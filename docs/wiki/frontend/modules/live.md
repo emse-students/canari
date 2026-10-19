@@ -261,21 +261,30 @@ one live is not built.
 
 **The viewer** is an overlay like the reel viewer: a history entry through `bindHistoryOverlay` (Back
 closes it, the feed underneath never leaves the page), `coversScreen`, `role="dialog"` named after
-the broadcaster, focus on the close button and back to the card's row on close, Escape closes, no
+the broadcaster, focus on the close button, Tab kept inside (`focusTrap`) and focus back to the card's row on close, a final screen's button focused when it appears, Escape closes, no
 other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
 
 1. A MediaSource FIRST - `MediaSource`, else `ManagedMediaSource` (the iPhone, which has no
    `MediaSource`; `disableRemotePlayback` set as it requires) - and `isTypeSupported` of
    `LIVE_RECORDER_MIME`, so an engine that cannot play never takes a seat.
 2. `GET /api/lives/:id`: the key and the seat.
-3. The join: the newest window; segment 0 (from `?from=0` unless it IS the newest), its init alone
-   appended (on Android segment 0 is the init; on iOS init + media, whose media is appended only when
-   segment 0 is the newest); then the newest segment, any leading init stripped; then a seek to
-   `end - LIVE_PLAYER_TARGET_BUFFER_MS`.
-4. A poll every `LIVE_MANIFEST_POLL_MS` from `last + 1`, segments taken in order. **The jump to the
-   live edge**: more than `LIVE_PLAYER_CATCHUP_SEGMENTS` new at once, a first index past `last + 1`
-   (the window moved on), or a `waiting` since the last segment - only the newest is appended and the
-   video seeks; and a drift past `LIVE_PLAYER_MAX_BEHIND_MS` seeks too. What was played more than
+3. The join on the NEWEST segment alone. Every segment is SELF-CONTAINED - the recorder's init
+   (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the broadcaster's shape (#2115) - so its
+   own init is appended, then its fragment, then a seek to `end - LIVE_PLAYER_TARGET_BUFFER_MS`.
+   A first segment with no init is "Live indisponible" (`playback`).
+4. A poll every `LIVE_MANIFEST_POLL_MS` from `last + 1`, segments taken in order. **A segment's init
+   is appended only when its bytes DIFFER from the last one appended** (a camera re-acquired
+   mid-live, e.g. a rotation); an identical one is skipped. MSE allows a new initialization segment
+   in the same `SourceBuffer` while the codec STRING is unchanged - resolution, SPS/PPS and audio
+   configuration may change; a different codec string would need `SourceBuffer.changeType()`, which
+   is not called because the recorder's type is the fixed `LIVE_RECORDER_MIME`. `mode = 'segments'`
+   keeps each fragment at its own timestamps, so a re-acquire (timestamps moved FORWARD by the time
+   away) opens a second buffered range: the `waiting` at the end of the first seeks across at once,
+   and a drift past `LIVE_PLAYER_MAX_BEHIND_MS` does the same - one seek, never a loop.
+   **The jump to the live edge**: more than `LIVE_PLAYER_CATCHUP_SEGMENTS` behind the manifest's
+   `nextIndex` asks for the NEWEST window (`?from=` answers the OLDEST ten from that index) and
+   takes only its newest segment; a `waiting` since the last segment seeks at the next one. Each
+   poll that brings media calls `play()` if something paused the video. What was played more than
    `LIVE_PLAYER_KEEP_BEHIND_MS` ago is removed.
 
 **Failure -> screen** (`liveFailureOutcome`, one table, tested):
@@ -284,10 +293,11 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
 | --- | --- |
 | `full` (`503 LIVE_FULL`) | "Live complet" with "Réessayer"; no automatic retry (never hammered); no seat to give back |
 | `seats-unavailable`, `rate-limited`, `unavailable` (a bare 5xx), `retry-segment`, a transport failure | "Reconnexion...", the same step again after 1 s doubling to 8 s - **never "complet"** |
-| `ended` (`410`), or `not-found` AFTER the join | "Le live est terminé"; the video paused, no timer left. The broadcaster's end deletes the row at once ([lives](../../services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)), so a viewer polling a second later reads `404`, not `410` |
-| `not-found` before the join, `removed`, `disabled`, `refused` | the neutral "Live indisponible" |
+| `ended` (`410`), or `not-found` once the key was served | "Le live est terminé"; no timer left. Every final screen pauses the video. The broadcaster's end deletes the row at once ([lives](../../services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)), so a viewer polling a second later reads `404`, not `410` |
+| `not-found` before the key, `removed`, `disabled`, `refused` | the neutral "Live indisponible" |
 | An engine with no MSE or no `avc1`/`mp4a` support | "Live indisponible" (`unsupported`) |
-| Segment 0 that does not open, or three segments in a row | "Live indisponible" (`undecryptable`); one segment that does not open, or one the server no longer has (`404`), is skipped |
+| The joining segment that does not open, or three segments in a row | "Live indisponible" (`undecryptable`); one segment that does not open, or one the server no longer has (`404`), is skipped |
+| Three failed appends in a row, or the `<video>`'s `error` event | "Live indisponible" (`playback`); the two failure counts are kept apart, so a segment that opens never hides an append that fails |
 
 **"Reconnecting" for the broadcaster** is read from the manifest's `serverNow - lastSegmentAt`, BOTH the
 database's clock, past `LIVE_BROADCASTER_QUIET_MS` (three segments); the end itself stays the

@@ -106,17 +106,14 @@ beforeEach(() => {
       };
     }),
     fetchSegment: vi.fn(async (_id: string, name: string) => new TextEncoder().encode(name).buffer),
-    openSegment: vi.fn(async (_k: string, _id: string, index: number) => {
-      if (index === 0) {
-        const init = new Uint8Array(32);
-        init.set(box('ftyp', 4));
-        init.set(box('moov', 12), 12);
-        return init;
-      }
-      const media = new Uint8Array(24);
-      media.set(box('moof', 0));
-      media.set(box('mdat', 8), 8);
-      return media;
+    // A self-contained segment, as the broadcaster uploads it: the init, then one fragment.
+    openSegment: vi.fn(async () => {
+      const segment = new Uint8Array(56);
+      segment.set(box('ftyp', 4));
+      segment.set(box('moov', 12), 12);
+      segment.set(box('moof', 0), 32);
+      segment.set(box('mdat', 8), 40);
+      return segment;
     }),
     leaveSeat: vi.fn(async () => {}),
     mediaSource: () => ({

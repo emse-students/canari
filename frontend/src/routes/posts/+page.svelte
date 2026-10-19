@@ -872,7 +872,14 @@
   {/if}
   {#if LIVE_ENABLED && openLive}
     {#key openLive.id}
-      <LiveViewer live={openLive} onClose={() => (openLive = null)} />
+      <LiveViewer
+        live={openLive}
+        onClose={() => {
+          openLive = null;
+          // A live that ended while watched leaves the card now, not at the next feed refresh.
+          liveRefresh++;
+        }}
+      />
     {/key}
   {/if}
 

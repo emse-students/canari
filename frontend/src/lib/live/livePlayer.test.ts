@@ -1,12 +1,16 @@
 /**
  * THE LIVE PLAYER'S STATE MACHINE AGAINST FAKE MSE OBJECTS AND A MANUAL CLOCK.
  *
- * Pinned: the join (init once, then the newest segment, then the edge) in both shapes WP-L1 measured
- * (Android: segment 0 is the init alone; iOS: init + media); the poll in index order; the jump to
- * the edge after a backlog, a gap the window passed, or a stall; every refusal mapped to its screen
- * (`full` never confused with a retry, `not-found` after the join read as the end); the seat given
- * back on close; an engine with no MSE never taking a seat. No sleep and no wall clock: the timer is
- * a queue this file runs by hand, and the only times are the manifest's database times.
+ * Segments have the broadcaster's shape (#2115): each is SELF-CONTAINED, the recorder's init then
+ * one fragment, and a camera re-acquired mid-live writes a NEW init and moves the timestamps forward.
+ *
+ * Pinned: the join on the newest segment; an identical init appended once, a new one appended again;
+ * a time gap crossed at the stall; the poll in index order; the catch-up to the NEWEST window (the
+ * server's `?from=` answers the oldest); every refusal mapped to its screen (`full` never confused
+ * with a retry, a `404` once the key was served read as the end); every final screen pausing; the
+ * seat given back on close and never by a stale run; append failures counted on their own; a video
+ * error stopping the player. No sleep and no wall clock: the timer is a queue this file runs by hand,
+ * and the only times are the manifest's database times.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
@@ -41,38 +45,47 @@ function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   }
   return out;
 }
-const INIT = concat(box('ftyp', 4), box('moov', 16));
+/** The recorder's init; `generation` is a camera acquisition (its `moov` differs). */
+const init = (generation: number) => concat(box('ftyp', 4), box('moov', 16 + generation));
 /** A media fragment; its size carries its index so an append can be read back. */
 const media = (index: number) => concat(box('moof', index), box('mdat', 8));
 const indexOfMedia = (bytes: Uint8Array) =>
   new DataView(bytes.buffer, bytes.byteOffset).getUint32(0) - 8;
+const generationOfInit = (bytes: Uint8Array) =>
+  new DataView(bytes.buffer, bytes.byteOffset).getUint32(12) - 8 - 16;
 
-/** A source buffer: every media append adds 2 s to one range, settled in a microtask. */
+/**
+ * A source buffer: every media append adds 2 s to the last range, settled in a microtask. A
+ * `gapNext` opens a NEW range that many seconds later - the forward jump of a re-acquire.
+ */
 class FakeBuffer extends EventTarget implements LiveSourceBufferLike {
   updating = false;
   mode = 'sequence';
   appends: string[] = [];
-  end = 0;
+  ranges: [number, number][] = [];
   removed: [number, number][] = [];
-  failNext = false;
+  gapNext = 0;
+  /** Appends that throw, as one after a SourceBuffer error does. */
+  failing = false;
   get buffered() {
-    const end = this.end;
-    return {
-      length: end > 0 ? 1 : 0,
-      start: () => 0,
-      end: () => end,
-    };
+    const r = this.ranges;
+    return { length: r.length, start: (i: number) => r[i][0], end: (i: number) => r[i][1] };
+  }
+  get end() {
+    return this.ranges.at(-1)?.[1] ?? 0;
   }
   appendBuffer(data: Uint8Array<ArrayBuffer>): void {
-    if (this.failNext) {
-      this.failNext = false;
-      throw new DOMException('quota', 'QuotaExceededError');
-    }
+    if (this.failing) throw new DOMException('closed', 'InvalidStateError');
     const type = String.fromCharCode(...data.subarray(4, 8));
-    if (type === 'ftyp') this.appends.push('init');
+    if (type === 'ftyp') this.appends.push(`init${generationOfInit(data)}`);
     else {
       this.appends.push(`m${indexOfMedia(data)}`);
-      this.end += 2;
+      const last = this.ranges.at(-1);
+      if (!last) this.ranges.push([0, 2]);
+      else if (this.gapNext > 0) {
+        this.ranges.push([last[1] + this.gapNext, last[1] + this.gapNext + 2]);
+        this.gapNext = 0;
+      } else last[1] += 2;
     }
     this.settle();
   }
@@ -102,11 +115,10 @@ class FakeSource extends EventTarget implements LiveMediaSourceLike {
 /** A live on the server: `count` segments stored, the manifest window of 10, two database times. */
 class FakeLive {
   count = 0;
-  /** iOS shape: segment 0 is init + media. */
-  iosInit = false;
   serverNow = STARTED;
   lastSegmentAt: number | null = null;
-  /** Refusals queued for the next calls, by route. */
+  /** The index from which the camera was re-acquired (a new init), or Infinity. */
+  reacquiredAt = Infinity;
   liveErrors: unknown[] = [];
   manifestErrors: unknown[] = [];
   openErrors = new Set<number>();
@@ -118,6 +130,7 @@ class FakeLive {
       this.lastSegmentAt = this.serverNow;
     }
   }
+  /** As the server answers: the newest 10, or the OLDEST 10 from `from`. */
   manifest(from?: number): LiveManifest {
     const all = Array.from({ length: this.count }, (_, index) => ({
       index,
@@ -134,6 +147,10 @@ class FakeLive {
       serverNow: new Date(this.serverNow).toISOString(),
       segments,
     };
+  }
+  /** One self-contained segment: its init, then its fragment. */
+  plain(index: number): Uint8Array<ArrayBuffer> {
+    return concat(init(index >= this.reacquiredAt ? 1 : 0), media(index));
   }
 }
 
@@ -219,8 +236,7 @@ beforeEach(() => {
     }),
     openSegment: vi.fn(async (_k: string, _id: string, index: number) => {
       if (live.openErrors.has(index)) throw new LiveSegmentOpenError('unauthentic', index, 0);
-      if (index === 0) return live.iosInit ? concat(INIT, media(0)) : INIT;
-      return media(index);
+      return live.plain(index);
     }),
     leaveSeat: vi.fn(async () => {}),
     mediaSource: () => ({
@@ -249,16 +265,20 @@ beforeEach(() => {
   };
 });
 
+async function joined(segments = 3) {
+  live.push(segments);
+  const p = makePlayer();
+  p.start();
+  await flush();
+  return p;
+}
+
 describe('the join', () => {
-  it('appends the init once, then the newest segment, and seeks one target buffer behind the edge', async () => {
-    live.push(6); // 0..5
-    const p = makePlayer();
-    p.start();
-    await flush();
+  it('joins on the newest segment alone: its init, its fragment, one target buffer behind the edge', async () => {
+    await joined(6); // 0..5
     expect(buffer().mode).toBe('segments');
-    expect(buffer().appends).toEqual(['init', 'm5']);
-    // The newest window, then from 0 for the init.
-    expect(vi.mocked(deps.fetchManifest).mock.calls.map((c) => c[1])).toEqual([undefined, 0]);
+    expect(buffer().appends).toEqual(['init0', 'm5']);
+    expect(vi.mocked(deps.fetchManifest).mock.calls.map((c) => c[1])).toEqual([undefined]);
     expect(video.currentTime).toBe(0); // the one range is [0, 2]: edge 2 - target 2
     expect(video.play).toHaveBeenCalled();
     expect(kinds()).toEqual(['connecting', 'playing']);
@@ -266,13 +286,11 @@ describe('the join', () => {
     expect(timers.map((t) => t.ms)).toEqual([1_000]);
   });
 
-  it('plays the media that follows the init in an iOS segment 0', async () => {
-    live.iosInit = true;
-    live.push(1);
-    makePlayer().start();
-    await flush();
-    expect(buffer().appends).toEqual(['init', 'm0']);
-    expect(vi.mocked(deps.fetchManifest)).toHaveBeenCalledTimes(1);
+  it('joining after a re-acquire takes the newest segment OWN init, never segment 0', async () => {
+    live.reacquiredAt = 2;
+    await joined(4); // 0, 1 on the first camera; 2, 3 on the second
+    expect(buffer().appends).toEqual(['init1', 'm3']);
+    expect(deps.fetchSegment).toHaveBeenCalledTimes(1);
   });
 
   it('waits at the poll pace while the live has no segment yet', async () => {
@@ -281,8 +299,15 @@ describe('the join', () => {
     expect(kinds()).toEqual(['connecting']);
     live.push(2);
     await tickTimer();
-    expect(buffer().appends).toEqual(['init', 'm1']);
+    expect(buffer().appends).toEqual(['init0', 'm1']);
     expect(kinds()).toEqual(['connecting', 'playing']);
+  });
+
+  it('a first segment with no init cannot be played', async () => {
+    deps.openSegment = vi.fn(async (_k: string, _id: string, index: number) => media(index));
+    await joined(2);
+    expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: 'playback' });
+    expect(deps.leaveSeat).toHaveBeenCalledWith(LIVE);
   });
 
   it('never takes a seat on an engine with no MediaSource', async () => {
@@ -304,8 +329,7 @@ describe('the join', () => {
     };
     deps.fetchSegment = vi.fn((_id: string, name: string) => {
       const index = Number(name.slice(4));
-      const plain = index === 0 ? INIT : media(index);
-      return track(sealLiveSegment(key, LIVE, index, plain).then((s) => s.buffer));
+      return track(sealLiveSegment(key, LIVE, index, live.plain(index)).then((s) => s.buffer));
     });
     deps.openSegment = (...args) => track(openLiveSegment(...args));
     live.push(4);
@@ -314,7 +338,7 @@ describe('the join', () => {
       await flush();
       await Promise.all(pending.splice(0));
     }
-    expect(buffer().appends).toEqual(['init', 'm3']);
+    expect(buffer().appends).toEqual(['init0', 'm3']);
     expect(states.at(-1)).toEqual({ kind: 'playing' });
   });
 
@@ -326,41 +350,60 @@ describe('the join', () => {
 });
 
 describe('the poll', () => {
-  async function joined() {
-    live.push(3); // 0..2
-    const p = makePlayer();
-    p.start();
-    await flush();
-    return p;
-  }
-
-  it('appends new segments in index order from the last one taken', async () => {
+  it('appends new segments in index order; an identical init is appended once', async () => {
     await joined();
     live.push(2); // 3, 4
     await tickTimer();
     expect(vi.mocked(deps.fetchManifest).mock.calls.at(-1)?.[1]).toBe(3);
-    expect(buffer().appends).toEqual(['init', 'm2', 'm3', 'm4']);
+    expect(buffer().appends).toEqual(['init0', 'm2', 'm3', 'm4']);
     expect(timers.map((t) => t.ms)).toEqual([1_000]);
   });
 
-  it('jumps to the newest and seeks to the edge when it fell behind', async () => {
+  it('a re-acquired camera: its NEW init is appended, and the time gap is crossed at the stall', async () => {
+    const p = await joined(); // 0..2, range [0, 2]
+    live.reacquiredAt = 3;
+    buffer().gapNext = 30; // the broadcaster's timestamps moved forward by its time away
+    live.push(1);
+    await tickTimer();
+    expect(buffer().appends).toEqual(['init0', 'm2', 'init1', 'm3']);
+    expect(buffer().ranges).toEqual([
+      [0, 2],
+      [32, 34],
+    ]);
+    expect(states.at(-1)).toEqual({ kind: 'playing' });
+    // The video reaches the end of the first range and waits: it is sent across at once.
+    video.currentTime = 2;
+    p.noteStall();
+    expect(video.currentTime).toBe(32);
+    // The next segment carries the new init again: not re-appended, and no further seek.
+    live.push(1);
+    video.currentTime = 33;
+    await tickTimer();
+    expect(buffer().appends).toEqual(['init0', 'm2', 'init1', 'm3', 'm4']);
+    expect(video.currentTime).toBe(33);
+    expect(states.at(-1)).toEqual({ kind: 'playing' });
+  });
+
+  it('jumps to the newest and seeks to the edge when a few segments behind', async () => {
     await joined();
     live.push(5); // 3..7
     video.currentTime = 1;
     await tickTimer();
-    expect(buffer().appends).toEqual(['init', 'm2', 'm7']);
+    expect(buffer().appends).toEqual(['init0', 'm2', 'm7']);
     expect(video.currentTime).toBe(2); // end 4 - target 2
   });
 
-  it('jumps over a gap the manifest window already passed', async () => {
+  it('far behind, asks for the NEWEST window rather than the oldest one from its index', async () => {
     await joined();
-    // The next manifest starts past last + 1: the window moved on while this viewer was away.
-    vi.mocked(deps.fetchManifest).mockImplementationOnce(async () => ({
-      ...live.manifest(),
-      segments: [{ index: 9, name: 'seg-9', bytes: 1 }],
-    }));
+    live.push(30); // 3..32; `?from=3` answers 3..12
     await tickTimer();
-    expect(buffer().appends).toEqual(['init', 'm2', 'm9']);
+    expect(
+      vi
+        .mocked(deps.fetchManifest)
+        .mock.calls.slice(-2)
+        .map((c) => c[1])
+    ).toEqual([3, undefined]);
+    expect(buffer().appends).toEqual(['init0', 'm2', 'm32']);
   });
 
   it('seeks back to the edge at the first segment after a stall', async () => {
@@ -372,6 +415,14 @@ describe('the poll', () => {
     live.push(1);
     await tickTimer();
     expect(video.currentTime).toBe(4); // end 6 - target 2
+  });
+
+  it('plays again after a pause from outside, at the next segment', async () => {
+    await joined();
+    video.paused = true;
+    live.push(1);
+    await tickTimer();
+    expect(video.paused).toBe(false);
   });
 
   it('trims what was played long ago', async () => {
@@ -410,9 +461,7 @@ describe('every refusal has its screen', () => {
   });
 
   it('seats-unavailable and rate-limited reconnect with a growing backoff, never "complet"', async () => {
-    live.push(3);
-    makePlayer().start();
-    await flush();
+    await joined();
     live.manifestErrors.push(refusal('seats-unavailable'), refusal('rate-limited', 429));
     await tickTimer(); // poll -> seats-unavailable
     expect(states.at(-1)).toEqual({ kind: 'reconnecting', reason: 'network' });
@@ -434,9 +483,7 @@ describe('every refusal has its screen', () => {
   });
 
   it('ended stops the player cleanly: paused, no timer, no seat request', async () => {
-    live.push(3);
-    makePlayer().start();
-    await flush();
+    await joined();
     live.manifestErrors.push(refusal('ended', 410));
     await tickTimer();
     expect(states.at(-1)).toEqual({ kind: 'ended' });
@@ -446,8 +493,14 @@ describe('every refusal has its screen', () => {
   });
 
   it('not-found after the join is the end (the row is deleted at the end)', async () => {
-    live.push(3);
-    makePlayer().start();
+    await joined();
+    live.manifestErrors.push(refusal('not-found', 404));
+    await tickTimer();
+    expect(states.at(-1)).toEqual({ kind: 'ended' });
+  });
+
+  it('not-found once the key was served, before any segment, is the end too', async () => {
+    makePlayer().start(); // on air, no segment yet: the key is held, the join waits
     await flush();
     live.manifestErrors.push(refusal('not-found', 404));
     await tickTimer();
@@ -458,30 +511,36 @@ describe('every refusal has its screen', () => {
     ['not-found', 404],
     ['removed', 403],
     ['disabled', 404],
-  ] as const)('%s before the join is the neutral unavailable screen', async (kind, status) => {
+  ] as const)('%s before the key is the neutral unavailable screen', async (kind, status) => {
     live.liveErrors.push(refusal(kind, status));
     makePlayer().start();
     await flush();
     expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: kind });
   });
 
-  it('an init that does not open stops on undecryptable and gives the seat back', async () => {
-    live.push(2);
-    live.openErrors.add(0);
-    makePlayer().start();
-    await flush();
+  it('a removal mid-live pauses the picture behind the screen and gives the seat back', async () => {
+    await joined();
+    video.paused = false;
+    live.manifestErrors.push(refusal('removed', 403));
+    await tickTimer();
+    expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: 'removed' });
+    expect(video.paused).toBe(true);
+    expect(deps.leaveSeat).toHaveBeenCalledWith(LIVE);
+  });
+
+  it('a joining segment that does not open stops on undecryptable and gives the seat back', async () => {
+    live.openErrors.add(1);
+    await joined(2);
     expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: 'undecryptable' });
     expect(deps.leaveSeat).toHaveBeenCalledWith(LIVE);
   });
 
   it('one media segment that does not open is skipped; three in a row stop', async () => {
-    live.push(3);
-    makePlayer().start();
-    await flush();
+    await joined();
     live.openErrors.add(3);
     live.push(2); // 3 fails, 4 plays
     await tickTimer();
-    expect(buffer().appends).toEqual(['init', 'm2', 'm4']);
+    expect(buffer().appends).toEqual(['init0', 'm2', 'm4']);
     for (const i of [5, 6, 7]) live.openErrors.add(i);
     live.push(2); // 5, 6
     await tickTimer();
@@ -491,32 +550,48 @@ describe('every refusal has its screen', () => {
     expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: 'undecryptable' });
   });
 
+  it('three failed appends in a row stop, although every segment opened', async () => {
+    await joined();
+    buffer().failing = true;
+    live.push(1);
+    await tickTimer();
+    live.push(1);
+    await tickTimer();
+    expect(states.at(-1)?.kind).toBe('playing');
+    live.push(1);
+    await tickTimer();
+    expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: 'playback' });
+    expect(timers).toHaveLength(0);
+  });
+
+  it('a video error stops the player at once', async () => {
+    const p = await joined();
+    p.noteMediaError();
+    expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: 'playback' });
+    expect(timers).toHaveLength(0);
+  });
+
   it('a segment the server no longer has is skipped, not fatal', async () => {
-    live.push(3);
-    makePlayer().start();
-    await flush();
+    await joined();
     vi.mocked(deps.fetchSegment).mockRejectedValueOnce(refusal('not-found', 404));
     live.push(2);
     await tickTimer();
-    expect(buffer().appends).toEqual(['init', 'm2', 'm4']);
+    expect(buffer().appends).toEqual(['init0', 'm2', 'm4']);
     expect(states.at(-1)?.kind).toBe('playing');
   });
 });
 
 describe('closing', () => {
   it('cancels the poll, detaches the source and gives the seat back', async () => {
-    live.push(3);
-    const p = makePlayer();
-    p.start();
-    await flush();
+    const p = await joined();
     p.stop();
     expect(timers).toHaveLength(0);
     expect(detach).toHaveBeenCalled();
     expect(deps.leaveSeat).toHaveBeenCalledWith(LIVE);
   });
 
-  it('a key that arrives after the close gives its seat straight back', async () => {
-    live.push(2);
+  /** A `fetchLive` that answers only when released. */
+  function gatedKey() {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     const original = deps.fetchLive;
@@ -524,6 +599,12 @@ describe('closing', () => {
       await gate;
       return original(id);
     });
+    return () => release();
+  }
+
+  it('a key that arrives after the close gives its seat straight back', async () => {
+    live.push(2);
+    const release = gatedKey();
     const p = makePlayer();
     p.start();
     await flush();
@@ -532,5 +613,35 @@ describe('closing', () => {
     await flush();
     expect(deps.leaveSeat).toHaveBeenCalledTimes(1);
     expect(deps.fetchManifest).not.toHaveBeenCalled();
+  });
+
+  it('a stale key never gives back the seat a newer run holds', async () => {
+    live.push(2);
+    const release = gatedKey();
+    const p = makePlayer();
+    p.start();
+    await flush();
+    p.stop(); // nothing held yet: no request
+    p.start(); // a newer run (a back-forward restore), waiting on the same gate
+    release();
+    await flush();
+    expect(deps.leaveSeat).not.toHaveBeenCalled();
+    expect(states.at(-1)).toEqual({ kind: 'playing' });
+  });
+
+  it('an append of a run closed meanwhile is not reported as a failure', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const p = await joined();
+    buffer().failing = true;
+    live.push(1);
+    const step = timers.shift()!;
+    step.fn();
+    p.stop();
+    await flush();
+    expect(errors).not.toHaveBeenCalledWith(
+      expect.stringContaining('append failed'),
+      expect.anything()
+    );
+    errors.mockRestore();
   });
 });

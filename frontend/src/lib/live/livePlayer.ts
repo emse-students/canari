@@ -8,8 +8,11 @@
  *
  * 1. `GET /api/lives/:id` - the key, and a seat on the host's viewer cap.
  * 2. One `SourceBuffer` of {@link LIVE_RECORDER_MIME}, `mode = 'segments'`.
- * 3. The JOIN: the newest manifest window; the INIT (`ftyp` + `moov`, at the head of segment 0 only)
- *    appended once, then the newest segment's media, then a seek to the live edge.
+ * 3. The JOIN on the newest segment. Every segment is SELF-CONTAINED - the recorder's init (`ftyp` +
+ *    `moov`) then one fragment (`moof` + `mdat`), the broadcaster's shape (#2115) - so the newest is
+ *    enough: its init, its fragment, then a seek to the live edge. A later segment's init is
+ *    appended only when it DIFFERS from the last one (a camera re-acquired mid-live); its media
+ *    timestamps then jump FORWARD, leaving a time gap that a `waiting` seeks across at once.
  * 4. A manifest poll every {@link LIVE_MANIFEST_POLL_MS} from the last index taken; each new
  *    segment fetched (the plain public fetch), opened with the live key, appended in order. More than
  *    {@link LIVE_PLAYER_CATCHUP_SEGMENTS} new at once, or a gap the window already passed, or a stall,
@@ -194,12 +197,18 @@ export class LivePlayer {
   private seated = false;
   private source: LiveMediaSourceLike | null = null;
   private buffer: LiveSourceBufferLike | null = null;
-  private initAppended = false;
+  /** The last init appended (`ftyp` + `moov`), or null before the first. */
+  private lastInit: Uint8Array | null = null;
   private joined = false;
   /** The highest index taken (appended or skipped); -1 before the join. */
   private last = -1;
   private retryAttempt = 0;
-  private segmentFailures = 0;
+  /** Segments in a row that did not open, and appends in a row that failed: two counters, so one
+   * success of the other kind never hides a run of failures. */
+  private openFailures = 0;
+  private appendFailures = 0;
+  /** True from `start()` until `stop()` or a final state: a stale continuation must not act then. */
+  private running = false;
   private stalled = false;
   private broadcasterQuiet = false;
   private state: LiveViewerState = { kind: 'connecting' };
@@ -231,6 +240,7 @@ export class LivePlayer {
     this.teardownMedia();
     const gen = ++this.generation;
     this.resetRun();
+    this.running = true;
     // Said even when it already was: the screen leaves a final state for this one.
     this.state = { kind: 'connecting' };
     this.opts.onState(this.state);
@@ -250,6 +260,7 @@ export class LivePlayer {
   stop(): void {
     console.debug(`[LIVE] viewer stop ${this.liveId} (${this.state.kind})`);
     this.generation++;
+    this.running = false;
     this.summarise('stopped');
     this.teardownMedia();
     this.giveBackSeat();
@@ -259,18 +270,48 @@ export class LivePlayer {
   noteStall(): void {
     if (!this.joined || this.stalled) return;
     console.debug(`[LIVE] viewer ${this.liveId} stalled at ${this.video.currentTime.toFixed(2)}`);
+    // Media already buffered PAST the position is a time gap (the broadcaster re-acquired its
+    // camera, its timestamps moved forward): no engine plays across it, so seek now - once.
+    const ranges = this.buffer?.buffered;
+    if (
+      ranges &&
+      ranges.length > 0 &&
+      ranges.end(ranges.length - 1) > this.video.currentTime + 0.5
+    ) {
+      const last = ranges.start(ranges.length - 1);
+      if (last > this.video.currentTime) {
+        this.seekToEdge('time gap');
+        return;
+      }
+    }
     this.stalled = true;
+  }
+
+  /**
+   * The `<video>` reported an `error` (a decode error after a bad append, a source that could not
+   * open): nothing more will play from this source, so the live is called unplayable at once rather
+   * than fed segments it can no longer take.
+   */
+  noteMediaError(): void {
+    if (!this.running) return;
+    console.error(`[LIVE] viewer ${this.liveId}: the video reported an error`);
+    this.fail(
+      this.generation,
+      new StopOn({ kind: 'unavailable', reason: 'playback' }),
+      async () => {}
+    );
   }
 
   // ------------------------------------------------------------------------------------------
 
   private resetRun(): void {
     this.keyHex = null;
-    this.initAppended = false;
+    this.lastInit = null;
     this.joined = false;
     this.last = -1;
     this.retryAttempt = 0;
-    this.segmentFailures = 0;
+    this.openFailures = 0;
+    this.appendFailures = 0;
     this.stalled = false;
     this.broadcasterQuiet = false;
     this.appended = 0;
@@ -323,7 +364,10 @@ export class LivePlayer {
   private fail(gen: number, error: unknown, step: (gen: number) => Promise<void>): void {
     if (!this.alive(gen)) return;
     const outcome =
-      error instanceof StopOn ? { stop: error.state } : liveFailureOutcome(error, this.joined);
+      error instanceof StopOn
+        ? { stop: error.state }
+        : // Once the key was served, the live existed for this viewer: a 404 is its end.
+          liveFailureOutcome(error, this.joined || this.keyHex !== null);
     if (outcome === 'retry') {
       this.retryAttempt++;
       const wait = liveRetryDelayMs(this.retryAttempt);
@@ -345,13 +389,15 @@ export class LivePlayer {
       console.warn(`[LIVE] viewer ${this.liveId}: stopped on ${final.kind} (${describe(error)})`);
     }
     this.generation++;
+    this.running = false;
     this.summarise(final.kind);
     this.cancelTimer?.();
     this.cancelTimer = null;
     // A refused seat (`full`) was never held, and an ended live freed every seat on the server.
     if (final.kind === 'full' || final.kind === 'ended') this.seated = false;
     else this.giveBackSeat();
-    if (final.kind === 'ended') this.video.pause();
+    // Every final screen stops the picture and its sound: nothing plays behind it.
+    this.video.pause();
     this.setState(final);
   }
 
@@ -366,12 +412,16 @@ export class LivePlayer {
       if (!this.alive(gen)) return;
       if (this.keyHex === null) {
         const live = await this.deps.fetchLive(this.liveId);
-        this.seated = true;
         if (!this.alive(gen)) {
-          // Closed while the key was on its way: the seat it took goes straight back.
-          this.giveBackSeat();
+          // Closed while the key was on its way: the seat it took goes straight back - unless a
+          // newer run is open, which holds the SAME seat (a seat is per account) and keeps it.
+          if (!this.running) {
+            this.seated = true;
+            this.giveBackSeat();
+          }
           return;
         }
+        this.seated = true;
         this.keyHex = live.key;
         this.startedAtMs = Date.parse(live.startedAt);
         this.retryAttempt = 0;
@@ -420,35 +470,13 @@ export class LivePlayer {
       this.later(gen, LIVE_MANIFEST_POLL_MS, (g) => this.open(g));
       return;
     }
-    if (!this.initAppended) {
-      const zero =
-        newest.index === 0
-          ? newest
-          : (await this.deps.fetchManifest(this.liveId, 0)).segments.find((s) => s.index === 0);
-      if (!this.alive(gen)) return;
-      if (!zero) {
-        console.warn(`[LIVE] viewer ${this.liveId}: segment 0 (the init) is not in the manifest`);
-        throw new StopOn({ kind: 'unavailable', reason: 'playback' });
-      }
-      const first = await this.openOne(gen, zero, true);
-      if (!first || !this.alive(gen)) return;
-      const end = initSegmentEnd(first);
-      if (end === 0) {
-        console.warn(`[LIVE] viewer ${this.liveId}: segment 0 carries no init`);
-        throw new StopOn({ kind: 'unavailable', reason: 'playback' });
-      }
-      await this.append(first.subarray(0, end));
-      this.initAppended = true;
-      if (newest.index === 0) {
-        if (end < first.byteLength) await this.append(first.subarray(end));
-        this.last = 0;
-      }
-    }
-    if (!this.alive(gen)) return;
-    if (newest.index > this.last) await this.take(gen, newest);
+    // Every segment is self-contained (its init, then one fragment - the broadcaster's shape), so
+    // the newest one is enough to join on; it cannot be skipped.
+    if (newest.index > this.last) await this.take(gen, newest, true);
     if (!this.alive(gen)) return;
     this.joined = true;
     this.seekToEdge('join');
+    this.resume();
     console.log(`[LIVE] viewer joined ${this.liveId} at segment ${newest.index}`);
     this.showPlaying();
     this.later(gen, LIVE_MANIFEST_POLL_MS, (g) => this.poll(g));
@@ -463,17 +491,27 @@ export class LivePlayer {
       this.readClock(manifest);
       let fresh = manifest.segments.filter((s) => s.index > this.last);
       let edge = this.stalled;
-      if (fresh.length > 0) {
-        const gap = fresh[0].index > this.last + 1;
-        if (gap || fresh.length > LIVE_PLAYER_CATCHUP_SEGMENTS) {
-          const newest = fresh[fresh.length - 1];
+      // How far behind the broadcaster this viewer is, from the server's own count. `?from=` answers
+      // the OLDEST window from that index, so after a background the window is still the past: the
+      // viewer asks for the NEWEST window instead and takes only its newest segment.
+      const behind = manifest.nextIndex - 1 - this.last;
+      if (behind > LIVE_PLAYER_CATCHUP_SEGMENTS) {
+        const top =
+          manifest.segments.at(-1)?.index === manifest.nextIndex - 1
+            ? manifest
+            : await this.deps.fetchManifest(this.liveId);
+        if (!this.alive(gen)) return;
+        const newest = top.segments.at(-1);
+        fresh = newest && newest.index > this.last ? [newest] : [];
+        if (newest) {
           console.debug(
-            `[LIVE] viewer ${this.liveId}: ${gap ? 'a gap' : `${fresh.length} segments behind`} - jumping from ${this.last} to ${newest.index}`
+            `[LIVE] viewer ${this.liveId}: ${behind} segments behind - jumping from ${this.last} to ${newest.index}`
           );
-          this.skipped += newest.index - this.last - 1;
-          fresh = [newest];
-          edge = true;
+          this.skipped += Math.max(0, newest.index - this.last - 1);
         }
+        edge = true;
+      }
+      if (fresh.length > 0) {
         for (const s of fresh) {
           await this.take(gen, s);
           if (!this.alive(gen)) return;
@@ -482,6 +520,9 @@ export class LivePlayer {
           this.seekToEdge(edge ? (this.stalled ? 'stall' : 'catch-up') : 'drift');
         }
         this.stalled = false;
+        // A pause from outside (an audio interruption, another player claiming playback) is not
+        // left frozen until the drift forces a seek.
+        this.resume();
         await this.trim();
         if (!this.alive(gen)) return;
       }
@@ -515,15 +556,15 @@ export class LivePlayer {
     if (!this.alive(gen) || this.keyHex === null) return null;
     try {
       const media = await this.deps.openSegment(this.keyHex, this.liveId, s.index, sealed);
-      this.segmentFailures = 0;
+      this.openFailures = 0;
       return media;
     } catch (e) {
       if (!(e instanceof LiveSegmentOpenError)) throw e;
-      this.segmentFailures++;
+      this.openFailures++;
       console.error(
-        `[LIVE] viewer ${this.liveId}: segment ${s.index} did not open (${this.segmentFailures} in a row)`
+        `[LIVE] viewer ${this.liveId}: segment ${s.index} did not open (${this.openFailures} in a row)`
       );
-      if (required || this.segmentFailures >= MAX_CONSECUTIVE_SEGMENT_FAILURES) {
+      if (required || this.openFailures >= MAX_CONSECUTIVE_SEGMENT_FAILURES) {
         throw new StopOn({ kind: 'unavailable', reason: 'undecryptable' });
       }
       this.skipped++;
@@ -531,33 +572,54 @@ export class LivePlayer {
     }
   }
 
-  /** Takes one media segment: open it, drop a leading init if it carries one, append the rest. */
-  private async take(gen: number, s: LiveManifestSegment): Promise<void> {
-    const media = await this.openOne(gen, s);
+  /**
+   * Takes one segment: open it, append its init when it differs from the last one appended (a
+   * camera re-acquired mid-live writes a NEW init; an identical one is skipped as a no-op), then its
+   * fragment. A first segment with no init cannot be played and stops the viewer.
+   */
+  private async take(gen: number, s: LiveManifestSegment, required = false): Promise<void> {
+    const media = await this.openOne(gen, s, required);
     if (!this.alive(gen)) return;
     this.last = Math.max(this.last, s.index);
     if (!media) return;
     const end = initSegmentEnd(media);
-    const body = end > 0 ? media.subarray(end) : media;
-    if (body.byteLength > 0) await this.append(body);
+    if (end > 0) {
+      const init = media.subarray(0, end);
+      if (!this.lastInit || !sameBytes(init, this.lastInit)) {
+        if (this.lastInit)
+          console.debug(`[LIVE] viewer ${this.liveId}: a new init at segment ${s.index}`);
+        await this.append(gen, init);
+        this.lastInit = init.slice();
+      }
+    } else if (!this.lastInit) {
+      console.warn(`[LIVE] viewer ${this.liveId}: segment ${s.index} carries no init to start on`);
+      throw new StopOn({ kind: 'unavailable', reason: 'playback' });
+    }
+    const body = media.subarray(end);
+    if (body.byteLength > 0) await this.append(gen, body);
     this.appended++;
     if (this.appended % SUMMARY_EVERY === 0) this.summarise('playing');
   }
 
-  /** Appends bytes and waits for the buffer to settle. A failure counts towards "unplayable". */
-  private async append(bytes: Uint8Array<ArrayBuffer>): Promise<void> {
+  /**
+   * Appends bytes and waits for the buffer to settle. A failure counts towards "unplayable"; only a
+   * successful APPEND resets that count. A run closed meanwhile (its source detached) returns
+   * quietly: an ordinary close is not an append error.
+   */
+  private async append(gen: number, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
     const buffer = this.buffer;
-    if (!buffer) return;
+    if (!buffer || !this.alive(gen)) return;
     try {
       await settleBuffer(buffer, () => buffer.appendBuffer(bytes));
-      this.segmentFailures = 0;
+      this.appendFailures = 0;
     } catch (e) {
-      this.segmentFailures++;
+      if (!this.alive(gen)) return;
+      this.appendFailures++;
       console.error(
-        `[LIVE] viewer ${this.liveId}: append failed (${this.segmentFailures} in a row)`,
+        `[LIVE] viewer ${this.liveId}: append failed (${this.appendFailures} in a row)`,
         e
       );
-      if (!this.initAppended || this.segmentFailures >= MAX_CONSECUTIVE_SEGMENT_FAILURES) {
+      if (this.lastInit === null || this.appendFailures >= MAX_CONSECUTIVE_SEGMENT_FAILURES) {
         throw new StopOn({ kind: 'unavailable', reason: 'playback' });
       }
     }
@@ -676,4 +738,11 @@ function settleBuffer(buffer: LiveSourceBufferLike, op: () => void): Promise<voi
   return new Promise<void>((resolve) =>
     buffer.addEventListener('updateend', () => resolve(), { once: true })
   ).then(run);
+}
+
+/** Whether two byte arrays hold the same bytes. */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+  return true;
 }

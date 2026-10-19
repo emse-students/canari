@@ -15,7 +15,8 @@
    * effort - the 30 s lease frees it anyway); a page restored from the back-forward cache starts
    * the live again.
    */
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { LoaderCircle, Radio, Volume2, VolumeX, X } from '@lucide/svelte';
   import LiveBadge from './LiveBadge.svelte';
   import LiveBroadcaster from './LiveBroadcaster.svelte';
@@ -40,6 +41,8 @@
   let { live, onClose, deps }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
+  /** The final screen's one button (retry or back), focused when that screen appears. */
+  let actionButton = $state<HTMLButtonElement | null>(null);
   let closeButton = $state<HTMLButtonElement | null>(null);
   let viewerState = $state<LiveViewerState>({ kind: 'connecting' });
   let elapsedMs = $state<number | null>(null);
@@ -101,9 +104,10 @@
   }
 
   onMount(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     overlay.syncOpen();
-    closeButton?.focus();
+    // `focusTrap` keeps Tab inside and gives focus back to the card on close; its own first focus runs
+    // before the dialog is in the document, so the X is focused here, once it is.
+    closeButton?.focus({ preventScroll: true });
     const el = video;
     if (!el) return;
     console.debug(`[LIVE] viewer opened on ${live.id}`);
@@ -132,8 +136,6 @@
       window.removeEventListener('pageshow', onPageShow);
       p.stop();
       player = null;
-      // Focus goes back to what opened the viewer (the card's row), never to the top of the page.
-      if (opener?.isConnected) opener.focus();
     };
   });
 
@@ -141,7 +143,10 @@
     videoSound.toggle();
     if (video) video.muted = videoSound.muted;
     // A tap is the gesture an unmuted play() needed.
-    if (video?.paused && viewerState.kind === 'playing') void video.play().catch(() => {});
+    if (video?.paused && viewerState.kind === 'playing')
+      void video.play().catch((e: unknown) => {
+        console.warn(`[LIVE] viewer: play() after the sound toggle refused (${String(e)})`);
+      });
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -153,6 +158,13 @@
   }
 
   const terminal = $derived(isTerminalLiveState(viewerState));
+
+  // A final screen takes the focus to its button, so a keyboard or screen-reader user lands on the
+  // one thing left to do. Keyed on the state's kind; the button is read after it is drawn.
+  $effect(() => {
+    if (!terminal) return;
+    void tick().then(() => actionButton?.focus({ preventScroll: true }));
+  });
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -160,6 +172,7 @@
 <div use:portal>
   <div
     use:coversScreen
+    use:focusTrap
     class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white"
     role="dialog"
     aria-modal="true"
@@ -177,6 +190,7 @@
       autoplay
       disableremoteplayback
       onwaiting={() => player?.noteStall()}
+      onerror={() => player?.noteMediaError()}
       data-live-video
     ></video>
 
@@ -242,6 +256,7 @@
           <button
             type="button"
             class="bg-cn-yellow text-cn-ink mt-4 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+            bind:this={actionButton}
             onclick={() => player?.retry()}
             data-live-retry
           >
@@ -259,6 +274,7 @@
           <button
             type="button"
             class="mt-4 min-h-11 rounded-full bg-white/15 px-5 text-sm font-bold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-white"
+            bind:this={actionButton}
             onclick={() => overlay.dismissFromUi()}
             data-live-back
           >
