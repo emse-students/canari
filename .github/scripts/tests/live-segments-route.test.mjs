@@ -29,9 +29,17 @@
  * location or in the `^~` guard that answers 404. The same probes were read once on the real image
  * against a stub upstream (lives.md, "Serving a segment").
  *
- * And the BYTES per address: limit_req counts requests, so `limit_conn` x `limit_rate` may not
- * exceed the live share of the uplink (cap x viewer bitrate), and the rate must be at least twice a
- * viewer's bitrate so a player can catch up.
+ * The regex is matched with PCRE's semantics, not JavaScript's: PCRE's `$` ALSO matches before a
+ * final newline (a trailing %0A matched the cached location and `$uri` carried a raw LF upstream -
+ * the second review of #2105), JavaScript's does not, so a `$` is translated to `(?=\n?$)` and
+ * the location must end in `\z` (true end) to pass the newline probes.
+ *
+ * And the BYTES per address: limit_req counts requests, so `limit_conn` and `limit_rate` bound
+ * them. `limit_conn` IS the viewer cap (a full audience behind one campus address is never
+ * refused), the rate is at least twice a viewer's bitrate (a player can catch up), and the product
+ * stays within TWICE the live share of the uplink - the stated trade-off (lives.md): both cannot fit
+ * the share itself, honest viewers are not throttled, and the per-address bound is coarse.
+ * A refusal logs at `warn`, never `error`.
  *
  * And the CONNECTION BUDGET: the host proxy in front of us is the DSI's (~1 500 concurrent
  * connections across every site on it, realtime-media-feasibility.md section 5), and this file must
@@ -74,7 +82,7 @@ if (zone) {
 
 // ── the location ─────────────────────────────────────────────────────────────────────────────────
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const head = `location ~ "^/api/media/public/live/${UUID}/${UUID}$" {`;
+const head = `location ~ "^/api/media/public/live/${UUID}/${UUID}\\\\z" {`;
 const at = NGINX.indexOf(head);
 need(at >= 0, `the segment location is gone or no longer matches two lower-case uuids:\n  ${head}`);
 const block = at >= 0 ? NGINX.slice(at, NGINX.indexOf('\n    }\\n\\', at)) : '';
@@ -85,6 +93,9 @@ for (const line of [
   'proxy_cache_key $uri;',
   'proxy_cache_lock on;',
   'proxy_buffering on;',
+  'proxy_force_ranges on;',
+  'limit_conn_log_level warn;',
+  'limit_req_log_level warn;',
   'proxy_ignore_headers Cache-Control Expires Set-Cookie Vary',
   'proxy_hide_header Cache-Control;',
   'proxy_hide_header Set-Cookie;',
@@ -181,11 +192,14 @@ need(Number.isInteger(connN) && connN > 0, 'the segment location has no limit_co
 need(rateBps > 0, 'the segment location has no limit_rate in plain bytes per second');
 const viewerBps = num('LIVE_VIEWER_BITRATE_BPS');
 need(
-  connN * rateBps <= cap * viewerBps,
-  `one address may pull ${connN} x ${rateBps} b/s, over the live share of the uplink (${cap} x ${viewerBps})`
+  connN === cap,
+  `limit_conn (${connN}) is not the viewer cap (${cap}): a full audience behind one address is refused`
 );
 need(rateBps >= 2 * viewerBps, `limit_rate (${rateBps} b/s) leaves a player no room to catch up`);
-need(connN <= cap, `limit_conn (${connN}) is over the viewer cap (${cap})`);
+need(
+  connN * rateBps <= 2 * cap * viewerBps,
+  `one address may pull ${connN} x ${rateBps} b/s, over twice the live share (${cap} x ${viewerBps})`
+);
 
 // ── nginx's own location selection, over the parsed server block ────────────────────────────────
 /**
@@ -194,7 +208,13 @@ need(connN <= cap, `limit_conn (${connN}) is over the viewer cap (${cap})`);
  * strings and comments are blanked before the braces are counted (the uuid regex holds `{8}`).
  */
 function parseLocations(conf) {
-  const lines = conf.split('\n').map((l) => l.replace(/\\n\\$/, ''));
+  // The printf body: strip the `\n\` line ends, then unescape `\\` and `%%` as printf does.
+  const lines = conf.split('\n').map((l) =>
+    l
+      .replace(/\\n\\$/, '')
+      .replace(/\\\\/g, '\\')
+      .replace(/%%/g, '%')
+  );
   const start = lines.findIndex((l) => /^server \{$/.test(l.trim()));
   const root = { children: [], body: [] };
   const stack = [root];
@@ -209,7 +229,7 @@ function parseLocations(conf) {
       const loc = {
         mod,
         arg,
-        re: mod.startsWith('~') ? new RegExp(arg, mod === '~*' ? 'i' : '') : null,
+        re: mod.startsWith('~') ? new RegExp(pcreToJs(arg), mod === '~*' ? 'i' : '') : null,
         children: [],
         body: [],
       };
@@ -233,6 +253,16 @@ function parseLocations(conf) {
     stack.push(block);
   }
   return root;
+}
+
+/**
+ * An nginx (PCRE) location regex as JavaScript matches it: a final `\z` is the true end (`$` in
+ * JavaScript without `m`), and a final `$` is PCRE's "end, or before a final newline".
+ */
+function pcreToJs(re) {
+  if (re.endsWith('\\z')) return re.slice(0, -2) + '$';
+  if (re.endsWith('$') && !re.endsWith('\\$')) return re.slice(0, -1) + '(?=\\n?$)';
+  return re;
 }
 
 /** ngx_http_core_find_location, for one level and its nested ones: `{ loc, final }`. */
@@ -291,6 +321,11 @@ for (const probe of [
   `${PREFIX}${L1}/${S1.replace(/3$/, 'A')}`,
   `${PREFIX}${L1}/${S1}/`,
   `${PREFIX}${L1}/${S1}/x`,
+  // $uri is DECODED: %0A, %0D%0A and %00 arrive as these characters.
+  `${PREFIX}${L1}/${S1}\n`,
+  `${PREFIX}${L1}/${S1}\r\n`,
+  `${PREFIX}${L1}/${S1}\nx`,
+  `${PREFIX}${L1}/${S1}\0`,
   `${PREFIX}${L1}/${S1}.mjs`,
   `${PREFIX}${L1}`,
   `${PREFIX}${L1}/`,
@@ -300,7 +335,7 @@ for (const probe of [
   const at = findLocation(server, probe).loc;
   need(
     at === guard,
-    `${probe} is answered by \`location ${at?.mod ?? ''} ${at?.arg ?? '(none)'}\`, not the ^~ guard's 404`
+    `${JSON.stringify(probe)} is answered by \`location ${at?.mod ?? ''} ${at?.arg ?? '(none)'}\`, not the ^~ guard's 404`
   );
 }
 

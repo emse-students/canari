@@ -79,7 +79,7 @@ a same request is one a cache answers.
 | --- | --- |
 | media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from Garage; no token, `LIVE_ENABLED` checked, no Cache-Control of its own. **Answers the CANONICAL path only** (`LiveSegmentsService.isCanonicalSegmentPath`: both uuids lower case, the raw path exactly `/api/media/public/live/<liveId>/<name>`, no trailing slash, no query, no percent-encoding) and 404s anything else before the store is asked - Express 5 matches any case and a trailing slash, and `/api/media/PUBLIC/live/...` reaches the route through the authenticated `/api/media` location. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
 | nginx `proxy_cache_path ... keys_zone=live_segments` | http level: 512 MB, `inactive=2m`, written in place (`use_temp_path=off`) |
-| nginx `location ^~ /api/media/public/live/` | **owns the whole prefix**: `^~` stops the regex search, so nothing under it can fall into `/api/media/public/` (no cache, no limit) or the `~* \.mjs$` location. Inside, ONE nested regex `"^/api/media/public/live/<uuid>/<uuid>$"` (lower case) is the cached location below; everything else under the prefix is a JSON `404` from the guard itself, before any upstream |
+| nginx `location ^~ /api/media/public/live/` | **owns the whole prefix**: `^~` stops the regex search, so nothing under it can fall into `/api/media/public/` (no cache, no limit) or the `~* \.mjs$` location. Inside, ONE nested regex `"^/api/media/public/live/<uuid>/<uuid>\z"` (lower case, and `\z`, never `$`: see below) is the cached location below; everything else under the prefix is a JSON `404` from the guard itself, before any upstream |
 
 **The rules of that location, each one a line whose loss turns the cache off silently**
 (`.github/scripts/tests/live-segments-route.test.mjs` asserts every one):
@@ -92,9 +92,23 @@ a same request is one a cache answers.
   reaching media-service.
 - The cookie, `Authorization`, `Origin`, `Range` and `If-Range` are cleared, and the four trust
   headers reset: the upstream request is the same for every viewer. A range is answered by nginx
-  from the cached whole (`206`).
-- `proxy_cache_valid 200 2m` / `404 10s`: a segment outlives the purge of its live in this cache for at
-  most two minutes; a miss (absent, or the switch off) costs one upstream call per 10 s per URL.
+  from the cached whole (`206`) **because of `proxy_force_ranges on`**: media-service sends no
+  `Accept-Ranges`, and without it nginx answers every `Range` with the whole `200` (the first
+  version of this page claimed the `206` without it; the stub it was read against was an nginx, which
+  sends `Accept-Ranges` itself). Re-read with a stub sending the real route's headers only
+  (`Content-Type`, `Content-Length`): `Range: bytes=0-99` -> `206`, `Content-Range: bytes 0-99/3000000`.
+- **The regex ends in `\z`, not `$`** (second review of #2105): PCRE's `$` also matches BEFORE A
+  FINAL NEWLINE, and `$uri` is decoded, so `<name>%0A` matched the cached location and
+  `proxy_pass ...$uri` wrote a raw LF into the upstream request line. Bun refused it with a 400, which
+  nginx does not cache - so every such request reached media-service's socket. With `\z` it is the
+  guard's 404. In the Dockerfile's `printf` body it is written `\\z`; the generated
+  `/etc/nginx/conf.d/default.conf` was read back from the built image and holds `\z`. `%0D%0A` was
+  refused either way; `%00` is nginx's own `400` before any location.
+- `proxy_cache_valid 200 2m` / `404 10s` with `inactive=2m`: a cached segment stays on this disk
+  **until two minutes after it was last fetched** (`inactive`), and is served for at most two minutes
+  after it was cached (`proxy_cache_valid`) - so the ciphertext of an ended live is gone here at most
+  two minutes after its last viewer fetched it, never later. A miss (absent, or the switch off) costs
+  one upstream call per 10 s per URL.
 - Upstream `Cache-Control`, `Expires`, `Set-Cookie`, `Vary` are ignored for the cache and hidden from
   the client; the ONE policy the client sees is **`private, max-age=120`**: **`private` so no shared
   cache between here and the viewer (the host proxy, a CDN on a legacy name) keeps a segment**, and
@@ -110,15 +124,21 @@ a same request is one a cache answers.
   answering the JSON `@api_error_429`. 30 r/s is the whole cap below fetching a segment a second
   from ONE campus address.
 - **The BYTES per address, because `limit_req` counts requests** (30 r/s of 4 MiB segments is ~1 Gb/s
-  from one address): `limit_conn lives_segments_conn 12` and `limit_rate 750000` (bytes/s, so 6 Mb/s
-  per fetch, twice a viewer's 3 Mb/s: a 3 s segment arrives in 1.5 s and a player can catch up). A
-  seated viewer then has a fetch in flight half the time, so the whole cap of 24 behind ONE campus
-  address averages 12 at once; **12 x 6 Mb/s = 72 Mb/s, exactly the live share of the uplink
-  (`LIVE_HOST_EGRESS_BPS` x `LIVE_EGRESS_SHARE`)** - one address can take the whole live budget, never
-  the link. The 13th concurrent fetch is a JSON 429. `live-segments-route.test.mjs` recomputes
-  `limit_conn` x `limit_rate` <= cap x viewer bitrate, and `limit_rate` >= 2 x the bitrate, from
-  `live.constants.ts`. nginx grants each response one second of head start, so a single short fetch
-  runs a little above the rate (3 MB in ~3 s instead of 4); a long one converges on it.
+  from one address): `limit_conn lives_segments_conn 24` - THE VIEWER CAP, so a full audience behind
+  ONE campus address, each with a fetch in flight, is never refused - and `limit_rate 750000`
+  (bytes/s, so 6 Mb/s per fetch, twice a viewer's 3 Mb/s: a 3 s segment arrives in 1.5 s and a player
+  can catch up). **THE TRADE-OFF, stated:** both cannot fit the live share of the uplink
+  (`LIVE_HOST_EGRESS_BPS` x `LIVE_EGRESS_SHARE` = 72 Mb/s): 24 fetches at 2x need 144 Mb/s, and 24 at
+  1x leave a player no room to catch up. Honest viewers are not throttled, so **one address is bounded
+  at 24 x 6 Mb/s = 144 Mb/s - twice the live share and above the measured link: a COARSE protection**
+  (against ~1 Gb/s unbounded), not the uplink budget, which is the seat cap for an honest client. The
+  first version sized `limit_conn` at 12, the AVERAGE in flight (24 viewers x half the time), and a
+  full audience behind one address got 429s at every peak (second review: 20 parallel -> 12 x 200).
+  `live-segments-route.test.mjs` asserts `limit_conn` = the cap, `limit_rate` >= 2 x the bitrate and
+  the product <= twice the share, from `live.constants.ts`. **A refusal logs at `warn`**
+  (`limit_conn_log_level`, `limit_req_log_level`): it is the limit doing its job, not an `[error]`.
+  nginx grants each response one second of head start, so a single short fetch runs a little above
+  the rate (3 MB in ~3 s instead of 4); a long one converges on it.
 - `X-Canari-Cache: HIT|MISS` on every answer, and the access log shows `urt=- ust=-` on a hit.
 
 **Read on a running container, 2026-10-19** (the image built from this Dockerfile, a stub nginx
@@ -139,11 +159,19 @@ the canonical path `200` `MISS` then `HIT`, `Cache-Control: private, max-age=120
 `/api/media/public/`, and the test's location simulator reproduces that on the old config (every
 probe answered by `location /api/media/public/` or `~* \.mjs$`).
 
+**Re-read after the SECOND review of #2105, 2026-10-19, on the real `nginx/1.30.6` image** (a Bun stub
+sending the real route's header set, no `Accept-Ranges`): canonical `200`; `%0A`, `%0A` + `x`,
+`%0D%0A` and a trailing `/` - `404`; `%00` - nginx's `400`; `Range: bytes=0-99` - `206` from the
+cache; 24 parallel fetches from one address - 24 x `200`; 30 parallel - 24 x `200`, 6 x `429`, each
+refusal ONE `[warn]` line and no `[error]`; **one upstream request for everything.**
+
 **The gate RUNS nginx's location selection, it does not grep for the fix.**
 `live-segments-route.test.mjs` parses the `server` block into its location tree and applies
 `ngx_http_core_find_location`'s order (exact, longest prefix, `^~` stops the regexes, nested
 locations before the level's regexes, regexes in file order) to a set of spellings: the canonical
-path must land in the cached location, every other one under the prefix in the `^~` guard.
+path must land in the cached location, every other one under the prefix in the `^~` guard. The
+location regex is matched with PCRE's `$` semantics (end, or before a final newline), so the `%0A`
+probes fail on a `$`-anchored location - checked by mutation.
 
 **What the cache saves, and what it does not.** It saves media-service, Garage and the database
 (which the segment route never touched anyway): one store read per segment per two minutes, whatever
@@ -210,9 +238,10 @@ the segment fetch is unauthenticated and checks no seat (that is what lets nginx
 client that kept a live's key and polls nothing can go on fetching segment names it already learned,
 and a second account can share a manifest with a client that has no seat. **What protects the
 CONTENT is the key and the manifest**, both behind the watch rule; **what protects the UPLINK from a
-dishonest client is nginx's per-address bound above** (12 fetches x 6 Mb/s), not the seat count.
+dishonest client is nginx's per-address bound above** (24 fetches x 6 Mb/s, coarse), not the seat
+count.
 
-**For the client (WP-L5), three things this server half decides:**
+**For the client (WP-L5), four things this server half decides:**
 
 - **Fetch a segment with a plain `fetch` and no custom header.** The location allows `GET`/`HEAD`
   only, so a CORS PREFLIGHT (`OPTIONS`, which any custom header or a non-simple content type
@@ -226,6 +255,11 @@ dishonest client is nginx's per-address bound above** (12 fetches x 6 Mb/s), not
   `503 LIVE_SEATS_UNAVAILABLE` within a second (social-service's Redis `commandTimeout`), so open lives freeze
   until Redis answers. That is the deliberate fail-closed cost of the cap (an uncounted audience is
   the overrun it prevents), not a defect to route around.
+- **A `429` on a segment fetch is nginx's per-address bound** (more than 24 fetches at once, or past
+  30 r/s burst 60, from one address). It is a JSON `{ statusCode: 429 }` with the CORS headers, never
+  a transport failure. The client keeps ONE segment fetch in flight per player, retries the same
+  segment after a short backoff (it is still in the manifest window), and never fans out parallel
+  retries - a burst of retries is exactly what the limit counts.
 
 **The connection budget, and why nothing is raised.** The host proxy is the DSI's: about 1 500
 concurrent connections across EVERY site on the host (`worker_connections 768`, two per proxied

@@ -1006,7 +1006,9 @@ export class MediaController {
   ): Promise<void> {
     this.assertLiveEnabled();
     if (!LiveSegmentsService.isCanonicalSegmentPath(req.originalUrl, liveId, name)) {
-      this.logger.warn(
+      // DEBUG, not warn: an unauthenticated caller reaches this through `/api/media/public/` (any
+      // case variant), which no rate applies to - a warn there is noise anybody can force.
+      this.logger.debug(
         `[LIVE] segment refused: not the canonical path (${req.originalUrl.slice(0, 200)})`
       );
       throw new NotFoundException('Live segment not found');
