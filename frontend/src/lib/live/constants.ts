@@ -70,3 +70,28 @@ export const LIVE_MANIFEST_POLL_MS = 1_000;
  * the cap itself is the server's (`viewerCap` in `/limits`).
  */
 export const LIVE_PLANNING_VIEWER_BPS = 3_100_000;
+
+/**
+ * How far behind its buffer's end the viewer may drift before it SEEKS back to the live edge, in ms:
+ * three segments. The bench seeked at 6 s behind with 2 s segments and kept glass-to-glass at
+ * 5.8-7.3 s p50 (WP-L1); one stall or a slow segment fetch costs ~one segment, so a smaller bound
+ * would seek on ordinary jitter.
+ */
+export const LIVE_PLAYER_MAX_BEHIND_MS = 3 * LIVE_SEGMENT_MS;
+
+/**
+ * How many NEW segments one manifest may bring before the viewer skips to the newest instead of
+ * playing them all: more than two means it fell behind (a background, a lost network, a slow link),
+ * and catching up by playing the backlog would keep it behind for good.
+ */
+export const LIVE_PLAYER_CATCHUP_SEGMENTS = 2;
+
+/**
+ * How long the broadcaster may go without a stored segment before the viewer says "reconnecting",
+ * in ms: three segments. Read from the manifest's `serverNow - lastSegmentAt`, both the database's
+ * clock - never the device's. The live itself ends on the SERVER's 60 s window, never on this.
+ */
+export const LIVE_BROADCASTER_QUIET_MS = 3 * LIVE_SEGMENT_MS;
+
+/** How much played media the viewer keeps behind its position, in ms, before trimming the buffer. */
+export const LIVE_PLAYER_KEEP_BEHIND_MS = 10_000;

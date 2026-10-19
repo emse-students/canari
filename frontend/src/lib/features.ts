@@ -62,3 +62,18 @@ export const CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'developm
  * framing per codec, or VP8 forced) has passed a video call Chrome <-> WKWebView.
  */
 export const CALLS_VIDEO_ENABLED = false;
+
+/**
+ * Watching a live: the LIVE card at the top of the feed and the full-screen live viewer
+ * (`components/live/`, `lib/live/`). The broadcaster's half is not built yet.
+ *
+ * **ON FOR A DEV BUILD ONLY (WP-L5, 2026-10-19)**, by the same test as {@link CALLS_ENABLED}: a build
+ * made for `dev.canari-emse.fr` carries `VITE_DEPLOY_ENVIRONMENT=development`, a production build
+ * never does, so a production binary asks `/api/lives` nothing and draws nothing. The server answers
+ * `404` on production anyway (`LIVE_ENABLED`, docs/wiki/services/lives.md) - two locks, one per side.
+ *
+ * **Turns on for production when** moderation (WP-L8, a release blocker by D3) and the store answers
+ * (WP-L9) are in, and the viewer readings owed on the Mi 9T and the iPhone 12 have passed
+ * (docs/wiki/device-verification.md, docs/wiki/frontend/modules/live.md).
+ */
+export const LIVE_ENABLED = deployEnvironment() === 'development';

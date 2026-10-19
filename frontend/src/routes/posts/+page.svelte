@@ -54,6 +54,10 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
+  import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
+  import LiveViewer from '$lib/components/live/LiveViewer.svelte';
+  import { LIVE_ENABLED } from '$lib/features';
+  import type { LiveListItem } from '$lib/live/types';
   import { getToken } from '$lib/stores/auth';
   import { connectivity } from '$lib/stores/connectivity.svelte';
   import { isTransportFailure } from '$lib/utils/transportFailure';
@@ -76,6 +80,15 @@
 
   const userId = $derived(currentUserId() ?? '');
   let authToken = $state('');
+
+  /**
+   * THE LIVE CARD ASKS FOR THE OPEN LIVES WHEN THE FEED ASKS FOR ITS FIRST PAGE (WP-L5): bumped by
+   * the tab load and by `refreshPosts` (pull-to-refresh, retry, reconnect, a publish), so the card
+   * has no timer of its own. `LIVE_ENABLED` keeps a production build from asking at all.
+   */
+  let liveRefresh = $state(0);
+  /** The live the viewer is open on, or null. */
+  let openLive = $state<LiveListItem | null>(null);
 
   let postsOverride = $state<PostEntity[] | null>(null);
   /** Resolved value of data.posts - used as fallback when postsOverride is still null. */
@@ -410,6 +423,8 @@
     // A new tab load: a refresh or a next page still out for the previous one is now stale, and the
     // flags it set belong to nobody.
     tabLoad++;
+    // Untracked: this effect must not depend on the counter it bumps.
+    liveRefresh = untrack(() => liveRefresh) + 1;
     loading = false;
     loadingMore = false;
 
@@ -557,6 +572,7 @@
   async function refreshPosts() {
     // The tab is taken NOW: an answer for a tab the reader has left is dropped (`refreshFirstPage`).
     const issuedFor = tabLoad;
+    liveRefresh++;
     loading = true;
     errorMessage = '';
     hasMore = true;
@@ -841,6 +857,24 @@
       <FeedTabRow feed={activeFeed} onFeed={navigateFeed} {authToken} />
     </div>
   </div>
+
+  <!-- THE LIVE CARD, at the top of the feed whatever the tab (L5); hidden while a search replaces
+       the feed, like the tab row. Dev builds only (`LIVE_ENABLED`). -->
+  {#if LIVE_ENABLED && userId && !searchQuery}
+    <LiveFeedCard
+      refreshKey={liveRefresh}
+      viewerId={userId}
+      onOpen={(live) => {
+        Log.d('POSTS', `live ${live.id} opened from the feed card`);
+        openLive = live;
+      }}
+    />
+  {/if}
+  {#if LIVE_ENABLED && openLive}
+    {#key openLive.id}
+      <LiveViewer live={openLive} onClose={() => (openLive = null)} />
+    {/key}
+  {/if}
 
   {#if scheduledPosts.length > 0}
     <ScheduledPostsPanel posts={scheduledPosts} onDelete={deleteScheduled} />

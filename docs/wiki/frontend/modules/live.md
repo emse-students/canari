@@ -236,6 +236,80 @@ decision C9). So the seal protects segments against the media store, the nginx c
 holds a segment URL - NOT against social-service, which holds the key next to the manifest. It is
 not end-to-end encryption against the server, and no page may call it that.
 
+## The viewer (as built, 2026-10-19)
+
+WP-L5's VIEWER half, **behind `LIVE_ENABLED` (`frontend/src/lib/features.ts`): on for dev builds only**,
+by the same `deployEnvironment() === 'development'` test as `CALLS_ENABLED`. A production binary asks
+`/api/lives` nothing and draws nothing; the server answers `404` there anyway. Not built: the
+broadcaster, chat and reactions (WP-L6), moderation (WP-L8).
+
+| File | What it holds |
+| --- | --- |
+| `lib/live/livePlayer.ts` | The MSE player and its state machine; everything outside it (API, seal, media source, timer) injected, so it is tested with fake MSE objects and a manual clock |
+| `lib/live/liveViewerState.ts` | The states, and `liveFailureOutcome`: the ONE decision from a failure to a screen |
+| `lib/live/fmp4.ts` | `initSegmentEnd`: where `ftyp` + `moov` stop in a recorder chunk |
+| `lib/live/openLives.ts` | The card's list (the reader's own live left out), `formatLiveElapsed` |
+| `lib/live/liveCrypto.ts` | Not this package's: the seal of [format v1](#the-segment-seal-format-v1) (draft PR #2111, which this one is stacked on); the viewer calls `openLiveSegment` and skips a segment on `LiveSegmentOpenError` |
+| `components/live/` | `LiveFeedCard`, `LiveViewer`, `LiveBroadcaster` (picture and name, a member or an association), `LiveBadge` |
+
+**The card.** At the top of the feed, under the tab row, whatever the tab; hidden during a search and
+when nothing is on air. It asks `GET /api/lives` when the FEED asks for its first page - the tab load
+and `refreshPosts` (pull-to-refresh, retry, reconnect, a publish) bump one counter - so it has **no
+timer of its own**. A lost answer keeps the rows it shows; a refusal (or the switch's `404`) removes
+the card. The notification "X est en live" lands on the feed (D4), where this card is; a deep link to
+one live is not built.
+
+**The viewer** is an overlay like the reel viewer: a history entry through `bindHistoryOverlay` (Back
+closes it, the feed underneath never leaves the page), `coversScreen`, `role="dialog"` named after
+the broadcaster, focus on the close button and back to the card's row on close, Escape closes, no
+other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
+
+1. A MediaSource FIRST - `MediaSource`, else `ManagedMediaSource` (the iPhone, which has no
+   `MediaSource`; `disableRemotePlayback` set as it requires) - and `isTypeSupported` of
+   `LIVE_RECORDER_MIME`, so an engine that cannot play never takes a seat.
+2. `GET /api/lives/:id`: the key and the seat.
+3. The join: the newest window; segment 0 (from `?from=0` unless it IS the newest), its init alone
+   appended (on Android segment 0 is the init; on iOS init + media, whose media is appended only when
+   segment 0 is the newest); then the newest segment, any leading init stripped; then a seek to
+   `end - LIVE_PLAYER_TARGET_BUFFER_MS`.
+4. A poll every `LIVE_MANIFEST_POLL_MS` from `last + 1`, segments taken in order. **The jump to the
+   live edge**: more than `LIVE_PLAYER_CATCHUP_SEGMENTS` new at once, a first index past `last + 1`
+   (the window moved on), or a `waiting` since the last segment - only the newest is appended and the
+   video seeks; and a drift past `LIVE_PLAYER_MAX_BEHIND_MS` seeks too. What was played more than
+   `LIVE_PLAYER_KEEP_BEHIND_MS` ago is removed.
+
+**Failure -> screen** (`liveFailureOutcome`, one table, tested):
+
+| What came back | Screen |
+| --- | --- |
+| `full` (`503 LIVE_FULL`) | "Live complet" with "Réessayer"; no automatic retry (never hammered); no seat to give back |
+| `seats-unavailable`, `rate-limited`, `unavailable` (a bare 5xx), `retry-segment`, a transport failure | "Reconnexion...", the same step again after 1 s doubling to 8 s - **never "complet"** |
+| `ended` (`410`), or `not-found` AFTER the join | "Le live est terminé"; the video paused, no timer left. The broadcaster's end deletes the row at once ([lives](../../services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3)), so a viewer polling a second later reads `404`, not `410` |
+| `not-found` before the join, `removed`, `disabled`, `refused` | the neutral "Live indisponible" |
+| An engine with no MSE or no `avc1`/`mp4a` support | "Live indisponible" (`unsupported`) |
+| Segment 0 that does not open, or three segments in a row | "Live indisponible" (`undecryptable`); one segment that does not open, or one the server no longer has (`404`), is skipped |
+
+**"Reconnecting" for the broadcaster** is read from the manifest's `serverNow - lastSegmentAt`, BOTH the
+database's clock, past `LIVE_BROADCASTER_QUIET_MS` (three segments); the end itself stays the
+server's 60 s window. **The time on air** is `serverNow - startedAt` at each poll, the same clock, so
+it needs no timer and never compares the device's clock with the server's.
+
+**The seat** goes back by `DELETE /api/lives/:id/seat` when the viewer closes and on `pagehide` (best
+effort: the 30 s lease is the bound); a key that arrives after a close gives its seat straight back;
+a page restored from the back-forward cache starts again. **Sound** is the app's one answer
+(`videoSound`, `followVideoSound`): muted at every start; a `play()` refused with sound is retried
+muted; the toggle unmutes with a tap.
+
+**Logs** (`[LIVE]`): entry, every state change and decision at `debug`; refusals at `warn`; a defect
+or an unopenable segment at `error`; segments SUMMARISED (one line per 30 played and at the stop),
+never one line each; the key and segment bytes never.
+
+**Verified by tests only** (`livePlayer.test.ts`, `liveViewerState.test.ts`, `fmp4.test.ts`,
+`openLives.test.ts`, `LiveFeedCard.svelte.test.ts`, `LiveViewer.svelte.test.ts`). **Owed on hardware**:
+check Y of [device-verification](../../device-verification.md#y-watching-a-live---owed-on-both-phones-mi-9t-iphone-12),
+which needs a broadcaster sealing format v1 (the broadcaster screen is not built). **Known gaps:** `ManagedMediaSource`'s `endstreaming` hint is ignored
+(read on the iPhone in check Y); no deep link to one live.
+
 ## Open questions for the user, each with a recommendation
 
 Answered on 2026-10-15 and moved to the decisions table: viewer cap (L8), simultaneous lives (L9),
