@@ -63,7 +63,18 @@ fn bound_port(line: &str) -> Option<u16> {
 /// was reset under it. The line is logged after `bind` returns, so it is also the readiness event -
 /// no probe at all.
 async fn start() -> Service {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_call-service"))
+    start_with_grace(None).await
+}
+
+/// [`start`], with `CALL_P2P_SEAT_GRACE_SEC` set when `grace_secs` is given. A grace of 0 makes the
+/// expiry of an away seat an EVENT that follows its `PeerAway` at once - no wait in any test.
+async fn start_with_grace(grace_secs: Option<u64>) -> Service {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_call-service"));
+    match grace_secs {
+        Some(secs) => command.env("CALL_P2P_SEAT_GRACE_SEC", secs.to_string()),
+        None => command.env_remove("CALL_P2P_SEAT_GRACE_SEC"),
+    };
+    let mut child = command
         .env("PORT", "0")
         .env("RUST_LOG", "info")
         .env("NO_COLOR", "1")
@@ -176,6 +187,45 @@ async fn recv(ws: &mut Ws) -> Value {
     .expect("no frame arrived")
 }
 
+/// Reads the `Joined` frame of `room` and returns the resume token it carries for this seat.
+async fn joined(ws: &mut Ws, room: &str) -> String {
+    let frame = recv(ws).await;
+    assert_eq!(frame["type"], "Joined", "{frame}");
+    assert_eq!(frame["room_id"], room, "{frame}");
+    frame["resume_token"]
+        .as_str()
+        .expect("a p2p Joined carries a resume token")
+        .to_string()
+}
+
+/// Opens a new socket for `user` and joins `room` with a token as given (a resume token here).
+async fn join_with(svc: &Service, user: &str, room: &str, token: &str) -> Ws {
+    let mut ws = connect(svc, user).await;
+    send(
+        &mut ws,
+        json!({ "type": "Join", "room_id": room, "room_token": token, "mode": "p2p" }),
+    )
+    .await;
+    ws
+}
+
+/// Two users paired in `room`; returns both sockets and the resume token of each.
+async fn paired(svc: &Service, room: &str) -> (Ws, String, Ws, String) {
+    let mut alice = join(svc, "alice", room).await;
+    let alice_resume = joined(&mut alice, room).await;
+    let mut bob = join(svc, "bob", room).await;
+    let bob_resume = joined(&mut bob, room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false })
+    );
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true })
+    );
+    (alice, alice_resume, bob, bob_resume)
+}
+
 async fn join(svc: &Service, user: &str, room: &str) -> Ws {
     let mut ws = connect(svc, user).await;
     send(
@@ -192,16 +242,10 @@ async fn two_users_are_paired_and_their_handshake_crosses_verbatim() {
     let room = "room-pair";
 
     let mut alice = join(&svc, "alice", room).await;
-    assert_eq!(
-        recv(&mut alice).await,
-        json!({ "type": "Joined", "room_id": room })
-    );
+    joined(&mut alice, room).await;
 
     let mut bob = join(&svc, "bob", room).await;
-    assert_eq!(
-        recv(&mut bob).await,
-        json!({ "type": "Joined", "room_id": room })
-    );
+    joined(&mut bob, room).await;
     assert_eq!(
         recv(&mut bob).await,
         json!({ "type": "PeerReady", "initiator": false })
@@ -265,10 +309,7 @@ async fn a_second_device_replaces_the_first_and_both_ends_are_told() {
 
     let mut bob_pc = join(&svc, "bob", room).await;
     assert_eq!(recv(&mut bob_phone).await, json!({ "type": "PeerLeft" }));
-    assert_eq!(
-        recv(&mut bob_pc).await,
-        json!({ "type": "Joined", "room_id": room })
-    );
+    joined(&mut bob_pc, room).await;
     assert_eq!(
         recv(&mut bob_pc).await,
         json!({ "type": "PeerReady", "initiator": false })
@@ -303,10 +344,7 @@ async fn a_token_for_another_group_is_refused_and_the_callee_still_pairs() {
     );
 
     let mut bob = join(&svc, "bob", room).await;
-    assert_eq!(
-        recv(&mut bob).await,
-        json!({ "type": "Joined", "room_id": room })
-    );
+    joined(&mut bob, room).await;
     assert_eq!(
         recv(&mut bob).await,
         json!({ "type": "PeerReady", "initiator": false })
@@ -405,4 +443,153 @@ async fn a_room_id_belongs_to_one_mode() {
         recv(&mut bob).await,
         json!({ "type": "Refused", "reason": "mode-mismatch" })
     );
+}
+
+/// CALL-WIFI (2026-10-19): a socket that dies WITHOUT a Close frame - a phone losing Wi-Fi - does
+/// not end the call. The partner is told `PeerAway`, the same device takes its seat back with its
+/// resume token, both are told `PeerReady { resumed: true }` with UNCHANGED roles, and the
+/// handshake crosses again.
+#[tokio::test]
+async fn a_lost_socket_is_resumed_in_place_and_the_call_goes_on() {
+    let svc = start().await;
+    let room = "room-blip";
+    let (mut alice, _, bob, bob_resume) = paired(&svc, room).await;
+
+    // No Close frame: the TCP connection just goes, as when the radio does.
+    drop(bob);
+    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+
+    let mut bob = join_with(&svc, "bob", room, &bob_resume).await;
+    let fresh = joined(&mut bob, room).await;
+    assert_ne!(
+        fresh, bob_resume,
+        "every Joined carries a fresh resume token"
+    );
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "resumed": true })
+    );
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "resumed": true })
+    );
+
+    // The ICE restart offer crosses as any offer does.
+    let offer = json!({ "type": "Offer", "sdp": "{\"type\":\"offer\",\"sdp\":\"v=0 restart\"}" });
+    send(&mut alice, offer.clone()).await;
+    assert_eq!(recv(&mut bob).await, offer);
+}
+
+/// A Close frame is a hangup, not a blip: the partner is told `PeerLeft` at once, and the resume
+/// token of the seat that hung up opens nothing afterwards.
+#[tokio::test]
+async fn a_close_frame_frees_the_seat_and_its_resume_is_refused() {
+    let svc = start().await;
+    let room = "room-hangup";
+    let (alice, alice_resume, mut bob, _) = paired(&svc, room).await;
+
+    let mut alice = alice;
+    alice.close(None).await.unwrap();
+    assert_eq!(recv(&mut bob).await, json!({ "type": "PeerLeft" }));
+
+    let mut again = join_with(&svc, "alice", room, &alice_resume).await;
+    assert_eq!(
+        recv(&mut again).await,
+        json!({ "type": "Refused", "reason": "call-over" })
+    );
+}
+
+/// The grace ran out (0 s here, so the expiry follows at once): the partner is told the call is
+/// over, and the late resume is refused.
+#[tokio::test]
+async fn an_away_seat_that_is_not_resumed_ends_the_call() {
+    let svc = start_with_grace(Some(0)).await;
+    let room = "room-expired";
+    let (mut alice, _, bob, bob_resume) = paired(&svc, room).await;
+
+    drop(bob);
+    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerLeft" }));
+
+    let mut late = join_with(&svc, "bob", room, &bob_resume).await;
+    assert_eq!(
+        recv(&mut late).await,
+        json!({ "type": "Refused", "reason": "call-over" })
+    );
+}
+
+/// A resume token is bound to its holder: presented by another user's session it is refused
+/// before anything is seated, and the away seat is still there for its owner.
+#[tokio::test]
+async fn a_resume_token_is_refused_to_another_user() {
+    let svc = start().await;
+    let room = "room-stolen";
+    let (mut alice, _, bob, bob_resume) = paired(&svc, room).await;
+    drop(bob);
+    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+
+    let mut mallory = join_with(&svc, "mallory", room, &bob_resume).await;
+    assert_eq!(
+        recv(&mut mallory).await,
+        json!({ "type": "Refused", "reason": "token-refused" })
+    );
+
+    let mut bob = join_with(&svc, "bob", room, &bob_resume).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "resumed": true })
+    );
+}
+
+/// The polite side cannot restart ICE itself, so it ASKS: the request crosses verbatim to the
+/// initiator, which is the one that offers.
+#[tokio::test]
+async fn an_ice_restart_request_reaches_the_initiator() {
+    let svc = start().await;
+    let room = "room-restart-ask";
+    let (mut alice, _, mut bob, _) = paired(&svc, room).await;
+
+    send(&mut bob, json!({ "type": "IceRestartRequest" })).await;
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "IceRestartRequest" })
+    );
+}
+
+/// A resume can arrive before the server saw the old socket die. The old socket is then CLOSED,
+/// not left half-open for the keepalive to find, and its closing tells the partner nothing.
+#[tokio::test]
+async fn a_resume_over_a_live_socket_closes_the_old_one() {
+    let svc = start().await;
+    let room = "room-live-resume";
+    let (mut alice, _, mut bob_old, bob_resume) = paired(&svc, room).await;
+
+    let mut bob = join_with(&svc, "bob", room, &bob_resume).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "resumed": true })
+    );
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "resumed": true })
+    );
+
+    let closed = timeout(LIVENESS, async {
+        loop {
+            match bob_old.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(Message::Text(t))) => panic!("the replaced socket got a frame: {t}"),
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "the replaced socket must be closed");
+
+    // Alice's next frame is Bob's, from his NEW socket: the old one's end was not announced.
+    let offer = json!({ "type": "Offer", "sdp": "{\"type\":\"offer\",\"sdp\":\"v=0 again\"}" });
+    send(&mut bob, offer.clone()).await;
+    assert_eq!(recv(&mut alice).await, offer);
 }

@@ -112,10 +112,35 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
   SDP, a few KiB.
 - **Roles:** arrival order, decided under the room's lock: the first in (the caller) is the
   initiator. Both ends are told in one `PeerReady` each.
-- **Lifetime:** kept in `AppState.p2p_rooms`, apart from SFU rooms, and **never reaped on a clock**:
-  the socket loop of the last peer removes the room when it ends (`DashMap::remove_if`, the same
-  shard lock a racing `Join` takes). A room id lives in ONE mode; a `Join` in the other mode is
-  `Refused { mode-mismatch }`.
+- **Lifetime:** kept in `AppState.p2p_rooms`, apart from SFU rooms. The room is removed when its
+  last SEAT goes (`DashMap::remove_if`, the same shard lock a racing `Join` takes). A room id lives
+  in ONE mode; a `Join` in the other mode is `Refused { mode-mismatch }`.
+- **A network blip is not a hangup (CALL-WIFI, 2026-10-19).** Measured on the Mi 9T: a 6 s and a
+  14 s Wi-Fi outage each ended the call, because the socket's end freed the seat and told the
+  partner `PeerLeft`. Now the record's FIRST disposition decides what a socket's end does:
+  - `client-close` (a Close frame: a hangup) or `rate-limited` -> the seat is freed and the present
+    partner gets `PeerLeft`, at once.
+  - `transport-error`, `stream-ended`, `send-failed` (the network went) -> the seat stays, ABSENT,
+    for `CALL_P2P_SEAT_GRACE_SEC` (default 60 s, longer than the client's 5-attempt ladder, whose
+    last attempt starts 31 s after the loss). The present partner gets `PeerAway`. Frames for an
+    away partner are dropped with an `info` line (expected), not the `warn` of a lone peer.
+  - **Resume:** every p2p `Joined` carries `resume_token`, a room token this service mints with the
+    same `CALL_ROOM_SECRET` plus a `seat` claim (the peer id), valid 4 h (the longest call
+    chat-delivery counts). A `Join` with it takes THAT seat back IN PLACE - same user and group
+    only - so the roles never change. Both present parties then get `PeerReady { resumed: true }`
+    (keep the peer connection, the initiator restarts ICE); an away partner gives the resumer
+    `PeerAway`; a partner that hung up meanwhile gives it `PeerLeft`. A resume that finds no seat
+    (expired, never this user's, room gone) is `Refused { call-over }` and never creates a room. If
+    the server had not yet seen the old socket die, the resume replaces the live seat, the old
+    record ends `resumed` (expected) and the old socket is CLOSED (an internal `Shutdown` its loop
+    turns into a Close frame), so a half-open socket never lingers until the keepalive.
+  - `IceRestartRequest` (client -> partner) is relayed verbatim like an SDP: the polite side asks
+    the initiator to restart ICE, since only the initiator offers. No counter, one relay line each.
+  - **Grace end:** `[call] p2p seat EXPIRED room= peer=` at `warn`, the seat is freed, a present
+    partner gets `PeerLeft`. The grace is a RESOURCE bound, never a verdict: a wrong value ends a
+    dead call earlier or later, and a late resume is answered `call-over`.
+  - A p2p `Join` whose token fails verification is now answered `Refused { token-refused }`
+    instead of silence, so a client never waits out its Join timeout on a token that cannot pass.
 - **Record:** `[call] session end room= peer= mode=p2p disposition= duration_ms= paired_ms= ...`
   with the usual counters, where `*_in` counts frames FROM this peer and `*_out` frames relayed TO
   it. `paired_ms` replaces `connected_ms`, because ICE runs between the clients and this service
@@ -228,14 +253,15 @@ the cause. The tokens are a contract the campaign greps on, pinned by
 |---|---|---|
 | `client-close` | the client sent a `Close` frame — a hangup | info |
 | `sibling-evicted` | the same user joined from another device; this one was replaced | info |
-| `transport-error` | the socket errored mid-call — the network went away | warn |
+| `resumed` | p2p: the same device took its seat back on a new socket before this one was seen to die | info |
+| `transport-error` | the socket errored mid-call — the network went away (p2p: the seat stays away for a resume) | warn |
 | `stream-ended` | the stream ended with no `Close` frame — a client that died | warn |
 | `rate-limited` | > 50 frames/s; the SFU disconnected it | warn |
 | `send-failed` | the SFU could not write to this peer | warn |
 | `room-reaped` | the room was still held when the 30-minute reaper ran | warn |
 | `unknown` | no branch classified the ending — a hole in `main.rs`, not in the call | warn |
 
-Only the first two are endings the design intends; everything else accuses.
+Only the first three are endings the design intends; everything else accuses. In p2p mode `transport-error`, `stream-ended` and `send-failed` keep the seat away for a resume ([peer-to-peer mode](#peer-to-peer-mode-2026-10-17)) - the record still accuses, because the network went.
 
 ### The fields that separate the causes
 
@@ -283,6 +309,7 @@ duration is present or absent.
 | `JWT_SECRET` | yes | - | HS256 secret (shared with all services) |
 | `CALL_ROOM_SECRET` | **yes** | - | Secret for room access tokens. Unset or empty, the service REFUSES TO START (it used to disable room access control; no dev flag exists, the local compose supplies a dev value) |
 | `PORT` | no | `3004` | Listen port |
+| `CALL_P2P_SEAT_GRACE_SEC` | no | `60` | How long a p2p seat whose socket dropped without a Close frame waits for its device to resume ([above](#peer-to-peer-mode-2026-10-17)). Not a number -> logged, default kept |
 | `CLOUDFLARE_CALLS_API_TOKEN` | no | - | Cloudflare API token for TURN credentials |
 | `CLOUDFLARE_TURN_KEY_ID` | no | - | Cloudflare TURN key ID |
 | `CLOUDFLARE_TURN_TTL_SECONDS` | no | `7200` | TURN credential TTL |

@@ -1560,6 +1560,9 @@ line into this public repository** - it prints key bytes (owed fix, [calls](fron
 | 5 | Mi 9T calls, nobody answers | after 60 s the ring stops; a missed-call line on both | caller `[Call] ring window (60000 ms) closed unanswered - call=<id>` |
 | 6 | The callee app KILLED, then called | **nothing rings - EXPECTED in lot 1**, not a `FAIL` | caller as step 5 |
 | 7 | Callee sets "Appels" to "Non autorises", then is called; then back to "Autorises" | refused: no ring, a missed-call line at once; allowed again: it rings | callee: `[Call] invite <id> in <group> not rung - calls are not allowed in this conversation` |
+| 8 | **CALL-WIFI** (owed on a build carrying the resume, both phones on it). In a connected call, Wi-Fi OFF on the Mi 9T for **6 s**, then on | the call does NOT end; both screens show "Reconnexion..." only on a build that also carries the call UI of #2138 (it reads `callService.reconnecting`); audio comes back both ways | Mi 9T: `[Call] signalling WebSocket closed code=1006 - resuming`, `[Call] signalling resume attempt N/5`, `[Call] signalling resumed on attempt N`, `[Call] peer ready - ... (resumed)`; on the INITIATOR `[Call] ICE restart 1/3 (...)` then `[Call] media path restored after 1 ICE restart(s)`; NO `[Call] terminal failure`. Server: `[call] p2p seat away ...` then `[call] p2p paired ... resumed=true` |
+| 9 | **CALL-WIFI**, the same with a **14 s** outage; then once more as callee (the iPhone calls) | as step 8 | as step 8; record the attempt number that resumed |
+| 10 | **CALL-WIFI**, Wi-Fi OFF on the Mi 9T for **90 s** (longer than the 60 s seat grace) | the call ENDS on both phones, within a few seconds of the grace on the iPhone | iPhone `[Call] the other party left the call room`; Mi 9T `[Call] signalling resume refused (call-over)` or `... not restored after 5 resume attempts` |
 
 **Record per direction:** the verdict, the `relayed=` value (only `relayed=yes` is billed TURN), the
 network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the build on each phone.
@@ -1573,7 +1576,10 @@ network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the b
 - `[Call] WARN remote audio still muted after 5s`, or `[Call] E2E decrypt failed`: media arrives
   but cannot be heard or decrypted - the per-side key derivation (F5 on
   [calls](frontend/modules/calls.md)); note both phones' MLS state.
-- `[Call] signalling refused: <reason>`: the relay refused the room (`room-full`, `group-mismatch`).
+- `[Call] signalling refused: <reason>`: the relay refused the room (`room-full`, `group-mismatch`,
+  `token-refused`; `call-over` on a resume means the seat expired or the other party hung up).
+- `[Call] terminal failure: ... the relay gave no resume token`: the call-service on that estate
+  predates the resume (CALL-WIFI) - a deploy gap, not a client defect.
 - `[Call] connectionState=failed` with no `selected path`: no candidate pair, not even TURN - read
   `iceConnectionState` and the network.
 

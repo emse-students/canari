@@ -19,8 +19,10 @@ import { publishCallPresence } from '$lib/utils/callPresence';
 import {
   CallE2eUnsupportedError,
   CallInitiateError,
+  CallSignallingRefusedError,
   describeCallFailure,
 } from '$lib/utils/callFailure';
+import { reconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
@@ -70,11 +72,40 @@ export function canUseRtpScriptTransform(): boolean {
  */
 export const CALL_ICE_TRANSPORT_POLICY: RTCIceTransportPolicy = 'all';
 
+/**
+ * How many times the signalling socket is re-opened after it drops mid-call, on the shared
+ * reconnect ladder (1, 2, 4, 8, 16 s: the last attempt starts 31 s after the loss). A BUDGET BY
+ * COUNT, never by wall time. `call-service` keeps the away seat 60 s (`DEFAULT_P2P_SEAT_GRACE`),
+ * counted from when IT sees the socket die: five attempts of at most
+ * {@link CALL_SIGNALLING_RESUME_TIMEOUT_MS} each end within 56 s of the client's loss, but the two
+ * clocks start at different moments (and a session refresh before an attempt is not bounded
+ * here), so the server MAY give up first. Then the resume is answered `call-over` and the call
+ * ends - the same outcome the budget would have reached.
+ */
+export const CALL_SIGNALLING_RESUME_ATTEMPTS = 5;
+
+/**
+ * One resume attempt's deadline, for the socket to open AND the relay to answer `Joined`. Past it
+ * the attempt counts as ONE failure and the next is armed. A RESOURCE bound, not a verdict: a
+ * socket stuck CONNECTING on a black-holed network would otherwise hold the ladder past the seat
+ * grace; a wrong value only costs one attempt of the budget, never the call by itself.
+ */
+export const CALL_SIGNALLING_RESUME_TIMEOUT_MS = 5_000;
+
+/**
+ * How many ICE restarts the initiator makes for ONE loss of the media path (the count resets the
+ * moment ICE connects again). Each one after the first is triggered by ICE reporting `failed`,
+ * which the browser's ICE agent always reaches - so the budget ends on events, not on a clock.
+ */
+export const CALL_ICE_RESTART_ATTEMPTS = 3;
+
 /** A server-to-client frame of the signalling socket (`apps/call-service`, `SignalMessage`). */
 export type SignalFrame =
-  | { type: 'Joined'; room_id?: string }
-  | { type: 'PeerReady'; initiator: boolean }
+  | { type: 'Joined'; room_id?: string; resume_token?: string }
+  | { type: 'PeerReady'; initiator: boolean; resumed?: boolean }
   | { type: 'PeerLeft' }
+  | { type: 'PeerAway' }
+  | { type: 'IceRestartRequest' }
   | { type: 'Refused'; reason: string }
   | { type: 'Offer' | 'Answer'; sdp: string }
   | { type: 'IceCandidate'; candidate: string };
@@ -107,6 +138,25 @@ export class CallService {
   private inviteSent = false;
   /** The relay paired the two parties: the ring is over whatever the media then does. */
   private peerArrived = false;
+  /**
+   * The relay's token for THIS device's seat (`Joined.resume_token`): what lets a new socket take
+   * the seat back after the old one dropped. Replaced by every `Joined`.
+   */
+  private resumeToken: string | null = null;
+  /** The signalling socket dropped after the room was joined and has not been resumed yet. */
+  private signallingLost = false;
+  /** Resume attempts since the loss; reset when a resume is joined. See the attempt budget. */
+  private resumeAttempts = 0;
+  private resumeTimer: number | null = null;
+  private resumeInFlight = false;
+  /** The relay said the other party's socket dropped (`PeerAway`) and it has not come back. */
+  private peerAway = false;
+  /** ICE of the CURRENT peer connection reached `connected` at least once. */
+  private mediaEverConnected = false;
+  /** ICE restarts since the media path was last connected. See the restart budget. */
+  private iceRestarts = 0;
+  /** A restart was made and ICE has neither connected nor failed since. */
+  private iceRestartPending = false;
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
@@ -131,6 +181,14 @@ export class CallService {
   private videoPausedByBackground = false;
 
   public callState = writable<CallState>('idle');
+  /**
+   * THE UI's "Reconnexion..." flag (`m.call_reconnecting()`): `true` while a call that had
+   * connected is getting its connection back - this device's signalling is being resumed, the
+   * other party's is (`PeerAway`), or the media path is down and being restarted. A network blip
+   * no longer ends the call; this is what the screen shows instead. Always `false` outside a call,
+   * and while a call has not connected yet (that is `calling`, not reconnecting).
+   */
+  public reconnecting = writable<boolean>(false);
   /** @deprecated Use remoteStreams for multi-party; kept for single-remote fallback. */
   public remoteStream = writable<MediaStream | null>(null);
   public remoteStreams = writable<RemoteStreams>(new Map());
@@ -434,6 +492,9 @@ export class CallService {
     if (state === 'idle' || state === 'ended') return;
     // Captured BEFORE cleanup: 'calling' means nobody answered yet (ring cancellation).
     const wasCalling = get(this.callState) === 'calling';
+    // The ended summary is not a reconnection, and a resume must not be attempted behind it.
+    this.clearResumeTimer();
+    this.reconnecting.set(false);
     if (notify && groupId && callId) {
       this.sendMlsNotification(groupId, mkCallHangup(callId, this.mlsService.getDeviceId())).catch(
         console.error
@@ -469,8 +530,9 @@ export class CallService {
   }
 
   /**
-   * Terminates a call that hit a non-recoverable transport failure (ICE/connection
-   * `failed`, or the SFU socket dropping mid-call). Without this, a dead media path
+   * Terminates a call that hit a non-recoverable transport failure: a media path that never
+   * connected, or one whose reconnection budget ran out (signalling resumes, ICE restarts - a
+   * network blip alone is resumed, never ended here). Without this, a dead media path
    * left the UI stuck "in call" on a frozen stream. No-op once the call is already
    * idle, so overlapping failure events (ICE + connection both fire `failed`) only
    * tear down once. Ends only this leg without broadcasting an MLS hangup: in a group
@@ -498,8 +560,18 @@ export class CallService {
 
   private cleanup() {
     this.clearRingTimer();
+    this.clearResumeTimer();
     this.inviteSent = false;
     this.peerArrived = false;
+    this.resumeToken = null;
+    this.signallingLost = false;
+    this.resumeAttempts = 0;
+    this.resumeInFlight = false;
+    this.peerAway = false;
+    this.mediaEverConnected = false;
+    this.iceRestarts = 0;
+    this.iceRestartPending = false;
+    this.reconnecting.set(false);
     this.removeBackgroundHandler();
     this.syncCallPresence(false);
     this.callState.set('idle');
@@ -784,8 +856,17 @@ export class CallService {
    * Opens the signalling socket (`/api/call`, the existing HTTPS origin - no port of its own) and
    * joins the call's PEER-TO-PEER room. Resolves once the relay has seated us; the peer connection
    * is built later, when `PeerReady` says the other party is there and which role this side plays.
+   *
+   * `joinToken` is the room token from chat-delivery for a first join, or this seat's resume token
+   * when the socket is re-opened after a drop ({@link resumeSignalling}). A `Refused` answer
+   * rejects with {@link CallSignallingRefusedError}; anything else is a transport failure.
+   * `attemptTimeoutMs`, given for a resume, is one deadline for the socket to open AND be joined.
    */
-  private async connectSignalling(roomId: string) {
+  private async connectSignalling(
+    roomId: string,
+    joinToken = this.currentRoomToken,
+    attemptTimeoutMs?: number
+  ) {
     // `apiUrl.ts` owns this decision - see `resolveServiceUrl`.
     const callBaseUrl = resolveServiceUrl(
       (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_CALL_URL,
@@ -807,6 +888,11 @@ export class CallService {
     } catch {
       appendLog('[Call] signalling WS: no in-memory token, relying on canari_ws_token cookie');
     }
+    // The call may have ended during that await (a resume racing a hangup): opening a socket now
+    // would seat a device in a call that is already over.
+    if (this.currentCallId !== roomId) {
+      throw new Error(`call ${roomId} ended before its signalling socket opened`);
+    }
 
     const wsUrl = `${wsBase}/api/call${tokenParam}`;
     appendLog(
@@ -817,6 +903,9 @@ export class CallService {
       const ws = new WebSocket(wsUrl);
       this.signaledWs = ws;
       let settled = false;
+      // The relay seated us on THIS socket. Only a socket that was joined can be LOST: one that
+      // failed before its `Joined` has already rejected, and its close is not a second event.
+      let joined = false;
       // Frames are handled ONE AT A TIME, in arrival order: building the peer connection on
       // `PeerReady` awaits the E2E worker, and the initiator's Offer can arrive meanwhile.
       let chain: Promise<void> = Promise.resolve();
@@ -832,22 +921,31 @@ export class CallService {
         window.clearTimeout(joinTimeout);
       };
 
+      // A resume attempt has ONE deadline for open AND Joined (a socket stuck CONNECTING on a
+      // black-holed network must not outlast the relay's seat grace); a first join keeps the two.
       const connectTimeout = window.setTimeout(() => {
-        fail(new Error('call signalling WebSocket connection timeout (15s)'));
+        fail(
+          new Error(
+            attemptTimeoutMs === undefined
+              ? 'call signalling WebSocket connection timeout (15s)'
+              : `call signalling resume attempt timeout (${attemptTimeoutMs} ms)`
+          )
+        );
         ws.close();
-      }, 15_000);
+      }, attemptTimeoutMs ?? 15_000);
 
       let joinTimeout = 0;
 
       ws.onopen = () => {
-        window.clearTimeout(connectTimeout);
+        if (attemptTimeoutMs === undefined) window.clearTimeout(connectTimeout);
         appendLog('[Call] signalling connected, joining p2p room...');
         this.sendSignal({
           type: 'Join',
           room_id: roomId,
-          room_token: this.currentRoomToken ?? undefined,
+          room_token: joinToken ?? undefined,
           mode: 'p2p',
         });
+        if (attemptTimeoutMs !== undefined) return;
         joinTimeout = window.setTimeout(() => {
           fail(new Error('call signalling Join ack timeout (20s)'));
           ws.close();
@@ -862,12 +960,12 @@ export class CallService {
 
       ws.onclose = (ev) => {
         clearTimers();
-        if (!settled) {
+        if (!joined) {
           fail(new Error(`call signalling WebSocket closed before ready (code=${ev.code})`));
         } else if (this.signaledWs === ws && get(this.callState) !== 'idle') {
           // cleanup() detaches the socket before closing it, so reaching here means the server
-          // or the network dropped it mid-call.
-          this.failCall(`signalling WebSocket closed code=${ev.code}`);
+          // or the network dropped it mid-call. A transport failure is not an answer: resume.
+          this.onSignallingLost(roomId, ev.code);
         }
       };
 
@@ -881,7 +979,13 @@ export class CallService {
         }
         if (frame.type === 'Joined') {
           clearTimers();
-          appendLog(`[Call] p2p room ready (${frame.room_id ?? roomId})`);
+          joined = true;
+          this.signallingLost = false;
+          this.resumeToken = frame.resume_token ?? null;
+          appendLog(
+            `[Call] p2p room ready (${frame.room_id ?? roomId})${frame.resume_token ? '' : ' - WARN no resume token: a network blip will end this call'}`
+          );
+          this.updateReconnecting();
           if (!settled) {
             settled = true;
             resolve();
@@ -892,7 +996,7 @@ export class CallService {
           clearTimers();
           appendLog(`[Call] signalling refused: ${frame.reason}`);
           if (!settled) {
-            fail(new Error(`call signalling refused: ${frame.reason}`));
+            fail(new CallSignallingRefusedError(frame.reason));
           } else {
             this.failCall(`signalling refused: ${frame.reason}`);
           }
@@ -912,11 +1016,23 @@ export class CallService {
   private async handleSignalFrame(frame: SignalFrame): Promise<void> {
     switch (frame.type) {
       case 'PeerReady':
-        await this.onPeerReady(frame.initiator);
+        await this.onPeerReady(frame.initiator, frame.resumed === true);
         return;
       case 'PeerLeft':
+        // An ANSWER: the other party hung up, or its away seat was never resumed.
         appendLog('[Call] the other party left the call room');
         this.endCall(false);
+        return;
+      case 'IceRestartRequest':
+        // The polite side lost its media path and cannot restart ICE itself.
+        this.onIceRestartRequested();
+        return;
+      case 'PeerAway':
+        // NOT an end: the relay keeps its seat for a resume, and says `PeerReady { resumed }` or
+        // `PeerLeft` next.
+        appendLog('[Call] the other party lost its signalling connection - waiting for it');
+        this.peerAway = true;
+        this.updateReconnecting();
         return;
       case 'Offer':
       case 'Answer': {
@@ -936,12 +1052,24 @@ export class CallService {
   /**
    * The other party is in the room. Builds the peer connection with this side's role; a second
    * `PeerReady` means the other party's device was replaced, and negotiation restarts from nothing.
+   *
+   * `resumed`: the pair is back together after one side's signalling dropped and was RESUMED in
+   * place (same seats, same roles). The peer connection is kept - the media may never have
+   * stopped - and the initiator restarts ICE if the path is down ({@link maybeRestartIce}).
    */
-  private async onPeerReady(initiator: boolean): Promise<void> {
+  private async onPeerReady(initiator: boolean, resumed = false): Promise<void> {
     this.polite = !initiator;
     this.peerArrived = true;
+    this.peerAway = false;
     this.clearRingTimer();
-    appendLog(`[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}`);
+    appendLog(
+      `[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}${resumed ? ' (resumed)' : ''}`
+    );
+    if (this.pc && resumed) {
+      this.updateReconnecting();
+      this.maybeRestartIce('signalling resumed');
+      return;
+    }
     if (this.pc) {
       appendLog('[Call] the other device was replaced - rebuilding the peer connection');
       this.pc.close();
@@ -950,8 +1078,186 @@ export class CallService {
       this.pendingRemoteIceCandidates = [];
       this.makingOffer = false;
       this.ignoreOffer = false;
+      this.mediaEverConnected = false;
+      this.iceRestarts = 0;
+      this.iceRestartPending = false;
     }
     await this.initPeerConnection();
+    this.updateReconnecting();
+  }
+
+  /**
+   * The signalling socket of `roomId` dropped after its room was joined - a transport failure, so
+   * NOT an end: the relay keeps this device's seat for a while, and the socket is re-opened on the
+   * shared ladder with the seat's resume token. The media path is independent and may well still
+   * be flowing. What ends the call is an answer (a `Refused` resume, `PeerLeft`, the MLS hangup)
+   * or the attempt budget running out.
+   */
+  private onSignallingLost(roomId: string, code: number): void {
+    if (this.currentCallId !== roomId) return;
+    if (!this.resumeToken) {
+      // A relay older than the resume protocol: nothing can take the seat back.
+      this.failCall(`signalling WebSocket closed code=${code} and the relay gave no resume token`);
+      return;
+    }
+    appendLog(`[Call] signalling WebSocket closed code=${code} - resuming (call=${roomId})`);
+    this.signallingLost = true;
+    this.resumeAttempts = 0;
+    this.updateReconnecting();
+    this.scheduleSignallingResume(roomId);
+  }
+
+  /** Arms the next resume attempt on the shared ladder, or ends the call once the budget is spent. */
+  private scheduleSignallingResume(roomId: string): void {
+    if (this.resumeTimer !== null || this.resumeInFlight) {
+      appendLog(
+        `[Call] signalling resume request dropped - ${this.resumeInFlight ? 'an attempt is running' : 'an attempt is already armed'}`
+      );
+      return;
+    }
+    const attempt = this.resumeAttempts + 1;
+    if (attempt > CALL_SIGNALLING_RESUME_ATTEMPTS) {
+      this.failCall(
+        `signalling not restored after ${CALL_SIGNALLING_RESUME_ATTEMPTS} resume attempts`
+      );
+      return;
+    }
+    this.resumeAttempts = attempt;
+    const delay = reconnectDelayMs(attempt - 1);
+    appendLog(
+      `[Call] signalling resume attempt ${attempt}/${CALL_SIGNALLING_RESUME_ATTEMPTS} in ${delay} ms`
+    );
+    this.resumeTimer = window.setTimeout(() => {
+      this.resumeTimer = null;
+      void this.resumeSignalling(roomId);
+    }, delay);
+  }
+
+  private clearResumeTimer(): void {
+    if (this.resumeTimer !== null) {
+      window.clearTimeout(this.resumeTimer);
+      this.resumeTimer = null;
+    }
+  }
+
+  /**
+   * One resume attempt: a new socket, `Join` with this seat's resume token. Joined -> the call goes
+   * on (the relay then sends `PeerReady { resumed }` or `PeerAway`). Refused -> the relay ANSWERED
+   * that this seat is gone (`call-over`: the grace ran out or the other party hung up), so the call
+   * ends. Any other failure is transport, and the next attempt is armed.
+   */
+  private async resumeSignalling(roomId: string): Promise<void> {
+    if (this.currentCallId !== roomId || !this.signallingLost) return;
+    this.resumeInFlight = true;
+    let retry = false;
+    try {
+      await this.connectSignalling(roomId, this.resumeToken, CALL_SIGNALLING_RESUME_TIMEOUT_MS);
+      appendLog(`[Call] signalling resumed on attempt ${this.resumeAttempts}`);
+      this.resumeAttempts = 0;
+    } catch (e) {
+      if (e instanceof CallSignallingRefusedError) {
+        appendLog(`[Call] signalling resume refused (${e.reason}) - the call is over`);
+        this.endCall(false);
+        return;
+      }
+      appendLog(`[Call] signalling resume attempt ${this.resumeAttempts} failed: ${String(e)}`);
+      retry = true;
+    } finally {
+      this.resumeInFlight = false;
+    }
+    if (retry && this.currentCallId === roomId) this.scheduleSignallingResume(roomId);
+  }
+
+  /**
+   * Restarts ICE when the media path is down and the pair can renegotiate. Called on the two
+   * events that can heal it: the signalling pair coming back together (a resume), and ICE itself
+   * reporting `disconnected` (first restart only) or `failed`.
+   *
+   * Only the INITIATOR restarts - it is the side that offers, and two restarts would collide. The
+   * restart is `pc.restartIce()`, whose `negotiationneeded` sends the new offer through the relay.
+   * The POLITE side sends `IceRestartRequest` instead, which the initiator honours
+   * ({@link onIceRestartRequested}). The budget counts restarts (or requests) since the path was
+   * last connected; spent, the call ends.
+   */
+  private maybeRestartIce(reason: string): void {
+    const pc = this.pc;
+    if (!pc) return;
+    const ice = pc.iceConnectionState;
+    if (ice !== 'disconnected' && ice !== 'failed') return;
+    if (this.signallingLost || this.peerAway) {
+      appendLog(
+        `[Call] ICE ${ice} (${reason}) - restart deferred until both parties are back on the relay`
+      );
+      return;
+    }
+    if (ice === 'disconnected' && this.iceRestarts > 0 && reason !== 'signalling resumed') {
+      // A restart is already under way for this loss; the next one waits for `failed`.
+      return;
+    }
+    if (this.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
+      this.failCall(`media path not restored after ${CALL_ICE_RESTART_ATTEMPTS} ICE restarts`);
+      return;
+    }
+    this.iceRestarts += 1;
+    if (this.polite) {
+      // Only the initiator offers, and it may see its own path as fine: ASK it, on THIS side's
+      // budget, so a loss only the polite side sees still ends in a restart or in the call's end.
+      appendLog(
+        `[Call] ICE ${ice} (${reason}) - asking the initiator to restart (${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS})`
+      );
+      this.sendSignal({ type: 'IceRestartRequest' });
+      return;
+    }
+    this.restartIceNow(`${reason}, ice=${ice}`);
+  }
+
+  /** The initiator's restart: one `restartIce()`, its offer sent on `negotiationneeded`. */
+  private restartIceNow(why: string): void {
+    const pc = this.pc;
+    if (!pc) return;
+    this.iceRestartPending = true;
+    appendLog(`[Call] ICE restart ${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS} (${why})`);
+    pc.restartIce();
+  }
+
+  /**
+   * The polite side asked for an ICE restart. Honoured unless one is already in flight (both sides
+   * saw the loss), and counted against this side's budget too - the asker's budget is what ends a
+   * loss that never heals, and this one keeps a misbehaving peer from driving restarts for ever.
+   */
+  private onIceRestartRequested(): void {
+    if (!this.pc || this.polite) {
+      appendLog('[Call] ICE restart request ignored - this side does not offer');
+      return;
+    }
+    if (this.iceRestartPending) {
+      appendLog('[Call] ICE restart request - a restart is already in flight');
+      return;
+    }
+    if (this.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
+      this.failCall(`media path not restored after ${CALL_ICE_RESTART_ATTEMPTS} ICE restarts`);
+      return;
+    }
+    this.iceRestarts += 1;
+    this.restartIceNow('requested by the other party');
+  }
+
+  /**
+   * Recomputes {@link reconnecting} from the three facts that make it: this device's signalling
+   * resuming, the other party's (`PeerAway`), and a media path that had connected and is not
+   * connected now. Logged on every change, with the facts, so a "Reconnexion..." seen on a phone
+   * is explained in its exported log.
+   */
+  private updateReconnecting(): void {
+    const ice = this.pc?.iceConnectionState;
+    const mediaDown = this.mediaEverConnected && ice !== 'connected' && ice !== 'completed';
+    const next =
+      get(this.callState) === 'incall' && (this.signallingLost || this.peerAway || mediaDown);
+    if (next === get(this.reconnecting)) return;
+    appendLog(
+      `[Call] reconnecting=${next} (signalling=${this.signallingLost ? 'lost' : 'up'} peer=${this.peerAway ? 'away' : 'present'} ice=${ice ?? 'none'})`
+    );
+    this.reconnecting.set(next);
   }
 
   /** Wires decrypt transform before exposing the track to the UI (avoids black video). */
@@ -1110,7 +1416,12 @@ export class CallService {
         appendLog('[Call] WebRTC peer connection disconnected (may recover)');
       }
       if (state === 'failed') {
-        this.failCall('connectionState=failed');
+        if (this.mediaEverConnected) {
+          // A path that HAD connected: the ICE handler below restarts it, on its own budget.
+          appendLog('[Call] connectionState=failed after a connection - left to the ICE restart');
+        } else {
+          this.failCall('connectionState=failed');
+        }
       }
     };
 
@@ -1118,12 +1429,26 @@ export class CallService {
       if (this.pc !== pc) return;
       const iceState = pc.iceConnectionState;
       appendLog(`[Call] iceConnectionState=${iceState}`);
-      if (iceState === 'failed') {
+      if (iceState === 'connected' || iceState === 'completed') {
+        if (this.iceRestarts > 0) {
+          appendLog(`[Call] media path restored after ${this.iceRestarts} ICE restart(s)`);
+        }
+        this.mediaEverConnected = true;
+        this.iceRestarts = 0;
+        this.iceRestartPending = false;
+      } else if (iceState === 'failed' && !this.mediaEverConnected) {
+        // Never connected: there is no path at all, and a restart would find the same candidates.
         appendLog(
           '[Call] ICE failed - no direct path and no TURN relay pair (check Cloudflare TURN on chat-delivery)'
         );
         this.failCall('iceConnectionState=failed');
+        return;
+      } else if (iceState === 'disconnected' || iceState === 'failed') {
+        // A path that had connected and was lost - a network change, a blip. Restart, not end.
+        if (iceState === 'failed') this.iceRestartPending = false;
+        this.maybeRestartIce(`iceConnectionState=${iceState}`);
       }
+      this.updateReconnecting();
     };
 
     if (this.localStream) {
