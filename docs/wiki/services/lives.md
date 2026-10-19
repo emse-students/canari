@@ -9,7 +9,7 @@ decisions"): architecture **C** (segmented HTTP, no transcoding), key design **Q
 production** (below).
 
 Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep, `live-announcer.ts`),
-migrations `091_lives.sql` and `095_live_announced_at.sql`, and `apps/media-service/src/media/live-segments.service.ts` (the bytes).
+migrations `091_lives.sql` and `094_live_announced_at.sql`, and `apps/media-service/src/media/live-segments.service.ts` (the bytes).
 
 ## The switch: `LIVE_ENABLED`
 
@@ -44,7 +44,7 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | Route | Who | Answers |
 | --- | --- | --- |
 | `GET /api/lives/limits` | any member | the four numbers above |
-| `GET /api/lives` | any member | the open lives the caller may watch, newest first, at most 50, **no key** |
+| `GET /api/lives` | any member | the open lives the caller may watch ([the rule of a post](#who-may-watch-the-rule-of-a-post)), newest first, at most 50, **no key** |
 | `POST /api/lives` `{ key, associationId? }` | any member (L1) | `201` the live with its key. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour) |
 | `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }` |
 | `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }] }` - the newest 10, or from `from` on |
@@ -52,11 +52,29 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | `POST /api/lives/:id/end` | the broadcaster | `{ id, endedAt, endReason }`, idempotent while the row exists; once the end's purge deleted it, a repeat is `404 LIVE_NOT_FOUND`, which the client reads as "ended and deleted" - nothing keeps a deleted live's end to answer with (no replay, L3) |
 | `POST /api/lives/:id/removed-viewers` `{ viewerId }` | the broadcaster | `{ liveId, viewerId }`, idempotent; `400 LIVE_VIEWER_IS_SELF` |
 
-**Who may watch** (the key and the manifest, the same rule): absent, or a block between the viewer
-and the broadcaster in either direction, is `404 LIVE_NOT_FOUND` (invisible, as the feed hides a
-blocked author); an ended live is `410 LIVE_ENDED` to everybody, the broadcaster included; a viewer
-the broadcaster removed is `403 LIVE_VIEWER_REMOVED`. A write on another member's live is
-`403 LIVE_NOT_BROADCASTER`.
+### Who may watch: the rule of a post
+
+**A live respects spaces like a post** (decided by the lead on review, 2026-10-19 - a safe default,
+reversible; it narrows L2's "the whole network"). `liveVisibleToUserSql` in
+`spaces/reader-spaces.ts` states it ONCE, built from the same fragments as `postVisibleToUserSql`:
+the broadcaster; a member's live, a reader sharing at least one space with the broadcaster; a live AS
+an association, a reader who sees that association (a member, its rules reaching one of their spaces,
+or - on the watch paths only - a nominative read grant). A live has no republication, the one
+disjunct of the post rule it lacks. An admin is a reader like any other, as when browsing posts.
+
+It gates the four paths together: `GET /api/lives` (the list), the key and the manifest
+(`assertMayWatch`, `liveVisibleToViewerSql`, read grants counted as on every post READ path), and the
+push's audience (`liveAudienceSql`, the PLAIN predicate - a named reader is never notified for their
+perimeter, as for a post's announcement). Pinned on a real PostgreSQL by `lives.integration.spec.ts`
+(a follower with no shared space, a follower sharing one, an association reached by its rules or its
+membership, a read grant that watches without a push).
+
+**The answers** (the key and the manifest, the same rule): absent, NOT VISIBLE to the viewer, or a
+block between the viewer and the broadcaster in either direction, is `404 LIVE_NOT_FOUND` (invisible,
+as the feed hides a post it does not show) - asked BEFORE the end, so an outsider never reads a `410`
+that would say a live existed; an ended live is `410 LIVE_ENDED` to everybody else, the broadcaster
+included; a viewer the broadcaster removed is `403 LIVE_VIEWER_REMOVED`. A write on another member's
+live is `403 LIVE_NOT_BROADCASTER`.
 
 **A segment is read from media-service**, `GET /api/media/live/<liveId>/<name>` (JWT), by the `name`
 the manifest gives. Serving it from Canari's own nginx without reaching media-service is WP-L4; until
@@ -64,9 +82,10 @@ then it is `Cache-Control: no-store` and streamed by media-service from the stor
 
 ### Reading a segment: why the route checks an account and nothing more
 
-Decided 2026-10-18 on review, not overlooked. A live is the whole network's (L2), so "a signed-in
-member" IS its audience, and the JWT proves exactly that. The only account a further check could
-refuse is one removed (or blocked) AFTER reading the key - and it can ask only for names it already
+Decided 2026-10-18 on review, not overlooked, and unchanged by the spaces rule of 2026-10-19: a
+segment's NAME is learned only from a manifest, and the manifest is refused to a reader the live is
+not visible to, so a signed-in account outside the audience has no name to ask for. The only account
+a further check could refuse is one removed (or blocked) AFTER reading the key - and it can ask only for names it already
 learned from a manifest, i.e. segments it was allowed to fetch and decrypt at the time; a NEW name is
 learned only from the manifest, which social-service refuses it. A per-fetch call to social-service
 (one every few seconds per viewer) would buy nothing beyond that and put a cross-service round trip on
@@ -205,9 +224,10 @@ client half - the LIVE card in the feed and the app route the tap opens - is NOT
 | Question | Answer, and where it is decided |
 | --- | --- |
 | **When** | At the **first STORED segment**, not at `POST /api/lives`: a row alone has nothing to watch, and a start the client abandons (camera refused, app killed, an immediate end) would ring every follower for nothing. So a refused start, and a live ended before its first segment, are never announced. |
-| **Once per live** | `lives."announcedAt"` (migration 095). Segment 0's CONFIRM stamps it in the SAME transaction, under the same row lock, as the segment itself (`WHERE "announcedAt" IS NULL`), and the push follows the commit. A repeat of segment 0, a reconnect, every later segment: the same stamped row, no second push. A NEW live (a new row) is a new announcement. No timer and no sweep: there is no second path to reconcile. |
+| **Once per live** | `lives."announcedAt"` (migration 094). Segment 0's CONFIRM stamps it in the SAME transaction, under the same row lock, as the segment itself (`WHERE "announcedAt" IS NULL`), and the push follows the commit. A repeat of segment 0, a reconnect, every later segment: the same stamped row, no second push. A NEW live (a new row) is a new announcement. No timer and no sweep: there is no second path to reconcile. |
 | **The trade** | Stamp before send, as `PostAnnounceScheduler` does: a crash between the commit and the send loses ONE announcement (`[LIVE_ANNOUNCE] ... NOT announced` at warn when it is an error rather than a crash); the other order could repeat it. A failing announcement never fails the segment. |
-| **Who** | A member's live: `user_follows` (followers of the broadcaster). A live AS an association: `association_follows` of that association - the member's own followers are NOT told. Both minus the broadcaster, either side of a block with the broadcaster, and a viewer the broadcaster already removed: exactly who `assertMayWatch` lets in, narrowed to followers (`liveAudienceSql`). |
+| **Who** | A member's live: `user_follows` (followers of the broadcaster). A live AS an association: `association_follows` of that association - the member's own followers are NOT told. Both minus the broadcaster, minus a follower the live is not VISIBLE to ([the rule of a post](#who-may-watch-the-rule-of-a-post): a member's follower with no space in common, an association's follower its rules and membership do not reach), minus either side of a block with the broadcaster and a viewer the broadcaster already removed: exactly who `assertMayWatch` lets in (read grants aside, which never notify), narrowed to followers (`liveAudienceSql`). |
+| **The name** | The association's `name`, or the member's display name from `PostNotificationsService.resolveDisplayName`. **A member with no name to give (no `users` row, no name, a failed lookup) is NOT announced** - `[LIVE_ANNOUNCE] ... NOT announced` at warn - rather than titled with the 64-hex user id, the fallback `resolveActorName` keeps for its other callers. The claim is committed, so it is not retried. |
 | **Mutes** | `association_push_mutes`: `live_started` is in `MUTABLE_PUSH_TYPES`, applied by `PostNotificationsService` like an association's post ([social-service](social-service.md)). A member's live has no association, so no mute applies. |
 | **Notification levels** | The push's `contentKey` `social_live_started` is filed under the reader's **`posts`** category in chat-delivery (`push-category.ts`): the switch that silences the posts of the people you follow silences their lives too. No new category (it would need a settings row on the client). |
 | **The pipeline** | `PostNotificationsService.pushNotice`: the same content mapping, icon rule (the association's logo, the member's face), mute and bounded per-recipient fan-out as `createNotifications`, sharing one private `fanOutPush`, but **no `post_notifications` row** - a live is deleted at its end (L3), so a bell row would be a 404 for ever after. |
@@ -217,9 +237,12 @@ client half - the LIVE card in the feed and the app route the tap opens - is NOT
 
 Observed by `[LIVE_ANNOUNCE] <liveId> by <broadcaster> kind=member or association followers=<n>`.
 
-**What the client still owes (WP-L7's other half, with WP-L5):** `appRouteForDeepLink`
-(`frontend/src/lib/mobile/deepLinkRoutes.ts`) has no `live` host, so today a tap answers null there
-and only opens the app - it needs a `live/<id>` case once WP-L5's viewer page exists; the LIVE card at
+**The tap, and what the client still owes (WP-L7's other half, with WP-L5):** `appRouteForDeepLink`
+(`frontend/src/lib/mobile/deepLinkRoutes.ts`) owns the `live` host and sends it to the FEED
+(`/posts`), and `tauri.conf.json` declares it (Android's deep-link plugin drops an undeclared host).
+A build older than that change does not route the tap: Android opens the app and stays where it was,
+and a link that reaches the hook lands on `/notifications` with the unknown-host warn. Owed: the
+`live/<id>` case reading the id once WP-L5's viewer page exists; the LIVE card at
 the top of the feed (L5) reading `GET /api/lives`; and the store builds carrying the new native
 strings (an installed build without them shows the server's French wording, with a warn).
 
@@ -231,9 +254,11 @@ changes; idempotent (applied twice by the integration spec), and
 No foreign key to `associations`: an association deleted during a live leaves a live that still ends
 and is still deleted.
 
-`095_live_announced_at.sql` adds `lives."announcedAt"` and, in the same step that creates the column,
-stamps every existing row with its start, so the first deploy announces no live that began before the
-feature; a re-run touches nothing. 095 because 093 is the highest on `main` and #1940 takes 094.
+`094_live_announced_at.sql` adds `lives."announcedAt"` and, in the same step that creates the column,
+stamps every existing row with its start; a re-run touches nothing. Nothing sweeps for unannounced
+lives - only segment 0's confirm claims one - so what the backfill changes is narrow: a live caught
+MID-START by the deploy (row written, segment 0 not yet confirmed) is never announced. 094 because it
+is the next free number on `main` (093 its highest on 2026-10-19).
 
 ## What is not proven
 

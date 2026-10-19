@@ -393,3 +393,41 @@ describe('PostNotificationsService.createNotifications', () => {
     });
   });
 });
+
+/**
+ * A NAME, OR NOTHING: `resolveDisplayName` answers `null` where `resolveActorName` falls back to the
+ * id - a live's announcement refuses to title a push with a 64-hex user id (WP-L7). A failed lookup
+ * is LOGGED, never swallowed.
+ */
+describe('PostNotificationsService.resolveDisplayName', () => {
+  const withQuery = (query: () => Promise<unknown>) =>
+    new PostNotificationsService(
+      {} as never,
+      // The users table is read through the POST repository's manager.
+      { manager: { query } } as never,
+      {} as never,
+      {} as never
+    );
+  const id = 'f'.repeat(64);
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('names a user with a name, and answers null for a missing row or an empty name', async () => {
+    expect(await withQuery(async () => [{ displayName: 'Claire' }]).resolveDisplayName(id)).toBe(
+      'Claire'
+    );
+    expect(await withQuery(async () => []).resolveDisplayName(id)).toBeNull();
+    expect(await withQuery(async () => [{}]).resolveDisplayName(id)).toBeNull();
+  });
+
+  it('logs a failed lookup at warn and answers null; resolveActorName still falls back to the id', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const broken = withQuery(async () => {
+      throw new Error('users down');
+    });
+    expect(await broken.resolveDisplayName(id)).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('users down'));
+    expect(await broken.resolveActorName(id)).toBe(id);
+    expect(await withQuery(async () => []).resolveActorName(id)).toBe(id);
+  });
+});

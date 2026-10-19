@@ -15,7 +15,7 @@ import { LiveAnnouncer } from './live-announcer';
 import { LivesController } from './lives.controller';
 import { LivesService } from './lives.service';
 
-/** Every table of the module (migrations 091 and 095), parent first. */
+/** Every table of the module (migrations 091 and 094), parent first. */
 export const LIVE_ENTITIES = [Live, LiveSegment, LiveRemovedViewer, LiveStart];
 
 /**

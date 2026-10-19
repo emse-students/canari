@@ -1,4 +1,4 @@
--- Migration 095: lives."announcedAt" - the durable record that a live's start was pushed to the
+-- Migration 094: lives."announcedAt" - the durable record that a live's start was pushed to the
 -- broadcaster's followers (WP-L7 of docs/wiki/frontend/modules/live.md, decision L10).
 --
 -- ONE PUSH PER LIVE, AND IDEMPOTENCE FROM THIS COLUMN, NEVER FROM A CLOCK: the confirm of segment 0
@@ -6,13 +6,15 @@
 -- segment itself, and the push follows that commit - so a repeat of segment 0, a reconnect or a
 -- second instance matches nothing. See docs/wiki/services/lives.md.
 --
--- The rows that exist when the column is ADDED are stamped with their start, so the first sweep after
--- the deploy does not announce lives that began before the feature existed. Only then: the block runs
--- the backfill in the same step that creates the column, so a re-run (the deploy re-applies a file
--- whose successor failed) touches nothing.
+-- The rows that exist when the column is ADDED are stamped with their start. Nothing sweeps for
+-- unannounced lives - only segment 0's confirm ever claims one - so the one live this changes is a
+-- live caught MID-START by the deploy (its row written, its segment 0 not yet confirmed): it is
+-- never announced, where it would otherwise be the first push of a feature that did not exist when
+-- it began. Only then: the block runs the backfill in the same step that creates the column, so a
+-- re-run (the deploy re-applies a file whose successor failed) touches nothing.
 --
 -- No personal data: a timestamp on a row the account erasure already ends and the sweep deletes.
--- 095: 093 is the highest on main and #1940 takes 094.
+-- 094: the next free number on main (093 is its highest, 2026-10-19).
 
 DO $$
 BEGIN

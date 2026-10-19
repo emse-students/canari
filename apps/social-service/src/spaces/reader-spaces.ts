@@ -198,6 +198,16 @@ function republicationReachesUserSql(post: string, user: string, opts: ReadOpts 
 }
 
 /**
+ * User row `user` shares at least one space with the author whose id is the expression `author` -
+ * what makes a PERSONAL item (a post, a live) visible. No read grant ever reaches it (WP7).
+ */
+function sharesSpaceWithAuthorSql(author: string, user: string): string {
+  return `EXISTS (
+      SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
+      WHERE vis_author.id = ${author} AND ${isReaderSpaceSql('vis_shared', user)})`;
+}
+
+/**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
  * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
  *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
@@ -222,9 +232,7 @@ export function postVisibleToUserSql(
 ): string {
   const adminClause = opts.adminSeesAll ? `${isAdminSql(user)}\n    OR ` : '';
   return `(${adminClause}${post}."authorId" = ${user}.id
-    OR (${post}."associationId" IS NULL AND EXISTS (
-      SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
-      WHERE vis_author.id = ${post}."authorId" AND ${isReaderSpaceSql('vis_shared', user)}))
+    OR (${post}."associationId" IS NULL AND ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)})
     OR (${post}."associationId" IS NOT NULL AND (
       ${associationVisibleToUserSql(`${post}."associationId"`, user, { readGrants: opts.readGrants })}
       OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })})))`;
@@ -254,6 +262,29 @@ export function postVisibleToViewerSql(
   // Grants count by default (every READ path); a WRITE that a grant never opened - a vote, a
   // republication - passes `readGrants: false`, explicitly.
   return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${postVisibleToUserSql(post, 'vis_viewer', { ...opts, readGrants: opts.readGrants ?? true })})`;
+}
+
+/**
+ * Live row `live` (a `lives` row) is visible to user row `user`: THE RULE OF A POST BY THE SAME
+ * BROADCASTER (WP-L7, decided 2026-10-19) - its broadcaster; a member's live, a user sharing a space
+ * with the broadcaster; an association's live, a user who sees the association (a member, or its
+ * rules reach one of their spaces, or - with `readGrants` - a nominative read grant). A live has no
+ * republication, so that disjunct of the post rule has nothing to add. An admin is a reader like any
+ * other, as when browsing posts.
+ */
+export function liveVisibleToUserSql(live: string, user: string, opts: ReadOpts = {}): string {
+  return `(${live}."broadcasterId" = ${user}.id
+    OR (${live}."associationId" IS NULL AND ${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)})
+    OR (${live}."associationId" IS NOT NULL AND ${associationVisibleToUserSql(`${live}."associationId"`, user, opts)}))`;
+}
+
+/**
+ * Live row `live` is visible to the viewer whose id is the placeholder `viewer` - the watch paths
+ * (the list, the key, the manifest), so read grants count as on every post READ path. An absent
+ * viewer sees nothing.
+ */
+export function liveVisibleToViewerSql(live: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${liveVisibleToUserSql(live, 'vis_viewer', { readGrants: true })})`;
 }
 
 /** Association `association` is visible to the viewer whose id is the placeholder `viewer`. */

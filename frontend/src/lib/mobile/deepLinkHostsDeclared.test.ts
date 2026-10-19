@@ -13,7 +13,16 @@ import { describe, expect, it } from 'vitest';
  * `callback`, `stripe`, `chat`, `post` and `form` were declared. `posts` and `proposals` were in the
  * same position.
  */
-const SERVER_HOSTS = ['chat', 'post', 'form', 'posts', 'calendar', 'admin-agenda', 'proposals'];
+const SERVER_HOSTS = [
+  'chat',
+  'post',
+  'form',
+  'posts',
+  'calendar',
+  'admin-agenda',
+  'proposals',
+  'live',
+];
 
 /** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */
 const CHECKOUT_HOSTS = ['payment'];

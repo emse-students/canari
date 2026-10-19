@@ -138,22 +138,33 @@ export class PostNotificationsService {
    * `displayName`, so a post notification could name somebody differently from the post it opened.
    *
    * Falls back to the actor id, which is not a name but is addressable: a notification with no
-   * actor at all reads as a fault, and the client resolves an id it recognises.
+   * actor at all reads as a fault, and the client resolves an id it recognises. A caller for which
+   * an id is NOT acceptable as a title asks {@link resolveDisplayName} instead.
    */
   async resolveActorName(actorId: string): Promise<string> {
+    return (await this.resolveDisplayName(actorId)) ?? actorId;
+  }
+
+  /**
+   * A user's display name, or `null` when there is none to give: no `users` row, a row with no
+   * name, or a failed lookup (logged at warn - the caller decides what an unnamed actor means).
+   */
+  async resolveDisplayName(actorId: string): Promise<string | null> {
     try {
       const rows: unknown = await this.postRepo.manager.query(
         `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
         [actorId]
       );
-      if (!Array.isArray(rows) || rows.length === 0) return actorId;
+      if (!Array.isArray(rows) || rows.length === 0) return null;
       const u: unknown = rows[0];
-      if (typeof u !== 'object' || u === null) return actorId;
-      return formatUserDisplayNameFromRaw(u as Record<string, unknown>) || actorId;
-    } catch {
-      /* non-fatal */
+      if (typeof u !== 'object' || u === null) return null;
+      return formatUserDisplayNameFromRaw(u as Record<string, unknown>) || null;
+    } catch (e) {
+      this.logger.warn(
+        `[NOTIF] display name of ${actorId.slice(0, 8)} unreadable: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return null;
     }
-    return actorId;
   }
 
   /**

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 import { PostNotificationsService } from '../posts/post-notifications.service';
+import { liveVisibleToUserSql } from '../spaces/reader-spaces';
 import { isLiveEnabled } from './live-enabled.guard';
 
 /** Short form of an id for a log line. */
@@ -10,9 +11,12 @@ const short = (id: string) => id.slice(0, 8);
 /**
  * Who is told that a live started (decision L10): the broadcaster's FOLLOWERS - `user_follows` for a
  * member's live, `association_follows` for a live broadcast as an association - minus the
- * broadcaster, minus either side of a block with the broadcaster, minus a viewer the broadcaster
- * already removed. Exactly the accounts `LivesService.assertMayWatch` would let in, narrowed to the
- * followers: a push never points at a live its reader would get a 404 or a 403 for.
+ * broadcaster, minus a follower who cannot SEE it (`liveVisibleToUserSql`: the rule of a post by the
+ * same author or association, so a member's live reaches only followers sharing a space with them),
+ * minus either side of a block with the broadcaster, minus a viewer the broadcaster already removed.
+ * Exactly the accounts `LivesService.assertMayWatch` would let in (read grants aside, which never
+ * notify), narrowed to the followers: a push never points at a live its reader would get a 404 or a
+ * 403 for.
  *
  * `association_push_mutes` is NOT read here: the mute silences the PUSH and is applied by
  * `PostNotificationsService`, the one place that pushes (`MUTABLE_PUSH_TYPES`). The reader's own
@@ -24,8 +28,13 @@ export function liveAudienceSql(asAssociation: boolean): string {
   const followers = asAssociation
     ? `SELECT f."followerUserId" AS id FROM association_follows f WHERE f."associationId" = $3`
     : `SELECT f."followerUserId" AS id FROM user_follows f WHERE f."followedUserId" = $1`;
+  // The visibility predicate is the PLAIN one (no read grant), as for a post's announcement: a named
+  // reader is never notified for their perimeter.
   return `SELECT DISTINCT fw.id FROM (${followers}) fw
+    JOIN users fw_user ON fw_user.id = fw.id
+    JOIN lives fw_live ON fw_live.id = $2
     WHERE fw.id <> $1
+      AND ${liveVisibleToUserSql('fw_live', 'fw_user')}
       AND NOT EXISTS (SELECT 1 FROM user_blocks b
                        WHERE (b."blockerId" = $1 AND b."blockedId" = fw.id)
                           OR (b."blockerId" = fw.id AND b."blockedId" = $1))
@@ -115,7 +124,12 @@ export class LiveAnnouncer {
       if (!actorName) throw new Error(`association ${live.associationId} has no name`);
       associationLogoMediaId = assos[0]?.logoMediaId ?? null;
     } else {
-      actorName = await this.notifications.resolveActorName(live.broadcasterId);
+      // NOT `resolveActorName`, which falls back to the raw user id: a lock screen reading
+      // "<64 hex> est en live" is a fault shown to every follower. An unnamed broadcaster is refused
+      // here, and `announce` logs it at warn.
+      const name = await this.notifications.resolveDisplayName(live.broadcasterId);
+      if (!name) throw new Error(`broadcaster ${short(live.broadcasterId)} has no display name`);
+      actorName = name;
     }
 
     const addressed = await this.notifications.pushNotice({

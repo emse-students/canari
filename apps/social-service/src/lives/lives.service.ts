@@ -37,6 +37,7 @@ import {
 } from './live.constants';
 import { LIVE_SEGMENT_STORE, type LiveSegmentStore } from './live-segment-store';
 import { LiveAnnouncer, type ClaimedLive } from './live-announcer';
+import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -231,13 +232,17 @@ export class LivesService {
     return toView(row);
   }
 
-  /** The open lives the viewer may watch: not ended, not blocked either way, not removed from. */
+  /**
+   * The open lives the viewer may watch: not ended, visible to them as a post of the same broadcaster
+   * would be (`liveVisibleToViewerSql`), not blocked either way, not removed from.
+   */
   async listOpen(viewerId: string): Promise<LiveListItem[]> {
     const blocked = await blockedUserIdsFor(this.db.manager, viewerId);
     const rows: LiveListItem[] = await this.db.query(
       `SELECT l.id, l."broadcasterId", l."associationId", l."startedAt"
          FROM lives l
         WHERE l."endedAt" IS NULL
+          AND ${liveVisibleToViewerSql('l', '$1')}
           AND l."broadcasterId" <> ALL($2::varchar[])
           AND NOT EXISTS (SELECT 1 FROM live_removed_viewers r
                            WHERE r."liveId" = l.id AND r."viewerId" = $1)
@@ -773,7 +778,10 @@ export class LivesService {
   /**
    * Who may read a live's key and manifest:
    *
-   * - absent, or a broadcaster blocked either way: 404 - invisible, as the feed hides them;
+   * - absent, NOT VISIBLE to the viewer (the rule of a post by the same broadcaster or association,
+   *   `liveVisibleToViewerSql` - spaces respected), or a broadcaster blocked either way: 404
+   *   `LIVE_NOT_FOUND` - invisible, as the feed hides them, and asked BEFORE the end so a 410 never
+   *   tells an outsider that a live existed;
    * - ended: 410 to everybody, the broadcaster included - nothing is served after `endedAt`;
    * - a viewer the broadcaster removed: 403 `LIVE_VIEWER_REMOVED`.
    */
@@ -783,12 +791,20 @@ export class LivesService {
     liveId: string
   ): Promise<LiveRow & { serverNow: Date }> {
     // `serverNow` from the same clock that wrote `lastSegmentAt`, so a viewer compares like with like.
-    const rows: (LiveRow & { serverNow: Date })[] = await manager.query(
-      `SELECT ${LIVE_COLUMNS}, now() AS "serverNow" FROM lives WHERE id = $1`,
-      [liveId]
+    const rows: (LiveRow & { serverNow: Date; visible: boolean })[] = await manager.query(
+      `SELECT ${LIVE_COLUMNS}, now() AS "serverNow",
+              ${liveVisibleToViewerSql('lives', '$2')} AS visible
+         FROM lives WHERE id = $1`,
+      [liveId, viewerId]
     );
-    const row = rows[0];
-    if (!row) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    const found = rows[0];
+    if (!found) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    const { visible, ...row } = found;
+    // `=== true` and nothing looser: a driver answering `'t'` must not widen the gate.
+    if (visible !== true) {
+      this.logger.debug(`[LIVE] ${liveId} hidden from ${short(viewerId)}: not in its audience`);
+      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    }
     const own = row.broadcasterId === viewerId;
     if (!own && (await isBlockedBetween(manager, viewerId, row.broadcasterId))) {
       this.logger.debug(`[LIVE] ${liveId} hidden from ${short(viewerId)}: a block`);

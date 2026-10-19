@@ -87,7 +87,7 @@ export class Live {
   pendingAt: Date | null;
 
   /**
-   * When the live's start was pushed to the broadcaster's followers (WP-L7, migration 095) - the
+   * When the live's start was pushed to the broadcaster's followers (WP-L7, migration 094) - the
    * CLAIM, written before the send, so a live is announced at most once whoever asks (`LiveAnnouncer`).
    */
   @Column({ type: 'timestamptz', nullable: true })

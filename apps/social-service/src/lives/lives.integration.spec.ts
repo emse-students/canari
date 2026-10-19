@@ -1,5 +1,5 @@
 /**
- * LIVES AGAINST A REAL POSTGRESQL - migrations 091 and 095, `LivesService`, the live sweep, the push
+ * LIVES AGAINST A REAL POSTGRESQL - migrations 091 and 094, `LivesService`, the live sweep, the push
  * to the followers when a live goes on air, and the lives part of the account erasure (WP-L2, WP-L3,
  * WP-L7; docs/wiki/services/lives.md).
  *
@@ -51,7 +51,7 @@ const maybe = URL ? describe : describe.skip;
 
 const MIGRATION = readFileSync(join(__dirname, '..', 'migrations', '091_lives.sql'), 'utf8');
 const ANNOUNCED_AT = readFileSync(
-  join(__dirname, '..', 'migrations', '095_live_announced_at.sql'),
+  join(__dirname, '..', 'migrations', '094_live_announced_at.sql'),
   'utf8'
 );
 
@@ -60,6 +60,10 @@ const BOB = 'b'.repeat(64);
 const CAROL = 'c'.repeat(64);
 const DAVE = 'd'.repeat(64);
 const EVE = 'e'.repeat(64);
+/** A member who shares NO space with the others (another campus, another formation). */
+const FRANK = 'f'.repeat(64);
+const SE = `'saint-etienne'`;
+const GA = `'gardanne'`;
 const KEY = '0f'.repeat(32);
 const ASSO = '11111111-1111-4111-8111-111111111111';
 
@@ -160,7 +164,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
   /** Every `pushNotice` the announcer made - the one pipeline, faked at its seam. */
   const notices: Parameters<PostNotificationsService['pushNotice']>[0][] = [];
   const notifications = {
-    resolveActorName: async (id: string) => (id === ALICE ? 'Alice' : id),
+    // Only ALICE has a name: BOB is the broadcaster with no `users` name to give.
+    resolveDisplayName: async (id: string) => (id === ALICE ? 'Alice' : null),
     pushNotice: async (data: Parameters<PostNotificationsService['pushNotice']>[0]) => {
       notices.push(data);
       return data.recipientIds.length;
@@ -193,6 +198,30 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       `CREATE TABLE association_follows ("followerUserId" varchar(255), "associationId" uuid)`
     );
     await q(`CREATE TABLE associations (id uuid, name varchar, "logoMediaId" varchar)`);
+    // And the ones a live's VISIBILITY reads (`liveVisibleToUserSql`, the rule of a post), in the
+    // columns `reader-spaces.ts` reads. ALICE..EVE share Saint-Etienne ICM; FRANK is in Gardanne
+    // ISMIN and shares no space with any of them.
+    await q(
+      `CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
+         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]')`
+    );
+    await q(`CREATE TABLE spaces (formation varchar, campus varchar)`);
+    await q(`INSERT INTO spaces (formation, campus) VALUES ('ICM', ${SE}), ('ISMIN', ${GA})`);
+    await q(`CREATE TABLE association_members ("associationId" uuid, "userId" varchar(255))`);
+    await q(
+      `CREATE TABLE association_audiences ("associationId" uuid, formation varchar, campus varchar)`
+    );
+    await q(`CREATE TABLE read_grants (user_id varchar(255), campus varchar, formation varchar)`);
+    for (const id of [ALICE, BOB, CAROL, DAVE, EVE]) {
+      await q(
+        `INSERT INTO users (id, campus, cursus) VALUES ($1, ${SE}, '[{"formation":"ICM"}]')`,
+        [id]
+      );
+    }
+    await q(
+      `INSERT INTO users (id, campus, cursus) VALUES ($1, ${GA}, '[{"formation":"ISMIN"}]')`,
+      [FRANK]
+    );
     // Applied TWICE: the deploy re-runs a file whose successor failed, so it must be a no-op then.
     await q(MIGRATION);
     await q(MIGRATION);
@@ -208,6 +237,9 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     await q(`DELETE FROM user_follows`);
     await q(`DELETE FROM association_follows`);
     await q(`DELETE FROM associations`);
+    await q(`DELETE FROM association_members`);
+    await q(`DELETE FROM association_audiences`);
+    await q(`DELETE FROM read_grants`);
     notices.length = 0;
     process.env.LIVE_ENABLED = 'true';
     muted.clear();
@@ -512,6 +544,10 @@ maybe('lives against PostgreSQL (migration 091)', () => {
         `INSERT INTO association_follows ("followerUserId", "associationId") VALUES ($1, $2), ($3, $2)`,
         [CAROL, ASSO, ALICE]
       );
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', ${SE})`,
+        [ASSO]
+      );
       await follow(BOB); // follows the member, not the association: not told
       mayActAs.add(`${ALICE}:${ASSO}`);
       const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
@@ -528,6 +564,78 @@ maybe('lives against PostgreSQL (migration 091)', () => {
           pushData: { liveId: live.id, associationId: ASSO },
         },
       ]);
+    });
+
+    it("A MEMBER'S LIVE RESPECTS SPACES AS A POST DOES: a follower sharing none is not told and cannot watch", async () => {
+      await follow(BOB);
+      await follow(FRANK);
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      expect(notices.map((n) => n.recipientIds)).toEqual([[BOB]]);
+
+      // The same 404 as an absent live, on every watch path: nothing says it exists.
+      for (const p of [lives.get(FRANK, live.id), lives.manifest(FRANK, live.id)]) {
+        expect(await refusal(p)).toEqual({ status: HttpStatus.NOT_FOUND, code: 'LIVE_NOT_FOUND' });
+      }
+      await expect(lives.listOpen(FRANK)).resolves.toEqual([]);
+      await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ key: KEY });
+
+      // Ended but still held (the purge refused): the outsider gets the 404, never the 410.
+      store.failPurge = true;
+      await lives.end(ALICE, live.id);
+      expect(await refusal(lives.get(FRANK, live.id))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_ENDED');
+    });
+
+    it("AN ASSOCIATION'S LIVE REACHES WHOM ITS RULES OR ITS MEMBERSHIP REACH, and a read grant watches without a push", async () => {
+      await q(`INSERT INTO associations (id, name) VALUES ($1, 'BDE Gardanne')`, [ASSO]);
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', ${GA})`,
+        [ASSO]
+      );
+      await q(`INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`, [
+        ASSO,
+        DAVE,
+      ]);
+      await q(
+        `INSERT INTO association_follows ("followerUserId", "associationId")
+         VALUES ($1, $4), ($2, $4), ($3, $4)`,
+        [BOB, DAVE, FRANK, ASSO]
+      );
+      // BOB is a NAMED reader of Gardanne: he may watch, and is never notified for it.
+      await q(`INSERT INTO read_grants (user_id, campus, formation) VALUES ($1, ${GA}, NULL)`, [
+        BOB,
+      ]);
+      mayActAs.add(`${ALICE}:${ASSO}`);
+      const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+
+      expect(notices).toHaveLength(1);
+      expect([...notices[0].recipientIds].sort()).toEqual([DAVE, FRANK]);
+      for (const viewer of [DAVE, FRANK, BOB]) {
+        await expect(lives.get(viewer, live.id)).resolves.toMatchObject({ key: KEY });
+      }
+      expect(await refusal(lives.get(CAROL, live.id))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      await expect(lives.listOpen(CAROL)).resolves.toEqual([]);
+      await expect(lives.listOpen(FRANK)).resolves.toEqual([
+        expect.objectContaining({ id: live.id }),
+      ]);
+    });
+
+    it('REFUSES TO PUSH for a broadcaster with no name rather than title it with a user id', async () => {
+      await follow(CAROL, BOB);
+      const live = await start(BOB);
+      await expect(lives.ingest(BOB, live.id, 0, segment(0))).resolves.toMatchObject({ index: 0 });
+      expect(notices).toEqual([]);
+      // Claimed all the same: refused once, never retried.
+      const [row] = await q(`SELECT "announcedAt" FROM lives WHERE id = $1`, [live.id]);
+      expect(row.announcedAt).not.toBeNull();
     });
 
     it('sends nothing while LIVE_ENABLED is off, and the segment is still taken', async () => {
@@ -549,7 +657,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
         { mayAct: async () => false } as unknown as AssociationsService,
         { isUserMuted: async () => false } as unknown as ModerationService,
         new LiveAnnouncer(ds, {
-          resolveActorName: async () => 'Alice',
+          resolveDisplayName: async () => 'Alice',
           pushNotice: async () => {
             attempts += 1;
             throw new Error('mute lookup down');

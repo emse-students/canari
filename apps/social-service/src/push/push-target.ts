@@ -31,7 +31,9 @@ export function socialDeepLink(data: Record<string, string>): string {
     return `fr.emse.canari://proposals/${encodeURIComponent(data.queueAssociationId)}`;
   }
   // A live started (WP-L7): the live itself. The app's route for it is WP-L5's viewer, still owed -
-  // until then `appRouteForDeepLink` answers null for this host and the tap opens the app only.
+  // until then `appRouteForDeepLink` sends this host to the feed (`/posts`), where the LIVE card is
+  // to be. A build older than that route does not route it: it opens the app, and at most lands on
+  // the notifications list (the hook's unknown-host branch).
   if (data.liveId) return `fr.emse.canari://live/${encodeURIComponent(data.liveId)}`;
   const postId = data.postId;
   if (postId) {
