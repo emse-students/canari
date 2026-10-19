@@ -82,6 +82,11 @@
      * overflow and gets no line; the title bar's `border-b` is the same edge at the top.
      */
     footerEdge?: boolean;
+    /**
+     * `critical` for a dialog raised OVER a full-screen viewer (`--z-viewer` sits above `--z-modal`,
+     * so a plain modal would open hidden behind the live it is about).
+     */
+    layer?: 'modal' | 'critical';
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
@@ -99,10 +104,14 @@
     phoneFullScreen = false,
     showTitleBar = true,
     footerEdge = false,
+    layer = 'modal',
     onClose,
     children,
     footer,
   }: Props = $props();
+
+  /** Literals, because Tailwind builds only the classes it can read in source. */
+  const layerClass = $derived(layer === 'critical' ? 'z-(--z-critical)' : 'z-(--z-modal)');
 
   const backdropAlignClass = $derived(
     fullViewport || topAnchored || phoneFullScreen
@@ -239,7 +248,7 @@
       role="presentation"
       use:coversScreen
       data-keyboard-aware-overlay
-      class="fixed z-(--z-modal) flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
+      class="fixed {layerClass} flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
         ? 'modal-phone-full'
         : ''}"
       onclick={handleBackdropClick}

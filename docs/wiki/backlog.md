@@ -35,7 +35,7 @@ the first-live rules acceptance is recorded and required ([lives](services/lives
 **Built 2026-10-19, dev builds, draft PR:** the viewer's and the broadcaster's cut screens, the
 `live_cut` bell row and the admin queue's live row with its cut button
 ([live](frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
-**Owed, code:** the viewer's report control; the chat-line hiding inside WP-L6, by the contract written there; a push for the cut
+**Built 2026-10-19, draft PR:** the viewer's report control (a Flag in the top bar, the report dialog, the block offer; reporting one chat line stays impossible by the server's contract). **Owed, code:** the chat-line hiding inside WP-L6, by the contract written there; a push for the cut
 once `notif_social_live_cut_*` exist in both native apps. **Owed, the user:** (1) the STRIKE POLICY -
 what N cuts trigger (a mute, a broadcasting ban, nothing), today only recorded and counted;
 (2) how long a cut is kept (365 days, a planning figure); (3) whether a live past N pending reports is

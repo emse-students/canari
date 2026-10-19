@@ -227,6 +227,15 @@ describe('LiveViewer', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('carries the report flag in the top bar, outside the video and the status layer', async () => {
+    await render();
+    const flag = document.querySelector<HTMLElement>('[data-live-report]')!;
+    expect(flag.getAttribute('aria-label')).toBe(m.live_report_button());
+    expect(flag.closest('[data-live-video]')).toBeNull();
+    expect(flag.closest('[role="status"]')).toBeNull();
+    expect(viewer().contains(flag)).toBe(true);
+  });
+
   it("the sound toggle sets the app's one sound answer", async () => {
     await render();
     const button = document.querySelector<HTMLButtonElement>('[data-live-sound]')!;

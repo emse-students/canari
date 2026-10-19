@@ -24,6 +24,11 @@ export class ModerationApiError extends Error {
   get isAlreadyReported(): boolean {
     return this.code === 'ALREADY_REPORTED';
   }
+
+  /** True when the reported live is gone or was never visible to the reporter (`404 LIVE_NOT_FOUND`). */
+  get isLiveNotFound(): boolean {
+    return this.code === 'LIVE_NOT_FOUND';
+  }
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
