@@ -10,6 +10,29 @@ broke* - never *this works*. A domain with forty unit tests and no end-to-end ro
 in production in a way every one of those tests passes through; that is exactly what the campaign was
 built to catch, and it is why the two columns are kept apart instead of added together.
 
+## Re-read 2026-10-18 - what gained a watcher since the 2026-08-21 measurement
+
+**Every count in the tables below is the 2026-08-21 one and is kept as history.** Re-run with the
+four commands under "How to re-measure it" on `main` at `2899fd7ea`: 909 frontend test files (was
+205), 319 backend specs (was 69: chat-delivery 89, social 166, core 41, media 23), 181 Rust test
+functions (was 39). Each claim of change below names the mechanism that now honours it; a row not
+listed here was checked and is unchanged.
+
+| Domain (2026-08-21 verdict) | Now | The mechanism that watches it |
+| --- | --- | --- |
+| Forms: "nothing watches this at all" | **22 social-service specs, 15 frontend tests** | `apps/social-service/src/forms/*.spec.ts` (pricing, cotisation, anonymous, archive, seat hold, files, reminder scheduler), `frontend/src/lib/forms/*.test.ts`; the deleted public `mark-paid` is held deleted by `forms.controller.no-mark-paid.spec.ts` (added 2026-10-18) |
+| Moderation: "nothing" | **service spec, controller spec, frontend tests** | `moderation.service.spec.ts`; `moderation.controller.spec.ts` (added 2026-10-18) asserts every admin handler answers 403 to a non-moderator before the service is touched and fails on a handler it does not know; `minesweeper.moderation.spec.ts`, `frontend/src/lib/minesweeper/api.moderation.test.ts` |
+| Admin and platform config: 3 specs | 3 platform specs plus `announcement` specs and `frontend/src/lib/admin/*.test.ts` | the `minClientVersion` ceiling is pinned by three cases in `platform.service.spec.ts`; **the `/admin/platform` screen itself still has no test** |
+| Payments: server-side only | 8 `core-service/src/payment` specs (Lydia signature, order reference, webhook controller, disabled provider) | `payment.service.spec.ts`, `webhook.controller.spec.ts`, `lydia-signature*.spec.ts`; still no end-to-end path |
+| Calls: 0 frontend tests | **13 frontend test files**, `calls.service.spec.ts` in chat-delivery | `CallService.p2p.test.ts`, `callsCompiled.test.ts` and siblings; **the 20 CALL board rows are still all `pending`** |
+| Media: one spec | 23 media-service specs (chunk lifecycle, byte range, reels, erasure) | the "no key material server-side" invariant of finding 5 was re-read: `media.controller.ts` still mentions AES only in a comment |
+| Follows: "nothing" | **one spec, for the push-mute service only** | `association-push-mutes.service.spec.ts`; **`follows.service.ts` has no spec** |
+| Posts, calendar, associations | 20+ posts specs, 9 calendar tests, 160+ social specs | `posts/*.spec.ts`, `frontend/src/lib/calendar/*.test.ts`, `associations/*.spec.ts` |
+
+Still unwatched, by the same method: the `/admin/platform` screen, `follows.service.ts` (user and
+association follows), and any end-to-end path for payments or forms. **Added on 2026-10-18** because
+they are buildable without production access: the two specs named in the table above.
+
 ## How to re-measure it
 
 Four commands, and they are the whole method. Anything below that is not reproducible from these is
