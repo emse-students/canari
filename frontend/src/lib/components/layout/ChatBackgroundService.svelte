@@ -77,9 +77,6 @@
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
-  import { Phone, PhoneOff, Video } from '@lucide/svelte';
-  import { fly } from 'svelte/transition';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
@@ -96,12 +93,9 @@
   import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
-  import {
-    buildConversationRow,
-    resolveConversationListPresentation,
-  } from '$lib/utils/chat/conversations';
+  import { buildConversationRow } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-  import type { CallParticipant } from '$lib/services/CallService';
+  import { resolveCallPeers } from '$lib/utils/chat/callPeers';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import {
     openNotificationTarget,
@@ -131,51 +125,18 @@
   import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
   import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 
-  /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
-  function buildRemoteCallParticipants(): CallParticipant[] {
-    const uid = (globalSession.userId || currentUserId() || '').toLowerCase();
-    const convo = globalConvs.currentConvo;
-    const callerId = globalSession.callService?.incomingCallerId?.toLowerCase();
-
-    if (!convo) {
-      if (callerId && callerId !== uid) {
-        return [{ userId: callerId, displayName: getUserDisplayNameSync(callerId) }];
-      }
-      return [];
-    }
-
-    const pres = resolveConversationListPresentation(
-      {
-        id: convo.id,
-        name: convo.name,
-        contactName: convo.contactName,
-        conversationType: convo.conversationType,
-        directPeerId: convo.directPeerId,
-      },
-      uid
-    );
-
-    if (pres.conversationType === 'direct') {
-      const peer = pres.contactId.toLowerCase();
-      if (!peer || peer === uid) return [];
-      return [{ userId: peer, displayName: pres.displayName }];
-    }
-
-    return globalConvs.groupMembers
-      .map((m) => m.toLowerCase())
-      .filter((m) => m && m !== uid)
-      .map((m) => ({ userId: m, displayName: getUserDisplayNameSync(m) }));
-  }
-
-  let callRemoteParticipants = $derived.by(buildRemoteCallParticipants);
-
-  /** Whether the current route is the chat page (where the full call overlay is native). */
-  let isOnChatPage = $derived(
-    typeof window !== 'undefined' && $page.url.pathname.startsWith('/chat')
-  );
-
-  /** When NOT on the chat page, show a compact incoming-call toast instead of the full hero screen. */
-  let showIncomingToast = $derived(globalSession.callState === 'incoming' && !isOnChatPage);
+  /** Who is on the other end of the call - from the CALL's conversation, never the one on screen. */
+  let callRemoteParticipants = $derived.by(() => {
+    const service = globalSession.callService;
+    if (!service || globalSession.callState === 'idle') return [];
+    return resolveCallPeers({
+      userId: globalSession.userId || currentUserId() || '',
+      callGroupId: service.currentGroupId,
+      conversations: globalConvs.conversations.values(),
+      incomingCallerId: service.incomingCallerId,
+      nameOf: getUserDisplayNameSync,
+    });
+  });
 
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);
@@ -2116,73 +2077,6 @@
   account={globalSession.userId}
 />
 
-{#if showIncomingToast}
-  <!-- Compact incoming-call toast when user is browsing another page (P5) -->
-  {@const callerName = getUserDisplayNameSync(globalSession.callService?.incomingCallerId ?? '')}
-  {@const isVideoCall = globalSession.callService?.incomingHasVideo ?? true}
-  <div
-    class="bg-cn-scrim/95 fixed top-[calc(var(--safe-area-inset-top,0px)+1rem)] left-1/2 z-(--z-call-notice) flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 animate-[slideDown_0.3s_ease-out] items-center gap-3 rounded-2xl px-4 py-3 shadow-2xl ring-1 ring-white/10"
-    transition:fly={{ y: -20, duration: 250 }}
-  >
-    <div class="relative h-10 w-10 shrink-0">
-      <span
-        class="ring-cn-scrim absolute -top-0.5 -right-0.5 z-10 h-3 w-3 animate-pulse rounded-full bg-amber-400 ring-2"
-      ></span>
-      <div class="h-full w-full overflow-hidden rounded-full bg-black/30 ring-1 ring-white/20">
-        <Avatar
-          userId={globalSession.callService?.incomingCallerId ?? ''}
-          fill
-          shape="circle"
-          fallbackLabel={callerName}
-        />
-      </div>
-    </div>
-    <div class="min-w-0 flex-1">
-      <p class="truncate text-sm font-bold text-white">{callerName || m.call_incoming_label()}</p>
-      <p class="flex items-center gap-1 text-xs text-white/55">
-        {#if isVideoCall}
-          <Video size={12} strokeWidth={2.5} />
-        {:else}
-          <Phone size={12} strokeWidth={2.5} />
-        {/if}
-        {isVideoCall ? m.chat_video_call_label() : m.chat_audio_call_label()}
-      </p>
-    </div>
-    <div class="flex shrink-0 items-center gap-2">
-      <div class="flex flex-col items-center gap-0.5">
-        <button
-          class="ui-icon-button rounded-full bg-emerald-500 text-white transition-all hover:bg-emerald-400 active:scale-95"
-          onclick={() =>
-            globalSession.callService?.acceptCall(
-              globalSession.callService.currentGroupId ?? '',
-              globalSession.callService.currentCallId ?? ''
-            )}
-          aria-label={m.call_accept_label()}
-        >
-          <Phone size={18} class="fill-current" />
-        </button>
-        <span class="text-2xs font-bold tracking-wider text-emerald-400 uppercase"
-          >{m.call_accept_label()}</span
-        >
-      </div>
-      <div class="flex flex-col items-center gap-0.5">
-        <button
-          class="ui-icon-button rounded-full bg-red-500 text-white transition-all hover:bg-red-400 active:scale-95"
-          onclick={() => globalSession.callService?.endCall()}
-          aria-label={m.call_decline_label()}
-        >
-          <PhoneOff size={18} />
-        </button>
-        <span class="text-2xs font-bold tracking-wider text-red-400 uppercase"
-          >{m.call_decline_label()}</span
-        >
-      </div>
-    </div>
-  </div>
-{:else if globalSession.callService && globalSession.callState !== 'idle'}
-  <CallOverlay
-    callService={globalSession.callService}
-    currentUserId={globalSession.userId || currentUserId() || ''}
-    participants={callRemoteParticipants}
-  />
+{#if globalSession.callService && globalSession.callState !== 'idle'}
+  <CallOverlay callService={globalSession.callService} participants={callRemoteParticipants} />
 {/if}

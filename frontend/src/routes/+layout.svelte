@@ -8,6 +8,7 @@
   import { onMount, tick } from 'svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
+  import CallBanner from '$lib/components/layout/CallBanner.svelte';
   import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
   import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
@@ -647,6 +648,10 @@
       <MaintenanceAdminBanner />
     {/if}
     <MlsFatalErrorBanner />
+    <!-- A MINIMISED CALL (2026-10-19) - right after the interrupting facts, before the transients: a
+         call in progress is what the reader is doing, and its hang-up must stay at the top of the
+         screen, the one edge no native chrome is drawn over (CallBanner). -->
+    <CallBanner />
     <!-- THE LAST TWO JOINED THE COLUMN ON 2026-09-22, and they are the reason it publishes its
          height. Both were rendered inside the CONTENT column instead, under a comment claiming
          "pleine largeur, jamais dans la rangee sidebar" - which is the one thing that placement

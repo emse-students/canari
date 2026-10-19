@@ -915,8 +915,7 @@ says `z-(--z-modal)`; twenty-six call sites were converted.
 | `--z-modal` | 280 | |
 | `--z-modal-popover` | 290 | a dropdown opened from inside a modal, portalled out of it |
 | `--z-viewer` | 300 | a full-screen media viewer |
-| `--z-critical` | 320 | a confirmation, the call UI |
-| `--z-call-notice` | 340 | the incoming-call notice, which must clear even the call UI |
+| `--z-critical` | 320 | a confirmation, the full-screen call (a minimised call is a row of the banner column, in flow; the 340 incoming-call rung went with its toast on 2026-10-19, [calls](modules/calls.md#the-call-ui-the-whole-screen-or-a-bar-at-the-top-2026-10-19)) |
 | `--z-tooltip` | 400 | follows the pointer, never interactive |
 | `--z-skip-link` | 500 | the way out for someone who cannot use a pointer |
 

@@ -485,6 +485,68 @@ a desktop play noise, is the one at fault.
 reading's `TURN CreatePermission error response` (403 and 600, CALL-TURN) is a dev TURN credential
 or binding question and stays listed there; no production setting was read or changed.
 
+## The call UI: the whole screen, or a bar at the top (2026-10-19)
+
+**The user's verdict** (2026-10-19): *"l'UI de l'appel telephonique (surtout audio seul) est nulle,
+inadaptee sur mobile ... Sur un Messenger, soit ca fait toute l'interface, soit ca fait un bandeau
+en haut, pas cette espece de modal qui en plus est sur ou sous le reste de l'interface."* And from
+the iPhone the same day (CALL-IOS-HANGUP, P1): the docked card's mute, speaker and hang-up sat UNDER
+the native glass tab bar - the red glyph visible through the glass, no tap reaching it - so the call
+could only be ended from the other phone. A native view is drawn above the whole WebView, so no
+z-index can lift a web control over it.
+
+**Two shapes, one flag** (`stores/callView.svelte.ts`, `minimised`):
+
+| Shape | Component | Where it lives | Why it cannot be covered |
+|---|---|---|---|
+| Full screen: avatar, name, status/timer, 64px controls under the thumb (mute, speaker on the apps, hang-up; decline/accept when ringing), the E2E line, a chevron to minimise | `chat/CallOverlay.svelte` | portalled to the body, `fixed inset-0`, `--z-critical`, safe-area padding on all four sides | it joins `coversScreen`, which HIDES the native tab bar and the native glass pieces; `--z-critical` is above every sheet, modal and toast |
+| A slim bar: "Bob · 02:13", a tap returns to the full screen, mute and hang-up on the bar (decline/accept when ringing) | `layout/CallBanner.svelte` | a ROW of the root layout's banner column, in flow, under the status bar | it pushes the page down rather than covering it (the column publishes `--app-banner-height`), and nothing native is drawn above the content's top edge - the glass pieces follow their web twins down |
+
+Every call opens full screen (an incoming ring too, on every route: the compact incoming toast and
+its `--z-call-notice` rung are gone). **The system Back MINIMISES** (`bindHistoryOverlay`); no
+gesture ends a call. Measured in Chromium at 390x844 (touch) and 1280x800, on `/legal/privacy`
+with a stand-in `CallService` (no local estate, no account): the bar is 52px at the top of the
+content under the environment banner, the page starts below it, and `elementFromPoint` at the
+centre of each of its three controls lands on that control (44x44 each on touch). A conversation
+was NOT rendered under the bar (no signed-in account here) - `ChatArea`'s header is in flow inside
+`main`, so it is pushed like any page; **owed: one look on each phone with a conversation open.**
+
+**Who is on the other end** is read from the CALL's conversation (`utils/chat/callPeers.ts`,
+`CallService.currentGroupId`), never from the one on screen: once the app can be browsed under the
+bar, `currentConvo` is whatever was opened last, and the old overlay would have renamed the call
+after it.
+
+**What the surfaces say** is one `CallStatusKind` (`callStatusKind`): `ringing`, `incoming`,
+`connecting` (the callee is `incall` from the tap, seconds before any sound), `live` (the timer),
+`reconnecting` ("Reconnexion...", `CallService.reconnecting` - the ONE flag the CALL-WIFI resume
+writes from signalling lost, peer away and ICE state; the UI only reads it, and only once `connectedAt`
+is set), `ended` ("Appel termine ·
+02:13").
+
+## The call in the background (2026-10-19)
+
+**The timer is a function of timestamps**: `CallService.connectedAt` (first `connected`, not the
+tap) and `endedAt`, read by `utils/callClock.ts`; the 1 s interval and a `visibilitychange` only
+REPAINT it. A throttled or frozen page is right on its first frame back.
+
+**One audio sink for the whole call.** It used to live in each of the old overlay's two views, so
+minimising destroyed the element playing the voice and built another. `CallOverlay` is mounted for
+the whole call and holds the only `<audio>`; every `<video>` is muted.
+
+**What the web can and cannot do** (what each engine does is unmeasured; the native half is a
+backlog item, [P1 - a call does not survive the app leaving the screen](../../backlog.md#p1-blocks-calls_compiled-not-dev---a-call-does-not-survive-the-app-leaving-the-screen-on-either-phone-2026-10-19)):
+
+| Concern | Web (done) | Native (owed) |
+|---|---|---|
+| The OS knows a call is up | Media Session: title = the peer, `hangup` / `togglemicrophone` handlers, `setMicrophoneActive` (Chromium) - `utils/callMediaSession.ts`, each action in its own `try`, each refusal logged | Android `CallStyle` ongoing notification in a `phoneCall` foreground service; iOS CallKit for EVERY call |
+| The microphone in the background | nothing can hold it: Android 9+ gives a backgrounded app silence; WKWebView stops capture when hidden | the foreground service / an `AVAudioSession` call session |
+| Audio route (speaker, earpiece, Bluetooth) | label-matched `setSinkId`, best effort, logged when there is nothing to route to | `AudioManager` / `AVAudioSession` |
+| Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it | video (WP-C3) can take one |
+| Diagnosis | `[Call] app hidden` / `visible`, with `state=`, `mic=live/os-muted` and `voice=playing` or `paused`, `the system took the microphone`, `the voice was paused while hidden - starting it again` | - |
+
+**Not verified on any device.** The Mi 9T runs whatever build is installed; a dev build is needed to
+call at all (`CALLS_ENABLED` is dev-only), and the reading owed is the backlog item's last bullet.
+
 ## Responsibilities
 
 - WebRTC audio/video calls within MLS groups (E2E encrypted).
@@ -590,7 +652,10 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 | Component | Role |
 |---|---|
-| `components/chat/CallOverlay.svelte` | The whole call UI: incoming, outgoing, in-call controls, duration, E2E badge |
+| `components/chat/CallOverlay.svelte` | The full-screen call (incoming, outgoing, in call, ended) and the call's one audio sink; mounted for the whole call |
+| `components/layout/CallBanner.svelte` | The minimised call: a row of the root layout's banner column |
+| `composables/useCallModel.svelte.ts` | The service's stores as runes, the status kind and the duration, for both |
+| `stores/callView.svelte.ts` | `minimised`, and `callStatusKind` |
 
 (Corrected 2026-10-15: this table named `CallUI`, `IncomingCallOverlay`, `CallButton` and
 `CallDuration`, none of which exists.)

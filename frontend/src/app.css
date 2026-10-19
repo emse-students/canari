@@ -258,11 +258,10 @@
      `--z-critical`, which a confirmation holds. */
   --z-toast: 310;
 
-  /* Interrupts everything below: a confirmation, the call UI. Nothing decorative may be here. */
+  /* Interrupts everything below: a confirmation, the full-screen call. Nothing decorative may be
+     here. (The incoming-call toast's rung, 340, went with the toast on 2026-10-19: a ring is the
+     full-screen call now, and a minimised call is a row of the banner column, in flow.) */
   --z-critical: 320;
-  /* The incoming-call notice, which must clear even the call UI - it is how a second call is
-     answered while the first one is on screen. */
-  --z-call-notice: 340;
 
   /* Follows the pointer and is never interactive, so it may sit over anything without trapping it. */
   --z-tooltip: 400;

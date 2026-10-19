@@ -403,6 +403,31 @@ describe('a peer-to-peer call, client side', () => {
  * callee inside the invite; these tests shrink it to a few milliseconds and wait for the timer as
  * an EVENT - registered before the wait, shorter than it - never asserting a wall clock.
  */
+describe('what the call UI reads: the connected moment', () => {
+  it('stamps connectedAt once, on the first connected, and a recovery does not restart it', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    const pc = FakePeerConnection.instances[0];
+    expect(get(service.connectedAt)).toBeNull();
+
+    pc.setConnection('connected');
+    const first = get(service.connectedAt);
+    expect(first).not.toBeNull();
+    expect(get(service.callState)).toBe('incall');
+
+    pc.setConnection('disconnected');
+    pc.setConnection('connected');
+    // A recovery does not restart the timer.
+    expect(get(service.connectedAt)).toBe(first);
+
+    service.endCall();
+    expect(get(service.callState)).toBe('ended');
+    expect(get(service.endedAt)).not.toBeNull();
+  });
+});
+
 describe('the ring window, both sides', () => {
   // The window is a timer: fake it, and step past it. `setTimeout` only, so the harness's own
   // microtask and macrotask yields still run.
