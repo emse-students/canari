@@ -319,11 +319,10 @@ describe('AccountErasureService', () => {
     });
 
     it('exports every completed digest and every pending subject, each with its LATEST request', async () => {
-      const query = jest.fn(
-        async (sql: string): Promise<unknown> =>
-          sql.includes('"completedAt" IS NOT NULL')
-            ? [{ digest: subjectDigest('x'), requestedAt: new Date(requestedAt) }]
-            : [{ subjectId: 'owed', requestedAt: new Date(requestedAt) }]
+      const query = jest.fn(async (sql: string): Promise<unknown> =>
+        sql.includes('"completedAt" IS NOT NULL')
+          ? [{ digest: subjectDigest('x'), requestedAt: new Date(requestedAt) }]
+          : [{ subjectId: 'owed', requestedAt: new Date(requestedAt) }]
       );
       const service = new AccountErasureService({ query } as unknown as DataSource);
       await expect(service.exportJournal()).resolves.toEqual({
