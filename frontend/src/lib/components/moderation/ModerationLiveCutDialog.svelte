@@ -4,6 +4,7 @@
   import { cutLive, LiveRefusalError } from '$lib/live/api';
   import type { LiveCutResult } from '$lib/live/types';
   import { reportReasons, type ReportReason } from '$lib/moderation/reasons';
+  import { LIVE_CUT_DETAILS_MAX } from '$lib/live/constants';
   import { isTransportFailure } from '$lib/utils/transportFailure';
 
   interface Props {
@@ -30,6 +31,8 @@
   let error = $state('');
 
   const reasons = $derived(reportReasons());
+  /** Too long to send: Continue stays disabled, so a 400 is never about the length. */
+  const detailsTooLong = $derived(details.trim().length > LIVE_CUT_DETAILS_MAX);
 
   // A dialog reopened on another live must not carry the previous choice.
   $effect(() => {
@@ -110,7 +113,7 @@
         <textarea
           bind:value={details}
           rows="3"
-          maxlength="500"
+          maxlength={LIVE_CUT_DETAILS_MAX}
           class="border-cn-border text-text-main focus:border-cn-yellow focus:ring-cn-yellow/20 bg-cn-surface w-full resize-y rounded-xl border px-3 py-2.5 text-sm outline-none focus:ring-2"
           data-live-cut-details></textarea>
       </label>
@@ -145,7 +148,7 @@
             error = '';
             step = 'confirm';
           }}
-          disabled={!reason}
+          disabled={!reason || detailsTooLong}
           data-live-cut-continue
         >
           {m.moderation_live_cut_continue_button()}

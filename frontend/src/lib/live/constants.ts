@@ -121,3 +121,10 @@ export const LIVE_BROADCASTER_QUIET_MS = 3 * LIVE_SEGMENT_MS;
 
 /** How much played media the viewer keeps behind its position, in ms, before trimming the buffer. */
 export const LIVE_PLAYER_KEEP_BEHIND_MS = 10_000;
+
+/**
+ * The longest `details` a moderator may send with a cut. MIRRORS `LIVE_CUT_DETAILS_MAX` of
+ * social-service (`lives/live.constants.ts`): the dialog refuses longer text itself, so the
+ * `400 LIVE_CUT_DETAILS_INVALID` of the server is never how a moderator learns the limit.
+ */
+export const LIVE_CUT_DETAILS_MAX = 500;

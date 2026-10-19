@@ -20,6 +20,8 @@
   import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
   import ModerationLiveBlock from '$lib/components/moderation/ModerationLiveBlock.svelte';
   import type { LiveCutResult } from '$lib/live/types';
+  import { liveStateLabels } from '$lib/moderation/liveState';
+  import { createLatestOnly } from '$lib/utils/latestOnly';
   import {
     listReports,
     reviewReport,
@@ -29,7 +31,6 @@
     deleteReportedComment,
     type ContentReport,
     type MutedUser,
-    type ReportedLiveState,
   } from '$lib/moderation/api';
   import {
     listHiddenPosts,
@@ -115,20 +116,29 @@
     }
   }
 
+  /** Overlapping loads (refresh, the reload after a cut) keep only the latest answer. */
+  const beginReportsLoad = createLatestOnly();
+
   async function loadReports() {
+    const isCurrent = beginReportsLoad();
     loadingReports = true;
     error = '';
     try {
-      reports = await listReports();
+      const fetched = await listReports();
+      if (!isCurrent()) {
+        Log.d('admin.moderation.loadReports', 'a newer load superseded this answer - ignored');
+        return;
+      }
+      reports = fetched;
       const ids = reports.flatMap((r) =>
         [r.reporterId, r.reportedUserId].filter((id): id is string => Boolean(id))
       );
       await resolveNames(ids);
     } catch (e) {
       Log.d('admin.moderation.loadReports failed', e);
-      error = m.moderation_load_reports_error();
+      if (isCurrent()) error = m.moderation_load_reports_error();
     } finally {
-      loadingReports = false;
+      if (isCurrent()) loadingReports = false;
     }
   }
 
@@ -354,12 +364,7 @@
     live: m.moderation_type_live(),
   });
 
-  const liveStateLabel: Record<ReportedLiveState, string> = $derived({
-    open: m.moderation_live_state_open(),
-    ended: m.moderation_live_state_ended(),
-    cut: m.moderation_live_state_cut(),
-    gone: m.moderation_live_state_gone(),
-  });
+  const liveStateLabel = $derived(liveStateLabels());
 
   /** A live was cut from a report row: say what the server did, then read the queue again. */
   async function handleLiveCut(result: LiveCutResult) {

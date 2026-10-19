@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import { initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
+import { LIVE_CUT_DETAILS_MAX } from '$lib/live/constants';
 import type { ReportedLive } from '$lib/moderation/api';
 import type { LiveCutResult } from '$lib/live/types';
 
@@ -200,6 +201,22 @@ describe('the cut', () => {
     q('[data-live-cut-confirm-button]')!.click();
     await settle();
     expect(cutLive).toHaveBeenCalledWith(LIVE_ID, 'other', 'looped a stolen video');
+  });
+
+  it('cannot continue with details over the cap, whatever put them there', () => {
+    render(openLive());
+    q('[data-moderation-live-cut]')!.click();
+    flushSync();
+    q('[data-live-cut-reason="other"]')!.click();
+    const details = q<HTMLTextAreaElement>('[data-live-cut-details]')!;
+    details.value = 'x'.repeat(LIVE_CUT_DETAILS_MAX + 1);
+    details.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    expect(q<HTMLButtonElement>('[data-live-cut-continue]')!.disabled).toBe(true);
+    details.value = 'x'.repeat(LIVE_CUT_DETAILS_MAX);
+    details.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    expect(q<HTMLButtonElement>('[data-live-cut-continue]')!.disabled).toBe(false);
   });
 
   it('cannot continue without a reason', () => {

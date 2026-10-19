@@ -75,7 +75,7 @@
   };
   /** The reason's label, or null for a code this build does not know (the sentence stands alone). */
   const liveCutReason = $derived(
-    isLiveCutNotif && notif.text in LIVE_CUT_REASON_LABEL
+    isLiveCutNotif && Object.hasOwn(LIVE_CUT_REASON_LABEL, notif.text)
       ? LIVE_CUT_REASON_LABEL[notif.text as ReportReason]()
       : null
   );

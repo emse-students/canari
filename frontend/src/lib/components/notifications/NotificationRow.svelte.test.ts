@@ -305,6 +305,12 @@ describe('NotificationRow for a live a moderator cut', () => {
     expect(target.querySelector('button')!.disabled).toBe(true);
   });
 
+  it('a reason that is an Object.prototype name is not a label either', () => {
+    const target = renderRow({ ...base, text: 'constructor' });
+    expect(target.textContent).toContain(m.notif_live_cut_text());
+    expect(target.textContent).not.toContain('constructor');
+  });
+
   it('a reason code this build does not know leaves the sentence alone', () => {
     const target = renderRow({ ...base, text: 'something_new' });
     expect(target.textContent).toContain(m.notif_live_cut_text());

@@ -2,7 +2,8 @@
   import { Copy, Scissors } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { copyId } from '$lib/utils/copyId';
-  import type { ReportedLive, ReportedLiveState } from '$lib/moderation/api';
+  import type { ReportedLive } from '$lib/moderation/api';
+  import { liveStateLabels } from '$lib/moderation/liveState';
   import type { LiveCutResult } from '$lib/live/types';
   import ModerationLiveCutDialog from './ModerationLiveCutDialog.svelte';
 
@@ -23,12 +24,7 @@
 
   let dialogOpen = $state(false);
 
-  const STATE_LABEL: Record<ReportedLiveState, () => string> = {
-    open: m.moderation_live_state_open,
-    ended: m.moderation_live_state_ended,
-    cut: m.moderation_live_state_cut,
-    gone: m.moderation_live_state_gone,
-  };
+  const stateLabel = $derived(liveStateLabels());
 
   /** Only a live that still has a row can be cut: `open`, or `ended` and not yet purged. */
   const cuttable = $derived(live.state === 'open' || live.state === 'ended');
@@ -52,7 +48,7 @@
         : 'bg-cn-border/40 text-text-muted'}"
       data-moderation-live-state
     >
-      {STATE_LABEL[live.state]()}
+      {stateLabel[live.state]}
     </span>
     {#if broadcasterName}
       <span class="text-text-main font-medium"
