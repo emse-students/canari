@@ -108,8 +108,66 @@ ceiling_ecosystem_from_ref() {
       local rest="${1#dependabot/}"
       printf '%s' "${rest%%/*}"
       ;;
+    # The lockfile refresh (`cargo-lock-refresh.sh`) names its branch `deps/lock-refresh/<ecosystem>/...`
+    # and carries Dependabot's commits, so its ecosystem is as known as Dependabot's own.
+    deps/lock-refresh/*)
+      local rest="${1#deps/lock-refresh/}"
+      printf '%s' "${rest%%/*}"
+      ;;
     *) ;;
   esac
+}
+
+# THE `updated-dependencies` BLOCKS OF DEPENDABOT'S COMMIT MESSAGES, ONE `name|update-type|version`
+# PER DEPENDENCY, read from stdin.
+#
+# ONE PARSER FOR TWO READERS: `dependency-ceiling.sh` (the CI check) and `cargo-lock-refresh.sh` (the
+# scheduled completion of a cargo bump) must agree on what an update IS, or the second could move a
+# crate the first never judged. Parsed AS BLOCKS, never as three independent lists: a grouped pull
+# request carries several, and an update Dependabot could not classify has no `update-type`, so
+# three lists pasted side by side would pair the wrong name with the wrong version
+# ([cicd](../../../docs/wiki/cicd.md#two-traps-in-reading-dependabots-own-commit-trailers)).
+#
+# DEPENDABOT YAML-QUOTES A NAME STARTING WITH `@`, so the quotes are stripped here, once - a `case`
+# on `@nestjs/*` against `"@nestjs/common"` matches nothing, which is how a first draft of the
+# ceiling merged the major it was written to refuse. The update type is reduced to `major`, `minor`
+# or `patch`, and is EMPTY when Dependabot wrote none (a requirement update, a Docker tag).
+ceiling_parse_updates() {
+  awk '
+    function flush() {
+      if (name == "") return
+      gsub(/^"|"$/, "", name)
+      print name "|" type "|" version
+    }
+    /^ *- dependency-name:/ {
+      flush()
+      name = $0; sub(/^ *- dependency-name: */, "", name); type = ""; version = ""
+      next
+    }
+    /^ *dependency-version:/ { version = $0; sub(/^ *dependency-version: */, "", version) }
+    /^ *update-type:/ { type = $0; sub(/^ *update-type: *version-update:semver-/, "", type) }
+    END { flush() }
+  '
+}
+
+# Does an update BREAK compatibility, as cargo and npm read a version? Exit 0 when it does.
+#
+# `update-type` names the semver FIELD that moved, and below 1.0 that is not compatibility: `^0.17`
+# does not match `0.20`, so a "minor" `0.x` bump is a major in all but name - #431, `webrtc 0.17.2 ->
+# 0.20.5`, moved every module of the facade crate. `0.0.x` gives even the patch field that meaning.
+# AN ABSENT OR UNKNOWN TYPE IS BREAKING: Dependabot writes none for "update the requirement to permit
+# the latest version" (#297, openmls 0.9.0), and unknown must be read as the worst case.
+#
+# THE CEILING ITSELF DOES NOT REFUSE ON THIS - a major that breaks the tree stops it compiling, and
+# the suite sees that. It is the UNATTENDED SECOND ACTOR, `cargo-lock-refresh.sh`, that refuses a
+# breaking update, because it writes lockfiles on a bump no person asked for; see that script.
+ceiling_update_is_breaking() { # <update-type> <proposed-version>
+  case "${1:-}" in
+    patch) case "${2:-}" in 0.0.*) return 0 ;; esac ;;
+    minor) case "${2:-}" in 0.*) return 0 ;; esac ;;
+    *) return 0 ;;
+  esac
+  return 1
 }
 
 # The declared major gap between dev and production, and what each gap has been PROVEN to

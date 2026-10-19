@@ -118,6 +118,10 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
+          # canari-only:begin
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # canari-only:end
         run: |
           set -euo pipefail
 
@@ -128,6 +132,77 @@ jobs:
             echo "armable=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          # canari-only:begin
+          # THE LOCKFILE REFRESH IS THE ONE PULL REQUEST FROM THE APP THAT IS ARMED (user,
+          # 2026-10-18; `cargo-lock-refresh.sh` opens it). The App is never a collaborator that can
+          # be asked, and "armed because the App wrote it" would be a hole the size of the
+          # repository, so this is a CLOSED allowlist read over the API - this job still checks out
+          # nothing, and every string below (branch, messages, file names) is DATA handed to `jq`,
+          # never to the shell. ALL must hold; an unreadable answer FAILS the run (`set -e`):
+          #   1. the branch is `deps/lock-refresh/cargo/dependabot-<n>`, and #<n> is Dependabot's
+          #      cargo pull request;
+          #   2. EVERY commit of #<n> is a SIGNED Dependabot commit - author login and noreply
+          #      address, committer `web-flow`, GitHub's signature verdict. A name is not an identity;
+          #   3. this pull request is #<n>'s commits, same messages, same order, re-committed by the
+          #      App (a cherry-pick re-signs nothing, which is why #<n> is what is verified), plus
+          #      ONE commit of the App's own on top;
+          #   4. every file is a `Cargo.toml` or a `Cargo.lock`, and the manifest change, line for
+          #      line, is the one Dependabot signed - so the App's commit can only have moved locks;
+          #   5. `CI passed` - not read here: auto-merge hands that to GitHub, as for everybody.
+          # A REFUSAL ALSO DISARMS: a push that breaks the allowlist after the arming must not
+          # inherit it. The threat model is in docs/wiki/cicd.md.
+          if [ "$AUTHOR" = 'canari-auto-merge[bot]' ]; then
+            refuse_app() {
+              echo "#$PR: $1 - not armed."
+              echo "armable=false" >> "$GITHUB_OUTPUT"
+              if [ "$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest --jq '.autoMergeRequest != null')" = 'true' ]; then
+                gh pr merge "$PR" --disable-auto --repo "$REPO"
+                echo "::warning::#$PR was armed and no longer satisfies the allowlist; auto-merge is disabled."
+              fi
+              exit 0
+            }
+            if ! [[ "$HEAD_REF" =~ ^deps/lock-refresh/cargo/dependabot-([1-9][0-9]{0,6})$ ]]; then
+              refuse_app "the App's branch is not a lockfile refresh"
+            fi
+            ORIG="${BASH_REMATCH[1]}"
+            dir="$(mktemp -d)"
+            commits='[.[] | {a: .author.login, e: .commit.author.email, c: .committer.login, v: .commit.verification.verified, m: .commit.message}]'
+            gh api "repos/$REPO/pulls/$ORIG" --jq '{u: .user.login, r: .head.ref}' > "$dir/orig.json"
+            gh api "repos/$REPO/pulls/$ORIG/commits?per_page=100" --jq "$commits" > "$dir/orig-commits.json"
+            gh api "repos/$REPO/pulls/$PR/commits?per_page=100" --jq "$commits" > "$dir/commits.json"
+            files='[.[] | {f: .filename, p: (if (.filename | test("(^|/)Cargo\\.toml$")) then .patch else null end)}]'
+            gh api "repos/$REPO/pulls/$ORIG/files?per_page=100" --jq "$files" > "$dir/orig-files.json"
+            gh api "repos/$REPO/pulls/$PR/files?per_page=100" --jq "$files" > "$dir/files.json"
+            verdict="$(jq -nr \
+              --slurpfile orig "$dir/orig.json" --slurpfile oc "$dir/orig-commits.json" --slurpfile mc "$dir/commits.json" \
+              --slurpfile of "$dir/orig-files.json" --slurpfile mf "$dir/files.json" '
+              def signed_dependabot: .a == "dependabot[bot]" and .e == "49699333+dependabot[bot]@users.noreply.github.com"
+                and .c == "web-flow" and .v == true;
+              def app: "canari-auto-merge[bot]";
+              def changed: [(.p // "") | split("\n")[] | select(test("^[-+]"))];
+              def manifests: [.[] | select(.f | test("(^|/)Cargo\\.toml$"))] | sort_by(.f);
+              def unreadable: any(.[]; .p == null);
+              def lines: map({f, d: changed});
+              $orig[0] as $o | $oc[0] as $oc | $mc[0] as $mc | $of[0] as $of | $mf[0] as $mf |
+              if ($o.u != "dependabot[bot]") or ($o.r | startswith("dependabot/cargo/") | not) then "its original is not a Dependabot cargo pull request"
+              elif ($oc | length) == 0 or ($oc | length) >= 100 or ($mc | length) >= 100 or ($mf | length) >= 100 or ($of | length) >= 100 then "a list is empty or longer than one page"
+              elif ($oc | all(signed_dependabot) | not) then "a commit of the original is not a signed Dependabot commit"
+              elif ($mc | length) != ($oc | length) + 1 then "it is not the original commits plus one"
+              elif ([$mc[:-1][] | .m] != [$oc[] | .m]) or ($mc[:-1] | all(.a == "dependabot[bot]" and .e == "49699333+dependabot[bot]@users.noreply.github.com" and .c == app) | not) then "its carried commits are not the original commits re-committed by the App"
+              elif ($mc[-1] | .a == app and .c == app | not) then "its last commit is not the App own"
+              elif ($mf | length) == 0 or ($mf | all(.f | test("(^|/)Cargo\\.(toml|lock)$")) | not) then "it changes a file that is not a Cargo.toml or a Cargo.lock"
+              elif ($mf | manifests | unreadable) or ($of | manifests | unreadable) then "a manifest diff is too large for the API to show"
+              elif ($mf | manifests | lines) != ($of | manifests | lines) then "its manifest change is not the one Dependabot signed"
+              else "ok" end')"
+            if [ "$verdict" != 'ok' ]; then
+              refuse_app "$verdict"
+            fi
+            echo "#$PR completes Dependabot's #$ORIG and changes nothing else - armable."
+            echo "armable=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # canari-only:end
 
           permission="$(gh api "repos/$REPO/collaborators/$AUTHOR/permission" --jq '.permission')"
           case "$permission" in

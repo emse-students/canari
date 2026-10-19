@@ -93,16 +93,7 @@ message="$messages"
 
 # Dependabot writes a machine-readable block into its commit message. It is the only description of
 # the update that is not prose.
-parsed="$(awk '
-  /^ *- dependency-name:/ {
-    if (name != "") print name "|" type "|" version
-    name = $0; sub(/^ *- dependency-name: */, "", name); type = ""; version = ""
-    next
-  }
-  /^ *dependency-version:/ { version = $0; sub(/^ *dependency-version: */, "", version) }
-  /^ *update-type:/ { type = $0; sub(/^ *update-type: *version-update:semver-/, "", type) }
-  END { if (name != "") print name "|" type "|" version }
-' <<< "$message")"
+parsed="$(ceiling_parse_updates <<< "$message")"
 
 if [ -z "$parsed" ]; then
   echo "::error::No commit on #$PR carries an updated-dependencies block, so nothing here can tell what it changes. Refusing to guess."
@@ -122,21 +113,18 @@ fi
 # not a semver comparison it can make - so this line printed an empty `()` for the very update that
 # cost production 33 minutes, which reads as a field nobody filled in rather than as a fact.
 update_kind() { # <update-type> <proposed-version>
-  case "$2" in
-    0.*) if [ "$1" = "minor" ]; then printf 'minor, and BREAKING below 1.0'; return; fi ;;
-  esac
+  if [ "$1" = "minor" ] && ceiling_update_is_breaking "$1" "$2"; then
+    printf 'minor, and BREAKING below 1.0'
+    return
+  fi
   printf '%s' "${1:-unclassified}"
 }
 
 refused=0
 while IFS='|' read -r name type version; do
   [ -z "$name" ] && continue
-  # DEPENDABOT YAML-QUOTES ANY NAME STARTING WITH `@`, so a scoped npm package arrives as
-  # `"@nestjs/common"`, quotes included. Matching without stripping them misses the entire scope -
-  # which is how a first draft of this ceiling merged the exact `@nestjs/common` major it was
-  # written to refuse.
-  name="${name%\"}"
-  name="${name#\"}"
+  # The quotes Dependabot puts around a scoped name (`"@nestjs/common"`) are stripped by
+  # `ceiling_parse_updates`, the one parser this and `cargo-lock-refresh.sh` share.
 
   # The VERSION is passed because one arm needs it: a datastore is refused only when the update
   # crosses the major production runs, a patch WITHIN a major being exactly what the digest pin

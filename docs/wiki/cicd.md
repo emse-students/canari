@@ -1285,6 +1285,48 @@ _"Je prefere blinder de test et faire les choses automatiquement qu'avoir une re
 n'arrive jamais"_). It was deleted on 2026-09-04 with the sweep, for the same reason: a notification
 about a decision nobody makes.
 
+### A Dependabot cargo bump that is incomplete by construction is completed and merged (WP-RUST-LOCK-AUTOMERGE, 2026-10-18)
+
+`frontend/mls-wasm` and `frontend/src-tauri` commit a `Cargo.lock` and consume `frontend/mls-core` (no lock, on purpose) by path. Dependabot's one pull request for an `mls-core/Cargo.toml` bump therefore leaves both locks stale and fails CI's `cargo metadata --locked` step. It was the last dependency update that could not merge unattended; the user decided on 2026-10-18 that a machine completes it and `CI passed` stays the only verdict. The one-workspace remedy (one `Cargo.lock` for `frontend/`) stays the structural fix and is not done.
+
+**Two halves, no new visible workflow** (the four-workflow rule holds; `shape.mjs` is green):
+
+| Half | Where | What it does |
+| --- | --- | --- |
+| Completing | job `cargo-lock-refresh` of `scheduled.yml` (the daily 09:00 UTC slot it shares with `stores`; by hand: dispatch job `cargo-lock-refresh`, not part of `all`) running `.github/scripts/cargo-lock-refresh.sh` | for each open Dependabot cargo pull request `#n` whose commits are all signed Dependabot commits, whose files are all manifests and lockfiles, and which leaves a committed lock stale: builds `deps/lock-refresh/cargo/dependabot-<n>` from `main`, cherry-picks Dependabot's commits (author and trailers kept, committer the App), adds ONE App commit running `cargo update -p <crate> --precise <version>` in each stale lock, pushes and opens a pull request AS THE APP, closes `#n` with a pointer |
+| Arming | a `# canari-only:` region in `arm-auto-merge.yml`'s authorisation step | arms an App-authored pull request only if every check of the allowlist below holds, and DISARMS one that stops holding |
+
+**The arming allowlist, every item read over the API (the job still checks nothing out):**
+
+1. the branch matches `^deps/lock-refresh/cargo/dependabot-<n>$`, and `#n` is a `dependabot[bot]` pull request from a `dependabot/cargo/` branch;
+2. every commit of `#n` is a signed Dependabot commit: author login `dependabot[bot]` AND address `49699333+dependabot[bot]@users.noreply.github.com` AND committer `web-flow` AND `verification.verified: true` - the shape of every real one (read off #296 on 2026-10-19). A NAME is not an identity: `user.name = dependabot[bot]` costs nothing, and a `github-actions[bot]` merge commit is signed by `web-flow` too (#296 carries one);
+3. this pull request is `#n`'s commits - same messages, same order, author Dependabot, committer the App - plus ONE commit authored and committed by the App. A cherry-pick re-signs nothing, which is why `#n`'s commits are the ones whose signatures are verified;
+4. every file is a `Cargo.toml` or a `Cargo.lock`, and the MANIFEST change, compared line for line (the `+`/`-` lines of every `Cargo.toml` patch, so another base's context and line numbers do not matter), is the one Dependabot signed. So the App's commit can only have moved lockfiles, and a lockfile cannot name a crate or a source its manifests do not - `--locked` and the registry checksums hold it to them;
+5. `CI passed`, which GitHub reads, as for everybody - including `dependency-ceiling`, whose `if:` now covers every `deps/lock-refresh/` branch (the author there is the App, so a ceiling that read only `dependabot[bot]` would let exactly this one past).
+
+An unreadable answer fails the run (`set -e`); a list longer than one page is refused rather than paginated.
+
+**What the refresh refuses, and how a refusal is seen.** A commit that is not a signed Dependabot commit; a file that is not a manifest or a lockfile; a crate of the Tauri runtime (`tauri`, `tauri-*`, `wry`, `tao`), named by the trailer OR moved by the refresh in any lock (a runtime bump is a native work package owed a device reading); a BREAKING update (`ceiling_update_is_breaking` in `lib/ceiling.sh`: a major, a `0.x` minor, a `0.0.x` patch, or no `update-type` at all, which is how Dependabot writes a requirement update); a dependency `lib/ceiling.sh` has no gate for; a trailer whose name or version is not a crate name and a full semver; a `cargo update` that fails; a lock still failing `cargo metadata --locked` after it; commits that do not cherry-pick onto `main`; a refresh pull request a person closed. **The breaking refusal is this path's alone**: the ceiling itself still decides nothing on semver, because a break stops the suite on its own; the unattended second actor is the one that must not write lockfiles for a bump nobody asked for. Each refusal is written ONCE on the pull request (a marker) and listed in ONE issue, _Dependabot cargo updates the lockfile refresh refused_ - found by its exact title, updated each run, closed once nothing is refused. That is the split `cargo-unreachable` already uses: **the issue says there is work; a red run says the mechanism is broken** (an unreadable API, a cargo that cannot answer, a refused push or pull request).
+
+**Idempotence is durable state, not a clock.** The branch name derives from `#n`, so a refresh pull request that exists decides everything (open or merged: close `#n`; closed by a person: refused, nothing reopened). A run that died after its push and before its pull request leaves a branch the next run overwrites, with `--force-with-lease` on the SHA it just read. A run that died before closing `#n` is finished by the next one. The job has its own concurrency group, so two runs never both read "no pull request yet".
+
+**Never a push onto Dependabot's branch** (refused ten times out of ten, see above): the original is closed with a pointer, and Dependabot then stops proposing that version.
+
+#### The threat model - this mechanism ARMS MERGES
+
+| Who | What they could try | What stops it |
+| --- | --- | --- |
+| A fork contributor | open a pull request on a `deps/lock-refresh/...` branch | `arm-auto-merge.yml` only considers branches of THIS repository, and only the App's login (unforgeable: it is the pull request's author as GitHub records it) |
+| Anybody with push access | push a commit onto an armed refresh pull request | the `synchronize` run re-evaluates the allowlist and DISARMS it. Such a person can already open and arm a pull request of their own, so this protects the allowlist's meaning, not a boundary |
+| A lookalike commit | author name `dependabot[bot]`, or a signed commit of another bot | the login, the address, the committer and GitHub's signature verdict are all required, by the refresh AND by the arming |
+| A hostile title, branch, body or trailer | shell or option injection | no `${{ }}` of an untrusted string in any `run:`; the branch is matched against an anchored regex before use and the head is fetched as `refs/pull/<n>/head`; pull-request numbers must be digits; crate names must start with a letter and versions be full semver before they reach cargo or a regex; the title is stripped to printable characters and passed as ONE argument; the arming compares strings inside `jq`, never in the shell; nothing is `eval`ed |
+| An upstream crate | a malicious release Dependabot proposes | out of scope here, as for every Dependabot update: `CI passed`, the ceiling, and the fact that a merge does not deploy |
+| The job's credentials | the App token sits in the job while cargo reads Dependabot's manifests | `cargo metadata` and `cargo update` resolve and fetch, they run no build script; the token is minted with `contents: write` and `pull-requests: write` ONLY, and the issue is written with `GITHUB_TOKEN` (`issues: write`), so the App needs no Issues permission |
+
+**Tests**, all offline: `tests/cargo-lock-refresh.test.sh` (a real git with a bare remote serving `refs/pull/<n>/head`, a fake `cargo`, and a STATEFUL fake `gh` whose pull requests and issues live in JSON, every `--jq` run by the real jq, commit identities derived from the commits the way GitHub derives them), `tests/arm-auto-merge-app.test.sh` (extracts the YAML's own `run:` text and runs it against API-shaped fixtures), and `tests/ceiling.test.sh` (the shared trailer parser and the breaking predicate). `shape.mjs` cuts the `# canari-only:` region before comparing the four copies of `arm-auto-merge.yml`, so every edit outside it still forks.
+
+**Unmeasured until the first live run:** that the API resolves the App's commits (committer of the cherry-picks, author and committer of the lock commit, address `<app user id>+canari-auto-merge[bot]@users.noreply.github.com`) to the login `canari-auto-merge[bot]`. If it does not, the refresh pull request is NOT armed - the safe direction - and the arming log says which check refused it.
+
 ### Every update merges onto `main`, and what protects production is that a merge does not deploy
 
 For one day (2026-09-02) all six blocks of `dependabot.yml` carried `target-branch: "dev"`, asked by

@@ -343,6 +343,8 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/smoke-login.test.mjs
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
 	@bash .github/scripts/tests/cargo-blocked-update-report.test.sh
+	@bash .github/scripts/tests/cargo-lock-refresh.test.sh
+	@bash .github/scripts/tests/arm-auto-merge-app.test.sh
 	@bash .github/scripts/tests/github-alerts-report.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh

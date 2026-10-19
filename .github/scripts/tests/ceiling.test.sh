@@ -155,7 +155,7 @@ expect_refused postgres "$((pg_major + 1))-alpine" "a major crossing arrives as 
 expect_refused postgres "$((pg_major + 1))-alpine" "an absent ecosystem must not be read as permission" ""
 
 echo "the branch Dependabot pushed states its own ecosystem:"
-for ref_case in   "dependabot/cargo/apps/chat-gateway/redis-1.7.0|cargo"   "dependabot/docker_compose/infrastructure/postgres-18-alpine|docker_compose"   "dependabot/github_actions/actions/checkout-7|github_actions"   "fix/a-human-branch|"; do
+for ref_case in   "dependabot/cargo/apps/chat-gateway/redis-1.7.0|cargo"   "dependabot/docker_compose/infrastructure/postgres-18-alpine|docker_compose"   "dependabot/github_actions/actions/checkout-7|github_actions"   "deps/lock-refresh/cargo/dependabot-12|cargo"   "fix/a-human-branch|"; do
   ref="${ref_case%%|*}"; want="${ref_case##*|}"
   got=$(ceiling_ecosystem_from_ref "$ref")
   if [ "$got" = "$want" ]; then
@@ -205,11 +205,51 @@ expect_allowed node "26-alpine"
 # the table's contract: it is given a BARE name.
 echo "the table is given a bare name:"
 if [ -z "$(gate_for_dependency '"postgres"' '15-alpine')" ]; then
-  echo "  ok   a quoted name does not match, so the caller's stripping is load-bearing and tested there"
+  echo "  ok   a quoted name does not match, so ceiling_parse_updates' stripping is load-bearing (tested below)"
 else
   echo "  FAIL a quoted name matched; the table's contract is now ambiguous"
   failures=$((failures + 1))
 fi
+
+# THE ONE PARSER, read by `dependency-ceiling.sh` and `cargo-lock-refresh.sh` alike. The fixture is a
+# grouped commit (two blocks) whose second block has NO `update-type`, plus a quoted scoped name -
+# the three traps the parser exists for.
+echo "the updated-dependencies blocks parse as blocks:"
+parsed_want=$'serde|patch|1.0.5\n@nestjs/common||12.0.1'
+parsed_got=$(ceiling_parse_updates <<'MSG'
+chore(deps): bump two
+
+---
+updated-dependencies:
+- dependency-name: serde
+  dependency-version: 1.0.5
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+- dependency-name: "@nestjs/common"
+  dependency-version: 12.0.1
+  dependency-type: direct:production
+...
+MSG
+)
+if [ "$parsed_got" = "$parsed_want" ]; then
+  echo "  ok   two blocks, the absent type stays empty and the quotes are stripped"
+else
+  echo "  FAIL parsed as: $parsed_got"
+  failures=$((failures + 1))
+fi
+
+echo "what an unattended actor reads as breaking:"
+for b_case in "major|2.0.0|y" "minor|0.20.5|y" "patch|0.0.9|y" "|0.9.0|y" "weird|1.2.3|y" \
+  "minor|1.4.0|n" "patch|1.0.5|n" "patch|0.17.3|n"; do
+  IFS='|' read -r b_type b_ver b_want <<<"$b_case"
+  if ceiling_update_is_breaking "$b_type" "$b_ver"; then b_got=y; else b_got=n; fi
+  if [ "$b_got" = "$b_want" ]; then
+    echo "  ok   '${b_type}' -> $b_ver: breaking=$b_got"
+  else
+    echo "  FAIL '${b_type}' -> $b_ver read as breaking=$b_got"
+    failures=$((failures + 1))
+  fi
+done
 
 echo
 if [ "$failures" -ne 0 ]; then
