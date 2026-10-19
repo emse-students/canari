@@ -133,3 +133,14 @@ describe('CreatePostForm - closing keeps the media', () => {
     expect(second.target.querySelectorAll('[role="listitem"]')).toHaveLength(0);
   });
 });
+
+describe('CreatePostForm - the strip of picked files', () => {
+  it('draws "IMG_1" at index 1 and "IMG_" at index 11 as two tiles (their name+index keys collided)', async () => {
+    const { target } = await open();
+    for (let i = 0; i < 12; i++) {
+      const name = i === 1 ? 'IMG_1' : i === 11 ? 'IMG_' : `p${i}`;
+      pick(target, new File(['x'], name, { type: 'image/png' }));
+    }
+    expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(12);
+  });
+});
