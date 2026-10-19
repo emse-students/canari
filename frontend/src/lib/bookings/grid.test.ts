@@ -3,6 +3,7 @@ import { m } from '$lib/paraglide/messages';
 import type { ResourceSlots, SlotUnit } from './api';
 import {
   bookingUnitLimit,
+  dragRange,
   formatTimeRange,
   freeRunFrom,
   gridOpeningDate,
@@ -235,5 +236,47 @@ describe('a night window still running after midnight (Saturday 00:15, Paris)', 
   it('opens on today once the night window has ended', () => {
     const read = serverRead(slotsReadRange(saturday, 7));
     expect(gridOpeningDate(read, saturday, at('2026-11-07T01:00:00Z'))).toBe(saturday);
+  });
+});
+
+describe('dragRange', () => {
+  const column = [
+    unit('09:00', 30),
+    unit('09:30', 30),
+    unit('10:00', 30),
+    unit('10:30', 30, 'blocked'),
+    unit('11:00', 30),
+    unit('11:30', 30),
+  ];
+
+  it('grows from the pressed row toward the pointer, downward and upward', () => {
+    expect(dragRange(column, 0, 2, 4)).toEqual({ first: 0, count: 3 });
+    expect(dragRange(column, 2, 0, 4)).toEqual({ first: 0, count: 3 });
+  });
+
+  it('is one unit while the pointer has not left the pressed row', () => {
+    expect(dragRange(column, 1, 1, 4)).toEqual({ first: 1, count: 1 });
+  });
+
+  it('never covers more than one booking may', () => {
+    expect(dragRange(column, 0, 2, 2)).toEqual({ first: 0, count: 2 });
+    expect(dragRange(column, 2, 0, 2)).toEqual({ first: 1, count: 2 });
+  });
+
+  it('stops before a taken unit, however far the pointer went', () => {
+    expect(dragRange(column, 1, 5, 6)).toEqual({ first: 1, count: 2 });
+    expect(dragRange(column, 5, 0, 6)).toEqual({ first: 4, count: 2 });
+  });
+
+  it('stops at a gap between two windows and at a row with no unit', () => {
+    const gapped = [unit('09:00', 30), unit('11:00', 30), null, unit('12:00', 30)];
+    expect(dragRange(gapped, 0, 1, 4)).toEqual({ first: 0, count: 1 });
+    expect(dragRange(gapped, 3, 0, 4)).toEqual({ first: 3, count: 1 });
+  });
+
+  it('selects nothing when the pressed row is not a free unit', () => {
+    expect(dragRange(column, 3, 5, 4).count).toBe(0);
+    expect(dragRange([null, unit('09:00', 30)], 0, 1, 4).count).toBe(0);
+    expect(dragRange(column, 0, 2, 0).count).toBe(0);
   });
 });

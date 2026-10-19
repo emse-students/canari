@@ -43,6 +43,8 @@
     space: BookerSpace;
     resource: BookerResource;
     run: SlotUnit[];
+    /** How many of `run`'s units the range starts with: a drag over the grid already chose its length. */
+    initialCount?: number;
     /** Offered to whoever may mark the range unavailable instead. */
     onBlockInstead?: () => void;
     /**
@@ -56,12 +58,21 @@
     onClose: (changed: boolean) => void;
   }
 
-  let { space, resource, run, onBlockInstead, windowNote, onReread, onClose }: Props = $props();
+  let {
+    space,
+    resource,
+    run,
+    initialCount = 1,
+    onBlockInstead,
+    windowNote,
+    onReread,
+    onClose,
+  }: Props = $props();
 
   const items = $derived(space.items);
   const hidden = $derived(new Set(space.hiddenItemIds));
 
-  let count = $state(1);
+  let count = $state(untrack(() => Math.max(1, Math.min(initialCount, run.length))));
   let participants = $state<Person[]>([]);
   let onBehalf = $state(false);
   let holder = $state<Person | null>(null);

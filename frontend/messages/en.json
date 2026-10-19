@@ -3867,6 +3867,7 @@
   "bookings_day_empty": "Nothing is offered that day.",
   "bookings_grid_caption": "Slots of {space}",
   "bookings_grid_time_header": "Time",
+  "bookings_grid_drag_hint": "Drag across the grid (long-press on mobile) to pick several slots.",
   "bookings_cell_free": "Free",
   "bookings_cell_booked": "Taken",
   "bookings_cell_mine": "My booking",
