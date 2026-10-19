@@ -258,11 +258,15 @@
      `--z-critical`, which a confirmation holds. */
   --z-toast: 310;
 
-  /* Interrupts everything below: a confirmation, the call UI. Nothing decorative may be here. */
+  /* Interrupts everything below: a confirmation. Nothing decorative may be here. */
   --z-critical: 320;
-  /* The incoming-call notice, which must clear even the call UI - it is how a second call is
-     answered while the first one is on screen. */
-  --z-call-notice: 340;
+  /* The full-screen call, OVER a confirmation, decided 2026-10-19: both used to share 320, so DOM
+     order picked the winner. A call is the thing the reader is doing; a confirmation raised behind
+     it waits (its promise with it) until the call is minimised or over. Below it on purpose: the
+     PIN lock (`--z-modal`), which the call never covers - while the lock is up the call is the
+     banner (`callView.showsFullScreen`). A minimised call is a row of the banner column, in flow,
+     and needs no rung. (The incoming-call toast's 340 went with the toast the same day.) */
+  --z-call: 330;
 
   /* Follows the pointer and is never interactive, so it may sit over anything without trapping it. */
   --z-tooltip: 400;

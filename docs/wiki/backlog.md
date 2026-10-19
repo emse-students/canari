@@ -1058,6 +1058,30 @@ enforced only by the client. Acceptable while group calls are off; WP-C11 must d
 block refuses the call or only drops that member
 ([calls](frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
 
+### P1 (blocks `CALLS_COMPILED`, not dev) - a call does not survive the app leaving the screen on either phone (2026-10-19)
+
+The web half is done (full screen + top banner, timer from timestamps, Media Session, one audio
+sink, a log line per background transition). What only native code can do, each a work package of
+its own ([calls](frontend/modules/calls.md#the-call-in-the-background-2026-10-19)):
+
+- **WP-C-BG-A (Android)**: a foreground service of type `phoneCall` (Android 14: plus
+  `FOREGROUND_SERVICE_PHONE_CALL`, or `microphone` + `FOREGROUND_SERVICE_MICROPHONE`), started from
+  the web when the call reaches `incall` and stopped at `idle`, carrying the ONGOING `CallStyle`
+  notification (name, chronometer from `connectedAt`, hang-up action). Without it Android 9+ hands a
+  backgrounded app's microphone SILENCE and the WebView's timers are throttled. Plus the real audio
+  route (`AudioManager.MODE_IN_COMMUNICATION`, `setCommunicationDevice` for speaker/earpiece/Bluetooth)
+  in place of the label-matched `setSinkId`.
+- **WP-C-BG-I (iOS)**: report every call (outgoing and answered in-app, not only rung) to CallKit
+  (`CXProvider` / `CXCallController`) and configure `AVAudioSession` `.playAndRecord` / `.voiceChat`,
+  with an `audio` (or `voip`) background mode. With none of it, as today, the app is suspended
+  seconds after it leaves the screen and WKWebView stops capture when the page is hidden: the call
+  goes silent, then the peer connection drops. The `voip` mode is one of the five switches and
+  App Review refused it once (2.5.4), so this rides the revival commit.
+- **Owed on hardware before either is written**: the readings the new log lines make possible -
+  `[Call] app hidden ... mic=... voice=...`, `the system took the microphone`, `the voice was paused
+  while hidden` - on the Mi 9T and the iPhone with the screen locked for 60 s, so the native work
+  starts from what each engine actually did.
+
 ### P2 - what made the profile fetches fail on that device at that moment
 
 Owed: the DENOMINATOR (the `(failed/attempted lookups failed this session, X%)` suffix on every

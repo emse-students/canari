@@ -403,6 +403,66 @@ describe('a peer-to-peer call, client side', () => {
  * callee inside the invite; these tests shrink it to a few milliseconds and wait for the timer as
  * an EVENT - registered before the wait, shorter than it - never asserting a wall clock.
  */
+describe('what the call UI reads: the connected moment', () => {
+  it('stamps connectedAt once, on the first connected, and a recovery does not restart it', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    const pc = FakePeerConnection.instances[0];
+    expect(get(service.connectedAt)).toBeNull();
+
+    pc.setConnection('connected');
+    const first = get(service.connectedAt);
+    expect(first).not.toBeNull();
+    expect(get(service.callState)).toBe('incall');
+
+    pc.setConnection('disconnected');
+    pc.setConnection('connected');
+    // A recovery does not restart the timer.
+    expect(get(service.connectedAt)).toBe(first);
+
+    service.endCall();
+    expect(get(service.callState)).toBe('ended');
+    expect(get(service.endedAt)).not.toBeNull();
+  });
+});
+
+describe('a second call while one is up', () => {
+  it('does not ring over the call in progress, sends nothing for it, and says why', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await service.handleCallSignal(
+      'other@example.org',
+      'group-2',
+      {
+        callId: 'room-2',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-9',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(get(service.callState)).toBe('calling');
+    expect(service.currentCallId).toBe('room-1');
+    expect(service.incomingCallerId).toBeNull();
+    expect(fakeMls.sendMessage).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(appendLog)
+        .mock.calls.map((c) => c[0])
+        .join(' ')
+    ).toContain('invite room-2 in group-2 not rung - busy');
+  });
+});
+
 describe('the ring window, both sides', () => {
   // The window is a timer: fake it, and step past it. `setTimeout` only, so the harness's own
   // microtask and macrotask yields still run.

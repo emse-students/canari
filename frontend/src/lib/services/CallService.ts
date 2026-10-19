@@ -195,6 +195,16 @@ export class CallService {
   public localStreamStore = writable<MediaStream | null>(null);
   public isMuted = writable<boolean>(false);
   public isVideoOff = writable<boolean>(false);
+  /**
+   * When the media path FIRST reached `connected` (epoch ms), or null before. The call UI derives its
+   * timer from this one timestamp (`utils/callClock.ts`) rather than counting ticks, so a frozen
+   * background tab or a throttled WebView reads the right duration the moment it paints again, and
+   * a transient `disconnected` -> `connected` does not restart it. `incall` is not the moment: the
+   * callee enters `incall` at the tap, seconds before any media flows.
+   */
+  public connectedAt = writable<number | null>(null);
+  /** When the call reached `ended` (epoch ms): the summary shows a duration that no longer runs. */
+  public endedAt = writable<number | null>(null);
 
   private chatNotifier: CallChatNotifier | null = null;
 
@@ -274,7 +284,15 @@ export class CallService {
         );
         return;
       }
-      if (get(this.callState) !== 'idle') return;
+      if (get(this.callState) !== 'idle') {
+        // BUSY: a second call does not ring over the one in progress, and nothing is sent for it.
+        // A hangup would reach the whole conversation - our own other devices included, which are
+        // free to answer it - so this device stays out of it; the caller's ring window decides.
+        appendLog(
+          `[Call] invite ${callMsg.callId} in ${groupId} not rung - busy (state=${get(this.callState)} call=${this.currentCallId})`
+        );
+        return;
+      }
       // An invite with no window comes from a build before the ring window existed: it would
       // ring here for as long as nobody touched it. Calls are dev-only, so it is refused, named.
       const ringTimeoutMs = callMsg.ringTimeoutMs ?? 0;
@@ -517,6 +535,7 @@ export class CallService {
     // Show the "ended" summary screen briefly (1.5 s) so the user sees the call
     // duration and result before the overlay disappears (P4).
     if (get(this.callState) === 'incall' || get(this.callState) === 'calling') {
+      this.endedAt.set(Date.now());
       this.callState.set('ended');
       setTimeout(() => {
         if (get(this.callState) === 'ended') {
@@ -612,6 +631,8 @@ export class CallService {
 
     this.remoteStream.set(null);
     this.remoteStreams.set(new Map());
+    this.connectedAt.set(null);
+    this.endedAt.set(null);
   }
 
   /**
@@ -1406,6 +1427,7 @@ export class CallService {
       appendLog(`[Call] connectionState=${state}`);
       if (state === 'connected') {
         if (get(this.callState) !== 'idle') this.callState.set('incall');
+        if (get(this.connectedAt) === null) this.connectedAt.set(Date.now());
         void pc
           .getStats()
           .then((stats) => appendLog(`[Call] selected path ${describeSelectedPair(stats)}`))
