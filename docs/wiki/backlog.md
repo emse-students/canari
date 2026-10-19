@@ -214,6 +214,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
 | **send the DSI the log-retention request** (the host's logs and security tooling: each kept 90 days at most, as the privacy policy promises) - the text is ready, in French | 1 e-mail | [dsi-log-retention-request](infrastructure/dsi-log-retention-request.md) |
 | **decide whether a container whose live log is past 60 days is RECREATED unattended** by the daily `log-retention` job (today it only goes red and a human recreates it); it is a production restart, of postgres and redis included | 1 decision | [logging](infrastructure/logging.md#the-90-day-ceiling-2026-10-16) |
+| **decide whether a video filmed from the post composer's camera becomes a CanaReel** (A keep, B reel, C ask; recommended B) | 1 decision | [the entry](#decision-for-the-user---a-video-filmed-from-the-post-composer-is-a-post-or-a-canareel-2026-10-19) |
 | **decide the WebCrypto checkpoint seal** (design only) | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
@@ -299,6 +300,14 @@ searches), `HEAD` content-length.
 ## P3 - The reel viewer has no like control: a keyboard or screen-reader member cannot like a reel there (#2113, 2026-10-19, a decision for the user)
 
 The double tap that likes a reel (#2113) is a pointer gesture only; the viewer draws no heart or reaction button, so a keyboard or VoiceOver/TalkBack member must close it and use the card's picker, and a like given there is also taken back only from the card. Decide whether the viewer gets a reaction control (Instagram's right-hand rail) or stays as it is. [reels](frontend/modules/reels.md#a-double-tap-on-a-reel-likes-it-2026-10-19)
+
+## Decision for the user - a video filmed from the post composer is a post or a CanaReel (2026-10-19)
+
+Reported: "+" then the camera publishes differently from swiping to the camera. It does by D-camera (retention by destination): the composer's take is a `kind='post'` video kept like any post, the tab's a `kind='reel'` deleted at 30 days. The table is on [reels](frontend/modules/reels.md#the-two-ways-into-the-camera-and-what-each-publishes-2026-10-19). Options: **(A)** keep it (nothing to build; the report's 360x480 post came from the system camera of an app older than `v1.2.9`, already gone); **(B)** a video FILMED in the composer's camera goes to the reel publish step with the composer's text as caption, a photo still comes back to the composer, a gallery video stays a post, the post EDITOR's camera keeps attaching - one camera, one behaviour, but those videos are then deleted at 30 days; **(C)** the composer offers "Publier comme CanaReel" when its only content is one filmed video. Recommendation: **B**, since a member reads the camera as one place; it needs the user's yes because it deletes what A keeps.
+
+## P3 - iOS: the system theme does not follow a live switch of the phone's theme (2026-10-19)
+
+The window override pins `prefers-color-scheme` to the page's own command, so in the `system` preference the iOS app reads the phone at start only (true since 2026-09-30; made explicit by the camera fix). Following it live needs native to post the screen's trait style to the page. [android-ios-parity](frontend/android-ios-parity.md#the-system-theme-on-ios-is-read-at-start-only)
 
 ## P3 - Bookings: a refused block names only a count (review of #2035, 2026-10-18, not built)
 

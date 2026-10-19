@@ -159,6 +159,20 @@ element only ever sees one stream. Pinned by `CameraScreen.svelte.test.ts` (iden
 its own stream rather than installing it - a fact recorded at the request, never a delay
 (`reels/cameraSession.svelte.ts`, pinned by its test).
 
+**The camera never changes the page's theme (iPhone, user report 2026-10-19).** `CameraScreen`
+holds the native status bar at light icons (`themeStore.holdNativeBar('dark')`), and on iOS that
+reaches `CanariApplyTheme`, which sets the WINDOW's `overrideUserInterfaceStyle` - and WKWebView's
+`prefers-color-scheme` follows the window. In the default `system` preference on a light phone the
+store took that echo for the phone turning dark, applied it, and its release then posted the echoed
+dark back: the app went dark on opening the camera (the tab and every composer's overlay alike) and
+stayed dark until a restart. Nothing was written to the preference, so a cold start came back
+right. Android's bridge only sets the bar icons and the browser has no bridge, so neither was
+touched. Fix: once a theme has reached the iOS shell, a change of that query is the page's own
+command, never the OS (`colorSchemeIsOwnCommand`, `themeStore.svelte.ts`). Pinned by
+`themeStore.test.ts` and `CameraScreen.svelte.test.ts` (an iOS shell stub that echoes the window
+style into the media query; both fail without the fix). What it leaves:
+[android-ios-parity](../android-ios-parity.md#the-system-theme-on-ios-is-read-at-start-only).
+
 **Read on both phones through a real swipe from the feed (2026-10-02).** Mi 9T, through harness row
 REEL-1: live in 1211 ms, 720x1280 from `camera 0, facing back`, 30 fps, torch offered, and the track
 ended once the swipe back reached `/posts`. iPhone 12 (iOS 27.0.1), through the WebKit bridge: live,
@@ -299,6 +313,35 @@ decorations into a WebP before the normal archive-media upload. It deliberately 
 as an ordinary post: the server contract defines a reel as exactly one video with a duration, so a
 photo must not be disguised as a reel. Video decorations use the same editor and are rendered into a
 local MediaRecorder stream before the existing H.264/AAC preparation path.
+
+## The two ways into the camera, and what each publishes (2026-10-19)
+
+**User report, relayed 2026-10-19: "+" then the camera does something different from swiping to
+the camera.** It does, and by decision: D-camera (user, 2026-10-11) keeps retention by DESTINATION,
+so ONE camera (`ReelCapture` over `CameraScreen`) feeds two publications. The production post that
+prompted the report (2026-10-19 08:09 UTC: `kind='post'`, one 360x480 video, no `durationMs`) is
+neither of today's paths: 360x480 portrait is the iOS SYSTEM camera's medium quality, reached by the
+`<input capture>` the post composer carried until D-camera (#1859, first stable `v1.2.9`) - so an app
+older than `v1.2.9`, or Safari's file sheet (a web page cannot remove its "take a video"). Inferred
+from the frame size; the publishing session's client version would settle it.
+
+| | Swipe from the feed (`/camera` tab) | "+" -> composer -> "Caméra" chip |
+| --- | --- | --- |
+| Component | `routes/camera` -> `ReelCapture destination="feed"` | `PostComposerBar` -> `CameraOverlay` -> `ReelCapture destination="post"` |
+| Capture | the same: front lens, the preview's crop, 90 s ring from `reel-limits` | the same |
+| Microphone | with the lens: refused = no camera | asked apart: refused = photos only |
+| Gallery tile / sound removal | yes / yes | no (the composer has its own "Photo/vidéo") / no |
+| After the review | "Suivant" -> `ReelPublishSheet`: caption + identity only | the take is handed back as a FILE: text, identity, poll, form, event, schedule, other media |
+| Preparation | `prepareVideoForUpload`, `feed` profile (720p) | the same, through `preparePostMedia` |
+| Upload class | `reel-pending` -> `reel` (30 days) | the post class |
+| `POST /api/posts` | `kind: 'reel'`, `durationMs` | `kind: 'post'`, no duration |
+| In the feed | 9:16 box, opens the reel viewer, listed by `allReels` | the file's ratio, opens the media viewer, not a reel |
+| Lifetime | deleted at 30 days with comments and reactions | kept like any post |
+| A PHOTO | an ordinary post from both | the same |
+
+**Whether a video FILMED from the composer should become a CanaReel is the USER's decision,
+not built** - it reverses D-camera's retention by destination and would delete those videos at 30
+days. The options and the recommendation: [backlog](../../backlog.md#decision-for-the-user---a-video-filmed-from-the-post-composer-is-a-post-or-a-canareel-2026-10-19).
 
 ## Publishing (R3, on C2 and C3)
 
