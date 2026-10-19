@@ -25,13 +25,24 @@
     exportCalendarMonth,
     DEFAULT_EXPORT_OPTIONS,
     VIGNETTE_MAX,
+    CELL_BORDER_WIDTHS,
+    CELL_BORDER_COLORS,
     BLUR_MAX_PX,
     CALENDAR_CONTAINER_HEIGHT,
     CALENDAR_CONTAINER_WIDTH,
     fileToDataUrl,
+    type CalendarExportFormat,
     type CalendarExportOptions,
   } from '$lib/utils/calendarExport';
-  import { ChevronLeft, ChevronRight, FileDown, ImagePlus, X, RotateCcw } from '@lucide/svelte';
+  import {
+    ChevronLeft,
+    ChevronRight,
+    FileDown,
+    FileImage,
+    ImagePlus,
+    X,
+    RotateCcw,
+  } from '@lucide/svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import { paletteFromImage } from '$lib/calendar/sheetPalette';
   // The sheet's two display faces, loaded by the ONE page that renders it. `calendarExport` is also
@@ -40,6 +51,7 @@
   import '@fontsource/chewy/400.css';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { showToast } from '$lib/stores/toast.svelte';
 
   // ── Month navigation ─────────────────────────────────────────────
   let focusDate = $state(new Date());
@@ -153,21 +165,42 @@
     previewContainerWidth > 0 ? previewContainerWidth / CALENDAR_CONTAINER_WIDTH : 0
   );
 
-  // ── PDF export ───────────────────────────────────────────────────
-  let exporting = $state(false);
+  // ── Cell border ──────────────────────────────────────────────────
+  /** The label of each frame width and ink, in the order the constants list them. */
+  const borderWidthLabel = {
+    0: m.calendar_export_border_none,
+    1: m.calendar_export_border_thin,
+    2: m.calendar_export_border_medium,
+    3: m.calendar_export_border_thick,
+  } as const;
+  const borderColorLabel = {
+    dark: m.calendar_export_border_dark,
+    light: m.calendar_export_border_light,
+  } as const;
 
-  async function handleExport() {
+  // ── PDF / PNG export ─────────────────────────────────────────────
+  /** The format being generated, or null. One at a time: both rasterise the same offscreen sheet. */
+  let exporting = $state<CalendarExportFormat | null>(null);
+
+  /**
+   * Saves the month as `format`. Both formats go through the ONE render path in
+   * `exportCalendarMonth`, so the PNG is the PDF's sheet, never a second layout.
+   */
+  async function handleExport(format: CalendarExportFormat) {
     if (exporting) return;
-    exporting = true;
+    exporting = format;
     try {
-      await exportCalendarMonth(events, focusDate, opts);
+      await exportCalendarMonth(events, focusDate, opts, format);
+    } catch (err) {
+      Log.d('calendar.export: generation failed', { format, err });
+      showToast(m.common_download_failed(), 'error');
     } finally {
-      exporting = false;
+      exporting = null;
     }
   }
 
   /**
-   * WHO MAY BUILD AN AGENDA PDF (user, 2026-09-14: *"Exporter le calendrier en pdf ne doit etre
+   * WHO MAY BUILD AN AGENDA PDF - OR ITS PNG, THE SAME SHEET BEHIND THE SAME GATE (user, 2026-09-14: *"Exporter le calendrier en pdf ne doit etre
    * possible que pour les admins (systeme ou BDE)"*).
    *
    * `null` until the answer is known, which is NOT the same as `false`: drawing the tool and then
@@ -377,6 +410,49 @@
                 class="accent-cn-dark w-28"
               />
             </div>
+            <!-- The day frame and the rule between stacked events, one setting for both (user,
+                 2026-10-18: *"les bords noirs des cases sont reglables ?"*). Page state like every
+                 other control here, so Reset brings back the 2px dark default. -->
+            <div role="radiogroup" aria-labelledby="cell-border-label" class="space-y-1">
+              <span id="cell-border-label" class="text-text-muted text-xs"
+                >{m.calendar_export_border_label()}</span
+              >
+              <div class="flex flex-wrap gap-1">
+                {#each CELL_BORDER_WIDTHS as width (width)}
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={opts.cellBorderWidth === width}
+                    data-testid="cell-border-width-{width}"
+                    onclick={() => (opts.cellBorderWidth = width)}
+                    class="border-cn-border text-text-main aria-checked:bg-cn-yellow aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
+                  >
+                    {borderWidthLabel[width]()}
+                  </button>
+                {/each}
+              </div>
+            </div>
+            {#if opts.cellBorderWidth > 0}
+              <div role="radiogroup" aria-labelledby="cell-border-color-label" class="space-y-1">
+                <span id="cell-border-color-label" class="text-text-muted text-xs"
+                  >{m.calendar_export_border_color_label()}</span
+                >
+                <div class="flex flex-wrap gap-1">
+                  {#each CELL_BORDER_COLORS as color (color)}
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={opts.cellBorderColor === color}
+                      data-testid="cell-border-color-{color}"
+                      onclick={() => (opts.cellBorderColor = color)}
+                      class="border-cn-border text-text-main aria-checked:bg-cn-yellow aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
+                    >
+                      {borderColorLabel[color]()}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
             <div class="flex items-center justify-between gap-2">
               <span class="text-text-muted text-xs"
                 >{m.calendar_export_logo_strength({ value: opts.logoOpacity })}</span
@@ -419,15 +495,38 @@
 
           <!-- Actions -->
           <div class="flex flex-col gap-2">
-            <button
-              type="button"
-              onclick={handleExport}
-              disabled={loading || exporting}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
-            >
-              <FileDown size={18} />
-              {exporting ? m.common_generating_label() : m.calendar_export_download_btn()}
-            </button>
+            <!-- PDF and PNG side by side, wrapping onto two rows when the text is large. The visible
+                 label is the format alone - "Telecharger le PDF" broke onto two lines in a 360px
+                 panel - and the accessible name is the full action, which contains it. -->
+            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+              {m.calendar_export_download_label()}
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-testid="calendar-export-pdf"
+                onclick={() => handleExport('pdf')}
+                disabled={loading || exporting !== null}
+                aria-busy={exporting === 'pdf'}
+                aria-label={m.calendar_export_download_btn()}
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex flex-1 basis-32 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
+              >
+                <FileDown size={18} aria-hidden="true" />
+                {exporting === 'pdf' ? m.common_generating_label() : m.calendar_export_format_pdf()}
+              </button>
+              <button
+                type="button"
+                data-testid="calendar-export-png"
+                onclick={() => handleExport('png')}
+                disabled={loading || exporting !== null}
+                aria-busy={exporting === 'png'}
+                aria-label={m.calendar_export_download_png_btn()}
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex flex-1 basis-32 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
+              >
+                <FileImage size={18} aria-hidden="true" />
+                {exporting === 'png' ? m.common_generating_label() : m.calendar_export_format_png()}
+              </button>
+            </div>
             <button
               type="button"
               onclick={resetOptions}
