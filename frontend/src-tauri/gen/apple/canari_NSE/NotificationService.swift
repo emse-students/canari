@@ -1102,7 +1102,6 @@ class NotificationService: UNNotificationServiceExtension {
     return seed
   }
 
-  /// The `reason` of a refusal from `background.rs`, or nil for anything that is not one.
   /// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with something readable -
   /// "you" for this device's own user, the NAME the phone already holds for anybody else, and the
   /// word "someone" for an id it has never named - and collapses the run of spaces a token left.
@@ -1201,6 +1200,7 @@ class NotificationService: UNNotificationServiceExtension {
     return root["names"] as? [String: Any]
   }
 
+  /// The `reason` of a refusal from `background.rs`, or nil for anything that is not one.
   private static func refusalReason(_ json: String?) -> String? {
     guard let json = json, let data = json.data(using: .utf8),
       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

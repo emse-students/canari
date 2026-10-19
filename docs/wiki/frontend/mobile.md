@@ -2025,7 +2025,7 @@ them. The name never rides the push and is never fetched on the push path (user 
 
 - **Writer**: the WebView. `displayName.ts` notes every name it RESOLVES (a seeded name, or a
   fetched profile that carries one - never the unknown-user label) in `nameMirror.ts`, which hands
-  it to `store_display_names` (`commands/display_names.rs`) **when it changes**: one write at the
+  it to `store_display_names` (`commands/display_names.rs`) **when a name is learned**: one write at the
   end of the task that learned it (a microtask, so a profile batch is one IPC), one write in flight
   at a time. No timer. Hiding the app flushes too, as an extra chance only - **not a guarantee**:
   WKWebView may suspend the page before an IPC started at `hidden` completes. What is guaranteed:
@@ -2039,14 +2039,18 @@ them. The name never rides the push and is never fetched on the push path (user 
   account"). The phone only learns it when its app next asks for that id; a name stored before
   that stays until then.
 - **The file**: `{"userId": <owner>, "names": {<id>: <name>}}`, merged per owner, capped at 2000
-  names (this write's names kept first), written by temp file + rename. On iOS the command also
+  names (this write's names kept first, then the stored ones in key order - NOT "the most recent":
+  inside one oversized batch, key order decides which stay), written by temp file + rename. On iOS the command also
   writes the App Group copy the extension reads, at the call rather than at the next lifecycle
   mirror.
 - **Readers** use it only when its owner is the account in `push_context.json`; the account
   deletion (`delete_user_push_files`) removes it only when its owner is the deleted account, in
   the data directory and the App Group - and a failure there is logged and returned AFTER the
-  other push files are removed, never before them. The factory wipe takes it with every other
-  top-level file.
+  other push files are removed, never before them. The factory wipe takes the data-directory copy with every other
+  top-level file, and removes the App Group copy through `wipe_group_names` (`storage.rs`, any
+  owner; no App Group container is logged at ERROR and returned after the rest). It reaches ONLY
+  that file in the group: `push_context.json` and the extension's caches are not the wipe's today
+  ([backlog](../backlog.md)).
 - **A sign-out leaves it, like every other push file**: sign-out unregisters the device on the
   server and removes no local push file (`push_context.json` and the outbox stay too). The owner
   check keeps it from any banner of another account, the next account's first write replaces it,
@@ -2056,7 +2060,7 @@ them. The name never rides the push and is never fetched on the push path (user 
   `display_names.rs` and `push.rs` (a deleted id dropped; an unreadable names copy does not stop
   the rest of the deletion), `displayName.spec.ts`, `nativeStrings.test.ts` (the author line on the salon path of all three composers,
   the MLS path left alone, the sentence in every table) and `initialsFallback.test.ts`; nothing
-  here runs Kotlin, Swift or ObjC. **Owed**: one look on each phone - a salon mention by somebody
+  here runs Kotlin, Swift or ObjC. **Owed**: on the Mi 9T, whether the COLLAPSED shade shows only the first line of a mention (the author line is line 1 of the MessagingStyle message and may hide the text); one look on each phone - a salon mention by somebody
   the app has shown, then by somebody it never has ([backlog](../backlog.md)).
 
 #### The language a notification speaks

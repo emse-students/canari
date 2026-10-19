@@ -468,7 +468,41 @@ const OUR_PREFS_PREFIXES: &[&str] = &["canari_", "keystore_aliases"];
 #[tauri::command]
 pub(crate) fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    wipe_app_data(&data_dir)
+    let wiped = wipe_app_data(&data_dir);
+    // The mirrored names also live in the iOS App Group container, which the walk above never
+    // reaches. Same policy as the account deletion: no container is logged at ERROR and returned,
+    // after everything else was removed.
+    #[cfg(target_os = "ios")]
+    {
+        let group = crate::app_group::app_group_dir().and_then(|g| wipe_group_names(&g));
+        if let Err(e) = group {
+            log::error!("[RESET] the App Group names copy was not removed: {e}");
+            return match wiped {
+                Ok(()) => Err(e),
+                Err(w) => Err(format!("{w}; {e}")),
+            };
+        }
+    }
+    wiped
+}
+
+/// Removes the App Group copy of `display_names.json`. A factory wipe forgets every account, so
+/// unlike the account deletion it is owner-agnostic. Only that file: the other App Group copies
+/// (`push_context.json`, the extension's caches) are not this wipe's today, see the backlog.
+#[cfg_attr(not(any(target_os = "ios", test)), allow(dead_code))]
+pub(crate) fn wipe_group_names(group: &std::path::Path) -> Result<(), String> {
+    let (mut removed, mut failures) = (0usize, 0usize);
+    remove_entry(
+        &group.join(crate::commands::display_names::DISPLAY_NAMES_FILE),
+        &mut removed,
+        &mut failures,
+    );
+    log::info!("[RESET] App Group names copy: {removed} removed, {failures} failed");
+    if failures == 0 {
+        Ok(())
+    } else {
+        Err("the App Group names copy could not be removed".to_string())
+    }
 }
 
 /// The whole of `clear_app_data` minus the `AppHandle`, so it can be tested against a real
@@ -1189,6 +1223,27 @@ mod tests {
 
         assert!(!path.exists(), "the file survived its last flag");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The factory wipe reaches the iOS App Group copy of the mirrored names, whoever owns it, and
+    /// nothing else in that container.
+    #[test]
+    fn the_wipe_removes_the_app_group_names_copy_and_only_that() {
+        let group = temp_dir("group-names");
+        std::fs::write(
+            group.join(crate::commands::display_names::DISPLAY_NAMES_FILE),
+            br#"{"userId":"someone","names":{}}"#,
+        )
+        .unwrap();
+        std::fs::write(group.join("push_context.json"), b"{}").unwrap();
+        wipe_group_names(&group).unwrap();
+        assert!(!group
+            .join(crate::commands::display_names::DISPLAY_NAMES_FILE)
+            .exists());
+        assert!(group.join("push_context.json").exists());
+        // Nothing to remove is a success, not a failure.
+        wipe_group_names(&group).unwrap();
+        std::fs::remove_dir_all(&group).ok();
     }
 
     /// And it must not take the OTHER flags with it - `biometricPromptDismissed` lives in the same

@@ -1311,13 +1311,17 @@ pub(crate) fn delete_user_push_files(
     {
         let group = crate::app_group::app_group_dir();
         let removed =
-            remove_account_push_and_name_files(&data_dir, group.as_deref().ok(), &user_id)?;
-        if let Err(e) = group {
+            remove_account_push_and_name_files(&data_dir, group.as_deref().ok(), &user_id);
+        if let Err(e) = &group {
             log::error!(
                 "[DEL-LOCAL] no App Group container - the extension's copies were not reached: {e}"
             );
-            return Err(e);
         }
+        if let Err(e) = &removed {
+            log::error!("[DEL-LOCAL] the account's push files were not all removed: {e}");
+        }
+        let removed = removed?;
+        group?;
         Ok(removed)
     }
     #[cfg(not(target_os = "ios"))]

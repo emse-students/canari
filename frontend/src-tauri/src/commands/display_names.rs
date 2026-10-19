@@ -45,7 +45,8 @@ fn is_mention_id(id: &str) -> bool {
 ///   names of one account are not another's to read.
 /// - Same owner: a name in `names` overrides the stored one (a renamed person is renamed here too).
 /// - Over [`DISPLAY_NAMES_MAX`]: the names of THIS write are kept first, then the stored ones in key
-///   order until the cap - so what the app resolved most recently survives, deterministically.
+///   order until the cap. Deterministic, but NOT "the most recent": a batch larger than the cap is
+///   cut in key order, and the stored names that survive are the first in key order.
 ///
 /// - An id in `removed` is DROPPED, from the stored names and from this write alike: the server
 ///   answered that the account does not exist (deleted), so no banner may name it again - a token
@@ -177,11 +178,10 @@ pub(crate) fn store_display_names(
     let held = merge_display_names(&data_dir, &user_id, &names, &removed)?;
     #[cfg(target_os = "ios")]
     {
-        let group = crate::app_group::app_group_dir().map_err(|e| {
+        let group = crate::app_group::app_group_dir().inspect_err(|e| {
             log::error!(
                 "[NAME_MIRROR] no App Group container - the extension keeps old names: {e}"
             );
-            e
         })?;
         merge_display_names(&group, &user_id, &names, &removed)?;
     }
