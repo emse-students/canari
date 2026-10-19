@@ -172,9 +172,12 @@ the Cloudflare tunnel in front of dev (the keepalive is there for them, unmeasur
 **The dev TURN secrets EXIST since 2026-10-17** (`DEV_CLOUDFLARE_CALLS_API_TOKEN`,
 `DEV_CLOUDFLARE_TURN_KEY_ID`, GitHub secrets). `serve-dev.yml` and `env-manifest.tsv` read them, and
 `docker-compose.dev.yml` hands them to chat-delivery-service since lot 1 (it did not before - the
-secrets alone would have changed nothing). They reach dev at the next pre-release deploy; until then
-dev answers 503 on `/api/calls/ice-servers` and every call fails at step 1 - by design, not a
-fallback to STUN only.
+secrets alone would have changed nothing). **They have reached dev since `v1.3.0-alpha.2`**: the
+`v1.3.0-alpha.4` dev deploy (2026-10-19) passed both and raised no "not set" warning for them, and
+dev serves lot 1, the ring window (#2010) and the call permission (#2048). Unset, dev would answer
+503 on `/api/calls/ice-servers` and every call would fail at step 1 - by design, not a fallback to
+STUN only. The phone procedure is
+[check CALL-L1](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both).
 
 **Still open from the plan:** the TURN budget estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts EVERY
 call as relayed; in P2P only `relayed=yes` calls cost, so it over-counts (harmless on dev). (A
