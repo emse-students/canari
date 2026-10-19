@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException } from '@nes
 import { Repository } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { Proposal } from './proposal.entity';
+import { Proposal, PROPOSAL_VOIDED_BY } from './proposal.entity';
 import {
   PROPOSAL_SENDER_GONE,
   ProposalsService,
@@ -190,6 +190,7 @@ describe('ProposalsService, a user-addressed kind', () => {
       decided: fns.decided,
       lockSubject: fns.lockSubject,
       senderStillSpeaks: fns.senderStillSpeaks,
+      senderSpeaksSql: () => 'true',
       withdrawn: fns.withdrawn,
       describe: jest.fn(() => Promise.resolve(new Map())),
       describeRequests: jest.fn(() => Promise.resolve(new Map())),
@@ -239,7 +240,7 @@ describe('ProposalsService, a user-addressed kind', () => {
 
 /** The review of #2116: the four findings the generic state machine owns. */
 describe('ProposalsService, a user-addressed kind - after review', () => {
-  function makeService(opts: { askedBefore?: boolean; speaks?: boolean } = {}) {
+  function makeService(opts: { askedBefore?: boolean; speaks?: boolean; stale?: boolean } = {}) {
     const order: string[] = [];
     const row = {
       id: 'x3',
@@ -252,11 +253,20 @@ describe('ProposalsService, a user-addressed kind - after review', () => {
       proposedBy: 'officer',
     };
     const statuses: string[] = [];
+    const deciders: string[] = [];
     const query = jest.fn((sql: string, params: unknown[] = []) => {
+      if (sql.includes('FOR KEY SHARE')) order.push('associations');
+      if (sql.startsWith('UPDATE proposals p ')) {
+        // The void of a silenced asker's request, at a new ask.
+        order.push('void');
+        const voided = opts.stale ? [{ ...row, status: 'withdrawn', decidedBy: params[3] }] : [];
+        return Promise.resolve([voided, voided.length]);
+      }
       if (sql.startsWith('UPDATE proposals')) {
         order.push('decide');
         statuses.push(String(params[1]));
-        return Promise.resolve([[{ ...row, status: params[1] }], 1]);
+        deciders.push(String(params[2]));
+        return Promise.resolve([[{ ...row, status: params[1], decidedBy: params[2] }], 1]);
       }
       if (sql.startsWith('INSERT INTO proposals')) return Promise.resolve([{ ...row }]);
       if (sql.includes('SELECT 1 FROM proposals')) {
@@ -282,6 +292,7 @@ describe('ProposalsService, a user-addressed kind - after review', () => {
       resolveRecipient: jest.fn(() => Promise.resolve('author')),
       lockSubject: fns.lockSubject,
       senderStillSpeaks: jest.fn(() => Promise.resolve(opts.speaks ?? true)),
+      senderSpeaksSql: () => 'true',
       apply: fns.apply,
       announce: fns.announce,
       withdrawn: fns.withdrawn,
@@ -294,7 +305,7 @@ describe('ProposalsService, a user-addressed kind - after review', () => {
       { mayAct: jest.fn(() => Promise.resolve(true)) } as unknown as AssociationsService
     );
     service.register(handler);
-    return { service, fns, order, statuses };
+    return { service, fns, order, statuses, deciders };
   }
 
   it('announces the FIRST ask of a pair only: an ask after a withdrawal is stored, not pushed', async () => {
@@ -318,7 +329,7 @@ describe('ProposalsService, a user-addressed kind - after review', () => {
   it('locks the subject BEFORE the proposal, the order a hide takes', async () => {
     const { service, order } = makeService();
     await service.accept('x3', 'author', false);
-    expect(order).toEqual(['lock', 'decide']);
+    expect(order).toEqual(['associations', 'lock', 'decide']);
   });
 
   it('voids a request whose asker no longer speaks for the association: 409, never applied', async () => {
@@ -329,5 +340,38 @@ describe('ProposalsService, a user-addressed kind - after review', () => {
     expect(statuses).toEqual(['withdrawn']);
     expect(fns.apply).not.toHaveBeenCalled();
     expect(fns.withdrawn).toHaveBeenCalled();
+  });
+
+  it('names nobody as the decider of a voided request: neither the author nor the asker', async () => {
+    const { service, deciders } = makeService({ speaks: false });
+    await service.accept('x3', 'author', false).catch(() => undefined);
+    expect(deciders).toEqual([PROPOSAL_VOIDED_BY]);
+  });
+
+  it('answers a withdrawal with the id and the status only: the row names the author', async () => {
+    const { service } = makeService();
+    await expect(service.withdraw('x3', 'officer', false)).resolves.toEqual({
+      id: 'x3',
+      status: 'withdrawn',
+    });
+  });
+
+  it('takes every lock of a withdrawal and a refusal in the acceptance order', async () => {
+    const withdrawal = makeService();
+    await withdrawal.service.withdraw('x3', 'officer', false);
+    expect(withdrawal.order).toEqual(['associations', 'lock', 'decide']);
+    const refusal = makeService();
+    await refusal.service.refuse('x3', 'author', false);
+    expect(refusal.order).toEqual(['associations', 'lock', 'decide']);
+  });
+
+  it('a new ask voids the pair request of a silenced asker, after the locks, and takes its bell row', async () => {
+    const { service, fns, order } = makeService({ stale: true });
+    await service.proposeToUser('repost-personal', 'post-1', 'asso-from', 'officer');
+    expect(order.slice(0, 3)).toEqual(['associations', 'lock', 'void']);
+    expect(fns.withdrawn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ decidedBy: PROPOSAL_VOIDED_BY })
+    );
   });
 });

@@ -71,11 +71,12 @@
       const status = refusalStatus(e);
       Log.d('RepublicationRequests', `${action} refused: status=${status} ${String(e)}`);
       if (status === 409) {
+        // Re-read FIRST: `load` clears the message, and the reason is what this answer must show.
+        await load();
         errorMessage =
           refusalCode(e) === PROPOSAL_SENDER_GONE
             ? m.republication_requests_sender_gone()
             : m.asso_republications_not_pending();
-        await load();
       } else {
         errorMessage = m.post_republish_error();
       }

@@ -28,9 +28,9 @@ import {
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import type { AssociationsService } from '../associations/associations.service';
 import type { RedisService } from '../common/redis/redis.service';
-import { ERASURE_STATEMENTS } from '../internal/account-erasure';
+import { ERASURE_STATEMENTS, type ErasureDb, eraseSocialRows } from '../internal/account-erasure';
 import type { ModerationService } from '../moderation/moderation.service';
-import { Proposal } from '../proposals/proposal.entity';
+import { Proposal, PROPOSAL_VOIDED_BY } from '../proposals/proposal.entity';
 import { PROPOSAL_SENDER_GONE, ProposalsService } from '../proposals/proposals.service';
 import { postVisibleToViewerSql } from '../spaces/reader-spaces';
 import { PostRepublication } from './entities/post-republication.entity';
@@ -70,6 +70,10 @@ const USERS: Record<string, { campus: string | null; formation: string | null; n
   bl: { campus: 'saint-etienne', formation: 'ICM', name: 'Bob Blocked' },
   // An author whose account is restricted.
   mu: { campus: 'saint-etienne', formation: 'ICM', name: 'Mia Muted' },
+  // A second officer of AG2, who asks after the first one stopped speaking for it.
+  pr2: { campus: 'saint-etienne', formation: 'ICM', name: 'Pat Second' },
+  // An officer of AG who asks, reacts to a post, and is then erased.
+  er: { campus: 'saint-etienne', formation: 'ICM', name: 'Eve Erased' },
 };
 
 const A = (n: number) => `00000000-0000-4000-8000-0000000b${String(n).padStart(4, '0')}`;
@@ -79,6 +83,7 @@ const INST = A(3); // institution
 const LIST = A(4); // promo list
 const ARCH = A(5); // archived association
 const A1 = A(6); // association of an association post
+const AG3 = A(7); // association, deleted while a request of it is being accepted
 
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const POSTS: {
@@ -104,6 +109,10 @@ const POSTS: {
   { id: P(13), authorId: 'au', announced: true }, // its asker stops speaking for the association
   { id: P(14), authorId: 'au', announced: true }, // the lock order of an acceptance
   { id: P(15), authorId: 'au', announced: true }, // becomes an expired reel
+  { id: P(16), authorId: 'au', announced: true }, // its asker is erased while it is accepted
+  { id: P(17), authorId: 'au', announced: true }, // a silenced asker's request, asked again
+  { id: P(18), authorId: 'au', announced: true }, // the caps leave a silenced asker out
+  { id: P(19), authorId: 'au', announced: true }, // its association is deleted during acceptance
 ];
 
 /** A refusal's stable code, read from the exception's body the way the client reads it. */
@@ -128,7 +137,6 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
   let republications: RepublicationsService;
   let personal: PersonalRepublicationsService;
   let proposals: ProposalsService;
-  const muted = new Set<string>(['mu']);
   const told: {
     type: string;
     postId: string;
@@ -146,6 +154,49 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       [userId, associationId, flag]
     );
     return rows.length > 0;
+  }
+
+  async function muted(userId: string): Promise<boolean> {
+    const rows: unknown[] = await q(
+      `SELECT 1 FROM user_moderation WHERE "userId" = $1 AND "isMuted" = true`,
+      [userId]
+    );
+    return rows.length > 0;
+  }
+
+  async function setMuted(userId: string, isMuted: boolean): Promise<void> {
+    await q(
+      `INSERT INTO user_moderation ("userId", "isMuted") VALUES ($1, $2)
+       ON CONFLICT ("userId") DO UPDATE SET "isMuted" = EXCLUDED."isMuted"`,
+      [userId, isMuted]
+    );
+  }
+
+  async function setFlag(userId: string, associationId: string, permissions: number) {
+    await q(
+      `UPDATE association_members SET permissions = $3 WHERE "userId" = $1 AND "associationId" = $2`,
+      [userId, associationId, permissions]
+    );
+  }
+
+  /**
+   * Resolves once at least `n` backends of this database wait on a lock - how a two-connection case
+   * knows a transaction has REACHED its wait, rather than guessing a duration.
+   */
+  async function lockWaiters(n: number): Promise<void> {
+    for (let i = 0; i < 400; i++) {
+      const rows: { n: number }[] = await q(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'`
+      );
+      if (rows[0].n >= n) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const seen: unknown[] = await q(
+      `SELECT pid, state, wait_event_type, wait_event, left(query, 120) AS query FROM pg_stat_activity
+        WHERE datname = current_database() AND pid <> pg_backend_pid()`
+    );
+    throw new Error(`never ${n} backend(s) waiting on a lock: ${JSON.stringify(seen)}`);
   }
 
   async function sees(postId: string, userId: string): Promise<boolean> {
@@ -181,27 +232,33 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         "firstName" varchar, "lastName" varchar);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
-        "logoUrl" varchar, "logoMediaId" varchar, "isBDE" boolean NOT NULL DEFAULT false);
+        "logoUrl" varchar, "logoMediaId" varchar, "isBDE" boolean NOT NULL DEFAULT false,
+        "createdBy" varchar(255));
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
         kind varchar NOT NULL DEFAULT 'post', "expiresAt" timestamptz, markdown text,
         "feedNotifiedAt" timestamptz, "createdAt" timestamptz NOT NULL DEFAULT now(),
-        "publishedAt" timestamptz NOT NULL DEFAULT now());
+        "publishedAt" timestamptz NOT NULL DEFAULT now(),
+        reactions jsonb NOT NULL DEFAULT '{}', mentions text NOT NULL DEFAULT '',
+        comments jsonb NOT NULL DEFAULT '[]', polls jsonb NOT NULL DEFAULT '[]');
+      CREATE TABLE user_moderation ("userId" varchar(255) PRIMARY KEY,
+        "isMuted" boolean NOT NULL DEFAULT false, "mutedBy" varchar(255));
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
       CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255) NOT NULL,
         "followedUserId" varchar(255) NOT NULL);
       CREATE TABLE post_notifications (id serial PRIMARY KEY, "recipientId" varchar NOT NULL,
-        type varchar NOT NULL, "postId" varchar NOT NULL, "associationId" uuid);
+        type varchar NOT NULL, "postId" varchar NOT NULL, "associationId" uuid, "actorId" varchar);
     `);
     await q(
       `INSERT INTO associations (id, name, slug, type, archived) VALUES
          ($1, 'AG', 'ag', 'association', false), ($2, 'AG2', 'ag2', 'association', false),
          ($3, 'INST', 'inst', 'institution', false), ($4, 'LIST', 'list', 'list', false),
-         ($5, 'ARCH', 'arch', 'association', true), ($6, 'A1', 'a1', 'association', false)`,
-      [AG, AG2, INST, LIST, ARCH, A1]
+         ($5, 'ARCH', 'arch', 'association', true), ($6, 'A1', 'a1', 'association', false),
+         ($7, 'AG3', 'ag3', 'association', false)`,
+      [AG, AG2, INST, LIST, ARCH, A1, AG3]
     );
     await q(migration('071_spaces.sql'));
     await q(migration('072_drop_is_bde.sql'));
@@ -229,16 +286,18 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         ]
       );
     }
-    for (const asso of [AG, AG2, INST, LIST, ARCH]) {
+    for (const asso of [AG, AG2, INST, LIST, ARCH, AG3]) {
       await q(
         `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'pr', $2)`,
         [asso, POST_AS]
       );
     }
     await q(
-      `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'outsider', $2), ($3, 'au', $2)`,
-      [AG, POST_AS, A1]
+      `INSERT INTO association_members ("associationId", "userId", permissions) VALUES
+         ($1, 'outsider', $2), ($3, 'au', $2), ($4, 'pr2', $2), ($1, 'er', $2), ($4, 'filler', $2)`,
+      [AG, POST_AS, A1, AG2]
     );
+    await q(`INSERT INTO user_moderation ("userId", "isMuted") VALUES ('mu', true)`);
     await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ('gb', 'au'), ('pr', 'bl')`);
     await q(`INSERT INTO user_follows ("followerUserId", "followedUserId") VALUES ('gf', 'au')`);
     for (const p of POSTS) {
@@ -269,8 +328,9 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         return Promise.resolve(recipientIds.length);
       },
     } as unknown as PostNotificationsService;
+    // The table `senderSpeaksSql` reads, and what `ModerationService.isUserMuted` reads too.
     const moderation = {
-      isUserMuted: (id: string) => Promise.resolve(muted.has(id)),
+      isUserMuted: (id: string) => muted(id),
     } as unknown as ModerationService;
     const redis = { deleteByPattern: () => Promise.resolve(0) } as unknown as RedisService;
     proposals = new ProposalsService(ds.getRepository(Proposal), associations);
@@ -329,7 +389,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
 
     it('names only associations of the kind that may ask, and only the posts a request would pass', async () => {
       const offer = await offerFor('pr', [P(1), P(2), P(3), P(5), P(11), P(12)]);
-      expect([...offer.personalRepublishAsIds].sort()).toEqual([AG, AG2].sort());
+      expect([...offer.personalRepublishAsIds].sort()).toEqual([AG, AG2, AG3].sort());
       // Anonymous (2), hidden (3), a block (5) and the proposer's own (11) are left out.
       expect([...offer.requestablePersonalIds].sort()).toEqual([P(1), P(12)].sort());
     });
@@ -484,10 +544,17 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       expect(await sees(P(1), 'outsider')).toBe(false);
       const queue = await proposals.listPending(AG, 'outsider', false);
       expect(queue.outgoing).toEqual([
-        expect.objectContaining({ kind: 'repost-personal', subject: null, toUser: null }),
+        expect.objectContaining({
+          kind: 'repost-personal',
+          subjectId: null,
+          subject: null,
+          toUser: null,
+        }),
       ]);
       expect(JSON.stringify(queue)).not.toContain('Alice');
       expect(JSON.stringify(queue)).not.toContain('post 01');
+      // Not even the post's id: `/posts/:id` would answer what the queue withheld.
+      expect(JSON.stringify(queue)).not.toContain(P(1));
     });
 
     it('only the author decides: neither the proposer nor a global admin', async () => {
@@ -574,7 +641,9 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       await expect(proposals.withdraw(pending.id, 'au', false)).rejects.toBeInstanceOf(
         ForbiddenException
       );
-      await expect(proposals.withdraw(pending.id, 'pr', false)).resolves.toMatchObject({
+      // The id and the status, nothing else: the row names the author and the post.
+      await expect(proposals.withdraw(pending.id, 'pr', false)).resolves.toEqual({
+        id: pending.id,
         status: 'withdrawn',
       });
       // AG's request is gone from au's bell; another association's is not.
@@ -594,30 +663,28 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
 
     it('a request whose asker no longer holds the flag, or is muted, is voided at acceptance', async () => {
       const lost = await personal.request(P(13), AG2, 'pr');
-      await q(
-        `UPDATE association_members SET permissions = 0 WHERE "userId" = 'pr' AND "associationId" = $1`,
-        [AG2]
-      );
+      await setFlag('pr', AG2, 0);
       try {
         const err = await refusedWith(proposals.accept(lost.id, 'au', false));
         expect(err).toBeInstanceOf(ConflictException);
         expect(codeOf(err)).toBe(PROPOSAL_SENDER_GONE);
       } finally {
-        await q(
-          `UPDATE association_members SET permissions = $2 WHERE "userId" = 'pr' AND "associationId" = $1`,
-          [AG2, POST_AS]
-        );
+        await setFlag('pr', AG2, POST_AS);
       }
-      expect(await proposalOf(P(13), AG2)).toMatchObject({ status: 'withdrawn' });
+      // Voided by the server: `decidedBy` names neither the author nor the asker.
+      expect(await proposalOf(P(13), AG2)).toMatchObject({
+        status: 'withdrawn',
+        decidedBy: PROPOSAL_VOIDED_BY,
+      });
       expect(await q(`SELECT 1 FROM post_republications WHERE "postId" = $1`, [P(13)])).toEqual([]);
 
       const mutedAsk = await personal.request(P(13), AG2, 'pr');
-      muted.add('pr');
+      await setMuted('pr', true);
       try {
         const err = await refusedWith(proposals.accept(mutedAsk.id, 'au', false));
         expect(codeOf(err)).toBe(PROPOSAL_SENDER_GONE);
       } finally {
-        muted.delete('pr');
+        await setMuted('pr', false);
       }
       expect(await q(`SELECT 1 FROM post_republications WHERE "postId" = $1`, [P(13)])).toEqual([]);
     });
@@ -656,6 +723,64 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       expect(await settled).toMatchObject({ value: { status: 'accepted' } });
     });
 
+    it('a request whose asker stopped speaking is hidden from the author, and voided when the association asks again', async () => {
+      const stale = await personal.request(P(17), AG2, 'pr');
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "associationId")
+           VALUES ('au', 'repost_personal_requested', $1, $2)`,
+        [P(17), AG2]
+      );
+      await setFlag('pr', AG2, 0);
+      try {
+        // Not shown, not counted: accepting it could only end in PROPOSAL_SENDER_GONE.
+        const inbox = await personal.inbox('au');
+        expect(inbox.incoming.map((r) => r.id)).not.toContain(stale.id);
+        expect((await personal.pendingCount('au')).pending).toBe(inbox.incoming.length);
+        // Another officer of AG2 asks: the stale request held the pair's place, and is voided.
+        const fresh = await personal.request(P(17), AG2, 'pr2');
+        expect(fresh).toMatchObject({ status: 'pending', proposedBy: 'pr2' });
+      } finally {
+        await setFlag('pr', AG2, POST_AS);
+      }
+      const old: Proposal[] = await q(`SELECT * FROM proposals WHERE id = $1`, [stale.id]);
+      expect(old[0]).toMatchObject({ status: 'withdrawn', decidedBy: PROPOSAL_VOIDED_BY });
+      expect(
+        await q(`SELECT 1 FROM post_notifications WHERE "postId" = $1 AND "associationId" = $2`, [
+          P(17),
+          AG2,
+        ])
+      ).toEqual([]);
+    });
+
+    it('an acceptance waits on an association being deleted before it takes the post', async () => {
+      const asked = await personal.request(P(19), AG3, 'pr');
+      // The association delete in flight: it holds the association, and its cascade the request.
+      const drop = ds.createQueryRunner();
+      await drop.connect();
+      await drop.startTransaction();
+      let postFree: boolean;
+      let settled: Promise<{ value?: unknown; error?: unknown }>;
+      try {
+        await drop.query(`DELETE FROM associations WHERE id = $1`, [AG3]);
+        settled = proposals.accept(asked.id, 'au', false).then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error })
+        );
+        await lockWaiters(1);
+        // Holding the post while waiting on the cascade's request is the half of a deadlock the
+        // delete would close by reaching the post: the acceptance must hold nothing yet.
+        postFree = await q(`SELECT 1 FROM posts WHERE id = $1 FOR UPDATE NOWAIT`, [P(19)]).then(
+          () => true,
+          () => false
+        );
+      } finally {
+        await drop.rollbackTransaction();
+        await drop.release();
+      }
+      expect(postFree).toBe(true);
+      expect(await settled).toMatchObject({ value: { status: 'accepted' } });
+    }, 30_000);
+
     it('before the first announce, the followers are left to the sweep and the rest told here', async () => {
       const proposal = await personal.request(P(4), AG, 'pr');
       told.length = 0;
@@ -691,6 +816,84 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       await q(`DELETE FROM posts WHERE id = $1`, [P(9)]);
       expect(await q(`SELECT 1 FROM proposals WHERE "subjectId" = $1`, [P(9)])).toEqual([]);
     });
+
+    it('an erasure and an acceptance racing on one post both complete, and the erased asker`s other request is voided', async () => {
+      // er asks for two posts, and reacted to the first.
+      const raced = await personal.request(P(16), AG, 'er');
+      const other = await personal.request(P(17), AG, 'er');
+      await q(`UPDATE posts SET reactions = '{"er": "like"}' WHERE id = $1`, [P(16)]);
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "associationId")
+           VALUES ('au', 'repost_personal_requested', $1, $2)`,
+        [P(17), AG]
+      );
+      // The tables this schema has: the erasure's other statements name tables it does not.
+      const present = new Set(
+        (
+          (await q(`SELECT table_name FROM information_schema.tables WHERE table_schema = $1`, [
+            schema,
+          ])) as { table_name: string }[]
+        ).map((r) => r.table_name)
+      );
+      const hold = ds.createQueryRunner();
+      const erase = ds.createQueryRunner();
+      await hold.connect();
+      await erase.connect();
+      let accepting: Promise<{ value?: unknown; error?: unknown }> | undefined;
+      let erasing: Promise<{ value?: unknown; error?: unknown }> | undefined;
+      try {
+        // Lines both writers up behind one holder of the post, the acceptance first.
+        await hold.startTransaction();
+        await hold.query(`SELECT 1 FROM posts WHERE id = $1 FOR UPDATE`, [P(16)]);
+        accepting = proposals.accept(raced.id, 'au', false).then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error })
+        );
+        await lockWaiters(1);
+        await erase.startTransaction();
+        const absent = (sql: string) => {
+          const table = /(?:FROM|UPDATE)\s+([a-z_]+)/.exec(sql)?.[1];
+          return !!table && !present.has(table);
+        };
+        const db: ErasureDb = {
+          write: async (sql, params) =>
+            absent(sql) ? 0 : ((await erase.query(sql, params)) as [unknown, number])[1],
+          read: async <T>(sql: string, params: unknown[]) =>
+            absent(sql) ? [] : ((await erase.query(sql, params)) as T[]),
+        };
+        erasing = eraseSocialRows(db, 'er').then(
+          async (value) => {
+            await erase.commitTransaction();
+            return { value };
+          },
+          async (error: unknown) => {
+            await erase.rollbackTransaction();
+            return { error };
+          }
+        );
+        await lockWaiters(2);
+      } finally {
+        if (hold.isTransactionActive) await hold.rollbackTransaction();
+        await hold.release();
+      }
+      // A proposal taken before the post would make this a 40P01 and abort one of them.
+      expect(await accepting).toMatchObject({ value: { status: 'accepted' } });
+      expect(await erasing).toMatchObject({ value: expect.anything() });
+      await erase.release();
+      expect(await proposalOf(P(16), AG)).toMatchObject({
+        status: 'accepted',
+        proposedBy: '[deleted]',
+      });
+      // The erased asker's other request no longer waits on the author, and left the bell.
+      const voided: Proposal[] = await q(`SELECT * FROM proposals WHERE id = $1`, [other.id]);
+      expect(voided[0]).toMatchObject({ status: 'withdrawn', decidedBy: PROPOSAL_VOIDED_BY });
+      expect(
+        await q(`SELECT 1 FROM post_notifications WHERE "postId" = $1 AND "associationId" = $2`, [
+          P(17),
+          AG,
+        ])
+      ).toEqual([]);
+    }, 30_000);
 
     it("the author's erasure removes the requests addressed to them", async () => {
       const statement = ERASURE_STATEMENTS.find((s) => s.label === 'proposals_to_user');
@@ -735,8 +938,9 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       await q(
         `INSERT INTO proposals (kind, "subjectId", "fromAssociationId", "toUserId", "proposedBy")
          SELECT 'repost-personal', gen_random_uuid(), $1, 'au', 'filler'
-           FROM generate_series(1, $2::int - (SELECT count(*)::int FROM proposals
-                WHERE "toUserId" = 'au' AND status = 'pending'))`,
+           FROM generate_series(1, $2::int - (SELECT count(*)::int FROM proposals p
+                WHERE p."toUserId" = 'au' AND p.status = 'pending'
+                  AND ${personal.senderSpeaksSql('p')}))`,
         [AG2, MAX_PENDING_REQUESTS_PER_AUTHOR]
       );
       expect(codeOf(await refusedWith(personal.request(P(12), AG, 'pr')))).toBe(
@@ -748,8 +952,9 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       await q(
         `INSERT INTO proposals (kind, "subjectId", "fromAssociationId", "toUserId", "proposedBy")
          SELECT 'repost-personal', gen_random_uuid(), $1, 'someone-' || g, 'filler'
-           FROM generate_series(1, $2::int - (SELECT count(*)::int FROM proposals
-                WHERE "fromAssociationId" = $1 AND status = 'pending')) g`,
+           FROM generate_series(1, $2::int - (SELECT count(*)::int FROM proposals p
+                WHERE p."fromAssociationId" = $1 AND p.status = 'pending'
+                  AND ${personal.senderSpeaksSql('p')})) g`,
         [AG2, MAX_PENDING_REQUESTS_PER_ASSOCIATION]
       );
       expect(codeOf(await refusedWith(personal.request(P(12), AG2, 'pr')))).toBe(
@@ -759,6 +964,23 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       await expect(personal.request(P(12), AG, 'pr')).resolves.toMatchObject({
         status: 'pending',
       });
+    });
+
+    it('a request whose asker no longer speaks holds no seat', async () => {
+      // A full author's worth of requests from askers with no membership left (left, or erased).
+      await q(
+        `INSERT INTO proposals (kind, "subjectId", "fromAssociationId", "toUserId", "proposedBy")
+         SELECT 'repost-personal', gen_random_uuid(), $1, 'au', 'gone-' || g
+           FROM generate_series(1, $2::int) g`,
+        [AG2, MAX_PENDING_REQUESTS_PER_AUTHOR]
+      );
+      try {
+        await expect(personal.request(P(18), AG2, 'pr')).resolves.toMatchObject({
+          status: 'pending',
+        });
+      } finally {
+        await q(`DELETE FROM proposals WHERE "proposedBy" LIKE 'gone-%'`);
+      }
     });
   });
 });

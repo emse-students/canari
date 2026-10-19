@@ -14,6 +14,14 @@ export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 export type ProposalStatus = 'pending' | 'accepted' | 'refused' | 'withdrawn';
 
 /**
+ * The `decidedBy` of a request the SERVER voided (D38b): its asker no longer speaks for the sending
+ * association (flag lost, left, muted, erased). Not the person asked - they decided nothing - and not
+ * the asker. The account erasure writes the same literal in SQL (`proposals_voided`), asserted by
+ * its spec.
+ */
+export const PROPOSAL_VOIDED_BY = '[voided]';
+
+/**
  * One proposal. `subjectId` is the thing proposed (a post for `repost` and `repost-personal`, an
  * event for `coorganise`) and carries no foreign key because it names a different table per kind;
  * a trigger per subject table (migrations 073, 074 and 096) removes the rows whose subject is
@@ -54,7 +62,10 @@ export class Proposal {
   @Column({ type: 'varchar', length: 255 })
   proposedBy: string;
 
-  /** Who accepted, refused or withdrew it; NULL while pending. */
+  /**
+   * Who accepted, refused or withdrew it; NULL while pending. {@link PROPOSAL_VOIDED_BY} when the
+   * server voided it because its asker no longer speaks for the association - nobody decided that.
+   */
   @Column({ type: 'varchar', length: 255, nullable: true })
   decidedBy: string | null;
 

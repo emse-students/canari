@@ -57,24 +57,26 @@ export interface ProposalPerson {
 interface ProposalBase {
   id: string;
   status: ProposalStatus;
-  /** What is proposed - a post id for `repost` and `repost-personal`, an event id for `coorganise`. */
-  subjectId: string;
   from: ProposalAssociation;
   createdAt: string;
 }
 
 /** Addressed to an association, whose holders of the kind's flag decide. */
 interface AssociationAddressed extends ProposalBase {
+  /** What is proposed - a post id for `repost`, an event id for `coorganise`. */
+  subjectId: string;
   to: ProposalAssociation;
   toUser: null;
 }
 
-/** Addressed to a person (D38b), who alone decides. */
-interface PersonAddressed extends ProposalBase {
-  to: null;
-  /** Null, with `subject` null too, when the caller may not see the post: nothing about it is told. */
-  toUser: ProposalPerson | null;
-}
+/**
+ * Addressed to a person (D38b), who alone decides. Described to a caller who may see the post -
+ * or, to one who may not, NOTHING: no post id, no preview, no name.
+ */
+type PersonAddressed = ProposalBase & { kind: 'repost-personal'; to: null } & (
+    | { subjectId: string; toUser: ProposalPerson; subject: PersonalRepostSubject }
+    | { subjectId: null; toUser: null; subject: null }
+  );
 
 /**
  * One proposal in a queue, its subject typed by its kind. `subject` is null when the subject is gone
@@ -83,7 +85,7 @@ interface PersonAddressed extends ProposalBase {
 export type Proposal =
   | (AssociationAddressed & { kind: 'repost'; subject: RepostSubject | null })
   | (AssociationAddressed & { kind: 'coorganise'; subject: CoorganiseSubject | null })
-  | (PersonAddressed & { kind: 'repost-personal'; subject: PersonalRepostSubject | null });
+  | PersonAddressed;
 
 /**
  * One request in the AUTHOR's inbox (D38b): who asks, in which association's name, about which post,
@@ -157,6 +159,8 @@ export async function refuseProposal(proposalId: string): Promise<unknown> {
 }
 
 /** The sender withdraws a proposal still waiting. */
-export async function withdrawProposal(proposalId: string): Promise<unknown> {
+export async function withdrawProposal(
+  proposalId: string
+): Promise<{ id: string; status: ProposalStatus }> {
   return socialRequest(`/api/associations/proposals/${proposalId}/withdraw`, { method: 'POST' });
 }

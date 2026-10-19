@@ -5,7 +5,13 @@ import {
   scrubPolls,
 } from './account-erasure';
 import { InternalController } from './internal.controller';
-import { ERASURE_STATEMENTS, WRITE_SCRUBBED_POST_SQL } from './account-erasure';
+import {
+  ERASURE_PROPOSAL_STATEMENTS,
+  ERASURE_ROW_STATEMENTS,
+  ERASURE_STATEMENTS,
+  WRITE_SCRUBBED_POST_SQL,
+} from './account-erasure';
+import { PROPOSAL_VOIDED_BY } from '../proposals/proposal.entity';
 
 /**
  * WHAT AN ERASED ACCOUNT LEFT ON OTHER PEOPLE'S POSTS: its comments, its likes, its poll votes.
@@ -201,6 +207,26 @@ describe('InternalController.deleteUserData', () => {
 
     expect(postRepo.manager.transaction).toHaveBeenCalledTimes(1);
     for (const s of ERASURE_STATEMENTS) expect(queries).toContain(s.sql);
+  });
+
+  it('writes no proposal before the last post lock: the scrub comes first (lockPostRow order)', async () => {
+    const { controller, queries } = make({
+      candidates: [{ id: 'touched', comments: [{ id: 'c', userId: 'erased' }], polls: [] }],
+    });
+    await controller.deleteUserData('erased', SECRET);
+    const lastPostLock = queries.lastIndexOf(WRITE_SCRUBBED_POST_SQL);
+    const firstProposalWrite = queries.findIndex((q) =>
+      ERASURE_PROPOSAL_STATEMENTS.some((s) => s.sql === q)
+    );
+    expect(lastPostLock).toBeGreaterThan(-1);
+    expect(firstProposalWrite).toBeGreaterThan(lastPostLock);
+    // No statement of the head names the proposals table.
+    expect(ERASURE_ROW_STATEMENTS.filter((s) => /\bproposals\b/.test(s.sql))).toEqual([]);
+  });
+
+  it('voids with the decidedBy the proposals service writes', () => {
+    const voided = ERASURE_PROPOSAL_STATEMENTS.find((s) => s.label === 'proposals_voided');
+    expect(voided?.sql).toContain(`'${PROPOSAL_VOIDED_BY}'`);
   });
 
   it('rewrites only the posts the account actually touched', async () => {

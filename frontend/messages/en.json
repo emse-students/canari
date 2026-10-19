@@ -1363,7 +1363,7 @@
   "asso_push_mute_button": "Mute notifications",
   "asso_push_unmute_button": "Unmute notifications",
   "settings_notif_muted_heading": "Muted associations",
-  "settings_notif_muted_desc": "Their posts stay in your feed but no longer send a notification.",
+  "settings_notif_muted_desc": "Their posts stay in your feed and their requests to republish yours stay in your requests, but no longer send a notification.",
   "settings_notif_muted_empty": "No muted association. You can mute one from its page.",
   "settings_notif_muted_unmute": "Unmute",
   "settings_notif_muted_unmute_aria": "Unmute notifications from {name}",

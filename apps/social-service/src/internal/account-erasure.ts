@@ -332,12 +332,14 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
 ];
 
 /**
- * Every statement, in the order they must run inside ONE transaction. Order matters where a row
- * references another (`minesweeper_scores` before `minesweeper_challenges`), and where one statement
- * reads what the next rewrites (an association's posts are anonymised before the account's own posts
- * are deleted, so the DELETE no longer sees them).
+ * The statements that run BEFORE the scrub of other people's posts, in the order they must run inside
+ * ONE transaction. Order matters where a row references another (`minesweeper_scores` before
+ * `minesweeper_challenges`), and where one statement reads what the next rewrites (an association's
+ * posts are anonymised before the account's own posts are deleted, so the DELETE no longer sees
+ * them). NONE OF THEM WRITES A PROPOSAL: those are {@link ERASURE_PROPOSAL_STATEMENTS}, after every
+ * post lock (see `lockPostRow`).
  */
-export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Posts published as an association stay: the association's communication, not the member's.
   {
     label: 'posts_association_author',
@@ -345,10 +347,6 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   },
   // Own content and standing
   { label: 'posts', sql: `DELETE FROM posts WHERE "authorId" = $1` },
-  // The republication requests addressed to the account (D38b). Its personal posts are deleted just
-  // above and migration 096's trigger takes their requests along; this names the column itself, so
-  // a request whose post outlived that (none can, by the trigger) is still not left addressed to it.
-  { label: 'proposals_to_user', sql: `DELETE FROM proposals WHERE "toUserId" = $1` },
   { label: 'association_members', sql: `DELETE FROM association_members WHERE "userId" = $1` },
   { label: 'role_history', sql: `DELETE FROM association_role_history WHERE user_id = $1` },
   {
@@ -484,18 +482,6 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     label: 'channel_workspaces',
     sql: `UPDATE channel_workspaces SET "createdBy" = $2 WHERE "createdBy" = $1`,
   },
-  {
-    label: 'republications',
-    sql: `UPDATE post_republications SET "republishedBy" = $2 WHERE "republishedBy" = $1`,
-  },
-  {
-    label: 'proposals_proposed',
-    sql: `UPDATE proposals SET "proposedBy" = $2 WHERE "proposedBy" = $1`,
-  },
-  {
-    label: 'proposals_decided',
-    sql: `UPDATE proposals SET "decidedBy" = $2 WHERE "decidedBy" = $1`,
-  },
   { label: 'tags_granted', sql: `UPDATE user_tags SET "grantedBy" = $2 WHERE "grantedBy" = $1` },
   {
     label: 'moderation_muted',
@@ -543,6 +529,58 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     label: 'reactions',
     sql: `UPDATE posts SET reactions = reactions - $1 WHERE reactions ? $1`,
   },
+];
+
+/**
+ * The statements that write PROPOSALS (and the republications they produced), run LAST - after the
+ * scrub of other people's posts. Every other writer of a proposal locks the post first and the
+ * proposal second (an acceptance: `ProposalsService.lockInOrder`; a hide; a post delete through its
+ * trigger); an erasure that took a proposal first and then a post the account reacted to deadlocked
+ * against an acceptance holding that post (`40P01`, the erasure aborted).
+ *
+ * A pending person-addressed request the account ASKED (D38b) is voided, not anonymised: its asker
+ * no longer speaks for the association, so it could only ever end in `PROPOSAL_SENDER_GONE`. Its
+ * bell row goes first (it is found through the still-pending row), then the row turns `withdrawn`
+ * with `decidedBy` = `'[voided]'` - `PROPOSAL_VOIDED_BY`, a literal here because a statement binds
+ * only `$1` and `$2` (asserted by the spec).
+ */
+export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
+  {
+    label: 'proposals_voided_bell',
+    sql: `DELETE FROM post_notifications n
+           USING proposals p
+           WHERE p."proposedBy" = $1 AND p.kind = 'repost-personal' AND p.status = 'pending'
+             AND n."recipientId" = p."toUserId" AND n.type = 'repost_personal_requested'
+             AND n."postId" = p."subjectId"::text
+             AND n."associationId"::text = p."fromAssociationId"::text`,
+  },
+  {
+    label: 'proposals_voided',
+    sql: `UPDATE proposals SET status = 'withdrawn', "decidedBy" = '[voided]', "decidedAt" = now()
+           WHERE "proposedBy" = $1 AND kind = 'repost-personal' AND status = 'pending'`,
+  },
+  {
+    label: 'republications',
+    sql: `UPDATE post_republications SET "republishedBy" = $2 WHERE "republishedBy" = $1`,
+  },
+  {
+    label: 'proposals_proposed',
+    sql: `UPDATE proposals SET "proposedBy" = $2 WHERE "proposedBy" = $1`,
+  },
+  {
+    label: 'proposals_decided',
+    sql: `UPDATE proposals SET "decidedBy" = $2 WHERE "decidedBy" = $1`,
+  },
+  // The republication requests addressed to the account (D38b). Its personal posts are deleted by
+  // `posts` and migration 096's trigger takes their requests along; this names the column itself, so
+  // a request whose post outlived that (none can, by the trigger) is still not left addressed to it.
+  { label: 'proposals_to_user', sql: `DELETE FROM proposals WHERE "toUserId" = $1` },
+];
+
+/** Every statement, in the order {@link eraseSocialRows} runs them around the scrub. */
+export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+  ...ERASURE_ROW_STATEMENTS,
+  ...ERASURE_PROPOSAL_STATEMENTS,
 ];
 
 /**
@@ -786,7 +824,7 @@ export async function runErasureStatements(
 export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<SocialErasureResult> {
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
 
-  const counts = await runErasureStatements(db, ERASURE_STATEMENTS, userId);
+  const counts = await runErasureStatements(db, ERASURE_ROW_STATEMENTS, userId);
 
   // Comments, likes and poll votes need the structure, so the candidates are read and locked.
   let postsScrubbed = 0;
@@ -800,5 +838,7 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
     await db.write(WRITE_SCRUBBED_POST_SQL, params);
     postsScrubbed += 1;
   }
+  // Proposals LAST, after every post lock: the order every acceptance takes (`lockPostRow`).
+  Object.assign(counts, await runErasureStatements(db, ERASURE_PROPOSAL_STATEMENTS, userId));
   return { counts, postsScrubbed, pinsRemoved };
 }

@@ -338,25 +338,32 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
 
   /**
    * The asker still holds `POST_AS_ASSO` in the association - read from the membership row itself,
-   * which is exact because that flag is never granted by a BDE tier - and is not restricted.
+   * which is exact because that flag is never granted by a BDE tier - and is not restricted
+   * (`user_moderation.isMuted`, what `ModerationService.isUserMuted` reads). An erased asker has no
+   * membership left, so it no longer speaks either. The flag is a constant of this class, never input.
    */
+  senderSpeaksSql(alias: string): string {
+    return `(EXISTS (SELECT 1 FROM association_members am
+                      WHERE am."associationId" = ${alias}."fromAssociationId"
+                        AND am."userId" = ${alias}."proposedBy"
+                        AND (am.permissions & ${Number(this.senderFlag)}) <> 0)
+             AND NOT EXISTS (SELECT 1 FROM user_moderation um
+                              WHERE um."userId" = ${alias}."proposedBy" AND um."isMuted" = true))`;
+  }
+
+  /** `senderSpeaksSql`, for one request, inside the acceptance's transaction. */
   async senderStillSpeaks(manager: EntityManager, proposal: UserProposal): Promise<boolean> {
-    const held: unknown[] = await manager.query(
-      `SELECT 1 FROM association_members
-        WHERE "associationId" = $1 AND "userId" = $2 AND (permissions & $3) <> 0`,
-      [proposal.fromAssociationId, proposal.proposedBy, this.senderFlag]
+    const rows: { speaks: boolean }[] = await manager.query(
+      `SELECT ${this.senderSpeaksSql('p')} AS speaks FROM proposals p WHERE p.id = $1`,
+      [proposal.id]
     );
-    if (held.length === 0) {
+    const speaks = rows[0]?.speaks === true;
+    if (!speaks) {
       this.logger.debug(
-        `[REPOST-P] ${proposal.id.slice(0, 8)}: its asker no longer holds the flag`
+        `[REPOST-P] ${proposal.id.slice(0, 8)}: its asker lost the flag, left or is muted`
       );
-      return false;
     }
-    if (await this.moderation.isUserMuted(proposal.proposedBy)) {
-      this.logger.debug(`[REPOST-P] ${proposal.id.slice(0, 8)}: its asker is muted`);
-      return false;
-    }
-    return true;
+    return speaks;
   }
 
   /** A request taken back leaves nothing to answer: its bell row goes in the same transaction. */
@@ -425,7 +432,8 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
   /**
    * The two caps, counted under TWO transaction-scoped advisory locks - the author's, then the
    * association's, always in that order, so two requests cannot both read "one seat left" and both
-   * take it, and no two transactions wait on each other in a cycle.
+   * take it, and no two transactions wait on each other in a cycle. A request whose asker no longer
+   * speaks (`senderSpeaksSql`) holds no seat: the author never sees it, and it can only be voided.
    */
   private async assertWithinCaps(
     manager: EntityManager,
@@ -441,9 +449,10 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
     const counts: { toAuthor: number; fromAssociation: number }[] = await manager.query(
       `SELECT count(*) FILTER (WHERE "toUserId" = $1)::int AS "toAuthor",
               count(*) FILTER (WHERE "fromAssociationId" = $2)::int AS "fromAssociation"
-         FROM proposals
-        WHERE kind = 'repost-personal' AND status = 'pending'
-          AND ("toUserId" = $1 OR "fromAssociationId" = $2)`,
+         FROM proposals p
+        WHERE p.kind = 'repost-personal' AND p.status = 'pending'
+          AND (p."toUserId" = $1 OR p."fromAssociationId" = $2)
+          AND ${this.senderSpeaksSql('p')}`,
       [authorId, associationId]
     );
     const { toAuthor, fromAssociation } = counts[0] ?? { toAuthor: 0, fromAssociation: 0 };

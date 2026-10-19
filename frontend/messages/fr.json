@@ -1395,7 +1395,7 @@
   "asso_push_mute_button": "Couper les notifications",
   "asso_push_unmute_button": "Réactiver les notifications",
   "settings_notif_muted_heading": "Associations en sourdine",
-  "settings_notif_muted_desc": "Leurs publications restent dans votre fil, mais n'envoient plus de notification.",
+  "settings_notif_muted_desc": "Leurs publications restent dans votre fil et leurs demandes de republier vos posts dans vos demandes, mais n'envoient plus de notification.",
   "settings_notif_muted_empty": "Aucune association en sourdine. Vous pouvez en couper une depuis sa page.",
   "settings_notif_muted_unmute": "Réactiver",
   "settings_notif_muted_unmute_aria": "Réactiver les notifications de {name}",

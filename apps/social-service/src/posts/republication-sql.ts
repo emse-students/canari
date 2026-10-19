@@ -80,11 +80,17 @@ export async function dropRepublicationsOf(
 }
 
 /**
- * Row-locks a post (`FOR UPDATE`) at the START of a proposal's acceptance, BEFORE the proposal row
- * is locked by the decision. A moderation hide locks the post (its `UPDATE`) and then deletes the
- * pending proposals, and a post delete does the same through its trigger; an acceptance that took
- * the proposal first and the post second (in `writeRepublication`) could wait on a hide that waits
- * on it. One order everywhere - the post, then its proposals - and no cycle can form.
+ * Row-locks a post (`FOR UPDATE`) BEFORE any proposal row about it is written - the subject lock of
+ * `ProposalsService.lockInOrder`, taken by every decision (accept, refuse, withdraw) and every
+ * person-addressed ask. A moderation hide locks the post (its `UPDATE`) and then deletes the pending
+ * proposals, and a post delete does the same through its trigger; an acceptance that took the
+ * proposal first and the post second (in `writeRepublication`) could wait on a hide that waits on
+ * it. The other writers keep the same order on purpose, and each says so where it does: the account
+ * erasure scrubs posts before it touches a proposal (`ERASURE_PROPOSAL_STATEMENTS`), a republication
+ * withdrawal locks the post first (`RepublicationsService.unrepublish`), and an association delete,
+ * which locks the association first, is waited on by `lockInOrder`'s `KEY SHARE`. A new writer of
+ * proposals that does not lock the post first re-opens the deadlock, and the lock-order cases of
+ * `personal-republications.integration.spec.ts` are what find it.
  */
 export async function lockPostRow(
   manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },

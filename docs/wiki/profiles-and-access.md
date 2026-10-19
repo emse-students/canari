@@ -980,17 +980,43 @@ association carrying it. Read grants never reach that branch.
 
 **What an officer sees of a request it sent.** The association queue describes a
 `repost-personal` request only to a viewer who sees the post (`postVisibleToViewerSql`, no read
-grant, no administrator reach). To another `POST_AS_ASSO` holder of the association, `subject` and
-`toUser` are null: the queue says "a request to an author", never the preview or the name.
+grant, no administrator reach). To another `POST_AS_ASSO` holder of the association, `subjectId`,
+`subject` and `toUser` are null: the queue says "a request to an author", never the post's id, its
+preview or the name. A withdrawal answers `{ id, status }` only, never the row (which names the
+author and the post).
 
-**Acceptance re-checks the asker.** In the accepting transaction, a `proposedBy` who no longer holds
-`POST_AS_ASSO` in the association, or is muted, voids the request (`withdrawn`, bell row deleted)
-and the author gets a 409 with code `PROPOSAL_SENDER_GONE`.
+**An asker who no longer speaks (second review of #2116).** "Speaks" is ONE SQL predicate,
+`senderSpeaksSql`: the asker holds `POST_AS_ASSO` in the association and is not muted. A request
+whose asker stopped speaking - flag lost, left, muted, erased - is:
 
-**Lock order: the POST, then the proposal.** Accept takes `lockPostRow` (the post `FOR UPDATE`)
-through the handler's `lockSubject` before its conditional `UPDATE` of the proposal - the order a
-moderation hide takes (post, then `DELETE` of pending proposals) - so the two cannot deadlock. D38's
-`repost` handler takes the same lock. An integration case holds the post and proves accept waits.
+- not shown in the author's inbox and not counted in its badge;
+- not counted in either cap (20 per author, 10 per association);
+- voided when the author accepts it: 409 with code `PROPOSAL_SENDER_GONE`;
+- voided when the same association asks again for the same post, so the pair's place in the
+  unique index is freed;
+- voided at once by the asker's erasure (`proposals_voided`).
+
+Voided means `withdrawn` with `decidedBy` = `[voided]` (`PROPOSAL_VOIDED_BY`), which names neither
+the author nor the asker, and the author's bell row goes in the same transaction. A flag change or a
+departure does NOT void at that moment: those have many writers. The predicate makes the request
+inert until one of the voids above finds it.
+
+**Lock order: the associations (`FOR KEY SHARE`), then the POST, then the proposal.**
+`ProposalsService.lockInOrder` takes it for every decision (accept, refuse, withdraw) and every ask
+to a person. The handler's `lockSubject` is `lockPostRow`, the post `FOR UPDATE`. Every other writer
+takes the same order:
+
+- a moderation hide and a post delete lock the post, then delete its pending proposals;
+- a republication withdrawal (`unrepublish`) locks the post first;
+- the account erasure writes proposals LAST, after the scrub of other people's posts
+  (`ERASURE_PROPOSAL_STATEMENTS`). Before that fix it anonymised `proposedBy` first, then locked
+  the posts the account had reacted to. Two connections reproduced `deadlock detected` against an
+  acceptance, and the erasure aborted;
+- an association delete locks the association first and cascades into its proposals. The
+  acceptance's `KEY SHARE` waits on it while holding nothing.
+
+Three integration cases hold the contested row from a second connection and prove the order: a
+hide, an association delete, and an erasure racing an acceptance, where both now complete.
 
 **The counts.** The inbox's "readers who would see it first" is computed by the very query
 acceptance notifies with (`newlyReachedByPersonalRepublicationSql`, with the post's
@@ -1016,8 +1042,8 @@ acceptance notifies with (`newlyReachedByPersonalRepublicationSql`, with the pos
   accepted or refused request stays until the post is deleted.
 - Deleting the post: the foreign key and the trigger.
 - The author's erasure deletes every request addressed to them (`proposals_to_user`).
-- The proposer's erasure anonymises `proposedBy`. Their pending requests remain, and the
-  association still speaks.
+- The proposer's erasure voids their PENDING requests (`[voided]`, bell rows deleted): no one is
+  left to speak for them. Their decided requests keep the record, with `proposedBy` anonymised.
 
 **The client:**
 

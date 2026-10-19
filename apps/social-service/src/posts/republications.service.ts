@@ -158,6 +158,8 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
       throw new ForbiddenException('You may not publish in this association name');
     }
     await this.repo.manager.transaction(async (manager) => {
+      // The post first, then the proposal it closes below: see `lockPostRow`.
+      await lockPostRow(manager, postId);
       const removed: unknown = await manager.query(
         `DELETE FROM post_republications WHERE "postId" = $1 AND "associationId" = $2`,
         [postId, associationId]

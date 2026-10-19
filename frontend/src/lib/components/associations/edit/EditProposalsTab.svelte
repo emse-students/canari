@@ -77,8 +77,9 @@
       const status = refusalStatus(e);
       Log.d('EditProposalsTab', `${action} refused: status=${status} ${String(e)}`);
       if (status === 409) {
-        errorMessage = m.asso_republications_not_pending();
+        // Re-read FIRST: `load` clears the message, and the reason is what this answer must show.
         await load();
+        errorMessage = m.asso_republications_not_pending();
       } else {
         errorMessage = m.post_republish_error();
       }
