@@ -11,8 +11,9 @@
  * second counter. A retry is the queue's and re-sends the SAME sealed bytes: nothing is re-sealed.
  *
  * A GENERATION is one recorder: its own init, its own splitter, its own time offset. A camera
- * re-acquired after a background starts a new one ({@link LiveSegmentPipeline.beginGeneration}); the
- * old recorder's last chunk, pushed before, is still processed with the old generation.
+ * re-acquired after a background starts a new one ({@link LiveSegmentPipeline.beginGeneration}), and
+ * every chunk is pushed WITH its generation's id, fixed when its recorder was created - so the old
+ * recorder's last chunk is processed with the old init whenever it arrives.
  *
  * Logging: per segment nothing but a debug line; a summary every {@link SUMMARY_EVERY} segments
  * (`[LIVE-PIPE] summary`), and one line per anomaly. Never a key or a segment's bytes.
@@ -44,6 +45,8 @@ export interface LiveSegmentPipelineDeps {
   maxSegmentBytes: number;
   /** A monotonic clock in ms, for the seal timing in the summary. */
   now: () => number;
+  /** Told when a generation breaks (an unreadable chunk): nothing more of that recorder is sent. */
+  onBroken?: (generation: number) => void;
 }
 
 /** Counters of the whole live, read by the summary line and the tests. */
@@ -64,7 +67,7 @@ interface Generation {
   splitter: Fmp4Splitter;
   offsetMs: number;
   init: Fmp4Init | null;
-  /** A parse failure poisons the generation: its bytes cannot be framed any more. */
+  /** A read or parse failure poisons the generation: its bytes cannot be framed any more. */
   broken: boolean;
 }
 
@@ -78,8 +81,9 @@ export class LiveSegmentPipeline {
     sealMsTotal: 0,
   };
   #tail: Promise<void> = Promise.resolve();
-  #generation: Generation | null = null;
-  #generations = 0;
+  /** Every generation still taking chunks, by id: a late chunk lands in ITS recorder's splitter. */
+  readonly #generations = new Map<number, Generation>();
+  #lastGeneration = 0;
   #closed = false;
 
   constructor(private readonly deps: LiveSegmentPipelineDeps) {}
@@ -87,28 +91,57 @@ export class LiveSegmentPipeline {
   /**
    * A new recorder starts: its chunks are read with their own init, and its media time is shifted
    * by `offsetMs` (0 for the first recorder; the time since the live began for a re-acquired one).
+   * Returns the generation's id, which that recorder's chunks are pushed with - FIXED at the
+   * recorder's creation, so the old recorder's last chunk can never reach the new splitter.
    */
-  beginGeneration(offsetMs: number): void {
-    const id = ++this.#generations;
+  beginGeneration(offsetMs: number): number {
+    const id = ++this.#lastGeneration;
     console.debug(`[LIVE-PIPE] generation ${id} begins at +${Math.round(offsetMs)} ms`);
-    this.#generation = {
+    this.#generations.set(id, {
       id,
       splitter: new Fmp4Splitter(),
       offsetMs,
       init: null,
       broken: false,
-    };
+    });
+    return id;
   }
 
-  /** Takes one recorder chunk; resolves once it is sealed and queued (or dropped, and logged). */
-  push(chunk: Blob | Uint8Array): Promise<void> {
-    const generation = this.#generation;
-    if (!generation) {
-      console.error('[LIVE-PIPE] a chunk arrived before any generation began - dropped');
-      return Promise.resolve();
+  /**
+   * The recorder of `generation` has stopped and handed over its last chunk: once that chunk is
+   * processed, the generation is forgotten - and bytes it still held (a box cut short) are LOGGED as
+   * lost, never dropped silently.
+   */
+  endGeneration(generation: number): Promise<void> {
+    const run = this.#tail.then(() => {
+      const g = this.#generations.get(generation);
+      if (!g) return;
+      this.#generations.delete(generation);
+      const pending = g.splitter.pendingBytes;
+      if (pending > 0) {
+        console.warn(
+          `[LIVE-PIPE] generation ${generation} ended with ${pending} B never framed - lost`
+        );
+      } else {
+        console.debug(`[LIVE-PIPE] generation ${generation} ended clean`);
+      }
+    });
+    this.#tail = run;
+    return run;
+  }
+
+  /**
+   * Takes one chunk of `generation`'s recorder; resolves once it is sealed and queued (or dropped,
+   * and logged). The chain NEVER rejects: every failure inside is caught, logged and counted.
+   */
+  push(generation: number, chunk: Blob | Uint8Array): Promise<void> {
+    const g = this.#generations.get(generation);
+    if (!g) {
+      console.error(`[LIVE-PIPE] a chunk of unknown or ended generation ${generation} - dropped`);
+      this.stats.dropped++;
+      return this.#tail;
     }
-    const run = this.#tail.then(() => this.#process(generation, chunk));
-    // The chain never rejects: #process logs and counts its own failures.
+    const run = this.#tail.then(() => this.#process(g, chunk));
     this.#tail = run;
     return run;
   }
@@ -125,30 +158,36 @@ export class LiveSegmentPipeline {
 
   async #process(generation: Generation, chunk: Blob | Uint8Array): Promise<void> {
     if (this.#closed || generation.broken) return;
-    const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(await chunk.arrayBuffer());
-    if (bytes.byteLength === 0) return;
-    let split;
     try {
-      split = generation.splitter.push(bytes);
+      // The read is inside the try: a Blob that cannot be read is a lost chunk, and a splitter that
+      // missed a chunk cannot be trusted to frame the next one, so it breaks the generation too.
+      const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(await chunk.arrayBuffer());
+      if (bytes.byteLength === 0) return;
+      const split = generation.splitter.push(bytes);
+      if (split.init) {
+        generation.init = split.init;
+        console.debug(
+          `[LIVE-PIPE] generation ${generation.id}: init ${split.init.bytes.byteLength} B, video track ${split.init.videoTrackId ?? 'none'}`
+        );
+      }
+      if (split.fragments.length > 1) this.stats.multiFragmentChunks++;
+      for (const raw of split.fragments) {
+        if (this.#closed) return;
+        await this.#send(generation, raw);
+      }
     } catch (e) {
-      // A recorder whose output cannot be framed cannot be resynchronised from the middle: the
-      // generation stops producing, LOUDLY. The live goes on air again at the next re-acquire.
+      // A recorder whose output cannot be read or framed cannot be resynchronised from the middle:
+      // the generation stops producing, LOUDLY, and the owner is told so the screen does not go on
+      // saying "on air" while nothing is sent.
       generation.broken = true;
       this.stats.dropped++;
       const why = e instanceof Fmp4ParseError ? e.message : String(e);
       console.error(`[LIVE-PIPE] generation ${generation.id}: unreadable recorder output (${why})`);
-      return;
-    }
-    if (split.init) {
-      generation.init = split.init;
-      console.debug(
-        `[LIVE-PIPE] generation ${generation.id}: init ${split.init.bytes.byteLength} B, video track ${split.init.videoTrackId ?? 'none'}`
-      );
-    }
-    if (split.fragments.length > 1) this.stats.multiFragmentChunks++;
-    for (const raw of split.fragments) {
-      if (this.#closed) return;
-      await this.#send(generation, raw);
+      try {
+        this.deps.onBroken?.(generation.id);
+      } catch (inner) {
+        console.error('[LIVE-PIPE] the broken-generation handler threw', inner);
+      }
     }
   }
 
@@ -214,7 +253,7 @@ export class LiveSegmentPipeline {
     console.log(
       `[LIVE-PIPE] summary: ${s.segments} segments, ${(s.plainBytes / 1e6).toFixed(1)} MB, ` +
         `seal ${(s.sealMsTotal / s.segments).toFixed(1)} ms avg, two-fragment chunks ${s.multiFragmentChunks}, ` +
-        `not on keyframe ${s.notOnKeyframe}, dropped ${s.dropped}, generation ${this.#generations}`
+        `not on keyframe ${s.notOnKeyframe}, dropped ${s.dropped}, generations open ${this.#generations.size}`
     );
   }
 }

@@ -47,6 +47,7 @@
 
   const narrow = isMobileOverlayLayout();
   let screen = $state<LiveBroadcaster | null>(null);
+  let dialog = $state<HTMLDivElement | null>(null);
   let gestureArm: HistoryGestureArm | null = null;
 
   const entry: OverlayClose = (reason) => {
@@ -63,8 +64,9 @@
 
   onMount(() => {
     console.debug(`[live-overlay] open${associationId ? ` as association ${associationId}` : ''}`);
-    const focused = document.activeElement;
-    if (focused instanceof HTMLElement && focused !== document.body) focused.blur();
+    // Focus moves INTO the dialog: a screen reader starts reading it, and the keyboard is no longer on
+    // the composer button behind the layer.
+    dialog?.focus({ preventScroll: true });
     pushHistoryOverlay(entry);
   });
 
@@ -85,9 +87,11 @@
     onArm: () => (gestureArm = armHistoryOverlayGesture()),
     enabled: narrow,
   }}
-  class="fixed inset-0 z-(--z-viewer) bg-black text-white"
+  class="fixed inset-0 z-(--z-viewer) bg-black text-white outline-none"
   role="dialog"
   aria-modal="true"
+  tabindex="-1"
+  bind:this={dialog}
   aria-label={m.live_overlay_label()}
   data-live-overlay
 >

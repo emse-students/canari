@@ -56,10 +56,10 @@ describe('LiveSegmentPipeline', () => {
   it('Android shape: the init-alone chunk queues nothing, then each fragment is a self-contained segment', async () => {
     const q = new FakeQueue();
     const p = pipeline(q);
-    p.beginGeneration(0);
-    void p.push(initSegment());
-    void p.push(fragment({ videoTime: 0n }));
-    void p.push(fragment({ videoTime: 180_000n }));
+    const g = p.beginGeneration(0);
+    void p.push(g, initSegment());
+    void p.push(g, fragment({ videoTime: 0n }));
+    void p.push(g, fragment({ videoTime: 180_000n }));
     await p.flush();
     expect(q.items.map((i) => i.index)).toEqual([0, 1]);
     expect(q.items.map((i) => sealedFor(i.sealed))).toEqual([0, 1]);
@@ -69,8 +69,9 @@ describe('LiveSegmentPipeline', () => {
   it("a two-fragment chunk becomes two segments on consecutive indexes, from the queue's own next index", async () => {
     const q = new FakeQueue(7);
     const p = pipeline(q);
-    p.beginGeneration(0);
+    const g = p.beginGeneration(0);
     await p.push(
+      g,
       join(initSegment(), fragment({ videoTime: 0n }), fragment({ videoTime: 180_000n }))
     );
     expect(q.items.map((i) => [i.index, sealedFor(i.sealed)])).toEqual([
@@ -88,10 +89,10 @@ describe('LiveSegmentPipeline', () => {
       return tagSeal(index, plain);
     });
     const p = pipeline(q, { seal });
-    p.beginGeneration(0);
-    void p.push(initSegment());
-    void p.push(fragment({ videoTime: 0n }));
-    const last = p.push(fragment({ videoTime: 180_000n }));
+    const g = p.beginGeneration(0);
+    void p.push(g, initSegment());
+    void p.push(g, fragment({ videoTime: 0n }));
+    const last = p.push(g, fragment({ videoTime: 180_000n }));
     await vi.waitFor(() => expect(seal).toHaveBeenCalledTimes(1));
     // The second segment is not sealed while the first is still sealing.
     expect(q.items).toEqual([]);
@@ -105,13 +106,13 @@ describe('LiveSegmentPipeline', () => {
   it('a re-acquired camera: a new init, its media time shifted by the offset, the indexes continuing', async () => {
     const q = new FakeQueue();
     const p = pipeline(q);
-    p.beginGeneration(0);
-    await p.push(join(initSegment(), fragment({ videoTime: 0n })));
+    const g = p.beginGeneration(0);
+    await p.push(g, join(initSegment(), fragment({ videoTime: 0n })));
     // The old recorder's last chunk, pushed before the new generation begins, keeps its own init.
-    void p.push(fragment({ videoTime: 180_000n }));
-    p.beginGeneration(30_000);
+    void p.push(g, fragment({ videoTime: 180_000n }));
+    const g2 = p.beginGeneration(30_000);
     // iOS shape this time: init + media in the first chunk; the new recorder restarts at zero.
-    await p.push(join(initSegment(), fragment({ videoTime: 0n, audioTime: 0 })));
+    await p.push(g2, join(initSegment(), fragment({ videoTime: 0n, audioTime: 0 })));
     expect(q.items.map((i) => i.index)).toEqual([0, 1, 2]);
     const third = plainOf(q.items[2].sealed);
     expect(third.slice(0, initSegment().length)).toEqual(initSegment());
@@ -126,24 +127,29 @@ describe('LiveSegmentPipeline', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const q = new FakeQueue();
     const p = pipeline(q, { maxSegmentBytes: initSegment().length + 4 + 200 });
-    p.beginGeneration(0);
-    await p.push(join(initSegment(), fragment({ mediaBytes: 500 }), fragment({ mediaBytes: 10 })));
+    const g = p.beginGeneration(0);
+    await p.push(
+      g,
+      join(initSegment(), fragment({ mediaBytes: 500 }), fragment({ mediaBytes: 10 }))
+    );
     expect(q.items).toHaveLength(1);
     expect(q.items[0].index).toBe(0);
     expect(p.stats.dropped).toBe(1);
   });
 
-  it('an unreadable chunk breaks its generation loudly; the next generation goes on air', async () => {
+  it('an unparseable chunk breaks its generation loudly and TELLS the owner; the next generation goes on air', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const q = new FakeQueue();
-    const p = pipeline(q);
-    p.beginGeneration(0);
-    await p.push(fragment()); // media before any init
-    await p.push(join(initSegment(), fragment()));
+    const onBroken = vi.fn();
+    const p = pipeline(q, { onBroken });
+    const g = p.beginGeneration(0);
+    await p.push(g, fragment()); // media before any init
+    await p.push(g, join(initSegment(), fragment()));
     expect(q.items).toEqual([]);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('unreadable recorder output'));
-    p.beginGeneration(10_000);
-    await p.push(join(initSegment(), fragment()));
+    expect(onBroken).toHaveBeenCalledExactlyOnceWith(g);
+    const g2 = p.beginGeneration(10_000);
+    await p.push(g2, join(initSegment(), fragment()));
     expect(q.items.map((i) => i.index)).toEqual([0]);
   });
 
@@ -151,8 +157,8 @@ describe('LiveSegmentPipeline', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const q = new FakeQueue();
     const p = pipeline(q);
-    p.beginGeneration(0);
-    await p.push(join(initSegment(), fragment({ keyframe: false })));
+    const g = p.beginGeneration(0);
+    await p.push(g, join(initSegment(), fragment({ keyframe: false })));
     expect(q.items).toHaveLength(1);
     expect(p.stats.notOnKeyframe).toBe(1);
   });
@@ -162,8 +168,8 @@ describe('LiveSegmentPipeline', () => {
     const q = new FakeQueue();
     q.stopped = true;
     const p = pipeline(q);
-    p.beginGeneration(0);
-    await p.push(join(initSegment(), fragment(), fragment()));
+    const g = p.beginGeneration(0);
+    await p.push(g, join(initSegment(), fragment(), fragment()));
     expect(tagSeal).toHaveBeenCalledTimes(1);
     expect(p.stats.dropped).toBe(1);
   });
@@ -173,9 +179,9 @@ describe('LiveSegmentPipeline', () => {
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     const q = new FakeQueue();
     const p = pipeline(q);
-    p.beginGeneration(0);
-    await p.push(initSegment());
-    for (let i = 0; i < SUMMARY_EVERY * 2; i++) await p.push(fragment({ videoTime: BigInt(i) }));
+    const g = p.beginGeneration(0);
+    await p.push(g, initSegment());
+    for (let i = 0; i < SUMMARY_EVERY * 2; i++) await p.push(g, fragment({ videoTime: BigInt(i) }));
     const summaries = log.mock.calls.filter((c) => String(c[0]).includes('summary'));
     expect(summaries).toHaveLength(2);
     for (const call of log.mock.calls) {
@@ -186,9 +192,60 @@ describe('LiveSegmentPipeline', () => {
   it('nothing is queued once closed', async () => {
     const q = new FakeQueue();
     const p = pipeline(q);
-    p.beginGeneration(0);
+    const g = p.beginGeneration(0);
     p.close();
-    await p.push(join(initSegment(), fragment()));
+    await p.push(g, join(initSegment(), fragment()));
     expect(q.items).toEqual([]);
+  });
+
+  it('a Blob whose read REJECTS breaks its generation and tells the owner - the chain itself survives', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const q = new FakeQueue();
+    const onBroken = vi.fn();
+    const p = pipeline(q, { onBroken });
+    const g = p.beginGeneration(0);
+    const unreadable = { arrayBuffer: () => Promise.reject(new Error('NotReadableError')) } as Blob;
+    await expect(p.push(g, unreadable)).resolves.toBeUndefined();
+    expect(onBroken).toHaveBeenCalledExactlyOnceWith(g);
+    // The same generation sends nothing more: its splitter missed bytes.
+    await p.push(g, join(initSegment(), fragment()));
+    expect(q.items).toEqual([]);
+    // A new recorder is still served by the same chain.
+    const g2 = p.beginGeneration(5_000);
+    await p.push(g2, join(initSegment(), fragment()));
+    expect(q.items.map((i) => i.index)).toEqual([0]);
+  });
+
+  it("the OLD recorder's last chunk, arriving after the new generation began, lands in the old splitter", async () => {
+    const q = new FakeQueue();
+    const p = pipeline(q);
+    const g1 = p.beginGeneration(0);
+    await p.push(g1, join(initSegment(), fragment({ videoTime: 0n })));
+    const g2 = p.beginGeneration(30_000);
+    await p.push(g2, join(initSegment(), fragment({ videoTime: 0n })));
+    // Late: the old recorder's stop delivered its final chunk only now.
+    await p.push(g1, fragment({ videoTime: 180_000n }));
+    expect(
+      q.items.map((i) => readTimes(plainOf(i.sealed).slice(initSegment().length)).video)
+    ).toEqual([0n, 30n * 90_000n, 180_000n]);
+  });
+
+  it('ending a generation LOGS the bytes it still held, and a chunk pushed after is dropped loudly', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const q = new FakeQueue();
+    const p = pipeline(q);
+    const g = p.beginGeneration(0);
+    const whole = join(initSegment(), fragment(), fragment());
+    await p.push(g, whole.slice(0, whole.length - 10));
+    expect(q.items).toHaveLength(1);
+    await p.endGeneration(g);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/generation 1 ended with \d+ B never framed/)
+    );
+    await p.push(g, whole.slice(whole.length - 10));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('unknown or ended generation'));
+    expect(q.items).toHaveLength(1);
+    expect(p.stats.dropped).toBe(1);
   });
 });

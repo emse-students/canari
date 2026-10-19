@@ -184,6 +184,7 @@
     server: m.live_ended_server,
     'server-while-away': m.live_ended_server_away,
     failed: m.live_ended_failed,
+    'connection-lost': m.live_ended_connection_lost,
   };
 
   const CAMERA_FAULT_TEXT: Record<CameraFault, () => string> = {
@@ -432,11 +433,23 @@
 
   {#if broadcast.phase === 'ending'}
     <div
-      class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70"
+      class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 px-8 text-center"
       role="status"
+      data-live-ending
     >
       <LoaderCircle size={32} strokeWidth={2} class="motion-safe:animate-spin" />
       <p class="text-sm">{m.live_ending()}</p>
+      <!-- The wait is the network's alone (the camera is already given back), and bounded - but it
+           is never the member's to sit through: leaving ends the live best-effort. -->
+      <p class="text-xs text-white/70">{m.live_ending_waiting()}</p>
+      <button
+        type="button"
+        class="{pill} mt-2 bg-white/15 hover:bg-white/25"
+        onclick={close}
+        data-live-ending-leave
+      >
+        {m.live_ending_leave()}
+      </button>
     </div>
   {/if}
 

@@ -8,8 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiveRefusalError } from './api';
 import { LiveBroadcast, startProblemOf } from './liveBroadcast.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
-import { fakeCamera, fakeDeps, LIVE_ID, KEY } from './liveBroadcast.test-helper';
-import { fragment, initSegment, join } from './fmp4.test-helper';
+import { fakeCamera, fakeDeps, LIMITS, LIVE_ID, KEY } from './liveBroadcast.test-helper';
+import { fragment, initSegment, join, readTimes } from './fmp4.test-helper';
+import {
+  LIVE_BACKLOG_MARGIN_SEGMENTS,
+  LIVE_RECORDER_STOP_BOUND_MS,
+  LIVE_SEGMENT_MS,
+} from './constants';
 
 const ended = () => new LiveRefusalError(410, 'LIVE_ENDED', 'ended', 'ended', null, null, null);
 const refused = (code: string) =>
@@ -178,6 +183,79 @@ describe('LiveBroadcast - on air', () => {
     expect(b.endCause).toBe('broadcaster');
   });
 
+  it('End offline: the camera and the screen lock are given back BEFORE the queue drains, and the drain is bounded by the reconnect window', async () => {
+    const { b, deps, uploaders, cam, fireTimers } = await ready();
+    await b.start();
+    uploaders[0].idle.mockImplementation(() => new Promise(() => {})); // offline: never drains
+    const ending = b.end();
+    await vi.waitFor(() => expect(cam.control.opened[0].video.stop).toHaveBeenCalled());
+    expect(b.phase).toBe('ending');
+    expect(deps.wakeLock.release).toHaveBeenCalled();
+    expect(uploaders[0].stop).not.toHaveBeenCalled();
+    fireTimers(LIMITS.reconnectWindowMs);
+    await ending;
+    expect(uploaders[0].stop).toHaveBeenCalled(); // the unsent queue is dropped
+    expect(deps.endLive).toHaveBeenCalledWith(LIVE_ID);
+    expect(b.phase).toBe('ended');
+  });
+
+  it('End with a recorder that never answers its stop: the wait is bounded, then the live ends', async () => {
+    const { b, deps, recorders, fireTimers } = await ready();
+    await b.start();
+    recorders[0].stop.mockImplementation(() => new Promise(() => {}));
+    const ending = b.end();
+    await settle();
+    expect(deps.endLive).not.toHaveBeenCalled();
+    fireTimers(LIVE_RECORDER_STOP_BOUND_MS);
+    await ending;
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    expect(b.phase).toBe('ended');
+  });
+
+  it('leaving while the end waits for the network ends the live once, and the wait does nothing after', async () => {
+    const { b, deps, uploaders, fireTimers } = await ready();
+    await b.start();
+    uploaders[0].idle.mockImplementation(() => new Promise(() => {}));
+    const ending = b.end();
+    await vi.waitFor(() => expect(deps.sleep).toHaveBeenCalledWith(LIMITS.reconnectWindowMs));
+    b.dispose();
+    expect(uploaders[0].stop).toHaveBeenCalled();
+    fireTimers(LIMITS.reconnectWindowMs);
+    await ending;
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+  });
+
+  it("a backlog past the reconnect window's worth of segments ends the live as a lost connection, dropping the queue", async () => {
+    const { b, deps, uploaders, recorders } = await ready();
+    await b.start();
+    const cap =
+      Math.ceil(LIMITS.reconnectWindowMs / LIVE_SEGMENT_MS) + LIVE_BACKLOG_MARGIN_SEGMENTS;
+    const u = uploaders[0];
+    u.backlog = cap;
+    u.options.onRetry!(0, 9, new TransportFailureError(new TypeError('x')));
+    expect(b.phase).toBe('live');
+    u.backlog = cap + 1;
+    u.options.onRetry!(0, 10, new TransportFailureError(new TypeError('x')));
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('connection-lost');
+    expect(u.stop).toHaveBeenCalled();
+    expect(recorders[0].stop).toHaveBeenCalled();
+    expect(deps.endLive).toHaveBeenCalledWith(LIVE_ID);
+  });
+
+  it('a chunk the pipeline cannot read takes the screen off air (away, camera given back) instead of a silent ON AIR', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { b, recorders, cam } = await ready();
+    await b.start();
+    recorders[0].onChunk({ arrayBuffer: () => Promise.reject(new Error('NotReadable')) } as Blob);
+    await vi.waitFor(() => expect(b.phase).toBe('away'));
+    expect(recorders[0].stop).toHaveBeenCalled();
+    expect(cam.control.opened[0].video.stop).toHaveBeenCalled();
+    await b.reacquire();
+    expect(b.phase).toBe('live');
+    expect(recorders).toHaveLength(2);
+  });
+
   it('iOS mutes a lens and unmutes it: nothing is re-recorded', async () => {
     const { b, recorders, cam } = await ready();
     await b.start();
@@ -214,6 +292,28 @@ describe('LiveBroadcast - background and return', () => {
 
     await chunk(recorders[1], join(initSegment(), fragment({ videoTime: 0n })));
     expect(uploaders[0].sent.map((s) => s.index)).toEqual([0, 1]);
+  });
+
+  it("the return waits for the OLD recorder's last chunk, which goes out with the old init and no shift", async () => {
+    const { b, recorders, uploaders, clock, setHidden } = await ready();
+    await b.start();
+    await chunk(recorders[0], join(initSegment(), fragment({ videoTime: 0n })));
+    let stopped!: () => void;
+    recorders[0].stop.mockImplementation(() => new Promise<void>((r) => (stopped = r)));
+    clock.t += 20_000;
+    setHidden(true);
+    b.appHidden();
+    setHidden(false);
+    b.appVisible();
+    await settle();
+    await settle();
+    expect(recorders).toHaveLength(1); // no new recorder while the old one hands over
+    recorders[0].onChunk(new Blob([fragment({ videoTime: 180_000n }) as Uint8Array<ArrayBuffer>]));
+    stopped();
+    await vi.waitFor(() => expect(b.phase).toBe('live'));
+    expect(recorders).toHaveLength(2);
+    const second = uploaders[0].sent[1].sealed.slice(4 + initSegment().length);
+    expect(readTimes(second).video).toBe(180_000n);
   });
 
   it('a return after the server ended it (410 on the read) is the end screen, and no camera is reopened', async () => {

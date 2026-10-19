@@ -123,6 +123,8 @@ export function fakeDeps() {
   const recorders: FakeRecorder[] = [];
   const uploaders: FakeUploader[] = [];
   const clock = { t: 1_000 };
+  /** Every bounded wait started, fired only by the test: no real time passes. */
+  const timers: { ms: number; fire: () => void }[] = [];
   let hidden = false;
   const deps = {
     fetchLiveLimits: vi.fn(async () => LIMITS),
@@ -155,6 +157,7 @@ export function fakeDeps() {
     ),
     wakeLock: { hold: vi.fn(() => Promise.resolve()), release: vi.fn() },
     now: () => clock.t,
+    sleep: vi.fn((ms: number) => new Promise<void>((fire) => timers.push({ ms, fire }))),
     isHidden: () => hidden,
   } satisfies LiveBroadcastDeps;
   return {
@@ -162,6 +165,11 @@ export function fakeDeps() {
     recorders,
     uploaders,
     clock,
+    timers,
+    /** Fires every pending bound of `ms`. */
+    fireTimers: (ms: number) => {
+      for (const t of timers.filter((x) => x.ms === ms)) t.fire();
+    },
     setHidden: (h: boolean) => {
       hidden = h;
     },

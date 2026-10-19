@@ -1515,6 +1515,9 @@ lines are what decide each row - no key, no segment byte is ever in them.
 | **5. End**: End, "Continuer" keeps the live, End again and confirm. The viewer's live ends; the end screen says you ended it. Log: `ended (broadcaster)` | owed | owed |
 | **6. Battery, UNPLUGGED, 30 min on air**: the level before and after, the phone's heat by hand. Also: under 60 % the rules screen shows the battery warning (Android only: WebKit has no Battery API) | owed (WP-L1: ~40 %/h PLUGGED) | owed (no warning expected) |
 | **7. The screen stays on** for the whole of row 1 without a touch (the Screen Wake Lock); if the log says `no Screen Wake Lock API here`, that engine dims and it is a finding | owed | owed |
+| **8. Does a NEW recorder's media time start at 0?** After row 2's return, read the first segment of `recorder 2` on the viewer side (or the rig's `readTimes`): its `tfdt` must be the `+<ms>` of `generation 2 begins`, NOT that plus the time the first recorder ran. `rebaseFragment` ASSUMES a fresh recorder restarts at zero - WP-L1 never measured it; an engine that keeps counting would put the second recorder's picture in the future for every viewer | owed | owed |
+| **9. Network cut longer than the window** (airplane mode ~90 s, on air): the end screen says the connection was lost too long, the camera light goes off. Log: `segments waiting, over the <n> the reconnect window holds`, `ended (connection-lost)` | owed | owed |
+| **10. End while offline**: airplane mode, End, confirm. The camera light goes off AT ONCE; the screen says the last seconds are being sent and offers "Quitter sans attendre", which closes it. Log: `camera given back; <n> segments to send` | owed | owed |
 
 ## CALL-L1. A 1:1 dev call between the two bench phones - owed on BOTH
 

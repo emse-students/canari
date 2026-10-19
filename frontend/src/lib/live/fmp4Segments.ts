@@ -201,6 +201,16 @@ export class Fmp4Splitter {
   /** The open fragment's `moof`, relative to its own bytes (for the keyframe read). */
   #moof: Uint8Array | null = null;
 
+  /**
+   * Bytes taken but not yet part of anything emitted: a box cut short, an open fragment, an init
+   * still missing its `moov`. Non-zero when a recorder stops means its tail is lost - which the
+   * pipeline LOGS rather than drops silently.
+   */
+  get pendingBytes(): number {
+    const sum = (parts: Uint8Array[]) => parts.reduce((n, p) => n + p.byteLength, 0);
+    return this.#carry.byteLength + sum(this.#fragment) + sum(this.#initParts);
+  }
+
   /** The init once read, else null. */
   get init(): Fmp4Init | null {
     return this.#init;

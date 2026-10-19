@@ -3992,7 +3992,16 @@
   "live_on_air": "Live",
   "live_elapsed_label": "Time on air",
   "live_reconnecting": "Reconnecting…",
-  "live_backlog": "{count} waiting",
+  "live_backlog": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} segment waiting",
+        "countPlural=other": "{count} segments waiting"
+      }
+    }
+  ],
   "live_end_button": "End",
   "live_end_confirm": "End the live? It disappears for every viewer.",
   "live_end_confirm_button": "End the live",
@@ -4005,5 +4014,8 @@
   "live_ended_broadcaster": "You ended the live. Nothing of it is kept.",
   "live_ended_server": "The live was stopped: it reached its longest duration, or moderation cut it.",
   "live_ended_server_away": "The live stopped while the camera was paused.",
-  "live_ended_failed": "The live stopped: the server refused the rest of the broadcast."
+  "live_ended_failed": "The live stopped: the server refused the rest of the broadcast.",
+  "live_ended_connection_lost": "The live stopped: the connection was lost for too long for the broadcast to resume.",
+  "live_ending_leave": "Leave now",
+  "live_ending_waiting": "Sending the last seconds… You may leave: the live will stop by itself."
 }

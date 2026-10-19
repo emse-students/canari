@@ -49,6 +49,11 @@ import {
   type LiveRecorderStarter,
 } from './liveRecorder';
 import { LiveSegmentPipeline } from './liveSegmentPipeline';
+import {
+  LIVE_BACKLOG_MARGIN_SEGMENTS,
+  LIVE_RECORDER_STOP_BOUND_MS,
+  LIVE_SEGMENT_MS,
+} from './constants';
 import type { LiveEndResult, LiveLimits, LiveView } from './types';
 
 /** Where the broadcast stands; see the diagram in the module comment. */
@@ -77,7 +82,12 @@ export type LiveEndCause =
   /** The server ended it while the camera was away: past the reconnect window, most often. */
   | 'server-while-away'
   /** A refusal the uploader cannot get past, or a recorder that would not start. */
-  | 'failed';
+  | 'failed'
+  /**
+   * The backlog outgrew the server's reconnect window: the connection was lost for longer than the
+   * server keeps a silent live, so nothing still queued could be watched.
+   */
+  | 'connection-lost';
 
 /** Whether the segments are getting through: `retrying` is the quiet "reconnecting" badge. */
 export type LiveUploadHealth = 'ok' | 'retrying';
@@ -107,6 +117,8 @@ export interface LiveBroadcastDeps {
   wakeLock: { hold(): Promise<void>; release(): void };
   /** A monotonic clock, in ms. */
   now: () => number;
+  /** Resolves after `ms`: the BOUND on a wait that has no verdict of its own, never a decision. */
+  sleep: (ms: number) => Promise<void>;
   isHidden: () => boolean;
 }
 
@@ -124,6 +136,7 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     startRecorder: startLiveRecorder,
     wakeLock: new ScreenWakeLock(),
     now: () => performance.now(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     isHidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
   };
 }
@@ -168,6 +181,13 @@ export class LiveBroadcast {
   #uploader: LiveUploaderLike | null = null;
   #pipeline: LiveSegmentPipeline | null = null;
   #recorder: LiveRecorderHandle | null = null;
+  /** The pipeline generation the current recorder's chunks are pushed to, fixed at its creation. */
+  #pipelineGeneration: number | null = null;
+  /**
+   * The last paused recorder handing over its final chunk (bounded), then its generation closed:
+   * a new recorder and the end both wait for it, so nothing of the old one lands after.
+   */
+  #stopping: Promise<void> = Promise.resolve();
   /** Removes the listeners on the recorded track; replaced per recorder. */
   #trackWatch: AbortController | null = null;
   /** Bumped by every recorder started and every pause: a stale recorder's event is ignored. */
@@ -251,12 +271,12 @@ export class LiveBroadcast {
       startIndex: live.nextIndex,
       onStored: () => {
         this.health = 'ok';
-        this.backlog = this.#uploader?.backlog ?? 0;
+        this.#noteBacklog();
       },
       onRetry: () => {
         if (this.health !== 'retrying') console.warn('[LIVE-BROADCAST] reconnecting');
         this.health = 'retrying';
-        this.backlog = this.#uploader?.backlog ?? 0;
+        this.#noteBacklog();
       },
       onStopped: (error) => this.#uploaderStopped(error),
     });
@@ -266,10 +286,11 @@ export class LiveBroadcast {
       nextIndex: () => this.#uploader!.nextIndex,
       enqueue: (index, sealed) => {
         this.#uploader!.enqueue(index, sealed);
-        this.backlog = this.#uploader!.backlog;
+        this.#noteBacklog();
       },
       maxSegmentBytes: limits.segmentMaxBytes,
       now: this.#deps.now,
+      onBroken: (generation) => this.#pipelineBroken(generation),
     });
     this.#goOnAir();
   }
@@ -282,7 +303,8 @@ export class LiveBroadcast {
       this.#pauseRecording('the app is in the background');
       this.phase = 'away';
     }
-    if (this.phase !== 'ended' && this.phase !== 'ending') this.camera.suspend();
+    // 'ending' included: the camera is held there only until the last chunk is out, never past a hide.
+    if (this.phase !== 'ended') this.camera.suspend();
   }
 
   /** The app is back on screen. */
@@ -328,23 +350,42 @@ export class LiveBroadcast {
       console.warn(`[LIVE-BROADCAST] camera not back (${this.camera.phase}/${this.camera.fault})`);
       return;
     }
+    // The previous recorder's last chunk goes into ITS generation before a new one begins.
+    await this.#stopping;
+    if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
     this.#goOnAir();
   }
 
-  /** The member confirmed End: the last chunk is sent, then the live is ended. */
+  /**
+   * The member confirmed End. The device's part is over as soon as the last chunk is sealed and
+   * queued: the camera, the screen lock and the recorder are given back THEN, not after the network.
+   * What is left is the queue reaching the server, waited for at most the server's reconnect window
+   * (past it the server has ended the live by absence anyway) - and the screen offers to leave
+   * before that, which {@link dispose} honours.
+   */
   async end(): Promise<void> {
     if (this.phase !== 'live' && this.phase !== 'away') return;
     const liveId = this.liveId!;
     console.log(`[LIVE-BROADCAST] ending ${liveId}`);
     this.phase = 'ending';
     ++this.#reacquireGeneration;
-    const recorder = this.#recorder;
-    this.#recorder = null;
-    this.#trackWatch?.abort();
-    await recorder?.stop();
+    this.#pauseRecording('the live is ending');
+    await this.#stopping;
     await this.#pipeline?.flush();
-    // Every queued segment lands or the server ends the live (410): a verdict, never a timer.
-    await this.#uploader?.idle();
+    if (this.#disposed) return;
+    this.#pipeline?.close();
+    this.camera.stop();
+    console.debug(
+      `[LIVE-BROADCAST] camera given back; ${this.#uploader?.backlog ?? 0} segments to send`
+    );
+    const window = this.limits?.reconnectWindowMs ?? 0;
+    const drained = await this.#bounded(
+      this.#uploader?.idle() ?? Promise.resolve(),
+      window,
+      'the last segments'
+    );
+    if (this.#disposed) return;
+    if (!drained) console.warn(`[LIVE-BROADCAST] ${liveId}: the queue is dropped unsent`);
     this.#release();
     try {
       await this.#deps.endLive(liveId);
@@ -366,8 +407,7 @@ export class LiveBroadcast {
     const open = this.phase === 'live' || this.phase === 'away' || this.phase === 'ending';
     console.debug(`[LIVE-BROADCAST] dispose in ${this.phase}`);
     ++this.#reacquireGeneration;
-    void this.#recorder?.stop();
-    this.#recorder = null;
+    this.#pauseRecording('the screen is closing');
     this.#release();
     if (open && this.liveId) this.#endBestEffort(this.liveId);
   }
@@ -387,11 +427,16 @@ export class LiveBroadcast {
     const first = this.#firstRecordAt === null;
     const now = this.#deps.now();
     this.#firstRecordAt ??= now;
-    this.#pipeline!.beginGeneration(first ? 0 : now - this.#firstRecordAt);
+    // The generation is FIXED in this recorder's callback: its last chunk, arriving after a pause,
+    // still lands in its own splitter and never in the next recorder's.
+    const pipelineGeneration = this.#pipeline!.beginGeneration(
+      first ? 0 : now - this.#firstRecordAt
+    );
+    this.#pipelineGeneration = pipelineGeneration;
     try {
       this.#recorder = this.#deps.startRecorder(
         stream,
-        (chunk) => void this.#pipeline?.push(chunk),
+        (chunk) => void this.#pipeline?.push(pipelineGeneration, chunk),
         (error) => this.#recorderFailed(generation, error)
       );
     } catch (e) {
@@ -432,20 +477,90 @@ export class LiveBroadcast {
   #recorderFailed(generation: number, error: unknown): void {
     if (generation !== this.#recorderGeneration || this.phase !== 'live') return;
     console.error('[LIVE-BROADCAST] the recorder failed on air - away until Retry', error);
-    this.#pauseRecording('the recorder failed');
+    this.#awayUntilRetry('the recorder failed');
+  }
+
+  /**
+   * The pipeline could not read or frame a chunk of `generation`: that recorder sends nothing any
+   * more, so the screen must not go on saying "on air". The camera is given back and Retry starts a
+   * fresh recorder - a fresh init - on the same live.
+   */
+  #pipelineBroken(generation: number): void {
+    if (generation !== this.#pipelineGeneration || this.phase !== 'live') {
+      console.warn(
+        `[LIVE-BROADCAST] pipeline generation ${generation} broke after its recorder was let go - nothing to stop`
+      );
+      return;
+    }
+    console.error('[LIVE-BROADCAST] the recorder output is unreadable - away until Retry');
+    this.#awayUntilRetry('the recorder output is unreadable');
+  }
+
+  #awayUntilRetry(why: string): void {
+    this.#pauseRecording(why);
     this.camera.stop();
     this.phase = 'away';
   }
 
-  /** Stops the current recorder (its last chunk still goes out) and forgets it. */
+  /**
+   * Stops the current recorder and forgets it. Its last chunk is still handed over - waited for at
+   * most {@link LIVE_RECORDER_STOP_BOUND_MS} - and its pipeline generation is then closed, which
+   * LOGS any bytes it still held; {@link #stopping} resolves when both are done.
+   */
   #pauseRecording(why: string): void {
     console.debug(`[LIVE-BROADCAST] recording paused: ${why}`);
     ++this.#recorderGeneration;
     this.#trackWatch?.abort();
     this.#trackWatch = null;
-    void this.#recorder?.stop();
+    const recorder = this.#recorder;
+    const generation = this.#pipelineGeneration;
     this.#recorder = null;
+    this.#pipelineGeneration = null;
     this.#deps.wakeLock.release();
+    if (!recorder && generation === null) return;
+    const lastChunk = recorder
+      ? this.#bounded(recorder.stop(), LIVE_RECORDER_STOP_BOUND_MS, "the recorder's last chunk")
+      : Promise.resolve(true);
+    const previous = this.#stopping;
+    this.#stopping = Promise.all([previous, lastChunk]).then(async () => {
+      if (generation !== null) await this.#pipeline?.endGeneration(generation);
+    });
+  }
+
+  /**
+   * Resolves true when `work` settles within `ms`, false when the bound came first (logged). A
+   * rejection counts as settled and is logged: the wait is over either way.
+   */
+  async #bounded(work: Promise<unknown>, ms: number, what: string): Promise<boolean> {
+    const settled = work.then(
+      () => true,
+      (e: unknown) => {
+        console.warn(`[LIVE-BROADCAST] ${what} failed`, e);
+        return true;
+      }
+    );
+    const done = await Promise.race([settled, this.#deps.sleep(ms).then(() => false)]);
+    if (!done)
+      console.warn(`[LIVE-BROADCAST] ${what}: nothing within ${ms} ms - not waited for longer`);
+    return done;
+  }
+
+  /**
+   * Reads the queue's backlog onto the screen and enforces its cap: past the reconnect window's
+   * worth of segments the connection has been lost longer than the server keeps a silent live, so
+   * recording on only grows memory (~23 MB a minute) for segments nobody can watch.
+   */
+  #noteBacklog(): void {
+    const backlog = this.#uploader?.backlog ?? 0;
+    this.backlog = backlog;
+    if ((this.phase !== 'live' && this.phase !== 'away') || !this.limits) return;
+    const cap =
+      Math.ceil(this.limits.reconnectWindowMs / LIVE_SEGMENT_MS) + LIVE_BACKLOG_MARGIN_SEGMENTS;
+    if (backlog <= cap) return;
+    console.warn(
+      `[LIVE-BROADCAST] ${backlog} segments waiting, over the ${cap} the reconnect window holds - connection lost too long, ending`
+    );
+    this.#finish('connection-lost', true);
   }
 
   #uploaderStopped(error: unknown): void {
@@ -463,8 +578,7 @@ export class LiveBroadcast {
   /** Ends the screen at once: nothing recorded or sent any more. */
   #finish(cause: LiveEndCause, endOnServer: boolean): void {
     ++this.#reacquireGeneration;
-    void this.#recorder?.stop();
-    this.#recorder = null;
+    this.#pauseRecording(`the live ended (${cause})`);
     this.#release();
     if (endOnServer && this.liveId) this.#endBestEffort(this.liveId);
     this.#settle(cause);
@@ -480,7 +594,7 @@ export class LiveBroadcast {
     this.phase = 'ended';
   }
 
-  /** Gives back everything held: the queue, the pipeline, the camera, the screen lock. */
+  /** Gives back everything held: the queue (its unsent bytes dropped), the pipeline, the camera, the screen lock. */
   #release(): void {
     ++this.#recorderGeneration;
     this.#trackWatch?.abort();

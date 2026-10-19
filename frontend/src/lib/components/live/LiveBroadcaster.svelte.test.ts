@@ -131,6 +131,38 @@ describe('LiveBroadcaster', () => {
     uploaders[0].options.onRetry!(0, 1, new Error('x'));
     await settle();
     expect(q('[data-live-reconnecting]')!.textContent).toContain(m.live_backlog({ count: 4 }));
+    // A plural, in both languages: one segment is not "1 segments".
+    expect(m.live_backlog({ count: 1 }, { locale: 'en' })).toBe('1 segment waiting');
+    expect(m.live_backlog({ count: 4 }, { locale: 'en' })).toBe('4 segments waiting');
+    expect(m.live_backlog({ count: 1 }, { locale: 'fr' })).toBe('1 segment en attente');
+  });
+
+  it('ending offline: the screen says the wait is the network and offers to leave, which ends the live once', async () => {
+    const { deps, uploaders, onclose } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    uploaders[0].idle.mockImplementation(() => new Promise(() => {}));
+    q<HTMLButtonElement>('[data-live-end]')!.click();
+    await vi.waitFor(() => expect(q('[data-live-ending]')).not.toBeNull());
+    expect(q('[data-live-ending]')!.textContent).toContain(m.live_ending_waiting());
+    q<HTMLButtonElement>('[data-live-ending-leave]')!.click();
+    await settle();
+    expect(onclose).toHaveBeenCalledTimes(1);
+    expect(uploaders[0].stop).toHaveBeenCalled();
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+  });
+
+  it('a backlog past the reconnect window ends the screen with the lost-connection sentence', async () => {
+    const { uploaders } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    uploaders[0].backlog = 1_000;
+    uploaders[0].options.onRetry!(0, 50, new Error('x'));
+    await settle();
+    expect(q('[data-live-ended]')!.dataset.liveEnded).toBe('connection-lost');
+    expect(document.body.textContent).toContain(m.live_ended_connection_lost());
   });
 
   it('End asks first; "keep going" keeps the live, yes ends it and shows why', async () => {
@@ -204,6 +236,8 @@ describe('LiveOverlay', () => {
     );
     await settle();
     expect(q('[role="dialog"]')!.getAttribute('aria-label')).toBe(m.live_overlay_label());
+    // Focus moved INTO the dialog on open.
+    expect(document.activeElement).toBe(q('[role="dialog"]'));
     expect(historyOverlayStackDepth()).toBe(1);
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();

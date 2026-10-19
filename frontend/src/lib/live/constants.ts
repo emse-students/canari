@@ -73,6 +73,21 @@ export const LIVE_MANIFEST_POLL_MS = 1_000;
 export const LIVE_BATTERY_WARN_LEVEL = 0.6;
 
 /**
+ * How long a stopping recorder may take to hand over its last chunk. A healthy one answers within
+ * one timeslice; one that never fires `stop` must not hold the camera, the screen lock or the next
+ * recorder - so past this the wait is abandoned, LOGGED, and whatever it still held is lost.
+ */
+export const LIVE_RECORDER_STOP_BOUND_MS = LIVE_SEGMENT_MS + 1_000;
+
+/**
+ * Segments waiting for the server beyond the reconnect window's worth: the broadcaster gives up
+ * there. Offline, the queue grows ~1 segment per {@link LIVE_SEGMENT_MS} (~230 MB in 10 min) and the
+ * server ENDS a live absent for `reconnectWindowMs` anyway, so holding more than that window's
+ * segments sends nothing anyone can watch. The margin absorbs a slow link's ordinary jitter.
+ */
+export const LIVE_BACKLOG_MARGIN_SEGMENTS = 5;
+
+/**
  * The planning figure for ONE viewer's egress, in bits per second: the Android broadcaster's
  * measured mean (3.08 Mb/s, the heavier of the two engines; iPhone 2.32 Mb/s). For estimates only -
  * the cap itself is the server's (`viewerCap` in `/limits`).

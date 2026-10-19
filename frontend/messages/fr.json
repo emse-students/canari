@@ -3992,7 +3992,16 @@
   "live_on_air": "En direct",
   "live_elapsed_label": "Temps de diffusion",
   "live_reconnecting": "Reconnexion…",
-  "live_backlog": "{count} en attente",
+  "live_backlog": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} segment en attente",
+        "countPlural=other": "{count} segments en attente"
+      }
+    }
+  ],
   "live_end_button": "Terminer",
   "live_end_confirm": "Terminer le live ? Il disparaît pour tous les spectateurs.",
   "live_end_confirm_button": "Terminer le live",
@@ -4005,5 +4014,8 @@
   "live_ended_broadcaster": "Vous avez terminé le live. Rien n'en est gardé.",
   "live_ended_server": "Le live a été arrêté : sa durée maximale est atteinte, ou la modération l'a coupé.",
   "live_ended_server_away": "Le live s'est arrêté pendant que la caméra était en pause.",
-  "live_ended_failed": "Le live s'est arrêté : le serveur a refusé la suite de la diffusion."
+  "live_ended_failed": "Le live s'est arrêté : le serveur a refusé la suite de la diffusion.",
+  "live_ended_connection_lost": "Le live s'est arrêté : la connexion a été perdue trop longtemps pour que la diffusion reprenne.",
+  "live_ending_leave": "Quitter sans attendre",
+  "live_ending_waiting": "Envoi des dernières secondes… Vous pouvez quitter : le live s'arrêtera de lui-même."
 }

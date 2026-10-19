@@ -376,13 +376,35 @@ the pause is a GAP the player seeks over, never a jump back. A lens ENDED while 
 took it) and a recorder `error` go `away` the same way, with a Retry. A `mute` on air is logged and
 nothing else: nothing records twice.
 
+**Each recorder's chunks are pushed with ITS pipeline generation, fixed when the recorder is
+created** (`push(generation, chunk)`): the old recorder's last chunk, delivered by its `stop` after a
+new generation began, still lands in the old splitter with the old init and offset. The return also
+WAITS for the paused recorder's `stop` (bounded) and closes its generation before starting the next
+one; a generation closed with bytes still in its splitter (a box cut short) is LOGGED as lost. A
+chunk the pipeline cannot read (a Blob read that rejects) or frame breaks its generation - the
+chain itself never rejects - and the pipeline TELLS the state machine (`onBroken`), which goes
+`away` with the camera given back and a Retry, rather than a screen saying "on air" while nothing is
+sent. **That a new recorder restarts its media time at zero is an ASSUMPTION** WP-L1 did not measure:
+LIVE-B1 row 8 reads it.
+
 ### Upload health and the end
 
 `LiveSegmentUploader` gained `onRetry(index, attempt, error)`: a retried send shows a quiet
-"Reconnexion..." badge with the backlog, and the next stored segment clears it. The END is always a
-verdict, never a client timer: the End button (confirmed; Back and the edge swipe ask the same
-question) stops the recorder, flushes the pipeline, waits for the queue to drain or be stopped by the
-server, then `POST /end`; a `410` from the uploader ends the screen ("the hour, or moderation") with no
+"Reconnexion..." badge with the backlog (a plural), and the next stored segment clears it.
+
+**The backlog is CAPPED in this layer, not the uploader's** (the queue in `api.ts` is unbounded,
+~230 MB in ten minutes offline): past `ceil(reconnectWindowMs / LIVE_SEGMENT_MS)` +
+`LIVE_BACKLOG_MARGIN_SEGMENTS` (5) segments waiting, the broadcast ends itself as
+`connection-lost` - the server has ended a live that silent anyway, so recording on fills memory with
+segments nobody can watch. The end drops the queue (`uploader.stop()`) and asks `/end` best-effort.
+
+**The End button** (confirmed; Back and the edge swipe ask the same question) stops the recorder -
+waiting for its last chunk at most `LIVE_RECORDER_STOP_BOUND_MS` (one segment + 1 s; a recorder
+that never fires `stop` is logged and abandoned) - flushes the pipeline, and **gives back the camera
+and the screen lock THEN**, before any network wait. What is left is the queue reaching the server,
+waited for at most `reconnectWindowMs` (past it the server ended the live by absence; the unsent
+queue is dropped, logged); the "ending" screen says so and offers "Quitter sans attendre", which
+disposes the screen and ends the live best-effort. Then `POST /end`; a `410` from the uploader ends the screen ("the hour, or moderation") with no
 end call; any other stopping refusal ends it as failed and calls `/end`; the screen unmounting or
 `pagehide` ends what is on air best-effort; a killed app is the server's absence rule. A start refused
 `LIVE_ALREADY_OPEN` (a previous screen killed) is not resumed: the member is told it closes within the
