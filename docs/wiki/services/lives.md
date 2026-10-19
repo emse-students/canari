@@ -427,9 +427,9 @@ stopped.**
 
 Built 2026-10-19 on the user's decisions D3 (any member may broadcast, so moderation is a RELEASE
 BLOCKER: no stable carries lives without it) and D6 (moderation works like posts:
-[moderation-and-blocking](../moderation-and-blocking.md)). **No client calls any of it yet**: the
-report control on the viewer, the cut button in `/admin/moderation`, the rules screen sending
-`acceptedRulesVersion` and the "cut" screen are the client follow-up (below).
+[moderation-and-blocking](../moderation-and-blocking.md)). **The broadcaster's rules step is built** (below); the
+report control on the viewer, the cut button in `/admin/moderation` and the "cut" screens are the
+client follow-up (below).
 
 | Control | Who | Where | What it does |
 | --- | --- | --- | --- |
@@ -504,11 +504,13 @@ older rules has not shown these. Checked AFTER the mute and the association righ
 records nothing. `GET /api/lives/rules` tells the pre-live screen whether to show them. **Raise
 `LIVE_RULES_VERSION` when the rules' TEXT changes**; every member then accepts once more.
 
-**THE CLIENT CONTRACT (for the broadcaster, #2115):** send `acceptedRulesVersion: <rulesVersion>`
-in `POST /api/lives` when the member tapped Start on the screen showing the rules; read
-`rulesVersion` from `GET /api/lives/limits` (or `version` from `/rules`); on `403
-LIVE_RULES_NOT_ACCEPTED`, show the rules again. Until the broadcaster sends it, a dev start by a
-member who never accepted is refused.
+**THE CLIENT (built, `LiveBroadcast` and `LiveBroadcaster.svelte`):** the pre-live screen reads
+`GET /api/lives/rules` with the limits (either failing is the same "could not read" with its
+Retry). While `acceptedVersion` is below `version`, a rules sheet (no harassment, nothing illegal,
+moderators can cut, you are responsible: `live_rules_*`) replaces Start with "I accept the rules";
+the start then sends `acceptedRulesVersion: version`, and only then. A `403
+LIVE_RULES_NOT_ACCEPTED` (the version raised since the read) re-reads the rules and shows the sheet
+again with `live_start_rules_not_accepted`; `LIVE_MUTED` keeps its own sentence.
 
 ### Hiding a chat message: the contract for WP-L6
 
@@ -538,7 +540,7 @@ is built in rather than added:
   and `404 LIVE_NOT_FOUND` handled as for a post.
 - **Broadcaster**: the uploader's `410` with `endReason: 'cut'` stops the broadcast with
   `live_broadcast_cut_title`: FR "Votre live a été interrompu par la modération", EN "Your live was
-  stopped by moderators"; the rules screen sends `acceptedRulesVersion`.
+  stopped by moderators".
 - **Bell**: a `live_cut` row (`NotificationRow`, `KNOWN_NOTIFICATION_TYPES`, no link):
   `notif_live_cut_text`: FR "Votre live a été interrompu par la modération", EN "Your live was
   stopped by moderators", plus the reason from `text` through the existing report-reason labels.

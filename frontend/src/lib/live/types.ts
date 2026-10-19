@@ -95,6 +95,17 @@ export interface LiveLimits {
 }
 
 /**
+ * `GET /api/lives/rules` - the caller's standing with the first-live rules (L11, WP-L8). The rules
+ * are shown, and the start carries `acceptedRulesVersion: version`, while `acceptedVersion` is
+ * below `version` (null: never accepted). The server records the acceptance with the start.
+ */
+export interface LiveRulesStatus {
+  version: number;
+  acceptedVersion: number | null;
+  acceptedAt: string | null;
+}
+
+/**
  * Every `code` a lives route (or the segment fetch) puts in a refusal body. The server throws each
  * as `new XxxException({ code, ... })`, which Nest serialises as that object.
  */
@@ -102,6 +113,7 @@ export type LiveRefusalCode =
   | 'LIVE_KEY_INVALID'
   | 'LIVE_ASSOCIATION_INVALID'
   | 'LIVE_MUTED'
+  | 'LIVE_RULES_NOT_ACCEPTED'
   | 'LIVE_ASSOCIATION_FORBIDDEN'
   | 'LIVE_ALREADY_OPEN'
   | 'LIVE_START_RATE'

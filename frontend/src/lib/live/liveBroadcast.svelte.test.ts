@@ -89,7 +89,7 @@ describe('LiveBroadcast - preview and start', () => {
   it('goes on air: the generated key and the association reach the server, a recorder runs on the open camera, the screen is held', async () => {
     const { b, deps, recorders, cam } = await ready('asso-1');
     await b.start();
-    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1');
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1', undefined);
     expect(b.phase).toBe('live');
     expect(b.liveId).toBe(LIVE_ID);
     expect(recorders).toHaveLength(1);
@@ -115,6 +115,90 @@ describe('LiveBroadcast - preview and start', () => {
       )
     ).toBe('rate-limited');
     expect(startProblemOf(new TransportFailureError(new TypeError('x')))).toBe('offline');
+  });
+});
+
+describe('LiveBroadcast - the first-live rules (L11)', () => {
+  const NEVER = { version: 1, acceptedVersion: null, acceptedAt: null };
+  const rulesRefusal = () =>
+    new LiveRefusalError(403, 'LIVE_RULES_NOT_ACCEPTED', '', 'refused', null, null, null);
+
+  it('never accepted: Start waits for "I accept", and the start then carries the version', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveRules.mockResolvedValue(NEVER);
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    expect(b.rulesPending).toBe(true);
+    expect(b.canStart).toBe(false);
+    b.acceptRules();
+    expect(b.rulesPending).toBe(false);
+    expect(b.canStart).toBe(true);
+    await b.start();
+    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, 1);
+    expect(b.phase).toBe('live');
+  });
+
+  it('accepted at this version before: no rules step, and the start carries no version', async () => {
+    const { b, deps } = await ready();
+    expect(b.rulesPending).toBe(false);
+    await b.start();
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined);
+  });
+
+  it('the rules changed since (accepted v1, now v2): shown again', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveRules.mockResolvedValue({ version: 2, acceptedVersion: 1, acceptedAt: 'x' });
+    const b = new LiveBroadcast(fakeCamera().session, null, f.deps);
+    await b.loadLimits();
+    expect(b.rulesPending).toBe(true);
+  });
+
+  it('LIVE_RULES_NOT_ACCEPTED: the rules are read again and shown, with their own sentence', async () => {
+    const { b, deps } = await ready();
+    deps.startLive.mockRejectedValueOnce(rulesRefusal());
+    deps.fetchLiveRules.mockResolvedValueOnce({ version: 2, acceptedVersion: 1, acceptedAt: 'x' });
+    await b.start();
+    expect(b.phase).toBe('preview');
+    expect(b.startProblem).toBe('rules-not-accepted');
+    expect(deps.fetchLiveRules).toHaveBeenCalledTimes(2);
+    expect(b.rulesPending).toBe(true);
+    b.acceptRules();
+    expect(b.startProblem).toBeNull();
+    await b.start();
+    expect(deps.startLive).toHaveBeenLastCalledWith(KEY, undefined, 2);
+  });
+
+  it('LIVE_RULES_NOT_ACCEPTED with the re-read failing: the limits Retry, Start waits', async () => {
+    const { b, deps } = await ready();
+    deps.startLive.mockRejectedValueOnce(rulesRefusal());
+    deps.fetchLiveRules.mockRejectedValueOnce(new TransportFailureError(new TypeError('x')));
+    await b.start();
+    expect(b.limitsProblem).toBe('offline');
+    expect(b.rules).toBeNull();
+    expect(b.canStart).toBe(false);
+  });
+
+  it('a rules read that fails is the limits problem, and Start waits', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveRules.mockRejectedValueOnce(new TransportFailureError(new TypeError('x')));
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    expect(b.limitsProblem).toBe('offline');
+    expect(b.canStart).toBe(false);
+  });
+
+  it('LIVE_MUTED is its own sentence, and records nothing about the rules', async () => {
+    const { b, deps } = await ready();
+    deps.startLive.mockRejectedValueOnce(
+      new LiveRefusalError(403, 'LIVE_MUTED', '', 'refused', null, null, null)
+    );
+    await b.start();
+    expect(b.startProblem).toBe('muted');
+    expect(deps.fetchLiveRules).toHaveBeenCalledTimes(1);
   });
 });
 

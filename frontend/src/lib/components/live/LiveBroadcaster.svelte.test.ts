@@ -121,6 +121,64 @@ describe('LiveBroadcaster', () => {
     expect(q('[data-live-start-problem]')!.textContent).toContain(m.live_start_already_open());
   });
 
+  it('first live: the rules sheet replaces Start until "I accept", then Start sends the version', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveRules.mockResolvedValue({
+      version: 1,
+      acceptedVersion: null,
+      acceptedAt: null,
+    });
+    const cam = fakeCamera();
+    const broadcast = new LiveBroadcast(cam.session, null, f.deps);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(
+      mount(LiveBroadcaster, {
+        target,
+        props: {
+          broadcast,
+          associationId: null,
+          associationName: null,
+          onclose: vi.fn(),
+          readBattery: () => Promise.resolve(null),
+        },
+      })
+    );
+    await settle();
+    const sheet = q('[data-live-rules]')!;
+    for (const line of [
+      m.live_rules_no_harassment(),
+      m.live_rules_no_illegal(),
+      m.live_rules_cut(),
+      m.live_rules_responsible(),
+    ]) {
+      expect(sheet.textContent).toContain(line);
+    }
+    expect(q('[data-live-start]')).toBeNull();
+    q<HTMLButtonElement>('[data-live-rules-accept]')!.click();
+    await settle();
+    expect(q('[data-live-rules]')).toBeNull();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(f.deps.startLive).toHaveBeenCalledWith(expect.any(String), undefined, 1);
+  });
+
+  it('a rules refusal at the start shows the sheet again with its sentence', async () => {
+    const { deps } = screen();
+    deps.startLive.mockRejectedValueOnce(
+      new LiveRefusalError(403, 'LIVE_RULES_NOT_ACCEPTED', '', 'refused', null, null, null)
+    );
+    await settle();
+    // After the mount read the (accepted) standing: only the re-read after the refusal sees v2.
+    deps.fetchLiveRules.mockResolvedValue({ version: 2, acceptedVersion: 1, acceptedAt: 'x' });
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(q('[data-live-rules]')).not.toBeNull();
+    expect(q('[data-live-start-problem]')!.textContent).toContain(
+      m.live_start_rules_not_accepted()
+    );
+  });
+
   it('on air: a retried segment shows the quiet reconnecting badge with the backlog', async () => {
     const { uploaders } = screen();
     await settle();

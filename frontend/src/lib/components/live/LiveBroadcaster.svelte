@@ -21,6 +21,7 @@
     Radio,
     RefreshCcw,
     ShieldAlert,
+    ShieldCheck,
     SwitchCamera,
     Timer,
     WifiOff,
@@ -164,6 +165,7 @@
 
   const START_TEXT: Record<LiveStartProblem, () => string> = {
     muted: m.live_start_muted,
+    'rules-not-accepted': m.live_start_rules_not_accepted,
     'already-open': m.live_start_already_open,
     'association-forbidden': m.live_start_association_forbidden,
     'rate-limited': m.live_start_rate_limited,
@@ -320,6 +322,19 @@
         {/if}
       </ul>
 
+      {#if broadcast.rulesPending}
+        <section class="flex flex-col gap-2 rounded-2xl bg-white/10 px-3 py-3" data-live-rules>
+          <h3 class="text-base font-bold">{m.live_rules_title()}</h3>
+          <p class="text-sm text-white/80">{m.live_rules_intro()}</p>
+          <ul class="flex list-disc flex-col gap-1 ps-5 text-sm text-white/90">
+            <li>{m.live_rules_no_harassment()}</li>
+            <li>{m.live_rules_no_illegal()}</li>
+            <li>{m.live_rules_cut()}</li>
+            <li>{m.live_rules_responsible()}</li>
+          </ul>
+        </section>
+      {/if}
+
       {#if batteryWarrantsWarning(batteryLevel)}
         <p
           class="flex items-start gap-2.5 rounded-2xl bg-amber-500/20 px-3 py-2 text-sm text-amber-200"
@@ -372,21 +387,33 @@
         </div>
       {/if}
 
-      <button
-        type="button"
-        class="{pill} justify-center bg-red-600 hover:bg-red-500"
-        disabled={!broadcast.canStart}
-        onclick={() => void broadcast.start()}
-        data-live-start
-      >
-        {#if broadcast.phase === 'starting'}
-          <LoaderCircle size={18} strokeWidth={2.5} class="motion-safe:animate-spin" />
-          {m.live_starting()}
-        {:else}
-          <Radio size={18} strokeWidth={2.5} />
-          {m.live_start_button()}
-        {/if}
-      </button>
+      {#if broadcast.rulesPending}
+        <button
+          type="button"
+          class="{pill} justify-center bg-white text-black hover:bg-white/90"
+          onclick={() => broadcast.acceptRules()}
+          data-live-rules-accept
+        >
+          <ShieldCheck size={18} strokeWidth={2.5} />
+          {m.live_rules_accept()}
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="{pill} justify-center bg-red-600 hover:bg-red-500"
+          disabled={!broadcast.canStart}
+          onclick={() => void broadcast.start()}
+          data-live-start
+        >
+          {#if broadcast.phase === 'starting'}
+            <LoaderCircle size={18} strokeWidth={2.5} class="motion-safe:animate-spin" />
+            {m.live_starting()}
+          {:else}
+            <Radio size={18} strokeWidth={2.5} />
+            {m.live_start_button()}
+          {/if}
+        </button>
+      {/if}
     </div>
   {/if}
 
