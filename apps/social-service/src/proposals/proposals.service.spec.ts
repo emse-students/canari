@@ -4,6 +4,7 @@ import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { Proposal } from './proposal.entity';
 import {
+  PROPOSAL_SENDER_GONE,
   ProposalsService,
   type ProposalKindHandler,
   type UserProposalKindHandler,
@@ -141,7 +142,8 @@ describe('ProposalsService', () => {
 describe('ProposalsService, a user-addressed kind', () => {
   const FROM = 'asso-from';
 
-  function makeService(opts: { mayAct?: boolean } = {}) {
+  function makeService(opts: { mayAct?: boolean; askedBefore?: boolean; speaks?: boolean } = {}) {
+    const order: string[] = [];
     const row = {
       id: 'x2',
       kind: 'repost-personal',
@@ -153,8 +155,14 @@ describe('ProposalsService, a user-addressed kind', () => {
       proposedBy: 'officer',
     };
     const query = jest.fn((sql: string) => {
-      if (sql.startsWith('UPDATE proposals')) return Promise.resolve([[{ ...row }], 1]);
+      if (sql.startsWith('UPDATE proposals')) {
+        order.push('decide');
+        return Promise.resolve([[{ ...row }], 1]);
+      }
       if (sql.startsWith('INSERT INTO proposals')) return Promise.resolve([{ ...row }]);
+      if (sql.startsWith('SELECT 1 FROM proposals')) {
+        return Promise.resolve(opts.askedBefore ? [{ '?column?': 1 }] : []);
+      }
       return Promise.resolve([]);
     });
     const manager = { query, transaction: jest.fn((fn: (m: unknown) => unknown) => fn(manager)) };
@@ -165,6 +173,12 @@ describe('ProposalsService, a user-addressed kind', () => {
       apply: jest.fn(() => Promise.resolve(() => Promise.resolve())),
       announce: jest.fn((_proposal: unknown) => Promise.resolve()),
       decided: jest.fn((_proposal: unknown) => Promise.resolve()),
+      lockSubject: jest.fn(() => {
+        order.push('lock');
+        return Promise.resolve();
+      }),
+      senderStillSpeaks: jest.fn(() => Promise.resolve(opts.speaks ?? true)),
+      withdrawn: jest.fn(() => Promise.resolve()),
     };
     const handler: UserProposalKindHandler = {
       kind: 'repost-personal',
@@ -174,6 +188,9 @@ describe('ProposalsService, a user-addressed kind', () => {
       apply: fns.apply,
       announce: fns.announce,
       decided: fns.decided,
+      lockSubject: fns.lockSubject,
+      senderStillSpeaks: fns.senderStillSpeaks,
+      withdrawn: fns.withdrawn,
       describe: jest.fn(() => Promise.resolve(new Map())),
       describeRequests: jest.fn(() => Promise.resolve(new Map())),
     };
@@ -182,7 +199,7 @@ describe('ProposalsService, a user-addressed kind', () => {
       { mayAct } as unknown as AssociationsService
     );
     service.register(handler);
-    return { service, fns, mayAct };
+    return { service, fns, mayAct, query, order };
   }
 
   it('asks the HELD sender flag - the administrator tier never stands in', async () => {
@@ -217,5 +234,100 @@ describe('ProposalsService, a user-addressed kind', () => {
     await expect(
       service.propose('repost-personal', 'post-1', 'asso-to', 'officer', false)
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+/** The review of #2116: the four findings the generic state machine owns. */
+describe('ProposalsService, a user-addressed kind - after review', () => {
+  function makeService(opts: { askedBefore?: boolean; speaks?: boolean } = {}) {
+    const order: string[] = [];
+    const row = {
+      id: 'x3',
+      kind: 'repost-personal',
+      subjectId: 'post-1',
+      fromAssociationId: 'asso-from',
+      toAssociationId: null,
+      toUserId: 'author',
+      status: 'pending',
+      proposedBy: 'officer',
+    };
+    const statuses: string[] = [];
+    const query = jest.fn((sql: string, params: unknown[] = []) => {
+      if (sql.startsWith('UPDATE proposals')) {
+        order.push('decide');
+        statuses.push(String(params[1]));
+        return Promise.resolve([[{ ...row, status: params[1] }], 1]);
+      }
+      if (sql.startsWith('INSERT INTO proposals')) return Promise.resolve([{ ...row }]);
+      if (sql.includes('SELECT 1 FROM proposals')) {
+        return Promise.resolve(opts.askedBefore ? [{ one: 1 }] : []);
+      }
+      return Promise.resolve([]);
+    });
+    const manager = { query, transaction: jest.fn((fn: (m: unknown) => unknown) => fn(manager)) };
+    const repo = { findOne: jest.fn(() => Promise.resolve({ ...row })), manager };
+    const fns = {
+      announce: jest.fn((_proposal: unknown) => Promise.resolve()),
+      apply: jest.fn(() => Promise.resolve(() => Promise.resolve())),
+      withdrawn: jest.fn((_m: unknown, _proposal: unknown) => Promise.resolve()),
+      lockSubject: jest.fn(() => {
+        order.push('lock');
+        return Promise.resolve();
+      }),
+    };
+    const handler: UserProposalKindHandler = {
+      kind: 'repost-personal',
+      target: 'user',
+      senderFlag: AssociationPermissionFlag.POST_AS_ASSO,
+      resolveRecipient: jest.fn(() => Promise.resolve('author')),
+      lockSubject: fns.lockSubject,
+      senderStillSpeaks: jest.fn(() => Promise.resolve(opts.speaks ?? true)),
+      apply: fns.apply,
+      announce: fns.announce,
+      withdrawn: fns.withdrawn,
+      decided: jest.fn(() => Promise.resolve()),
+      describe: jest.fn(() => Promise.resolve(new Map())),
+      describeRequests: jest.fn(() => Promise.resolve(new Map())),
+    };
+    const service = new ProposalsService(
+      repo as unknown as Repository<Proposal>,
+      { mayAct: jest.fn(() => Promise.resolve(true)) } as unknown as AssociationsService
+    );
+    service.register(handler);
+    return { service, fns, order, statuses };
+  }
+
+  it('announces the FIRST ask of a pair only: an ask after a withdrawal is stored, not pushed', async () => {
+    const first = makeService();
+    await first.service.proposeToUser('repost-personal', 'post-1', 'asso-from', 'officer');
+    expect(first.fns.announce).toHaveBeenCalledTimes(1);
+    const again = makeService({ askedBefore: true });
+    await again.service.proposeToUser('repost-personal', 'post-1', 'asso-from', 'officer');
+    expect(again.fns.announce).not.toHaveBeenCalled();
+  });
+
+  it('takes back the bell row when the association withdraws', async () => {
+    const { service, fns } = makeService();
+    await service.withdraw('x3', 'officer', false);
+    expect(fns.withdrawn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: 'x3' })
+    );
+  });
+
+  it('locks the subject BEFORE the proposal, the order a hide takes', async () => {
+    const { service, order } = makeService();
+    await service.accept('x3', 'author', false);
+    expect(order).toEqual(['lock', 'decide']);
+  });
+
+  it('voids a request whose asker no longer speaks for the association: 409, never applied', async () => {
+    const { service, fns, statuses } = makeService({ speaks: false });
+    const err: unknown = await service.accept('x3', 'author', false).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as ConflictException).getResponse()).toMatchObject({ code: PROPOSAL_SENDER_GONE });
+    expect(statuses).toEqual(['withdrawn']);
+    expect(fns.apply).not.toHaveBeenCalled();
+    expect(fns.withdrawn).toHaveBeenCalled();
   });
 });

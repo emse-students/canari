@@ -20,6 +20,12 @@ function firstReturned(result: unknown): Proposal | null {
   return Array.isArray(rows) ? ((rows[0] as Proposal | undefined) ?? null) : null;
 }
 
+/**
+ * The refusal code of an acceptance that found the request's asker no longer speaking for the
+ * sending association (D38b): the request is voided (`withdrawn`), never applied.
+ */
+export const PROPOSAL_SENDER_GONE = 'PROPOSAL_SENDER_GONE';
+
 /** Work owed once the decision has COMMITTED - a notification, a cache sweep. Never inside it. */
 export type AfterCommit = () => Promise<void>;
 
@@ -103,6 +109,12 @@ export interface ProposalKindHandler {
    */
   resolveSender(subjectId: string, toAssociationId: string): Promise<string>;
   /**
+   * Row-locks the SUBJECT before the decision locks the proposal, when `apply` locks the subject:
+   * every other writer (a moderation hide, a delete) takes the subject first and the proposals
+   * after, so the decision must take them in the same order or the two can deadlock.
+   */
+  lockSubject?(manager: EntityManager, subjectId: string): Promise<void>;
+  /**
    * Does what accepting means, INSIDE the transaction that records the acceptance - so a failure
    * here leaves the proposal pending. Returns what to do once it has committed.
    */
@@ -140,14 +152,34 @@ export interface UserProposalKindHandler {
     fromAssociationId: string,
     actorId: string
   ): Promise<string>;
+  /** As `ProposalKindHandler.lockSubject`, and not optional: `apply` locks the subject. */
+  lockSubject(manager: EntityManager, subjectId: string): Promise<void>;
+  /**
+   * Whether the member who asked STILL speaks for the sending association - the sender flag held,
+   * the account not restricted - judged inside the acceptance's transaction. A request whose asker
+   * left (or was muted) must not publish in the association's name: it is voided, never applied.
+   */
+  senderStillSpeaks(manager: EntityManager, proposal: UserProposal): Promise<boolean>;
   /** As `ProposalKindHandler.apply`: inside the acceptance's transaction. */
   apply(manager: EntityManager, proposal: UserProposal, actorId: string): Promise<AfterCommit>;
-  /** Tells the person a request is waiting. Best effort. */
+  /**
+   * Tells the person a request is waiting. Best effort, and called for the FIRST ask of a (subject,
+   * sending association) pair only: a request withdrawn and asked again is not announced twice.
+   */
   announce(proposal: UserProposal): Promise<void>;
+  /**
+   * Undoes, inside the withdrawal's transaction, what `announce` left in the person's bell - a
+   * request taken back is not a thing to answer any more.
+   */
+  withdrawn(manager: EntityManager, proposal: UserProposal): Promise<void>;
   /** Tells the proposer what the person decided, once it has committed. Best effort. */
   decided(proposal: UserProposal): Promise<void>;
-  /** A short description of each subject, for the SENDING association's queue. */
-  describe(subjectIds: string[]): Promise<Map<string, Record<string, unknown>>>;
+  /**
+   * A short description of each subject, for the SENDING association's queue - of the subjects
+   * `viewerId` may see only: a member of the sending association who cannot see the post learns
+   * nothing about it (absent from the map, so the queue shows neither it nor whom it was asked of).
+   */
+  describe(subjectIds: string[], viewerId: string): Promise<Map<string, Record<string, unknown>>>;
   /** What the person's inbox shows about each request, keyed by proposal id. */
   describeRequests(proposals: UserProposal[]): Promise<Map<string, Record<string, unknown>>>;
 }
@@ -308,6 +340,7 @@ export class ProposalsService {
       throw new ForbiddenException('You may not propose in this association name');
     }
     let saved: UserProposal;
+    let askedBefore = false;
     try {
       saved = await this.repo.manager.transaction(async (manager) => {
         const toUserId = await handler.resolveRecipient(
@@ -316,6 +349,16 @@ export class ProposalsService {
           fromAssociationId,
           actorId
         );
+        // DURABLE STATE, NOT A CLOCK: a withdrawn request of the same pair is the record that the
+        // person was already told once. Withdrawing frees the pair (it may be asked again), but an
+        // ask -> withdraw -> ask loop must not become a push per cycle.
+        const earlier: unknown[] = await manager.query(
+          `SELECT 1 FROM proposals
+            WHERE kind = $1 AND "subjectId" = $2 AND "fromAssociationId" = $3 AND "toUserId" = $4
+            LIMIT 1`,
+          [kind, subjectId, fromAssociationId, toUserId]
+        );
+        askedBefore = earlier.length > 0;
         const inserted: UserProposal[] = await manager.query(
           `INSERT INTO proposals (kind, "subjectId", "fromAssociationId", "toAssociationId",
                                   "toUserId", status, "proposedBy")
@@ -336,6 +379,12 @@ export class ProposalsService {
     this.logger.log(
       `[PROPOSAL] ${kind} ${saved.id.slice(0, 8)}: ${fromAssociationId.slice(0, 8)} -> user ${saved.toUserId.slice(0, 8)} by ${actorId.slice(0, 8)}`
     );
+    if (askedBefore) {
+      this.logger.log(
+        `[PROPOSAL] ${saved.id.slice(0, 8)} asked again after a withdrawal: in the inbox, not announced`
+      );
+      return saved;
+    }
     try {
       await handler.announce(saved);
     } catch (e: unknown) {
@@ -355,11 +404,33 @@ export class ProposalsService {
     let after: AfterCommit = () => Promise.resolve();
     if (isUserHandler(handler)) {
       const asked = this.assertRecipient(proposal, actorId);
-      const decided = await this.repo.manager.transaction(async (manager) => {
+      const outcome = await this.repo.manager.transaction(async (manager) => {
+        // The subject first, then the proposal - the order every hide and delete takes.
+        await handler.lockSubject(manager, asked.subjectId);
+        if (!(await handler.senderStillSpeaks(manager, asked))) {
+          const voided = (await this.decide(
+            manager,
+            asked.id,
+            'withdrawn',
+            actorId
+          )) as UserProposal;
+          await handler.withdrawn(manager, voided);
+          return { voided };
+        }
         const row = await this.decide(manager, asked.id, 'accepted', actorId);
         after = await handler.apply(manager, row as UserProposal, actorId);
-        return row as UserProposal;
+        return { decided: row as UserProposal };
       });
+      if ('voided' in outcome) {
+        this.logger.log(
+          `[PROPOSAL] ${asked.id.slice(0, 8)} voided at acceptance: its asker no longer speaks for ${asked.fromAssociationId.slice(0, 8)}`
+        );
+        throw new ConflictException({
+          code: PROPOSAL_SENDER_GONE,
+          message: 'Whoever asked no longer speaks for this association',
+        });
+      }
+      const decided = outcome.decided;
       this.logger.log(`[PROPOSAL] ${decided.id.slice(0, 8)} accepted by its recipient`);
       await after();
       await this.tellProposer(handler, decided);
@@ -368,6 +439,7 @@ export class ProposalsService {
     const target = this.associationTarget(proposal);
     await this.assertMay(actorId, target.toAssociationId, handler.acceptorFlag, isGlobalAdmin);
     const decided = await this.repo.manager.transaction(async (manager) => {
+      if (handler.lockSubject) await handler.lockSubject(manager, proposal.subjectId);
       const row = await this.decide(manager, proposal.id, 'accepted', actorId);
       after = await handler.apply(manager, row as AssociationProposal, actorId);
       return row;
@@ -404,7 +476,11 @@ export class ProposalsService {
     const handler = this.handler(proposal.kind);
     const adminTier = isUserHandler(handler) ? false : isGlobalAdmin;
     await this.assertMay(actorId, proposal.fromAssociationId, handler.senderFlag, adminTier);
-    const decided = await this.decide(this.repo.manager, proposal.id, 'withdrawn', actorId);
+    const decided = await this.repo.manager.transaction(async (manager) => {
+      const row = await this.decide(manager, proposal.id, 'withdrawn', actorId);
+      if (isUserHandler(handler)) await handler.withdrawn(manager, row as UserProposal);
+      return row;
+    });
     this.logger.log(`[PROPOSAL] ${decided.id.slice(0, 8)} withdrawn by ${actorId.slice(0, 8)}`);
     return decided;
   }
@@ -466,13 +542,20 @@ export class ProposalsService {
     );
     const subjects = new Map<string, Record<string, unknown>>();
     for (const kind of new Set(rows.map((r) => r.kind))) {
-      const described = await this.handler(kind).describe(
-        rows.filter((r) => r.kind === kind).map((r) => r.subjectId)
-      );
+      const handler = this.handler(kind);
+      const ids = rows.filter((r) => r.kind === kind).map((r) => r.subjectId);
+      // A person-addressed kind describes only what THIS caller may see (D38b): an officer who
+      // cannot see the post learns neither its text nor whose it is.
+      const described = isUserHandler(handler)
+        ? await handler.describe(ids, actorId)
+        : await handler.describe(ids);
       for (const [id, subject] of described) subjects.set(`${kind}:${id}`, subject);
     }
+    // The person asked is named only beside a subject the caller was allowed to see.
+    const namedTarget = (r: (typeof rows)[number]): string | null =>
+      r.toUserId && subjects.has(`${r.kind}:${r.subjectId}`) ? r.toUserId : null;
     const userNames = await this.userNames(
-      rows.map((r) => r.toUserId).filter((id): id is string => !!id)
+      rows.map(namedTarget).filter((id): id is string => !!id)
     );
     const view = (r: (typeof rows)[number]): ProposalView => ({
       id: r.id,
@@ -485,7 +568,9 @@ export class ProposalsService {
         r.toAssociationId && r.toName !== null && r.toSlug !== null
           ? { id: r.toAssociationId, name: r.toName, slug: r.toSlug, logoUrl: r.toLogoUrl }
           : null,
-      toUser: r.toUserId ? { id: r.toUserId, name: userNames.get(r.toUserId) ?? null } : null,
+      toUser: namedTarget(r)
+        ? { id: r.toUserId as string, name: userNames.get(r.toUserId as string) ?? null }
+        : null,
       createdAt: r.createdAt,
     });
     const incoming = rows.filter((r) => r.toAssociationId === associationId).map(view);
@@ -494,6 +579,18 @@ export class ProposalsService {
       `[PROPOSAL] queue of ${associationId.slice(0, 8)}: ${incoming.length} in, ${outgoing.length} out`
     );
     return { incoming, outgoing };
+  }
+
+  /**
+   * D38b: how many requests wait for `userId`'s answer - ONE indexed count, for a page that only
+   * needs to know whether to show the way to the inbox (`IDX_proposals_user_target_pending`).
+   */
+  async countForUser(userId: string): Promise<number> {
+    const rows: { n: number }[] = await this.repo.manager.query(
+      `SELECT count(*)::int AS n FROM proposals WHERE "toUserId" = $1 AND status = 'pending'`,
+      [userId]
+    );
+    return rows[0]?.n ?? 0;
   }
 
   /**

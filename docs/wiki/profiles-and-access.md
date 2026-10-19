@@ -972,6 +972,30 @@ association carrying it. Read grants never reach that branch.
   - minus anyone in a block with the author;
   - minus, before the first announce, the author's followers, whom the sweep tells.
 - The PROPOSER gets `repost_personal_accepted` or `repost_personal_refused` in-app, with no push.
+- **Only the FIRST ask of a (post, association) pair is announced** (review of #2116): the state is
+  the earlier `proposals` row, read in the asking transaction, never a clock. A withdrawal by the
+  association also deletes the author's bell row for that request, so ask / withdraw / ask cannot
+  ring the author again. `repost_personal_requested` is in `MUTABLE_PUSH_TYPES`: the author's mute
+  of the asking association silences it.
+
+**What an officer sees of a request it sent.** The association queue describes a
+`repost-personal` request only to a viewer who sees the post (`postVisibleToViewerSql`, no read
+grant, no administrator reach). To another `POST_AS_ASSO` holder of the association, `subject` and
+`toUser` are null: the queue says "a request to an author", never the preview or the name.
+
+**Acceptance re-checks the asker.** In the accepting transaction, a `proposedBy` who no longer holds
+`POST_AS_ASSO` in the association, or is muted, voids the request (`withdrawn`, bell row deleted)
+and the author gets a 409 with code `PROPOSAL_SENDER_GONE`.
+
+**Lock order: the POST, then the proposal.** Accept takes `lockPostRow` (the post `FOR UPDATE`)
+through the handler's `lockSubject` before its conditional `UPDATE` of the proposal - the order a
+moderation hide takes (post, then `DELETE` of pending proposals) - so the two cannot deadlock. D38's
+`repost` handler takes the same lock. An integration case holds the post and proves accept waits.
+
+**The counts.** The inbox's "readers who would see it first" is computed by the very query
+acceptance notifies with (`newlyReachedByPersonalRepublicationSql`, with the post's
+`feedNotifiedAt`), so the two agree. `/notifications` reads only
+`GET /api/posts/me/republication-requests/count`.
 
 **The author's request states plainly:**
 
@@ -988,7 +1012,8 @@ association carrying it. Read grants never reach that branch.
 
 **Removal:**
 
-- Hiding the post (`dropRepublicationsOf`) deletes its republications and pending requests.
+- Hiding the post (`dropRepublicationsOf`) deletes its republications and PENDING requests; an
+  accepted or refused request stays until the post is deleted.
 - Deleting the post: the foreign key and the trigger.
 - The author's erasure deletes every request addressed to them (`proposals_to_user`).
 - The proposer's erasure anonymises `proposedBy`. Their pending requests remain, and the

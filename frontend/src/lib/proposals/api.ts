@@ -72,6 +72,7 @@ interface AssociationAddressed extends ProposalBase {
 /** Addressed to a person (D38b), who alone decides. */
 interface PersonAddressed extends ProposalBase {
   to: null;
+  /** Null, with `subject` null too, when the caller may not see the post: nothing about it is told. */
   toUser: ProposalPerson | null;
 }
 
@@ -102,6 +103,23 @@ export interface RepublicationRequest {
   details: (PersonalRepostSubject & { newlyReached: number }) | null;
   createdAt: string;
 }
+
+/**
+ * How many requests wait on the signed-in author - one count, for a page that only draws the way to
+ * the inbox and must not run its per-request audience counts on every open.
+ */
+export async function countMyRepublicationRequests(): Promise<number> {
+  const { pending } = await socialRequest<{ pending: number }>(
+    '/api/posts/me/republication-requests/count'
+  );
+  return pending;
+}
+
+/**
+ * The refusal code of an acceptance whose asker no longer speaks for the association: the request
+ * was voided by the server, and the inbox says why instead of "already decided".
+ */
+export const PROPOSAL_SENDER_GONE = 'PROPOSAL_SENDER_GONE';
 
 /** The requests waiting on the signed-in author, oldest first. */
 export async function listMyRepublicationRequests(): Promise<{

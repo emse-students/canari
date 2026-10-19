@@ -155,7 +155,8 @@ The numbers and what they imply are in
 | PATCH | `/api/posts/:postId/pin` | Pin post (admin only) |
 | PATCH | `/api/posts/:postId/unpin` | Unpin post (admin only) |
 | POST | `/api/posts/:postId/republication-requests` | Ask the AUTHOR of a personal post to let an association carry it (D38b; `POST_AS_ASSO` held, typed `REPOST_PERSONAL_*` refusals, [profiles-and-access](../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
-| GET | `/api/posts/me/republication-requests` | The caller's inbox of requests to answer (D38b); answered through `POST /api/associations/proposals/:id/accept` or `/refuse` |
+| GET | `/api/posts/me/republication-requests` | The caller's inbox of requests to answer (D38b); answered through `POST /api/associations/proposals/:id/accept` or `/refuse` (409 `PROPOSAL_SENDER_GONE` when the asker no longer speaks for the association) |
+| GET | `/api/posts/me/republication-requests/count` | `{ pending }`, the count alone, for `/notifications` (D38b) |
 | DELETE | `/api/posts/:postId/republications/:associationId` | Withdraw a republication: the republishing association, or the author of a personal post (D38b) |
 
 **`:postId` is parsed as a UUID on every route (`ParseUUIDPipe`), so a malformed id is a `400`.**
@@ -958,7 +959,7 @@ accident):
 | `association_repost` | a reader the republication newly reached (the mute is the REPUBLISHING association's) | yes |
 | `live_started` | a follower of the association broadcasting a live (WP-L7; push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | yes |
 | `repost_proposed`, `coorganise_proposed` | managers who must accept | **no** - operational |
-| `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | **no** - addressed to one person |
+| `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | **yes** - the author's mute of the asking association |
 | `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | **no** - operational |
 | `followed_post`, `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | **no** - not an association's push |
 

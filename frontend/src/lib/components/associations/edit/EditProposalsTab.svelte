@@ -115,6 +115,9 @@
     >
       {m.asso_republications_view_post()}
     </a>
+  {:else if proposal.kind === 'repost-personal'}
+    <!-- D38b: the server describes a personal post only to who may see it, and names nobody. -->
+    <p class="text-text-muted text-sm italic">{m.asso_proposals_personal_unseen()}</p>
   {:else}
     <p class="text-text-muted text-sm italic">{m.asso_republications_subject_gone()}</p>
   {/if}
@@ -209,16 +212,21 @@
                     {m.asso_republications_to({ name: proposal.to.name })}
                   </span>
                 {:else}
-                  <!-- D38b: a request to the AUTHOR of a personal post, who alone answers it. -->
-                  <Avatar
-                    userId={proposal.toUser?.id ?? ''}
-                    size="sm"
-                    fallbackLabel={proposal.toUser?.name ?? ''}
-                  />
+                  <!-- D38b: a request to the AUTHOR of a personal post, who alone answers it - named
+                       only to a member who may see the post (`toUser` is null otherwise). -->
+                  {#if proposal.toUser}
+                    <Avatar
+                      userId={proposal.toUser.id}
+                      size="sm"
+                      fallbackLabel={proposal.toUser.name ?? ''}
+                    />
+                  {/if}
                   <span class="text-text-main min-w-0 truncate text-sm font-semibold">
-                    {m.asso_proposals_to_author({
-                      name: proposal.toUser?.name || m.notif_actor_unknown(),
-                    })}
+                    {proposal.toUser
+                      ? m.asso_proposals_to_author({
+                          name: proposal.toUser.name || m.notif_actor_unknown(),
+                        })
+                      : m.asso_proposals_to_an_author()}
                   </span>
                 {/if}
                 <span class="text-text-muted ml-auto shrink-0 text-xs">

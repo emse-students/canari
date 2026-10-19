@@ -18,7 +18,7 @@
     REPUBLICATION_REQUESTS_ROUTE,
     resolveNotificationHref,
   } from '$lib/posts/notificationTarget';
-  import { listMyRepublicationRequests } from '$lib/proposals/api';
+  import { countMyRepublicationRequests } from '$lib/proposals/api';
   import { getAssociation } from '$lib/associations/api';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
@@ -53,8 +53,8 @@
   let pendingRequests = $state(0);
 
   onMount(() => {
-    listMyRepublicationRequests()
-      .then(({ incoming }) => (pendingRequests = incoming.length))
+    countMyRepublicationRequests()
+      .then((count) => (pendingRequests = count))
       .catch((e: unknown) => Log.d('notifications', `request count failed: ${String(e)}`));
   });
 

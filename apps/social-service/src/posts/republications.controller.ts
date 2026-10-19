@@ -48,6 +48,15 @@ export class RepublicationsController {
     return this.personal.inbox(xUserId);
   }
 
+  /**
+   * D38b: HOW MANY requests wait for the caller's answer - one indexed count, so a page that only
+   * draws the way to the inbox never runs the inbox's per-request audience counts.
+   */
+  @Get('me/republication-requests/count')
+  myRepublicationRequestCount(@Headers('x-user-id') xUserId: string) {
+    return this.personal.pendingCount(xUserId);
+  }
+
   /** Republishes the post AS `associationId`, at once: `POST_AS_ASSO` there, and the post in sight. */
   @HttpPost(':postId/republications')
   async republish(

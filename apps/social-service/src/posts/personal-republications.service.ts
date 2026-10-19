@@ -23,12 +23,12 @@ import {
 import { previewOf } from '../push/push-content';
 import { REPUBLICATION_REQUESTS_TARGET } from '../push/push-target';
 import {
-  NEWLY_REACHED_BY_REPUBLICATION_SQL,
+  newlyReachedByPersonalRepublicationSql,
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
 import { PostRepublication } from './entities/post-republication.entity';
 import { PostNotificationsService } from './post-notifications.service';
-import { PERSONAL_REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
+import { lockPostRow, PERSONAL_REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
 import { RepublicationsService, isWithheldPost } from './republications.service';
 
 /**
@@ -42,7 +42,9 @@ export const MAX_PENDING_REQUESTS_PER_AUTHOR = 20;
  * At most this many requests one association may have waiting at once (D38b) - the per-association
  * brake against spam, on state rather than on a time window (see the durable rule "idempotence
  * comes from durable state, never from a clock"): an association that wants to ask more must wait
- * for answers, and each post can be asked only once (a refusal stands).
+ * for answers. A refusal stands; a request the association WITHDRAWS frees its pair to be asked
+ * again, but only the first ask of a pair is ever announced (`ProposalsService.proposeToUser`), so a
+ * withdraw-and-ask loop puts nothing new in the author's bell or on their phone.
  */
 export const MAX_PENDING_REQUESTS_PER_ASSOCIATION = 10;
 
@@ -128,6 +130,11 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
   /** The requests waiting for `userId`'s answer - their own inbox. */
   inbox(userId: string): Promise<{ incoming: UserProposalView[] }> {
     return this.proposals.listForUser(userId);
+  }
+
+  /** How many requests wait for `userId`'s answer - one count, for the way to the inbox. */
+  async pendingCount(userId: string): Promise<{ pending: number }> {
+    return { pending: await this.proposals.countForUser(userId) };
   }
 
   // ── The `repost-personal` proposal kind ────────────────────────────────────────────────────────
@@ -268,38 +275,102 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
     );
   }
 
-  async describe(postIds: string[]): Promise<Map<string, Record<string, unknown>>> {
+  /**
+   * The sending association's queue: the posts `viewerId` sees WITHOUT a grant and without the
+   * administrator's by-id reach - the very predicate the request itself passed. A member of the
+   * association who cannot see a post learns nothing of it here, not even that it exists.
+   */
+  async describe(
+    postIds: string[],
+    viewerId: string
+  ): Promise<Map<string, Record<string, unknown>>> {
     if (postIds.length === 0) return new Map();
-    const rows: { id: string; markdown: string | null; createdAt: Date }[] =
-      await this.repo.manager.query(
-        `SELECT id, markdown, "publishedAt" AS "createdAt" FROM posts WHERE id = ANY($1::uuid[])`,
-        [postIds]
-      );
-    return new Map(
-      rows.map((r) => [r.id, { preview: previewOf(r.markdown ?? ''), createdAt: r.createdAt }])
+    const rows: SubjectRow[] = await this.repo.manager.query(
+      `SELECT posts.id, posts.markdown, posts."publishedAt" AS "createdAt", posts."feedNotifiedAt"
+         FROM posts
+        WHERE posts.id = ANY($1::uuid[])
+          AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false })}`,
+      [postIds, viewerId]
     );
+    const hidden = postIds.length - rows.length;
+    if (hidden > 0) {
+      this.logger.debug(`[REPOST-P] queue of ${viewerId.slice(0, 8)}: ${hidden} subject(s) unseen`);
+    }
+    return new Map(rows.map((r) => [r.id, subjectView(r)]));
   }
 
   /**
-   * What the author sees before answering (D38b): the post, and HOW MANY readers would see it for
-   * the first time - the proposing association's readers who cannot see it now, the very set the
-   * acceptance would notify. A count, never a list of names: the author is told the size of the
-   * audience they would add, not who is in it.
+   * What the author sees before answering (D38b): the post, and HOW MANY readers acceptance would
+   * tell it reached - `newlyReachedByPersonalRepublicationSql`, the very query `writeRepublication`
+   * runs, with the post's own announce state: the association's readers who cannot see it now,
+   * minus anyone in a block with the author, and - before the post's first announcement - minus the
+   * followers the sweep tells anyway. A count, never names.
    */
   async describeRequests(proposals: UserProposal[]): Promise<Map<string, Record<string, unknown>>> {
     const out = new Map<string, Record<string, unknown>>();
-    const subjects = await this.describe([...new Set(proposals.map((p) => p.subjectId))]);
+    const ids = [...new Set(proposals.map((p) => p.subjectId))];
+    // The author's own posts: no visibility filter, they are its author.
+    const rows: SubjectRow[] = ids.length
+      ? await this.repo.manager.query(
+          `SELECT id, markdown, "publishedAt" AS "createdAt", "feedNotifiedAt"
+             FROM posts WHERE id = ANY($1::uuid[])`,
+          [ids]
+        )
+      : [];
+    const subjects = new Map(rows.map((r) => [r.id, r]));
     for (const proposal of proposals) {
+      const subject = subjects.get(proposal.subjectId);
+      if (!subject) continue;
       const reached: { n: number }[] = await this.repo.manager.query(
-        `SELECT count(*)::int AS n FROM (${NEWLY_REACHED_BY_REPUBLICATION_SQL}) nr`,
+        `SELECT count(*)::int AS n
+           FROM (${newlyReachedByPersonalRepublicationSql(subject.feedNotifiedAt !== null)}) nr`,
         [proposal.subjectId, proposal.fromAssociationId]
       );
-      out.set(proposal.id, {
-        ...subjects.get(proposal.subjectId),
-        newlyReached: reached[0]?.n ?? 0,
-      });
+      out.set(proposal.id, { ...subjectView(subject), newlyReached: reached[0]?.n ?? 0 });
     }
     return out;
+  }
+
+  /** The post first, then the proposal: see `lockPostRow`. */
+  lockSubject(manager: EntityManager, postId: string): Promise<void> {
+    return lockPostRow(manager, postId);
+  }
+
+  /**
+   * The asker still holds `POST_AS_ASSO` in the association - read from the membership row itself,
+   * which is exact because that flag is never granted by a BDE tier - and is not restricted.
+   */
+  async senderStillSpeaks(manager: EntityManager, proposal: UserProposal): Promise<boolean> {
+    const held: unknown[] = await manager.query(
+      `SELECT 1 FROM association_members
+        WHERE "associationId" = $1 AND "userId" = $2 AND (permissions & $3) <> 0`,
+      [proposal.fromAssociationId, proposal.proposedBy, this.senderFlag]
+    );
+    if (held.length === 0) {
+      this.logger.debug(
+        `[REPOST-P] ${proposal.id.slice(0, 8)}: its asker no longer holds the flag`
+      );
+      return false;
+    }
+    if (await this.moderation.isUserMuted(proposal.proposedBy)) {
+      this.logger.debug(`[REPOST-P] ${proposal.id.slice(0, 8)}: its asker is muted`);
+      return false;
+    }
+    return true;
+  }
+
+  /** A request taken back leaves nothing to answer: its bell row goes in the same transaction. */
+  async withdrawn(manager: EntityManager, proposal: UserProposal): Promise<void> {
+    const result: unknown = await manager.query(
+      `DELETE FROM post_notifications
+        WHERE "recipientId" = $1 AND type = 'repost_personal_requested'
+          AND "postId" = $2 AND "associationId" = $3`,
+      [proposal.toUserId, proposal.subjectId, proposal.fromAssociationId]
+    );
+    const removed = Array.isArray(result) && typeof result[1] === 'number' ? result[1] : 0;
+    this.logger.debug(
+      `[REPOST-P] ${proposal.id.slice(0, 8)} withdrawn: ${removed} bell row(s) removed`
+    );
   }
 
   // ── Reads and refusals ─────────────────────────────────────────────────────────────────────────
@@ -395,6 +466,19 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
       );
     }
   }
+}
+
+/** A post as a request's description needs it. */
+interface SubjectRow {
+  id: string;
+  markdown: string | null;
+  createdAt: Date;
+  feedNotifiedAt: Date | null;
+}
+
+/** What a queue or an inbox shows about the post: its opening and its date. */
+function subjectView(row: SubjectRow): Record<string, unknown> {
+  return { preview: previewOf(row.markdown ?? ''), createdAt: row.createdAt };
 }
 
 /** An HTTP refusal carrying a stable `code` - the client maps the code, never the message. */

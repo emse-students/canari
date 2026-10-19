@@ -396,6 +396,7 @@ export class PostsService {
             AND NOT COALESCE(posts.anonymous, false) AND posts."authorId" <> $2
             AND NOT posts."hiddenByModeration"
             AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
+            AND NOT (posts.kind = 'reel' AND posts."expiresAt" IS NOT NULL AND posts."expiresAt" <= now())
             AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false })}
             AND NOT EXISTS (SELECT 1 FROM user_blocks req_block
               WHERE (req_block."blockerId" = $2 AND req_block."blockedId" = posts."authorId")

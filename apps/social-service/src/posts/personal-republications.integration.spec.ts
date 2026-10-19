@@ -31,7 +31,7 @@ import type { RedisService } from '../common/redis/redis.service';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { ModerationService } from '../moderation/moderation.service';
 import { Proposal } from '../proposals/proposal.entity';
-import { ProposalsService } from '../proposals/proposals.service';
+import { PROPOSAL_SENDER_GONE, ProposalsService } from '../proposals/proposals.service';
 import { postVisibleToViewerSql } from '../spaces/reader-spaces';
 import { PostRepublication } from './entities/post-republication.entity';
 import {
@@ -101,6 +101,9 @@ const POSTS: {
   { id: P(10), authorId: 'mu', announced: true }, // a muted author accepts
   { id: P(11), authorId: 'pr', announced: true }, // the proposer's own
   { id: P(12), authorId: 'au', announced: true }, // the caps
+  { id: P(13), authorId: 'au', announced: true }, // its asker stops speaking for the association
+  { id: P(14), authorId: 'au', announced: true }, // the lock order of an acceptance
+  { id: P(15), authorId: 'au', announced: true }, // becomes an expired reel
 ];
 
 /** A refusal's stable code, read from the exception's body the way the client reads it. */
@@ -190,6 +193,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255) NOT NULL,
         "followedUserId" varchar(255) NOT NULL);
+      CREATE TABLE post_notifications (id serial PRIMARY KEY, "recipientId" varchar NOT NULL,
+        type varchar NOT NULL, "postId" varchar NOT NULL, "associationId" uuid);
     `);
     await q(
       `INSERT INTO associations (id, name, slug, type, archived) VALUES
@@ -353,6 +358,16 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       await q(`DELETE FROM proposals WHERE id = $1`, [asked.id]);
     });
 
+    it('offers nothing on an expired reel, which a request would refuse as withheld', async () => {
+      await q(
+        `UPDATE posts SET kind = 'reel', "expiresAt" = now() - interval '1 hour' WHERE id = $1`,
+        [P(15)]
+      );
+      const offer = await offerFor('pr', [P(15)]);
+      expect(offer.requestablePersonalIds.size).toBe(0);
+      await expect(personal.request(P(15), AG, 'pr')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
     it('offers nothing on a post the reader does not see', async () => {
       const offer = await offerFor('outsider', [P(1)]);
       expect([...offer.personalRepublishAsIds]).toEqual([AG]);
@@ -445,7 +460,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         from: { id: AG, name: 'AG' },
         proposedBy: { id: 'pr', name: 'Paul Proposer' },
         // gr, gf, gb and outsider see AG and not the post (pr already does: shared space).
-        details: { preview: 'post 01', newlyReached: 4 },
+        // EXACTLY whom acceptance would tell: gr, gf and outsider - never gb, who blocked au.
+        details: { preview: 'post 01', newlyReached: 3 },
       });
       // Nobody else reads it.
       expect((await personal.inbox('pr')).incoming).toEqual([]);
@@ -462,6 +478,16 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         }),
       ]);
       expect(queue.incoming).toEqual([]);
+    });
+
+    it('an officer of the association who cannot see the post learns neither its text nor whose it is', async () => {
+      expect(await sees(P(1), 'outsider')).toBe(false);
+      const queue = await proposals.listPending(AG, 'outsider', false);
+      expect(queue.outgoing).toEqual([
+        expect.objectContaining({ kind: 'repost-personal', subject: null, toUser: null }),
+      ]);
+      expect(JSON.stringify(queue)).not.toContain('Alice');
+      expect(JSON.stringify(queue)).not.toContain('post 01');
     });
 
     it('only the author decides: neither the proposer nor a global admin', async () => {
@@ -531,18 +557,103 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       );
       await republications.unrepublish(P(8), AG, 'pr', false);
       expect(await proposalOf(P(8), AG)).toMatchObject({ status: 'withdrawn' });
+      told.length = 0;
       const second = await personal.request(P(8), AG, 'pr');
       expect(second.status).toBe('pending');
+      // Asked before: in the inbox, but neither a bell row nor a push a second time.
+      expect(told).toEqual([]);
     });
 
-    it('a pending request is withdrawn by its association, never by the author', async () => {
+    it('a pending request is withdrawn by its association, never by the author - and leaves the bell', async () => {
       const pending = await proposalOf(P(8), AG);
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "associationId") VALUES
+           ('au', 'repost_personal_requested', $1, $2), ('au', 'repost_personal_requested', $1, $3)`,
+        [P(8), AG, AG2]
+      );
       await expect(proposals.withdraw(pending.id, 'au', false)).rejects.toBeInstanceOf(
         ForbiddenException
       );
       await expect(proposals.withdraw(pending.id, 'pr', false)).resolves.toMatchObject({
         status: 'withdrawn',
       });
+      // AG's request is gone from au's bell; another association's is not.
+      expect(
+        await q(`SELECT "associationId" FROM post_notifications WHERE "postId" = $1`, [P(8)])
+      ).toEqual([{ associationId: AG2 }]);
+    });
+
+    it('an ask -> withdraw loop announces once, however many times it runs', async () => {
+      told.length = 0;
+      for (let i = 0; i < 3; i++) {
+        const asked = await personal.request(P(8), AG, 'pr');
+        await proposals.withdraw(asked.id, 'pr', false);
+      }
+      expect(told.filter((t) => t.type === 'repost_personal_requested')).toEqual([]);
+    });
+
+    it('a request whose asker no longer holds the flag, or is muted, is voided at acceptance', async () => {
+      const lost = await personal.request(P(13), AG2, 'pr');
+      await q(
+        `UPDATE association_members SET permissions = 0 WHERE "userId" = 'pr' AND "associationId" = $1`,
+        [AG2]
+      );
+      try {
+        const err = await refusedWith(proposals.accept(lost.id, 'au', false));
+        expect(err).toBeInstanceOf(ConflictException);
+        expect(codeOf(err)).toBe(PROPOSAL_SENDER_GONE);
+      } finally {
+        await q(
+          `UPDATE association_members SET permissions = $2 WHERE "userId" = 'pr' AND "associationId" = $1`,
+          [AG2, POST_AS]
+        );
+      }
+      expect(await proposalOf(P(13), AG2)).toMatchObject({ status: 'withdrawn' });
+      expect(await q(`SELECT 1 FROM post_republications WHERE "postId" = $1`, [P(13)])).toEqual([]);
+
+      const mutedAsk = await personal.request(P(13), AG2, 'pr');
+      muted.add('pr');
+      try {
+        const err = await refusedWith(proposals.accept(mutedAsk.id, 'au', false));
+        expect(codeOf(err)).toBe(PROPOSAL_SENDER_GONE);
+      } finally {
+        muted.delete('pr');
+      }
+      expect(await q(`SELECT 1 FROM post_republications WHERE "postId" = $1`, [P(13)])).toEqual([]);
+    });
+
+    it('an acceptance takes the post before the proposal, as a hide does, so the two cannot deadlock', async () => {
+      const asked = await personal.request(P(14), AG, 'pr');
+      // A moderation hide in flight: it holds the post row.
+      const hide = ds.createQueryRunner();
+      await hide.connect();
+      await hide.startTransaction();
+      await hide.query(`UPDATE posts SET "hiddenByModeration" = false WHERE id = $1`, [P(14)]);
+      const accepting = proposals.accept(asked.id, 'au', false);
+      // Settled whatever the outcome, so a failure below cannot leave it unhandled.
+      const settled = accepting.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error })
+      );
+      let proposalFree: boolean;
+      try {
+        // Waits on the hide's row, whatever its order; this sleep only lets it get there. The
+        // verdict is the lock state below, never the duration.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        // The acceptance waits on the post and has NOT taken the proposal, so the hide could still
+        // delete it. Taking the proposal first would make this NOWAIT fail (SQLSTATE 55P03).
+        proposalFree = await q(`SELECT 1 FROM proposals WHERE id = $1 FOR UPDATE NOWAIT`, [
+          asked.id,
+        ]).then(
+          () => true,
+          () => false
+        );
+      } finally {
+        await hide.rollbackTransaction();
+        await hide.release();
+      }
+      expect(proposalFree).toBe(true);
+      expect(await settled).toMatchObject({ value: { status: 'accepted' } });
     });
 
     it('before the first announce, the followers are left to the sweep and the rest told here', async () => {

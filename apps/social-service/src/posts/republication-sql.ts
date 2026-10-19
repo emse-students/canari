@@ -78,3 +78,17 @@ export async function dropRepublicationsOf(
   );
   return { republications, proposals };
 }
+
+/**
+ * Row-locks a post (`FOR UPDATE`) at the START of a proposal's acceptance, BEFORE the proposal row
+ * is locked by the decision. A moderation hide locks the post (its `UPDATE`) and then deletes the
+ * pending proposals, and a post delete does the same through its trigger; an acceptance that took
+ * the proposal first and the post second (in `writeRepublication`) could wait on a hide that waits
+ * on it. One order everywhere - the post, then its proposals - and no cycle can form.
+ */
+export async function lockPostRow(
+  manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+  postId: string
+): Promise<void> {
+  await manager.query(`SELECT 1 FROM posts WHERE id = $1 FOR UPDATE`, [postId]);
+}

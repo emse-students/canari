@@ -27,7 +27,7 @@ import {
 import { PostRepublication } from './entities/post-republication.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { invalidatePostListCache } from './post-list-cache';
-import { REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
+import { lockPostRow, REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
 import { isExpiredReel, type PostKind } from './reel.constants';
 
 /** The columns of a post a republication decides on. */
@@ -241,6 +241,11 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
       pushData: { queueAssociationId: proposal.toAssociationId },
     });
     this.logger.log(`[REPOST] proposal ${proposal.id.slice(0, 8)} announced to ${count}`);
+  }
+
+  /** The post first, then the proposal: see `lockPostRow`. */
+  lockSubject(manager: EntityManager, postId: string): Promise<void> {
+    return lockPostRow(manager, postId);
   }
 
   async describe(postIds: string[]): Promise<Map<string, Record<string, unknown>>> {

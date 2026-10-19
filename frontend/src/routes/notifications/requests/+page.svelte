@@ -20,10 +20,11 @@
   import {
     acceptProposal,
     listMyRepublicationRequests,
+    PROPOSAL_SENDER_GONE,
     refuseProposal,
     type RepublicationRequest,
   } from '$lib/proposals/api';
-  import { refusalStatus } from '$lib/utils/apiRefusal';
+  import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { formatRelative } from '$lib/utils/time';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
@@ -70,7 +71,10 @@
       const status = refusalStatus(e);
       Log.d('RepublicationRequests', `${action} refused: status=${status} ${String(e)}`);
       if (status === 409) {
-        errorMessage = m.asso_republications_not_pending();
+        errorMessage =
+          refusalCode(e) === PROPOSAL_SENDER_GONE
+            ? m.republication_requests_sender_gone()
+            : m.asso_republications_not_pending();
         await load();
       } else {
         errorMessage = m.post_republish_error();
