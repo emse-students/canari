@@ -7,6 +7,7 @@
     windowRefusal,
     type GridRow,
   } from '$lib/bookings/grid';
+  import { localTime } from '$lib/bookings/zonedTime';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -183,6 +184,23 @@
     return { text: m.bookings_cell_closed(), closed: true };
   }
 
+  /**
+   * Two units that read as ONE thing on the grid: touching free units the device's clock treats the
+   * same way, touching blocked units, or the units of one booking. A run is drawn as a single block
+   * (rounded only at its ends, its label said once) while every unit stays its own button, so a
+   * press or a drag still lands on the step under the pointer.
+   */
+  function sameRun(a: SlotUnit | null | undefined, b: SlotUnit | null | undefined): boolean {
+    if (!a || !b || a.endMs !== b.startMs || a.state !== b.state) return false;
+    if (a.state === 'booked' && b.state === 'booked') return a.booking.id === b.booking.id;
+    return reading(a).text === reading(b).text;
+  }
+
+  /** The row sits on the hour: only those carry a full time label, the half hours a faint one. */
+  function onTheHour(row: GridRow): boolean {
+    return localTime(row.startMs, space.timeZone).slice(3, 5) === '00';
+  }
+
   function cellClass(unit: SlotUnit, closed: boolean): string {
     if (unit.state === 'booked') {
       return unit.booking.mine
@@ -209,7 +227,7 @@
       {selectedReading}
     </p>
   {/if}
-  <table class="w-full border-separate border-spacing-1 text-sm">
+  <table class="w-full border-separate border-spacing-x-1 border-spacing-y-px text-sm">
     <caption class="sr-only">{m.bookings_grid_caption({ space: space.name })}</caption>
     <thead>
       <tr>
@@ -240,7 +258,11 @@
         <tr>
           <th
             scope="row"
-            class="bg-cn-surface text-text-muted sticky left-0 z-10 p-2 text-left text-xs font-semibold whitespace-nowrap tabular-nums"
+            class="bg-cn-surface sticky left-0 z-10 px-2 py-0 text-left text-xs whitespace-nowrap tabular-nums {onTheHour(
+              row
+            )
+              ? 'text-text-muted font-semibold'
+              : 'text-text-muted/50 font-normal'}"
           >
             {row.label}
             {#if row.nextDay}
@@ -252,6 +274,8 @@
             <td class="p-0">
               {#if unit}
                 {@const cell = reading(unit)}
+                {@const joinedAbove = sameRun(rows[rowIndex - 1]?.cells[column], unit)}
+                {@const joinedBelow = sameRun(unit, rows[rowIndex + 1]?.cells[column])}
                 {@const inRange =
                   selected !== null &&
                   selected.column === column &&
@@ -274,11 +298,13 @@
                     time: row.nextDay ? `${row.label} ${m.bookings_time_next_day()}` : row.label,
                     state: cell.text,
                   })}
-                  class="block min-h-11 w-full truncate rounded-lg border px-2 py-2 text-left text-xs font-semibold transition-colors {inRange
+                  class="block min-h-8 w-full truncate border px-2 py-1 text-left text-xs font-semibold transition-colors {joinedAbove
+                    ? 'rounded-t-none border-t-black/5'
+                    : 'rounded-t-lg'} {joinedBelow ? 'rounded-b-none' : 'rounded-b-lg'} {inRange
                     ? 'bg-cn-yellow/40 text-text-main border-cn-yellow'
                     : cellClass(unit, cell.closed)}"
                 >
-                  {cell.text}
+                  {joinedAbove ? '' : cell.text}
                 </button>
               {/if}
             </td>
