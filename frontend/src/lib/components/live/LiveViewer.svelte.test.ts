@@ -388,6 +388,19 @@ describe('LiveViewer', () => {
     expect(document.querySelector('[data-live-chat]')).toBeNull();
   });
 
+  it("a chat write answered 410 with endReason 'cut' shows the cut screen, as the player's own poll would", async () => {
+    chatDeps.postReactions = vi.fn(async () => {
+      throw new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null, 'cut');
+    });
+    await render();
+    document.querySelector<HTMLButtonElement>('[data-live-reaction="canari"]')!.click();
+    timers.shift()!();
+    await settle();
+    expect(stateOf()).toBe('ended');
+    expect(document.body.textContent).toContain(m.live_viewer_cut_title());
+    expect(document.body.textContent).not.toContain(m.live_viewer_ended_title());
+  });
+
   it('a chat write refused for that write alone (429) leaves the live playing', async () => {
     chatDeps.postReactions = vi.fn(async () => {
       throw refusal('rate-limited', 429);

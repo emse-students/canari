@@ -412,6 +412,21 @@ describe('LiveOverlay', () => {
     expect(q('[data-live-chat-line="m-1"]')).toBeNull();
   });
 
+  it("the chat's 410 with endReason 'cut' shows the broadcaster's cut screen", async () => {
+    vi.mocked(liveApi.fetchLiveManifest).mockRejectedValue(
+      new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null, 'cut')
+    );
+    const { broadcast, deps } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('ended'));
+    await settle();
+    expect(broadcast.endCause).toBe('cut');
+    expect(q('[data-live-ended]')!.dataset.liveEnded).toBe('cut');
+    expect(document.body.textContent).toContain(m.live_broadcast_cut_title());
+    expect(deps.endLive).not.toHaveBeenCalled();
+  });
+
   it("the chat's 410 ends the screen as the uploader's would, with the server's sentence", async () => {
     vi.mocked(liveApi.fetchLiveManifest).mockRejectedValue(
       new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null)

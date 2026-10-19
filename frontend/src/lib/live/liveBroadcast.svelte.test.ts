@@ -283,6 +283,14 @@ describe('LiveBroadcast - on air', () => {
     expect(b.endCause).toBe('server');
   });
 
+  it("the chat's 410 with endReason 'cut' ends the screen as a cut", async () => {
+    const { b } = await ready();
+    await b.start();
+    b.chatHeardEnd(new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null, 'cut'));
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('cut');
+  });
+
   it('the chat reads the key the live was started with', async () => {
     const { b } = await ready();
     expect(b.chatKey).toBeNull();

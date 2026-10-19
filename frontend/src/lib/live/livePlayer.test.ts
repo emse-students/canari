@@ -611,6 +611,14 @@ describe('a refusal the chat heard (WP-L6)', () => {
     }
   );
 
+  it("a chat 410 with endReason 'cut' stops on the cut screen", async () => {
+    const p = await joined();
+    p.refusedElsewhere(
+      new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null, 'cut')
+    );
+    expect(states.at(-1)).toEqual({ kind: 'ended', cut: true });
+  });
+
   it("a refusal that is only a retry (429, no answer) is not the chat's to act on", async () => {
     const p = await joined();
     const before = states.length;
