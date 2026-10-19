@@ -3542,7 +3542,7 @@ See [`cicd.md`](../cicd.md) for the full pipeline.
 
 The 2026-09-06 measurement (a notification posted by the WebView carried no actions, so check K's backgrounded case could not be performed) described a world with TWO builders. Since 2026-09-18 the WebSocket frame is a second TRIGGER for the ONE Kotlin builder ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts) -> `notifier_message_natif` -> `showMessageNotification`, `quickActions = true` by default), so a backgrounded message carries Reply and Mark as read like a pushed one. The only conversations without them are reactions (`quickActions = false`) and salons (a \`channel_\` id), whose send is server-authoritative. What is still owed is the HAND: answering a backgrounded shade (NOTIF-6c).
 
-## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, scheduled after the campaign)
+## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, planned now, built on draft #2065)
 
 **Play's requirement:** an app with sign-in must support Zero-Tap Sign-In restoration on a new Android device (mobile and tablet; enforcement from **April 2027**). The exemptions (Block Store integration by 30 September 2026 - that date has PASSED - enterprise or permanently-private apps, regulatory) do not describe a student messaging app. The mechanism is the Restore Credentials API (`androidx.credentials`, Android 9+, our minSdk is 28; GMS core 24220000+): a system-managed WebAuthn credential tied to the package, created silently after sign-in, backed up with the device. It works regardless of `android:allowBackup`, so it does not reopen the device-transfer exclusion of 2026-08-26.
 
