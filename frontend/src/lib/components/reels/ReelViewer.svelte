@@ -11,10 +11,21 @@
    *
    * IT IS A HISTORY ENTRY (`bindHistoryOverlay`), so Android's Back closes it, and it covers the
    * screen (`coversScreen`), so the iOS native tab bar steps aside.
+   *
+   * THE RAIL AND THE COMMENTS SHEET (user, 2026-10-19, Instagram's Reels): each page of a post gets
+   * the heart, the comments and the send (`ReelActionRail`); the comments open over the playing
+   * reel (`ReelCommentsSheet`). A conversation's reel is not a post and gets neither - the rail is
+   * drawn only for a signed-in reader (`likerId`). A dialog opened from in here (a report, the GIF
+   * picker) is drawn above the viewer (`markViewerLayer`).
    */
   import { onMount } from 'svelte';
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
   import ReelSlide from './ReelSlide.svelte';
+  import ReelCommentsSheet from './ReelCommentsSheet.svelte';
+  import { markViewerLayer } from '$lib/utils/viewerLayer';
+  import { railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
+  import { sharePostLink } from '$lib/posts/sharePost';
+  import { WheelPageLock, wheelOverScrollable, wheelStep } from '$lib/reels/reelWheel';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
@@ -69,7 +80,10 @@
    * Touches on these belong to them: the player's bar seeks, a button is pressed, and an EXPANDED
    * caption scrolls its own text (`ReelSlide`) - a swipe there must not turn the reel.
    */
-  const NOT_A_GESTURE = 'button, [data-video-controls], [data-reel-caption-open]';
+  const NOT_A_GESTURE =
+    'button, [data-video-controls], [data-reel-caption-open], [data-reel-rail], [data-reel-comments]';
+
+  markViewerLayer();
 
   let reels = $state<PostEntity[]>([]);
   let index = $state(0);
@@ -132,20 +146,52 @@
   }
 
   /**
-   * A DOUBLE TAP ON A REEL LIKES IT, AND NEVER UNLIKES IT (user, 2026-10-19) - the card's reaction
-   * path (`posts/postReaction.ts`): the same refusal known before any request, the same request
-   * behind `assertNotMuted`, the same failure sentence, said here as a toast since the viewer has
-   * no card line. A reel the reader already reacted to, with any reaction, gets the heart and no
-   * request. True when the reel now carries the reader's reaction, which is when the heart is drawn.
-   * The server's answer goes to the cards on screen too, so the feed behind shows the like.
+   * The posts whose reaction is on its way to the server. ONE AT A TIME PER POST: a second tap
+   * while the first is in flight is ignored (logged), so two answers can never land out of order,
+   * and a failure rolls back to the state the tap started from, which no later tap has moved.
+   */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a guard read by handlers, never rendered
+  const reactionInFlight = new Set<string>();
+
+  /**
+   * Sends the reader's reaction `type` on `post` (taking it back when `wasReacted`) on the card's
+   * path (`posts/postReaction.ts`): written on the tap, the server's answer adopted and announced to
+   * the cards behind, a failure rolled back and said as the card's sentence in a toast.
+   */
+  function sendReaction(post: PostEntity, me: string, type: string, wasReacted: boolean) {
+    const before = post.reactions ?? {};
+    reactionInFlight.add(post.id);
+    setReactions(post.id, toggledReactions(before, me, type).next);
+    sendPostReaction(post.id, type, wasReacted)
+      .then(
+        (reactions) => {
+          setReactions(post.id, reactions);
+          publishPostReactions(post.id, reactions);
+        },
+        (err: unknown) => {
+          console.warn(`[reel-viewer] the reaction on ${post.id} was not recorded`, err);
+          setReactions(post.id, before);
+          showToast(publishFailureMessage(err, m.post_reaction_error()), 'error');
+        }
+      )
+      .finally(() => reactionInFlight.delete(post.id));
+  }
+
+  /**
+   * A DOUBLE TAP ON A REEL LIKES IT, AND NEVER UNLIKES IT (user, 2026-10-19), on `sendReaction`.
+   * A reel the reader already reacted to, with any reaction, gets the heart and no request. True
+   * when the reel now carries the reader's reaction, which is when the heart is drawn.
    */
   function likeReel(post: PostEntity): boolean {
     const me = likerId;
     if (!me) return false;
-    const before = post.reactions ?? {};
-    if (before[me]) {
+    if ((post.reactions ?? {})[me]) {
       console.debug(`[reel-viewer] double tap on ${post.id}: already reacted, heart only`);
       return true;
+    }
+    if (reactionInFlight.has(post.id)) {
+      console.debug(`[reel-viewer] double tap on ${post.id}: a reaction is in flight, ignored`);
+      return false;
     }
     if (reactionRefusedLocally()) {
       console.debug(`[reel-viewer] double tap on ${post.id}: refused, the reader is muted`);
@@ -153,19 +199,55 @@
       return false;
     }
     console.debug(`[reel-viewer] double tap on ${post.id}: like`);
-    setReactions(post.id, toggledReactions(before, me, DOUBLE_TAP_REACTION).next);
-    sendPostReaction(post.id, DOUBLE_TAP_REACTION, false).then(
-      (reactions) => {
-        setReactions(post.id, reactions);
-        publishPostReactions(post.id, reactions);
-      },
-      (err: unknown) => {
-        console.warn(`[reel-viewer] the like on ${post.id} was not recorded`, err);
-        setReactions(post.id, before);
-        showToast(publishFailureMessage(err, m.post_reaction_error()), 'error');
-      }
-    );
+    sendReaction(post, me, DOUBLE_TAP_REACTION, false);
     return true;
+  }
+
+  /**
+   * THE RAIL'S HEART (`reels/reelRail.ts`): it takes the reader's reaction back if they hold one,
+   * and gives "J'aime" if not - the card's toggle, on `sendReaction`.
+   */
+  function toggleHeart(post: PostEntity) {
+    const me = likerId;
+    if (!me) return;
+    if (reactionInFlight.has(post.id)) {
+      console.debug(`[reel-viewer] heart on ${post.id}: a reaction is in flight, ignored`);
+      return;
+    }
+    if (reactionRefusedLocally()) {
+      console.debug(`[reel-viewer] heart on ${post.id}: refused, the reader is muted`);
+      showToast(m.post_action_not_allowed(), 'error');
+      return;
+    }
+    const { type, wasReacted } = railHeartToggle(post.reactions ?? {}, me);
+    console.debug(`[reel-viewer] heart on ${post.id}: ${wasReacted ? 'take back' : 'like'}`);
+    sendReaction(post, me, type, wasReacted);
+  }
+
+  /** The post whose comments sheet is open, by id - the sheet follows the row, not an index. */
+  let commentsFor = $state<string | null>(null);
+  const commentsPost = $derived(
+    commentsFor ? (reels.find((r) => r.id === commentsFor) ?? null) : null
+  );
+
+  /** Replaces the loaded post `next.id` - a comment written in the sheet. */
+  function setPost(next: PostEntity) {
+    reels = reels.map((r) => (r.id === next.id ? next : r));
+  }
+
+  /** The rail's actions for one page, or none outside a signed-in reader's posts. */
+  function railFor(post: PostEntity): ReelRailActions | undefined {
+    const me = likerId;
+    if (!me) return undefined;
+    return {
+      readerId: me,
+      onHeart: () => toggleHeart(post),
+      onComments: () => {
+        console.debug(`[reel-viewer] comments opened on ${post.id}`);
+        commentsFor = post.id;
+      },
+      onSend: () => void sharePostLink(post.id),
+    };
   }
 
   function reducedMotion(): boolean {
@@ -180,6 +262,14 @@
    * once - a transition that does not happen fires no end event.
    */
   function settle(x: number, y: number, then?: () => void) {
+    // A LANDING IS NEVER DROPPED: a move started over one still pending (every entry point waits for
+    // `settling` to clear, so this is a defect upstream) runs it first, and says so.
+    if (afterSettle) {
+      console.error('[reel-viewer] a move started over a pending landing - the landing runs first');
+      const pending = afterSettle;
+      afterSettle = null;
+      pending();
+    }
     if (reducedMotion() || (x === offsetX && y === offsetY)) {
       offsetX = x;
       offsetY = y;
@@ -194,8 +284,17 @@
     offsetY = y;
   }
 
+  /**
+   * The track's move is over: it ENDED, or it was CANCELLED (the track hidden or detached mid-move,
+   * where `transitionend` never comes - and `settling` would freeze touch, keys, wheel and
+   * chevrons until the viewer closed). Either way the landing runs, which puts the page at rest
+   * where the move was going.
+   */
   function onTransitionEnd(e: TransitionEvent) {
     if (e.target !== e.currentTarget || e.propertyName !== 'transform') return;
+    if (e.type === 'transitioncancel') {
+      console.warn('[reel-viewer] the track move was cancelled - landing where it was going');
+    }
     settling = false;
     const next = afterSettle;
     afterSettle = null;
@@ -224,6 +323,37 @@
       offsetY = 0;
     });
   }
+
+  let viewerEl = $state<HTMLDivElement | null>(null);
+
+  /**
+   * THE MOUSE WHEEL TURNS THE PAGE (user, 2026-10-19, desktop): one gesture, one page, through
+   * `go` - the arrow buttons' path (`reels/reelWheel.ts`). Not while the comments sheet is open nor
+   * over a child that scrolls (the list scrolls instead), never on ctrl+wheel (zoom) or a horizontal
+   * scroll. Non-passive, on the viewer only, so `preventDefault` runs exactly when the event is
+   * consumed; removed with the viewer.
+   */
+  $effect(() => {
+    const el = viewerEl;
+    if (!el) return;
+    const lock = new WheelPageLock();
+    function onWheel(e: WheelEvent) {
+      const step = wheelStep(e);
+      if (!step || commentsFor || wheelOverScrollable(e.target, el!)) return;
+      e.preventDefault();
+      // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
+      const free = lock.free && !settling;
+      lock.heard();
+      if (!free) return;
+      console.debug(`[reel-viewer] wheel: ${step}`);
+      go(step);
+    }
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      lock.dispose();
+    };
+  });
 
   // Touch listeners by hand with `passive: false`: Svelte registers touch handlers as passive, where
   // `preventDefault()` is ignored and the page would scroll under the drag.
@@ -289,7 +419,9 @@
       );
     }
 
+    // A cancel ends a drag of OURS; one arriving while a page lands (no drag was taken) moves nothing.
     function onCancel() {
+      if (!gesture) return;
       gesture = null;
       settle(0, 0);
     }
@@ -328,7 +460,8 @@
 
   /** The keyboard: up/down page, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
-    if (e.defaultPrevented || settling) return;
+    // The comments sheet has the keyboard while it is open: its field types, and Escape closes IT.
+    if (e.defaultPrevented || settling || commentsFor) return;
     if (scrollOpenCaption(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'PageDown') {
       e.preventDefault();
@@ -347,6 +480,7 @@
 
 <div use:portal>
   <div
+    bind:this={viewerEl}
     use:coversScreen
     class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white"
     role="dialog"
@@ -362,6 +496,7 @@
           ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
           : 'none'}
         ontransitionend={onTransitionEnd}
+        ontransitioncancel={onTransitionEnd}
         data-reel-track
       >
         {#each mounted as i (reels[i].id)}
@@ -372,6 +507,7 @@
               active={i === index}
               preload={i === index + 1}
               onLike={likerId ? () => likeReel(reels[i]) : undefined}
+              rail={railFor(reels[i])}
             />
           </div>
         {/each}
@@ -402,7 +538,7 @@
         aria-label={m.reels_viewer_prev()}
         title={m.reels_viewer_prev()}
         disabled={index === 0}
-        onclick={() => go('prev')}
+        onclick={() => !settling && go('prev')}
       >
         <ChevronUp size={22} strokeWidth={2.5} />
       </button>
@@ -412,10 +548,20 @@
         aria-label={m.reels_viewer_next()}
         title={m.reels_viewer_next()}
         disabled={index >= reels.length - 1}
-        onclick={() => go('next')}
+        onclick={() => !settling && go('next')}
       >
         <ChevronDown size={22} strokeWidth={2.5} />
       </button>
     </div>
+
+    {#if commentsPost && likerId}
+      <ReelCommentsSheet
+        post={commentsPost}
+        currentUserId={likerId}
+        {authToken}
+        onChange={setPost}
+        onClose={() => (commentsFor = null)}
+      />
+    {/if}
   </div>
 </div>

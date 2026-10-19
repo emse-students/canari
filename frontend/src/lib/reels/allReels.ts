@@ -1,10 +1,12 @@
 import { listPosts, type PostEntity } from '$lib/posts/api';
 
 /**
- * THE LIST THE REEL VIEWER SWIPES THROUGH (C7): every live reel the reader may see, newest first,
- * whatever tab the feed is on - the server narrows (`GET /api/posts?kind=reel&feed=all`), never the
- * client. Opened from a reel it follows that reel; opened from the CanaReels icon beside the feed's
- * tabs it starts at the newest (docs/wiki/frontend/modules/reels.md, "The CanaReels entry").
+ * THE LIST THE REEL VIEWER SWIPES THROUGH (C7): every live reel the reader may see, and since
+ * 2026-10-19 every post whose only content is ONE picture (user: photos in CanaReels, as on
+ * Instagram), newest first, whatever tab the feed is on - the server narrows
+ * (`GET /api/posts?kind=reel&singlePhotos=true`, `feed` defaulting to `all`), never the client.
+ * Opened from a reel it follows that reel; opened from the CanaReels icon beside the feed's tabs it
+ * starts at the newest (docs/wiki/frontend/modules/reels.md, "The CanaReels entry").
  */
 
 /** A page of reels from `offset`, `limit` long - what `ReelViewer` asks for. */
@@ -15,7 +17,7 @@ export const REEL_PAGE = 10;
 
 /** The C7 list. */
 export const listAllReels: ReelPageLoader = (offset, limit) =>
-  listPosts({ kind: 'reel', feed: 'all', offset, limit });
+  listPosts({ kind: 'reel', singlePhotos: true, feed: 'all', offset, limit });
 
 /**
  * The C7 list, with its first page already in hand: the entry read it to know whether there is a

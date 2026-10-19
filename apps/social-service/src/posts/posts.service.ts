@@ -35,6 +35,7 @@ import {
   type PostKind,
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
+import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
 import { publicationTime } from './publication-time';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
@@ -195,9 +196,10 @@ export class PostsService {
     formation: string | undefined,
     limit: number,
     offset: number,
-    kind: PostKind | undefined
+    kind: PostKind | undefined,
+    singlePhotos: boolean
   ) {
-    return `${POST_LIST_CACHE_PREFIX}${feed}:${viewerUserId ?? 'anon'}:${promo ?? '-'}:${formation ?? '-'}:${limit}:${offset}:${kind ?? '-'}`;
+    return `${POST_LIST_CACHE_PREFIX}${feed}:${viewerUserId ?? 'anon'}:${promo ?? '-'}:${formation ?? '-'}:${limit}:${offset}:${kind ?? '-'}${singlePhotos ? '+photos' : ''}`;
   }
 
   /**
@@ -216,10 +218,26 @@ export class PostsService {
    * The `kind` the caller restricted the page to; ABSENT MEANS BOTH. The value is matched against
    * the two literals rather than interpolated, so nothing a client sends reaches the SQL text.
    */
-  private kindFilterSql(kind: PostKind | undefined): string {
+  private kindFilterSql(kind: PostKind | undefined, singlePhotos = false): string {
+    if (kind === 'reel' && singlePhotos) {
+      return `AND (posts.kind = 'reel' OR (posts.kind = 'post' AND ${SINGLE_PHOTO_POST_SQL}))`;
+    }
     if (kind === 'reel') return `AND posts.kind = 'reel'`;
     if (kind === 'post') return `AND posts.kind = 'post'`;
     return '';
+  }
+
+  /**
+   * A list page's order. THE CANAREELS LIST (`kind=reel`) IS NEWEST FIRST AND NOTHING ELSE (lead's
+   * decision, 2026-10-19): a pin is a feed concept, and a pinned reel or photo post heading the
+   * full-screen list would greet every reader with the same page. Every other list keeps its pinned
+   * posts first. THE ORDER IS TOTAL: `id` breaks a tie of `publishedAt` (scheduled posts published
+   * at the same instant), so an `OFFSET` page can neither repeat nor skip a row.
+   */
+  private listOrderSql(kind: PostKind | undefined): string {
+    return kind === 'reel'
+      ? `ORDER BY posts."publishedAt" DESC, posts.id DESC`
+      : `ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`;
   }
 
   /**
@@ -984,7 +1002,7 @@ export class PostsService {
          ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${viewerParam}`)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC
        LIMIT $1 OFFSET $2`,
       params
     );
@@ -1156,8 +1174,11 @@ export class PostsService {
     formation?: string;
     /** Restricts the page to one kind; absent means posts AND reels. */
     kind?: PostKind;
+    /** With `kind: 'reel'`, the posts whose only content is ONE picture come too (`single-photo-sql.ts`). */
+    singlePhotos?: boolean;
   }) {
     const { feed, viewerUserId, isAdmin, promo, formation, kind } = params;
+    const singlePhotos = params.singlePhotos === true && kind === 'reel';
     const limit = Number(params.limit);
     const offset = Number(params.offset);
     const cacheKey = this.listPostsCacheKey(
@@ -1167,7 +1188,8 @@ export class PostsService {
       formation,
       limit,
       offset,
-      kind
+      kind,
+      singlePhotos
     );
 
     try {
@@ -1220,7 +1242,7 @@ export class PostsService {
 
     const hiddenFilter = this.hiddenFilterSql(isAdmin === true);
     // A dead reel is excluded in EVERY arm, and `kind` (absent = both) narrows every arm alike.
-    const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind)}`;
+    const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind, singlePhotos)}`;
     const serviceAccountFilter = this.serviceAccountFilterSql(isAdmin === true, viewerUserId);
     // WHICH POSTS THIS READER MAY SEE (WP6b), in every arm. The viewer goes LAST, after the optional
     // promo cutoff and blocked list (`tail`), so its placeholder is the next free index of each arm.
@@ -1245,7 +1267,7 @@ export class PostsService {
          ${serviceAccountFilter}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1263,7 +1285,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1290,7 +1312,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );
@@ -1313,7 +1335,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, promoParam, formationParam, ...tail, viewerParam]
       );
@@ -1495,7 +1517,7 @@ export class PostsService {
          ${this.liveReelFilterSql()}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${blockedIds.length > 0 ? 3 : 2}`)}
-       ORDER BY posts."publishedAt" DESC
+       ORDER BY posts."publishedAt" DESC, posts.id DESC
        LIMIT 1`,
       [eventId, ...(blockedIds.length > 0 ? [blockedIds] : []), viewerId ?? null]
     );

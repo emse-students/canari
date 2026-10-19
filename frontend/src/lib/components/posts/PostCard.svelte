@@ -2,10 +2,6 @@
   import { publicSectionHref } from '$lib/associations/publicSections';
   import {
     votePoll,
-    addComment,
-    likeComment as likeCommentApi,
-    editComment as editCommentApi,
-    deleteComment as deleteCommentApi,
     getPost,
     pinPost as pinPostApi,
     unpinPost as unpinPostApi,
@@ -13,6 +9,7 @@
     unrepublishPost as unrepublishPostApi,
     type PostEntity,
     type PostComment,
+    type PostMediaRef,
     type Poll,
   } from '$lib/posts/api';
   import { Log } from '$lib/utils/Log';
@@ -22,7 +19,9 @@
   import { createReport, ModerationApiError } from '$lib/moderation/api';
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
-  import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
+  import { reportComment } from '$lib/posts/reportComment';
+  import { PostCommentThread, onPostComments } from '$lib/posts/postCommentThread.svelte';
+  import { applyCommentChange, commentCountOf } from '$lib/posts/commentChange';
   import {
     DOUBLE_TAP_REACTION,
     onPostReactions,
@@ -35,7 +34,6 @@
   import DoubleTapHeart from './DoubleTapHeart.svelte';
   import { applyPostPollVote, nextPollSelection, pollDeadlinePassed } from '$lib/posts/pollVote';
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
-  import { SvelteSet } from 'svelte/reactivity';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { PostCardLedger, servedAt } from '$lib/posts/postCardSync';
   import { getForm, checkSubmission } from '$lib/forms/api';
@@ -183,14 +181,33 @@
   // state from then on - a parent that flipped the prop later would otherwise fight the reader's
   // own taps on the comment button.
   let showComments = $state(untrack(() => commentsOpen));
-  let submittingComment = $state(false);
   /**
-   * Comments written into the list before the server acknowledged them, by their LOCAL id.
-   *
-   * Handed to `PostComments`, which withholds every control that would name an id to the server
-   * for as long as a row is in here. Emptied in the `finally`, whichever way the write went.
+   * The comment writes (`posts/postCommentThread.svelte.ts`), shared with the reel viewer's comments
+   * sheet: this card lends its copy of the post, its ledger and its inline line. Its `pending` set
+   * is handed to `PostComments`, which withholds every control naming a local id to the server.
    */
-  const pendingCommentIds = new SvelteSet<string>();
+  const thread = new PostCommentThread({
+    userId: () => currentUserId,
+    read: () => localPost,
+    write: (next) => (localPost = next),
+    // The count moves with the rows, so a write declares both: a read issued before it must not
+    // bring back the count of a thread it no longer describes.
+    begin: () => void ledger.begin(['comments', 'commentCount']),
+    end: () => ledger.end(['comments', 'commentCount']),
+    answered: () => ledger.answered(['comments', 'commentCount']),
+    holdThread: () => {
+      fullThread = true;
+      ledger.hold('comments');
+    },
+    adoptThread: (full) => {
+      localPost = ledger.mergeRead(
+        localPost,
+        { comments: full.comments, commentCount: full.commentCount },
+        servedAt(full)
+      );
+    },
+    fail: (message) => (errorMessage = message),
+  });
   let showReactionPicker = $state(false);
 
   // Server-answered, per reader and per control. Never re-derived here: an association post carries
@@ -405,156 +422,38 @@
   }
 
   /**
-   * Fetches the full post (with all comments) to replace the truncated comment list returned by the
-   * feed endpoint. From then on the card HOLDS the thread: a feed row carries only its first few
-   * comments, so adopting it would collapse the thread - a new row asks for the thread again instead.
+   * Reads the full thread to replace the truncated list a feed row carries. From then on the card
+   * HOLDS the thread: adopting a later feed row would collapse it, so a new row asks again instead.
    */
-  async function loadAllComments() {
-    fullThread = true;
-    ledger.hold('comments');
-    try {
-      const full = await getPost(localPost.id);
-      localPost = ledger.mergeRead(localPost, { comments: full.comments }, servedAt(full));
-    } catch (err) {
-      Log.d('PostCard.loadAllComments failed - the thread shown is kept', err);
-    }
+  function loadAllComments(): Promise<void> {
+    return thread.loadAll();
   }
 
-  /** Posts a new comment (or reply) and appends it to the local comments array. media is an optional encrypted GIF/image ref. */
-  async function handleAddComment(
-    parentId?: string,
-    media?: import('$lib/posts/api').PostMediaRef
-  ) {
+  /**
+   * Posts a new comment (or reply) with optional encrypted media. The box empties when the row is
+   * shown, and gets the text back if the write failed and nothing was typed meanwhile.
+   */
+  async function handleAddComment(parentId?: string, media?: PostMediaRef) {
     const text = commentText.trim();
     if (!text && !media) return;
-    if (!currentUserId.trim()) return;
-
-    // A mute already known refuses before anything is written; see `handleReaction`.
-    if (cachedMuteStatus()?.isMuted) {
-      errorMessage = m.post_action_not_allowed();
-      return;
-    }
-
-    // THE COMMENT IS COMPLETE BEFORE IT IS SENT, so it is shown before it is sent. The box used to
-    // keep the text and the send button stayed disabled for the whole round trip, which on a bad
-    // link reads as an app that ignored the tap. The row carries a LOCAL id and is listed as
-    // pending, which is what stops `PostComments` from offering to edit, delete or like something
-    // the server has never heard of - its row replaces this one, id and all, when it answers.
-    const pendingId = `pending-${crypto.randomUUID()}`;
-    const pending: PostComment = {
-      id: pendingId,
-      userId: currentUserId,
-      text,
-      parentId: parentId ?? null,
-      likes: [],
-      createdAt: new Date().toISOString(),
-      ...(media ? { media } : {}),
-    };
-    pendingCommentIds.add(pendingId);
-    localPost = { ...localPost, comments: [...(localPost.comments ?? []), pending] };
-    commentText = '';
-    submittingComment = true;
-
-    ledger.begin(['comments']);
-    try {
-      await assertNotMuted();
-      const result = await addComment(localPost.id, { text, parentId, media });
-      localPost = {
-        ...localPost,
-        comments: (localPost.comments ?? []).map((c) => (c.id === pendingId ? result.comment : c)),
-      };
-    } catch (err) {
-      // Two causes wear this sentence: moderation refusing, and `addComment` failing. Only the
-      // first is about the reader, and only the second is about the comment. Either way the row
-      // goes, and the text goes back where the reader can send it again.
-      // ONLY THE ROW THIS WRITE ADDED GOES: the list carries other writes of the reader (a heart
-      // on a comment, another comment) that this failure says nothing about.
-      console.error('[POST_CARD] comment refused', err);
-      localPost = {
-        ...localPost,
-        comments: (localPost.comments ?? []).filter((c) => c.id !== pendingId),
-      };
-      if (!commentText.trim()) commentText = text;
-      errorMessage = publishFailureMessage(err, m.post_unable_to_comment());
-    } finally {
-      ledger.end(['comments']);
-      pendingCommentIds.delete(pendingId);
-      submittingComment = false;
-    }
+    const outcome = await thread.add(text, parentId, media, () => (commentText = ''));
+    if (outcome === 'failed' && !commentText.trim()) commentText = text;
   }
 
-  /** Toggles a like on a comment and updates the local comment in-place. Fails silently to avoid disrupting UX. */
-  async function handleLikeComment(commentId: string) {
-    // THE HEART IS A MEMBERSHIP TEST ON AN ARRAY THIS DEVICE HOLDS. It used to move only when the
-    // server answered, and a failure was swallowed - so on a bad link a tap did nothing at all and
-    // said nothing either.
-    const previous = (localPost.comments ?? []).find((c) => c.id === commentId);
-    ledger.begin(['comments']);
-    localPost = {
-      ...localPost,
-      comments: (localPost.comments ?? []).map((c) =>
-        c.id === commentId
-          ? {
-              ...c,
-              likes: c.likes.includes(currentUserId)
-                ? c.likes.filter((id) => id !== currentUserId)
-                : [...c.likes, currentUserId],
-            }
-          : c
-      ),
-    };
-    try {
-      const result = await likeCommentApi(localPost.id, commentId);
-      localPost = {
-        ...localPost,
-        comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
-      };
-    } catch (err) {
-      // Put the heart back rather than leaving a count this device invented - on THIS comment only:
-      // the list carries other writes of the reader (a comment still sending) this failure is not about.
-      Log.d('handleLikeComment failed', err);
-      if (previous) {
-        localPost = {
-          ...localPost,
-          comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? previous : c)),
-        };
-      }
-    } finally {
-      ledger.end(['comments']);
-    }
-  }
-
-  /** Sends the updated comment text to the API and replaces the matching comment in the local list. */
-  async function handleEditComment(commentId: string, text: string) {
-    try {
-      const result = await editCommentApi(localPost.id, commentId, text);
-      ledger.answered(['comments']);
-      localPost = {
-        ...localPost,
-        comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
-      };
-    } catch (err) {
-      Log.d('handleEditComment failed', err);
-      errorMessage = m.post_unable_to_edit_comment();
-    }
-  }
-
-  /** Deletes a comment and all its replies from both the API and the local comments array. */
-  async function handleDeleteComment(commentId: string) {
-    try {
-      await deleteCommentApi(localPost.id, commentId);
-      ledger.answered(['comments']);
-      localPost = {
-        ...localPost,
-        comments: (localPost.comments ?? []).filter(
-          (c) => c.id !== commentId && c.parentId !== commentId
-        ),
-      };
-    } catch (err) {
-      Log.d('handleDeleteComment failed', err);
-      errorMessage = m.post_unable_to_delete_comment();
-    }
-  }
+  /**
+   * A write made on another surface showing this post (the reel viewer's comments sheet), applied
+   * to THIS card's thread as a change (`posts/commentChange.ts`): closing the viewer shows the
+   * comment just written there, and a card holding the whole thread keeps every row - the viewer's
+   * copy is a feed row of the newest twenty, never a list to adopt.
+   */
+  $effect(() =>
+    onPostComments(postId, (change, from) => {
+      if (from === thread) return;
+      Log.d('PostCard.onPostComments', `${change.kind} from another surface on ${postId}`);
+      ledger.answered(['comments', 'commentCount']);
+      localPost = applyCommentChange(localPost, change);
+    })
+  );
 
   /** Pins or unpins the post (admin only) and updates the local pinned flag on success. */
   async function togglePin() {
@@ -674,15 +573,11 @@
     const comment = commentBeingReported;
     if (!comment) return;
     reportSubmitting = true;
-    try {
-      await createReport('comment', comment.id, reason, undefined, comment.userId ?? null);
-      actionMessage = m.post_comment_reported();
-    } catch (err) {
-      reportFailed(err, m.post_comment_already_reported());
-    } finally {
-      reportSubmitting = false;
-      commentBeingReported = null;
-    }
+    const outcome = await reportComment(comment, reason);
+    if (outcome.ok) actionMessage = outcome.message;
+    else errorMessage = outcome.message;
+    reportSubmitting = false;
+    commentBeingReported = null;
   }
 
   /** Submits the chosen reason for the post itself, through the same dialog a comment uses. */
@@ -817,7 +712,7 @@
         {userReaction}
         {showReactionPicker}
         reactionList={REACTIONS}
-        commentCount={comments.length || undefined}
+        commentCount={commentCountOf(localPost) || undefined}
         onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
         onReactionSelect={handleReaction}
         onCommentClick={() => (showComments = !showComments)}
@@ -867,8 +762,8 @@
         {topLevelComments}
         {showComments}
         {commentText}
-        {submittingComment}
-        {pendingCommentIds}
+        submittingComment={thread.submitting}
+        pendingCommentIds={thread.pending}
         {currentUserId}
         {authToken}
         {focusCommentId}
@@ -877,12 +772,12 @@
           commentText = text;
         }}
         onAddComment={handleAddComment}
-        onLikeComment={handleLikeComment}
-        onEditComment={handleEditComment}
-        onDeleteComment={handleDeleteComment}
+        onLikeComment={(id) => void thread.like(id)}
+        onEditComment={(id, text) => thread.edit(id, text)}
+        onDeleteComment={(id) => thread.remove(id)}
         onReport={handleReportComment}
         onLoadAllComments={loadAllComments}
-        totalCommentCount={(localPost.comments ?? []).length}
+        totalCommentCount={commentCountOf(localPost)}
       />
     </div>
 

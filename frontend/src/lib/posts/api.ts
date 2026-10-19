@@ -193,6 +193,12 @@ export interface PostEntity {
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
   comments?: PostComment[];
+  /**
+   * The post's comments in all, as the server counted them for this reader (blocked authors left
+   * out). A list row carries only the newest twenty in `comments`, so the number shown is this one
+   * (`posts/commentChange.ts`, `commentCountOf`); absent from a server older than the field.
+   */
+  commentCount?: number | null;
   pinned?: boolean;
   scheduledAt?: string | null;
   createdAt: string;
@@ -273,6 +279,12 @@ export interface ListPostsOptions {
   formation?: string;
   /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
   kind?: PostKind;
+  /**
+   * With `kind: 'reel'`: the posts whose only content is ONE picture come too - the CanaReels list
+   * (`reels/fullScreenPost.ts`). A server older than it drops the unknown parameter and answers
+   * the reels alone.
+   */
+  singlePhotos?: boolean;
 }
 
 export interface ScheduledPost {
@@ -346,6 +358,7 @@ function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
+  if (options.singlePhotos) p.set('singlePhotos', 'true');
   const s = p.toString();
   return s ? `?${s}` : '';
 }

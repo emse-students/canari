@@ -527,9 +527,112 @@ reasoned rather than measured are in
 - **In the feed, the reel card** is a post card: a double tap likes, and a single tap opens the viewer
   once the double-tap window (250 ms) has passed (`data-double-tap-defers` on `InlineVideo`'s open
   button) - the one place this gesture adds a wait.
-- **The viewer has no heart button of its own**: a like given there is taken back from the card's
-  picker. The heart burst is the viewer's only sign of a like, and a screen reader in the viewer has
-  no way to like - an open decision for the user, in [backlog](../../backlog.md), not built unasked.
+- **The viewer's heart button is the rail's** (next section, 2026-10-19): it takes a like back, and
+  it is how a screen reader likes in the viewer.
+
+### The rail, the comments sheet and the photo pages (user, 2026-10-19: Instagram's Reels)
+
+**Asked by the user:** the reference for CanaReels is **Instagram Reels** (Snapchat's private
+sending is a different task): a vertical icon rail on each page, the comments in a sheet over the
+playing reel, and the posts of ONE photo in the same feed. Built against the Instagram reference
+below; **owed on both phones**
+([device-verification RR](../../device-verification.md#rr-the-canareels-rail-the-comments-sheet-and-the-photo-pages---owed-on-both-phones)).
+
+- **The rail** (`ReelActionRail`, inside `ReelSlide`'s frame, bottom-right on the caption's
+  baseline; the caption keeps `pr-16` free for it): **heart** with the number of reactions,
+  **comments** with the number of comments, **send**. Drawn only when the viewer has a reader
+  (`likerId`), so a conversation's reel (RC-1) has none. `data-no-double-tap` keeps it out of the
+  double tap, `data-reel-rail` out of the viewer's swipe (`NOT_A_GESTURE`).
+- **The heart says "I reacted"** (`reels/reelRail.ts`): a post carries reactions of several kinds,
+  one per reader, and the rail has room for one. Empty with no reaction, red with "J'aime", and
+  **the reader's OWN emoji in its place for any other kind** (lead's decision after review,
+  2026-10-19), named "Votre réaction : ..., retirer" - so a tap, which takes the reader's reaction
+  back, never removes a 😂 the rail did not show. With none, a tap gives "J'aime". The number is
+  every reaction; a kind this client does not know (a newer server's) is named "Votre réaction",
+  never "J'aime". Changing to another kind stays the card's picker. Same path as the double tap
+  (`toggledReactions`, `sendPostReaction`, `publishPostReactions`, rollback + toast), and **one
+  reaction in flight per reel**: a second tap (heart or double tap) before the server answered is
+  ignored and logged, so two answers never land out of order and a rollback returns to a state no
+  later tap moved. A request the server never answers does not hold the heart forever: every
+  `apiFetch` carries its response deadline (`RequestDeadlineError`), which rolls the heart back
+  with the card's sentence and frees it.
+- **The comment number is the server's total** (`commentCount`, `posts/commentChange.ts`): a list
+  row carries only the newest twenty comments, so `comments.length` read "20" for a post of 57 -
+  on the rail and on the card's button alike. Every write keeps the total in step, and "load all"
+  (`GET /api/posts/:id`, every comment and no total) sets it to the rows it read - on the read's
+  own object, so its served stamp survives. On the card, a comment write declares `comments` AND
+  `commentCount` to its ledger: a read issued before the write adopts neither.
+- **Send is the post menu's share** (`posts/sharePost.ts`: copy the public link, toast). Sending a
+  post INTO a conversation does not exist; it is an owed decision, not built here.
+- **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
+  `docked` mode (the list scrolls, the composer stays at the bottom), written through
+  `posts/postCommentThread.svelte.ts`, the class the card now uses too, and reported through
+  `posts/reportComment.ts`, also the card's. No new request. 60 % of the screen, `rounded-t-3xl`,
+  a grabber; it rides the keyboard (`keyboard-aware-bottom`, capped at `--app-viewport-height`).
+  It closes by a drag down on its top (`decideDismiss`, the media viewer's rule), Back (its own
+  history entry, so Back closes the sheet and not the viewer), a tap on the reel above it, Escape,
+  and the X. No focus trap: it takes the focus on open and hands it back to the button on close.
+  A write there reaches the card behind AS A CHANGE (`publishPostComments` carries an upsert or a
+  removal, never a list): the viewer's copy is a feed row of the newest twenty, and a card holding
+  the whole thread used to adopt it and collapse.
+- **Dialogs opened from inside the viewer** (the report, the GIF picker) used to sit UNDER it
+  (`--z-modal` 280, `--z-sheet` 160, against `--z-viewer` 300): `utils/viewerLayer.ts` marks the
+  viewer's subtree and `Modal`/`ModalOverlay` take the `--z-viewer-dialog` rung (305) there.
+- **Photo pages** (`reels/fullScreenPost.ts`): a post whose ONLY content is one picture - no other
+  media, no poll, no form - is a page like a reel: the same frame, caption and rail, its picture
+  instead of the video, no player bar (so the caption sits lower). Several media, a video outside a
+  reel, a file and text alone stay out, and so do **a linked calendar event and a link in the
+  text**: the card draws the event's card (date, place, add to calendar) and the link's preview,
+  and a page would silently drop both. **The list is newest first and nothing else** (lead's
+  decision): a pin is a feed concept, and a pinned post would head every reader's CanaReels. The list comes from the server
+  (`kind=reel&singlePhotos=true`, [server half](../../services/reels.md#reading)); a row it serves
+  that the client reads as neither is drawn as a reel and accused once in the log.
+
+- **The mouse wheel turns the page on a desktop** (user, 2026-10-19; `reels/reelWheel.ts`): a notch
+  down is the next reel, up the previous, through `go` - the arrow buttons' and keys' own step. ONE
+  GESTURE, ONE PAGE: a trackpad flick or a free-spinning wheel sends dozens of events and its
+  inertia keeps going after the page lands, so a new page turns only when the last one has landed
+  (the viewer's own `settling`, the one state every entry point reads) AND the wheel has been quiet
+  for `WHEEL_QUIET_MS` (200 ms; the wheel sends no "end" event, so the quiet is the only proof a
+  gesture ended). The chevrons wait for `settling` like the keys and the swipe, a `touchcancel`
+  moves nothing unless a drag of the viewer's was under way, and `settle` never drops a pending
+  landing: a move started over one runs it first and logs an error (review of #2119: a chevron
+  clicked mid-transition used to drop the wheel's landing and jam the wheel for good). A
+  `transitioncancel` (the track hidden or detached mid-move, where `transitionend` never comes)
+  lands the page like a `transitionend`, so `settling` can never stay set and freeze the viewer. Left to the browser:
+  ctrl+wheel (zoom, and a trackpad pinch), a mostly horizontal scroll, the wheel while the comments
+  sheet is open or over a child that scrolls (the list, an unfolded caption). The listener is
+  non-passive on the viewer only, `preventDefault` runs only on a consumed event, and it goes with
+  the viewer. Touch, swipes and their thresholds are unchanged.
+
+#### Instagram reference (Mi 9T, 2026-10-19)
+
+Observed in the Instagram app on the bench Mi 9T (1080 x 2340 px at 396 dpi, 2.475 px per dp), an
+account already signed in, read only - nothing liked, commented or sent. Measured with
+`adb shell input swipe` and the accessibility tree.
+
+| What | Measured |
+| --- | --- |
+| Rail position | column centre x = 1005 px, ~30 dp from the right edge; anchored to the BOTTOM - it moves up with a longer caption |
+| Rail pitch | one action every 161 px (~65 dp); the number ~33 dp under its icon |
+| Rail order | like, comment, repost, send (paper plane), save, more, then the audio art |
+| Caption | author row (avatar, name, Follow) bottom-left, one line of text with an ellipsis |
+| Comments sheet | the video SHRINKS into the area above and keeps playing; the sheet's top at 963 px (~59 % of the height), large top corners, a grabber, comment rows with a heart and count on the right, emoji row + composer docked at the bottom |
+| Sheet closes | a drag down from the grabber (540,990 -> 2100 in 400 ms); Back (the reel stays); a tap on the video above. A 500 px swipe over the list in 150 ms scrolled it and did NOT close |
+| Next reel: long fast swipe | 80 % -> 20 % of the height (1404 px) in 200 ms: next |
+| Next reel: slow drags, 1000 ms | 60 px no, 100 px (0.10 px/ms) no, 150 px (0.15 px/ms) yes, 300 px yes |
+| Next reel: very slow | 600 px over 6000 ms (26 % of the height, 0.10 px/ms) snapped BACK; 1300 px over 13000 ms (56 %) went on |
+| Next reel: flicks | 60 px in 40 ms no; 120 px in 60 ms yes |
+
+**Reading:** a velocity-driven pager - a release above ~0.12-0.15 px/ms (0.05-0.06 dp/ms, about
+Android's minimum fling of 50 dp/s) turns the page, else only past half the page - with a minimum
+flick distance between 60 and 120 px (~24-48 dp). Canari's reel pager is the media viewer's
+`decideSwipe` (`utils/viewerGestures.ts`): past 25 % of the height (`SWIPE_COMMIT_RATIO`), or a
+flick of 0.4 CSS px/ms (`FLICK_VELOCITY`) over 24 CSS px (`FLICK_MIN_DISTANCE_PX`) - a CSS px is a
+dp in the WebView. So a slow drag commits SOONER in Canari (25 % against 50 %) and a flick needs to
+be about seven times FASTER. These numbers are the reference for tuning it; this change applies
+none of them. **Follow-up, after the phone reading of RR:** decide whether the reel pager moves
+towards these thresholds (lead's decision: not in the rail's pull request).
 
 ### The CanaReels entry - an icon beside the tabs that opens the viewer (user, 2026-10-16)
 
