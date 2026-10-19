@@ -1,6 +1,10 @@
 # Test suite reform - the measured estate and the plan (2026-10-18)
 
-> **Status: PLAN, nothing changed yet.** Asked by the user on 2026-10-18 (*"la refonte de tout
+> **Status 2026-10-19: WP-T1, T2, T3, T5 (first pass) and T6 are MERGED** (#2033, #2034, #2030, #2042,
+> #2043); **WP-T4 is draft #2041**; WP-T7 and WP-T8 are not started. The measured sections below are
+> the baseline those packages were written against, not today's counts.
+>
+> Asked by the user on 2026-10-18 (*"la refonte de tout
 > l'outillage me semble necessaire et peut-etre faite maintenant. On est a un nombre de test aberrant
 > je crois."*). Every number below was MEASURED on that date - from `gh run view` job data, the CI
 > logs' own summaries, or a same-machine A/B run - and says where it comes from. Re-measure before
