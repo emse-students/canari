@@ -452,7 +452,7 @@ reasoned rather than measured are in
   button) - the one place this gesture adds a wait.
 - **The viewer has no heart button of its own**: a like given there is taken back from the card's
   picker. The heart burst is the viewer's only sign of a like, and a screen reader in the viewer has
-  no way to like - reported to the user as an open decision rather than built unasked.
+  no way to like - an open decision for the user, in [backlog](../../backlog.md), not built unasked.
 
 ### The CanaReels entry - an icon beside the tabs that opens the viewer (user, 2026-10-16)
 

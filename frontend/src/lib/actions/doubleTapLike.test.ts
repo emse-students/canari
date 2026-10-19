@@ -25,8 +25,15 @@ function surface(params: Partial<DoubleTapLikeParams> = {}) {
       <a id="link" href="/elsewhere">a link</a>
       <button id="option" type="button">Option A</button>
       <button id="photo" type="button" data-double-tap-defers><img id="img" alt="" /></button>
-      <div data-no-double-tap><span id="bar">action bar</span></div>
+      <div data-no-double-tap><span id="bar">action bar</span>
+        <button id="comment-photo" type="button" data-double-tap-defers><img id="comment-img" alt="" /></button>
+      </div>
+      <a id="preview" href="/posts/other"><span id="preview-title">A shared post</span>
+        <button id="preview-photo" type="button" data-double-tap-defers><img id="preview-img" alt="" /></button>
+      </a>
     </div>`;
+  // A link's default would navigate happy-dom away; the tests only read who took the click.
+  document.getElementById('preview')!.addEventListener('click', (e) => e.preventDefault());
   const node = document.getElementById('card')!;
   const at = vi.fn();
   const action = doubleTapLike(node, { onDoubleTap: at, ...params });
@@ -203,6 +210,53 @@ describe('doubleTapLike', () => {
       vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
       expect(at).toHaveBeenCalledTimes(1);
       expect(opened).not.toHaveBeenCalled();
+    });
+
+    it('a third quick tap after a double opens nothing behind the heart', () => {
+      const { at, el } = surface();
+      const opened = vi.fn();
+      el('photo').addEventListener('click', opened);
+      tap(el('img'));
+      tap(el('img'));
+      tap(el('img'));
+      vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+      expect(at).toHaveBeenCalledTimes(1);
+      expect(opened).not.toHaveBeenCalled();
+    });
+
+    it('inside a no-double-tap region (a comment picture) it opens AT ONCE, and two taps never like', () => {
+      const { at, el } = surface();
+      const opened = vi.fn();
+      el('comment-photo').addEventListener('click', opened);
+      tap(el('comment-img'));
+      // No hold: the open is not waiting for the window.
+      expect(opened).toHaveBeenCalledTimes(1);
+      tap(el('comment-img'));
+      expect(opened).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+      expect(opened).toHaveBeenCalledTimes(2);
+      expect(at).not.toHaveBeenCalled();
+    });
+
+    it("inside a link preview it is the link's: opens at once, two taps never like", () => {
+      const { at, el } = surface();
+      const opened = vi.fn();
+      el('preview-photo').addEventListener('click', opened);
+      tap(el('preview-img'));
+      expect(opened).toHaveBeenCalledTimes(1);
+      tap(el('preview-img'));
+      tap(el('preview-title'));
+      tap(el('preview-title'));
+      vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+      expect(opened).toHaveBeenCalledTimes(2);
+      expect(at).not.toHaveBeenCalled();
+    });
+
+    it('a mouse double click on a comment picture is left to it (no word-selection guard)', () => {
+      const { el } = surface();
+      const second = new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 2 });
+      el('comment-img').dispatchEvent(second);
+      expect(second.defaultPrevented).toBe(false);
     });
 
     it('Enter or a screen reader opens it at once', () => {

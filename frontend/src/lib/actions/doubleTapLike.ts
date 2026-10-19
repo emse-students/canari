@@ -26,7 +26,9 @@ import { Log } from '$lib/utils/Log';
  *
  * WHAT IS NEVER A TAP OF THIS GESTURE, and acts at once as before:
  * - a link, a button, a form field, a poll option, a mention - anything `tapBelongsToInnerControl`
- *   names - and anything inside `[data-no-double-tap]` (the action bar, the comments);
+ *   names - and anything inside `[data-no-double-tap]` (the action bar, the comments), a media
+ *   opener there included (a comment's picture opens at once);
+ * - a media opener nested in another control: a link preview's picture belongs to its link;
  * - a click with no pointer behind it (`detail === 0`): Enter or Space on a focused control, and a
  *   screen reader's activation. The heart button stays the accessible way to like;
  * - the click that ends a drag-selection of text (a range is selected);
@@ -52,6 +54,9 @@ export interface DoubleTapLikeParams {
   /** Off, the surface is inert: no click is held, none is counted. Default on. */
   enabled?: boolean;
 }
+
+/** What a click's target is to a likeable surface (see `classify`). */
+type TapTarget = { kind: 'owned' } | { kind: 'opener'; el: HTMLElement } | { kind: 'surface' };
 
 /** Svelte action: wires the double tap on `node`. */
 export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
@@ -104,18 +109,27 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
     }
   }
 
-  /** The media opener `target` sits in, if it belongs to this surface. */
-  function openerOf(target: Element | null): HTMLElement | null {
-    const opener = target?.closest<HTMLElement>(`[${DOUBLE_TAP_DEFERS}]`) ?? null;
-    return opener && node.contains(opener) ? opener : null;
-  }
-
-  /** True when a click on `target` belongs to something else on the surface (see above). */
-  function ownedElsewhere(target: Element | null): boolean {
-    if (!target || typeof target.closest !== 'function') return true;
+  /**
+   * What a click on `target` is to this surface, decided in ONE order:
+   * 1. inside a `[data-no-double-tap]` region (the action bar, the comments): not ours, whatever it
+   *    is - a comment's picture opens at once and never counts towards a like of the post;
+   * 2. a media opener (`[data-double-tap-defers]`): held for the window - UNLESS it sits inside
+   *    another control. A link preview is an `<a>` around a picture, and that picture is the link's:
+   *    it opens at once as before, so link previews are outside the gesture;
+   * 3. any other control (`tapBelongsToInnerControl`): not ours;
+   * 4. otherwise the surface itself: counted, and it acts at once.
+   */
+  function classify(target: Element | null): TapTarget {
+    if (!target || typeof target.closest !== 'function') return { kind: 'owned' };
     const region = target.closest(`[${NO_DOUBLE_TAP}]`);
-    if (region && node.contains(region)) return true;
-    return tapBelongsToInnerControl(target, node);
+    if (region && node.contains(region)) return { kind: 'owned' };
+    const opener = target.closest<HTMLElement>(`[${DOUBLE_TAP_DEFERS}]`);
+    if (opener && node.contains(opener)) {
+      const outer = opener.parentElement;
+      if (outer && tapBelongsToInnerControl(outer, node)) return { kind: 'owned' };
+      return { kind: 'opener', el: opener };
+    }
+    return tapBelongsToInnerControl(target, node) ? { kind: 'owned' } : { kind: 'surface' };
   }
 
   function onClick(e: MouseEvent) {
@@ -124,9 +138,8 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
       reset('a click with no pointer (keyboard or assistive technology)');
       return;
     }
-    const target = e.target as Element | null;
-    const opener = openerOf(target);
-    if (!opener && ownedElsewhere(target)) {
+    const verdict = classify(e.target as Element | null);
+    if (verdict.kind === 'owned') {
       reset('a control took the tap');
       return;
     }
@@ -134,6 +147,7 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
       reset('text is selected');
       return;
     }
+    const opener = verdict.kind === 'opener' ? verdict.el : null;
     if (opener) {
       // Held, never lost: replayed by the disambiguator's single, or spent on the double.
       e.preventDefault();
@@ -171,8 +185,7 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
   /** A mouse double click would select the word under it; on a likeable surface it likes instead. */
   function onMouseDown(e: MouseEvent) {
     if (!enabled() || e.detail !== 2) return;
-    const target = e.target as Element | null;
-    if (!openerOf(target) && ownedElsewhere(target)) return;
+    if (classify(e.target as Element | null).kind === 'owned') return;
     e.preventDefault();
   }
 

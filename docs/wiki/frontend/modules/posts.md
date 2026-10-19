@@ -1422,6 +1422,14 @@ already share, not a third copy. A third quick tap belongs to the same gesture (
   action bar and the comment section of the card - and the click ending a drag-selection of text
   (`hasActiveTextSelection`). A tap on any of these also ENDS a sequence, so text-option-text is no
   like.
+- **The region is asked FIRST, before the media marker** (`classify` in the action). A comment's
+  picture or GIF is a `PostMedia` button carrying `data-double-tap-defers`, inside the comments'
+  `data-no-double-tap`; asked the other way round, a double tap on it liked the POST and its
+  lightbox never opened (review of #2113). It now opens at once, with no hold, and never likes.
+- **Link previews are OUTSIDE the gesture.** A `LinkPreviewCard` is an `<a>` around a `PostMedia`
+  picture: a media opener nested inside another control belongs to that control, so the preview's
+  picture opens at once as before and two taps on any part of a preview never like - the preview
+  is another post's or another site's, not the one being liked.
 - **A mouse double click does not select the word under it** on the card: its second `mousedown`
   (`detail === 2`) is prevented, outside controls. A drag still selects, and a long press on a phone
   still selects (it is never a click).

@@ -292,6 +292,10 @@ searches), `HEAD` content-length.
 
 **User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Budget: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1 (saved workspace list), F2, F3, F4 (a salon's last page kept locally), F5 and F6 are built and measured; the tab is 2-4x faster and works offline, but still short of 200 ms (first mount cut, see the page). **Left:** F7's second half (one native call for a page's signatures; native, so a lead review), a re-measure against the budget on the Mi 9T, a CPU profile of the warm resume at 4x, the history head/body split, iOS. State and numbers: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`.
 
+## P3 - The reel viewer has no like control: a keyboard or screen-reader member cannot like a reel there (#2113, 2026-10-19, a decision for the user)
+
+The double tap that likes a reel (#2113) is a pointer gesture only; the viewer draws no heart or reaction button, so a keyboard or VoiceOver/TalkBack member must close it and use the card's picker, and a like given there is also taken back only from the card. Decide whether the viewer gets a reaction control (Instagram's right-hand rail) or stays as it is. [reels](frontend/modules/reels.md#a-double-tap-on-a-reel-likes-it-2026-10-19)
+
 ## P3 - Bookings: a refused block names only a count (review of #2035, 2026-10-18, not built)
 
 A `bookings-inside-block` refusal is worded with its count and the ids are only logged; the organiser could get the bookings listed as a D29 refusal lists them (`StrandedBookings.svelte`). (The P2 half - a block over a block - is built: `block-overlap`.) [bookings](bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)
