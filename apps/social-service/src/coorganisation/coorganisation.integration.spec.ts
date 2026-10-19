@@ -28,6 +28,8 @@ import {
 } from '../associations/entities/association-member.entity';
 import { AssociationCalendarEvent } from '../associations/entities/association-calendar-event.entity';
 import { AssociationCalendarEventCoOwner } from '../associations/entities/association-calendar-event-co-owner.entity';
+import { Form } from '../forms/entities/form.entity';
+import { Submission } from '../forms/entities/submission.entity';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
 import { Proposal } from '../proposals/proposal.entity';
 import { ProposalsService } from '../proposals/proposals.service';
@@ -113,6 +115,9 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         AssociationCalendarEvent,
         AssociationCalendarEventCoOwner,
         Proposal,
+        // What an association delete retires with it (`retireForms`).
+        Form,
+        Submission,
       ],
       synchronize: false,
       extra: { options: `-c search_path=${schema},public` },
@@ -129,6 +134,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid);
       ALTER TABLE associations ADD COLUMN "isBDE" boolean NOT NULL DEFAULT false;
+      CREATE TABLE booking_spaces ("associationId" uuid, poster jsonb);
     `);
     for (const [id, name] of [
       [A1, 'Organiser'],
@@ -196,6 +202,8 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       },
     } as unknown as PostNotificationsService;
     const none = {} as never;
+    // The feed-cache sweep an association delete ends with: nothing is cached here.
+    const redis = { deleteByPattern: () => Promise.resolve(0) } as never;
     associations = new AssociationsService(
       ds.getRepository(Association),
       ds.getRepository(AssociationMember),
@@ -204,9 +212,9 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       none,
       none,
       none,
+      ds.getRepository(Form),
       none,
-      none,
-      none,
+      redis,
       none,
       notifications,
       none
@@ -408,5 +416,89 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(await coOwnersOf(E(5))).toEqual([]);
       expect(await proposalRows(E(5))).toEqual([]);
     });
+  });
+
+  describe('a decision and an association delete share one lock order', () => {
+    const A5 = '00000000-0000-4000-8000-0000000c0a05'; // deleted below
+
+    /**
+     * The pid of a backend, not in `known`, waiting on a lock one of `holders` holds. Polled until
+     * the lock graph shows it, never timed: no verdict rests on a duration.
+     */
+    async function nextWaiterOn(holders: number[], known: number[] = []): Promise<number> {
+      for (let i = 0; i < 5000; i++) {
+        const rows: { pid: number }[] = await q(
+          `SELECT pid FROM pg_stat_activity
+            WHERE pg_blocking_pids(pid) && $1::int[] AND NOT (pid = ANY($2::int[]))`,
+          [holders, known]
+        );
+        if (rows.length > 0) return rows[0].pid;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      throw new Error(`nothing came to wait on ${holders.join(',')}`);
+    }
+
+    it('a co-organisation decision and the organiser`s delete both complete (no 40P01)', async () => {
+      await q(
+        `INSERT INTO associations (id, name, slug, "createdBy") VALUES ($1, 'Doomed', 'doomed', 'it')`,
+        [A5]
+      );
+      await q(
+        `INSERT INTO association_members ("associationId", "userId", role, permissions) VALUES ($1, 'org', 'admin', $2)`,
+        [A5, PROPOSE]
+      );
+      await q(
+        `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+           VALUES ($1, $2, 'Doomed event', '2026-07-01T18:00:00Z', 'org', 'validated')`,
+        [E(10), A5]
+      );
+      await update(A5, E(10), [A3], 'org');
+      const [p] = (await proposals.listPending(A3, 'coPub', false)).incoming.filter(
+        (x) => x.subjectId === E(10)
+      );
+      // A holder of the proposal lines both writers up behind it: the decision first, holding the
+      // associations' KEY SHARE; then the delete.
+      const hold = ds.createQueryRunner();
+      await hold.connect();
+      let eventFree: boolean;
+      let deciding: Promise<{ value?: unknown; error?: unknown }> | undefined;
+      let removing: Promise<{ value?: unknown; error?: unknown }> | undefined;
+      try {
+        await hold.startTransaction();
+        await hold.query(`SELECT 1 FROM proposals WHERE id = $1 FOR UPDATE`, [p.id]);
+        const [{ pid: holder }]: { pid: number }[] = await hold.query(
+          `SELECT pg_backend_pid() AS pid`
+        );
+        deciding = proposals.accept(p.id, 'coPub', false).then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error })
+        );
+        const decider = await nextWaiterOn([holder]);
+        removing = associations.remove(A5, 'org').then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error })
+        );
+        await nextWaiterOn([holder, decider], [decider]);
+        // The delete waits holding NOTHING: locking the association last, it had already deleted
+        // the event (and, through 074's trigger, reached for the proposal) - the half of the cycle
+        // the decision closed by waiting on the association.
+        eventFree = await q(
+          `SELECT 1 FROM association_calendar_events WHERE id = $1 FOR UPDATE NOWAIT`,
+          [E(10)]
+        ).then(
+          () => true,
+          () => false
+        );
+      } finally {
+        if (hold.isTransactionActive) await hold.rollbackTransaction();
+        await hold.release();
+      }
+      expect(eventFree).toBe(true);
+      expect(await deciding).toMatchObject({ value: { status: 'accepted' } });
+      expect(await removing).toEqual({ value: { ok: true } });
+      expect(await q(`SELECT 1 FROM associations WHERE id = $1`, [A5])).toEqual([]);
+      expect(await proposalRows(E(10))).toEqual([]);
+      expect(await coOwnersOf(E(10))).toEqual([]);
+    }, 30_000);
   });
 });

@@ -1001,22 +1001,36 @@ the author nor the asker, and the author's bell row goes in the same transaction
 departure does NOT void at that moment: those have many writers. The predicate makes the request
 inert until one of the voids above finds it.
 
-**Lock order: the associations (`FOR KEY SHARE`), then the POST, then the proposal.**
-`ProposalsService.lockInOrder` takes it for every decision (accept, refuse, withdraw) and every ask
-to a person. The handler's `lockSubject` is `lockPostRow`, the post `FOR UPDATE`. Every other writer
-takes the same order:
+**Lock order: the associations (`FOR KEY SHARE`), then the subject, then the proposal.**
+`ProposalsService.lockInOrder` takes it for every decision (accept, refuse, withdraw) of every kind
+and every ask to a person. The handler's `lockSubject` is `lockPostRow` (the post `FOR UPDATE`) for
+the republication kinds; `coorganise` has none, so its next lock is the proposal itself.
 
-- a moderation hide and a post delete lock the post, then delete its pending proposals;
-- a republication withdrawal (`unrepublish`) locks the post first;
-- the account erasure writes proposals LAST, after the scrub of other people's posts
-  (`ERASURE_PROPOSAL_STATEMENTS`). Before that fix it anonymised `proposedBy` first, then locked
-  the posts the account had reacted to. Two connections reproduced `deadlock detected` against an
-  acceptance, and the erasure aborted;
-- an association delete locks the association first and cascades into its proposals. The
-  acceptance's `KEY SHARE` waits on it while holding nothing.
+| Writer | 1. association | 2. subject | 3. proposal |
+| --- | --- | --- | --- |
+| a decision or an ask (`lockInOrder`) | `FOR KEY SHARE`, from and to | the post `FOR UPDATE` (none for `coorganise`) | the conditional `UPDATE` |
+| a moderation hide, a post delete | - | the post | its pending proposals (096's trigger for a delete) |
+| a republication withdrawal (`unrepublish`) | - | the post | - |
+| the account erasure | - | the posts it scrubs | LAST (`ERASURE_PROPOSAL_STATEMENTS`) |
+| an association delete (`AssociationsService.remove`) | `FOR UPDATE`, its FIRST statement | its events (074's trigger), then the row's cascade into posts | through those, and the cascade |
 
-Three integration cases hold the contested row from a second connection and prove the order: a
-hide, an association delete, and an erasure racing an acceptance, where both now complete.
+- The erasure anonymised `proposedBy` first, then locked the posts the account had reacted to,
+  until a fix. Two connections reproduced `deadlock detected` against an acceptance, and the erasure
+  aborted.
+- The association delete took the association LAST (2026-10-19, review of the D38b second pass): it
+  deleted the events first, whose 074 trigger took their `coorganise` proposals, then waited on a
+  co-organisation decision's `KEY SHARE` while that decision waited on the proposal. Reproduced as
+  `40P01` on PostgreSQL 18. It must be `FOR UPDATE`: `FOR NO KEY UPDATE` does not conflict with
+  `KEY SHARE`.
+- A `KEY SHARE` blocks a delete or a KEY change of the association, never another edit. The key is
+  the primary key AND every unique column, so a write of `slug` (unique) waits behind an in-flight
+  decision, as a delete does.
+
+Four integration cases hold the contested row from a second connection and prove the order: a hide,
+an association delete against an acceptance (the delete holds the association), an erasure racing
+an acceptance (both complete), and a co-organisation decision against `AssociationsService.remove`
+(the delete waits holding nothing, and both complete;
+`coorganisation.integration.spec.ts`).
 
 **The counts.** The inbox's "readers who would see it first" is computed by the very query
 acceptance notifies with (`newlyReachedByPersonalRepublicationSql`, with the post's

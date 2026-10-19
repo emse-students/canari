@@ -539,21 +539,13 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
  * against an acceptance holding that post (`40P01`, the erasure aborted).
  *
  * A pending person-addressed request the account ASKED (D38b) is voided, not anonymised: its asker
- * no longer speaks for the association, so it could only ever end in `PROPOSAL_SENDER_GONE`. Its
- * bell row goes first (it is found through the still-pending row), then the row turns `withdrawn`
- * with `decidedBy` = `'[voided]'` - `PROPOSAL_VOIDED_BY`, a literal here because a statement binds
- * only `$1` and `$2` (asserted by the spec).
+ * no longer speaks for the association, so it could only ever end in `PROPOSAL_SENDER_GONE`. The
+ * row turns `withdrawn` with `decidedBy` = `'[voided]'` - `PROPOSAL_VOIDED_BY`, a literal here
+ * because a statement binds only `$1` and `$2` (asserted by the spec). Its bell row needs no
+ * statement here: the announce writes it with `actorId` = the asker (`announce`), so the head's
+ * `post_notifications` statement (`"actorId" = $1`) has already deleted it.
  */
 export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
-  {
-    label: 'proposals_voided_bell',
-    sql: `DELETE FROM post_notifications n
-           USING proposals p
-           WHERE p."proposedBy" = $1 AND p.kind = 'repost-personal' AND p.status = 'pending'
-             AND n."recipientId" = p."toUserId" AND n.type = 'repost_personal_requested'
-             AND n."postId" = p."subjectId"::text
-             AND n."associationId"::text = p."fromAssociationId"::text`,
-  },
   {
     label: 'proposals_voided',
     sql: `UPDATE proposals SET status = 'withdrawn', "decidedBy" = '[voided]', "decidedAt" = now()

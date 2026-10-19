@@ -822,9 +822,10 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       const raced = await personal.request(P(16), AG, 'er');
       const other = await personal.request(P(17), AG, 'er');
       await q(`UPDATE posts SET reactions = '{"er": "like"}' WHERE id = $1`, [P(16)]);
+      // The bell row as `announce` writes it: its actor is the asker.
       await q(
-        `INSERT INTO post_notifications ("recipientId", type, "postId", "associationId")
-           VALUES ('au', 'repost_personal_requested', $1, $2)`,
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "associationId", "actorId")
+           VALUES ('au', 'repost_personal_requested', $1, $2, 'er')`,
         [P(17), AG]
       );
       // The tables this schema has: the erasure's other statements name tables it does not.

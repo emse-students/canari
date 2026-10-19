@@ -726,11 +726,15 @@ export class ProposalsService {
    *
    * - a moderation hide and a post delete lock the post, then delete its pending proposals;
    * - the account erasure scrubs posts BEFORE it touches a proposal (`ERASURE_PROPOSAL_STATEMENTS`);
-   * - an association delete locks the association first, then cascades into its posts and
-   *   proposals: the `KEY SHARE` here waits on it, holding nothing it needs, instead of holding the
-   *   post while it waits on a proposal the cascade already took.
+   * - an association delete (`AssociationsService.remove`) takes the association `FOR UPDATE` as
+   *   its FIRST statement, before its events (whose delete takes their co-organisation proposals by
+   *   migration 074's trigger) and before the row's own cascade into its posts and proposals: the
+   *   `KEY SHARE` here waits on it holding nothing, or holds it and makes the delete wait holding
+   *   nothing. Locking it last was a `40P01` against a co-organisation decision.
    *
-   * A `KEY SHARE` blocks only a delete or a key change of the association, never an edit of it.
+   * A `KEY SHARE` blocks a delete or a KEY change of the association, never another edit of it. A
+   * key is the primary key AND every unique column: a write of `slug` (unique) waits behind an
+   * in-flight decision, as a delete does.
    */
   private async lockInOrder(
     manager: EntityManager,

@@ -569,6 +569,14 @@ export class AssociationsService {
       [id]
     );
     await this.assoRepo.manager.transaction(async (manager) => {
+      // THE ASSOCIATION FIRST, before anything its delete reaches: the lock order every proposal
+      // write follows (`ProposalsService.lockInOrder`: associations `FOR KEY SHARE`, then the
+      // subject, then the proposal). The event delete below locks proposals through migration 074's
+      // trigger; taking the association only at the end held those proposals while waiting on a
+      // co-organisation decision's `KEY SHARE`, which waited on them (`40P01`). `FOR UPDATE`, not
+      // `FOR NO KEY UPDATE`: only the former conflicts with `KEY SHARE`.
+      await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [id]);
+      this.logger.debug(`[ASSO] DELETE ${id}: association locked`);
       await manager.delete(AssociationCalendarEvent, { associationId: id });
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
