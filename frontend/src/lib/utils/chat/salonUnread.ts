@@ -80,6 +80,7 @@ export function beginUnreadReconcile(): number {
  */
 export function resetSalonUnread(): void {
   ticks = 0;
+  countsInFlight = null;
   generation++;
   openedAtTick.clear();
   levelNotedAtTick.clear();
@@ -189,6 +190,33 @@ export function reconcileSalonUnread(
 }
 
 /**
+ * The ONE `unread-counts` request on the wire, shared while it is in flight (a cold start sent it
+ * twice: the community load and the live stream coming back). Keyed by the session generation so an
+ * answer asked under an ended session is never handed to the next one. The entry lives exactly as
+ * long as the request - no clock; a failure rejects every joiner and is not remembered.
+ */
+let countsInFlight: { generation: number; promise: Promise<unknown> } | null = null;
+
+function countsRequest(
+  fetchCounts: () => Promise<unknown>,
+  startedIn: number,
+  mayJoin: boolean,
+  opts: { reason: string; log: (message: string) => void }
+): Promise<unknown> {
+  if (mayJoin && countsInFlight && countsInFlight.generation === startedIn) {
+    opts.log(`[UNREAD] ${opts.reason}: joined the counts request already in flight`);
+    return countsInFlight.promise;
+  }
+  const entry = { generation: startedIn, promise: Promise.resolve().then(fetchCounts) };
+  countsInFlight = entry;
+  const release = () => {
+    if (countsInFlight === entry) countsInFlight = null;
+  };
+  entry.promise.then(release, release);
+  return entry.promise;
+}
+
+/**
  * Asks the server for the counts and applies them - the one entry both callers (the community load
  * and the socket coming back) go through. A failure is a warning and leaves every count as it was:
  * a count that could not be refreshed is stale, not wrong, and the next occasion asks again.
@@ -203,22 +231,28 @@ export async function reconcileSalonUnreadFromServer(opts: {
    * this device still owes must reach it first or the answer re-raises the badge just cleared.
    * Its own failure is already reported by the flush and never blocks the counts.
    */
-  settleOwedMarks?: () => Promise<unknown>;
+  settleOwedMarks?: () => Promise<number>;
   log: (message: string) => void;
   /** Where the counts were asked for, for the one line this leaves. */
   reason: string;
 }): Promise<void> {
+  // NOTHING OWED = THE REQUEST ALREADY ON THE WIRE IS AS FRESH AS OURS. Only a flush that delivered
+  // no mark (or no flush at all) lets this caller join; one that delivered marks asks for itself,
+  // because the request in flight was sent before those marks reached the server.
+  let nothingOwed = true;
   if (opts.settleOwedMarks) {
     try {
-      await opts.settleOwedMarks();
+      const delivered = await opts.settleOwedMarks();
+      nothingOwed = delivered === 0;
     } catch (e) {
+      nothingOwed = false;
       console.warn(`[UNREAD] ${opts.reason}: owed read marks not settled: ${String(e)}`);
     }
   }
   const token = beginUnreadReconcile();
   const startedIn = generation;
   try {
-    const raw = await opts.fetchCounts();
+    const raw = await countsRequest(opts.fetchCounts, startedIn, nothingOwed, opts);
     if (startedIn !== generation) {
       opts.log(
         `[UNREAD] ${opts.reason}: the session ended while the counts were in flight - dropped`

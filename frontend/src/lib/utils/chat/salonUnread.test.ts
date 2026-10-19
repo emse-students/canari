@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Conversation } from '$lib/types';
 import {
   beginUnreadReconcile,
@@ -333,5 +333,91 @@ describe('a muted salon', () => {
       parseSalonUnreadAnswer({ asOf: 1, counts: {}, muted: [RAW.toUpperCase(), 7] })?.muted
     ).toEqual([RAW]);
     expect(parseSalonUnreadAnswer({ asOf: 1, counts: {} })?.muted).toEqual([]);
+  });
+});
+
+/** One `unread-counts` request per boot (2026-10-19): the community load and the live stream coming back ask together. */
+describe('reconcileSalonUnreadFromServer - one request in flight', () => {
+  beforeEach(() => resetSalonUnread());
+
+  function ask(
+    map: Map<string, Conversation>,
+    fetchCounts: () => Promise<unknown>,
+    settleOwedMarks?: () => Promise<number>
+  ) {
+    return reconcileSalonUnreadFromServer({
+      conversations: map,
+      selectedId: null,
+      userId: ME,
+      reason: 'test',
+      log: () => {},
+      fetchCounts,
+      settleOwedMarks,
+    });
+  }
+
+  it('joins a request already on the wire when nothing was owed, and asks again afterwards', async () => {
+    const map = new Map([[SALON, convo()]]);
+    let calls = 0;
+    const answer = { asOf: 1, counts: { [SALON.replace('channel_', '')]: 2 } };
+    const fetchCounts = async () => {
+      calls++;
+      return answer;
+    };
+    await Promise.all([
+      ask(map, fetchCounts, async () => 0),
+      ask(map, fetchCounts, async () => 0),
+      ask(map, fetchCounts),
+    ]);
+    expect(calls).toBe(1);
+    expect(map.get(SALON)?.unreadCount).toBe(2);
+    // Nothing is held past the answer.
+    await ask(map, fetchCounts);
+    expect(calls).toBe(2);
+  });
+
+  it('does NOT join when this caller just delivered read marks: the request in flight predates them', async () => {
+    const map = new Map([[SALON, convo()]]);
+    let calls = 0;
+    const fetchCounts = async () => {
+      calls++;
+      return { asOf: 1, counts: {} };
+    };
+    await Promise.all([ask(map, fetchCounts, async () => 0), ask(map, fetchCounts, async () => 1)]);
+    expect(calls).toBe(2);
+  });
+
+  it('does not remember a failure: every joiner is refused, the next caller asks again', async () => {
+    const map = new Map([[SALON, convo()]]);
+    let calls = 0;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failing = async () => {
+      calls++;
+      throw new Error('offline');
+    };
+    await Promise.all([ask(map, failing), ask(map, failing)]);
+    expect(calls).toBe(1);
+    await ask(map, async () => {
+      calls++;
+      return { asOf: 1, counts: {} };
+    });
+    expect(calls).toBe(2);
+    warn.mockRestore();
+  });
+
+  it('never hands an answer asked under an ended session to the next one', async () => {
+    const map = new Map([[SALON, convo()]]);
+    let calls = 0;
+    const slow = ask(map, async () => {
+      calls++;
+      return { asOf: 1, counts: {} };
+    });
+    resetSalonUnread();
+    await ask(map, async () => {
+      calls++;
+      return { asOf: 1, counts: {} };
+    });
+    await slow;
+    expect(calls).toBe(2);
   });
 });
