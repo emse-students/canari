@@ -132,7 +132,7 @@ services:
     # PINNED BY DIGEST, not `:latest` - and `:latest` was the worst of the three floating tags, on a
     # database admin UI, in PRODUCTION. The image carries no version label, so the digest is the only
     # name it has.
-    image: adminer@sha256:74f29c416e148b98305e84446a18db7cd2c1038264dec464359d36774ef080ce
+    image: adminer@sha256:49a7d30e71de97fb18933ffe7d46cc2b343c49fd7a63a7791c8be2548eb65115
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"
