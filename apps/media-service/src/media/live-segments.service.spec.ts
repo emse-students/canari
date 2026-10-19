@@ -3,7 +3,7 @@
  * and nothing else, the purge deletes ONE live's prefix and answers a re-listing, and the three
  * routes are closed while `LIVE_ENABLED` is off.
  */
-import { Readable } from 'node:stream';
+import { Readable, Writable } from 'node:stream';
 import { BadRequestException, HttpStatus } from '@nestjs/common';
 import {
   LIVE_SEGMENT_MAX_BYTES,
@@ -141,10 +141,38 @@ describe('the live routes of MediaController', () => {
       expect(
         await statusOf(() => controller.storeLiveSegment(LIVE, SEG_A, file(1), 's3cret'))
       ).toBe(HttpStatus.NOT_FOUND);
-      expect(
-        await statusOf(() => controller.downloadLiveSegment(LIVE, SEG_A, {} as never, {} as never))
-      ).toBe(HttpStatus.NOT_FOUND);
+      expect(await statusOf(() => controller.downloadLiveSegment(LIVE, SEG_A, {} as never))).toBe(
+        HttpStatus.NOT_FOUND
+      );
     }
+  });
+
+  it('serves a stored segment with NO request and NO token - the public route nginx caches (WP-L4)', async () => {
+    process.env.LIVE_ENABLED = 'true';
+    const { controller, svc } = rig();
+    await svc.store(LIVE, SEG_A, Buffer.from('sealed'));
+    const headers: Record<string, unknown> = {};
+    const chunks: Buffer[] = [];
+    const res = new Writable({
+      write(chunk: Buffer, _enc: string, done: () => void) {
+        chunks.push(chunk);
+        done();
+      },
+    });
+    Object.assign(res, {
+      setHeader: (name: string, value: unknown) => void (headers[name] = value),
+    });
+    const finished = new Promise((resolve) => res.on('finish', resolve));
+    await controller.downloadLiveSegment(LIVE, SEG_A, res as never);
+    await finished;
+    expect(Buffer.concat(chunks).toString()).toBe('sealed');
+    expect(headers['Content-Type']).toBe('application/octet-stream');
+    expect(headers['Content-Length']).toBe(6);
+    // nginx owns the header every client sees; this route states no cache policy of its own.
+    expect(headers['Cache-Control']).toBeUndefined();
+    expect(await statusOf(() => controller.downloadLiveSegment(LIVE, SEG_B, res as never))).toBe(
+      HttpStatus.NOT_FOUND
+    );
   });
 
   it('stores only for the internal secret, and only a body within the bound', async () => {

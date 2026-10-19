@@ -21,7 +21,8 @@
  *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
  *   POST /media/internal/live/:liveId/:name - store one sealed live segment (X-Internal-Secret)
  *   POST /media/internal/live-purge - delete every segment of an ended live (X-Internal-Secret)
- *   GET  /media/live/:liveId/:name - one sealed live segment, by the name its manifest gave (JWT)
+ *   GET  /media/public/live/:liveId/:name - one sealed live segment, by the name its manifest gave
+ *                         (NO JWT: ciphertext, cached by Canari's nginx - WP-L4)
  *   (the three live routes answer 404 unless LIVE_ENABLED=true - docs/wiki/services/lives.md)
  *
  * A `form-file` object is served by `GET /media/internal/form-file/:id` ONLY: `GET /media/:id` and
@@ -975,36 +976,33 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
-  // GET /media/live/:liveId/:name - one sealed live segment
+  // GET /media/public/live/:liveId/:name - one sealed live segment, no JWT (WP-L4)
   // ---------------------------------------------------------------------------
   /**
-   * One sealed segment of a live, to a signed-in member, by the random name its manifest listed.
-   * The bytes are ciphertext under the live's key; WHO may read the key and the names is decided by
-   * social-service (a removed viewer is refused both), and this route only proves an account.
+   * One sealed segment of a live, by the random name its manifest listed. NO ACCOUNT IS CHECKED,
+   * and that is the plan's C9 model (docs/wiki/services/lives.md, "Serving a segment"): the bytes
+   * are ciphertext under the live's key, which only social-service hands out (a removed or blocked
+   * viewer is refused it, and the manifest that names the next segment); the names are random
+   * uuids chosen by the server at ingest. What an unauthenticated route buys is that the SAME bytes
+   * answer every viewer, so Canari's nginx caches them (`proxy_cache`, `live_segments` zone) and a
+   * second viewer's fetch never reaches this process: this handler runs about once per segment, not
+   * once per viewer.
    *
-   * WHY NO PER-VIEWER CHECK HERE, deliberately (docs/wiki/services/lives.md, "Reading a segment"):
-   * a live is the whole network's (L2), so "a member" IS the audience and the JWT proves it. The one
-   * account a check here could still refuse - a viewer removed, or blocked, AFTER reading the key -
-   * can only ask for names it already learned from a manifest, i.e. segments it was allowed to
-   * fetch and decrypt then; a NEW name is learned only from the manifest, which social-service
-   * refuses it. Asking social-service on every segment fetch (one every few seconds per viewer)
-   * would buy nothing more and put a cross-service call on the hottest path, which WP-L4 moves to
-   * nginx's cache anyway. The tokens carry no audience claim to narrow them by (one HS256 token
-   * for every service). Two path segments, so it never collides with the catch-all `@Get(':id')`.
+   * Cache-Control is NOT set here: the nginx location in front owns the header every client sees
+   * (and ignores any upstream one for its own cache), so the policy is stated once.
+   * Four path segments, so it collides neither with `public/:id` nor with the catch-all `:id`.
    */
-  @Get('live/:liveId/:name')
+  @Get('public/live/:liveId/:name')
   async downloadLiveSegment(
     @Param('liveId') liveId: string,
     @Param('name') name: string,
-    @Req() req: Request,
     @Res() res: Response
   ): Promise<void> {
     this.assertLiveEnabled();
-    this.verifyToken(req);
     const { stream, size } = await this.liveSegments.read(liveId, name);
+    this.logger.debug(`[LIVE] segment ${liveId}/${name} served to the edge cache (${size} B)`);
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', size);
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     stream.on('error', (err) => {
       this.logger.warn(`[LIVE] segment ${liveId}/${name} stream failed: ${String(err)}`);
       res.destroy(err);

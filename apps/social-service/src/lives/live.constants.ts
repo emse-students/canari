@@ -94,6 +94,48 @@ export const LIVE_RESERVATION_TTL_MS = LIVE_STORE_TIMEOUT_MS + 5_000;
  */
 export const LIVE_INGEST_MAX_CONCURRENT = 4;
 
+/**
+ * THE HOST'S USABLE EGRESS, in bits per second: the floor of the ~90-107 Mb/s aggregate measured
+ * out of production on 443 (realtime-media-feasibility.md, sections 4 and 2a, two separate hours).
+ * Every viewer of every live is one more copy out of this ONE link - nginx's cache saves the app
+ * and the store, never a byte of it (live.md, option C). A MEASUREMENT FROM ONE OUTSIDE CLIENT, to
+ * be replaced by the DSI's figure (Q3) or a campus-side measurement when either exists.
+ */
+export const LIVE_HOST_EGRESS_BPS = 90_000_000;
+
+/**
+ * The share of {@link LIVE_HOST_EGRESS_BPS} lives may take. The link also carries production's own
+ * traffic, dev, Le Cercle and the co-tenant sites of a host we do not own; 0.8 leaves a fifth of it
+ * to everything else. A planning figure.
+ */
+export const LIVE_EGRESS_SHARE = 0.8;
+
+/**
+ * What one viewer costs the uplink, in bits per second: the MEASURED mean of the WP-L1 bench on the
+ * platform that produces more (Chrome/Android, 2.89-3.06 Mb/s against a 2.5 Mb/s target;
+ * device-readings-calls-live-2026-10-18.md). Sized on the heavier broadcaster, so a live from an
+ * iPhone (~1.45 Mb/s) leaves headroom rather than the reverse.
+ */
+export const LIVE_VIEWER_BITRATE_BPS = 3_000_000;
+
+/**
+ * THE VIEWER CAP OF THE HOST (L8 as the plan resolved it: "a cap set by the host's uplink"):
+ * floor(90 Mb/s x 0.8 / 3 Mb/s) = 24 seats, across EVERY live at once, since they share the link.
+ * Seat N+1 is refused 503 `LIVE_FULL` (lives.md, "The viewer cap"). The broadcaster takes none.
+ */
+export const LIVE_VIEWER_CAP = Math.floor(
+  (LIVE_HOST_EGRESS_BPS * LIVE_EGRESS_SHARE) / LIVE_VIEWER_BITRATE_BPS
+);
+
+/**
+ * How long a seat is held after the viewer's last key read or manifest poll. A viewer polls every
+ * segment (a few seconds), so 30 s is ten polls missed: wrong too SHORT, a watching viewer loses its
+ * seat to the next one in; wrong too LONG, a viewer that vanished without `DELETE .../seat` (a
+ * crash, a lost network) holds a seat that long. The leave route is the proof; this is only the
+ * bound on a viewer that could not send it.
+ */
+export const LIVE_SEAT_LEASE_MS = 30_000;
+
 /** Why a live ended - the `endReason` column. */
 export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased';
 
@@ -107,6 +149,8 @@ export function liveLimits(): {
   segmentMinDurationMs: number;
   segmentBurst: number;
   startsPerHour: number;
+  viewerCap: number;
+  seatLeaseMs: number;
 } {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
@@ -117,5 +161,7 @@ export function liveLimits(): {
     segmentMinDurationMs: LIVE_SEGMENT_MIN_DURATION_MS,
     segmentBurst: LIVE_SEGMENT_BURST,
     startsPerHour: LIVE_STARTS_PER_HOUR,
+    viewerCap: LIVE_VIEWER_CAP,
+    seatLeaseMs: LIVE_SEAT_LEASE_MS,
   };
 }

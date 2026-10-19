@@ -119,6 +119,20 @@ map $request_method $lives_ingest_key {\n\
 }\n\
 limit_req_zone $lives_ingest_key zone=lives_ingest:1m rate=2r/s;\n\
 \n\
+# THE SEALED SEGMENTS OF A LIVE LEAVE THE STORE ONCE PER SEGMENT, NOT ONCE PER VIEWER (WP-L4,\n\
+# docs/wiki/services/lives.md "Serving a segment"). Every viewer of a live fetches the SAME ciphertext\n\
+# by the SAME name, so this cache answers all but the first, and `proxy_cache_lock` makes the viewers\n\
+# that arrive together wait for that first one instead of each reaching media-service. Sizes:\n\
+# 2 min (`inactive`, and `proxy_cache_valid 200` below) is far past the manifest window a viewer reads\n\
+# from (10 segments of a few seconds), and it bounds how long a segment outlives the purge of its live here.\n\
+# 512 MB holds two minutes of ~20 lives at the planned 3 Mb/s; past it the oldest go first, which costs\n\
+# a refetch, never an error. `use_temp_path=off` writes a response straight into this directory.\n\
+proxy_cache_path /var/cache/nginx/live levels=1:2 keys_zone=live_segments:1m max_size=512m inactive=2m use_temp_path=off;\n\
+# The segment route is unauthenticated, so it has an edge ceiling of its own, per client address. A\n\
+# whole campus may share ONE address: 30 r/s is the whole viewer cap of the host (24 seats, lives.md)\n\
+# fetching a segment a second, with room to spare; the burst absorbs a player catching up.\n\
+limit_req_zone $binary_remote_addr zone=lives_segments:1m rate=30r/s;\n\
+\n\
 # THE CACHE-CONTROL OF AN SSR RESPONSE, decided in two steps.\n\
 # 1. A response that DECLARED its own public max-age keeps it: routes/sitemap.xml/+server.ts is\n\
 #    prerender=false, so it is served through @ssr, and its 1 h is a budget it set for itself.\n\
@@ -679,6 +693,67 @@ server {\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    # ONE SEALED LIVE SEGMENT, NO TOKEN, ANSWERED FROM THIS CACHE (WP-L4, docs/wiki/services/lives.md\n\
+    # "Serving a segment"). The bytes are ciphertext under the live key, which only social-service hands\n\
+    # out; the names are random uuids learned only from the manifest. A REGEX location so it wins over\n\
+    # the two prefixes above, and so only two lower-case uuids ever reach media-service: anything else\n\
+    # falls to /api/media/public/ and is a 404 there.\n\
+    # - THE UPSTREAM REQUEST IS THE SAME FOR EVERY VIEWER: the key is the path alone (a query string is\n\
+    #   neither in the key nor forwarded, so no viewer can bust the cache), and the cookie, the token,\n\
+    #   the origin and any range are dropped. A range is answered by this nginx from the cached whole.\n\
+    # - `proxy_buffering on` HERE: it is off server-wide, and an unbuffered response is never cached.\n\
+    # - Media-service sends no Cache-Control; whatever an upstream sends is ignored for the cache and\n\
+    #   hidden from the client, so the header below is the one policy: `private` (no shared cache\n\
+    #   between here and the viewer keeps a segment past the purge of its live), an hour (the longest\n\
+    #   live, L4: a segment is never needed longer) and `immutable` (a name never changes bytes).\n\
+    # - A 404 (absent, or LIVE_ENABLED off) is kept 10 s, so a repeated miss costs one upstream call.\n\
+    # - `X-Canari-Cache` says HIT or MISS; the access log shows `urt=- ust=-` on a hit - the proof that a\n\
+    #   second viewer never reached media-service.\n\
+    # - CORS as the API errors do: the three WebView origins, allowlisted, credentials allowed, so the\n\
+    #   app may fetch it either way; the web app is same-origin and needs none.\n\
+    location ~ "^/api/media/public/live/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" {\n\
+    limit_except GET { deny all; }\n\
+    limit_req zone=lives_segments burst=60 nodelay;\n\
+    limit_req_status 429;\n\
+    proxy_cache live_segments;\n\
+    proxy_cache_key $uri;\n\
+    proxy_cache_valid 200 2m;\n\
+    proxy_cache_valid 404 10s;\n\
+    proxy_cache_lock on;\n\
+    proxy_cache_lock_timeout 10s;\n\
+    proxy_cache_lock_age 10s;\n\
+    proxy_buffering on;\n\
+    proxy_ignore_headers Cache-Control Expires Set-Cookie Vary X-Accel-Expires;\n\
+    proxy_hide_header Cache-Control;\n\
+    proxy_hide_header Set-Cookie;\n\
+    proxy_hide_header Vary;\n\
+    proxy_hide_header Access-Control-Allow-Origin;\n\
+    proxy_hide_header Access-Control-Allow-Credentials;\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header Cookie "";\n\
+    proxy_set_header Authorization "";\n\
+    proxy_set_header Origin "";\n\
+    proxy_set_header Range "";\n\
+    proxy_set_header If-Range "";\n\
+    set $upstream_media_live media-service:3011;\n\
+    proxy_pass http://$upstream_media_live$uri;\n\
+    proxy_http_version 1.1;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    add_header Cache-Control "private, max-age=3600, immutable";\n\
+    add_header X-Canari-Cache $upstream_cache_status always;\n\
+    add_header Access-Control-Allow-Origin $api_error_cors_origin always;\n\
+    add_header Access-Control-Allow-Credentials "true" always;\n\
+    add_header Vary "Origin" always;\n\
+    include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
     }\n\
     location /api/media {\n\
     auth_request /internal/auth/verify;\n\

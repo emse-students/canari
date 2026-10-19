@@ -1,19 +1,22 @@
-# Lives - the server half (WP-L2, WP-L3)
+# Lives - the server half (WP-L2, WP-L3, WP-L4)
 
 The server half of the live chantier planned on [live](../frontend/modules/live.md): the `lives` row
 and its key (WP-L2), the segment ingest, the manifest viewers poll and the deletion at the end
-(WP-L3). Built 2026-10-18 on the plan's RECOMMENDATIONS, which the user said to take ("take the
+(WP-L3), the segments served from Canari's nginx cache and the host's viewer cap (WP-L4, built
+2026-10-19). WP-L2 and WP-L3 were built 2026-10-18 on the plan's RECOMMENDATIONS, which the user said to take ("take the
 decisions"): architecture **C** (segmented HTTP, no transcoding), key design **Q4**, durable end
 **Q5**, retention **Q10**. **No client calls any of it yet** (WP-L5), and **it is switched OFF on
 production** (below).
 
-Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep), migration
-`091_lives.sql`, and `apps/media-service/src/media/live-segments.service.ts` (the bytes).
+Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep, `live-seats.ts`), migration
+`091_lives.sql`, `apps/media-service/src/media/live-segments.service.ts` (the bytes), and the
+`live_segments` cache in `infrastructure/local/Dockerfile.frontend` (Canari's nginx).
 
 ## The switch: `LIVE_ENABLED`
 
 Every `/api/lives` route and the two media routes that serve or store segments answer **404 unless
-`LIVE_ENABLED` is exactly `true`** (`live-enabled.guard.ts`, `isLiveEnabled` in media-service).
+`LIVE_ENABLED` is exactly `true`** - the nginx segment location included, since what it caches is
+media-service's answer (a 404, kept 10 s) (`live-enabled.guard.ts`, `isLiveEnabled` in media-service).
 `render-env.sh` computes it per estate (`compute_live_enabled`): **`true` on dev, `false` on
 production**, asserted on the rendered files by `deploy-env.test.sh`. The local compose defaults it
 to `true`. Three things run whatever it says, on purpose: the live sweep and the media purge and live-list routes, so
@@ -32,6 +35,8 @@ a live started while the switch was on is still ended and deleted after it is tu
 | Starts per account | 6 in a rolling hour; ONE open at a time (the partial unique index) | `LIVE_STARTS_PER_HOUR`, `LIVE_START_WINDOW_MS` | same route (`startsPerHour`) |
 | Ingests storing at once, per instance | 4 (the database pool is 10) | `LIVE_INGEST_MAX_CONCURRENT` | - |
 | Store timeout / reservation age | 30 s / 35 s | `LIVE_STORE_TIMEOUT_MS`, `LIVE_RESERVATION_TTL_MS` | - |
+| Viewer cap of the HOST, all lives together | 24 = floor(90 Mb/s `LIVE_HOST_EGRESS_BPS` x 0.8 `LIVE_EGRESS_SHARE` / 3 Mb/s `LIVE_VIEWER_BITRATE_BPS`) | `LIVE_VIEWER_CAP`, same file | same route (`viewerCap`) |
+| Seat lease | 30 s after the last key read or manifest poll | `LIVE_SEAT_LEASE_MS` | same route (`seatLeaseMs`) |
 
 The 60 s window, the bitrate, the margin and the one-second segment floor are planning figures,
 **to be confirmed on the WP-L1 bench**.
@@ -42,11 +47,12 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 
 | Route | Who | Answers |
 | --- | --- | --- |
-| `GET /api/lives/limits` | any member | the four numbers above |
+| `GET /api/lives/limits` | any member | the numbers above |
 | `GET /api/lives` | any member | the open lives the caller may watch, newest first, at most 50, **no key** |
 | `POST /api/lives` `{ key, associationId? }` | any member (L1) | `201` the live with its key. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour) |
-| `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }` |
-| `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }] }` - the newest 10, or from `from` on |
+| `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }`, `no-store`. Takes a SEAT ([below](#the-viewer-cap-wp-l4)): `503 LIVE_FULL` (with `viewerCap`) past the cap, `503 LIVE_SEATS_UNAVAILABLE` when the seat count does not answer |
+| `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }] }` - the newest 10, or from `from` on; `no-store` (the live edge: the shortest cache is none, and the answer is per viewer); renews the seat, same two 503s |
+| `DELETE /api/lives/:id/seat` | any member | `204`: the caller's seat on that live goes back to the cap now. Idempotent, no watch check (a viewer may always give back what it holds); `503 LIVE_SEATS_UNAVAILABLE` |
 | `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `409 LIVE_SEGMENT_IN_PROGRESS` (that index is still storing: retry, the repeat then answers), `409 LIVE_SEGMENT_RESERVATION_LOST` (its reservation was taken over as abandoned), `413` over 4 MiB, `413 LIVE_BUDGET_EXHAUSTED`, `429 LIVE_SEGMENT_TOO_FAST`, `429` from nginx (no `code`), `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded, the index released), `503 LIVE_INGEST_BUSY` |
 | `POST /api/lives/:id/end` | the broadcaster | `{ id, endedAt, endReason }`, idempotent while the row exists; once the end's purge deleted it, a repeat is `404 LIVE_NOT_FOUND`, which the client reads as "ended and deleted" - nothing keeps a deleted live's end to answer with (no replay, L3) |
 | `POST /api/lives/:id/removed-viewers` `{ viewerId }` | the broadcaster | `{ liveId, viewerId }`, idempotent; `400 LIVE_VIEWER_IS_SELF` |
@@ -57,20 +63,128 @@ blocked author); an ended live is `410 LIVE_ENDED` to everybody, the broadcaster
 the broadcaster removed is `403 LIVE_VIEWER_REMOVED`. A write on another member's live is
 `403 LIVE_NOT_BROADCASTER`.
 
-**A segment is read from media-service**, `GET /api/media/live/<liveId>/<name>` (JWT), by the `name`
-the manifest gives. Serving it from Canari's own nginx without reaching media-service is WP-L4; until
-then it is `Cache-Control: no-store` and streamed by media-service from the store.
+**A segment is read WITHOUT A TOKEN**, `GET /api/media/public/live/<liveId>/<name>`, by the `name`
+the manifest gives, and it is answered by Canari's own nginx from the second viewer on (below).
 
-### Reading a segment: why the route checks an account and nothing more
+## Serving a segment from the nginx cache (WP-L4)
 
-Decided 2026-10-18 on review, not overlooked. A live is the whole network's (L2), so "a signed-in
-member" IS its audience, and the JWT proves exactly that. The only account a further check could
-refuse is one removed (or blocked) AFTER reading the key - and it can ask only for names it already
-learned from a manifest, i.e. segments it was allowed to fetch and decrypt at the time; a NEW name is
-learned only from the manifest, which social-service refuses it. A per-fetch call to social-service
-(one every few seconds per viewer) would buy nothing beyond that and put a cross-service round trip on
-the hottest path, which WP-L4 moves into nginx's cache anyway. There is no token audience to narrow
-by: one HS256 token, no `aud` claim, serves every service.
+Built 2026-10-19. **The plan's C9 model**: a segment is ciphertext under the live key, readable by
+anyone holding the URL and decryptable only by a holder of the key from the row; the URL is two
+uuids, the second chosen at random by the server at ingest and learned only from the manifest. So
+what protects a live is the KEY and the MANIFEST, both served by social-service under the watch
+rule - not the segment fetch. That is what lets the fetch be the SAME request for every viewer, and
+a same request is one a cache answers.
+
+| Where | What it does |
+| --- | --- |
+| media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from Garage; no token, `LIVE_ENABLED` checked, no Cache-Control of its own. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
+| nginx `proxy_cache_path ... keys_zone=live_segments` | http level: 512 MB, `inactive=2m`, written in place (`use_temp_path=off`) |
+| nginx `location ~ "^/api/media/public/live/<uuid>/<uuid>$"` | a REGEX location (it wins over the `/api/media/public/` and `/api/media` prefixes), so only two lower-case uuids reach media-service; anything else falls to `/api/media/public/` and is a 404 there |
+
+**The rules of that location, each one a line whose loss turns the cache off silently**
+(`.github/scripts/tests/live-segments-route.test.mjs` asserts every one):
+
+- `proxy_buffering on` IN the location - it is off server-wide, and nginx never caches an
+  unbuffered response.
+- `proxy_cache_key $uri` and `proxy_pass http://$upstream_media_live$uri`: a query string is neither
+  in the key nor forwarded, so `?x=<random>` cannot bust the cache of an unauthenticated route.
+- `proxy_cache_lock on` (10 s): viewers arriving together wait for the FIRST fetch instead of each
+  reaching media-service.
+- The cookie, `Authorization`, `Origin`, `Range` and `If-Range` are cleared, and the four trust
+  headers reset: the upstream request is the same for every viewer. A range is answered by nginx
+  from the cached whole (`206`).
+- `proxy_cache_valid 200 2m` / `404 10s`: a segment outlives the purge of its live in this cache for at
+  most two minutes; a miss (absent, or the switch off) costs one upstream call per 10 s per URL.
+- Upstream `Cache-Control`, `Expires`, `Set-Cookie`, `Vary` are ignored for the cache and hidden from
+  the client; the ONE policy the client sees is **`private, max-age=3600, immutable`**: `immutable`
+  because a name never changes bytes, an hour because no segment is needed longer than the longest
+  live (L4), and **`private` so no shared cache between here and the viewer (the host proxy, a CDN on
+  a legacy name) keeps a segment past the purge** - Q10's "everything is gone after the sweep" holds
+  for every cache we do not control.
+- CORS as nginx's own API errors: the three WebView origins (`$api_error_cors_origin`),
+  credentials allowed, `Vary: Origin`; the web app is same-origin. The CSP and the two security
+  headers are restated (`add_header` replaces the inherited set). The app's CSP already allows it:
+  `connect-src 'self'` on the web, none on Tauri (`"csp": null`).
+- `limit_except GET` (HEAD included), and `lives_segments`: 30 r/s burst 60 per client address,
+  answering the JSON `@api_error_429`. 30 r/s is the whole cap below fetching a segment a second
+  from ONE campus address.
+- `X-Canari-Cache: HIT|MISS` on every answer, and the access log shows `urt=- ust=-` on a hit.
+
+**Read on a running container, 2026-10-19** (the image built from this Dockerfile, a stub nginx
+standing in for media-service on a Docker network): a 1 MiB segment fetched three times with a
+different `?bust=` each time - `MISS`, `HIT`, `HIT`, and ONE request in the upstream's log, without
+its query; 20 concurrent fetches of a fresh 3 MB segment - 20 x `200`, ONE upstream request; a range
+`206` from the cache; an absent name twice - one upstream request; an upper-case name and a
+`/live/x` - 404 without the cache; `POST` - 403; a foreign `Origin` - no `Access-Control-Allow-Origin`;
+the stub's `Set-Cookie`, `Cache-Control: no-store` and its own CORS header never reached the client.
+**Not read: against the real media-service and Garage, through the host proxy, on a phone.**
+
+**What the cache saves, and what it does not.** It saves media-service, Garage and the database
+(which the segment route never touched anyway): one store read per segment per two minutes, whatever
+the audience. **It does not save a byte of the uplink** - nginx still sends one copy per viewer,
+which is what the cap below is for.
+
+## The viewer cap (WP-L4)
+
+L8 asked for no cap; the plan's answer was "a cap set by the host's uplink, to be MEASURED". The
+measurement exists ([realtime-media-feasibility](../infrastructure/realtime-media-feasibility.md)
+section 4 and 2a: ~90-107 Mb/s out of production on 443, two separate hours, one outside client),
+and so does the per-viewer cost ([bench readings](../device-readings-calls-live-2026-10-18.md): the
+Chrome/Android encoder averages 2.89-3.06 Mb/s against a 2.5 Mb/s target, Safari 1.45). So:
+
+```
+cap = floor(LIVE_HOST_EGRESS_BPS x LIVE_EGRESS_SHARE / LIVE_VIEWER_BITRATE_BPS)
+    = floor(90 Mb/s x 0.8 / 3 Mb/s) = 24 viewers, across EVERY live at once
+```
+
+The floor of the measured range, a fifth left to everything else on the link (production's own
+traffic, dev, Le Cercle, the co-tenant sites), and the heavier of the two encoders. All three are
+constants in `live.constants.ts`, served by `/limits`; **the figure to replace first is the egress,
+by the DSI's answer (Q3) or a campus-side measurement** - campus viewers may not cross the border at
+all, and nobody has measured that path.
+
+**How a seat works** (`lives/live-seats.ts`):
+
+- ONE Redis sorted set per estate, `live:seats`; a member is `<liveId>:<viewerId>`, its score the
+  Redis clock of its last renewal. One set for all lives, because they share one link.
+- The key read (`GET /:id`) TAKES a seat and every manifest poll RENEWS it, in ONE Lua script: sweep
+  the seats older than the lease, then grant if the viewer already holds one or the count is under
+  the cap. The check and the write cannot interleave across instances (a rolling deploy runs two),
+  and the clock is Redis's own (`TIME`), so no instance's clock is compared with another's. Proven
+  against a real Redis: 40 simultaneous takes at a cap of 5 grant exactly 5
+  (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`).
+- The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
+  "full"; the broadcaster takes none.
+- **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, and the
+  broadcaster's removal of a viewer frees that viewer's seat at once. **The 30 s lease is only the
+  bound on a viewer that could not say it left** (a crash, a lost network). If it were wrong too
+  short, a watching viewer would lose its seat - so it is ten polls long; too long, a departed
+  viewer would hold a seat that long, which costs a refusal and never a byte. The set itself expires
+  with the lease once nobody renews it.
+
+**The refusal is typed, never prose** - the client's "live complet" screen reads the code:
+
+| Answer | Means | The client shows |
+| --- | --- | --- |
+| `503 { code: 'LIVE_FULL', viewerCap }` | every seat is held | "live complet", and may retry later; `viewerCap` is the number to name |
+| `503 { code: 'LIVE_SEATS_UNAVAILABLE' }` | Redis did not answer (an `error` line) | a failure to retry - **never** "complet": Redis down refuses rather than seats everybody, because an uncounted audience is the overrun the cap prevents |
+
+**The connection budget, and why nothing is raised.** The host proxy is the DSI's: about 1 500
+concurrent connections across EVERY site on the host (`worker_connections 768`, two per proxied
+connection; [realtime-media-feasibility](../infrastructure/realtime-media-feasibility.md) section 5),
+and raising it is their file and their decision. A seated viewer holds at most four: its app
+connection (HTTP/2, the API calls ride it too), its WebSocket and that socket's upstream leg (both
+held by every signed-in member already), and one segment fetch in flight (short: the host buffers it).
+**24 x 4 = 96, under a fifteenth of the budget** - the cap is set by bandwidth long before
+connections. Our own nginx keeps the image default (`worker_connections` is not set in
+`Dockerfile.frontend`), and the edge's 4 096 is untouched, as are its `pid /var/run/nginx.pid` and
+`listen 80`, which its healthcheck reads (#2099). `live-segments-route.test.mjs` fails if the cap
+times four ever passes a quarter of 1 500.
+
+**WAF.** The host runs CrowdSec inside its nginx. Up to 24 viewers behind one campus address
+polling a manifest and fetching a segment every few seconds is ~10-20 requests a second from that
+address, which a crawl scenario could read as abuse. **Unknown, and a question for the DSI before
+the first public live** (not a change: a question).
 
 ## The key (Q4): served like a post CEK, removal enforced by the server
 
@@ -204,17 +318,25 @@ and is still deleted.
 
 ## What is not proven
 
-- **Nothing on a phone, nothing through nginx, nothing on a real media-service and Garage**: the
-  specs are a real PostgreSQL with an in-memory store, media-service unit specs over a fake bucket,
-  and the HTTP client over a fake transport. The first reading is a dev deploy plus a scripted
-  broadcaster.
+- **Nothing on a phone, nothing through the HOST proxy, nothing on a real media-service and Garage**:
+  the specs are a real PostgreSQL with an in-memory store, a real Redis for the seat script,
+  media-service unit specs over a fake bucket, and the HTTP client over a fake transport; the nginx
+  cache was read on its own image against a stub upstream (above). The first reading is a dev deploy
+  plus a scripted broadcaster and a few viewers, checking `X-Canari-Cache` and media-service's log.
+- **The cap's three figures are an outside-client measurement, a bench and a guess**: the egress
+  was measured from one workstation (campus viewers unmeasured), the bitrate on Chrome and Safari
+  rather than in the app WebViews, and the 0.8 share is a planning choice. **Dev and production count
+  their seats apart** (each estate has its own Redis) while sharing the link; dev's audience is the
+  testers, so it is accepted, not solved. A seat is per ACCOUNT per live: two devices of one account
+  on one live cost two copies and one seat.
+- **Whether CrowdSec on the host reads a campus audience as a crawl** (above): a DSI question.
 - **A store that outlives its own timeout** is no longer left behind: while the live lasts it is
   under the live's prefix and the end's purge takes it; one that lands after the purge is a folder
   with no row, which the next sweep's reaper takes. What is not proven is the reaper against a real
   Garage listing (the delimiter listing is exercised on a fake bucket).
 - **The ingest semaphore is per instance.** social-service runs one replica (two for a moment during
   a rolling deploy); a second permanent replica would double the bound.
-- The 60 s window, the 4 MiB bound, the 2.5 Mb/s budget and its 1.5 margin, and the one-second
+- The 60 s window, the 4 MiB bound, the 30 s seat lease, the 2.5 Mb/s budget and its 1.5 margin, and the one-second
   segment floor are planning figures until WP-L1 measures segment sizes and reconnect times.
 
 ## See also
