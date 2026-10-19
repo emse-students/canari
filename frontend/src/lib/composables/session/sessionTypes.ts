@@ -26,6 +26,12 @@ export interface ChatSessionCallbacks {
   /** Restores conversations from IndexedDB and re-checks MLS state consistency. */
   loadAndRestoreConversations: () => Promise<void>;
   /**
+   * Retires the ending session's restore chain (`useConversations`' `RestoreGeneration`), so a
+   * restore it queued never runs as that account after the sign-out, and one still running never
+   * makes the next login's restore wait. Called by the teardown, next to the clearing of the map.
+   */
+  invalidateRestores: () => void;
+  /**
    * Opens/closes the span during which a conversation may still appear from a startup source.
    *
    * The restore is only the first of those sources, and a deep-link landing that abandoned as soon
@@ -168,8 +174,11 @@ export interface SessionContext {
   // ── Services ───────────────────────────────────────────────────────────────
   /** Returns the current MLS service instance, creating it lazily if needed. */
   ensureMls(): IMlsService;
-  /** Destroys the MLS instance (destroy + null) to force a clean reinitialisation. */
-  resetMls(): void;
+  /**
+   * Destroys the MLS instance (destroy + null) to force a clean reinitialisation. With `only`, only
+   * when that is the instance held - see `MlsHolder.reset`.
+   */
+  resetMls(only?: IMlsService): void;
   /**
    * Lets go of the MLS client at a sign-out and destroys it once `finalWrite` (the teardown's final
    * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client.

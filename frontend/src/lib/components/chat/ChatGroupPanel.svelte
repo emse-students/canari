@@ -29,6 +29,8 @@
   import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
   import { joiningRows, membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
   import NotificationLevelControl from './NotificationLevelControl.svelte';
+  import CallPermissionControl from './CallPermissionControl.svelte';
+  import { CALLS_ENABLED } from '$lib/features';
   import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
   import type { ConversationNotificationLevel } from '$lib/notifications/conversationLevel';
 
@@ -173,6 +175,36 @@
       }
     } finally {
       levelSaving = false;
+    }
+  }
+
+  // ── Call permission (allowed | not allowed), its own setting beside the level ─────────────────
+  //
+  // Read in the same request as the level, so the same load above answers it and the same rule
+  // holds: nothing is checked until the store has answered. Offered where a call can be placed -
+  // a direct conversation of a build with calls on - and nowhere else.
+  const callsControlShown = $derived(CALLS_ENABLED && !isGroupConversation && !!groupId);
+  let callsError = $state('');
+  let callsSaving = $state(false);
+  const callsAllowed = $derived<boolean | null>(
+    notificationPreferences.loaded && groupId ? notificationPreferences.callsAllowed(groupId) : null
+  );
+
+  /** Persists the call permission; the store moves it at once and reverts a refused write. */
+  async function setCallsAllowed(next: boolean) {
+    if (!groupId || next === callsAllowed || callsSaving) return;
+    callsSaving = true;
+    callsError = '';
+    try {
+      const ok = await notificationPreferences.setGroupCallsAllowed(groupId, next);
+      if (ok) {
+        Log.d(`chatGroupPanel.setCallsAllowed(${next}) saved`);
+      } else {
+        console.warn(`[CHAT] call permission ${next} refused for group=${groupId} - reverted`);
+        callsError = m.chat_calls_permission_save_error();
+      }
+    } finally {
+      callsSaving = false;
     }
   }
 
@@ -372,6 +404,16 @@
         error={levelError}
         onSelect={(next) => void setLevel(next)}
       />
+      {#if callsControlShown}
+        <CallPermissionControl
+          allowed={callsAllowed}
+          loading={levelLoading}
+          saving={callsSaving}
+          headingId="group-calls-heading"
+          error={callsError}
+          onSelect={(next) => void setCallsAllowed(next)}
+        />
+      {/if}
     </div>
   {/if}
 

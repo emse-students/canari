@@ -37,6 +37,10 @@
     recordDmReadMark,
     recordSalonReadMark,
   } from '$lib/utils/chat/salonReadMarkQueue';
+  import {
+    loadControlRefusals,
+    setControlRetryExecutor,
+  } from '$lib/utils/chat/controlRefusals.svelte';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
@@ -394,6 +398,7 @@
     return {
       conversations: convs.conversations,
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
+      invalidateRestores: () => convs.invalidateRestores(),
       beginConversationSource: () => convs.beginConversationSource(),
       endConversationSource: () => convs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
@@ -813,6 +818,17 @@
     };
   });
 
+  // ─── Refused control actions: the account's list, and the Retry that runs them ────
+  // The notices are durable per account, so they are bound to whoever is signed in; a Retry runs
+  // with the context of the tap (`msgCtx()` is built fresh), never one captured at the refusal.
+  $effect(() => {
+    if (session.userId) loadControlRefusals(session.userId);
+  });
+  onMount(() => {
+    setControlRetryExecutor((refusal) => messaging.retryRefusedControl(refusal, msgCtx()));
+    return () => setControlRetryExecutor(null);
+  });
+
   // ─── Mount: event listeners (window focus, visibility, debug shortcut) ────
   onMount(() => {
     isWindowFocused = document.hasFocus();
@@ -1153,9 +1169,18 @@
     const convo = convs.conversations.get(key);
     if (!convo?.id) return;
     Promise.resolve(session.ensureMls())
-      .then((m) => m?.sendTyping?.(convo.id, isTyping))
-      .catch(() => {});
+      .then(async (m) => {
+        await m?.sendTyping?.(convo.id, isTyping);
+        dmTypingFailing = false;
+      })
+      .catch((e) => {
+        // One line per failing streak, not per keystroke; the next success re-arms it.
+        if (dmTypingFailing) return;
+        dmTypingFailing = true;
+        appendLog(`[typing] DM typing signal not delivered (further failures not logged) - ${e}`);
+      });
   }
+  let dmTypingFailing = false;
 
   /**
    * Loads the conversation's shared media/links/files from the FULL local history

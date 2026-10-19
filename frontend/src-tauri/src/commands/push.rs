@@ -207,12 +207,187 @@ fn take_ndjson_handoff(
     entries
 }
 
-/// Reads {app_data_dir}/fcm_message_cache.ndjson, clears the file and returns the entries.
-/// Called at boot right after login to pre-inject messages already decrypted when the FCM push
-/// arrived - avoids waiting for the full MLS sync (~10s).
+/// The file the native push paths write (Android `appendFcmCacheEntry`, iOS `canari_push.mm`).
+const FCM_CACHE_FILE: &str = "fcm_message_cache.ndjson";
+/// What [`take_fcm_cache_in`] moved aside is `<prefix><generation>.ndjson`, kept until the
+/// frontend has persisted it ([`ack_fcm_cache_in`]). One file per take, never appended to.
+pub(crate) const FCM_CACHE_TAKEN_PREFIX: &str = "fcm_message_cache.taken.";
+
+/// One taken file, as the ack must find it again: its name, and its size when it was read.
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FcmTakenFile {
+    name: String,
+    bytes: u64,
+}
+
+/// What [`take_fcm_cache_in`] hands over: the entries, and the files they were read from.
+#[derive(serde::Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FcmCacheTake {
+    entries: Vec<serde_json::Value>,
+    files: Vec<FcmTakenFile>,
+}
+
+/// The generation in a taken file's name, or `None` for any other file.
+fn taken_generation(name: &str) -> Option<u64> {
+    name.strip_prefix(FCM_CACHE_TAKEN_PREFIX)?
+        .strip_suffix(".ndjson")?
+        .parse()
+        .ok()
+}
+
+/// Every taken file in `dir`, oldest generation first.
+fn taken_files(dir: &std::path::Path) -> Vec<(u64, String)> {
+    let mut found: Vec<(u64, String)> = match std::fs::read_dir(dir) {
+        Ok(it) => it
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                taken_generation(&name).map(|g| (g, name))
+            })
+            .collect(),
+        Err(e) => {
+            log::warn!("[FCM_CACHE] cannot list the data directory: {e}");
+            vec![]
+        }
+    };
+    found.sort();
+    found
+}
+
+/// TAKES the push cache WITHOUT deleting it: the live file is RENAMED to a new taken generation and
+/// every taken file is read; they are deleted only by [`ack_fcm_cache_in`], once the frontend has
+/// written what they held.
+///
+/// WHY TWO STEPS. This used to delete the file before answering, so a process death between that
+/// delete and the frontend's `saveMessage` lost the entries for good - and for a notification quick
+/// reply the cache is the ONLY local record of a message this device sent
+/// (`CanariNotificationActionReceiver.handleReply`).
+///
+/// WHY A RENAME AND NEVER A COPY. The native writers keep writing the live path (Android rewrites
+/// it whole, iOS drains its App Group into it). A rename is atomic: a write lands either in the
+/// renamed file or in the next live one. A write still finishing into the renamed inode after it was
+/// read makes that file LARGER than the size handed over, and the ack then keeps it for the next
+/// take - nothing is read and then deleted unread.
+///
+/// A taken file older than this take's own is a take that was never acknowledged - the process died
+/// before the frontend persisted it: it is handed over again, first. Replaying one is harmless:
+/// `consumeFcmCache` never downgrades a row and its writes are puts by id. The frontend runs one take
+/// at a time, so that is the only way such a file exists.
+pub(crate) fn take_fcm_cache_in(dir: &std::path::Path) -> FcmCacheTake {
+    let existing = taken_files(dir);
+    let next = existing.last().map_or(0, |(g, _)| g + 1);
+    let own = format!("{FCM_CACHE_TAKEN_PREFIX}{next}.ndjson");
+    match std::fs::rename(dir.join(FCM_CACHE_FILE), dir.join(&own)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("[FCM_CACHE] could not move the live cache aside: {e}"),
+    }
+    if !existing.is_empty() {
+        log::warn!(
+            "[FCM_CACHE] {} taken file(s) were never acknowledged - the process died before the \
+             frontend persisted them; handed over again",
+            existing.len()
+        );
+    }
+    let mut entries = Vec::new();
+    let mut files = Vec::new();
+    for (_, name) in taken_files(dir) {
+        let bytes = match std::fs::read(dir.join(&name)) {
+            Ok(b) => b,
+            Err(e) => {
+                // Not handed over, so not acknowledged: it stays for the next take.
+                log::warn!("[FCM_CACHE] taken file {name} unreadable, kept: {e}");
+                continue;
+            }
+        };
+        entries.extend(
+            String::from_utf8_lossy(&bytes)
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()),
+        );
+        files.push(FcmTakenFile {
+            name,
+            bytes: bytes.len() as u64,
+        });
+    }
+    if !files.is_empty() {
+        log::info!(
+            "[FCM_CACHE] {} entry/entries taken from {} file(s), deleted only once acknowledged",
+            entries.len(),
+            files.len()
+        );
+    }
+    FcmCacheTake { entries, files }
+}
+
+/// Deletes each taken file the frontend persisted - but only while it is still exactly the size it
+/// was read at. A larger one received a native write after it was read; it is kept, and the next
+/// take hands it over again (harmless) rather than deleting a line nobody read. A name that is not
+/// a taken file is refused: this deletes nothing else.
+///
+/// Returns how many files were deleted.
+pub(crate) fn ack_fcm_cache_in(dir: &std::path::Path, files: &[FcmTakenFile]) -> usize {
+    let mut deleted = 0;
+    for f in files {
+        if taken_generation(&f.name).is_none() {
+            log::error!("[FCM_CACHE] ack refused for a name that is not a taken file");
+            continue;
+        }
+        let path = dir.join(&f.name);
+        match std::fs::metadata(&path) {
+            Ok(m) if m.len() == f.bytes => match std::fs::remove_file(&path) {
+                Ok(()) => deleted += 1,
+                Err(e) => log::warn!("[FCM_CACHE] taken file {} delete failed: {e}", f.name),
+            },
+            Ok(m) => log::warn!(
+                "[FCM_CACHE] taken file {} kept: {} bytes, read at {} - a native write landed after \
+                 the read, the next take hands it over",
+                f.name,
+                m.len(),
+                f.bytes
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("[FCM_CACHE] taken file {} stat failed: {e}", f.name),
+        }
+    }
+    log::info!(
+        "[FCM_CACHE] acknowledged: {deleted} of {} taken file(s) deleted",
+        files.len()
+    );
+    deleted
+}
+
+/// [`take_fcm_cache_in`] on the app's data directory. Called at boot right after login to
+/// pre-inject messages already decrypted when the FCM push arrived - avoids waiting for the full
+/// MLS sync (~10s).
 #[tauri::command]
-pub(crate) fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
-    take_ndjson_handoff(&app, "fcm_message_cache.ndjson", "FCM_CACHE")
+pub(crate) fn take_fcm_cache(app: tauri::AppHandle) -> FcmCacheTake {
+    match app.path().app_data_dir() {
+        Ok(dir) => take_fcm_cache_in(&dir),
+        Err(e) => {
+            log::warn!("[FCM_CACHE] app_data_dir() failed: {e}");
+            FcmCacheTake {
+                entries: vec![],
+                files: vec![],
+            }
+        }
+    }
+}
+
+/// [`ack_fcm_cache_in`] on the app's data directory, called by `consumeFcmCache` once the entries
+/// it was handed have been written.
+#[tauri::command]
+pub(crate) fn ack_fcm_cache(app: tauri::AppHandle, files: Vec<FcmTakenFile>) -> usize {
+    match app.path().app_data_dir() {
+        Ok(dir) => ack_fcm_cache_in(&dir, &files),
+        Err(e) => {
+            log::warn!("[FCM_CACHE] app_data_dir() failed: {e}");
+            0
+        }
+    }
 }
 
 /// Reads {app_data_dir}/read_watermarks.ndjson, clears the file and returns the entries.
@@ -909,22 +1084,62 @@ pub(crate) fn store_push_context(
         .store_device_key(&key_bytes, &alias)
         .map_err(|e| format!("keystore write failed (background decrypt will not work): {e}"))?;
 
+    write_session_push_context(
+        &data_dir,
+        &user_id,
+        &device_id,
+        &base_url,
+        &push_token.unwrap_or_default(),
+        locale,
+    )
+}
+
+/// Orders every edit of `push_context.json` made in this process: the three writers
+/// (`store_push_context`, `store_device_identity`, `set_push_context_locale`) and the deletion's
+/// read-check-delete ([`remove_user_push_files`]).
+///
+/// WHY. The deletion reads the file to PROVE the deleted account owns it, then removes it. A new
+/// sign-in's `store_push_context` landing between the two was deleted on the strength of a proof
+/// about the PREVIOUS bytes, leaving that session with no push context until it was stored again
+/// (fourth review of #2023). A Tauri command without `async` is not serialised by the runtime: the
+/// IPC custom protocol calls it on whatever thread the WebView hands the request to.
+static PUSH_CONTEXT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Takes [`PUSH_CONTEXT_LOCK`]. The lock guards an ORDER, not a value: a holder that panicked
+/// leaves no half-built data behind it, so a poisoned lock is taken as it is.
+fn push_context_guard() -> std::sync::MutexGuard<'static, ()> {
+    PUSH_CONTEXT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The file half of [`store_push_context`], under [`PUSH_CONTEXT_LOCK`]: replaces
+/// `push_context.json` with this session's context.
+fn write_session_push_context(
+    data_dir: &std::path::Path,
+    user_id: &str,
+    device_id: &str,
+    base_url: &str,
+    push_token: &str,
+    locale: Option<String>,
+) -> Result<(), String> {
+    let _guard = push_context_guard();
     // This call REPLACES the file, so a locale already mirrored must survive a caller that does not
     // know one - otherwise a device-key refresh silently reverts every background notification to
     // the default language until the user next changes it by hand.
     let locale = locale
         .filter(|l| !l.trim().is_empty())
-        .or_else(|| read_push_context_locale(&data_dir))
+        .or_else(|| read_push_context_locale(data_dir))
         .unwrap_or_else(|| DEFAULT_PUSH_LOCALE.to_string());
 
     let json = serde_json::json!({
         "userId": user_id,
         "deviceId": device_id,
         "baseUrl": base_url,
-        "pushToken": push_token.unwrap_or_default(),
+        "pushToken": push_token,
         "locale": locale,
     });
-    std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
+    std::fs::write(data_dir.join(PUSH_CONTEXT_FILE), json.to_string()).map_err(|e| e.to_string())
 }
 
 /// Mirrors THIS DEVICE'S IDENTITY, and nothing else, so it survives the WebView losing
@@ -966,6 +1181,7 @@ pub(crate) fn store_device_identity(
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let path = data_dir.join("push_context.json");
 
+    let _guard = push_context_guard();
     let mut ctx: serde_json::Map<String, serde_json::Value> = match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
         Err(_) => serde_json::Map::new(),
@@ -1019,6 +1235,7 @@ pub(crate) fn set_push_context_locale(locale: String, app: tauri::AppHandle) -> 
     // Absent file: the user changed language before ever logging in. Writing a lone locale here
     // would be a push context with no device key, which every reader treats as unusable - so this
     // is not an error, and `store_push_context` picks the value up at login through the read above.
+    let _guard = push_context_guard();
     let mut ctx: serde_json::Map<String, serde_json::Value> = match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
         Err(_) => return Ok(()),
@@ -1058,11 +1275,12 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
 
 /// The per-install files that hold ONE account's data in the clear and die with that account when it
 /// is DELETED: unsent `AppMessage` protos (`store_outbox_mirror`), messages decrypted by a push
-/// (`read_and_clear_fcm_cache`), the read marks and sent ids the background side handed over. Not
-/// `mls.bin`, `graine_seeds.json` or the push secret - kept by this command on purpose.
+/// (`take_fcm_cache`; what a take moved aside, `FCM_CACHE_TAKEN_PREFIX*`, goes with them), the read
+/// marks and sent ids the background side handed over. Not `mls.bin`, `graine_seeds.json` or the push secret -
+/// kept by this command on purpose.
 const ACCOUNT_PUSH_FILES: [&str; 4] = [
     "outbox_pending.ndjson",
-    "fcm_message_cache.ndjson",
+    FCM_CACHE_FILE,
     "read_watermarks.ndjson",
     "outbox_sent.ndjson",
 ];
@@ -1071,33 +1289,87 @@ const ACCOUNT_PUSH_FILES: [&str; 4] = [
 const PUSH_CONTEXT_FILE: &str = "push_context.json";
 
 /// Deletes the push-side files of a DELETED account (WP-DEL-LOCAL) - see [`remove_user_push_files`].
+///
+/// On iOS the App Group container is part of the deletion: `CanariMirrorPushStateToAppGroup`
+/// copies `push_context.json` there and the notification extension writes its decrypted
+/// `fcm_message_cache.ndjson` there, and neither writer ever deletes. With no container the
+/// app's own files still go and the error is returned: the mirror resolves the container through
+/// the same entitlement, so a container this call cannot reach is one nothing was copied into.
+///
+/// A SYNCHRONOUS command: on iOS it runs inline in WebKit's URL-scheme callback (wry 0.57 and
+/// tauri 2.12 add no thread hop for a sync command), which is the main thread - the thread the
+/// mirror runs on at `didBecomeActive` / `willResignActive` - so a mirror cannot copy the context
+/// back between this deletion's proof and its removals. Making it `async` would reopen that window.
+/// Read from source, not observed on a device.
 #[tauri::command]
 pub(crate) fn delete_user_push_files(
     app: tauri::AppHandle,
     user_id: String,
 ) -> Result<usize, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    remove_user_push_files(&data_dir, &user_id)
+    #[cfg(target_os = "ios")]
+    {
+        let group = crate::app_group::app_group_dir();
+        let removed = remove_user_push_files(&data_dir, group.as_deref().ok(), &user_id)?;
+        if let Err(e) = group {
+            log::error!(
+                "[DEL-LOCAL] no App Group container - the extension's copies were not reached: {e}"
+            );
+            return Err(e);
+        }
+        Ok(removed)
+    }
+    #[cfg(not(target_os = "ios"))]
+    remove_user_push_files(&data_dir, None, &user_id)
+}
+
+/// The names in [`ACCOUNT_PUSH_FILES`] plus `push_context.json` that can also exist in the iOS App
+/// Group container: the extension's own `fcm_message_cache.ndjson` and the mirrored context. The
+/// whole account list is swept there, so a file the extension starts keeping later is covered
+/// without a second list to forget.
+fn extension_account_files() -> impl Iterator<Item = &'static str> {
+    ACCOUNT_PUSH_FILES
+        .into_iter()
+        .chain(std::iter::once(PUSH_CONTEXT_FILE))
 }
 
 /// Removes [`ACCOUNT_PUSH_FILES`] and `push_context.json` (`userId`, `deviceId`, the bearer
 /// `pushToken`) ONLY WHEN `push_context.json` NAMES `user_id`. An allowlist by owner: none of the
 /// NDJSON files carries its account, so the context is the one fact that can prove whose they are.
+/// The same names go from `extension_dir` (the iOS App Group container, `None` elsewhere) on the
+/// same proof: what is there is a copy of this directory's files or the extension's half of them.
 ///
 /// - names `user_id`: every file goes, the context LAST - a failure keeps the proof for the resume;
 /// - names another account: nothing is touched - that account signed in after, the files are its;
 /// - absent, unreadable or naming nobody: nothing is touched and it is logged - an unknown owner is
 ///   never a licence to delete.
 ///
+/// The read, the check and every removal run under [`PUSH_CONTEXT_LOCK`], so a context a new
+/// sign-in stores meanwhile is written AFTER the deletion and survives it.
+///
 /// Returns how many files were removed.
 pub(crate) fn remove_user_push_files(
     data_dir: &std::path::Path,
+    extension_dir: Option<&std::path::Path>,
     user_id: &str,
+) -> Result<usize, String> {
+    remove_user_push_files_proved(data_dir, extension_dir, user_id, || {})
+}
+
+/// [`remove_user_push_files`], with `after_proof` run once the context has proved `user_id` owns
+/// the files and before the first removal, the lock still held: the window the lock closes, which
+/// a test fills with a concurrent sign-in.
+fn remove_user_push_files_proved(
+    data_dir: &std::path::Path,
+    extension_dir: Option<&std::path::Path>,
+    user_id: &str,
+    after_proof: impl FnOnce(),
 ) -> Result<usize, String> {
     if !crate::commands::storage::is_wipeable_account_id(user_id) {
         log::error!("[DEL-LOCAL] push files: refusing a user id outside the allowlist");
         return Err("invalid user id".to_string());
     }
+    let _guard = push_context_guard();
     let context_path = data_dir.join(PUSH_CONTEXT_FILE);
     let bytes = match std::fs::read(&context_path) {
         Ok(b) => b,
@@ -1128,10 +1400,24 @@ pub(crate) fn remove_user_push_files(
         }
         Some(_) => {}
     }
+    after_proof();
     let mut removed = 0usize;
     let mut failures = 0usize;
     for name in ACCOUNT_PUSH_FILES {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
+    }
+    for (_, name) in taken_files(data_dir) {
+        crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
+    }
+    if let Some(dir) = extension_dir {
+        let before = removed;
+        for name in extension_account_files() {
+            crate::commands::storage::remove_entry(&dir.join(name), &mut removed, &mut failures);
+        }
+        log::info!(
+            "[DEL-LOCAL] push files: {} removed from the extension's container",
+            removed - before
+        );
     }
     if failures == 0 {
         crate::commands::storage::remove_entry(&context_path, &mut removed, &mut failures);
@@ -1548,7 +1834,14 @@ mod delete_user_push_files_tests {
             "own",
             Some(r#"{"userId":"a.b@x.fr","deviceId":"d","pushToken":"t"}"#),
         );
-        assert_eq!(remove_user_push_files(&dir, "a.b@x.fr").unwrap(), 5);
+        std::fs::write(
+            dir.join("fcm_message_cache.taken.3.ndjson"),
+            b"{}
+",
+        )
+        .unwrap();
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 6);
+        assert!(!dir.join("fcm_message_cache.taken.3.ndjson").exists());
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
         }
@@ -1556,7 +1849,7 @@ mod delete_user_push_files_tests {
         assert!(dir.join("mls.bin").exists());
         assert!(dir.join("graine_seeds.json").exists());
         // Idempotent: a resumed wipe finds no context and touches nothing.
-        assert_eq!(remove_user_push_files(&dir, "a.b@x.fr").unwrap(), 0);
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1564,11 +1857,11 @@ mod delete_user_push_files_tests {
     #[test]
     fn never_touches_files_another_account_owns() {
         let dir = dir_with("other", Some(r#"{"userId":"b","deviceId":"d"}"#));
-        assert_eq!(remove_user_push_files(&dir, "a").unwrap(), 0);
+        assert_eq!(remove_user_push_files(&dir, None, "a").unwrap(), 0);
         assert!(untouched(&dir));
         assert!(dir.join(PUSH_CONTEXT_FILE).exists());
         // A prefix of the owner is another account too.
-        assert_eq!(remove_user_push_files(&dir, "b_").unwrap(), 0);
+        assert_eq!(remove_user_push_files(&dir, None, "b_").unwrap(), 0);
         assert!(untouched(&dir));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1583,18 +1876,241 @@ mod delete_user_push_files_tests {
             ("empty", Some(r#"{"userId":""}"#)),
         ] {
             let dir = dir_with(tag, ctx);
-            assert_eq!(remove_user_push_files(&dir, "a").unwrap(), 0, "{tag}");
+            assert_eq!(remove_user_push_files(&dir, None, "a").unwrap(), 0, "{tag}");
             assert!(untouched(&dir), "{tag}");
             let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+
+    /// What the iOS App Group container holds once the mirror and the extension have run: the
+    /// mirrored context and the extension's decrypted cache (the deleted account's), and the
+    /// per-install copies the deletion keeps.
+    fn extension_container(dir: &std::path::Path, context: &str) -> std::path::PathBuf {
+        let group = dir.join("app_group");
+        std::fs::create_dir_all(&group).unwrap();
+        std::fs::write(group.join(PUSH_CONTEXT_FILE), context).unwrap();
+        std::fs::write(group.join(super::FCM_CACHE_FILE), b"{}\n").unwrap();
+        for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
+            std::fs::write(group.join(kept), b"x").unwrap();
+        }
+        group
+    }
+
+    /// The defect: the App Group copy of `push_context.json` (userId, deviceId, the bearer
+    /// pushToken) and the extension's decrypted cache outlived the account's deletion, because the
+    /// mirror never deletes and the deletion never looked there. Both go now, on the same proof.
+    #[test]
+    fn removes_the_deleted_accounts_copies_from_the_extensions_container() {
+        let ctx = r#"{"userId":"a","deviceId":"d","pushToken":"t"}"#;
+        let dir = dir_with("group_own", Some(ctx));
+        let group = extension_container(&dir, ctx);
+        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 7);
+        assert!(!group.join(PUSH_CONTEXT_FILE).exists());
+        assert!(!group.join(super::FCM_CACHE_FILE).exists());
+        for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
+            assert!(group.join(kept).exists(), "{kept}");
+        }
+        assert!(!dir.join(PUSH_CONTEXT_FILE).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The container is reached on the app's proof only: another owner, or none, leaves it whole.
+    #[test]
+    fn never_touches_the_extensions_container_without_the_proof() {
+        for (tag, ctx) in [
+            ("group_other", Some(r#"{"userId":"b","deviceId":"d"}"#)),
+            ("group_none", None),
+        ] {
+            let dir = dir_with(tag, ctx);
+            let group = extension_container(&dir, r#"{"userId":"b","deviceId":"d"}"#);
+            assert_eq!(
+                remove_user_push_files(&dir, Some(&group), "a").unwrap(),
+                0,
+                "{tag}"
+            );
+            assert!(group.join(PUSH_CONTEXT_FILE).exists(), "{tag}");
+            assert!(group.join(super::FCM_CACHE_FILE).exists(), "{tag}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// A copy the container refuses to give up keeps the app's context - the proof the resumed
+    /// deletion needs to come back for it.
+    #[cfg(unix)]
+    #[test]
+    fn a_container_copy_that_stays_keeps_the_proof() {
+        let ctx = r#"{"userId":"a","deviceId":"d"}"#;
+        let dir = dir_with("group_fail", Some(ctx));
+        // A FILE where the container should be: every removal under it fails with ENOTDIR,
+        // which is not "not found".
+        let group = dir.join("not_a_dir");
+        std::fs::write(&group, b"x").unwrap();
+        assert!(remove_user_push_files(&dir, Some(&group), "a").is_err());
+        assert!(dir.join(PUSH_CONTEXT_FILE).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An id outside the allowlist is refused before anything is read.
     #[test]
     fn refuses_an_id_outside_the_allowlist() {
         let dir = dir_with("bad", Some(r#"{"userId":"../x"}"#));
-        assert!(remove_user_push_files(&dir, "../x").is_err());
+        assert!(remove_user_push_files(&dir, None, "../x").is_err());
         assert!(untouched(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod fcm_cache_take_tests {
+    use super::{ack_fcm_cache_in, take_fcm_cache_in, FcmCacheTake, FCM_CACHE_FILE};
+
+    fn dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("fcm-take-{name}-{}", std::process::id()));
+        std::fs::remove_dir_all(&d).ok();
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn ids(take: &FcmCacheTake) -> Vec<String> {
+        take.entries
+            .iter()
+            .map(|e| e["messageId"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn push(d: &std::path::Path, id: &str) {
+        std::fs::write(
+            d.join(FCM_CACHE_FILE),
+            format!("{{\"messageId\":\"{id}\"}}\n"),
+        )
+        .unwrap();
+    }
+
+    fn files_in(d: &std::path::Path) -> usize {
+        std::fs::read_dir(d).unwrap().count()
+    }
+
+    /// The defect: the cache was deleted before the frontend persisted it, so a process death in
+    /// between lost it. A take that is never acknowledged must be handed over again.
+    #[test]
+    fn an_unacknowledged_take_is_handed_over_again() {
+        let d = dir("replay");
+        push(&d, "a");
+        assert_eq!(ids(&take_fcm_cache_in(&d)), vec!["a"]);
+        // The process dies here, with no ack. A push arrives before the next boot.
+        push(&d, "b");
+        let second = take_fcm_cache_in(&d);
+        assert_eq!(ids(&second), vec!["a", "b"]);
+        assert!(!d.join(FCM_CACHE_FILE).exists());
+        assert_eq!(ack_fcm_cache_in(&d, &second.files), 2);
+        assert_eq!(files_in(&d), 0);
+        assert!(take_fcm_cache_in(&d).entries.is_empty());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A native write that lands in a taken file AFTER it was read makes it larger than the size
+    /// handed over: the ack keeps it, and the next take hands the late line over.
+    #[test]
+    fn a_line_written_after_the_read_is_never_deleted_unread() {
+        let d = dir("late");
+        push(&d, "a");
+        let take = take_fcm_cache_in(&d);
+        let taken = d.join(&take.files[0].name);
+        let mut body = std::fs::read_to_string(&taken).unwrap();
+        body.push_str("{\"messageId\":\"late\"}\n");
+        std::fs::write(&taken, body).unwrap();
+        assert_eq!(ack_fcm_cache_in(&d, &take.files), 0);
+        assert_eq!(ids(&take_fcm_cache_in(&d)), vec!["a", "late"]);
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// An ack deletes only the taken files it names, and nothing that is not a taken file.
+    #[test]
+    fn an_ack_deletes_only_the_taken_files_it_names() {
+        let d = dir("names");
+        push(&d, "a");
+        let first = take_fcm_cache_in(&d);
+        push(&d, "b");
+        // The live file was taken by a second take nobody has acknowledged yet.
+        std::fs::rename(
+            d.join(FCM_CACHE_FILE),
+            d.join("fcm_message_cache.taken.9.ndjson"),
+        )
+        .unwrap();
+        assert_eq!(ack_fcm_cache_in(&d, &first.files), 1);
+        assert!(d.join("fcm_message_cache.taken.9.ndjson").exists());
+        let forged = vec![super::FcmTakenFile {
+            name: "mls.bin".to_string(),
+            bytes: 1,
+        }];
+        std::fs::write(d.join("mls.bin"), b"x").unwrap();
+        assert_eq!(ack_fcm_cache_in(&d, &forged), 0);
+        assert!(d.join("mls.bin").exists());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn nothing_to_take_is_empty() {
+        let d = dir("empty");
+        let t = take_fcm_cache_in(&d);
+        assert!(t.entries.is_empty());
+        assert!(t.files.is_empty());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A line that will not parse costs only itself, as it did before.
+    #[test]
+    fn an_unparsable_line_costs_only_itself() {
+        let d = dir("garbage");
+        std::fs::write(
+            d.join(FCM_CACHE_FILE),
+            "not json\n\n{\"messageId\":\"a\"}\n",
+        )
+        .unwrap();
+        assert_eq!(ids(&take_fcm_cache_in(&d)), vec!["a"]);
+        std::fs::remove_dir_all(&d).ok();
+    }
+}
+
+#[cfg(test)]
+mod push_context_lock_tests {
+    use super::{
+        remove_user_push_files_proved, write_session_push_context, PUSH_CONTEXT_FILE,
+        PUSH_CONTEXT_LOCK,
+    };
+
+    fn owner(dir: &std::path::Path) -> Option<String> {
+        let bytes = std::fs::read(dir.join(PUSH_CONTEXT_FILE)).ok()?;
+        let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        v.get("userId")?.as_str().map(str::to_string)
+    }
+
+    /// A new sign-in storing its context inside the deletion's window - after the proof, before
+    /// the removals - is held until the deletion is done, and its context survives it.
+    #[test]
+    fn a_sign_in_during_the_deletion_keeps_its_push_context() {
+        let dir = std::env::temp_dir().join(format!("canari_push_ctx_lock_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        write_session_push_context(&dir, "deleted", "d1", "https://x", "t1", None).unwrap();
+
+        let mut sign_in = None;
+        let removed = remove_user_push_files_proved(&dir, None, "deleted", || {
+            // The proof and the removals are one critical section.
+            assert!(PUSH_CONTEXT_LOCK.try_lock().is_err());
+            let d = dir.clone();
+            sign_in = Some(std::thread::spawn(move || {
+                write_session_push_context(&d, "new", "d2", "https://x", "t2", None)
+            }));
+        })
+        .unwrap();
+        sign_in.unwrap().join().unwrap().unwrap();
+
+        assert_eq!(
+            removed, 1,
+            "only the deleted account's context was there to remove"
+        );
+        assert_eq!(owner(&dir).as_deref(), Some("new"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

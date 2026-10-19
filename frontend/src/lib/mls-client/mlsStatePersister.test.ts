@@ -5,6 +5,7 @@ import {
   scheduleOutboundMlsPersist,
   persistMlsStructuralCheckpoint,
 } from './mlsStatePersisterRegistry';
+import { flushMacrotask } from '../../test/flush';
 
 vi.mock('$lib/utils/scheduling/yieldToMainThread', () => ({
   yieldToMainThread: vi.fn().mockResolvedValue(undefined),
@@ -27,7 +28,7 @@ describe('createMlsStatePersister', () => {
     const { persistCheckpoint, persister } = makePersister();
     persister.scheduleDeferred();
     persister.scheduleDeferred();
-    await new Promise((r) => setTimeout(r, 50));
+    await flushMacrotask();
     expect(persistCheckpoint).not.toHaveBeenCalled();
   });
 
@@ -56,7 +57,7 @@ describe('createMlsStatePersister', () => {
     persister.onBulkIngestStart();
     persister.scheduleDeferred();
     persister.persistNow();
-    await new Promise((r) => setTimeout(r, 50));
+    await flushMacrotask();
     expect(persistCheckpoint).not.toHaveBeenCalled();
 
     await persister.onBulkIngestEnd();
@@ -80,14 +81,14 @@ describe('createMlsStatePersister', () => {
 
     let ended = false;
     void persister.onBulkIngestEnd().then(() => (ended = true));
-    await new Promise((r) => setTimeout(r, 50));
+    await flushMacrotask();
 
     // The window is closed while the disk write is still in flight - that is the whole point.
     expect(ended).toBe(true);
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
 
     release();
-    await new Promise((r) => setTimeout(r, 50));
+    await flushMacrotask();
   });
 
   it('a checkpoint that FAILS after the window closed does not reject into the pipeline', async () => {
@@ -101,11 +102,12 @@ describe('createMlsStatePersister', () => {
     persister.onBulkIngestStart();
     persister.persistNow();
     await expect(persister.onBulkIngestEnd()).resolves.toBeUndefined();
-    await new Promise((r) => setTimeout(r, 50));
+    await flushMacrotask();
   });
 
-  // The 50 ms wait IS the finding, so it is named rather than tolerated: the write is queued on a
-  // microtask and the call returns `void`, so no caller can await it and none does. This shortens
+  // The wait IS the finding, so it is named rather than tolerated: the write is queued on a
+  // microtask and the call returns `void`, so no caller can await it and none does (the test waits
+  // for the WRITE, never for a duration). This shortens
   // the window in which a reload would restore a ratchet behind the frames already sent; what
   // CLOSES that window is the send ledger, asserted in `BaseMlsService.sendSeam.test.ts`.
   it('scheduleOutboundMlsPersist reaches disk EVENTUALLY, on a microtask nobody awaits', async () => {
@@ -113,8 +115,7 @@ describe('createMlsStatePersister', () => {
     registerMlsStatePersister(persister);
     expect(scheduleOutboundMlsPersist()).toBeUndefined();
     expect(persistCheckpoint).not.toHaveBeenCalled();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(persistCheckpoint).toHaveBeenCalledTimes(1));
   });
 
   it('coalesces a burst of outbound sends into one checkpoint', async () => {
@@ -123,7 +124,7 @@ describe('createMlsStatePersister', () => {
     scheduleOutboundMlsPersist();
     scheduleOutboundMlsPersist();
     scheduleOutboundMlsPersist();
-    await new Promise((r) => setTimeout(r, 50));
+    await flushMacrotask();
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });
 
@@ -132,7 +133,7 @@ describe('createMlsStatePersister', () => {
     registerMlsStatePersister(persister);
     persister.onBulkIngestStart();
     scheduleOutboundMlsPersist();
-    await new Promise((r) => setTimeout(r, 50));
+    await flushMacrotask();
     expect(persistCheckpoint).not.toHaveBeenCalled();
     await persister.onBulkIngestEnd();
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
@@ -174,7 +175,7 @@ describe('createMlsStatePersister', () => {
         mutate: () => (version += 1),
         releaseNext: async () => {
           releases.shift()?.();
-          await new Promise((r) => setTimeout(r, 0));
+          await flushMacrotask();
         },
       };
     }
@@ -183,7 +184,7 @@ describe('createMlsStatePersister', () => {
       const c = controlled();
       c.persister.scheduleDeferred();
       void c.persister.flush(); // checkpoint A exports version 1
-      await new Promise((r) => setTimeout(r, 0));
+      await flushMacrotask();
 
       c.mutate(); // the join lands: version 2
       c.persister.scheduleDeferred();
@@ -204,7 +205,7 @@ describe('createMlsStatePersister', () => {
       const c = controlled();
       c.persister.scheduleDeferred();
       void c.persister.flush();
-      await new Promise((r) => setTimeout(r, 0));
+      await flushMacrotask();
 
       const waits = [];
       for (let i = 0; i < 5; i++) {
@@ -224,7 +225,7 @@ describe('createMlsStatePersister', () => {
       const c = controlled();
       c.persister.scheduleDeferred();
       void c.persister.flush();
-      await new Promise((r) => setTimeout(r, 0));
+      await flushMacrotask();
 
       const wait = c.persister.flush();
       await c.releaseNext();

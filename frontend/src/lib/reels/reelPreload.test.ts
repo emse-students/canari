@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ReelPreload, type ReelPreloadCache } from './reelPreload';
 import type { MediaRef } from '$lib/media';
+import { flushMacrotask } from '../../test/flush';
 
 vi.mock('$lib/utils/apiUrl', () => ({ mediaUrl: () => 'https://media.test' }));
 
@@ -36,7 +37,7 @@ function cache() {
   return { c, resolve: (u: string) => resolve(u), signal: () => signal };
 }
 
-const flush = () => new Promise((r) => setTimeout(r, 0));
+const flush = () => flushMacrotask();
 
 describe('ReelPreload', () => {
   it('fetches through the cache at once', () => {

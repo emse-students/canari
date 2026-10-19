@@ -17,6 +17,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { Readable } from 'stream';
 import sharp from 'sharp';
+import { LIVE_PREFIX } from './live-segments.service';
 
 /** UUID v4 pattern - used to validate user-supplied IDs before path joins and property accesses. */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -91,6 +92,15 @@ const PENDING_REEL_TTL_MS = resolvePendingReelTtlMs(process.env.MEDIA_PENDING_RE
  */
 const PURGE_MAX_PER_RUN = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** How old an upload may be and still be claimed as a booking space's poster (`claimPosters`). */
+export const POSTER_CLAIM_WINDOW_MS = DAY_MS;
+/**
+ * When an unclaimed `poster-pending` upload is swept: TWICE the claim window, so the sweep can never
+ * take an upload a claim may still accept - the two predicates are disjoint by construction.
+ */
+export const POSTER_PENDING_TTL_MS = 2 * POSTER_CLAIM_WINDOW_MS;
+/** The classes a CLAIMED poster carries; only {@link MediaService.releasePosters} moves them. */
+export const POSTER_CLASSES: ReadonlySet<string> = new Set(['poster', 'poster-association']);
 /** Purged metadata entries (tombstones) are removed from the index after this delay. */
 const META_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
@@ -182,6 +192,19 @@ export interface MediaStorageStats {
   formFileCount: number;
   formFileBytes: number;
   /**
+   * Sealed segments of lives (`live/<liveId>/<name>`), outside the metadata index by design and
+   * deleted by social-service's live sweep when their live ends. Their own line rather than
+   * `untracked`: a count that does not fall back to zero between lives is that sweep stopped.
+   */
+  liveSegmentCount: number;
+  liveSegmentBytes: number;
+  /**
+   * Booking posters, pending and claimed (`poster-pending`, `poster`, `poster-association`). A
+   * pending one is swept by age; a claimed one goes when social-service releases it.
+   */
+  posterCount: number;
+  posterBytes: number;
+  /**
    * Live objects carrying no class at all: everything stored before the sweep became an allowlist
    * (2026-10-01), and every upload from a client too old to name its surface. The sweep may not
    * touch them, so this line is where their growth shows.
@@ -267,6 +290,18 @@ function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason }
  *   social-service's form-file purge through {@link MediaService.purgeFormFiles}, N days after the
  *   answer. Still reached by account deletion: a CV is its uploader's.
  *
+ * - `poster-pending` - a booking space's POSTER, uploaded and not yet cited. SET BY THE CLIENT AT
+ *   UPLOAD, by the poster field alone, so a poster is never an object some other surface uses (a
+ *   post's image, a document): reusing one of those as a poster, then removing the poster, would
+ *   have released the post's image to the sweep (review of #2045). Swept by AGE
+ *   ({@link POSTER_PENDING_TTL_MS} from upload), as `reel-pending` is, and safe for the same reason:
+ *   a client naming it gains only a shorter life.
+ * - `poster` / `poster-association` - a CLAIMED poster, of a personal space / of an entity's space.
+ *   Set only by `internal/poster-claim`, on its uploader's `poster-pending` object, bound to ONE
+ *   space (`claimedFor`); kept by the idle sweep; moved out only by `internal/poster-release`,
+ *   which touches nothing else. `poster-association` survives its uploader's erasure, as an
+ *   association document does; `poster` goes with it.
+ *
  * None of them is `publicAsset`: that flag also opens `GET /media/public/:id` (no JWT), so reusing
  * it would put ciphertext on an unauthenticated route.
  */
@@ -277,7 +312,10 @@ export type RetentionClass =
   | 'reel'
   | 'reel-pending'
   | 'chat-reel'
-  | 'form-file';
+  | 'form-file'
+  | 'poster-pending'
+  | 'poster'
+  | 'poster-association';
 
 export const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'ephemeral',
@@ -287,6 +325,9 @@ export const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'reel-pending',
   'chat-reel',
   'form-file',
+  'poster-pending',
+  'poster',
+  'poster-association',
 ]);
 
 /** The class whose objects are plaintext readable by social-service alone - see {@link RetentionClass}. */
@@ -423,6 +464,8 @@ interface MediaMetaEntry {
    * reachable only by the retention sweep.
    */
   ownerId?: string;
+  /** The booking space a CLAIMED poster (`poster`, `poster-association`) belongs to. */
+  claimedFor?: string;
   /**
    * Ciphertext size in bytes, recorded for `chat-reel` uploads ONLY: the daily cap sums it per
    * owner, and nothing else in the index needs a size (the listing of the store has them).
@@ -829,6 +872,13 @@ export class MediaService {
         );
         continue;
       }
+      // A claimed poster keeps its class: only `releasePosters` moves it, once no space cites it.
+      if (POSTER_CLASSES.has(entry.retentionClass ?? '')) {
+        this.logger.warn(
+          `media ${mediaId}: a claimed poster keeps its class - ${retentionClass} refused`
+        );
+        continue;
+      }
 
       entry.retentionClass = retentionClass;
       changed += 1;
@@ -954,6 +1004,117 @@ export class MediaService {
       );
     }
     return { claimed, refused };
+  }
+
+  /**
+   * Claims a booking space's POSTER for the member setting it (social-service, WP-B6): moves the
+   * object to `poster` (a personal space) or `poster-association` (an entity's) and binds it to
+   * `spaceId`, ONLY when it is that member's own fresh `poster-pending` upload.
+   *
+   * Ids are not secrets, and what a space does with its poster later is destructive (the release
+   * hands it to the idle sweep) or protective (`poster-association` outlives its uploader's erasure).
+   * So the claim is the reels' rule (`claimReels`), narrowed to "an upload MADE FOR THIS":
+   * - the entry's recorded uploader is `ownerId` (none recorded: refused, never on trust);
+   * - its class is `poster-pending`, which only a poster upload names - a post's image, an
+   *   association document, a reel, a form file or a chat photo is refused, even the member's own,
+   *   so removing a poster can never release an object another surface still shows (review of #2045);
+   * - it was uploaded less than {@link POSTER_CLAIM_WINDOW_MS} ago (the sweep takes it after
+   *   {@link POSTER_PENDING_TTL_MS}, so a claim never meets an object the sweep is about to take);
+   * - not purged, not a public asset.
+   *
+   * IDEMPOTENT FOR ITS OWN SPACE: an object already claimed in `retentionClass` FOR `spaceId` by the
+   * same owner is answered claimed again with nothing changed - a double submit, or a save retried
+   * after its answer was lost. Claimed for any other space, it is refused: one poster, one space.
+   *
+   * @returns the ids claimed and the ids refused.
+   */
+  async claimPosters(
+    mediaIds: string[],
+    ownerId: string,
+    spaceId: string,
+    retentionClass: 'poster' | 'poster-association',
+    nowMs = Date.now()
+  ): Promise<{ claimed: string[]; refused: string[] }> {
+    const claimed: string[] = [];
+    const refused: string[] = [];
+    let changed = false;
+    for (const mediaId of new Set(mediaIds)) {
+      const entry = UUID_REGEX.test(mediaId) ? this.meta.items[mediaId] : undefined;
+      if (
+        !entry ||
+        entry.purgedAt ||
+        this.isPublicAssetEntry(entry) ||
+        !entry.ownerId ||
+        entry.ownerId !== ownerId
+      ) {
+        refused.push(mediaId);
+        continue;
+      }
+      if (entry.retentionClass === retentionClass && entry.claimedFor === spaceId) {
+        claimed.push(mediaId);
+        continue;
+      }
+      if (
+        entry.retentionClass !== 'poster-pending' ||
+        nowMs - entry.createdAt > POSTER_CLAIM_WINDOW_MS
+      ) {
+        refused.push(mediaId);
+        continue;
+      }
+      entry.retentionClass = retentionClass;
+      entry.claimedFor = spaceId;
+      changed = true;
+      claimed.push(mediaId);
+    }
+    if (changed) await this.persistMetadata();
+    if (refused.length > 0) {
+      this.logger.warn(
+        `Poster claim by ${ownerId}: ${refused.length} object(s) refused (unknown, purged, public, not theirs, not a poster upload, older than ${POSTER_CLAIM_WINDOW_MS} ms, or another space's)`
+      );
+    }
+    return { claimed, refused };
+  }
+
+  /**
+   * Releases CLAIMED posters to the idle sweep (`ephemeral`) - social-service's
+   * `releaseUncitedPosters`, once no space cites them. THE ALLOWLIST IS THE CLASS: only an object in
+   * {@link POSTER_CLASSES} moves, so an id naming anything else - a post's image, a document - is
+   * refused and left alone, whatever the caller believed.
+   */
+  async releasePosters(mediaIds: string[]): Promise<{ released: string[]; refused: string[] }> {
+    const released: string[] = [];
+    const refused: string[] = [];
+    for (const mediaId of new Set(mediaIds)) {
+      const entry = UUID_REGEX.test(mediaId) ? this.meta.items[mediaId] : undefined;
+      if (!entry || entry.purgedAt || !POSTER_CLASSES.has(entry.retentionClass ?? '')) {
+        refused.push(mediaId);
+        continue;
+      }
+      entry.retentionClass = 'ephemeral';
+      delete entry.claimedFor;
+      released.push(mediaId);
+    }
+    if (released.length > 0) await this.persistMetadata();
+    if (refused.length > 0) {
+      this.logger.warn(
+        `Poster release: ${refused.length} object(s) refused (unknown, purged or not a claimed poster)`
+      );
+    }
+    return { released, refused };
+  }
+
+  /**
+   * Every CLAIMED poster and the space it was claimed for - what social-service's reconciliation
+   * reads to release a poster no space cites (a save that crashed between its claim and its commit).
+   */
+  listPosters(): Array<{ mediaId: string; spaceId: string | null }> {
+    const out: Array<{ mediaId: string; spaceId: string | null }> = [];
+    for (const [mediaId, entry] of Object.entries(this.meta.items)) {
+      if (!entry.purgedAt && POSTER_CLASSES.has(entry.retentionClass ?? '')) {
+        out.push({ mediaId, spaceId: entry.claimedFor ?? null });
+      }
+    }
+    return out;
   }
 
   /**
@@ -1405,6 +1566,10 @@ export class MediaService {
       pendingReelTtlMs: PENDING_REEL_TTL_MS,
       formFileCount: 0,
       formFileBytes: 0,
+      liveSegmentCount: 0,
+      liveSegmentBytes: 0,
+      posterCount: 0,
+      posterBytes: 0,
       unclassifiedCount: 0,
       unclassifiedBytes: 0,
       retentionMs: RETENTION_MS,
@@ -1425,6 +1590,11 @@ export class MediaService {
         }
       }
 
+      if (object.id.startsWith(LIVE_PREFIX)) {
+        stats.liveSegmentCount += 1;
+        stats.liveSegmentBytes += object.size;
+        continue;
+      }
       const entry = this.meta.items[object.id];
       if (!entry) {
         stats.untrackedCount += 1;
@@ -1469,6 +1639,14 @@ export class MediaService {
       if (entry.retentionClass === 'form-file') {
         stats.formFileCount += 1;
         stats.formFileBytes += object.size;
+        continue;
+      }
+      if (
+        entry.retentionClass === 'poster-pending' ||
+        POSTER_CLASSES.has(entry.retentionClass ?? '')
+      ) {
+        stats.posterCount += 1;
+        stats.posterBytes += object.size;
         continue;
       }
       if (entry.retentionClass === 'reel-pending') {
@@ -1920,7 +2098,8 @@ export class MediaService {
     return (
       (entry.retentionClass === 'ephemeral' ||
         entry.retentionClass === 'chat-reel' ||
-        entry.retentionClass === 'reel-pending') &&
+        entry.retentionClass === 'reel-pending' ||
+        entry.retentionClass === 'poster-pending') &&
       !this.isPublicAssetEntry(entry)
     );
   }
@@ -1940,6 +2119,9 @@ export class MediaService {
     if (entry.retentionClass === 'reel-pending') {
       return entry.createdAt + PENDING_REEL_TTL_MS < now;
     }
+    if (entry.retentionClass === 'poster-pending') {
+      return entry.createdAt + POSTER_PENDING_TTL_MS < now;
+    }
     return entry.lastAccessAt < now - RETENTION_MS;
   }
 
@@ -1951,7 +2133,11 @@ export class MediaService {
    * sweep and still goes with its uploader's account.
    */
   private survivesAccountDeletion(entry: MediaMetaEntry): boolean {
-    return this.isPublicAssetEntry(entry) || entry.retentionClass === 'association';
+    return (
+      this.isPublicAssetEntry(entry) ||
+      entry.retentionClass === 'association' ||
+      entry.retentionClass === 'poster-association'
+    );
   }
 
   /** True for association logos and other plaintext images exempt from the retention sweep. */

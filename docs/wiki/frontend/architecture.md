@@ -680,6 +680,9 @@ check in the same file, which is also what catches a fourteenth builder.
   message)` is the base, each service's class adds only its NAME, and a screen reads
   `refusalStatus(e)` / `refusalCode(e)` instead of naming a service it otherwise has no reason to
   import - which is how `chat/messaging.ts` stopped pulling `ChannelService` into the send path.
+  A bare refused `Response` is typed by `refusalFromResponse(res, what)` (`utils/apiRefusalError.ts`,
+  status + the body's `code`): minesweeper, group invites, Adminer, the vault download and the
+  delivery service's key package publish, device update and commit submit/replay use it (2026-10-18).
 - **A native prompt is user-visible UI whose text you do not fully own.** A plugin fills the fields
   you leave empty from its own hardcoded defaults, which are English: `tauri-plugin-biometric`
   titles the Android prompt "Fingerprint Authentication" and labels its button "Cancel" unless

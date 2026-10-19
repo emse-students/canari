@@ -163,6 +163,8 @@ describe('a welcome_request is served one way, from either entrance (R-D9)', () 
   });
 
   it('sessionAuth reaches the responder only through this module', async () => {
+    // WHY A SOURCE TEST (WP-T5: keep). The queue is driven above; a third entrance building its own
+    // parameter object would live in `sessionAuth`, which only a live session runs.
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
     const src = readFileSync(

@@ -26,6 +26,7 @@ export const EDIT_SECTIONS = [
   'cotisations',
   'delegation',
   'formulaires',
+  'reservations',
   'partnerships',
   'republications',
   'audience',
@@ -52,6 +53,8 @@ export interface EditRights {
   documents: boolean;
   products: boolean;
   forms: boolean;
+  /** `MANAGE_BOOKINGS` (D30): the entity's bookable spaces. */
+  bookings: boolean;
   partnerships: boolean;
   proposals: boolean;
   payoutAccount: boolean;
@@ -74,6 +77,7 @@ export function editRights(
     documents: may(AssociationPermissionFlag.MANAGE_DOCUMENTS),
     products: may(AssociationPermissionFlag.MANAGE_PRODUCTS),
     forms: may(AssociationPermissionFlag.MANAGE_FORMS),
+    bookings: may(AssociationPermissionFlag.MANAGE_BOOKINGS),
     partnerships: may(AssociationPermissionFlag.MANAGE_PARTNERSHIPS),
     // Republications (POST_AS_ASSO) and co-organisations (PROPOSE_EVENT) share one queue.
     proposals:
@@ -102,6 +106,8 @@ export function mayOpenEditSection(section: EditSection, rights: EditRights): bo
       return rights.members || rights.products;
     case 'formulaires':
       return rights.forms;
+    case 'reservations':
+      return rights.bookings;
     case 'partnerships':
       return rights.partnerships;
     case 'republications':
@@ -114,11 +120,17 @@ export function mayOpenEditSection(section: EditSection, rights: EditRights): bo
 }
 
 /**
- * The sections a LIST's management area has: its profile, its roster and the archive/delete card.
- * A list sells nothing, so the shop and payment sections do not exist for it; the rights are the
- * SAME `mayOpenEditSection` answers, only the roster of keys is shorter.
+ * The sections a LIST's management area has: its profile, its roster, its bookable spaces (D38: the
+ * bookings tab opens for all three kinds) and the archive/delete card. A list sells nothing, so the
+ * shop and payment sections do not exist for it; the rights are the SAME `mayOpenEditSection`
+ * answers, only the roster of keys is shorter.
  */
-export const LIST_EDIT_SECTIONS: readonly EditSection[] = ['profile', 'members', 'danger'];
+export const LIST_EDIT_SECTIONS: readonly EditSection[] = [
+  'profile',
+  'members',
+  'reservations',
+  'danger',
+];
 
 /** Where a management area lives: associations and institutions under `/associations`, lists under `/lists`. */
 export type EditBase = '/associations' | '/lists';

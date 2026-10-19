@@ -618,7 +618,8 @@ and with `createdAt` after `GREATEST(the caller's mark, the caller's membership,
 because a mark is also the "Lu par" receipt other people see. `read-mark` accepts an optional `serverAt`
 (the row's own `createdAt`) and stores the later of it and `at`, still bounded by the newest message - the
 author's `sentAt` is earlier than `createdAt`, which left the newest message "unread" for ever. A
-membership notice that is not silent is counted until the salon is opened. The count is one LATERAL
+membership notice is sent silent (2026-10-18) and so is not counted; a salon at level `none` is left out and listed in `muted`
+(see [chat](../frontend/modules/chat.md#a-muted-salon-and-a-membership-notice-raise-no-badge-2026-10-18)). The count is one LATERAL
 per salon bounded by `createdAt >= since`, riding `IDX_channel_messages_channel_created` (migration 079):
 300 ms on 1.5M rows / 300 salons with the old `channelId` index, 6 ms with it (EXPLAIN, `jit=off`). Why the client needs it:
 [chat](../frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08).
@@ -652,6 +653,11 @@ then writes the badge from what remains — computed from the array already in h
 
 Rooms and slots; every route, its rights and its refusal codes are in
 [bookings-chantier](../bookings-chantier.md#wp-b3-as-built-2026-10-17), the only copy.
+
+### Lives (`/api/lives`)
+
+Live broadcasts, behind `LIVE_ENABLED`; every route, its rights and its refusal codes are in
+[lives](lives.md), the only copy.
 
 ### Associations (`/api/associations`)
 
@@ -1129,7 +1135,7 @@ publishes like the other four. The audience always comes from `channelAudience`,
 reaches its roster and a public one the whole community, and the publish always happens AFTER the
 row is saved - the audience is derived from access, so announcing first would address the event to
 everyone except the person it is about.
-| `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals |
+| `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals; typing goes to the channel audience MINUS the typist (user ids, so their other devices too) |
 
 The chat-gateway subscribers fan out these events to all connected devices of the affected users.
 

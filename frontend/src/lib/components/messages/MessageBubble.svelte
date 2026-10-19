@@ -28,6 +28,7 @@
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageReactions from './MessageReactions.svelte';
   import type { MessageReaction, MessageSendStatus } from '$lib/types';
+  import ControlRefusedNotice from './ControlRefusedNotice.svelte';
   import { isOrphanMediaCandidate } from '$lib/utils/chat/orphanMedia';
   import { isOutboxEntryQueued } from '$lib/utils/chat/outbox';
   import {
@@ -637,6 +638,14 @@
    * delete, instead of the spinner a missing `mediaId` would otherwise draw for ever.
    */
   const uploadFailed = $derived(isOwn && !!mediaRef && !mediaRef.mediaId && status === 'error');
+  /**
+   * A text of mine the server failed on 5xx too many times in a row: the outbox keeps it, shows it
+   * failed and marks it with a `failed` view - the one sign that its Retry has a handler. Its retry
+   * is the attachment's (`retryUpload`), so the component still never imports the queue.
+   */
+  const queuedTextFailed = $derived(
+    isOwn && !mediaRef && status === 'error' && uploadViewOf(messageId)?.phase === 'failed'
+  );
   const upload = $derived.by((): UploadView | null => {
     if (!isOwn || !mediaRef || mediaRef.mediaId) return null;
     if (status !== 'pending' && status !== 'sending') return null;
@@ -980,7 +989,7 @@
               isReadReceiptAnchor={false}
               {status}
               {readBy}
-              {onRetry}
+              onRetry={onRetry ?? (queuedTextFailed ? () => retryUpload(messageId) : undefined)}
               {onDiscard}
               {onRestore}
             />
@@ -1036,6 +1045,11 @@
       {readBy}
       outsideBubble
     />
+
+    <!-- A tombstone has nothing left to retry: its refusals are cleared where the delete lands. -->
+    {#if !isDeleted}
+      <ControlRefusedNotice {messageId} {isOwn} excerpt={textContent} />
+    {/if}
 
     <MessageEmojiPicker
       origin={emojiPickerOrigin}

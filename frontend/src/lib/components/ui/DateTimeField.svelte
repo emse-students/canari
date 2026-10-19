@@ -42,6 +42,11 @@
     id?: string;
     /** Earliest allowed value, same format. */
     min?: string;
+    /**
+     * A calendar date alone: the value (and `min`) is `YYYY-MM-DD` and no time is offered - a
+     * closure, a dated availability line. The month grid is the same one.
+     */
+    dateOnly?: boolean;
     /** Offers "Effacer" when a value is set - for an optional date. */
     clearable?: boolean;
     disabled?: boolean;
@@ -63,7 +68,8 @@
     onValueChange,
     label,
     id,
-    min = '',
+    min: minProp = '',
+    dateOnly = false,
     clearable = false,
     disabled = false,
     placeholder = '',
@@ -77,6 +83,10 @@
 
   const SHEET_QUERY = '(width < 40rem)';
 
+  /** A date-only value reads as that day's midnight, so every helper below keeps one format. */
+  const asDateTime = (v: string) => (dateOnly && v ? `${v}T00:00` : v);
+  const min = $derived(asDateTime(minProp));
+
   let open = $state(false);
   let asSheet = $state(false);
   let triggerEl: HTMLButtonElement | null = $state(null);
@@ -88,15 +98,14 @@
   const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
 
   const formatted = $derived.by(() => {
-    const dt = parseLocalDateTime(value);
+    const dt = parseLocalDateTime(asDateTime(value));
     if (!dt) return '';
     return toDate(dt).toLocaleString(locale, {
       weekday: 'short',
       day: 'numeric',
       month: 'short',
       year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+      ...(dateOnly ? {} : { hour: '2-digit', minute: '2-digit' }),
     });
   });
 
@@ -116,7 +125,7 @@
 
   /** An empty field opens on the next step of the current hour, never in the past of `min`. */
   function startingPoint(): LocalDateTime {
-    const parsed = parseLocalDateTime(value);
+    const parsed = parseLocalDateTime(asDateTime(value));
     if (parsed) return parsed;
     const now = fromDate(new Date());
     const rounded = Math.ceil(now.minute / minuteStep) * minuteStep;
@@ -154,7 +163,8 @@
   }
 
   function confirm() {
-    const chosen = formatLocalDateTime(min ? clampToMin(draft, min) : draft);
+    const full = formatLocalDateTime(min ? clampToMin(draft, min) : draft);
+    const chosen = dateOnly ? full.slice(0, 10) : full;
     Log.d('DATETIME', `"${label}" -> ${chosen === value ? 'unchanged' : 'changed'}`);
     if (chosen !== value) onValueChange(chosen);
     close(true);
@@ -256,37 +266,39 @@
       </div>
     </div>
 
-    <div class="flex items-start justify-center gap-2 sm:pt-9">
-      <div bind:this={hoursEl} class={COLUMN} role="group" aria-label={m.ui_datetime_hours()}>
-        {#each HOURS as h (h)}
-          <button
-            type="button"
-            aria-pressed={draft.hour === h}
-            class="{CELL} {draft.hour === h
-              ? 'bg-amber-400 text-black'
-              : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-            onclick={() => (draft = { ...draft, hour: h })}
-          >
-            {pad2(h)}
-          </button>
-        {/each}
+    {#if !dateOnly}
+      <div class="flex items-start justify-center gap-2 sm:pt-9">
+        <div bind:this={hoursEl} class={COLUMN} role="group" aria-label={m.ui_datetime_hours()}>
+          {#each HOURS as h (h)}
+            <button
+              type="button"
+              aria-pressed={draft.hour === h}
+              class="{CELL} {draft.hour === h
+                ? 'bg-amber-400 text-black'
+                : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
+              onclick={() => (draft = { ...draft, hour: h })}
+            >
+              {pad2(h)}
+            </button>
+          {/each}
+        </div>
+        <span class="text-text-muted pt-1.5 text-sm font-bold">:</span>
+        <div bind:this={minutesEl} class={COLUMN} role="group" aria-label={m.ui_datetime_minutes()}>
+          {#each minutes as mi (mi)}
+            <button
+              type="button"
+              aria-pressed={draft.minute === mi}
+              class="{CELL} {draft.minute === mi
+                ? 'bg-amber-400 text-black'
+                : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
+              onclick={() => (draft = { ...draft, minute: mi })}
+            >
+              {pad2(mi)}
+            </button>
+          {/each}
+        </div>
       </div>
-      <span class="text-text-muted pt-1.5 text-sm font-bold">:</span>
-      <div bind:this={minutesEl} class={COLUMN} role="group" aria-label={m.ui_datetime_minutes()}>
-        {#each minutes as mi (mi)}
-          <button
-            type="button"
-            aria-pressed={draft.minute === mi}
-            class="{CELL} {draft.minute === mi
-              ? 'bg-amber-400 text-black'
-              : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-            onclick={() => (draft = { ...draft, minute: mi })}
-          >
-            {pad2(mi)}
-          </button>
-        {/each}
-      </div>
-    </div>
+    {/if}
   </div>
 
   {#snippet footer()}

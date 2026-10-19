@@ -1459,7 +1459,7 @@ member excluded from a private salon received, on their own authenticated socket
 | Event | What it carries |
 |---|---|
 | `channel.message.created` | `ciphertext`, `nonce`, `senderSessionId`, `messageIndex` - inline |
-| `channel.typing` | who is writing there, live |
+| `channel.typing` | who is writing there, live (never sent back to the typist) |
 | `channel.pin`, `channel.message.deleted` | what is pinned, what was removed |
 | `channel.poll.vote` | the tally |
 | `channel.updated`, `channel.member.joined` | the salon's NAME, and who was added to it |
@@ -2264,7 +2264,7 @@ know*, which is a different sentence from *no*.
 | --- | --- |
 | `messaging.service.ts` | reads the two `distribution*` columns it was already fetching the row for |
 | `push-payload.ts` | sends `isKeyDistribution`, or OMITS the key when the row could not be read |
-| Kotlin `onMessageReceived` | `silent && !CALLS_ENABLED && isKeyDistribution != true` still returns; a key-material frame goes on |
+| Kotlin `onMessageReceived` | `silent && isKeyDistribution != true` still returns; a key-material frame goes on (the guard read the calls switch too until 2026-10-18 - [calls](../frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)) |
 | `background.rs` | passes a non-renderable answer through with a `reason` TOKEN instead of collapsing it to one refusal |
 | `proto_fields.rs` | reads fields 10 (one seed) and 12 (a BUNDLE, as a list) and attaches `{channelId, sessionId, seedB64, createdAt}` |
 | Kotlin `decryptProto` | switches on the same token, into `PushDecrypt.KeyMaterial` |
@@ -3494,6 +3494,15 @@ not: commits and application frames share one per-group FIFO, and its `control` 
 the native `group_reset`. The frames were LIVE requests (339-469 B) sealed by other members' devices
 3-6 epochs behind, so every up-to-date member found them unreadable, and each loss drives a re-ask.
 The sender side is open in the [backlog](../backlog.md).
+
+**The server names the lagging sender (2026-10-18).** chat-delivery reads every application frame's
+clear epoch (`mlsFrameEpoch`) and, under the same locked group read as the write
+(`enqueueForLiveGroup`), compares it with `activeEpoch`. A frame below `activeEpoch - 2`
+(`isBeyondPastEpochWindow`, the client's `max_past_epochs`) logs `STALE_EPOCH_FRAME group=...
+keyGroup=... frameEpoch=E activeEpoch=A behind=N sender=user:device app=<build> rows=R` at `warn`.
+The build is the sender's KeyPackage `deviceAppVersion`, read by the query the fan-out already
+makes. It is REPORTED, never refused: a `stale_epoch` refusal changes what every shipped client sees
+on a send, and it waits for this line to say which builds lag. Commits and Welcomes are not checked.
 
 ## 24. A history ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, decided 2026-10-18)
 

@@ -166,6 +166,15 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: "a booking space's wall clock (D25), server and screen",
+    compare: 'exact',
+    why: 'one question - "what instant is this local time in the space\'s zone, and back" - answered by the server for every rule and booking and by the organiser\'s and booker\'s screens for every date they show or take, which must not disagree on a DST night. No shared TS package between the NestJS service and the SvelteKit app, and the file has no import, which is what lets the copies be identical.',
+    files: [
+      'apps/social-service/src/bookings/zoned-time.ts',
+      'frontend/src/lib/bookings/zonedTime.ts',
+    ],
+  },
+  {
     what: 'the presence-audience question, validated on both answering services',
     compare: 'exact',
     why: 'the gateway asks chat-delivery (shared conversations) and social-service (shared communities) ONE question, `{ viewerId, userIds }`, and takes the union of the answers - so the two must parse it identically, or one half refuses what the other answers and every presence read is a 503. No shared TS package; the cap is the same number as MAX_PRESENCE_USERS in the gateway, pinned by libs/contracts/presence-audience.cases.json, which both specs and presence.rs read.',
@@ -181,6 +190,15 @@ export const DECLARED_GROUPS = [
     files: [
       'apps/chat-delivery-service/src/utils/presence-audience.spec.ts',
       'apps/social-service/src/utils/presence-audience.spec.ts',
+    ],
+  },
+  {
+    what: "a booking space's booking window (D26), server and screen",
+    compare: 'exact',
+    why: 'one question - "may this range be booked now" - decided by the server on its own clock and drawn by the grid on the device clock, which must not disagree on a rule or its order. No shared TS package between the NestJS service and the SvelteKit app; the file takes plain numbers rather than either side\'s model, which is what lets the copies be identical, and both specs read libs/contracts/booking-window.cases.json.',
+    files: [
+      'apps/social-service/src/bookings/booking-window.ts',
+      'frontend/src/lib/bookings/bookingWindow.ts',
     ],
   },
   {

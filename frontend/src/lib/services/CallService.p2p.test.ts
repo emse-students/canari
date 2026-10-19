@@ -4,6 +4,7 @@ import type { IMlsService } from '$lib/mls-client';
 import { CallService, CALL_ICE_TRANSPORT_POLICY } from './CallService';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
 import { m } from '$lib/paraglide/messages';
+import { flushMacrotask } from '../../test/flush';
 
 /**
  * The client half of a PEER-TO-PEER 1:1 call (lot 1 of the revival, 2026-10-17), driven through
@@ -16,12 +17,19 @@ import { m } from '$lib/paraglide/messages';
  */
 
 vi.mock('$lib/features', () => ({ CALLS_ENABLED: true }));
+vi.mock('$lib/users/blocks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/users/blocks')>()),
+  isBlockedWith: vi.fn(async () => false),
+}));
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
 vi.mock('$lib/utils/callPresence', () => ({ publishCallPresence: vi.fn(async () => {}) }));
 vi.mock('$lib/utils/chat/callSystemMessages', () => ({
   getCallSystemMessageContext: () => null,
   recordCallMissed: vi.fn(),
+}));
+vi.mock('$lib/stores/notificationPreferences.svelte', () => ({
+  notificationPreferences: { callsAllowed: vi.fn(() => true) },
 }));
 vi.mock('$lib/stores/auth', () => ({ getToken: async () => 'session-token' }));
 vi.mock('$lib/utils/callAudio', () => ({
@@ -180,7 +188,7 @@ const fakeMls = {
 } as unknown as IMlsService;
 
 /** Lets every pending promise and microtask of the service settle. */
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const settle = () => flushMacrotask();
 
 beforeEach(() => {
   server.ringTimeoutMs = 60_000;
@@ -292,7 +300,7 @@ describe('a peer-to-peer call, client side', () => {
 
   it('as the polite side, never opens and answers the initiator offer', async () => {
     const service = new CallService(fakeMls);
-    service.handleCallSignal(
+    await service.handleCallSignal(
       'peer@example.org',
       'group-1',
       {
@@ -366,7 +374,15 @@ describe('a peer-to-peer call, client side', () => {
  * an EVENT - registered before the wait, shorter than it - never asserting a wall clock.
  */
 describe('the ring window, both sides', () => {
-  const pastWindow = () => new Promise((r) => setTimeout(r, 30));
+  // The window is a timer: fake it, and step past it. `setTimeout` only, so the harness's own
+  // microtask and macrotask yields still run.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const pastWindow = () => vi.advanceTimersByTimeAsync(30);
   const invite = (ringTimeoutMs?: number) => ({
     callId: 'room-1',
     offerSdp: 'START',
@@ -404,7 +420,7 @@ describe('the ring window, both sides', () => {
     const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
     vi.mocked(recordCallMissed).mockClear();
     const service = new CallService(fakeMls);
-    service.handleCallSignal(
+    await service.handleCallSignal(
       'peer@example.org',
       'group-1',
       invite(5),
@@ -419,9 +435,24 @@ describe('the ring window, both sides', () => {
     expect(recordCallMissed).not.toHaveBeenCalled();
   });
 
-  it('does not ring for an invite that carries no window', () => {
+  it('does not ring in a conversation whose call permission refuses it', async () => {
+    const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
+    vi.mocked(notificationPreferences.callsAllowed).mockReturnValueOnce(false);
     const service = new CallService(fakeMls);
-    service.handleCallSignal(
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      invite(5),
+      'me@example.org',
+      'device-1'
+    );
+    expect(notificationPreferences.callsAllowed).toHaveBeenCalledWith('group-1');
+    expect(get(service.callState)).toBe('idle');
+  });
+
+  it('does not ring for an invite that carries no window', async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
       'peer@example.org',
       'group-1',
       invite(undefined),
@@ -499,7 +530,7 @@ describe('a late answer', () => {
     const { showToast } = await import('$lib/stores/toast.svelte');
     vi.mocked(showToast).mockClear();
     const service = new CallService(fakeMls);
-    service.handleCallSignal(
+    await service.handleCallSignal(
       'peer@example.org',
       'group-1',
       {
@@ -517,6 +548,36 @@ describe('a late answer', () => {
 
     expect(showToast).toHaveBeenCalledWith(m.call_over(), 'warning');
     expect(FakeSocket.instances).toHaveLength(0);
+  });
+});
+
+/** A refused answer (a block set while the call rang) told nobody it was answered. */
+describe('a refused answer', () => {
+  it('asks for the token before sending the answered frame, so a refusal sends only the hangup', async () => {
+    server.roomTokenStatus = 403;
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+    order.length = 0;
+
+    await service.acceptCall('group-1', 'room-1');
+    await settle();
+
+    expect(order[0]).toBe('api:/api/calls/room-token');
+    // The one MLS frame is the hangup; the answered frame never left.
+    expect(order.filter((o) => o === 'mls')).toHaveLength(1);
+    expect(order).not.toContain('api:/api/calls/ice-servers');
   });
 });
 

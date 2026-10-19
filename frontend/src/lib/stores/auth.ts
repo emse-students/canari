@@ -104,6 +104,19 @@ let _pendingRefresh: Promise<string> | null = null;
  * which is "a saved user, nobody logged in": the vault unlock, its 401, and a second sign-out.
  */
 let _signOutGeneration = 0;
+
+/**
+ * The number of sign-outs this process has started (see `_signOutGeneration`), for work that spans
+ * awaits and must not complete for an account that signed out meanwhile.
+ *
+ * A caller captures it when it starts and compares it after each await: a different value means a
+ * sign-out began in between, whether or not it has finished. The login is the case that named it - a
+ * sign-out during a ~12 s native decrypt found no live session to stop, and the login then set
+ * `isLoggedIn` for a signed-out user (`loginImpl`).
+ */
+export function signOutGeneration(): number {
+  return _signOutGeneration;
+}
 /**
  * How many {@link clearAuth} calls are running; while any is, a refresh asked for is not sent at all.
  * A count because sign-outs overlap - see `clearAuth`.

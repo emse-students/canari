@@ -945,6 +945,7 @@
     const base = {
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
+      invalidateRestores: () => globalConvs.invalidateRestores(),
       beginConversationSource: () => globalConvs.beginConversationSource(),
       endConversationSource: () => globalConvs.endConversationSource(),
       previewLandingTarget: (input: {

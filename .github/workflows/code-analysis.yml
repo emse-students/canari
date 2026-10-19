@@ -53,7 +53,7 @@ jobs:
   codeql:
     name: CodeQL Security Analysis
     if: inputs.scope == 'all' || inputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: read
       contents: read
@@ -122,7 +122,7 @@ jobs:
   secret-scan:
     name: Scan for Secrets
     if: inputs.scope == 'all' || inputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -161,7 +161,7 @@ jobs:
   guards:
     name: Guard the committed lockfiles
     if: inputs.scope == 'all' || inputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -242,7 +242,7 @@ jobs:
   npm-audit:
     name: npm audit (${{ matrix.tree }})
     if: inputs.scope == 'all' || inputs.scope == 'dependencies'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
@@ -458,7 +458,7 @@ jobs:
   cargo-audit:
     name: cargo audit
     if: inputs.scope == 'all' || inputs.scope == 'dependencies'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:

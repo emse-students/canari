@@ -13,6 +13,7 @@
 import { Log } from '$lib/utils/Log';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { MediaPurgedError } from '$lib/utils/mediaErrors';
 
 /**
@@ -22,7 +23,7 @@ import { MediaPurgedError } from '$lib/utils/mediaErrors';
  * @returns        The packed bytes, ready for `unpackEncryptedBlob`.
  * @throws MediaPurgedError when the media service answers 410: the blob is gone for good and
  *         only a new upload can replace it.
- * @throws Error for any other refusal, which may be transient.
+ * @throws ApiRefusalError (status + code) for any other refusal, which may be transient.
  */
 export async function fetchVaultCiphertext(mediaId: string): Promise<ArrayBuffer> {
   const mediaBase = socialUrl() || '';
@@ -33,7 +34,7 @@ export async function fetchVaultCiphertext(mediaId: string): Promise<ArrayBuffer
   }
   if (!res.ok) {
     Log.d(`vaultDownload: refused with ${res.status}`);
-    throw new Error(`Download failed: ${res.status}`);
+    throw await refusalFromResponse(res, 'Vault download refused');
   }
   return res.arrayBuffer();
 }

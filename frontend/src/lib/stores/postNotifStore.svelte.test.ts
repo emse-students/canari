@@ -35,7 +35,7 @@ describe('postNotifStore.load', () => {
 
     load.mockResolvedValueOnce([] as PostNotification[]);
     await postNotifStore.load();
-    load.mockRejectedValue(new TypeError('Failed to fetch'));
+    load.mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
     await postNotifStore.load();
     expect(log).toHaveBeenCalledTimes(2);
   });

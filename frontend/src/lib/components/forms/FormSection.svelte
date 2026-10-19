@@ -59,7 +59,7 @@
     <div class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2">
       <SectionIcon size={20} />
     </div>
-    <h2 class="text-text-main text-lg font-bold">{title}</h2>
+    <h2 class="text-text-main min-w-0 text-lg font-bold break-words">{title}</h2>
     {#if badge}
       <span
         class="text-text-muted bg-cn-border/40 ml-auto rounded-full px-2.5 py-1 text-xs font-semibold"
@@ -74,7 +74,7 @@
       type="button"
       onclick={() => (userToggled = !open)}
       aria-expanded={open}
-      class="flex w-full items-center gap-2.5 text-left"
+      class="flex w-full flex-wrap items-center gap-2.5 text-left"
     >
       {@render header()}
       <ChevronDown
@@ -85,7 +85,7 @@
       />
     </button>
   {:else}
-    <div class="mb-4 flex items-center gap-2.5 sm:mb-5">
+    <div class="mb-4 flex flex-wrap items-center gap-2.5 sm:mb-5">
       {@render header()}
     </div>
   {/if}

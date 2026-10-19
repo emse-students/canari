@@ -3,6 +3,7 @@ import {
   digestIdentity,
   resetHistoryDigestRendezvousForTests,
 } from '$lib/utils/chat/historyDigestRendezvous';
+import { flushMacrotask } from '../../../test/flush';
 
 /**
  * A DIGEST OVERHEARD BY A MEMBER THAT WAS NEITHER SIDE OF THE EXCHANGE.
@@ -66,7 +67,7 @@ const DIGEST_FRAME = {
 };
 
 /** Lets the `void`-ed chain behind `answerAfterMailboxDrained` run. */
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const settle = () => flushMacrotask();
 
 beforeEach(() => {
   resetHistoryDigestRendezvousForTests();

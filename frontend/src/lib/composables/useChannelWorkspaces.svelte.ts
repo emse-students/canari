@@ -1827,7 +1827,16 @@ export function useChannelWorkspaces() {
             members: displayName,
           });
           const systemBytes = encodeAppMessage(mkSystem('memberAdded', systemText as string));
-          await sendEncryptedChannelMessage(channelConversationId, systemBytes);
+          // SILENT: the row is opaque to the server, so the sender says it is a notice - it must
+          // neither count as unread for the salon's members nor ring their phones.
+          await sendEncryptedChannelMessage(
+            channelConversationId,
+            systemBytes,
+            undefined,
+            undefined,
+            undefined,
+            { silent: true }
+          );
         } catch (err) {
           console.warn('[Channel Invite] Failed to send system message to channel:', err);
           // Do not block the invitation if the system message fails

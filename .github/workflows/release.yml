@@ -92,7 +92,7 @@ jobs:
   # than merely reported.
   preflight:
     name: May this release start?
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       checks: read
@@ -249,7 +249,7 @@ jobs:
   bump:
     name: Write the version across the project
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       # THE COMMIT EVERY ARM BELOW BUILDS. Resolved here, once, and passed down - never re-derived
       # from `main`, which moves: the bump's own push raises a `push` event, so CI runs on `main`
@@ -344,7 +344,7 @@ jobs:
     name: Land the changelog on main
     needs: [preflight, bump]
     if: needs.preflight.outputs.prerelease == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Mint the identity the ruleset lets push to main
         id: app-token
@@ -535,7 +535,7 @@ jobs:
   notes:
     name: Release notes
     needs: [preflight, bump]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -620,7 +620,7 @@ jobs:
     name: Did it reach production
     needs: [preflight, bump, serve-prod]
     if: always() && needs.preflight.outputs.prerelease == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:

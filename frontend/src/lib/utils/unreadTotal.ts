@@ -46,9 +46,8 @@ export function channelUnreadCount(
  * True when ANY salon of a community has something to read - what the rail's dot means.
  *
  * Derived from the per-salon count, never stored: a second ledger would be one more thing to clear.
- * There is no mute filter because none exists on this side - a salon's notification level is a
- * server-held PUSH preference that the salon rows' own badges ignore too, so the dot agrees with
- * the badges it summarises.
+ * There is no mute filter HERE: a muted salon's count is zero at the source (the server leaves it
+ * out and the live tally skips it, `isSalonMuted`), so the dot agrees with the badges it summarises.
  */
 export function communityHasUnread(
   channels: readonly (HasUnreadCount & { id: string })[],
