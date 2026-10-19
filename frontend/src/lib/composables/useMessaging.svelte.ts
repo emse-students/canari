@@ -789,7 +789,7 @@ export function useMessaging() {
         // returns on the only path an inbound message can take, and between them they can absorb a
         // message without leaving anything behind. A card that never appeared has to be explainable
         // from a log, and "we already had it" is one of the explanations.
-        console.log(`[ADD_MSG] Duplicate ignored during a bulk ingest id=${id}…`);
+        console.log(`[ADD_MSG] Duplicate ignored during a bulk ingest id=${id}`);
         return;
       }
       if (!upgrades) {
@@ -804,9 +804,7 @@ export function useMessaging() {
         raiseOverlayIfWorthAnnouncing();
         return;
       }
-      console.log(
-        `[ADD_MSG] Preview upgrade during a bulk ingest id=${id}… - taking the live path`
-      );
+      console.log(`[ADD_MSG] Preview upgrade during a bulk ingest id=${id} - taking the live path`);
     }
 
     const convo = ctx.conversations.get(normalized);
@@ -905,10 +903,10 @@ export function useMessaging() {
             ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
           });
         }
-        console.log(`[ADD_MSG] ✓ Message upgraded: id=${newMsg.id}…`);
+        console.log(`[ADD_MSG] ✓ Message upgraded: id=${newMsg.id}`);
         return;
       }
-      console.log(`[ADD_MSG] Duplicate ignored id=${newMsg.id}…`);
+      console.log(`[ADD_MSG] Duplicate ignored id=${newMsg.id}`);
       return;
     }
 
@@ -935,7 +933,7 @@ export function useMessaging() {
       messages: insertMessageOrdered(convo.messages, newMsg),
       lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
     });
-    console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id}…`);
+    console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id}`);
 
     // A salon echo has no server id yet: announced to the sibling tabs now, it would be a row they
     // can never reconcile. `applySalonEchoChange` announces it once it is re-keyed.

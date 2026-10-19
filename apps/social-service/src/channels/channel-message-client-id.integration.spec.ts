@@ -38,6 +38,11 @@ const migration = readFileSync(
   'utf8'
 );
 
+const fanoutMigration = readFileSync(
+  join(__dirname, '..', 'migrations', '093_channel_message_fanout.sql'),
+  'utf8'
+);
+
 const WS = '00000000-0000-4000-8000-0000000000a8';
 const SALON = '00000000-0000-4000-8000-0000000000c8';
 const ME = 'author';
@@ -165,6 +170,24 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     expect(index).toHaveLength(1);
     expect(index[0].indexdef).toContain('UNIQUE');
     expect(index[0].indexdef).toContain('IS NOT NULL');
+  });
+
+  it('migration 093 (the fan-out outbox) applies twice and goes with its message', async () => {
+    await q(fanoutMigration);
+    await q(fanoutMigration);
+    const sent = await send(ME);
+    await q(`INSERT INTO channel_message_fanout ("messageId", payload) VALUES ($1, '{}'::jsonb)`, [
+      sent.id,
+    ]);
+    await q(`DELETE FROM channel_messages WHERE id = $1`, [sent.id]);
+    const left: unknown[] = await q(`SELECT 1 FROM channel_message_fanout WHERE "messageId" = $1`, [
+      sent.id,
+    ]);
+    expect(left).toHaveLength(0);
+    // The send above published and pushed: later tests count calls from a clean slate.
+    await published();
+    publish.mockClear();
+    pushes.mockClear();
   });
 
   it('a repeat is answered with the stored row: one row, one broadcast, one push', async () => {

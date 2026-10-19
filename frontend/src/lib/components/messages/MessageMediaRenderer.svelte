@@ -396,6 +396,7 @@
         <div class="w-[20rem] max-w-full">
           <VoiceMessagePlayer
             src={blobUrl}
+            mimeType={mediaRef.mimeType}
             onDownload={() => downloadBlob(blobUrl!, mediaRef.fileName ?? 'vocal.webm')}
           />
         </div>

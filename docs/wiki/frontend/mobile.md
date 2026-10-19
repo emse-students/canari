@@ -1027,7 +1027,12 @@ Now (`canari_push.mm`):
 - **`class_replaceMethod` ADDS the method**, chaining to any later wry implementation - the APNs
   token hook's technique. The application's delegate is then re-assigned once
   (`CanariReassignAppDelegate`), because UIKit records which optional methods a delegate implements
-  when it is SET; Firebase's own proxy does the same after it swizzles.
+  when it is SET; Firebase's own proxy does the same after it swizzles. **And, like Firebase, it then
+  keeps the delegate in a static strong reference**: `UIApplication.delegate` does not retain, and
+  without that copy `v1.3.0-alpha.1`/`-alpha.2` aborted whenever the accessibility tree was read and
+  never received the APNs token (P1 of 2026-10-19 in [backlog](../backlog.md): a dead responder in
+  the chain is read from `pymobiledevice3 crash pull`; that it is the delegate is inferred, and a
+  becoming-active log line settles it).
 - **Only a silent frame is acted on** (`CanariIsSilentFrame`: `content-available: 1` and no
   `alert`); an alert stays the extension's (killed, background) and `willPresentNotification`'s
   (foreground), or it would be drawn twice.

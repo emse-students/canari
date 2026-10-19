@@ -115,6 +115,12 @@ runs it or approves it explicitly); sending the DPO dossier; the DSI log-retenti
 - **The MiConnect terms hold is lifted by the lead** as soon as the three preconditions listed above are verified; the lead tells the user.
 - **The KLIPY key is not rotated.** It was read container-side for the measurement and never printed.
 
+## Seen in the 2026-10-18 web console log - three observations, none built
+
+- **The live console prints message plaintext.** `[SEND] handleSendChat ... text=` writes the first 40 characters of the message to the devtools console as it is sent. The in-app log redacts that field, the live console does not. Decide whether redaction belongs at the console logger rather than per call site.
+- **Firefox disabled scroll anchoring on the `/posts` feed.** Ten consecutive sub-pixel adjustments of about 0.1667 px preceded it; rounding at a fractional device-pixel ratio is suspected. Reproduce with a `ResizeObserver` log on the feed container before changing anything.
+- **A seed asked by two phones was declined by a web device** (`holding 0 - missing ... declining`). Open observation: separate the causes by who should have held it, which needs a read of production state (private operations notes), not a client change.
+
 ## P3 - The distribution path's device check: ship on an alpha, read `[SENDER_MISMATCH] path=distribution` first
 
 On a key-group frame `openDistributionFrame` compares only the envelope's USER with the MLS credential; the envelope's `senderDeviceId` stays self-asserted ([channel-encryption section 21.1](protocols/channel-encryption.md#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)). Handing it to the sender check would REFUSE every frame whose device disagrees, and production has never been read for `path=distribution kind=device`, so it was taken out of #2027 (user, 2026-10-18). What it would buy: a device could no longer answer "I hold nothing" in a sibling's name ([section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)). Order: ship the comparison on an alpha, read `[SENDER_MISMATCH] path=distribution` on chat-delivery on dev, then on production, before any stable carries it.
@@ -340,17 +346,13 @@ Another tab's "Take over" makes the changing leader `releaseLeadership`, and the
 
 `restore.sh` exports the current erasure journal before it replaces the database and replays it after; a returner's new account is kept ([account-erasure](account-erasure.md#a-restore-replays-the-erasures)). Delete this entry when a release carries it: both the host's checkout of `restore.sh` and the core-service image move only with a release ([backup README](../../infrastructure/backup/README.md)).
 
-## P2 - Deleting the account leaves its local message database at rest (found 2026-10-15, review of #1892) - DECIDED 2026-10-18
+## P2 - Deleting the account leaves its local message database at rest (found 2026-10-15, review of #1892) - BUILT (#2023), in `v1.3.0-alpha.1`
 
-`SettingsDangerZone` runs `deleteMyAccount()`, then `clearAuth()`, then `leaveSignedOut()`; none deletes `CanariDB_<userId>` / `canari_<userId>.db`, so every DM row (and every salon's last page, [F4](frontend/community-open-budget.md#f4-built-2026-10-15)) stays on the device under the device key. A sign-out keeps it on purpose. **Decided (user, 2026-10-18): a deletion wipes THAT account's database and its vault slot, nothing else** - never `wipeDeviceToFactory`. Owed: the build and a test ([WP-DEL-LOCAL](#decided-by-the-user-on-2026-10-18---every-design-question-answered)).
+`SettingsDangerZone` runs `deleteMyAccount()`, then `clearAuth()`, then `leaveSignedOut()`; none deletes `CanariDB_<userId>` / `canari_<userId>.db`, so every DM row (and every salon's last page, [F4](frontend/community-open-budget.md#f4-built-2026-10-15)) stays on the device under the device key. A sign-out keeps it on purpose. **Decided (user, 2026-10-18): a deletion wipes THAT account's database and its vault slot, nothing else** - never `wipeDeviceToFactory`. Built with its tests in #2023 ([auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)); delete this entry when a stable carries it ([WP-DEL-LOCAL](#decided-by-the-user-on-2026-10-18---every-design-question-answered)).
 
 ## P2 - A deleted account's community keys stay on the phone in per-install files with no owner (found 2026-10-18, fourth review of #2023)
 
 `graine_seeds.json` (with its `.lock`) and `channel_keys.json` are ONE file per install and hold community keys that can decrypt history the server still stores. Neither records whose it is, so the account-deletion wipe cannot remove them (and a sign-out already leaves them, deliberately). **The minimal safe rule** is the one `delete_user_push_files` uses: remove only when an ownership proof names the deleted account, as `push_context.json` does. **Check first**: two local accounts in the same community may share entries, and whether the live account re-mirrors them from its own session decides if a per-account split or an owner field is the right cut ([auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
-
-## P3 - `remove_user_push_files` can lose a new sign-in's push context (found 2026-10-18, fourth review of #2023)
-
-Between reading `push_context.json` (to prove the deleted account owns it) and deleting it, a concurrent `store_push_context` for a NEW sign-in can write its own context - which the delete then removes, leaving that session with no push context until it is stored again. **Owed**: the read-check-delete done under the same lock `store_push_context` takes, or a compare on the bytes read, and a Rust test of the interleaving (`commands/push.rs`).
 
 ## P3 - The case-collision refusal keeps the deletion marker for ever (found 2026-10-18, fourth review of #2023)
 
@@ -403,6 +405,10 @@ Decided: declare system gesture exclusion rects for the right edge band while a 
 ## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, draft PR in progress
 
 Decided: the iPhone app FOLLOWS the system text size, like Android. Read on `1.2.9-alpha.1` (2026-10-15): cold start PASS; a size changed while backgrounded applied only after a cold start, now carried from native ([mobile](frontend/mobile.md#the-iphone-follows-dynamic-type-decided-by-the-user-2026-10-14)). **Owed: an iPhone 12 reading of the background change, the rail salon name and a long heading at 2x.**
+
+## P1 - The iOS app aborts whenever its accessibility tree is read, since `v1.3.0-alpha.1` (iPhone 12, 2026-10-19) - FIX ON A DRAFT PR, UNVERIFIED
+
+**Observed:** any WDA query (element lookup, tree, even a coordinate tap) kills the app within ~10 ms: `HangTracer name=UIAutomation`, then `Corpse allowed`, then `ASI found [libsystem_c.dylib] (safe) 'abort() called'`. `1.2.9` survives the same query; `1.3.0-alpha.1` and `-alpha.2` abort. VoiceOver users would hit the same path. **Bisected by reading `v1.2.9..v1.3.0-alpha.1`:** no dependency moved (tao 0.37.1, wry 0.57.0, objc2 0.6.4 on both sides); the native iOS changes are #2000 (`canari_push.mm`), #2037 (a `locale` argument through three FFI calls, reached only by a push), the NSE (another process) and sound resources. **Prime candidate: #2000's `CanariReassignAppDelegate`** (`app.delegate = nil; app.delegate = delegate`), the one new thing that touches an object UIKit's accessibility runtime reads. Firebase's own `reassignAppDelegate`, which it copied, keeps the delegate in a static strong `gOriginalAppDelegate` on the very next line; ours keeps it in a local, so the delegate `UIApplicationMain` created appears to die when the function returns. **Corroborated by the same syslog:** SpringBoard logs `Sending received device token to 1 connections` on both launches, and `[CanariPush] APNs token received` - the token hook ON that delegate - never prints. **The backtrace IS readable, with no App Store Connect: `pymobiledevice3 crash pull <dir>` on the USB-attached phone** (reports under `Retired/`). Read 2026-10-19: seven `Canari-2026-10-18-*.ips`, bug type 309, `SIGABRT`, one on `-alpha.1` (build `100300001`) and six on `-alpha.2`. ONE carries the reason: `NSInvalidArgumentException: -[_UISceneCloudKitShareMetadataBSActionHandler _keyboardShortcutMenuLeaves]: unrecognized selector`, thrown from `-[UIResponder _enumerateKeyboardShortcutsInChainWithOptions:usingBlock:]` <- `-[UIApplication _immediatelyUpdateSerializableKeyCommands]` <- the after-CA-commit queue <- `UIApplicationMain` - a responder-only message reaching a UIKit-internal object, i.e. a FREED responder whose memory was reused, in the chain that ends UIApplication -> its delegate (tao's `AppDelegate`, a `UIResponder`). The other six abort with no reason recorded: disassembled against the release `Canari.ipa` (UUID matched), their frames are `start_app`'s `catch_unwind` landing pad -> `__rust_panic_cleanup`'s foreign-exception branch -> "Rust cannot catch foreign exceptions" -> `abort`, so an Objective-C exception escaped `UIApplicationMain` there too and Rust's abort erased its frames. `_AXDyldImageMonitor` is live in each - the accessibility runtime had just loaded. **So: a dead responder at the end of the chain is READ; that it is the delegate is still the hypothesis**, which the fix's becoming-active log (`app delegate is the kept-alive one` / `is nil` / `differs`) settles. Fix: keep the delegate in a static strong reference (draft PR, compiled nowhere - this Windows box cannot build iOS). **Confirms it:** on a build with the fix, (1) a WDA tree/element query no longer aborts, and (2) `[CanariPush] APNs token received` appears in the syslog after `registerForRemoteNotifications`; and (3) the becoming-active line reads `the kept-alive one`; a 1.2.9 syslog showing the token line would add to it. If (1) still aborts with the fix, the next candidate is the reassignment ITSELF (UIKit re-reading a delegate that does not declare `UIApplicationDelegate`, as GoogleUtilities logs at launch) - drop it and accept unseen silent frames until a backtrace says otherwise. The silent-frame reading of #2000 below is void until this closes.
 
 ## P2 - iOS silent frames reach no Canari native code, background or foreground (found 2026-10-15, iPhone 12 syslog)
 
@@ -461,7 +467,7 @@ Production, group `656597dc`: the browser lacked one message the owner's phone h
 
 ## P2 - Key-group requests sealed 3-6 epochs behind are unreadable by every current member (console export, 2026-10-12)
 
-Four senders' devices sealed seed requests at epochs 135-138 while the key group was at 141. No current member can open them (`max_past_epochs` 2), and each loss drives a re-ask. The drain order was REFUTED as the cause ([channel-encryption §23](protocols/channel-encryption.md#not-the-cause-the-drain-order)). **Candidate**: chat-delivery answers `stale_epoch` to an application frame on a key group whose MLS epoch is below active - 2, so the sender catches up and re-seals instead of sending something nobody can read. **First measure**: the `at epoch E` of the new `[GRAINE] asked` line, on the sender side, to find out which client versions lag.
+Four senders' devices sealed seed requests at epochs 135-138 while the key group was at 141. No current member can open them (`max_past_epochs` 2), and each loss drives a re-ask. The drain order was REFUTED as the cause ([channel-encryption §23](protocols/channel-encryption.md#not-the-cause-the-drain-order)). **Candidate**: chat-delivery answers `stale_epoch` to an application frame on a key group whose MLS epoch is below active - 2, so the sender catches up and re-seals instead of sending something nobody can read. **First measure**: chat-delivery now logs `STALE_EPOCH_FRAME` with the sender's device, build and distance for every such frame ([channel-encryption §23](protocols/channel-encryption.md#not-the-cause-the-drain-order)); read it on production after the deploy to find out which client versions lag, then decide the refusal.
 
 ## P2 - A notification tap takes 2.7 s to a usable conversation when killed, 5 s behind the PIN (measured 2026-10-11)
 
@@ -473,7 +479,7 @@ Salon writes now wait for the link and a repeat is one row (WP-OFF-3/4, PK4 pull
 
 ## P3 - A salon row committed by a process that died before its broadcast is never broadcast or pushed (review of #2005, 2026-10-18)
 
-`sendMessage` commits the row, then publishes `channel.message.created` and fans out the push fire-and-forget. A process killed between the two leaves a stored row no peer is told about live and no phone is rung for; peers get it at their next history load. A repeat of that send (WP-OFF-3) is answered with the stored row and returns BEFORE the publish, so it does not heal it either. **Not fixed in the follow-up PR, deliberately:** (a) "publish on a replay of a young row" is a clock deciding a delivery; (b) a `published` column on `channel_messages` reopens the deploy window in which EVERY salon INSERT fails (TypeORM names each column in every INSERT, [section 16](frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)); (c) a marker read only on a replay heals only the rare send whose answer was ALSO lost, while the same crash with no replay stays lost. **The fix is a transactional outbox**: a `channel_message_fanout` row inserted in the send's transaction, deleted once the publish and the push fan-out are handed off, and drained at boot (a crash is the only thing that leaves one behind), with the replay path draining its own row at once. One new table and a migration, so it gets its own pull request. Clients already settle a duplicate frame by message id.
+`sendMessage` commits the row, then publishes `channel.message.created` and fans out the push fire-and-forget. A process killed between the two leaves a stored row no peer is told about live and no phone is rung for; peers get it at their next history load. A repeat of that send (WP-OFF-3) is answered with the stored row and returns BEFORE the publish, so it does not heal it either. **Not fixed in the follow-up PR, deliberately:** (a) "publish on a replay of a young row" is a clock deciding a delivery; (b) a `published` column on `channel_messages` reopens the deploy window in which EVERY salon INSERT fails (TypeORM names each column in every INSERT, [section 16](frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)); (c) a marker read only on a replay heals only the rare send whose answer was ALSO lost, while the same crash with no replay stays lost. **The fix is a transactional outbox** (migration 093 + the writer, two stacked pull requests that can ride the same release: the deploy migrates BEFORE it replaces services, and a rollback leaves a harmless unread table; it covers PROCESS DEATH and DATABASE failures only, not a Redis outage, whose publish swallows its errors): a `channel_message_fanout` row inserted in the send's transaction, deleted once the publish and the push fan-out are handed off, and drained at boot (a crash is the only thing that leaves one behind), with the replay path draining its own row at once. One new table and a migration, so it gets its own pull request. Clients already settle a duplicate frame by message id.
 
 ## P2 - The host WAF drops any request body over 10 MiB (found 2026-10-10)
 
@@ -573,9 +579,9 @@ A candidate cause is fixed in #1862 (the MLS client and its device id survived a
 **The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
 **The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, `delete_mls_state` removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
 
-### P3 - every cold start re-registers the device and fetches `/groups` two or three times
+### P3 - a cold start still sends `unread-counts` twice, and the boot has no recorded-boot counting test
 
-`POST /api/mls/register-device` runs on every cold start; the Mi 9T also sends `POST /mls/history-request` twice.
+`devices` and `users/<id>/groups` are single-flight since [section 18](frontend/offline-and-weak-network.md#18-wp-w4-first-part-the-account-level-reads-of-a-boot-are-shared-while-in-flight-2026-10-18); `register-device` stays, it is the liveness clock. Left: `unread-counts` twice (needs an ordering against the read-mark flush), the per-community triplet, ETag/304, a counting test over a recorded boot, and whether the Mi 9T's two `history-request` hit one group.
 
 ### P3 - the harness gamma bench PIN is refused on dev
 
@@ -613,13 +619,13 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
-**Built (2026-10-13, draft PR `perf/group-rosters-batch`)**: one `POST /api/mls/group-rosters` per connection ([chat-delivery](services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)). Owed once shipped: the per-connection count on a production console (expected 1 request where there were 80-81).
+**Merged as #1806, shipped in `v1.2.7`**: one `POST /api/mls/group-rosters` per connection ([chat-delivery](services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)). Owed once shipped: the per-connection count on a production console (expected 1 request where there were 80-81).
 
 ### P3 - an avatar 404 is the only way to learn a person has no photo
 
 10 of 28 avatar reads answered 404 on one load. The client already keeps the absence for the session; removing the first ask needs the user record to say whether a photo exists, which only MiGallery knows.
 
-**Built (2026-10-14, draft PRs: MiGallery `feat/avatar-presence-batch`, Canari `feat/avatar-presence-batch`)**: one presence question per list ([core-service](services/core-service.md#which-faces-exist-asked-once-per-list-2026-10-14)). MiGallery ships first; Canari tolerates its absence. Owed once both ship: the salon walk's count on a console (0 avatar `404`s expected, 37 before). Delete this entry then.
+**Built (2026-10-14; Canari's half merged as #1840 and shipped in `v1.2.9`, MiGallery's on its `feat/avatar-presence-batch` branch)**: one presence question per list ([core-service](services/core-service.md#which-faces-exist-asked-once-per-list-2026-10-14)). MiGallery ships first; Canari tolerates its absence. Owed once both ship: the salon walk's count on a console (0 avatar `404`s expected, 37 before). Delete this entry then.
 
 ## Seen in the 2026-10-12 heavy-state performance audit - what is open
 
@@ -633,23 +639,25 @@ The framed `state_blob` v2 (WebCrypto AES-GCM on the web, read by `mls-core` eve
 
 `getMessagesPage` `getAll`s every row to return 50 (28-31 ms for 5000 rows); needs a `[conversationId, timestamp]` index (an IndexedDB version bump) and a reverse cursor. SQLite sorts in a temp B-tree for want of `(conversation_id, timestamp)`.
 
-**Built (2026-10-17, draft PR `perf/pk13-message-storage`)**: IndexedDB v11 and `idx_messages_conv_time` ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)). Owed once shipped: the per-page time on a 5k conversation, and no `[IDB] Migration v10->v11` error line on an upgraded browser. Delete this entry then.
+**Merged as #1998 (2026-10-18), in `v1.3.0-alpha.1`, no stable yet**: IndexedDB v11 and `idx_messages_conv_time` ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)). Owed once shipped: the per-page time on a 5k conversation, and no `[IDB] Migration v10->v11` error line on an upgraded browser. Delete this entry then.
 
 ### P3 - a Welcome re-runs the whole restore
 
 `sessionAuth.ts:1351,1364` call `loadAndRestoreConversations` per Welcome; a new device joining 80 groups restores 80 times.
 
+**Built (2026-10-18, draft PR `perf/welcome-restore-once`)**: one restore at a time, at most one queued behind it, so a burst of Welcomes costs two restores ([performance-audit](frontend/performance-audit-2026-10-12.md#finding-8---built-2026-10-18-draft-pr-perfwelcome-restore-once)). Owed once shipped: the count of `[RESTORE] ... seeded` lines on a new device joining many groups. Delete this entry then.
+
 ### P3 - the thread's render window only grows, with listeners per bubble
 
-`renderWindow.ts` never shrinks the mounted range; each `MessageBubble` adds a non-passive `touchmove` listener. Owed: a DOM-node and listener count on a seeded 5k thread, which decides whether the grow-only window (deliberate, see `renderWindow.ts`) is worth reopening. **The per-bubble `matchMedia` and window `keydown` are gone (2026-10-17, draft PR `perf/pk13-message-storage`)** ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)).
+`renderWindow.ts` never shrinks the mounted range; each `MessageBubble` adds a non-passive `touchmove` listener. Owed: a DOM-node and listener count on a seeded 5k thread, which decides whether the grow-only window (deliberate, see `renderWindow.ts`) is worth reopening. **The per-bubble `matchMedia` and window `keydown` are gone (#1998, in `v1.3.0-alpha.1`)** ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)).
 
 ### P3 - the seen-cipher ledger is re-stringified per received frame
 
-**Built (2026-10-17, draft PR `perf/pk13-message-storage`)**: the live mark is written at the checkpoint, with the replay's ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)). Owed once shipped: no new `frame never read here` line on a cold start after a drain (TAB-3b). Delete this entry then.
+**Merged as #1998 (2026-10-18), in `v1.3.0-alpha.1`, no stable yet**: the live mark is written at the checkpoint, with the replay's ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)). Owed once shipped: no new `frame never read here` line on a cold start after a drain (TAB-3b). Delete this entry then.
 
 ### P3 - native checkpoints hold the MLS mutex across export, seal and file write
 
-`src-tauri/src/commands/mls.rs:216-231`: a send or decrypt waits for a whole checkpoint. Snapshot under the lock, seal and write outside it.
+**Fixed by #1826, shipped in `v1.2.7`**: the manager lock spans the export only, the seal and the write run on the copy ([performance-audit](frontend/performance-audit-2026-10-12.md#finding-12---the-manager-lock-released-at-the-export-2026-10-13)). Owed: the Mi 9T's `[MLS] checkpoint: manager lock held N ms` debug line on the same walk. Delete this entry then.
 
 ## Open defects, in severity order
 
@@ -676,6 +684,9 @@ can the browser failure rate be re-counted without the probes.
 Both media show "Format non supporte / Telecharger" on the Mi 9T while the iPhone lists them as
 "[Media]". Unexplained; the swipe half of that report is fixed
 ([mobile](frontend/mobile.md#a-modal-closed-by-its-owners-state-left-the-overlay-stack-and-the-tab-swipe-stood-down-2026-10-09)).
+**The refusal now logs its cause (2026-10-18, draft PR `fix/voice-player-error-log`)**; owed: that
+`[voice] ... refused its source` line from the Mi 9T on the conversation, which decides the fix
+([chat](frontend/modules/chat.md#format-non-supporte-names-its-cause-in-the-log-2026-10-18)).
 
 ### P1 - Graine v2 - an author that is proven, and a ciphertext bound to its place (decided 2026-09-28)
 

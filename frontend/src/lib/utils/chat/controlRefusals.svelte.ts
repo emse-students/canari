@@ -178,7 +178,7 @@ export function recordControlRefusal(userId: string, refusal: ControlRefusal): v
     const key = controlRefusalKey(refusal.messageId, refusal.act);
     m.delete(key); // re-inserted last: the eviction order is the order of the refusals
     m.set(key, refusal);
-    for (const oldest of [...m.keys()]) {
+    for (const oldest of m.keys()) {
       if (m.size <= MAX_CONTROL_REFUSALS) break;
       m.delete(oldest);
       console.warn(
@@ -219,7 +219,7 @@ function clearWhere(
   if (!userId) return;
   changeAccount(userId, (m) => {
     let removed = 0;
-    for (const [key, r] of [...m]) {
+    for (const [key, r] of m) {
       if (!matches(r)) continue;
       m.delete(key);
       removed++;

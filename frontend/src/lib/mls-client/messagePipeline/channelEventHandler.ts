@@ -356,6 +356,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           // changes a bubble instead of adding one, and it is the ONLY live route reactions have -
           // there is no server tally left to broadcast.
           if (msg?.reaction) {
+            log(
+              `Channel reaction applied to ${String(msg.reaction.messageId ?? '')} (removed=${msg.reaction.removed === true})`
+            );
             applyChannelReactionFrame(
               String(msg.reaction.messageId ?? ''),
               String(sender || '').toLowerCase(),
@@ -370,6 +373,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           // the target's author. A bubble not loaded here is picked up by the next history load,
           // which reads the same row.
           if (msg?.edit) {
+            log(`Channel edit received for ${String(msg.edit.messageId ?? '')}`);
             const current = conversations.get(channelId);
             if (current) {
               const { messages, applied } = applyChannelEdit(

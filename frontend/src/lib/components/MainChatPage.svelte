@@ -398,6 +398,7 @@
     return {
       conversations: convs.conversations,
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
+      invalidateRestores: () => convs.invalidateRestores(),
       beginConversationSource: () => convs.beginConversationSource(),
       endConversationSource: () => convs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
@@ -1168,9 +1169,18 @@
     const convo = convs.conversations.get(key);
     if (!convo?.id) return;
     Promise.resolve(session.ensureMls())
-      .then((m) => m?.sendTyping?.(convo.id, isTyping))
-      .catch(() => {});
+      .then(async (m) => {
+        await m?.sendTyping?.(convo.id, isTyping);
+        dmTypingFailing = false;
+      })
+      .catch((e) => {
+        // One line per failing streak, not per keystroke; the next success re-arms it.
+        if (dmTypingFailing) return;
+        dmTypingFailing = true;
+        appendLog(`[typing] DM typing signal not delivered (further failures not logged) - ${e}`);
+      });
   }
+  let dmTypingFailing = false;
 
   /**
    * Loads the conversation's shared media/links/files from the FULL local history

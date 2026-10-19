@@ -123,6 +123,7 @@ function signedInAsA() {
   const cb = {
     log: vi.fn(),
     conversations: new Map(),
+    invalidateRestores: vi.fn(),
     setSelectedContact: vi.fn(),
   } as unknown as ChatSessionCallbacks;
   setSignOutHandler(() => session.endSession(cb));

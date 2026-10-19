@@ -291,6 +291,9 @@ describe('both base repairs report what the server did, in one wording (R-D3)', 
   });
 
   it('sessionAuth wires the responder rather than keeping a second copy of it', async () => {
+    // WHY A SOURCE TEST (WP-T5: keep). The responder is driven above; the defect was a second copy
+    // living in `sessionAuth`'s frame handler, which only a live session runs - so the absence of
+    // the copy is asserted where it would be written.
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
     const src = readFileSync(

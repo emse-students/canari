@@ -307,6 +307,34 @@ race found: the form reminder now claims its row with a conditional `UPDATE`
   replicas can retry in the overlap. Harmless: Le Cercle inserts with `ON CONFLICT(payment_intent_id)`,
   so no member is credited twice; only a counter update and a `[CERCLE]` line are doubled.
 
+#### The edge is ready when it listens, not when it runs
+
+**Found as a CI flake (2026-10-18), and it was a deploy defect.** `deploy-rolling.test.sh` failed its
+first case, `v1 answers through the edge`, with `curl: (56) Recv failure: Connection reset by peer` in
+**3 of 62** `Test CI Scripts` runs (jobs 117678020679, 117703956520, 117780454771; the other 59 passed
+the same code). The edge had NO healthcheck, so `wait_healthy` returned at `running none` - the
+moment Docker started the process, before nginx had opened port 80 - and `replace_services` handed
+back an "up" estate. On Linux, Docker's port proxy accepts on `127.0.0.1:<port>` before the container
+listens, fails to reach it, and closes with the request unread: a reset.
+
+Evidence, on a Linux `dockerd` 28.5.2 (`docker:dind`, the runners' engine line): a request to a
+started-but-not-listening nginx returns exactly `(56) Connection reset by peer`; `docker run -d`
+followed at once by a request reset **30 times in 30**; with the healthcheck below awaited first,
+**30 answered in 30**. Ruled out: the edge listening but unable to reach `frontend` gives the same
+code, but `frontend` was already healthy and resolvable when the edge started (the plan replaces it
+first), and the test now prints the edge's state and log on that failure, which separates the two.
+
+**The fix is the readiness proof, in production too:** the edge's healthcheck is
+`test -s /var/run/nginx.pid && grep -q ' 00000000:0050 00000000:0000 0A ' /proc/net/tcp` - the pid
+file nginx's master writes after opening its listeners and installing its signal handlers (so the
+deploy's `nginx -s reload` that follows has a master to reach), and the kernel's LISTEN row for `:80`,
+which a stale pid file left by a killed container cannot fake. It proxies nothing: a probe THROUGH the
+relay would open a `frontend` connection every 30 s. `deploy-replace.test.sh` requires prod, dev and
+the fixture to carry the same test. No retry was added to the test: its single POST is the assertion.
+
+**Cost, once:** adding a healthcheck changes the edge's compose definition, so the first deploy
+carrying it RECREATES the edge on each estate - the ~1 s gap of an edge image bump, said above.
+
 #### Every job checks out the SHA `release-kind` resolved, because `main` is a moving reference (2026-09-03)
 
 All five jobs used to check out `ref: main`, and the comment above `CHECKOUT_REF` explained why it
