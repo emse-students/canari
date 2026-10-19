@@ -96,6 +96,7 @@
   import { buildConversationRow } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { resolveCallPeers } from '$lib/utils/chat/callPeers';
+  import { callView } from '$lib/stores/callView.svelte';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import {
     openNotificationTarget,
@@ -137,6 +138,9 @@
       nameOf: getUserDisplayNameSync,
     });
   });
+
+  // The PIN lock sits under the call's rung: while it is up, a call is the banner it covers.
+  $effect(() => callView.setLocked(showPinModal));
 
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);

@@ -284,7 +284,15 @@ export class CallService {
         );
         return;
       }
-      if (get(this.callState) !== 'idle') return;
+      if (get(this.callState) !== 'idle') {
+        // BUSY: a second call does not ring over the one in progress, and nothing is sent for it.
+        // A hangup would reach the whole conversation - our own other devices included, which are
+        // free to answer it - so this device stays out of it; the caller's ring window decides.
+        appendLog(
+          `[Call] invite ${callMsg.callId} in ${groupId} not rung - busy (state=${get(this.callState)} call=${this.currentCallId})`
+        );
+        return;
+      }
       // An invite with no window comes from a build before the ring window existed: it would
       // ring here for as long as nobody touched it. Calls are dev-only, so it is refused, named.
       const ringTimeoutMs = callMsg.ringTimeoutMs ?? 0;

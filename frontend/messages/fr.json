@@ -570,6 +570,8 @@
   "call_banner_region_label": "Appel en cours",
   "call_banner_return_label": "Revenir à l'appel avec {name}",
   "call_banner_return_hint": "Revenir à l'appel",
+  "call_live_announcement": "Appel connecté",
+  "call_tap_to_hear": "Toucher pour entendre",
   "call_mute_short_label": "Muet",
   "call_camera_short_label": "Caméra",
   "chat_record_voice_message_label": "Enregistrer un message vocal",

@@ -428,6 +428,41 @@ describe('what the call UI reads: the connected moment', () => {
   });
 });
 
+describe('a second call while one is up', () => {
+  it('does not ring over the call in progress, sends nothing for it, and says why', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    vi.mocked(fakeMls.sendMessage).mockClear();
+
+    await service.handleCallSignal(
+      'other@example.org',
+      'group-2',
+      {
+        callId: 'room-2',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-9',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(get(service.callState)).toBe('calling');
+    expect(service.currentCallId).toBe('room-1');
+    expect(service.incomingCallerId).toBeNull();
+    expect(fakeMls.sendMessage).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(appendLog)
+        .mock.calls.map((c) => c[0])
+        .join(' ')
+    ).toContain('invite room-2 in group-2 not rung - busy');
+  });
+});
+
 describe('the ring window, both sides', () => {
   // The window is a timer: fake it, and step past it. `setTimeout` only, so the harness's own
   // microtask and macrotask yields still run.

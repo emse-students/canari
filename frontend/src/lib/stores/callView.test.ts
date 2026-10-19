@@ -36,4 +36,23 @@ describe('callView', () => {
     callView.reset();
     expect(callView.minimised).toBe(false);
   });
+
+  it('is never drawn full screen over the PIN lock, and comes back when the lock goes', () => {
+    callView.reset();
+    callView.setLocked(true);
+    expect(callView.showsFullScreen).toBe(false);
+    callView.setLocked(false);
+    expect(callView.showsFullScreen).toBe(true);
+    callView.minimise();
+    callView.setLocked(true);
+    callView.setLocked(false);
+    expect(callView.showsFullScreen).toBe(false);
+    callView.reset();
+  });
+
+  it('forgets a refused voice with the call', () => {
+    callView.setAudioBlocked(true);
+    callView.reset();
+    expect(callView.audioBlocked).toBe(false);
+  });
 });

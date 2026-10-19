@@ -19,7 +19,7 @@
    * the sink is the one audio output, whatever is on screen.
    *
    * The full screen is portalled to the body (`.page-scroll-wrap` is a containing block for
-   * `fixed`), takes `--z-critical` (the call UI's rung), and answers the system Back by MINIMISING -
+   * `fixed`), takes `--z-call` (above a confirmation, see `app.css`), and answers the system Back by MINIMISING -
    * the call goes on in the banner, as on every phone.
    */
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
@@ -52,6 +52,7 @@
   import { applyCallMediaSession, clearCallMediaSession } from '$lib/utils/callMediaSession';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { appendLog } from '$lib/utils/sessionLog';
+  import { startCallVoice } from '$lib/utils/callVoice';
 
   let {
     callService,
@@ -62,13 +63,26 @@
   } = $props();
 
   const call = useCallModel(() => callService);
-  const fullScreen = $derived(!callView.minimised);
+  const fullScreen = $derived(callView.showsFullScreen);
 
-  // Back minimises; the call is never ended by a navigation gesture.
-  bindHistoryOverlay(
+  // Back minimises; the call is never ended by a navigation gesture. The chevron and Escape go
+  // through `dismissFromUi` too, so every way out of the full screen leaves the stack the same way
+  // (its entry a ghost the next expand takes back, never a second one).
+  const overlayEntry = bindHistoryOverlay(
     () => fullScreen,
     () => callView.minimise()
   );
+
+  function minimise(how: string) {
+    appendLog(`[Call] full screen minimised (${how})`);
+    overlayEntry.dismissFromUi();
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !fullScreen) return;
+    e.stopPropagation();
+    minimise('Escape');
+  }
 
   // The next call opens full screen: this component lives exactly as long as one call.
   $effect(() => () => callView.reset());
@@ -104,18 +118,59 @@
 
   // -- The one audio output of the call ------------------------------------------------------
   let remoteAudioSink: HTMLAudioElement | undefined = $state();
+
+  /** Starts the voice and publishes whether the engine refused it for want of a gesture. */
+  async function startVoice(why: string): Promise<void> {
+    const sink = remoteAudioSink;
+    if (!sink || !sink.srcObject) return;
+    callView.setAudioBlocked((await startCallVoice(sink, why)) === 'blocked');
+  }
+
   $effect(() => {
     const sink = remoteAudioSink;
     const stream = remoteAudioStream;
     if (!sink || !stream) return;
     sink.srcObject = stream;
-    sink.play().catch((e: unknown) => appendLog(`[Call] remote audio did not start: ${String(e)}`));
+    void startVoice('stream arrived');
     // Released when the stream goes: a sink bound to an old stream keeps an audio output for
     // nothing (`toneOutput.ts`).
     return () => {
       sink.pause();
       sink.srcObject = null;
     };
+  });
+
+  /**
+   * THE TAP THAT STARTS THE VOICE. A WebView may refuse `play()` outside a user gesture, and the
+   * stream arrives long after the tap that answered or dialled. So: the element is PRIMED inside a
+   * gesture (the Accept tap, or this mount when it happens within the dial tap's activation), and
+   * while a start was refused the next pointer-down anywhere - on the banner, in a page - retries.
+   */
+  function primeVoice(why: string) {
+    const sink = remoteAudioSink;
+    if (!sink) return;
+    if (sink.srcObject) {
+      void startVoice(why);
+      return;
+    }
+    // No stream yet: an empty play() inside the gesture is what lets the later one through on
+    // WebKit. Its own rejection (no source) is expected and only logged.
+    sink.play().catch((e: unknown) => appendLog(`[Call] voice primed (${why}): ${String(e)}`));
+  }
+
+  $effect(() => {
+    if (!remoteAudioSink) return;
+    const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } })
+      .userActivation;
+    if (activation?.isActive) primeVoice('mounted within the dialling tap');
+  });
+
+  $effect(() => {
+    // While ringing too: the Accept tap may land on the BANNER, which cannot reach this element.
+    if (!callView.audioBlocked && !isIncoming) return;
+    const retry = () => primeVoice(isIncoming ? 'tap while ringing' : 'tap after a refusal');
+    window.addEventListener('pointerdown', retry, { capture: true });
+    return () => window.removeEventListener('pointerdown', retry, { capture: true });
   });
 
   /** Whether audio is routed through the speaker (true) or earpiece (false). Mobile only. */
@@ -196,9 +251,7 @@
       );
       if (!document.hidden && sink?.paused && sink.srcObject) {
         appendLog('[Call] WARN the voice was paused while hidden - starting it again');
-        sink
-          .play()
-          .catch((e: unknown) => appendLog(`[Call] restarting the voice failed: ${String(e)}`));
+        void startVoice('back from the background');
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
@@ -261,8 +314,24 @@
 
   function accept() {
     appendLog('[Call] accepted from the full-screen ring');
+    primeVoice('accept tap');
     void callService.acceptCall(callService.currentGroupId ?? '', callService.currentCallId ?? '');
   }
+
+  // The ring is an ALERT: focus lands on Accept, the one thing a keyboard or screen-reader user came
+  // to do (`focusTrap` would pick the chevron, the first control in the tree).
+  let screenEl: HTMLElement | undefined = $state();
+  $effect(() => {
+    if (!screenEl || !isIncoming) return;
+    screenEl
+      .querySelector<HTMLButtonElement>('[data-testid="call-accept"]')
+      ?.focus({ preventScroll: true });
+  });
+
+  /** The live line: a change of STATE is announced, never the timer's every second. */
+  let announcement = $derived(
+    call.kind === 'live' ? m.call_live_announcement() : callStatusText(call.kind, call.duration)
+  );
 
   function hangUp() {
     appendLog(`[Call] ${isIncoming ? 'declined' : 'hung up'} from the full screen`);
@@ -271,6 +340,7 @@
 </script>
 
 {#snippet control(
+  testid: string,
   label: string,
   caption: string,
   onclick: () => void,
@@ -289,6 +359,7 @@
             ? 'text-cn-ink bg-white'
             : 'bg-white/15 text-white hover:bg-white/25'}"
       aria-label={label}
+      data-testid={testid}
       {onclick}
     >
       {@render icon()}
@@ -297,19 +368,24 @@
   </div>
 {/snippet}
 
+<svelte:window onkeydown={onKeydown} />
+
 <!-- The voice: hidden, mounted for the whole call, in either shape. -->
 <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
+<!-- ONE live region for both shapes, so a minimised call still announces "Reconnexion...". -->
+<span class="sr-only" role="status" data-testid="call-announcer">{announcement}</span>
 
 {#if fullScreen}
   <div
     use:portal
     use:coversScreen
     use:focusTrap
-    role="dialog"
+    bind:this={screenEl}
+    role={isIncoming ? 'alertdialog' : 'dialog'}
     aria-modal="true"
     aria-label={primary?.displayName || m.call_label()}
     data-testid="call-screen"
-    class="bg-cn-scrim fixed inset-0 z-(--z-critical) flex flex-col overflow-hidden text-white select-none"
+    class="bg-cn-scrim fixed inset-0 z-(--z-call) flex flex-col overflow-hidden text-white select-none"
     style="padding: var(--safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) var(--safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);"
     transition:fade={{ duration: 150 }}
   >
@@ -330,7 +406,7 @@
         class="ui-icon-button rounded-full text-white hover:bg-white/10"
         aria-label={m.call_minimize_label()}
         title={m.call_minimize_label()}
-        onclick={() => callView.minimise()}
+        onclick={() => minimise('chevron')}
       >
         <ChevronDown size={26} />
       </button>
@@ -398,6 +474,17 @@
         >
           {statusText}
         </p>
+        {#if callView.audioBlocked}
+          <button
+            type="button"
+            class="text-cn-ink mt-2 inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold"
+            data-testid="call-tap-to-hear"
+            onclick={() => primeVoice('tap-to-hear button')}
+          >
+            <Volume2 size={18} />
+            {m.call_tap_to_hear()}
+          </button>
+        {/if}
       </div>
     </div>
 
@@ -418,6 +505,7 @@
           {#snippet declineIcon()}<PhoneOff size={28} />{/snippet}
           {#snippet acceptIcon()}<Phone size={28} class="fill-current" />{/snippet}
           {@render control(
+            'call-decline',
             m.call_decline_incoming_label(),
             m.call_decline_label(),
             hangUp,
@@ -425,6 +513,7 @@
             declineIcon
           )}
           {@render control(
+            'call-accept',
             m.call_accept_incoming_label(),
             m.call_accept_short_label(),
             accept,
@@ -439,6 +528,7 @@
               {#if isSpeakerOn}<Volume2 size={26} />{:else}<Speaker size={26} />{/if}
             {/snippet}
             {@render control(
+              'call-speaker',
               isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
               isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
               () => (isSpeakerOn = !isSpeakerOn),
@@ -451,6 +541,7 @@
               {#if call.isVideoOff}<VideoOff size={26} />{:else}<Video size={26} />{/if}
             {/snippet}
             {@render control(
+              'call-camera',
               call.isVideoOff ? m.call_enable_camera_label() : m.call_disable_camera_label(),
               m.call_camera_short_label(),
               () => void callService.toggleVideo(),
@@ -462,6 +553,7 @@
             {#if call.isMuted}<MicOff size={26} />{:else}<Mic size={26} />{/if}
           {/snippet}
           {@render control(
+            'call-mute',
             call.isMuted ? m.call_unmute_label() : m.call_mute_label(),
             m.call_mute_short_label(),
             () => callService.toggleMute(),
@@ -470,6 +562,7 @@
           )}
           {#snippet endIcon()}<PhoneOff size={28} />{/snippet}
           {@render control(
+            'call-hang-up',
             m.call_hang_up_label(),
             m.call_hang_up_label(),
             hangUp,

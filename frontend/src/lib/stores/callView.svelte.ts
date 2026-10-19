@@ -12,6 +12,8 @@ import type { CallState } from '$lib/services/CallService';
  * reads nor writes it.
  */
 let minimised = $state(false);
+let locked = $state(false);
+let audioBlocked = $state(false);
 
 export const callView = {
   /** True while the call is shown as the top bar and the app is usable under it. */
@@ -30,10 +32,37 @@ export const callView = {
     Log.d('CallView', 'expanded to full screen');
     minimised = false;
   },
-  /** A call that ended: the next one opens full screen again. */
+  /**
+   * Whether the full screen is drawn now: not minimised, and not held under the PIN lock. The lock
+   * (`PinModal`, `--z-modal`) sits BELOW the call's rung, so a full-screen call would paint over the
+   * one gate of the app that must stay on top; while it is up the call is the banner, which the
+   * gate covers, and it comes back full screen when the gate goes - unless the reader minimised it.
+   */
+  get showsFullScreen(): boolean {
+    return !minimised && !locked;
+  },
+  /** The PIN lock is on screen (`ChatBackgroundService` writes it). */
+  setLocked(next: boolean): void {
+    if (next === locked) return;
+    Log.d('CallView', next ? 'held under the PIN lock' : 'PIN lock gone');
+    locked = next;
+  },
+  /**
+   * The engine refused to start the voice (`play()` rejected: no user gesture on that WebView).
+   * Both surfaces say "tap to hear" while it is true; the next tap anywhere retries.
+   */
+  get audioBlocked(): boolean {
+    return audioBlocked;
+  },
+  setAudioBlocked(next: boolean): void {
+    if (next === audioBlocked) return;
+    audioBlocked = next;
+  },
+  /** A call that ended: the next one opens full screen again, with nothing held over. */
   reset(): void {
     if (minimised) Log.d('CallView', 'reset to full screen for the next call');
     minimised = false;
+    audioBlocked = false;
   },
 };
 

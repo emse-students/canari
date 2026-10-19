@@ -915,7 +915,8 @@ says `z-(--z-modal)`; twenty-six call sites were converted.
 | `--z-modal` | 280 | |
 | `--z-modal-popover` | 290 | a dropdown opened from inside a modal, portalled out of it |
 | `--z-viewer` | 300 | a full-screen media viewer |
-| `--z-critical` | 320 | a confirmation, the full-screen call (a minimised call is a row of the banner column, in flow; the 340 incoming-call rung went with its toast on 2026-10-19, [calls](modules/calls.md#the-call-ui-the-whole-screen-or-a-bar-at-the-top-2026-10-19)) |
+| `--z-critical` | 320 | a confirmation |
+| `--z-call` | 330 | the full-screen call, ABOVE a confirmation; a minimised call is a row of the banner column, in flow, and the 340 incoming-call rung went with its toast on 2026-10-19 ([calls](modules/calls.md#which-layer-the-call-is-on-and-what-it-may-never-cover)) |
 | `--z-tooltip` | 400 | follows the pointer, never interactive |
 | `--z-skip-link` | 500 | the way out for someone who cannot use a pointer |
 
@@ -1011,7 +1012,7 @@ dropdown it closes. Renaming only the catcher would have sent it from 40 to 190 
 50: a full-screen click target over the thing it dims, which is the `Sidebar` defect this ladder was
 written to end, reintroduced by the gate meant to prevent it.
 
-**`CallOverlay` was on the suspect list and is clean** - it already takes `--z-critical` on its
+**`CallOverlay` was on the suspect list and is clean** - it took `--z-critical` then (its own `--z-call` rung since 2026-10-19) on its
 `fixed inset-0` root. Its class attribute spans lines, which is why a line-oriented sweep could not
 say so; the gate collapses whitespace before reading, so it can.
 

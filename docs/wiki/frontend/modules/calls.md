@@ -499,12 +499,16 @@ z-index can lift a web control over it.
 
 | Shape | Component | Where it lives | Why it cannot be covered |
 |---|---|---|---|
-| Full screen: avatar, name, status/timer, 64px controls under the thumb (mute, speaker on the apps, hang-up; decline/accept when ringing), the E2E line, a chevron to minimise | `chat/CallOverlay.svelte` | portalled to the body, `fixed inset-0`, `--z-critical`, safe-area padding on all four sides | it joins `coversScreen`, which HIDES the native tab bar and the native glass pieces; `--z-critical` is above every sheet, modal and toast |
+| Full screen: avatar, name, status/timer, 64px controls under the thumb (mute, speaker on the apps, hang-up; decline/accept when ringing), the E2E line, a chevron to minimise | `chat/CallOverlay.svelte` | portalled to the body, `fixed inset-0`, `--z-call`, safe-area padding on all four sides | it joins `coversScreen`, which HIDES the native tab bar and the native glass pieces; `--z-call` is above every sheet, modal, toast and confirmation |
 | A slim bar: "Bob · 02:13", a tap returns to the full screen, mute and hang-up on the bar (decline/accept when ringing) | `layout/CallBanner.svelte` | a ROW of the root layout's banner column, in flow, under the status bar | it pushes the page down rather than covering it (the column publishes `--app-banner-height`), and nothing native is drawn above the content's top edge - the glass pieces follow their web twins down |
 
 Every call opens full screen (an incoming ring too, on every route: the compact incoming toast and
-its `--z-call-notice` rung are gone). **The system Back MINIMISES** (`bindHistoryOverlay`); no
-gesture ends a call. Measured in Chromium at 390x844 (touch) and 1280x800, on `/legal/privacy`
+its `--z-call-notice` rung are gone). **The system Back, Escape, the chevron and the bar's expand
+all MINIMISE through ONE path** - the binder's `dismissFromUi()` (`bindHistoryOverlay`), so a
+minimise from the UI leaves a ghost entry the next expand REUSES; a direct `callView.minimise()`
+from a button would leave the history stack one entry deeper per cycle (the review of #2138 found it;
+`CallOverlay.svelte.test.ts` counts the depth and `history.length` over two cycles). No gesture ends
+a call. Measured in Chromium at 390x844 (touch) and 1280x800, on `/legal/privacy`
 with a stand-in `CallService` (no local estate, no account): the bar is 52px at the top of the
 content under the environment banner, the page starts below it, and `elementFromPoint` at the
 centre of each of its three controls lands on that control (44x44 each on touch). A conversation
@@ -522,6 +526,39 @@ after it.
 writes from signalling lost, peer away and ICE state; the UI only reads it, and only once `connectedAt`
 is set), `ended` ("Appel termine ·
 02:13").
+
+### Which layer the call is on, and what it may never cover
+
+**The full screen has its own rung, `--z-call` (330), ABOVE `--z-critical` (320, a confirmation).**
+A call that rings while a "sign out?" or "delete?" confirmation is open must still be answerable;
+the confirmation is not lost - minimise the call and it is there, unchanged. Sharing 320 with
+`ModalOverlay` would have left the winner to DOM order, which is exactly the "on or under the rest"
+the user reported.
+
+**The PIN lock is never covered, and it is not by a z-index.** `PinModal` sits at `--z-modal` (280),
+below the call - so while it is up (`ChatBackgroundService` -> `callView.setLocked(showPinModal)`)
+the full screen STEPS BACK and the call is the top bar, which is in flow and covers nothing; it comes
+back when the PIN is entered. A ring on a locked app is still answerable from the bar - the device is
+not unlocked by it, and the conversation behind stays sealed.
+
+### Ringing, announcing, hearing
+
+- **The ring is an `alertdialog` with focus on Accept** (`preventScroll`); once answered it is a
+  plain `dialog`. ONE `role="status"` region, outside the full screen so it survives a minimise,
+  announces each state change - "Appel connecte" rather than the timer, which would speak every second.
+- **A refused voice says so.** A WebView may refuse `play()` without a gesture (`NotAllowedError`);
+  the voice usually arrives seconds after the last tap. `utils/callVoice.ts` tells that refusal from
+  any other failure, the screen and the bar say "Toucher pour entendre", and the NEXT pointer event
+  anywhere (or the Accept tap, which primes the sink) starts it. Logged: `[Call] WARN voice refused
+  without a gesture (<why>) - waiting for a tap`.
+- **A second call while one is up is not rung, and nothing is sent back.** A hangup would reach the
+  whole conversation - our own other devices included, which may be free to answer it. Logged:
+  `[Call] invite <callId> in <groupId> not rung - busy (state=... call=...)`
+  (`CallService.p2p.test.ts`, "a second call while one is up").
+- **The 64px controls are size-checked on the RENDERED screen**, not by `iconButtonScale.test.ts`:
+  they are drawn by a snippet that markup scan cannot see through. `CallOverlay.svelte.test.ts`
+  holds every button of the ring and of the call to `ui-icon-button` or `size-16`; the bar's buttons
+  are plain markup and stay under the scan.
 
 ## The call in the background (2026-10-19)
 

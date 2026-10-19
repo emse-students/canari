@@ -29,7 +29,7 @@
   const service = $derived(globalSession.callService as CallService | null);
   const call = useCallModel(() => service);
 
-  const visible = $derived(!!service && call.callState !== 'idle' && callView.minimised);
+  const visible = $derived(!!service && call.callState !== 'idle' && !callView.showsFullScreen);
   const isIncoming = $derived(call.callState === 'incoming');
 
   const peerName = $derived.by(() => {
@@ -87,7 +87,7 @@
       <span class="min-w-0 truncate text-sm font-semibold">{peerName}</span>
       <span class="shrink-0 text-sm text-white/85" aria-hidden="true">·</span>
       <span class="shrink-0 text-sm text-white/85 tabular-nums" data-testid="call-banner-status"
-        >{statusText}</span
+        >{callView.audioBlocked ? m.call_tap_to_hear() : statusText}</span
       >
       <span class="ml-auto hidden shrink-0 text-xs text-white/75 sm:inline"
         >{m.call_banner_return_hint()}</span
