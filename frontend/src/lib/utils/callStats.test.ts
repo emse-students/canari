@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeSelectedPair } from './callStats';
+import { audioCodecOrder, describeAudioCodecs, describeSelectedPair } from './callStats';
 
 /** A fake `RTCStatsReport`: what the reader uses of it is `forEach`. */
 function report(entries: Record<string, unknown>[]): RTCStatsReport {
@@ -81,5 +81,55 @@ describe('describeSelectedPair', () => {
       ])
     );
     expect(out).not.toMatch(/192\.0\.2|198\.51\.100/);
+  });
+});
+
+describe('describeAudioCodecs', () => {
+  it('names the codec each audio direction is bound to', () => {
+    const out = describeAudioCodecs(
+      report([
+        { id: 'O', type: 'outbound-rtp', kind: 'audio', codecId: 'C1' },
+        { id: 'I', type: 'inbound-rtp', kind: 'audio', codecId: 'C2' },
+        { id: 'V', type: 'outbound-rtp', kind: 'video', codecId: 'C3' },
+        {
+          id: 'C1',
+          type: 'codec',
+          mimeType: 'audio/opus',
+          payloadType: 111,
+          channels: 2,
+          sdpFmtpLine: 'minptime=10;useinbandfec=1',
+        },
+        { id: 'C2', type: 'codec', mimeType: 'audio/red', payloadType: 63, channels: 2 },
+        { id: 'C3', type: 'codec', mimeType: 'video/VP8', payloadType: 96 },
+      ])
+    );
+    expect(out).toBe(
+      'audio send=audio/opus pt=111 ch=2 [minptime=10;useinbandfec=1] recv=audio/red pt=63 ch=2'
+    );
+  });
+
+  it('says none before a stream exists and ? when its codec entry is missing', () => {
+    const out = describeAudioCodecs(report([{ id: 'O', type: 'outbound-rtp', kind: 'audio' }]));
+    expect(out).toBe('audio send=? recv=none');
+  });
+});
+
+describe('audioCodecOrder', () => {
+  it('lists the first audio section in the order it offers its payload types', () => {
+    const sdp = [
+      'v=0',
+      'm=audio 9 UDP/TLS/RTP/SAVPF 63 111 0',
+      'a=rtpmap:111 opus/48000/2',
+      'a=rtpmap:63 red/48000/2',
+      'a=rtpmap:0 PCMU/8000',
+      'm=video 9 UDP/TLS/RTP/SAVPF 96',
+      'a=rtpmap:96 VP8/90000',
+    ].join('\r\n');
+    expect(audioCodecOrder(sdp)).toBe('red/63,opus/111,pcmu/0');
+  });
+
+  it('says none without an SDP or an audio section', () => {
+    expect(audioCodecOrder(undefined)).toBe('none');
+    expect(audioCodecOrder('v=0\r\nm=video 9 UDP 96')).toBe('none');
   });
 });

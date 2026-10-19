@@ -29,7 +29,7 @@ import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/c
 import { CALLS_ENABLED } from '$lib/features';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
-import { describeSelectedPair } from '$lib/utils/callStats';
+import { audioCodecOrder, describeAudioCodecs, describeSelectedPair } from '$lib/utils/callStats';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -1410,6 +1410,9 @@ export class CallService {
           .getStats()
           .then((stats) => appendLog(`[Call] selected path ${describeSelectedPair(stats)}`))
           .catch((e: unknown) => appendLog(`[Call] getStats failed: ${String(e)}`));
+        // The RTP streams bind their codec on the first packet, after `connected`: read once
+        // the media has had time to flow (a diagnostic read, nothing waits on it).
+        setTimeout(() => this.logAudioCodecs(pc), CallService.CODEC_READ_DELAY_MS);
       }
       if (state === 'disconnected') {
         // 'disconnected' is often transient (WebRTC may recover); log but do not tear down.
@@ -1470,6 +1473,26 @@ export class CallService {
       }
       await configureCallAudioSenders(pc, this.callHasVideo);
     }
+  }
+
+  /** How long after `connected` the negotiated audio codecs are read (see `logAudioCodecs`). */
+  private static readonly CODEC_READ_DELAY_MS = 3_000;
+
+  /**
+   * Logs the audio codec each direction is bound to and the order each SDP offered them in. WHY
+   * (2026-10-19): an iPhone's audio reached every receiver as noise while all Chromium pairs were
+   * clean, and which codec WebKit really sends was in no log. Codec names only, never an address.
+   */
+  private logAudioCodecs(pc: RTCPeerConnection): void {
+    if (this.pc !== pc || pc.connectionState !== 'connected') return;
+    void pc
+      .getStats()
+      .then((stats) =>
+        appendLog(
+          `[Call] ${describeAudioCodecs(stats)} | local m=audio ${audioCodecOrder(pc.localDescription?.sdp)} | remote m=audio ${audioCodecOrder(pc.remoteDescription?.sdp)}`
+        )
+      )
+      .catch((e: unknown) => appendLog(`[Call] getStats (codecs) failed: ${String(e)}`));
   }
 
   /** Writes one frame to the signalling socket. A frame that cannot leave is named, never dropped silently. */
@@ -1534,6 +1557,23 @@ export class CallService {
           };
           appendLog(
             `[Call] ERROR E2E ${side}: audio payload is not an Opus packet (${count ?? '?'} so far; len=${length} toc=0x${toc.toString(16)} pt=${payloadType})`
+          );
+        } else if (type === 'transformer') {
+          // ONE line per transformer: the app attaches one per sender and one per receiver, so a
+          // second `sender` count for the same kind is a double attach; the codec is what the
+          // engine actually feeds the transform.
+          const d = event.data as unknown as Record<string, unknown>;
+          appendLog(
+            `[Call] E2E ${String(d.side)} transformer #${String(d.id)} (${String(d.count)} ${String(d.side)} in this worker): first frame ${String(d.mediaKind)} mime=${String(d.mimeType)} pt=${String(d.payloadType)}`
+          );
+        } else if (type === 'senderAudioShape') {
+          // Posted once after 50 frames, and again only while an anomaly counter is non-zero:
+          // `own-iv` is this device's OWN output handed back (a double pass), `repeated-ts` one
+          // frame handed over twice, `not-opus` the engine feeding something else.
+          const d = event.data as unknown as Record<string, number | string>;
+          const anomalous = Number(d.notOpus) + Number(d.repeatedTs) + Number(d.ownIv) > 0;
+          appendLog(
+            `[Call] ${anomalous ? 'ERROR ' : ''}E2E sender audio #${d.id}: ${d.frames} frame(s), not-opus=${d.notOpus} repeated-ts=${d.repeatedTs} own-iv=${d.ownIv} len=${d.lenMin}..${d.lenMax} avg=${d.lenAvg} toc=${d.tocClass} (${d.tocShare}%)`
           );
         } else if (type === 'doubleEncrypted') {
           appendLog(

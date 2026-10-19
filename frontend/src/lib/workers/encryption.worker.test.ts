@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-type Metadata = { payloadType?: number; mimeType?: string };
+type Metadata = { payloadType?: number; mimeType?: string; rtpTimestamp?: number };
 const OPUS_METADATA = (): Metadata => ({ payloadType: 111, mimeType: 'audio/opus' });
 /** What every frame's `getMetadata` answers; a test swaps it and `afterEach` restores it. */
 let metadata: () => Metadata = OPUS_METADATA;
@@ -171,5 +171,72 @@ describe('encryption.worker - a getMetadata that throws costs no frame', () => {
         detail: expect.stringContaining('getMetadata threw'),
       })
     );
+  });
+});
+
+describe('encryption.worker - the sender diagnostics (WebKit sender noise, 2026-10-19)', () => {
+  /** 50 Opus frames with RTP timestamps 960 apart; `repeatAt` re-uses the previous frame's. */
+  function timedFrames(repeatAt = -1): Uint8Array[] {
+    let i = 0;
+    metadata = () => {
+      const n = i++;
+      return { ...OPUS_METADATA(), rtpTimestamp: 960 * (n === repeatAt ? n - 1 : n) };
+    };
+    return Array.from({ length: 50 }, () => opus());
+  }
+  const shapes = () => posted.filter((m) => m.type === 'senderAudioShape');
+
+  it('posts ONE line per transformer, with its per-side count and its first frame codec', async () => {
+    await run('sender', [opus(), opus()]);
+    const lines = posted.filter((m) => m.type === 'transformer');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      side: 'sender',
+      mediaKind: 'audio',
+      mimeType: 'audio/opus',
+      payloadType: 111,
+    });
+    posted.length = 0;
+    await run('sender', [opus()]);
+    const next = posted.find((m) => m.type === 'transformer')!;
+    expect((next.count as number) - (lines[0].count as number)).toBe(1);
+  });
+
+  it('a clean sender posts its shape once, after 50 frames, with no anomaly', async () => {
+    await run('sender', timedFrames());
+    expect(shapes()).toEqual([
+      expect.objectContaining({
+        frames: 50,
+        notOpus: 0,
+        repeatedTs: 0,
+        ownIv: 0,
+        lenMin: 81,
+        lenMax: 81,
+        tocClass: 'config31/code0',
+        tocShare: 100,
+      }),
+    ]);
+  });
+
+  it('counts a repeated RTP timestamp per transformer, not across transformers', async () => {
+    await run('sender', timedFrames(10));
+    expect(shapes()[0]).toMatchObject({ repeatedTs: 1 });
+    posted.length = 0;
+    // A second transformer seeing the SAME timestamps is not a repeat of its own.
+    await run('sender', timedFrames());
+    expect(shapes()[0]).toMatchObject({ repeatedTs: 0 });
+  });
+
+  it('names a chained double pass by the IV it produced, without decrypting, and still sends', async () => {
+    const once = await run('sender', timedFrames());
+    posted.length = 0;
+    const twice = await run('sender', once);
+    expect(twice).toHaveLength(50);
+    expect(shapes()[0]).toMatchObject({ ownIv: 50 });
+    // The frames left encrypted twice: the receiver's own witness still fires.
+    posted.length = 0;
+    metadata = OPUS_METADATA;
+    await run('receiver', twice); // ~half the inner ciphertexts break R1-R7, which triggers the probe
+    expect(posted).toContainEqual(expect.objectContaining({ type: 'doubleEncrypted' }));
   });
 });
