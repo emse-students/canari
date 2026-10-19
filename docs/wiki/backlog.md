@@ -1337,10 +1337,6 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 - **Ambiguity to answer:** what "an institution of another campus" means for a reader (the grant reaches it today).
 - The document-reviewer rows were NOT moved into the grants table (a separate capability on the same page).
 
-## Tooltips: one remaining inconsistency (audit 2026-10-08)
-
-The app still has THREE hover/tap systems (native `title`, the `PostPolls` voters bubble, `MessageInfoTooltip`) and no shared `Tooltip` component. Redesign only if a fourth appears; the 38 icon buttons whose `title` and `aria-label` are two different keys for the same hint could share one key ([convention](frontend/design-reference.md#tooltips-one-convention-audited-2026-10-08)). `ReactionsDisplay`'s native reactor `title` is removed in its own PR.
-
 ## CanaReels: the camera tab cannot be guessed (user, 2026-10-09)
 
 Swiping right from the leftmost tab opens the camera, and nothing says so. Wanted AFTER the video, discard and weak-network chantiers are stable, not before. Ideas to weigh with the user: a peeking camera edge on the leftmost tab (a visible handle that nudges once); a first-run coachmark shown once per account and remembered server-side; a permanent camera icon in the app bar next to the plus; and a "Canareels" entry in the plus menu so the feature is reachable without the swipe. Measure how many users have ever opened the camera before choosing. **DECIDED 2026-10-18: a "CanaReels" entry in the + menu** ([WP-REELS-MENU](#decided-by-the-user-on-2026-10-18---every-design-question-answered)); the other ideas are not taken.

@@ -1397,7 +1397,7 @@
                       onclick={() => onTogglePin?.(pid)}
                       class="ui-icon-button text-text-muted rounded-lg hover:bg-red-500/10 hover:text-red-500"
                       aria-label={m.chat_unpin_label()}
-                      title={m.chat_unpin_title()}
+                      title={m.chat_unpin_label()}
                     >
                       <X size={14} />
                     </button>
