@@ -876,6 +876,40 @@ refusal is a server bug, not a state to keep rotating through. The MLS credentia
 `userId:deviceId`, so a new id *is* a new device: local history is gone and every group must
 re-invite it. That is the intended cost of a revocation being real.
 
+## Refusal codes - one stable name per refusal a member can act on (2026-10-19)
+
+A refusal's `message` is dev-facing English and a client never shows or branches on it. What it keys
+on is the body's `code`, from ONE registry per service (`src/utils/refusal-codes.ts` here,
+`src/common/refusal-codes.ts` in core-service; `refusalBody(code, message, extra)` builds the body),
+and it words the code through Paraglide in `frontend/src/lib/utils/refusalCodes.ts`
+(`describeRefusalCode(refusalCode(error))`). `refusalCodes.test.ts` reads both registries and fails
+when a code is neither worded nor declared `TYPED_ELSEWHERE_CODES`. Codes are additive: the old
+`message` text stays beside the code, so an older client reads what it always read and no shim exists.
+A code is a contract - a rename is a new code plus the old one kept until `minClientVersion` drops
+every client that reads it. Social-service keeps its own table ([social-service](social-service.md)).
+
+| Service | Code | Status | Raised when | Worded on |
+| --- | --- | --- | --- | --- |
+| delivery | `DEVICE_REVOKED`, `DEVICE_LIMIT_REACHED`, `KEY_PACKAGE_IDENTITY_INVALID`, `KEY_DISTRIBUTION_GROUP` | 403/400 | already coded before this pass | typed flows, never a sentence |
+| delivery | `USER_BLOCKED` | 403 | a block stands between two people (add, call) | call and add-member screens, neutral |
+| delivery | `NOT_A_MEMBER` | 403 | invite link, roster read or notification setting on a conversation the caller is not in | share link, panel |
+| delivery | `MEMBERSHIP_NOT_ALLOWED` | 403 | a non-member changes a roster | add-member |
+| delivery | `INVITE_INVALID` | 404 | unknown, expired or revoked invitation | `/g/join/[token]` |
+| delivery | `INVITE_NOT_A_GROUP` | 400 | invite link requested for a 1-to-1 | share link |
+| delivery | `NO_ACTIVE_DEVICE` | 400 | the joiner has no usable key package | `/g/join/[token]` |
+| delivery | `PIN_INCORRECT` | 403 | wrong current PIN, or the lost compare-and-swap | PIN change |
+| delivery | `PIN_NOT_SET` | 400 | PIN change on an account with no PIN | PIN change |
+| core | `BLOCK_SELF`, `BLOCK_TARGET_NOT_FOUND`, `BLOCK_LIMIT_REACHED` (+`max`), `NOT_BLOCKED` | 400/404/422/404 | the block list | settings, blocked people |
+| core | `ADMIN_SELF_DEMOTE` | 403 | an administrator removes their own right | no screen calls it yet |
+| core | `USER_SEARCH_FILTER_REQUIRED`, `USER_SEARCH_TOO_LONG` (+`max`) | 400 | the directory with no filter, a search past 200 characters | `/directory` |
+
+`MAINTENANCE`, `ACCOUNT_ERASURE_PENDING` and `ACCOUNT_ERASURE_BLOCKED` were coded in
+`auth.controller.ts` earlier and are worded by the sign-in screen. **Not coded, on purpose:** header
+and shape validation (`Missing X-User-Id`, `ids must be ...`: a client bug, not a member's), shared-secret
+guards, push-token and link-preview failures (no screen words them), calls (held off, dev builds only),
+Lydia payment errors (the paid half waits for WP-LYDIA-1), and anything in social-service, account
+erasure, lives or reels.
+
 ## Routes
 
 All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (injected by Nginx) unless noted.

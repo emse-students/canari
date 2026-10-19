@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { coreUrl } from '$lib/utils/apiUrl';
 import type { Campus, CursusEntry, Post } from './miconnectProfile';
@@ -188,9 +189,6 @@ export async function searchDirectory(params: {
   if (params.offset != null) p.set('offset', String(params.offset));
 
   const res = await apiFetch(`${coreUrl()}/api/users/directory?${p.toString()}`);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body?.message || `Erreur (${res.status})`);
-  }
+  if (!res.ok) throw await refusalFromResponse(res, 'directory search refused');
   return (await res.json()) as DirectorySearchResult;
 }

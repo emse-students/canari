@@ -2,6 +2,8 @@
   import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { Log } from '$lib/utils/Log';
+  import { refusalCode } from '$lib/utils/apiRefusal';
+  import { describeRefusalCode } from '$lib/utils/refusalCodes';
   import {
     Clock,
     Trash2,
@@ -236,7 +238,7 @@
       }
     } catch (e) {
       Log.d('chatGroupPanel.generateShareLink failed', e);
-      shareError = m.chat_group_link_generation_error();
+      shareError = describeRefusalCode(refusalCode(e)) ?? m.chat_group_link_generation_error();
     } finally {
       shareLoading = false;
     }

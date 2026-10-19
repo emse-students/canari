@@ -29,6 +29,8 @@ import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
 // `Failed to fetch`, and only the THROW knows which it is.
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { describeRefusalCode } from '$lib/utils/refusalCodes';
 import {
   LoginFailure,
   LoginStoppedBySignOutError,
@@ -2362,8 +2364,12 @@ export async function changePinImpl(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ userId, oldVerifier, newVerifier }),
   });
-  if (res.status === 403) throw new LocalizedError(m.auth_pin_change_current_incorrect());
-  if (!res.ok) throw new LocalizedError(m.auth_pin_change_server_error());
+  if (!res.ok) {
+    // Worded from the refusal's stable code (PIN_INCORRECT, PIN_NOT_SET), never its prose or a bare
+    // status: a 403 here is the one refusal, but the code is what says so.
+    const refusal = await refusalFromResponse(res, 'PIN change refused');
+    throw new LocalizedError(describeRefusalCode(refusal.code) ?? m.auth_pin_change_server_error());
+  }
   log('[PIN_CHANGE] Account verifier rotated server-side.');
 
   // Derive both device keys from the same salt: the old one to read the existing state,
