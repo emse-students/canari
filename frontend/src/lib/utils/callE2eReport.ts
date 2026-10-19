@@ -28,7 +28,11 @@ export interface E2eWorkerReport {
 
 /** The engine facts a report is read against, gathered once on the main thread. */
 export interface E2eEngineFacts {
-  /** e.g. `Chrome/152`, `Safari/26`, or `?` - the major version only. */
+  /**
+   * e.g. `Chrome/152`, `iOS/27` (the OS version a WKWebView names), `Safari/26` (the browser's
+   * own version), or `?`. Never a WebKit BUILD number: those (`AppleWebKit/605.1.15`) are frozen
+   * and compare to nothing.
+   */
   engine: string;
   /** Whether `RTCRtpSender.prototype` / `RTCRtpReceiver.prototype` define `transform` natively. */
   senderAttr: 'native' | 'absent';
@@ -48,12 +52,17 @@ export function transformAttribute(proto: object | undefined): 'native' | 'absen
   return 'absent';
 }
 
-/** The engine's name and MAJOR version from a user agent (no device or build detail). */
+/**
+ * The engine's name and MAJOR version from a user agent (no device or build detail). A WKWebView's
+ * agent carries no browser version, only the OS's, so it reads `iOS/N`; Safari reads `Safari/N`.
+ */
 export function engineFromUserAgent(ua: string): string {
   const chrome = /\b(?:Chrome|Chromium)\/(\d+)/.exec(ua);
   if (chrome) return `Chrome/${chrome[1]}`;
-  const webkit = /\bVersion\/(\d+)[^ ]* .*Safari\//.exec(ua) ?? /\bOS (\d+)_\d+/.exec(ua);
-  if (webkit) return `WebKit/${webkit[1]}`;
+  const safari = /\bVersion\/(\d+)[^ ]* .*Safari\//.exec(ua);
+  if (safari) return `Safari/${safari[1]}`;
+  const ios = /\bOS (\d+)_\d+/.exec(ua);
+  if (ios) return `iOS/${ios[1]}`;
   const firefox = /\bFirefox\/(\d+)/.exec(ua);
   if (firefox) return `Firefox/${firefox[1]}`;
   return '?';
@@ -72,33 +81,80 @@ export function readE2eEngineFacts(): E2eEngineFacts {
   };
 }
 
+/** What a report says beyond its counts: a FAULT leads the line with `ERROR`, a NOTE does not. */
+export interface E2eDiagnosis {
+  level: 'fault' | 'note';
+  text: string;
+}
+
 /**
- * The diagnosis a report carries, or `null` when the transform is plainly in the path. Read at
- * 5 s after `connected` and at the end: by then each side has seen hundreds of audio frames.
+ * The diagnosis a report carries, or `null` when the transform is plainly in the path.
+ *
+ * `judgeFrames` says whether a side with NO frame is a fault. It is, 5 s after `connected`: by
+ * then each side has seen hundreds of audio frames. At the end of a call it is only when that 5 s
+ * report was taken - a call hung up a second after connecting may legitimately have received
+ * nothing, and its end report then states counts without accusing anything. Decided by WHICH
+ * report ran, never by a clock.
+ *
+ * A missing native `transform` attribute is a fact about the engine; it is a fault only together
+ * with a side that saw no frame. Fed transforms on such an engine are a note, not a verdict.
  */
-export function diagnoseE2eReport(r: E2eWorkerReport, facts: E2eEngineFacts): string | null {
+export function diagnoseE2eReport(
+  r: E2eWorkerReport,
+  facts: E2eEngineFacts,
+  judgeFrames = true
+): E2eDiagnosis | null {
   const sender = r.framesIn.sender ?? 0;
   const receiver = r.framesIn.receiver ?? 0;
-  if (facts.senderAttr === 'absent' || facts.receiverAttr === 'absent') {
-    return 'this engine has no native transform attribute: media bypasses the worker (clear out, ciphertext in)';
-  }
+  const attrAbsent = facts.senderAttr === 'absent' || facts.receiverAttr === 'absent';
   if (!r.transformers.sender || !r.transformers.receiver) {
-    return 'the engine never handed the worker a transformer for one side';
+    return {
+      level: 'fault',
+      text: 'the engine never handed the worker a transformer for one side',
+    };
   }
-  if (sender === 0 && receiver === 0) {
-    return 'no frame reached either transform: the media bypasses or stalls before the worker';
-  }
-  if (sender === 0) return 'no frame reached the SENDER transform';
-  if (receiver === 0) return 'no frame reached the RECEIVER transform';
   if (r.opusInvalid.sender || r.opusInvalid.receiver || r.doubleEncrypted) {
-    return 'non-Opus audio crossed the transform';
+    return { level: 'fault', text: 'non-Opus audio crossed the transform' };
+  }
+  const unfed =
+    sender === 0 && receiver === 0
+      ? 'no frame reached either transform'
+      : sender === 0
+        ? 'no frame reached the SENDER transform'
+        : receiver === 0
+          ? 'no frame reached the RECEIVER transform'
+          : null;
+  if (unfed && judgeFrames) {
+    return {
+      level: 'fault',
+      text: attrAbsent
+        ? `${unfed}, and this engine has no native transform attribute: the media may flow around the worker`
+        : unfed,
+    };
+  }
+  if (attrAbsent) {
+    return {
+      level: 'note',
+      text:
+        sender > 0 && receiver > 0
+          ? 'this engine has no native transform attribute, yet both transforms were fed'
+          : 'this engine has no native transform attribute',
+    };
   }
   return null;
 }
 
-/** The report as ONE log line; `ERROR` leads it when `diagnoseE2eReport` names a fault. */
-export function describeE2eReport(r: E2eWorkerReport, facts: E2eEngineFacts): string {
-  const fault = diagnoseE2eReport(r, facts);
+/**
+ * The report as ONE log line; `ERROR` leads it when `diagnoseE2eReport` names a fault, and a
+ * note is appended without it. `judgeFrames` as in `diagnoseE2eReport`.
+ */
+export function describeE2eReport(
+  r: E2eWorkerReport,
+  facts: E2eEngineFacts,
+  judgeFrames = true
+): string {
+  const d = diagnoseE2eReport(r, facts, judgeFrames);
+  const fault = d?.level === 'fault';
   const t = r.transformers;
   const f = r.framesIn;
   return (
@@ -110,6 +166,6 @@ export function describeE2eReport(r: E2eWorkerReport, facts: E2eEngineFacts): st
     `decrypt-failed=${r.decryptFailures} short=${r.tooShort} (empty ${r.tooShortEmpty}) no-key=${r.droppedNoKey} ` +
     `not-opus sender=${r.opusInvalid.sender} receiver=${r.opusInvalid.receiver} double=${r.doubleEncrypted} | ` +
     `engine=${facts.engine} attr sender=${facts.senderAttr} receiver=${facts.receiverAttr}` +
-    (fault ? ` - ${fault}` : '')
+    (d ? ` - ${d.text}` : '')
   );
 }

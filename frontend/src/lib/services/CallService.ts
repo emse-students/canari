@@ -167,6 +167,11 @@ export class CallService {
   private workerKeyReady: Promise<void> | null = null;
   /** The one E2E worker report of a call, 5 s after its first `connected` (`logE2eReport`). */
   private e2eReportTimer: number | null = null;
+  /**
+   * Whether that 5 s report RAN. The timer id stays set after it fires, so it cannot answer this;
+   * the end report judges a side with no frame only when this is true (`diagnoseE2eReport`).
+   */
+  private e2eReportFired = false;
   /** All remote tracks merged for 1:1 display (audio + video in one MediaStream). */
   private mergedRemoteStream: MediaStream | null = null;
   private callKeyBytes: Uint8Array | null = null;
@@ -587,6 +592,9 @@ export class CallService {
   private cleanup() {
     // Read before the reset below: only a call that connected owes a final worker report.
     const wasConnected = get(this.connectedAt) !== null;
+    const endedCallId = this.currentCallId;
+    const fiveSecondReportRan = this.e2eReportFired;
+    this.e2eReportFired = false;
     if (this.e2eReportTimer !== null) {
       window.clearTimeout(this.e2eReportTimer);
       this.e2eReportTimer = null;
@@ -642,7 +650,11 @@ export class CallService {
       this.workerKeyReady = null;
       // The counters die with the worker, so the final report is asked BEFORE it goes.
       if (wasConnected)
-        void this.logE2eReport('call end', worker).finally(() => worker.terminate());
+        void this.logE2eReport(
+          `call end, call=${endedCallId ?? '?'}`,
+          worker,
+          fiveSecondReportRan
+        ).finally(() => worker.terminate());
       else worker.terminate();
     }
 
@@ -1456,10 +1468,10 @@ export class CallService {
         // per transform side, read from the worker itself, plus the one at the end (`cleanup`).
         if (this.e2eReportTimer === null && this.encryptionWorker) {
           const worker = this.encryptionWorker;
-          this.e2eReportTimer = window.setTimeout(
-            () => void this.logE2eReport('5 s after connected', worker),
-            CallService.E2E_REPORT_DELAY_MS
-          );
+          this.e2eReportTimer = window.setTimeout(() => {
+            this.e2eReportFired = true;
+            void this.logE2eReport('5 s after connected', worker, true);
+          }, CallService.E2E_REPORT_DELAY_MS);
         }
       }
       if (state === 'disconnected') {
@@ -1533,14 +1545,17 @@ export class CallService {
    * (2026-10-19): the Mi 9T logged no worker line in five calls, which could mean a lost message
    * bridge, a transform never handed to the worker, or a transform never fed a frame. Asked, not
    * waited for: no answer within `E2E_REPORT_ANSWER_MS` accuses the bridge in its own line.
+   * `judgeFrames`: whether a side with no frame is a fault (`diagnoseE2eReport`).
    */
-  private logE2eReport(tag: string, worker: Worker): Promise<void> {
+  private logE2eReport(tag: string, worker: Worker, judgeFrames: boolean): Promise<void> {
     return new Promise<void>((resolve) => {
       const onAnswer = (event: MessageEvent<{ type?: string; tag?: string }>) => {
         if (event.data?.type !== 'report' || event.data.tag !== tag) return;
         window.clearTimeout(timer);
         worker.removeEventListener('message', onAnswer);
-        appendLog(describeE2eReport(event.data as E2eWorkerReport, readE2eEngineFacts()));
+        appendLog(
+          describeE2eReport(event.data as E2eWorkerReport, readE2eEngineFacts(), judgeFrames)
+        );
         resolve();
       };
       const timer = window.setTimeout(() => {

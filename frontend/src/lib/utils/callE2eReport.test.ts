@@ -60,7 +60,12 @@ describe('engineFromUserAgent', () => {
       engineFromUserAgent(
         'Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
       )
-    ).toBe('WebKit/27');
+    ).toBe('iOS/27');
+    expect(
+      engineFromUserAgent(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15'
+      )
+    ).toBe('Safari/26');
     expect(engineFromUserAgent('curl/8')).toBe('?');
   });
 });
@@ -76,7 +81,11 @@ describe('diagnoseE2eReport / describeE2eReport', () => {
 
   it('names each way the media can miss the worker', () => {
     const cases: Array<[Partial<E2eWorkerReport>, E2eEngineFacts, string]> = [
-      [{}, { ...NATIVE, senderAttr: 'absent' }, 'no native transform attribute'],
+      [
+        { framesIn: { sender: 9 } },
+        { ...NATIVE, senderAttr: 'absent' },
+        'may flow around the worker',
+      ],
       [{ transformers: { sender: 1 } }, NATIVE, 'never handed the worker a transformer'],
       [{ framesIn: {} }, NATIVE, 'no frame reached either transform'],
       [{ framesIn: { receiver: 9 } }, NATIVE, 'no frame reached the SENDER transform'],
@@ -88,5 +97,24 @@ describe('diagnoseE2eReport / describeE2eReport', () => {
       expect(line.startsWith('[Call] ERROR E2E worker report')).toBe(true);
       expect(line).toContain(says);
     }
+  });
+
+  it('a missing attribute with BOTH transforms fed is a note, never an ERROR', () => {
+    const facts: E2eEngineFacts = { ...NATIVE, receiverAttr: 'absent' };
+    expect(diagnoseE2eReport(report(), facts)).toEqual({
+      level: 'note',
+      text: 'this engine has no native transform attribute, yet both transforms were fed',
+    });
+    expect(describeE2eReport(report(), facts).startsWith('[Call] E2E worker report')).toBe(true);
+  });
+
+  it('a side with no frame is not judged when judgeFrames is false (a call ended before 5 s)', () => {
+    const short = report({ framesIn: { sender: 40 } });
+    expect(diagnoseE2eReport(short, NATIVE, false)).toBeNull();
+    expect(describeE2eReport(short, NATIVE, false)).not.toContain('ERROR');
+    // A real fault is still one.
+    expect(
+      diagnoseE2eReport(report({ doubleEncrypted: 1, framesIn: {} }), NATIVE, false)?.level
+    ).toBe('fault');
   });
 });

@@ -507,7 +507,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     expect(workerAnswers.terminated).toBe(0);
     await vi.advanceTimersByTimeAsync(1);
     expect(reports()).toHaveLength(2);
-    expect(reports()[1]).toContain('(call end)');
+    expect(reports()[1]).toContain('(call end, call=room-1)');
     expect(workerAnswers.terminated).toBe(1);
   });
 
@@ -530,6 +530,18 @@ describe('the E2E worker report (2026-10-19)', () => {
     const line = lines().find((l) => l.includes('E2E worker report'));
     expect(line?.startsWith('[Call] ERROR E2E worker report')).toBe(true);
     expect(line).toContain('no frame reached the RECEIVER transform');
+  });
+
+  it('does not accuse an empty side at the end of a call shorter than the 5 s report', async () => {
+    workerAnswers.report = { sender: 40, receiver: 0 };
+    const { service, lines } = await connectedCall();
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    const line = lines().find((l) => l.includes('E2E worker report'));
+    expect(line).toContain('(call end, call=room-1)');
+    expect(line).toContain('frames in sender=40 receiver=0');
+    expect(line).not.toContain('ERROR');
   });
 
   it('owes no report for a call that never connected', async () => {

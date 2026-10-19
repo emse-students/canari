@@ -570,9 +570,13 @@ on the Mi 9T. `CallService` asks twice per call, 5 s after the first `connected`
 
 Rules for the line:
 
-- It starts `ERROR` when a side has no transformer or no frame, when the engine has no NATIVE
-  `transform` attribute (`sender.transform = x` would then be a plain property and change nothing),
-  or when non-Opus audio crossed.
+- It starts `ERROR` when a side has no transformer or no frame, or when non-Opus audio crossed.
+- A missing NATIVE `transform` attribute (`sender.transform = x` would then be a plain property) is
+  a fact, not a verdict: with a side at 0 frames it joins the `ERROR` ("the media may flow around
+  the worker"); with both sides fed it is a note, without `ERROR`.
+- "No frame" is judged at the end of a call ONLY if the 5 s report ran: a call hung up a second
+  after connecting may legitimately have received nothing. Decided by which report ran, not a clock.
+- The end line carries the call id: `(call end, call=<id>)`.
 - No answer within 1.5 s is its own `ERROR ... the worker did not answer` line.
 - A call that never connected owes no report.
 
@@ -588,14 +592,15 @@ rx=0. Pinned by `callE2eReport.test.ts`, `encryption.worker.test.ts` and `CallSe
 
 **What the next phone call must show** (Mi 9T, each line read from its console):
 
-| Report line on the Mi 9T                                              | Means                                                                                                                                                         |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Report line on the Mi 9T                                               | Means                                                                                                                                                          |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | present, frames in sender/receiver ~250 each at 5 s, `decrypted` close | the transform IS in the path; the per-frame lines are lost because posts from inside the transform do not reach the page on this WebView. Read `not-opus` here |
-| `the worker did not answer in 1500 ms`                                 | once a transform is attached, nothing the worker posts reaches the page (`keyReady` came before)                                                              |
-| `transformers sender=0` or `receiver=0`                                | the engine never handed the worker that side's transformer                                                                                                    |
-| transformers 1, `frames in` 0 on a side                                | the transformer exists and is never fed: media flows around it                                                                                                |
-| `attr ... absent`                                                      | this WebView has no native `transform` attribute: calls from it are NOT encrypted - a P1, refuse such an engine                                               |
-| `not-opus receiver` > 0 while hearing the iPhone                       | the iPhone's frames decrypt to non-Opus (H2/H1 above); `double` > 0 is H1                                                                                     |
+| `the worker did not answer in 1500 ms`                                 | once a transform is attached, nothing the worker posts reaches the page (`keyReady` came before)                                                               |
+| `transformers sender=0` or `receiver=0`                                | the engine never handed the worker that side's transformer                                                                                                     |
+| transformers 1, `frames in` 0 on a side                                | the transformer exists and is never fed: media flows around it                                                                                                 |
+| `attr ... absent` with a side at 0 frames (`ERROR`)                    | this WebView may route media around the worker: read the other device for `E2E decrypt failed` before calling it unencrypted                                   |
+| `attr ... absent`, both sides fed (a note)                             | the attribute is missing but the transform runs; not a fault by itself                                                                                         |
+| `not-opus receiver` > 0 while hearing the iPhone                       | the iPhone's frames decrypt to non-Opus (H2/H1 above); `double` > 0 is H1                                                                                      |
 
 **The desktop counterpart is a command now.** `tools/cross-client-harness/callpeer.mjs` starts a
 harness profile with a fake microphone, tracks the page's peer connections, can dial or accept, and

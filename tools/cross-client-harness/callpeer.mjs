@@ -37,15 +37,22 @@ import { BROWSERS, isUp, startBrowser } from './launch.mjs';
 import { SITE } from './names.mjs';
 
 const args = process.argv.slice(2);
+/** The value after `--name`; a flag given with no value (or another flag after it) FAILS loudly. */
 const opt = (name, dflt) => {
   const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : dflt;
+  if (i < 0) return dflt;
+  const v = args[i + 1];
+  if (v === undefined || v.startsWith('--')) throw new Error(`--${name} needs a value`);
+  return v;
 };
 const flag = (name) => args.includes(`--${name}`);
 
 const WHICH = opt('browser', 'w3');
 const URL_ = opt('url', `${SITE}/chat`);
 const SECONDS = Number(opt('seconds', '60'));
+if (!Number.isInteger(SECONDS) || SECONDS < 1) {
+  throw new Error(`--seconds must be a whole number of seconds >= 1, got ${opt('seconds', '60')}`);
+}
 const WAV = opt('wav', '');
 const OUT = opt('out', join(tmpdir(), `callpeer-${WHICH}-${Date.now()}.json`));
 const CONNECT_WAIT_MS = 120_000;
