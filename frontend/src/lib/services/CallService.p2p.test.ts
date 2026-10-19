@@ -6,6 +6,7 @@ import {
   CALL_ICE_RESTART_ATTEMPTS,
   CALL_ICE_TRANSPORT_POLICY,
   CALL_SIGNALLING_RESUME_ATTEMPTS,
+  CALL_SIGNALLING_RESUME_TIMEOUT_MS,
 } from './CallService';
 import { reconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
@@ -832,8 +833,8 @@ describe('a network blip does not end the call', () => {
     expect(pc.restarts).toBe(CALL_ICE_RESTART_ATTEMPTS + 2);
   });
 
-  it('the polite side never restarts ICE: it waits for the initiator', async () => {
-    const service = new CallService(fakeMls);
+  /** The callee of a connected call: polite, joined with a resume token, ICE connected. */
+  async function connectedCallee(service: CallService) {
     await service.handleCallSignal(
       'peer@example.org',
       'group-1',
@@ -857,11 +858,79 @@ describe('a network blip does not end the call', () => {
     await settle();
     const pc = FakePeerConnection.instances[0];
     pc.setIce('connected');
+    return { ws, pc };
+  }
 
-    pc.setIce('failed');
+  it('the polite side never restarts ICE itself: it ASKS the initiator, on its own budget', async () => {
+    const service = new CallService(fakeMls);
+    const { ws, pc } = await connectedCallee(service);
+
+    pc.setIce('disconnected');
+    expect(ws.framesOfType('IceRestartRequest')).toHaveLength(1);
+    for (let n = 2; n <= CALL_ICE_RESTART_ATTEMPTS; n++) {
+      pc.setIce('failed');
+      expect(ws.framesOfType('IceRestartRequest')).toHaveLength(n);
+      expect(get(service.callState)).toBe('incall');
+    }
     expect(pc.restarts).toBe(0);
-    expect(get(service.callState)).toBe('incall');
     expect(get(service.reconnecting)).toBe(true);
+
+    // The initiator never brought the path back: the polite side's budget ends the call.
+    pc.setIce('failed');
+    expect(ws.framesOfType('IceRestartRequest')).toHaveLength(CALL_ICE_RESTART_ATTEMPTS);
+    expect(get(service.callState)).toBe('ended');
+  });
+
+  it('the initiator honours a restart request even while its own path looks connected', async () => {
+    const service = new CallService(fakeMls);
+    const { ws, pc } = await connectedCaller(service);
+
+    ws.deliver({ type: 'IceRestartRequest' });
+    await settle();
+    expect(pc.restarts).toBe(1);
+
+    // Both sides saw the loss: a request arriving while a restart is in flight adds none.
+    ws.deliver({ type: 'IceRestartRequest' });
+    await settle();
+    expect(pc.restarts).toBe(1);
+
+    // The restart did not heal it: the next request is honoured, and the budget ends a loop.
+    pc.setIce('failed');
+    expect(pc.restarts).toBe(2);
+    ws.deliver({ type: 'IceRestartRequest' });
+    await settle();
+    expect(pc.restarts).toBe(2);
+    pc.setIce('failed');
+    expect(pc.restarts).toBe(CALL_ICE_RESTART_ATTEMPTS);
+    pc.setIce('failed');
+    expect(get(service.callState)).toBe('ended');
+  });
+
+  it('a resume attempt stuck before its Joined counts as ONE failed attempt at its deadline', async () => {
+    const service = new CallService(fakeMls);
+    await connectedCaller(service);
+
+    FakeSocket.instances[0].drop();
+    const stuck = await resumeAttempt(1);
+    // Never opens (a black-holed network): the deadline fails the attempt and arms the next.
+    await vi.advanceTimersByTimeAsync(CALL_SIGNALLING_RESUME_TIMEOUT_MS);
+    await settle();
+    expect(stuck.readyState).toBe(3);
+    expect(get(service.callState)).toBe('incall');
+    // Opened but never joined: the SAME deadline covers it.
+    const opened = await resumeAttempt(2);
+    opened.open();
+    await vi.advanceTimersByTimeAsync(CALL_SIGNALLING_RESUME_TIMEOUT_MS);
+    await settle();
+    expect(opened.readyState).toBe(3);
+    // The third attempt joins: the call goes on.
+    const ws = await resumeAttempt(3);
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-3' });
+    await settle();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(get(service.callState)).toBe('incall');
+    expect(FakeSocket.instances).toHaveLength(4);
   });
 
   it('a path that NEVER connected still ends the call on ICE failed - there is nothing to restore', async () => {

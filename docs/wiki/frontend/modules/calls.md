@@ -196,16 +196,28 @@ and no ICE restart. A transport failure is not an answer, so it no longer ends a
 
 | Event | Client (`CallService.ts`) | Server ([call-service](../../services/call-service.md#peer-to-peer-mode-2026-10-17)) |
 |---|---|---|
-| this device's signalling socket drops after `Joined` | `onSignallingLost`: re-open on the shared ladder (`utils/reconnectBackoff.ts`, the chat gateway's own 1/2/4/8/16 s), `Join` with the seat's `resume_token` | the seat stays ABSENT for `CALL_P2P_SEAT_GRACE_SEC` (60 s); the partner gets `PeerAway` |
+| this device's signalling socket drops after `Joined` | `onSignallingLost`: re-open on the shared ladder (`utils/reconnectBackoff.ts`, the chat gateway's own 1/2/4/8/16 s), `Join` with the seat's `resume_token`; each attempt has ONE deadline for open AND `Joined` (`CALL_SIGNALLING_RESUME_TIMEOUT_MS`, 5 s - a resource bound: a socket stuck CONNECTING on a black-holed network costs one attempt, not the ladder) | the seat stays ABSENT for `CALL_P2P_SEAT_GRACE_SEC` (60 s); the partner gets `PeerAway` |
 | resume joined | `signalling resumed on attempt N`; the next `Joined` brings a fresh token | the seat is taken back IN PLACE (same roles); both get `PeerReady { resumed: true }` |
 | `PeerReady { resumed: true }` | keep the peer connection; the INITIATOR calls `pc.restartIce()` if ICE is `disconnected`/`failed` (its offer goes out on `negotiationneeded`) | - |
-| ICE `disconnected` (first restart of a loss) or `failed` after it had connected, signalling up | initiator restarts ICE; the polite side waits for it | - |
+| ICE `disconnected` (first restart of a loss) or `failed` after it had connected, signalling up | initiator restarts ICE; the POLITE side sends `IceRestartRequest` (it cannot offer), on its OWN 3-per-loss budget, and the initiator restarts even if its own path looks connected (one restart in flight absorbs a second ask) | relays `IceRestartRequest` verbatim |
 | `PeerAway` | the call goes on, `reconnecting = true`; ICE restart deferred until `PeerReady { resumed }` | - |
-| **ends the call** | `PeerLeft`; a resume `Refused` (`call-over`: seat expired or partner hung up); the MLS `call_hangup`; **5 resume attempts** (`CALL_SIGNALLING_RESUME_ATTEMPTS`) or **3 ICE restarts** since the path last connected (`CALL_ICE_RESTART_ATTEMPTS`) spent | Close frame = hangup -> `PeerLeft` at once; grace spent -> `PeerLeft` |
+| **ends the call** | `PeerLeft`; a resume `Refused` (`call-over`: seat expired or partner hung up); the MLS `call_hangup`; **5 resume attempts** (`CALL_SIGNALLING_RESUME_ATTEMPTS`) or **3 ICE restarts or restart requests** since the path last connected (`CALL_ICE_RESTART_ATTEMPTS`) spent | Close frame = hangup -> `PeerLeft` at once; grace spent -> `PeerLeft` |
 | ICE `failed` on a path that NEVER connected | ends the call, as before: there is nothing to restore | - |
 
 A relay without the resume protocol (no `resume_token` in `Joined`) still ends the call on a drop,
 saying so: `... and the relay gave no resume token`.
+
+**The two clocks are not one.** Five attempts of at most 5 s on a 1/2/4/8/16 s ladder end within
+56 s of the CLIENT's loss, and the seat grace is 60 s from when the SERVER sees the socket die - two
+different moments, and a session refresh before an attempt is not bounded here. So the server MAY
+give up first; the late resume is then answered `call-over` and the call ends, the outcome the
+budget would have reached anyway.
+
+**AN ACCEPTED COST: AN APP KILLED BY THE OS NOW LOOKS LIKE A BLIP.** A killed app sends no Close
+frame and no MLS hangup, so the server cannot tell it from a network loss: the partner sees
+"Reconnexion..." for the 60 s grace, then `PeerLeft`, where it used to get `PeerLeft` at once. A
+deliberate hangup (the button, a page closed by the user - the browser sends a Close frame) still
+ends the call immediately.
 
 **THE UI CONTRACT: `callService.reconnecting` (a `Writable<boolean>`), shown with
 `m.call_reconnecting()` ("Reconnexion..." / "Reconnecting...").** `true` while a call in `incall`
@@ -213,8 +225,9 @@ that had connected is getting its connection back: this device's signalling is r
 party's is (`PeerAway`), or ICE is not `connected`/`completed` after having been. `false` outside a
 call, while ringing or connecting (that is `calling`), and as soon as the ended summary shows. Every
 change is logged with its three facts: `[Call] reconnecting=<bool> (signalling=lost|up
-peer=away|present ice=<state>)`. The call overlay redesign reads this field; the old overlay does not
-show it yet.
+peer=away|present ice=<state>)`. **No component reads it in this change (#2137)**: the screen shows
+"Reconnexion..." once the call UI of #2138, stacked on it, subscribes to it. Until then the call
+survives the blip with nothing on screen saying so.
 
 **Pinned by** `CallService.p2p.test.ts` ("a network blip does not end the call": fake socket, fake
 peer connection, fake `setTimeout` stepped through the ladder, no real sleep) and

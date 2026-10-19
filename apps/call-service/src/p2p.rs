@@ -349,6 +349,9 @@ pub(crate) enum RelayedKind {
     Offer,
     Answer,
     Ice,
+    /// The polite side asking the initiator to restart ICE. Rare (a few per lost path at most), so
+    /// it has no counter: its relay line is the record.
+    IceRestartRequest,
 }
 
 /// Counts a frame on both ledgers: received from the sender, handed to the partner. Kept in one
@@ -367,6 +370,7 @@ pub(crate) fn count_relayed(kind: RelayedKind, from: &CallLedger, to: &CallLedge
             bump(&from.ice_in);
             bump(&to.ice_out);
         }
+        RelayedKind::IceRestartRequest => {}
     }
 }
 

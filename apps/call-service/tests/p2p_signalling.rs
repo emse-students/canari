@@ -541,3 +541,55 @@ async fn a_resume_token_is_refused_to_another_user() {
         json!({ "type": "PeerReady", "initiator": false, "resumed": true })
     );
 }
+
+/// The polite side cannot restart ICE itself, so it ASKS: the request crosses verbatim to the
+/// initiator, which is the one that offers.
+#[tokio::test]
+async fn an_ice_restart_request_reaches_the_initiator() {
+    let svc = start().await;
+    let room = "room-restart-ask";
+    let (mut alice, _, mut bob, _) = paired(&svc, room).await;
+
+    send(&mut bob, json!({ "type": "IceRestartRequest" })).await;
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "IceRestartRequest" })
+    );
+}
+
+/// A resume can arrive before the server saw the old socket die. The old socket is then CLOSED,
+/// not left half-open for the keepalive to find, and its closing tells the partner nothing.
+#[tokio::test]
+async fn a_resume_over_a_live_socket_closes_the_old_one() {
+    let svc = start().await;
+    let room = "room-live-resume";
+    let (mut alice, _, mut bob_old, bob_resume) = paired(&svc, room).await;
+
+    let mut bob = join_with(&svc, "bob", room, &bob_resume).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "resumed": true })
+    );
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "resumed": true })
+    );
+
+    let closed = timeout(LIVENESS, async {
+        loop {
+            match bob_old.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(Message::Text(t))) => panic!("the replaced socket got a frame: {t}"),
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "the replaced socket must be closed");
+
+    // Alice's next frame is Bob's, from his NEW socket: the old one's end was not announced.
+    let offer = json!({ "type": "Offer", "sdp": "{\"type\":\"offer\",\"sdp\":\"v=0 again\"}" });
+    send(&mut bob, offer.clone()).await;
+    assert_eq!(recv(&mut alice).await, offer);
+}

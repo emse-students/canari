@@ -75,11 +75,22 @@ export const CALL_ICE_TRANSPORT_POLICY: RTCIceTransportPolicy = 'all';
 /**
  * How many times the signalling socket is re-opened after it drops mid-call, on the shared
  * reconnect ladder (1, 2, 4, 8, 16 s: the last attempt starts 31 s after the loss). A BUDGET BY
- * COUNT, never by wall time; `call-service` keeps the away seat 60 s
- * (`DEFAULT_P2P_SEAT_GRACE`), longer than this ladder, so the server never gives up first on a
- * device that is still trying.
+ * COUNT, never by wall time. `call-service` keeps the away seat 60 s (`DEFAULT_P2P_SEAT_GRACE`),
+ * counted from when IT sees the socket die: five attempts of at most
+ * {@link CALL_SIGNALLING_RESUME_TIMEOUT_MS} each end within 56 s of the client's loss, but the two
+ * clocks start at different moments (and a session refresh before an attempt is not bounded
+ * here), so the server MAY give up first. Then the resume is answered `call-over` and the call
+ * ends - the same outcome the budget would have reached.
  */
 export const CALL_SIGNALLING_RESUME_ATTEMPTS = 5;
+
+/**
+ * One resume attempt's deadline, for the socket to open AND the relay to answer `Joined`. Past it
+ * the attempt counts as ONE failure and the next is armed. A RESOURCE bound, not a verdict: a
+ * socket stuck CONNECTING on a black-holed network would otherwise hold the ladder past the seat
+ * grace; a wrong value only costs one attempt of the budget, never the call by itself.
+ */
+export const CALL_SIGNALLING_RESUME_TIMEOUT_MS = 5_000;
 
 /**
  * How many ICE restarts the initiator makes for ONE loss of the media path (the count resets the
@@ -94,6 +105,7 @@ export type SignalFrame =
   | { type: 'PeerReady'; initiator: boolean; resumed?: boolean }
   | { type: 'PeerLeft' }
   | { type: 'PeerAway' }
+  | { type: 'IceRestartRequest' }
   | { type: 'Refused'; reason: string }
   | { type: 'Offer' | 'Answer'; sdp: string }
   | { type: 'IceCandidate'; candidate: string };
@@ -143,6 +155,8 @@ export class CallService {
   private mediaEverConnected = false;
   /** ICE restarts since the media path was last connected. See the restart budget. */
   private iceRestarts = 0;
+  /** A restart was made and ICE has neither connected nor failed since. */
+  private iceRestartPending = false;
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
@@ -556,6 +570,7 @@ export class CallService {
     this.peerAway = false;
     this.mediaEverConnected = false;
     this.iceRestarts = 0;
+    this.iceRestartPending = false;
     this.reconnecting.set(false);
     this.removeBackgroundHandler();
     this.syncCallPresence(false);
@@ -845,8 +860,13 @@ export class CallService {
    * `joinToken` is the room token from chat-delivery for a first join, or this seat's resume token
    * when the socket is re-opened after a drop ({@link resumeSignalling}). A `Refused` answer
    * rejects with {@link CallSignallingRefusedError}; anything else is a transport failure.
+   * `attemptTimeoutMs`, given for a resume, is one deadline for the socket to open AND be joined.
    */
-  private async connectSignalling(roomId: string, joinToken = this.currentRoomToken) {
+  private async connectSignalling(
+    roomId: string,
+    joinToken = this.currentRoomToken,
+    attemptTimeoutMs?: number
+  ) {
     // `apiUrl.ts` owns this decision - see `resolveServiceUrl`.
     const callBaseUrl = resolveServiceUrl(
       (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_CALL_URL,
@@ -901,15 +921,23 @@ export class CallService {
         window.clearTimeout(joinTimeout);
       };
 
+      // A resume attempt has ONE deadline for open AND Joined (a socket stuck CONNECTING on a
+      // black-holed network must not outlast the relay's seat grace); a first join keeps the two.
       const connectTimeout = window.setTimeout(() => {
-        fail(new Error('call signalling WebSocket connection timeout (15s)'));
+        fail(
+          new Error(
+            attemptTimeoutMs === undefined
+              ? 'call signalling WebSocket connection timeout (15s)'
+              : `call signalling resume attempt timeout (${attemptTimeoutMs} ms)`
+          )
+        );
         ws.close();
-      }, 15_000);
+      }, attemptTimeoutMs ?? 15_000);
 
       let joinTimeout = 0;
 
       ws.onopen = () => {
-        window.clearTimeout(connectTimeout);
+        if (attemptTimeoutMs === undefined) window.clearTimeout(connectTimeout);
         appendLog('[Call] signalling connected, joining p2p room...');
         this.sendSignal({
           type: 'Join',
@@ -917,6 +945,7 @@ export class CallService {
           room_token: joinToken ?? undefined,
           mode: 'p2p',
         });
+        if (attemptTimeoutMs !== undefined) return;
         joinTimeout = window.setTimeout(() => {
           fail(new Error('call signalling Join ack timeout (20s)'));
           ws.close();
@@ -994,6 +1023,10 @@ export class CallService {
         appendLog('[Call] the other party left the call room');
         this.endCall(false);
         return;
+      case 'IceRestartRequest':
+        // The polite side lost its media path and cannot restart ICE itself.
+        this.onIceRestartRequested();
+        return;
       case 'PeerAway':
         // NOT an end: the relay keeps its seat for a resume, and says `PeerReady { resumed }` or
         // `PeerLeft` next.
@@ -1047,6 +1080,7 @@ export class CallService {
       this.ignoreOffer = false;
       this.mediaEverConnected = false;
       this.iceRestarts = 0;
+      this.iceRestartPending = false;
     }
     await this.initPeerConnection();
     this.updateReconnecting();
@@ -1117,7 +1151,7 @@ export class CallService {
     this.resumeInFlight = true;
     let retry = false;
     try {
-      await this.connectSignalling(roomId, this.resumeToken);
+      await this.connectSignalling(roomId, this.resumeToken, CALL_SIGNALLING_RESUME_TIMEOUT_MS);
       appendLog(`[Call] signalling resumed on attempt ${this.resumeAttempts}`);
       this.resumeAttempts = 0;
     } catch (e) {
@@ -1141,7 +1175,9 @@ export class CallService {
    *
    * Only the INITIATOR restarts - it is the side that offers, and two restarts would collide. The
    * restart is `pc.restartIce()`, whose `negotiationneeded` sends the new offer through the relay.
-   * The budget counts restarts since the path was last connected; spent, the call ends.
+   * The POLITE side sends `IceRestartRequest` instead, which the initiator honours
+   * ({@link onIceRestartRequested}). The budget counts restarts (or requests) since the path was
+   * last connected; spent, the call ends.
    */
   private maybeRestartIce(reason: string): void {
     const pc = this.pc;
@@ -1154,10 +1190,6 @@ export class CallService {
       );
       return;
     }
-    if (this.polite) {
-      appendLog(`[Call] ICE ${ice} (${reason}) - waiting for the initiator's ICE restart`);
-      return;
-    }
     if (ice === 'disconnected' && this.iceRestarts > 0 && reason !== 'signalling resumed') {
       // A restart is already under way for this loss; the next one waits for `failed`.
       return;
@@ -1167,10 +1199,47 @@ export class CallService {
       return;
     }
     this.iceRestarts += 1;
-    appendLog(
-      `[Call] ICE restart ${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS} (${reason}, ice=${ice})`
-    );
+    if (this.polite) {
+      // Only the initiator offers, and it may see its own path as fine: ASK it, on THIS side's
+      // budget, so a loss only the polite side sees still ends in a restart or in the call's end.
+      appendLog(
+        `[Call] ICE ${ice} (${reason}) - asking the initiator to restart (${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS})`
+      );
+      this.sendSignal({ type: 'IceRestartRequest' });
+      return;
+    }
+    this.restartIceNow(`${reason}, ice=${ice}`);
+  }
+
+  /** The initiator's restart: one `restartIce()`, its offer sent on `negotiationneeded`. */
+  private restartIceNow(why: string): void {
+    const pc = this.pc;
+    if (!pc) return;
+    this.iceRestartPending = true;
+    appendLog(`[Call] ICE restart ${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS} (${why})`);
     pc.restartIce();
+  }
+
+  /**
+   * The polite side asked for an ICE restart. Honoured unless one is already in flight (both sides
+   * saw the loss), and counted against this side's budget too - the asker's budget is what ends a
+   * loss that never heals, and this one keeps a misbehaving peer from driving restarts for ever.
+   */
+  private onIceRestartRequested(): void {
+    if (!this.pc || this.polite) {
+      appendLog('[Call] ICE restart request ignored - this side does not offer');
+      return;
+    }
+    if (this.iceRestartPending) {
+      appendLog('[Call] ICE restart request - a restart is already in flight');
+      return;
+    }
+    if (this.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
+      this.failCall(`media path not restored after ${CALL_ICE_RESTART_ATTEMPTS} ICE restarts`);
+      return;
+    }
+    this.iceRestarts += 1;
+    this.restartIceNow('requested by the other party');
   }
 
   /**
@@ -1366,6 +1435,7 @@ export class CallService {
         }
         this.mediaEverConnected = true;
         this.iceRestarts = 0;
+        this.iceRestartPending = false;
       } else if (iceState === 'failed' && !this.mediaEverConnected) {
         // Never connected: there is no path at all, and a restart would find the same candidates.
         appendLog(
@@ -1375,6 +1445,7 @@ export class CallService {
         return;
       } else if (iceState === 'disconnected' || iceState === 'failed') {
         // A path that had connected and was lost - a network change, a blip. Restart, not end.
+        if (iceState === 'failed') this.iceRestartPending = false;
         this.maybeRestartIce(`iceConnectionState=${iceState}`);
       }
       this.updateReconnecting();

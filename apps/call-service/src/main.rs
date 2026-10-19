@@ -660,6 +660,14 @@ enum SignalMessage {
     Refused {
         reason: String,
     },
+    /// P2P only, client -> server -> partner, relayed verbatim: the POLITE side's media path is
+    /// down and it cannot restart ICE itself (only the initiator offers), so it asks the initiator
+    /// to. Bounded by the asker's own restart budget.
+    IceRestartRequest,
+    /// Server-internal, never on the wire: tells a socket loop to send a Close frame and end -
+    /// the seat it held was resumed by the same device on a new socket.
+    #[serde(skip)]
+    Shutdown,
     Offer {
         sdp: String,
     },
@@ -684,6 +692,8 @@ impl SignalMessage {
             SignalMessage::PeerReady { .. } => "peer-ready",
             SignalMessage::PeerLeft => "peer-left",
             SignalMessage::PeerAway => "peer-away",
+            SignalMessage::IceRestartRequest => "ice-restart-request",
+            SignalMessage::Shutdown => "shutdown",
             SignalMessage::Refused { .. } => "refused",
         }
     }
@@ -957,6 +967,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                 }
             }
             Some(msg) = rx.recv() => {
+                if matches!(msg, SignalMessage::Shutdown) {
+                    // Our seat was resumed on another socket: this one is the same device's stale
+                    // connection. Its record already says `resumed`.
+                    info!("[call] {} closing - its seat was resumed on a new socket", peer_id);
+                    let _ = writer_socket.send(Message::Close(None)).await;
+                    end_session(&session, Disposition::Resumed);
+                    break;
+                }
                 // A frame we cannot serialise is dropped and named, never panicked on: this is
                 // the writer for every outbound signal and it must not take the call down.
                 let text = match serde_json::to_string(&msg) {
@@ -1455,6 +1473,16 @@ async fn handle_signal(
             )
             .await;
         }
+        SignalMessage::IceRestartRequest if session.mode == RoomMode::P2p => {
+            p2p_relay(
+                state,
+                session,
+                peer_id,
+                RelayedKind::IceRestartRequest,
+                SignalMessage::IceRestartRequest,
+            )
+            .await;
+        }
         SignalMessage::Offer { sdp } => {
             let Some((room_id, room)) = resolve_room(state, session, peer_id, "offer") else {
                 return;
@@ -1583,8 +1611,10 @@ async fn handle_signal(
         | SignalMessage::PeerReady { .. }
         | SignalMessage::PeerLeft
         | SignalMessage::PeerAway
+        | SignalMessage::Shutdown
+        | SignalMessage::IceRestartRequest
         | SignalMessage::Refused { .. } => {
-            // Server -> client only. A client sending one is confused, and the line says which.
+            // Server -> client only (and an ICE restart request outside p2p mode). A client sending one is confused, and the line says which.
             warn!(
                 "[call] {} sent server-only frame {} - dropped",
                 peer_id,
@@ -1899,9 +1929,10 @@ fn p2p_resume(
     session.mode = RoomMode::P2p;
     session.ledger = Some(ledger);
     if let Some(old) = replaced {
-        // The server had not seen that socket die. It is told nothing: it is the same device's
-        // dead socket, and its record says why it ended.
+        // The server had not seen that socket die. Its record says why it ended, and it is CLOSED
+        // rather than left for the keepalive to find: a half-open socket must not linger.
         old.ledger.end(Disposition::Resumed);
+        p2p_send(&old.tx, SignalMessage::Shutdown, &room_id, &old.peer_id);
     }
 
     if !p2p_send_joined(state, &notify_tx, &room_id, user_id, group_id, peer_id) {

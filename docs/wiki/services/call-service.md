@@ -131,8 +131,11 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
     (keep the peer connection, the initiator restarts ICE); an away partner gives the resumer
     `PeerAway`; a partner that hung up meanwhile gives it `PeerLeft`. A resume that finds no seat
     (expired, never this user's, room gone) is `Refused { call-over }` and never creates a room. If
-    the server had not yet seen the old socket die, the resume replaces the live seat and the old
-    record ends `resumed` (expected).
+    the server had not yet seen the old socket die, the resume replaces the live seat, the old
+    record ends `resumed` (expected) and the old socket is CLOSED (an internal `Shutdown` its loop
+    turns into a Close frame), so a half-open socket never lingers until the keepalive.
+  - `IceRestartRequest` (client -> partner) is relayed verbatim like an SDP: the polite side asks
+    the initiator to restart ICE, since only the initiator offers. No counter, one relay line each.
   - **Grace end:** `[call] p2p seat EXPIRED room= peer=` at `warn`, the seat is freed, a present
     partner gets `PeerLeft`. The grace is a RESOURCE bound, never a verdict: a wrong value ends a
     dead call earlier or later, and a late resume is answered `call-over`.
