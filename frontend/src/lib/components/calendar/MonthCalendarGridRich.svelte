@@ -29,12 +29,12 @@
     events = [],
     loading = false,
     selectedDay = $bindable<number | null>(null),
-  } = $props<{
+  }: {
     focusDate: Date;
     events: AssociationCalendarFeedEvent[];
     loading?: boolean;
     selectedDay?: number | null;
-  }>();
+  } = $props();
 
   /**
    * The header row, asked of the same helper the PDF export asks - so a header cannot read "lun" on
