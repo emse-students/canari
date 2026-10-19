@@ -466,3 +466,48 @@ or from a desktop Chrome were not made (no desktop client signed in on dev as th
 counterpart for the noise, the Mi 9T as the caller in the Wi-Fi rows, the iPhone's booking and reel rows, an
 association delete with a form (an account that owns an association), a Back after the upload has begun, a hearing
 check of the remote voice on both phones, and the iPhone's `app hidden` lines.
+
+## 2026-10-19 - the call noise isolated: the iPhone's SENDER is the faulty side, the Mi 9T is clean
+
+CALL-AUDIO-1 left two suspects (the iPhone sending non-Opus bytes, or the Mi 9T not decrypting). Test, on
+`1.3.1-alpha.1` against `dev.canari-emse.fr`, no new build: each phone called from desktop Chrome (a Chromium
+engine already proven clean in the fidelity rig), the RECEIVING side read with `getStats()` every 2 s over CDP
+and, on the Mi 9T, `logcat`. Desktop microphone: Chrome's fake device playing a 12 s looped speech-like wav (same
+`echoCancellation`/`noiseSuppression`/`autoGainControl` constraints as the app). Accounts: the Mi 9T is bench
+account `fourth`, the iPhone `third`; the desktop was `fourth`'s dev profile against the iPhone and `third`'s
+against the Mi 9T. Each call about 40 s after the accept. Two calls per phone's direction table below, one per
+initiator; a call carries both directions, so one call reads two rows.
+
+| Pair (sender -> receiver) | Where read | Concealed / total samples | Lost | `Decode error` (logcat) | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| iPhone -> desktop, desktop called (C) | desktop `getStats` | **58 %** over 26 s (60 % cumulative), 365 events, 544 discarded | 0 | n/a (desktop) | **NOISY** |
+| iPhone -> desktop, iPhone called (D) | desktop `getStats` | **68 %** over 26 s (65 % cumulative), 297 events, 530 discarded | 0 | n/a (desktop) | **NOISY** |
+| desktop -> iPhone (C and D) | the iPhone | not readable | - | - | **NOT-READ**: the TestFlight build is not inspectable |
+| desktop -> Mi 9T, desktop called (A) | Mi 9T `getStats` + logcat | 0.0 % (0.2 % cumulative, 2 events) | 0 | **0** | **CLEAN** |
+| Mi 9T -> desktop, desktop called (A) | desktop `getStats` | 0.0 % (0.1 % cumulative, 2 events) | 0 | n/a | **CLEAN** |
+| Mi 9T -> desktop, Mi 9T called (B) | desktop `getStats` | 0.0 % (0.0 % cumulative) | 0 | n/a | **CLEAN** |
+| desktop -> Mi 9T, Mi 9T called (B) | Mi 9T `getStats` + logcat | 0.0 % (0.1 % cumulative, 1 event) | 0 | **0** | **CLEAN** |
+
+Every call logged `E2E sender transform attached (audio)` and `E2E receiver transform attached (audio)` on both
+ends, no `[Call]` error or warning, and `audioLevel` was a plausible 0.0-0.26 on the clean pairs (the iPhone's
+sound reached 0.84 in C). The iPhone calls ran `relay/udp -> srflx/udp` (different networks), the Mi 9T calls
+`srflx/udp <-> relay/udp`; packet loss was 0 in all of them, so the network is not the difference.
+
+**Conclusion.** The Mi 9T decodes a Chromium sender's audio perfectly (0 decode errors in logcat against 14,568
+on 2026-10-19 receiving the iPhone), and a Chromium receiver is just as clean from the Mi 9T. Receiving the
+iPhone, a Chromium receiver on a different engine, network and phone is as noisy as the Mi 9T was (58-68 %
+concealed, about half the packets discarded by the jitter buffer). So **the fault is in what the iPhone sends**:
+its WebKit sender hands the decoder bytes that are not one Opus packet (the signature the fidelity rig gives for
+ciphertext reaching the decoder, [calls](frontend/modules/calls.md#audio-quality-measured-2026-10-19)), whatever the
+initiator. It is NOT the Mi 9T's WebView (not decrypting), and not the desktop's. What this does not separate,
+inside the iPhone's sender: the sender frame transform running twice, WebKit handing it something other than one
+Opus frame per call, or WebKit's own encrypt/packetise path.
+
+Owed: (1) the iPhone as RECEIVER of a clean sender (row desktop -> iPhone), which needs an inspectable iPhone
+build or the ear of a person; (2) the witness of the draft PR #2140 on the iPhone (its `ERROR E2E sender` line
+names the exact case) once it rides a pre-release, or a desktop-side tap on the encoded frames of the iPhone's
+audio (their length and the first byte against RFC 6716). Bench lessons: a Chrome profile left running without the
+fake-device flags has no deterministic microphone, relaunch it with `--use-fake-device-for-media-stream
+--use-file-for-fake-audio-capture`; `startCall failed: Error: WC not initialized` on a desktop right after the PIN
+is cured by a reload plus the PIN again; on the iPhone the ring is a native banner (tap it, then "Accepter l'appel
+entrant"); an accept done by a DOM `click()` over CDP is enough on both the desktop and the Mi 9T.
