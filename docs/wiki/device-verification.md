@@ -79,6 +79,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 |---|---|---|---|
 | B | WP-VERIF-0 (background decrypt), WP-VERIF-2 | PASS v0.11.7 | owed |
 | B-bis | `G2` - a dismissed notification not coming back at launch, and a new one still arriving | **owed** | n/a (the record is Android's) |
+| B-reel | WP-RC-7 - a CanaReel sent in a DM, a group and a salon reads as one on the lock screen of a killed app, in French and English | **owed** (needs a sender with the RC-4 writer switched on) | owed (same) |
 | D, E | WP-VERIF-0 (PIN change, fresh install) | PASS v0.11.7 | owed |
 | F | WP-VERIF-1 | PASS v0.11.7 | owed |
 | G | WP-VERIF-3 | PASS v0.11.6 | owed |
@@ -301,6 +302,40 @@ alerting` is the OTHER guard (the notification was still visible) and does not t
 
 **Known limit, not a bug:** a SALON message is not covered. Its push payload carries no timestamp, so
 the builder can identify no message of its own and never guesses - see `docs/wiki/backlog.md`.
+
+## B-reel. A CanaReel announces itself on the lock screen of a killed app - owed on BOTH platforms
+
+**Proves** WP-RC-7 where no gate here reaches: the Rust scanner reads `MediaMsg.intent` and words
+the line (`mobile/push_text.rs`, `PushText::Reel`), but only a phone proves that the line it returns
+is the one the Android service and the iOS NSE post, through all three decrypt paths - MLS for a DM
+and a group, Graine for a salon - and that no thumbnail is ever attempted
+([reels-in-chat](frontend/modules/reels-in-chat.md#push-text)).
+
+**Precondition, not ambient:** the SENDER must run a build with the reel writer (RC-4, behind its OFF
+switch) turned on; nothing else can produce a reel message. The receiving phone runs any build
+carrying RC-7.
+
+1. On the receiving phone set the app language to **French** (Settings, inside Canari - not the
+   phone's). Kill the app. Lock the screen.
+2. From the peer, send a CanaReel with NO caption in a **DM**, then one in a **group**, then one in a
+   **salon** of a shared community.
+3. Read each notification on the lock screen **without unlocking**.
+4. Send one more in the DM WITH a caption.
+5. Open the app once (so the locale is mirrored), switch the app language to **English**, kill it,
+   lock, and repeat 2-4.
+
+**Pass** = French: the DM reads `🎬 CanaReel` under the sender's name, the group and the salon read
+it under their own titles as any message does there, and the captioned one reads `🎬 CanaReel : <caption>`;
+English: `🎬 CanaReel` and `🎬 CanaReel: <caption>`. **No picture** on any of them. **FAIL** =
+`🎥 Vidéo` / `🎥 Video` (the receiving build does not carry RC-7, or the sender did not declare the
+intent), a generic "Nouveau message" (the decrypt did not happen: that is check B's failure, not this
+one's), or any thumbnail.
+
+**Where to look:** Android `adb logcat -s CanariFCM`: `decryptProto: success type=media -> "🎬 CanaReel"`
+(`decryptProtoWithCommits` after a catch-up; the salon's Graine path logs its own open). iOS:
+Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
+`[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
+logger may not run in - its absence proves nothing; the missing picture is the reading.
 
 ## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
 

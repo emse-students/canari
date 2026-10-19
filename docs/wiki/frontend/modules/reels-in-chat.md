@@ -28,7 +28,7 @@ before building (the upload path below is the one most likely to overlap).
 | Retention class `reel` + social-service worker | posts only | **not reusable**: a conversation has no social-service row (new class, section 2) |
 | A message type | `MediaMsg` (`MEDIA_KIND_VIDEO`, `voice_note` precedent) | **one declared intent field**, not a new top-level message |
 | Tombstone when the blob is gone | `410` + `MediaPurgedError` on every media surface | reused, with a reel-shaped tile |
-| Push for a message | decrypted on device (Android service, iOS NSE), `mediaKind` carried | one new kind and two strings per language |
+| Push for a message | decrypted on device (Android service, iOS NSE), `mediaKind` carried | **built (RC-7, section 12)**: `mediaKind` `reel` and one `PushText::Reel` sentence in the Rust scanner, fr + en |
 
 ## 1. Entering the camera from a conversation
 
@@ -402,34 +402,40 @@ input). It hides ~10-30 s of encode behind the member's own look at the take. Le
 | Preparation (WebCodecs + mediabunny) | works where WebCodecs does | **WebKitGTK on Linux: unmeasured** - WP-RC-0 reads it | measured 2026-10-01 | measured 2026-10-01 |
 | Raw-take / prepared-file store | OPFS | OPFS or the cache dir | the cache dir via the existing plugin, or OPFS | same |
 | Resumable upload, tile, viewer | web | web | web | web |
-| **Push text and kind** | n/a (no push) | n/a | **native Kotlin**: `mediaKind` gains a reel value; two strings | **native Swift in the NSE** (and `canari_push.mm` for the in-app path): the same, in the NSE's OWN `Localizable.strings` (an appex is a separate bundle) |
+| **Push text and kind** | n/a (no push) | n/a | **the shared Rust scanner** (`proto_fields.rs`, `push_text.rs`) returns `mediaKind: "reel"` and the line; Kotlin passes both through (built, RC-7) | the same Rust, called by the NSE and `canari_push.mm`; no `Localizable.strings` entry (built, RC-7) |
 | Deterrent against capture | none possible | none | `FLAG_SECURE` is native, optional (D4) | none supported |
 | Save own take | download | download | gallery plugin (exists) | gallery plugin (exists) |
 
 **So the build is almost entirely shared TypeScript.** Native work is limited to the push surfaces
-(about a Kotlin branch and a Swift branch plus strings and their tests) and an optional Android window
+(since WP-PUSH-I18N, one Rust branch and its tests: section 12) and an optional Android window
 flag. The camera needs none - the point of building the capture screen in the WebView.
 
 ## 6. Push, moderation, accessibility, i18n
 
 ### Push text
 
-Push for a DM or group message is composed ON THE DEVICE from the decrypted message
-(`CanariFirebaseMessagingService.kt` reads `mediaKind` as `image | video | audio | file`; the iOS NSE
-the same), in the LANGUAGE THE MEMBER CHOSE, from tables that the app mirrors into `push_context.json`
-([mobile](../mobile.md#the-language-a-notification-speaks)). The server writes no sentence for a chat
-message and cannot: it holds ciphertext. So:
+Push for a DM, group or salon message is composed ON THE DEVICE from the decrypted message, in the
+LANGUAGE THE MEMBER CHOSE inside Canari (mirrored into `push_context.json`,
+[mobile](../mobile.md#the-language-a-notification-speaks)). The server writes no sentence for a chat
+message and cannot: it holds ciphertext, so no `contentKey` is involved (those are social-service's,
+for posts and events). **As built (RC-7, section 12), and as it changed from this study's first
+draft:**
 
-- `mediaKind` gains `"reel"` (derived from `intent`, NOT from the mime type, or a picked clip would
-  read as a reel). The composer maps it to a line: DM `"<name> a envoye un CanaReel"` / `"<name> sent a
-  CanaReel"`; group and salon `"<name>: CanaReel"` in the existing group format; with a caption the
-  caption follows, as it does for a photo. **No emoji in the string** (the repo's ASCII rule applies to
-  dev-facing text; the user-visible strings are Paraglide/`strings.xml`/`Localizable.strings`, three
-  tables kept in step - the NSE's own copy included).
-- **No thumbnail, ever.** `decrypted.mediaKind != "image"` already returns null for the notification
-  picture (`CanariFirebaseMessagingService.kt`); a reel must keep returning null. Decrypting a 14-35 MB
-  blob inside a background service to draw a preview would be the wrong cost and an exposure the tile
-  deliberately avoids.
+- The line is written by the **Rust push scanner**, not by three native tables: since WP-PUSH-I18N
+  (#2037) every sentence the scanner composes - the voice note's included - lives once, in fr and en,
+  in `mobile/push_text.rs`, and Android, the NSE and `canari_push.mm` post what Rust returns. A reel is
+  `PushText::Reel`: `🎬 CanaReel`, and with a caption `🎬 CanaReel : <caption>` / `🎬 CanaReel: <caption>`
+  (the caption FOLLOWS, where a photo's caption replaces "Photo": the banner must still say a reel is
+  waiting). The sender's name is the title (DM) or the prefix in the group/salon line, exactly as for
+  every message. The emoji follows the four media lines beside it (`📷 Photo`, `🎥 Vidéo`, `🎤 Message
+  vocal`); the study's "no emoji" was written for native tables that no longer hold these lines.
+- `mediaKind` is `"reel"`, derived from the DECLARED `intent` (field 14 = 1 on a video, the rule of
+  `isReelMessage`), never from the mime type, so a picked clip stays `🎥 Vidéo`. An intent value the
+  reader does not know (2, view-once) stays a video.
+- **No thumbnail, ever, as a fact in Rust**: a reel never hands over its `mediaKey`/`mediaIv`, whatever
+  its encoding, so no native caller has anything to fetch (the native `mediaKind == "image"` checks are
+  a second, independent refusal). Decrypting a 9-35 MB blob inside a background service to draw a
+  preview would be the wrong cost and an exposure the tile deliberately avoids.
 - When the decrypt fails (a newer epoch in the NSE, [mobile](../mobile.md)) the generic line stays as
   it is for every message - no new fallback.
 - Muting, "do not disturb" and per-conversation settings are the conversation's, unchanged.
@@ -474,8 +480,9 @@ only be as widely seen as the audience it was sent to.
 `reel_chat_sender_note` (the 30-day sentence of 3.3), `reel_chat_preparing`, `reel_chat_sending`,
 `reel_chat_send_failed`, `reel_chat_send_retry`, `reel_chat_tile_label` (the accessible name, with
 parameters), `reel_chat_expired`, `reel_chat_expired_label`, `reel_chat_open_error`,
-`reel_chat_muted_in_community`, and the viewer's `reel_chat_viewer_*` set. The two native push strings
-(`notif_reel_dm`, `notif_reel_group`) live in the three platform tables, not Paraglide.
+`reel_chat_muted_in_community`, and the viewer's `reel_chat_viewer_*` set. The push line is NOT a
+Paraglide key nor a native-table key: it is `PushText::Reel` in the Rust scanner (`mobile/push_text.rs`,
+RC-7), where every push sentence the scanner composes lives since WP-PUSH-I18N.
 
 ## 7. The work packages, in order
 
@@ -491,7 +498,7 @@ are for one engineer including tests, in days.
 | **RC-4** | **Capture destination**: `destination` prop, the overlay layer with its history entries and `fullscreen-place-open`, the composer camera button and "+" entry, "Envoyer", the photo-as-image branch, the accessible shutter toggle, the mute check; i18n | component tests (the overlay mounts, Back ends take then review then layer, the photo goes the image path, the feed destination is byte-identical), harness row on both phones | 3 | RC-1, RC-3 |
 | **RC-5** | **Outbox**: the raw-take store, the prepared file OUTSIDE the row, states `preparing`/`sending`/`failed`, cancel, resume; the resumable chunk upload and its server offset route | outbox tests for each state and a crash at each stage (no double upload, no lost take); chunk-resume unit on media-service; a throttled-network run (`offline-and-weak-network` is the model) | 4-5 | RC-2, RC-4, the weak-network PR |
 | **RC-6** | **The tile and the viewer**: `MessageMediaRenderer` reel branch, tombstone, conversation mode of `ReelViewer`, no save/forward, cache hygiene at expiry, accessibility | **a mounting test of the branch** (lesson of #1229), every state, reduced motion, the action sheet drops forward/copy, `410` and the hint both draw the tombstone | 3 | RC-1, RC-2 |
-| **RC-7** | **Push**: `mediaKind` reel on Android and the iOS NSE (and `canari_push.mm`), strings in the three tables, no thumbnail | Kotlin unit and strings-parity tests; on a phone with the app killed, a DM, a group and a salon each read on the lock screen (the device-verification check B pattern) | 2 | RC-1 |
+| **RC-7** | **Push** (BUILT 2026-10-19, section 12): `mediaKind` reel and the `PushText::Reel` line in the shared Rust scanner, which Android, the iOS NSE and `canari_push.mm` all call; no thumbnail | Rust unit tests (no Kotlin unit tests exist in the repo; no native string table changes); on a phone with the app killed, a DM, a group and a salon each read on the lock screen (the device-verification check B pattern) | 2 | RC-1 |
 | **RC-8** | **Salons and moderation**: the salon send path, social-service's moderator delete purging through `chat-reel-purge` (ownership allowlist), the user-report entry from the tile's menu, optionally the disclosed report (D8) | social-service unit and the real-database path for the delete; a moderator run on the bench | 2.5 | RC-2, RC-6 |
 | **RC-9** | **Campaign rows and the hardware pass**: DM, group and salon, web + Android + iOS, a weak-network run, the 30-day crossing on a bench with the window shortened, an expiry read of every surface | new rows on [cross-client-testing](../../cross-client-testing.md) through `bun rows.mjs`; the user's look on both phones | 2 | RC-4 to RC-8 |
 | RC-10 | *Later*: "opened" signal (D3), then view once for DMs (3.4, with its own `minClientVersion` gate) | its own study when asked | - | RC-9 |
@@ -536,7 +543,7 @@ ONLY - nothing in the app can send a reel message yet (no RC-4 camera entry, no 
   `codec.reelMessage.test.ts` against the schema as it stood); a client that knows the field but not the
   VALUE reads an ordinary attachment, never an error. The native push readers (Rust `proto_fields.rs`,
   Kotlin, Swift/NSE) read `MediaMsg` by field number and ignore the three, so a push still says "video"
-  until RC-7: **compile-checked and unit-tested in Rust only, NOT run on a device.**
+  until RC-7 (section 12 - it now reads `intent`): **compile-checked and unit-tested in Rust only, NOT run on a device.**
 - **Model**: `MediaRef.intent / durationMs / expiresAtMs`, the stored JSON envelope, the outbox payload
   (`prepareMedia` writes the declaration; nothing sets it yet), `mediaReelProtoFields` /
   `mediaReelFromProto` in `proto/codec.ts`, the ONE place that spells the mapping.
@@ -551,7 +558,7 @@ ONLY - nothing in the app can send a reel message yet (no RC-4 camera entry, no 
   (a conversation's reels are not the feed's; the chain through the conversation's other reels of 3.2 is
   not built). **The save button is in the bar next to the volume, for every reel** (D-save), so the feed
   viewer changed too. A reel message is NOT forwardable (the bubble drops the action).
-- **Not built**: the sender, the retention class beyond the RC-2 draft, the resumable upload, push text,
+- **Not built**: the sender, the retention class beyond the RC-2 draft, the resumable upload, push text (RC-7, section 12),
   salons' moderator purge. (The 60 s cap field and the chat encoding profile were built by RC-3, section 11.)
 
 ## 9. Decisions
@@ -606,3 +613,37 @@ Unit specs only; the real-service bench run is owed. The client type `MediaReten
 - **The chat cap is the server's.** `GET /api/posts/reel-limits` serves `chatMaxDurationMs` (60 000, `CHAT_REEL_MAX_DURATION_MS`); the client type `ReelLimits.chatMaxDurationMs` is OPTIONAL, so an older server's answer reads as "no chat cap" and no client carries the number. Old clients ignore the extra field.
 - **Pinned** by `videoEncodingPlan.test.ts` (540x960 at 1.2 Mb/s; sizes at 20, 60 and 90 s under `maxBytes`; about 9 MB at 60 s; the feed plan unchanged), `prepareVideoForUpload.test.ts` (audio route against the profile's bitrate) and `reel-rules.spec.ts` (the served field).
 - **OWED, HARDWARE: the RC-0 device table re-run** at the shipped numbers (encode time and real output size of a 60 s in-app take at the `chat` profile, on the Mi 9T and the iPhone 12). The plan's arithmetic is tested; how long the phones take and what the encoder really lands at is not measured.
+
+## 12. What the push package (RC-7) built (2026-10-19)
+
+**Draft pull request. Inert until the writer ships**: a push for a reel message exists only once a
+reel message does, and nothing sends one until RC-4 (behind its OFF switch); the user's rule of
+2026-10-14 (no chat-reel writer in a stable before RC-5 and RC-7) is what this package serves.
+
+- **One branch, in Rust, for every platform and every conversation.** `extract_full_message_info`
+  (`mobile/proto_fields.rs`) reads `MediaMsg.intent` (field 14) beside `voice_note`: a VIDEO declaring
+  `REEL_MESSAGE` (1) - the rule of `isReelMessage` - returns `mediaKind: "reel"` and the line
+  `PushText::Reel` (`mobile/push_text.rs`), in the app language each native caller passes down. The
+  three decrypt paths all go through it - MLS for a DM and a group, the commit catch-up, and the Graine
+  open for a salon - on Android (`CanariFirebaseMessagingService.kt`), in the iOS NSE and in
+  `canari_push.mm`, so a reel reads on the lock screen of a killed app exactly where a voice note does.
+- **The key is withheld for a reel whatever its encoding**: `mediaKey`/`mediaIv` come back empty, so
+  no native caller can fetch or decrypt it for a picture. The native code changed only by comments:
+  each caller already passes `mediaKind` through untouched and draws a picture for `image` alone.
+- **No string table changed.** The study's plan of two strings in `strings.xml` and the two
+  `Localizable.strings` copies predates WP-PUSH-I18N, which moved every sentence the scanner composes
+  into Rust; a native copy would be a second table nothing reads. The server is untouched too: a chat
+  message is ciphertext to it, and `contentKey` (`PushContentKey`) is social-service's, for posts and
+  events, so `push-content.spec.ts` and `nativeStrings.test.ts` have nothing to pin.
+- **The FCM cache** stores `mediaKind: "reel"` (the TS reader types it `string`, reads it nowhere) and
+  the line as the preview row's content, upgraded by the envelope like every media push row
+  ([mobile](../mobile.md)).
+- **Pinned** by `proto_fields.rs` (`a_reel_message_is_announced_as_a_canareel_and_never_hands_over_its_key`,
+  `a_reel_caption_follows_the_announcement`, `a_single_block_reel_still_withholds_its_key`,
+  `only_a_video_declaring_reel_message_is_a_reel`) and `push_text.rs`
+  (`every_sentence_is_written_in_both_languages`).
+- **NOT verified: everything native.** Kotlin, Swift and Objective-C++ were neither compiled nor run
+  for this package (the change there is comments only), and no phone has shown the line. **Owed: check
+  [B-reel](../../device-verification.md#b-reel-a-canareel-announces-itself-on-the-lock-screen-of-a-killed-app---owed-on-both-platforms)**
+  on the Mi 9T and the iPhone 12 - a DM, a group and a salon, app killed, in French and English -
+  which needs a sender with the RC-4 writer switched on.

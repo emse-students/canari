@@ -426,16 +426,27 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
         // as false, which is every message from before 2026-09-17 - announced as an audio file, as
         // it always was (docs/wiki/frontend/modules/chat.md, "A voice note declares itself").
         let voice_note = find_varint_field(&media_msg, 11).unwrap_or(0) != 0;
-        let display_text = caption.unwrap_or_else(|| {
-            match kind_str {
-                "image" => PushText::Photo,
-                "video" => PushText::Video,
-                "audio" if voice_note => PushText::VoiceNote,
-                "audio" => PushText::Audio,
-                _ => PushText::Attachment,
-            }
-            .render(language)
-        });
+        // `intent` (field 14) is DECLARED BY THE SENDER too, for the same reason: a CanaReel filmed
+        // in a conversation and a clip picked from the gallery are both an MP4 video. The rule is
+        // `isReelMessage` (frontend `reels/chatReel.ts`): a VIDEO declaring `REEL_MESSAGE` (1). Any
+        // other value - an intent this reader was never taught - stays an ordinary video, as it
+        // does in the app (WP-RC-7, docs/wiki/frontend/modules/reels-in-chat.md section 6).
+        let reel = kind_str == "video" && find_varint_field(&media_msg, 14) == Some(1);
+        let media_kind = if reel { "reel" } else { kind_str };
+        let display_text = if reel {
+            PushText::Reel(caption.as_deref()).render(language)
+        } else {
+            caption.unwrap_or_else(|| {
+                match kind_str {
+                    "image" => PushText::Photo,
+                    "video" => PushText::Video,
+                    "audio" if voice_note => PushText::VoiceNote,
+                    "audio" => PushText::Audio,
+                    _ => PushText::Attachment,
+                }
+                .render(language)
+            })
+        };
         // Media reference + CEK (WP-XP-3): the native notification builder downloads the opaque
         // ciphertext by `mediaId` and AES-256-GCM-decrypts it with `mediaKey`/`mediaIv` to attach a
         // thumbnail. key/iv are stored as raw proto `bytes`; base64-encode them for the JSON bridge
@@ -450,10 +461,14 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
         // download is wasted. The writer segments video only, which no native path renders anyway -
         // this is the refusal by FACT for the day a segmented picture ever reaches one.
         let encoding = find_varint_field(&media_msg, 12).unwrap_or(0);
-        let thumbnail_readable = encoding == 0;
+        // A REEL NEVER HANDS OVER ITS KEY, whatever its encoding: no thumbnail, ever (reels-in-chat
+        // section 6). Decrypting a reel in a background service to draw a preview would be the
+        // wrong cost and an exposure the tile itself avoids (it fetches nothing before the tap).
+        // Stated as a fact here rather than left to `mediaKind != "image"` in three native callers.
+        let thumbnail_readable = encoding == 0 && !reel;
         if !thumbnail_readable {
             log::debug!(
-                "[MediaBG] media encoding {encoding} is not the single block - no thumbnail"
+                "[MediaBG] media encoding {encoding} reel={reel} - no thumbnail, key withheld"
             );
         }
         let media_key = find_length_delimited_field(&media_msg, 3)
@@ -469,7 +484,7 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
             .unwrap_or_default();
         return serde_json::json!({
             "ok": true, "text": display_text, "messageId": message_id,
-            "sentAt": sent_at, "type": "media", "replyTo": null, "mediaKind": kind_str,
+            "sentAt": sent_at, "type": "media", "replyTo": null, "mediaKind": media_kind,
             "mediaId": media_id, "mediaKey": media_key, "mediaIv": media_iv, "mimeType": mime_type
         });
     }
@@ -827,20 +842,31 @@ mod tests {
         }
     }
 
-    /// A reel message (CanaReels in a conversation): a segmented VIDEO that also declares `intent`
-    /// (14), `duration_ms` (15) and `expires_at_ms` (16). This reader knows none of the three.
-    fn reel_message_app_message() -> Vec<u8> {
+    /// A `MediaMsg` declaring an `intent` (14), as the reel writer sends it: `kind`, an id, a key,
+    /// `encoding` (12, 1 = SEGMENTED_V1, 0 = absent), the intent, `duration_ms` (15) and
+    /// `expires_at_ms` (16), plus a caption (8) when given.
+    fn intent_media_app_message(
+        kind: u64,
+        encoding: u64,
+        intent: u64,
+        caption: Option<&str>,
+    ) -> Vec<u8> {
         let mut media = Vec::new();
         write_tag(&mut media, 1, 0);
-        write_varint(&mut media, 2); // MEDIA_KIND_VIDEO
+        write_varint(&mut media, kind);
         write_string_field(&mut media, 2, "reel-1");
         write_bytes_field(&mut media, 3, &[7u8; 32]);
         write_bytes_field(&mut media, 4, &[9u8; 12]);
         write_string_field(&mut media, 5, "video/mp4");
-        write_tag(&mut media, 12, 0);
-        write_varint(&mut media, 1); // SEGMENTED_V1
+        if let Some(caption) = caption {
+            write_string_field(&mut media, 8, caption);
+        }
+        if encoding != 0 {
+            write_tag(&mut media, 12, 0);
+            write_varint(&mut media, encoding);
+        }
         write_tag(&mut media, 14, 0);
-        write_varint(&mut media, 1); // MEDIA_INTENT_REEL_MESSAGE
+        write_varint(&mut media, intent);
         write_tag(&mut media, 15, 0);
         write_varint(&mut media, 42_000);
         write_tag(&mut media, 16, 0);
@@ -848,16 +874,92 @@ mod tests {
         wrap_app_message(4, &media, "msg-reel", 1)
     }
 
+    /// A reel message as the writer sends it: a segmented VIDEO declaring `REEL_MESSAGE`.
+    fn reel_message_app_message(caption: Option<&str>) -> Vec<u8> {
+        intent_media_app_message(2, 1, 1, caption)
+    }
+
+    /// WP-RC-7: a reel message is announced as a CanaReel, in the app language, with the kind the
+    /// native side files it under - and its key never leaves Rust, so no caller can try a thumbnail.
     #[test]
-    fn a_reel_message_is_read_as_a_plain_video_by_a_reader_that_ignores_its_declaration() {
-        // The fields are skipped by number, so the banner reads "video", and a segmented blob still
-        // withholds its key: the push never tries to decrypt a reel for a thumbnail.
-        let info = extract_full_message_info(&reel_message_app_message(), PushLanguage::French);
+    fn a_reel_message_is_announced_as_a_canareel_and_never_hands_over_its_key() {
+        let info = extract_full_message_info(&reel_message_app_message(None), PushLanguage::French);
+        assert_eq!(info["ok"], true);
         assert_eq!(info["type"], "media");
-        assert_eq!(info["mediaKind"], "video");
+        assert_eq!(info["mediaKind"], "reel");
+        assert_eq!(info["text"], "\u{1f3ac} CanaReel");
         assert_eq!(info["mediaId"], "reel-1");
         assert_eq!(info["mediaKey"], "");
+        assert_eq!(info["mediaIv"], "");
         assert_eq!(info["mimeType"], "video/mp4");
+
+        let english =
+            extract_full_message_info(&reel_message_app_message(None), PushLanguage::English);
+        assert_eq!(english["text"], "\u{1f3ac} CanaReel");
+    }
+
+    /// A caption FOLLOWS the announcement instead of replacing it, as it does for a photo: the
+    /// banner must still say a reel is waiting.
+    #[test]
+    fn a_reel_caption_follows_the_announcement() {
+        let fr = extract_full_message_info(
+            &reel_message_app_message(Some("Au gala")),
+            PushLanguage::French,
+        );
+        assert_eq!(fr["text"], "\u{1f3ac} CanaReel : Au gala");
+        let en = extract_full_message_info(
+            &reel_message_app_message(Some("Au gala")),
+            PushLanguage::English,
+        );
+        assert_eq!(en["text"], "\u{1f3ac} CanaReel: Au gala");
+        // An EMPTY caption is no caption.
+        let empty =
+            extract_full_message_info(&reel_message_app_message(Some("")), PushLanguage::French);
+        assert_eq!(empty["text"], "\u{1f3ac} CanaReel");
+    }
+
+    /// NO THUMBNAIL, EVER, is a property of the reel and not of its encoding: a single-block reel
+    /// (a writer that never segmented it) still withholds its key.
+    #[test]
+    fn a_single_block_reel_still_withholds_its_key() {
+        let info = extract_full_message_info(
+            &intent_media_app_message(2, 0, 1, None),
+            PushLanguage::French,
+        );
+        assert_eq!(info["mediaKind"], "reel");
+        assert_eq!(info["mediaKey"], "");
+        assert_eq!(info["mediaIv"], "");
+    }
+
+    /// The rule is the app's `isReelMessage`: a VIDEO declaring value 1. A value this reader was
+    /// never taught (2 is reserved for view-once) and the declaration on a non-video both read as
+    /// what the kind says - an ordinary video, an ordinary photo.
+    #[test]
+    fn only_a_video_declaring_reel_message_is_a_reel() {
+        let unknown = extract_full_message_info(
+            &intent_media_app_message(2, 1, 2, None),
+            PushLanguage::French,
+        );
+        assert_eq!(unknown["mediaKind"], "video");
+        assert_eq!(unknown["text"], "\u{1f3a5} Vidéo");
+
+        let none = extract_full_message_info(
+            &intent_media_app_message(2, 1, 0, None),
+            PushLanguage::French,
+        );
+        assert_eq!(none["mediaKind"], "video");
+
+        let photo = extract_full_message_info(
+            &intent_media_app_message(1, 0, 1, None),
+            PushLanguage::French,
+        );
+        assert_eq!(photo["mediaKind"], "image");
+        assert_eq!(photo["text"], "\u{1f4f7} Photo");
+        assert_eq!(
+            photo["mediaKey"],
+            BASE64.encode([7u8; 32]),
+            "a photo keeps its thumbnail"
+        );
     }
 
     /// An audio `MediaMsg`, declared a voice note (field 11) or not.

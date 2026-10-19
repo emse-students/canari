@@ -135,6 +135,9 @@ static NSLock *g_cacheLock = nil;
 @property(nonatomic, copy) NSString *messageId;
 @property(nonatomic, assign) long long sentAt;
 @property(nonatomic, copy) NSString *type;
+// "image" | "video" | "audio" | "file" | "reel", as Rust read it. "reel" is a CanaReel sent in a
+// conversation (WP-RC-7): Rust words its line and withholds its key, so
+// CanariFetchAndDecryptMedia returns nil for it - no thumbnail, ever.
 @property(nonatomic, copy, nullable) NSString *mediaKind;
 // Media reference + CEK (WP-XP-3), populated only for a media message. Used to download and
 // AES-256-GCM-decrypt the blob for a notification thumbnail. nil for non-media messages.

@@ -599,6 +599,9 @@ class NotificationService: UNNotificationServiceExtension {
     let messageId: String
     let sentAt: Int64
     let replyTo: String?
+    /// "image" | "video" | "audio" | "file" | "reel", as Rust read it. "reel" is a CanaReel sent in
+    /// a conversation (WP-RC-7): Rust words its line and withholds its key, so `isImageMedia` is
+    /// false for it twice over - no thumbnail, ever.
     let mediaKind: String?
     let mediaId: String?
     let mediaKey: String?

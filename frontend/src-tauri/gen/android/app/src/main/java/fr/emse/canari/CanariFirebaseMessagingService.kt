@@ -2379,7 +2379,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val sentAt: Long,
         val type: String,                 // "text" | "reply" | "media" | "call_invite" | "call_control" | ...
         val replyTo: JSONObject?,
-        val mediaKind: String?,           // "image" | "video" | "audio" | "file" | null
+        // "image" | "video" | "audio" | "file" | "reel" | null. "reel" is a CanaReel sent in a
+        // conversation (WP-RC-7): Rust words its line ("CanaReel") and never hands over its key, so
+        // `fetchAndDecryptMedia` has nothing to fetch - no thumbnail, ever.
+        val mediaKind: String?,
         // Media reference + CEK (WP-XP-3), populated only for `type == "media"`. Used to download and
         // AES-256-GCM-decrypt the blob for a notification thumbnail. Empty for non-media messages.
         val mediaId: String? = null,

@@ -1327,8 +1327,9 @@ out of the tab.
 `extract_full_message_info`) decides WHAT a decrypted message is and reads `voice_note` (field 11)
 beside the `MediaKind`: a declared recording is announced `Message vocal` / `Voice message`, an
 undeclared audio (an import, or a recording from before 2026-09-17) `Fichier audio` / `Audio file`.
-Every sentence it composes - the system events, `a réagi {emoji}`, the four media placeholders, the
-poll line, the two call lines and the `événement de groupe ({event})` trap - is written ONCE, in both
+Every sentence it composes - the system events, `a réagi {emoji}`, the media placeholders (a
+CanaReel's included since WP-RC-7, declared by `MediaMsg.intent` the same way:
+[reels-in-chat](reels-in-chat.md#push-text)), the poll line, the two call lines and the `événement de groupe ({event})` trap - is written ONCE, in both
 languages, in `mobile/push_text.rs` (`PushText::render`): a closed enum whose exhaustive `match`
 refuses to compile a sentence written in one language only, and a test that writes out all of them.
 The text somebody TYPED passes through untouched.
