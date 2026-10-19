@@ -342,6 +342,44 @@ every scan here is cross-file or reads `app.css`, which oxlint's per-file rules 
   that silently stopped asserting is the failure mode. Revalidate: case counts per service identical
   (1,985 / 875 / 436 / 241), and a planted bug in each MLS-storage path still fails its spec.
 
+### WP-T9 (S) - One walk of the source tree for every scan (2026-10-19)
+
+**Problem.** 19 test files read the source tree as text (the lint-style scans of
+[WP-T5](#wp-t5-m---triage-the-source-text-tests)); nine of them each carried their own copy of
+`sourceFiles()`. Vitest isolates modules per file, so no memo inside a helper is shared: every file
+re-walked and re-read ~2,000 files, and under full-suite load (other files saturating the disk and
+the CPU) the first test of such a file passed the 5 s timeout. Measured on 20 runs of the 19 scan
+files plus `ChatArea.entryWindow`, at default parallelism on a loaded 16-core Windows box: **89
+timeouts**, medians of 8 s (`apiUrl.absolute`), 6 s (`tooltipOneKey`), 5 s (`accent`,
+`serverProse`, `outbox`).
+
+**Change.** A vitest `globalSetup` (`frontend/src/test/sourceTreeSetup.ts`) walks `src` and `static`
+ONCE per run and writes the hand-written `ts js svelte css html` files (1,995 files, ~15 MB; the
+generated `paraglide`, `wasm` and `proto/canari.*` are not in it) to one file under
+`node_modules/.cache/canari-source-tree`, deleted at teardown. Only the PATH goes through `provide`:
+`provide` is serialised to every worker for every one of the ~940 files, so the text must not ride on
+it. `frontend/src/test/sourceTree.ts` is the ONE reader: `sourceFiles({ under, extensions, tests,
+skipDirs })`, `readSource(path)`, `relativeTo(path, base)`; the first call in a file parses the
+snapshot (tens of ms) and every later call is a filter over strings. The 19 scans use it and their
+walkers are deleted.
+
+**It fails loud.** The walk (`sourceTreeWalk.ts`) throws when `src/lib` or `static` is missing or when fewer than 1,500 files are found (75 % of the 1,995 measured), because six of the scans have no "is reading the tree" assertion of their own and an empty list passes them all. Setup also deletes `snapshot-<pid>.json` files older than a day (a killed run); a younger one belongs to a concurrent run. `src/test/sourceTree.test.ts` pins the reader (`under`, `tests`, `skipDirs`, `extensions`), the snapshot's content, and a planted offender over a fixture tree.
+
+**Same cases, same pass set.** 315 cases before and after on the 19 files. Each scan was shown a
+planted offender (one file with one violation per rule) and each failure names it; the planted files
+were removed. Three deliberate differences, none a loss: `accent` and `markupSources` no longer walk
+the generated Paraglide files (a getter cannot derive an accent or strip a comment);
+`postMarkdownBlocks` names its cases by a root-relative path instead of an absolute one; and a file
+edited while `vitest` WATCH is running is not re-read by a scan until the process restarts (the scans
+are CI guards).
+
+**After**, same 20-run protocol: **0 timeouts on the 19 scan files**, medians 0.0-0.8 s (`outbox`,
+171 cases, 2.7 s is its own cases). `ChatArea.entryWindow` was a second, independent cause: its two
+tests took 2.0 s and 1.8 s ALONE, because ChatArea's mount cost grows with the WHOLE thread, not with
+the 60-row window (300 rows 2.0 s, 70 rows 0.5 s); the test now mounts 80 rows, which shows the same
+60-row cap, median 0.6 s. One run in 20 still crossed 5 s there while the box was running other
+sessions' suites (that run's wall was 59 s against a 15 s median); `testTimeout` was NOT raised.
+
 ## 6. Expected end state
 
 | Measure | Today | After WP-T1..T4 (estimate from the A/B) |

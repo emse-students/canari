@@ -1847,31 +1847,22 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
   });
 
   it('exactly three sites outside this module raise a flush, and they are the three named ones', async () => {
-    const { readdirSync, readFileSync } = await import('node:fs');
-    const { join, relative, sep } = await import('node:path');
-    const root = join(process.cwd(), 'src');
+    const { relativeTo, sourceFiles } = await import('../../../test/sourceTree');
     const found: Record<string, number> = {};
-    const walk = (dir: string): void => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, e.name);
-        if (e.isDirectory()) {
-          if (e.name === 'paraglide' || e.name === 'wasm' || e.name === 'proto') continue;
-          walk(full);
-          continue;
-        }
-        if (!/\.(ts|svelte)$/.test(e.name) || /\.(test|spec)\.ts$/.test(e.name)) continue;
-        const rel = relative(root, full).split(sep).join('/');
-        if (rel === 'lib/utils/chat/outbox.ts') continue;
-        // The parentheses matter: bare `flushOutbox` matches the import line too. The second arm
-        // is the other door into the same flush, which a new site would reach for once the first
-        // one started failing here.
-        const calls =
-          readFileSync(full, 'utf8').match(/\bflushOutbox\(\)|getOutbox\(\)[^\n]*\.flush\(\)/g) ??
-          [];
-        if (calls.length) found[rel] = calls.length;
-      }
-    };
-    walk(root);
+    for (const { path, text } of sourceFiles({
+      under: 'src',
+      extensions: ['ts', 'svelte'],
+      tests: 'exclude',
+      skipDirs: ['proto'],
+    })) {
+      const rel = relativeTo(path, 'src');
+      if (rel === 'lib/utils/chat/outbox.ts') continue;
+      // The parentheses matter: bare `flushOutbox` matches the import line too. The second arm
+      // is the other door into the same flush, which a new site would reach for once the first
+      // one started failing here.
+      const calls = text.match(/\bflushOutbox\(\)|getOutbox\(\)[^\n]*\.flush\(\)/g) ?? [];
+      if (calls.length) found[rel] = calls.length;
+    }
 
     // A fourth external trigger is not forbidden; it has to be ARGUED FOR, which is what failing
     // here asks of whoever adds one - name the moment nothing inside the outbox can observe, or

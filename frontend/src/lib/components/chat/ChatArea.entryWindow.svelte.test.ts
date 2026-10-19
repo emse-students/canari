@@ -24,6 +24,15 @@ vi.mock('$lib/utils/userAvatarCache', () => ({
 const PANE_PX = 700;
 const ROW_SELECTOR = '[id^="msg-"]';
 
+/**
+ * Rows in the thread, deliberately just above the 60-row entry window and not a long thread: what
+ * is asserted is the window's arithmetic, which a thread of 80 shows as well as one of 300 (a window
+ * of anything but 60 reads differently), and ChatArea's mount cost grows with the WHOLE thread -
+ * measured 2026-10-19, 2.0 s per test at 300 rows against 0.5 s at 70, which under suite load
+ * crossed the 5 s timeout. docs/wiki/test-suite-reform.md (WP-T9).
+ */
+const THREAD = 80;
+
 let rowPx = 36;
 const mounted: (() => void)[] = [];
 const restore: (() => void)[] = [];
@@ -116,7 +125,7 @@ describe('ChatArea entry window (F6)', () => {
     // so it steps to the full entry size in the hidden frame; the widen then has nothing to add.
     rowPx = 36;
     modelGeometry();
-    const target = mountArea(300);
+    const target = mountArea(THREAD);
     await vi.advanceTimersByTimeAsync(0);
     expect(target.querySelectorAll(ROW_SELECTOR).length).toBeGreaterThan(0);
     await settleEntry();
@@ -126,7 +135,7 @@ describe('ChatArea entry window (F6)', () => {
   it('mounts 20 rows first, widens to 60, and moves scrollTop by exactly the height added', async () => {
     rowPx = 48; // 20 rows = 960 px: the viewport is filled, no fill step.
     modelGeometry();
-    const target = mountArea(300);
+    const target = mountArea(THREAD);
     const scroller = () =>
       target
         .querySelector<HTMLElement>(ROW_SELECTOR)

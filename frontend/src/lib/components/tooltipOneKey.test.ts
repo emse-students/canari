@@ -1,23 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 
-// FROM `process.cwd()`, NOT FROM `import.meta.url`, for the reason `cardGrid.test.ts` records:
-// Vite hands a module under `src/` a non-`file:` `import.meta.url`.
+// The messages are read from `process.cwd()` (the frontend root): Vite hands a module under
+// `src/` a non-`file:` `import.meta.url`.
 const ROOT = process.cwd();
-const SRC = join(ROOT, 'src');
 
 type Messages = Record<string, string>;
 const fr = JSON.parse(readFileSync(join(ROOT, 'messages/fr.json'), 'utf8')) as Messages;
 const en = JSON.parse(readFileSync(join(ROOT, 'messages/en.json'), 'utf8')) as Messages;
-
-function svelteFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) return svelteFiles(full);
-    return name.endsWith('.svelte') ? [full] : [];
-  });
-}
 
 /**
  * Every opening tag of a Svelte source, with the line it starts on. The `{}` depth is tracked so
@@ -43,15 +35,16 @@ function openingTags(src: string): { line: number; text: string }[] {
 /** Every element whose `title` and `aria-label` are two DIFFERENT Paraglide keys. */
 function twoKeyElements(): { at: string; title: string; aria: string }[] {
   const pairs: { at: string; title: string; aria: string }[] = [];
-  for (const file of svelteFiles(SRC)) {
-    for (const tag of openingTags(readFileSync(file, 'utf8'))) {
+  for (const { path: file, text } of sourceFiles({
+    under: 'src',
+    extensions: ['svelte'],
+    tests: 'include',
+  })) {
+    for (const tag of openingTags(text)) {
       const title = tag.text.match(/\stitle=\{m\.(\w+)\(/)?.[1];
       const aria = tag.text.match(/\saria-label=\{m\.(\w+)\(/)?.[1];
       if (!title || !aria || title === aria) continue;
-      const rel = file
-        .slice(SRC.length + 1)
-        .split('\\')
-        .join('/');
+      const rel = relativeTo(file, 'src');
       pairs.push({ at: `${rel}:${tag.line}`, title, aria });
     }
   }
