@@ -1177,6 +1177,35 @@ other 3 it spends 24 ms at 881.5. No real IME on this phone is that short; a flo
 one-row keyboard would be. Evidence: `<harness-dir>/a1-bench/r1013-owed/checkW-mi9t.json`
 (the LatinIME run; the ADB-keyboard numbers above are the only record of that run).
 
+## DT. A double tap likes a post - owed on BOTH phones
+
+**Proves** [the double tap that likes](frontend/modules/posts.md#a-double-tap-likes-the-post-and-never-unlikes-it-2026-10-19)
+on real fingers: every gate here dispatches synthetic `click`s, so whether WebKit and the Android
+WebView deliver the two taps as two clicks with a `detail`, and nothing else, is read here only.
+**Precondition:** a build carrying `doubleTapLike`, a bench account, a feed holding a text post, a
+photo post, a poll post and a reel, none of them reacted to by the account; the console (CDP on the
+Mi 9T, the in-app log on the iPhone) for the `[doubleTapLike] double tap` and
+`[PostCard.doubleTap]` / `[reel-viewer] double tap` lines.
+
+1. **A reel, in the viewer**: open it, double tap the picture. Expect the heart at the finger, one
+   `like` line, the controls ending as they started, the video still playing. Double tap again: the
+   heart, an `already reacted, heart only` line, no request. Close: the card shows ❤️ as the reader's
+   reaction. Single tap: the controls toggle AT ONCE (no wait).
+2. **A reel card in the feed**: double tap it - liked, and the viewer does NOT open. Single tap it -
+   the viewer opens after a beat (~250 ms) and, if sound was turned on in the app, plays WITH sound
+   (the held tap is replayed from a timer: the user-activation question is the one thing reasoned
+   rather than measured).
+3. **A photo post**: double tap the picture - liked, no lightbox. Single tap - the lightbox opens.
+4. **A text post**: double tap the text - liked, no word selected, the page did not zoom or slide
+   to a neighbouring tab. A long press still selects the text.
+5. **A poll option**: double tap an option - it votes / unvotes as two taps always did, and the post
+   is NOT liked (no heart, no line).
+6. **VoiceOver (iPhone) and TalkBack (Mi 9T) on**: the reaction button still likes ("Ajouter une
+   réaction", then the heart in the picker); activating a photo opens the lightbox at once (no held tap); activating anything never
+   likes the post. A two-finger or three-finger screen-reader gesture over a card likes nothing.
+7. **Haptic**: the Mi 9T ticks on a like with vibrations on in the settings, and not with them off.
+   The iPhone has no web vibration and is expected to stay still.
+
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 
 Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11

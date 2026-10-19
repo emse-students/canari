@@ -426,6 +426,34 @@ neither pauses nor turns the reel: the tap-outside layer is a button, and the un
 type grows UPWARD. The viewer has nothing else at the bottom-right at 390 px (its step buttons are
 `md:` and mid-height; the save is in the player's bar), so nothing collides.
 
+### A double tap on a reel likes it (2026-10-19)
+
+**Asked by the user:** *"J'aimerais qu'on puisse liker un CanaReel en double cliquant dessus."* The
+gesture is the post card's (`actions/doubleTapLike.ts`; the contract, the disambiguation and what is
+reasoned rather than measured are in
+[posts](posts.md#a-double-tap-likes-the-post-and-never-unlikes-it-2026-10-19)). On a reel:
+
+- **In the viewer, anywhere on the reel on screen**, the letterbox bands included (`ReelSlide`;
+  only the `active` slide listens). Nothing is held: the first tap toggles `VideoPlayer`'s controls at
+  once, as before, and the second toggles them back, so a like leaves them as they were. The player's
+  bar, its play button (drawn while paused), the caption's toggle and its tap-outside layer, and the
+  author link are controls and keep their taps.
+- **It is the card's reaction path** (`posts/postReaction.ts`): `ReelViewer.likeReel` writes the
+  heart into its own list on the tap, sends the same request behind `assertNotMuted`, and on a
+  failure rolls it back and says the card's sentence as a toast (the viewer has no card line). A reel
+  already reacted to, with any reaction, gets the heart and no request. **The server's answer is
+  announced to the cards on screen** (`publishPostReactions`, which `PostCard` listens to by post
+  id), so closing the viewer shows the reel's card with the heart just given.
+- **Only a post can be liked**: the viewer takes the reader as `likerId`, which the card's
+  `PostContent` and the feed's `ReelsEntryButton` pass; a conversation's reel (`MessageMediaRenderer`,
+  RC-1) is not a post and passes none, so a double tap there does nothing.
+- **In the feed, the reel card** is a post card: a double tap likes, and a single tap opens the viewer
+  once the double-tap window (250 ms) has passed (`data-double-tap-defers` on `InlineVideo`'s open
+  button) - the one place this gesture adds a wait.
+- **The viewer has no heart button of its own**: a like given there is taken back from the card's
+  picker. The heart burst is the viewer's only sign of a like, and a screen reader in the viewer has
+  no way to like - an open decision for the user, in [backlog](../../backlog.md), not built unasked.
+
 ### The CanaReels entry - an icon beside the tabs that opens the viewer (user, 2026-10-16)
 
 **SUPERSEDES the 2026-10-15 "CanaReels filter"** (#1920: a "Tous les posts" / "CanaReels" bar above
