@@ -1522,6 +1522,23 @@ export class CallService {
           appendLog(`[Call] E2E decrypting ${mediaKind ?? '?'} (${count} frame(s))`);
         } else if (type === 'videoKeyframeIn') {
           appendLog(`[Call] remote video keyframe received (#${count})`);
+        } else if (type === 'opusInvalid') {
+          // The side that first shows a non-Opus payload is the side that corrupted it: a sender
+          // line means this device's ENGINE handed the transform something else; a receiver line
+          // with no sender line on the other device means it arrived that way.
+          const { side, length, toc, payloadType } = event.data as unknown as {
+            side: string;
+            length: number;
+            toc: number;
+            payloadType: number;
+          };
+          appendLog(
+            `[Call] ERROR E2E ${side}: audio payload is not an Opus packet (${count ?? '?'} so far; len=${length} toc=0x${toc.toString(16)} pt=${payloadType})`
+          );
+        } else if (type === 'doubleEncrypted') {
+          appendLog(
+            `[Call] ERROR E2E receiver: audio frames decrypt TWICE - the other device encrypts each frame two times (${count ?? '?'} so far)`
+          );
         }
       };
     }

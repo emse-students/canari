@@ -148,9 +148,10 @@ build**, so an alpha app would have sent cleartext to a web peer that decrypts -
 that fails to attach ends the call.
 
 **Measured in Chrome 155 (2026-10-17), and it changed the code:** a RECEIVER transform attached in
-`ontrack` never sees a frame - the call connects, packets arrive, every sample is concealed
-silence. Attached to the receiver of the transceiver `addTrack` created, before negotiation, every
-frame decrypts. `initPeerConnection` now does that; `ontrack` attaching late logs a WARN. The same
+`ontrack` to a receiver that was ALREADY running never saw a frame - the call connects, packets
+arrive, every sample is concealed silence. Attached to the receiver of the transceiver `addTrack`
+created, before negotiation, every frame decrypts. (Narrowed 2026-10-19: attached in `ontrack` for
+a transceiver a RENEGOTIATION created, it decrypts every frame - [measured below](#audio-quality-measured-2026-10-19).) `initPeerConnection` now does that; `ontrack` attaching late logs a WARN. The same
 session found the worker counting a failed decrypt as `decryptOk` (fixed: `decryptError` only).
 
 **Server half:** [call-service p2p mode](../../services/call-service.md#peer-to-peer-mode-2026-10-17).
@@ -375,6 +376,115 @@ ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFai
 refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
 for a group ([backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)).
 
+## Audio quality, measured 2026-10-19
+
+**The report.** The user: the call audio "sounds horrible", then "un bruit informe au lieu d'un son"
+(a formless noise instead of a sound). The same day's phone reading (Mi 9T calling the iPhone 12,
+`1.3.1-alpha.1`, [device-readings](../../device-readings-2026-10.md), CALL-AUDIO-1): clean network
+(jitter 3-19 ms, ~0 loss, `host/udp`), yet the Mi 9T's NetEq logged 14,568 `Decode error` (~30 % of
+the iPhone's 50 packets a second), 62 % of samples concealed, `audioLevel` 1.000.
+
+**The rig.** [`tools/call-audio-fidelity`](../../../../tools/call-audio-fidelity/README.md): two
+headless Chrome 155 processes, each with a fake microphone playing a known 12 s reference (sweep,
+speech-like, tones, noise), call each other through the app's IMPORTED capture constraints, sender
+parameters and E2E worker, in `CallService`'s order. The receiver records the decoded audio at
+48 kHz; every decrypted payload is looked up, by a 32-bit FNV-1a hash and its length, among the
+payloads the other side encoded (a membership check, not a full byte compare);
+`getStats()` every second. `bun tools/call-audio-fidelity/rig.mjs` (about 45 s a row; run nothing
+heavy beside it), `--reanalyze <dir>` re-scores saved recordings, `bun test tools/call-audio-fidelity`
+self-tests the metrics (in `make test-ci-scripts`).
+
+**Results** (Chrome 155 to Chrome 155, loopback, one host; `match` = median correlation of 50 ms
+blocks with the reference; LSD on the speech segment):
+
+| Row                                                                    | match | bit-exact frames | LSD dB | bandwidth Hz | dropouts (ms) | concealed % | verdict              |
+| ---------------------------------------------------------------------- | ----- | ---------------- | ------ | ------------ | ------------- | ----------- | -------------------- |
+| app (as shipped, E2E on)                                               | 0.98  | 1726/1726        | 3.95   | 10412        | 1 (170)       | 0           | PASS                 |
+| app, far end talking                                                   | 0.98  | 1722/1722        | 4.22   | 10412        | 1 (170)       | 0.4         | PASS                 |
+| app, no E2E transform                                                  | 0.98  | -                | 3.92   | 10412        | 1 (170)       | 0           | PASS                 |
+| voice processing off                                                   | 0.99  | 1734/1734        | 2.67   | 19515        | 0             | 0           | PASS                 |
+| app, 5 % loss                                                          | 0.94  | 1671/1671        | 5.13   | 10011        | 1 (160)       | 4.5         | PASS                 |
+| no E2E, 5 % loss                                                       | 0.95  | -                | 5.06   | 10011        | 1 (160)       | 4.8         | PASS                 |
+| app, 15 % bursty loss + 40 ms jitter                                   | 0.89  | 1473/1473        | 6.75   | 8067         | 4 (350)       | 13.7        | (not gated)          |
+| RED first                                                              | 0.98  | 1720/1720        | 3.95   | 10412        | 1 (170)       | 0.1         | PASS                 |
+| DTX on                                                                 | 0.98  | 1711/1711        | 3.96   | 10412        | 1 (170)       | 0           | PASS                 |
+| callee audio on a NEW m-line, receiver transform attached in `ontrack` | 0.96  | 1754/1754        | 4.15   | 10412        | 1 (160)       | 0           | PASS                 |
+| FAULT: wrong key on the callee                                         | 0.00  | 0/0              | 29.2   | -            | 7610          | 0           | silence              |
+| FAULT: the sender encrypts twice                                       | 0.06  | 0/1735           | 29.3   | -            | 610           | 53.1        | loud noise, clipping |
+| FAULT: no receiver transform                                           | 0.07  | -                | 48.0   | -            | 600           | 53.7        | loud noise, clipping |
+
+**What it says.**
+
+1. **The app's own path does not corrupt audio.** Chrome to Chrome, both directions, every role,
+   clean or lossy, with RED or DTX: every decrypted payload's hash matches an encoded one and
+   the output correlates 0.94-0.98 with the reference. The E2E transform costs nothing measurable
+   (app vs no-E2E: same LSD, same concealment under loss).
+2. **The phones' symptom has ONE signature in the rig: bytes that are not Opus reaching the
+   decoder.** Ciphertext into the decoder (no decrypt, or a double encryption decrypted once) gives
+   ~53 % concealment, full-scale samples and a noise floor of -13 to -21 dBFS: the Mi 9T's 62 %,
+   `audioLevel` 1.000 and "formless noise". A wrong key gives SILENCE (every frame dropped), never
+   noise, so the F5 key mismatch is not this defect. Random bytes break Opus's framing rules
+   (RFC 6716 R1-R7) about half the time, which is the decoder's `Decode error` share.
+3. **So the fault sits on a side the rig does not run**: the iPhone's WebKit sender (WebKit's
+   encoded transform handing over, or sending, something other than one encrypted Opus frame) or the
+   Mi 9T's Android WebView receiver not decrypting. Both are named by the log line below.
+4. **Voice processing, not the codec, sets the band**: with the app's `echoCancellation`,
+   `noiseSuppression`, `autoGainControl` the sweep falls 10 dB by 10.4 kHz (tone at 10 kHz -6 dB)
+   and one ~170 ms onset after a pause is gated - identical with and without E2E, absent with
+   processing off (19.5 kHz). That is Chrome's standard voice chain, wideband-plus, not "horrible".
+5. **Clipping under loss.** Opus concealment overshoots: 0-3215 full-scale samples per 12 s under
+   5 % loss, varying run to run, with and without processing. Not gated on lossy rows.
+6. **DTX and E2E.** With `usedtx=1` Chrome hands the sender transform 0-byte frames in every pause;
+   the worker encrypts them into 28-byte packets, so DTX would save nothing under E2E. The app does
+   not negotiate DTX.
+7. **The lot 1 note above was narrower than it read** (corrected there). A receiver transform
+   attached in `ontrack` for a transceiver a RENEGOTIATION created decrypts every frame in Chrome
+   155 (row "new m-line"); the silence measured on 2026-10-17 was a transform attached late to a
+   receiver already running.
+
+**The change (draft PR).** The worker checks every plaintext audio payload against RFC 6716 R1-R7
+(`utils/opusPacket.ts`): on the sender BEFORE it encrypts, on the receiver AFTER it decrypts, and on
+a receiver payload that fails it, tries to decrypt it AGAIN - success is proof the sender encrypted
+twice. It forwards everything unchanged (a witness, not a filter; the decoder rejects such a frame
+anyway). `CallService` logs:
+
+- `[Call] ERROR E2E sender: audio payload is not an Opus packet (N so far; len= toc= pt=)` - this
+  device's ENGINE handed the transform something that is not Opus (or the transform runs twice);
+- `[Call] ERROR E2E receiver: ...` with NO sender line on the other device - it was damaged after
+  the other side's check, or arrives undecrypted;
+- `[Call] ERROR E2E receiver: audio frames decrypt TWICE` - the other device encrypts twice.
+
+Empty frames (DTX) are exempt, and so is any frame whose metadata does not NAME `audio/opus` (a RED
+or CN frame is not an Opus packet; an engine that omits `mimeType` gives no way to tell). A
+`getMetadata()` that throws is logged as a worker `warn` and costs no frame. The rig ASSERTS the
+silence: `verdict()` fails any row whose log carries an `opusInvalid` or `doubleEncrypted` line,
+and the double-encryption fault logs both sender and receiver lines from the first frame. Pinned by
+`encryption.worker.test.ts` and `opusPacket.test.ts`.
+
+**Owed on the phones (the next reading separates the hypotheses from the app log alone):**
+
+| On which device                        | Read                                                                      | Means                                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| iPhone (sender of the noisy direction) | `ERROR E2E sender` lines; the count of `E2E encrypting audio`             | WebKit's sender frames are not single Opus packets, or the transform is applied twice |
+| Mi 9T (receiver)                       | `E2E decrypting audio (N frame(s))` growing at ~50/s while it hears noise | it DOES decrypt: the bytes were wrong before encryption (iPhone side)                 |
+| Mi 9T                                  | no `E2E decrypting audio` at all, or `WARN late E2E receiver transform`   | its receiver is not decrypting: ciphertext reaches its decoder                        |
+| Mi 9T                                  | `ERROR E2E receiver: audio frames decrypt TWICE`                          | the iPhone encrypts each frame twice                                                  |
+| both                                   | the other direction (Mi 9T heard on the iPhone)                           | not read on 2026-10-19 (store build not inspectable)                                  |
+
+**The witness may be blind on the iPhone.** It accuses only a frame whose metadata names
+`audio/opus`; if WebKit's `RTCEncodedAudioFrame.getMetadata()` omits `mimeType`, the iPhone logs no
+`ERROR E2E sender` line whatever it sends, so an ABSENT sender line there proves nothing. The Mi 9T
+receiver (Chromium) carries `mimeType` and is the side to read.
+
+The in-app log was batched during that reading (LOG-1); read the lines from the console live, as the
+reading did. A decisive check that needs no new build: call each phone from desktop Chrome on
+`dev.canari-emse.fr` (the rig's engine). The phone that plays noise from a desktop caller, or makes
+a desktop play noise, is the one at fault.
+
+**TURN / server.** Every row runs `host/udp` on loopback; nothing here exercises TURN. The phone
+reading's `TURN CreatePermission error response` (403 and 600, CALL-TURN) is a dev TURN credential
+or binding question and stays listed there; no production setting was read or changed.
+
 ## Responsibilities
 
 - WebRTC audio/video calls within MLS groups (E2E encrypted).
@@ -490,7 +600,8 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 | Service | Role |
 |---|---|
 | `CallService.ts` | WebRTC peer connection management, media capture, SFU signaling, ring/hangup push triggers |
-| `workers/encryption.worker.ts` | E2E frame transform (AES-GCM, MLS-derived key) |
+| `workers/encryption.worker.ts` | E2E frame transform (AES-GCM, MLS-derived key); names a plaintext audio payload that is not Opus, per side, and proves a double encryption ([above](#audio-quality-measured-2026-10-19)) |
+| `utils/opusPacket.ts` | `isValidOpusPacket` - RFC 6716 section 3.4 rules R1-R7, the worker's witness |
 | `utils/callAudio.ts`, `utils/callPresence.ts`, `utils/callFailure.ts` | Sender audio parameters, presence, the typed initiate failure |
 | `utils/chat/callSystemMessages.ts` | Call started/ended/missed messages in the timeline |
 

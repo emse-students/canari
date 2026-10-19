@@ -392,6 +392,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun tools/version-report/lib.test.mjs
 	@bun tools/test-inventory/lib.test.mjs
 	@bun test tools/store-listings
+	@bun test tools/call-audio-fidelity
 
 # THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
 # all until 2026-09-07. `bun run lint` is scoped to `frontend/`; this recipe ran the self-tests and
