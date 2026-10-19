@@ -15,6 +15,7 @@ import {
   buildCallAudioConstraints,
   configureCallAudioSenders,
 } from '../../../frontend/src/lib/utils/callAudio';
+import { transformAttribute } from '../../../frontend/src/lib/utils/callE2eReport';
 
 interface Impair {
   loss?: number;
@@ -314,6 +315,37 @@ function startStats() {
   statsTimer = window.setInterval(() => void sampleStats(), 1000);
 }
 
+/** How long `finish` waits for one answer of the worker before the row fails on it. */
+const WORKER_ANSWER_MS = 5_000;
+
+/**
+ * Posts `request` and resolves with the worker's first message of type `answer`. The listener is
+ * removed either way, and no answer within `WORKER_ANSWER_MS` REJECTS: a row must fail on a worker
+ * that does not answer, never hang on it.
+ */
+function askWorker(
+  w: Worker,
+  request: Record<string, unknown>,
+  answer: string
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (e: MessageEvent<{ type?: string }>) => {
+      if (e.data?.type !== answer) return;
+      clearTimeout(timer);
+      w.removeEventListener('message', onMessage);
+      resolve(e.data as Record<string, unknown>);
+    };
+    const timer = setTimeout(() => {
+      w.removeEventListener('message', onMessage);
+      reject(
+        new Error(`the worker did not answer ${String(request.type)} in ${WORKER_ANSWER_MS} ms`)
+      );
+    }, WORKER_ANSWER_MS);
+    w.addEventListener('message', onMessage);
+    w.postMessage(request);
+  });
+}
+
 /** Stops everything and returns the recording (base64 Float32 LE) and the stats series. */
 async function finish() {
   window.clearInterval(statsTimer);
@@ -342,19 +374,21 @@ async function finish() {
     await recorder.ctx.close();
   }
   let tap: { sent: string[]; received: string[] } | null = null;
+  let report: Record<string, unknown> | null = null;
   if (worker) {
-    const w = worker;
-    tap = await new Promise((resolve) => {
-      w.addEventListener('message', (e: MessageEvent<{ type: string }>) => {
-        if (e.data?.type === 'tap')
-          resolve(e.data as unknown as { sent: string[]; received: string[] });
-      });
-      w.postMessage({ type: 'dumpTap' });
-    });
+    // The app worker's OWN report, asked exactly as CallService asks it: frames per side. It is
+    // returned in the result, not noted in the log as well.
+    report = await askWorker(worker, { type: 'report', tag: 'rig' }, 'report');
+    tap = (await askWorker(worker, { type: 'dumpTap' }, 'tap')) as unknown as typeof tap;
   }
   pc.close();
   worker?.terminate();
-  return { b64, sampleRate, stats: statsLog, senderParams, log, tap };
+  const engine = {
+    ua: navigator.userAgent,
+    senderAttr: transformAttribute(RTCRtpSender.prototype),
+    receiverAttr: transformAttribute(RTCRtpReceiver.prototype),
+  };
+  return { b64, sampleRate, stats: statsLog, senderParams, log, tap, report, engine };
 }
 
 Object.assign(window, {

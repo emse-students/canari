@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-82 scripts.
+83 scripts.
 
 | script | what it is |
 |---|---|
@@ -29,6 +29,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `atoms.mjs` | THE ATOMS - every gesture this rig can make, in one place, each with its contract. |
 | `buildstamp.mjs` | The identity a frontend build gives itself, read back. |
 | `bundle.mjs` | WHICH BUNDLE A WEB CLIENT IS RUNNING, and the repair when it is not the deployed one. |
+| `callpeer.mjs` | A desktop Chrome as the OTHER END of a phone call, and the receiver's numbers read from it. |
 | `cdp.mjs` | Dependency-free Chrome DevTools Protocol driver for the cross-client test campaign |
 | `chat.mjs` | Chat primitives shared by every check in the campaign. |
 | `checks.mjs` | THE MANIFEST: which script covers which phase, and what each phase needs to be meaningful. |
@@ -309,4 +310,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-248 scripts in total.
+249 scripts in total.

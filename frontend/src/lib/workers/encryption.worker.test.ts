@@ -240,3 +240,41 @@ describe('encryption.worker - the sender diagnostics (WebKit sender noise, 2026-
     expect(posted).toContainEqual(expect.objectContaining({ type: 'doubleEncrypted' }));
   });
 });
+
+describe('encryption.worker - the report the call asks for (2026-10-19)', () => {
+  /** Asks the worker for its report, as CallService does, and returns the answer. */
+  async function report(tag: string): Promise<Record<string, unknown>> {
+    await scope.onmessage!({ data: { type: 'report', tag } } as MessageEvent);
+    const answer = posted.find((m) => m.type === 'report' && m.tag === tag);
+    expect(answer).toBeDefined();
+    return answer!;
+  }
+
+  it('counts every frame the engine hands each side, and answers with the tag it was asked', async () => {
+    const before = await report('before');
+    const transformers = before.transformers as Record<string, number>;
+    const framesIn = before.framesIn as Record<string, number>;
+    const sent = await run('sender', [opus(), opus(), opus()]);
+    await run('receiver', sent);
+    const after = await report('after');
+    expect(after.framesIn).toEqual({
+      sender: (framesIn.sender ?? 0) + 3,
+      receiver: (framesIn.receiver ?? 0) + 3,
+    });
+    expect(after.transformers).toEqual({
+      sender: (transformers.sender ?? 0) + 1,
+      receiver: (transformers.receiver ?? 0) + 1,
+    });
+  });
+
+  it('counts an EMPTY receiver frame without a line, and names a non-empty one shorter than an IV', async () => {
+    const before = await report('short-before');
+    await run('receiver', [new Uint8Array(0), Uint8Array.from([1, 2, 3, 4, 5])]);
+    const after = await report('short-after');
+    expect(Number(after.tooShort) - Number(before.tooShort)).toBe(2);
+    expect(Number(after.tooShortEmpty) - Number(before.tooShortEmpty)).toBe(1);
+    const warns = posted.filter((m) => m.type === 'warn');
+    expect(warns).toHaveLength(1);
+    expect(String(warns[0].detail)).toContain('receiver frame of 5 byte(s) dropped');
+  });
+});

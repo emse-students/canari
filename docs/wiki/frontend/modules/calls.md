@@ -530,6 +530,85 @@ Chrome, the iPhone's log read live):
 | `mime`/`audio send=` not Opus                                  | noise         | H3: the codec WebKit actually sends                                           |
 | all zero                                                       | clean         | not reproduced on that build: read again before anything else                  |
 
+### The Mi 9T logged no worker line at all (`1.3.1-alpha.2`) - the worker is now ASKED
+
+**What was read** (device-readings, `1.3.1-alpha.2`, five calls, both roles): the Mi 9T logged the
+main thread's `E2E sender/receiver transform attached` and `audio send=` lines and NOTHING the
+worker posts - no `transformer #N`, no `sender audio #N`, not even the first-frame `E2E
+encrypting/decrypting audio (1 frame(s))`.
+
+**What the code rules out.**
+
+- The worker IS started and its messages DO reach the main thread at least once: both `attached`
+  lines are written only after `ensureWorkerKeyReady` received the worker's `keyReady`.
+- The bridge logs every kind it is sent (`getOrCreateEncryptionWorker`), and `appendLog` is a bare
+  `console.log`.
+- Nothing is rate-limited past the first frame: `transformer` and `encryptOk`/`decryptOk` post on
+  frame 1, the sender shape on frame 50 (1 s).
+- There is ONE transform path (`RTCRtpScriptTransform`; the legacy `createEncodedStreams` was
+  removed in lot 1).
+
+**What the readings rule out.** On `1.3.1-alpha.1` the Mi 9T paired with desktop Chrome was CLEAN
+both ways (0 decode errors, [device-readings](../../device-readings-2026-10.md)). Desktop Chrome
+encrypts (the rig taps it), so the Mi 9T's receiver transform decrypts, and its sender transform
+encrypts: frames DO reach the Mi 9T's worker. **So the likely fault is posts from inside the
+transform not reaching the main thread on Android WebView 152**, not a transform that is off. That
+is an inference from two builds; the next reading settles it.
+
+**Desktop Chrome 152 does not reproduce it.** The rig run on Chrome for Testing 152.0.7977.82 (the
+WebView's major) and on 155 shows every transform-context line and the transform in the path:
+1,721-1,726 sender frames and 1,747-1,820 receiver frames per 34 s.
+
+**The change.** The worker counts every frame each side is handed, BEFORE anything can drop or
+throw, and answers `{ type: 'report' }` from its `onmessage` - the path `keyReady` already crosses
+on the Mi 9T. `CallService` asks twice per call, 5 s after the first `connected` and at the end
+(before the worker is terminated), and logs ONE line each (`utils/callE2eReport.ts`):
+
+```
+[Call] E2E worker report (5 s after connected): transformers sender=1 receiver=1 | frames in sender=250 receiver=251 | encrypted audio=250 video=0 | decrypted audio=249 video=0 | decrypt-failed=0 short=2 (empty 2) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=Chrome/152 attr sender=native receiver=native
+```
+
+Rules for the line:
+
+- It starts `ERROR` when a side has no transformer or no frame, or when non-Opus audio crossed.
+- A missing NATIVE `transform` attribute (`sender.transform = x` would then be a plain property) is
+  a fact, not a verdict: with a side at 0 frames it joins the `ERROR` ("the media may flow around
+  the worker"); with both sides fed it is a note, without `ERROR`.
+- "No frame" is judged at the end of a call ONLY if the 5 s report ran: a call hung up a second
+  after connecting may legitimately have received nothing. Decided by which report ran, not a clock.
+- The end line carries the call id: `(call end, call=<id>)`.
+- No answer within 1.5 s is its own `ERROR ... the worker did not answer` line.
+- A call that never connected owes no report.
+
+**The receiver's silent drop is counted too.** A receiver frame shorter than an IV was dropped with
+no trace. The rig shows they exist: 18-39 EMPTY frames per 34 s on Chrome 155, 110 on 152, none
+from the app's sender. They are counted in `short=` (empty ones without a line), and a non-empty
+one is named.
+
+**The rig.** It asks the same report and FAILS an E2E row whose sender or receiver transform saw no
+frame (`transform-in-path`). The FAULT row "no receiver transform" now fails on it too: tx=1722,
+rx=0. Pinned by `callE2eReport.test.ts`, `encryption.worker.test.ts` and `CallService.p2p.test.ts`
+("the E2E worker report").
+
+**What the next phone call must show** (Mi 9T, each line read from its console):
+
+| Report line on the Mi 9T                                               | Means                                                                                                                                                          |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| present, frames in sender/receiver ~250 each at 5 s, `decrypted` close | the transform IS in the path; the per-frame lines are lost because posts from inside the transform do not reach the page on this WebView. Read `not-opus` here |
+| `the worker did not answer in 1500 ms`                                 | once a transform is attached, nothing the worker posts reaches the page (`keyReady` came before)                                                               |
+| `transformers sender=0` or `receiver=0`                                | the engine never handed the worker that side's transformer                                                                                                     |
+| transformers 1, `frames in` 0 on a side                                | the transformer exists and is never fed: media flows around it                                                                                                 |
+| `attr ... absent` with a side at 0 frames (`ERROR`)                    | this WebView may route media around the worker: read the other device for `E2E decrypt failed` before calling it unencrypted                                   |
+| `attr ... absent`, both sides fed (a note)                             | the attribute is missing but the transform runs; not a fault by itself                                                                                         |
+| `not-opus receiver` > 0 while hearing the iPhone                       | the iPhone's frames decrypt to non-Opus (H2/H1 above); `double` > 0 is H1                                                                                      |
+
+**The desktop counterpart is a command now.** `tools/cross-client-harness/callpeer.mjs` starts a
+harness profile with a fake microphone, tracks the page's peer connections, can dial or accept, and
+prints the RECEIVER's concealed %, loss, jitter and codec every 5 s. It also writes the samples and
+every `[Call]` line (the worker report included) to a JSON file. The by-hand reading of 2026-10-19
+becomes `bun callpeer.mjs --browser w3 --launch --url https://dev.canari-emse.fr/chat --accept`
+([README](../../../../tools/cross-client-harness/README.md#callpeermjs---a-desktop-chrome-as-the-other-end-of-a-phone-call)).
+
 **TURN / server.** Every row runs `host/udp` on loopback; nothing here exercises TURN. The phone
 reading's `TURN CreatePermission error response` (403 and 600, CALL-TURN) is a dev TURN credential
 or binding question and stays listed there; no production setting was read or changed.
@@ -791,6 +870,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 | `CallService.ts` | WebRTC peer connection management, media capture, SFU signaling, ring/hangup push triggers |
 | `workers/encryption.worker.ts` | E2E frame transform (AES-GCM, MLS-derived key); names a plaintext audio payload that is not Opus, per side, and proves a double encryption ([above](#audio-quality-measured-2026-10-19)) |
 | `utils/opusPacket.ts` | `isValidOpusPacket` - RFC 6716 section 3.4 rules R1-R7, the worker's witness |
+| `utils/callE2eReport.ts` | the E2E worker report as one log line, and the engine facts it is read against ([above](#the-mi-9t-logged-no-worker-line-at-all-131-alpha2---the-worker-is-now-asked)) |
 | `utils/callAudio.ts`, `utils/callPresence.ts`, `utils/callFailure.ts` | Sender audio parameters, presence, the typed initiate failure |
 | `utils/chat/callSystemMessages.ts` | Call started/ended/missed messages in the timeline |
 
