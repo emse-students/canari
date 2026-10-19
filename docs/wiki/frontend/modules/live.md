@@ -452,8 +452,24 @@ and `ended`, the "Couper le live" button. It opens `ModerationLiveCutDialog`: re
 reasons), details (500), then a CONFIRMATION step naming the broadcaster with the repeat count, and
 only then `POST /api/lives/:id/cut` through `cutLive`. A repeat (`newlyCut: false`) is still a
 success and the page says "already cut"; a refusal gets its own sentence by `code` and returns to
-the form. Not built here: the viewer's report control (below, `ReportReasonDialog` with
-`contentType: 'live'`).
+the form.
+
+**The viewer's report control (2026-10-19, built).** `LiveReportControl` sits in the viewer's TOP BAR
+(the strip above the picture: it never covers the video, a double-tap region or the chat panel), a
+`Flag` icon button named `live_report_button`, hidden on the broadcaster's own copy
+(`getSavedUserId() === live.broadcasterId`). It opens the posts' `ReportReasonDialog` (one reason list)
+with `createReport('live', live.id, reason)`; the dialog is raised on the `critical` layer through the
+new `layer` prop of `Modal`/`ReportReasonDialog`, because `--z-viewer` sits ABOVE `--z-modal` and a plain
+modal would open behind the live it is about. Outcomes by TYPE, never by message: `409 ALREADY_REPORTED`
+("already reported", closes), `404 LIVE_NOT_FOUND` (`ModerationApiError.isLiveNotFound`: "the live is
+over", closes), anything else (a retry, the dialog stays open). Only a report that was FILED offers
+"block the person who is broadcasting" through `showConfirm` (danger) and `blockUser(broadcasterId)`;
+a block leaves the live through the viewer's own dismissal. The offer says "the person", not the
+name: on an association's live the displayed name is the association's, the block lands on the member
+who broadcasts. **Not built, by the server's contract:** reporting ONE chat line - `content_reports`
+accepts `contentType: 'live'` only ([lives](../../services/lives.md#an-erased-account-and-a-single-message-reported)),
+so a viewer reports the live or the person. Tests: `LiveReportControl.svelte.test.ts`, the flag in
+`LiveViewer.svelte.test.ts`.
 
 **Verified by tests** (fakes for the recorder, camera, uploader and server; no clock, no sleep):
 `fmp4Segments.test.ts`, `liveSegmentPipeline.test.ts`, `liveBroadcast.svelte.test.ts`, `liveDevice.test.ts`,
@@ -496,7 +512,7 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 | **WP-L5** (**viewer and broadcaster built 2026-10-19 behind `LIVE_ENABLED`, dev builds only, [viewer](#the-viewer-as-built-2026-10-19), [broadcaster](#the-broadcaster-as-built); the phone readings are owed**) | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
 | **WP-L6** (**server half built 2026-10-19, draft; the 16 decisions C1-C16 are on [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6): PostgreSQL rows erased with the live, carried by the manifest poll, NOT the WS gateway**) | **Live comments and floating reactions ARE wanted (user, 2026-10-19, D5)**, encrypted with the live key, ephemeral. | the manifest poll (`lives.controller.ts`), the segment seal (`liveCrypto.ts`) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
 | **WP-L7** (**server half built 2026-10-19, [lives](../../services/lives.md#the-push-to-the-followers-wp-l7-server-half); a tap lands on the feed (`appRouteForDeepLink` owns the `live` host), where the LIVE card is (dev builds only, [viewer](#the-viewer-as-built-2026-10-19)); the live's own viewer route is still owed**) | **Announcement**: LIVE card at the top of the feed; push to followers (L10), sent at the first stored segment. | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
-| **WP-L8** (**RELEASE BLOCKER before any stable, D3; moderation works like posts, D6: reuse the posts code path, no parallel mechanism. SERVER HALF BUILT 2026-10-19** ([lives](../../services/lives.md#moderation-wp-l8-server-half)): a live reported through `content_reports`, the staff cut `POST /api/lives/:id/cut` (410 `endReason: 'cut'`), the first-live rules acceptance recorded (L11), remove-viewer and blocks as built in WP-L2; **client half built 2026-10-19 except the viewer's report control** (cut screens, bell row, admin cut button: [the moderation client](#the-moderation-client-wp-l8s-client-half-2026-10-19); the broadcaster's rules sheet is built), chat hiding inside WP-L6 by the contract written there, and the strike policy and cut retention, the user's) | **Moderation**: hide message, remove viewer, block, report a live through `content_reports` like a post, staff remote cut (the live equivalent of "delete the post"). | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
+| **WP-L8** (**RELEASE BLOCKER before any stable, D3; moderation works like posts, D6: reuse the posts code path, no parallel mechanism. SERVER HALF BUILT 2026-10-19** ([lives](../../services/lives.md#moderation-wp-l8-server-half)): a live reported through `content_reports`, the staff cut `POST /api/lives/:id/cut` (410 `endReason: 'cut'`), the first-live rules acceptance recorded (L11), remove-viewer and blocks as built in WP-L2; **client half built 2026-10-19, the viewer's report control included** (cut screens, bell row, admin cut button: [the moderation client](#the-moderation-client-wp-l8s-client-half-2026-10-19); the broadcaster's rules sheet is built), chat hiding inside WP-L6 by the contract written there, and the strike policy and cut retention, the user's) | **Moderation**: hide message, remove viewer, block, report a live through `content_reports` like a post, staff remote cut (the live equivalent of "delete the post"). | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
 | **WP-L9** (Q2 answers precede any store submission, D3; **the answers and what is missing: [store-ugc-answers](../../store-ugc-answers.md)**) | **Store review**: UGC answers (Q2), the review video for live, then a pre-release to testers. | [mobile](../mobile.md) submission notes | accepted builds on both stores |
 | **WP-L10** (only if A is kept) | **Low-latency small-audience mode on the SFU**: a `broadcast` room kind (broadcaster-only publish, receive-only viewers, a cap, a server-side kick), frame E2E keyed by the live key with **no cleartext path**, the SFU bench with 1 then 30 subscribers. | `apps/call-service/src/main.rs` `on_track`, `tests/relay_path.rs`, `CallService.ts` `setupEncryption` | Rust tests: a viewer's track is refused, a kicked peer cannot rejoin; a missing transform refuses to broadcast; TURN GB per live-hour measured |
 

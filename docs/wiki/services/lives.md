@@ -430,8 +430,8 @@ stopped.**
 Built 2026-10-19 on the user's decisions D3 (any member may broadcast, so moderation is a RELEASE
 BLOCKER: no stable carries lives without it) and D6 (moderation works like posts:
 [moderation-and-blocking](../moderation-and-blocking.md)). **The broadcaster's rules step is built** (below); the
-report control on the viewer, the cut button in `/admin/moderation` and the "cut" screens are the
-client follow-up (below).
+report control on the viewer, the cut button in `/admin/moderation` and the "cut" screens are BUILT
+(client follow-up, below).
 
 | Control | Who | Where | What it does |
 | --- | --- | --- | --- |
@@ -539,8 +539,6 @@ live row and cut button and the `LiveEndReason` / `LiveRefusalCode` additions ar
 ([the moderation client](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
 What is left:
 
-- **Viewer report control**: `ReportReasonDialog` with `contentType: 'live'`; `409 ALREADY_REPORTED`
-  and `404 LIVE_NOT_FOUND` handled as for a post.
 - **The push for a cut**: `notif_social_live_cut_*` in both native apps, then `skipPush` goes.
 
 ## A deleted account

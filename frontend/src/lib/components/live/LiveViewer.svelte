@@ -20,6 +20,7 @@
   import { LoaderCircle, Radio, Volume2, VolumeX, X } from '@lucide/svelte';
   import LiveBadge from './LiveBadge.svelte';
   import LiveIdentity from './LiveIdentity.svelte';
+  import LiveReportControl from './LiveReportControl.svelte';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { followVideoSound } from '$lib/actions/playWhileVisible';
@@ -221,6 +222,7 @@
           {formatLiveElapsed(elapsedMs)}
         </span>
       {/if}
+      <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
       <button
         type="button"
         class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
