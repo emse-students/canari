@@ -1027,8 +1027,9 @@ the republication kinds; `coorganise` has none, so its next lock is the proposal
   to it, the erasure held the member row while the delete held the association and its events; each
   then waited on the other (`40P01`, PostgreSQL 18). The erasure now locks first every association
   one of its writes reaches through a row the delete removes: created, member, role history, push
-  mutes, events it created, validated or rejected, forms it owns, proposals and republications, and
-  the booking spaces under its bookings, participations, blocks, files and linked resources. A
+  mutes, events it created, validated or rejected, forms it owns or answered, proposals and the
+  republications it made or that name its posts (the post delete cascades into them), and the
+  booking spaces under its bookings, participations, blocks, files and linked resources. A
   missing source reopens the cycle for its rows. `FOR NO KEY UPDATE` conflicts with the delete's
   `FOR UPDATE`, is the lock the `createdBy` update takes anyway, and does not block a decision's
   `KEY SHARE`. Id order keeps two erasures apart too.

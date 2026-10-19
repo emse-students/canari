@@ -28,7 +28,12 @@ import {
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import type { AssociationsService } from '../associations/associations.service';
 import type { RedisService } from '../common/redis/redis.service';
-import { ERASURE_STATEMENTS, type ErasureDb, eraseSocialRows } from '../internal/account-erasure';
+import {
+  ERASURE_ASSOCIATION_LOCK_SQL,
+  ERASURE_STATEMENTS,
+  type ErasureDb,
+  eraseSocialRows,
+} from '../internal/account-erasure';
 import type { ModerationService } from '../moderation/moderation.service';
 import { Proposal, PROPOSAL_VOIDED_BY } from '../proposals/proposal.entity';
 import { PROPOSAL_SENDER_GONE, ProposalsService } from '../proposals/proposals.service';
@@ -47,6 +52,21 @@ import { RepublicationsService } from './republications.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
+
+/** The tables built only for the erasure's association lock: no erasure statement runs on them. */
+const LOCK_ONLY = new Set([
+  'association_role_history',
+  'association_push_mutes',
+  'association_calendar_events',
+  'forms',
+  'form_respondents',
+  'booking_spaces',
+  'booking_resources',
+  'bookings',
+  'booking_participants',
+  'booking_blocks',
+  'booking_files',
+]);
 
 const migration = (file: string) => readFileSync(join(__dirname, '..', 'migrations', file), 'utf8');
 
@@ -251,6 +271,22 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         "followedUserId" varchar(255) NOT NULL);
       CREATE TABLE post_notifications (id serial PRIMARY KEY, "recipientId" varchar NOT NULL,
         type varchar NOT NULL, "postId" varchar NOT NULL, "associationId" uuid, "actorId" varchar);
+    `);
+    // Only what the erasure's association lock reads (`LOCK_ONLY`): no statement runs against them.
+    await q(`
+      CREATE TABLE association_role_history (association_id uuid, user_id varchar);
+      CREATE TABLE association_push_mutes ("associationId" uuid, "userId" varchar);
+      CREATE TABLE association_calendar_events ("associationId" uuid, "createdBy" varchar,
+        "validatedBy" varchar, "rejectedBy" varchar);
+      CREATE TABLE forms (id uuid PRIMARY KEY, "associationId" uuid, "ownerId" varchar);
+      CREATE TABLE form_respondents ("formId" uuid, "userId" varchar);
+      CREATE TABLE booking_spaces (id uuid PRIMARY KEY, "associationId" uuid, "ownerId" varchar);
+      CREATE TABLE booking_resources (id uuid PRIMARY KEY, "spaceId" uuid, "linkedUserId" varchar);
+      CREATE TABLE bookings (id uuid PRIMARY KEY, "resourceId" uuid, "holderId" varchar,
+        "bookedById" varchar, "cancelledById" varchar);
+      CREATE TABLE booking_participants ("bookingId" uuid, "userId" varchar);
+      CREATE TABLE booking_blocks ("resourceId" uuid, "createdById" varchar);
+      CREATE TABLE booking_files ("spaceId" uuid, "uploaderId" varchar);
     `);
     await q(
       `INSERT INTO associations (id, name, slug, type, archived) VALUES
@@ -836,6 +872,17 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
           ])) as { table_name: string }[]
         ).map((r) => r.table_name)
       );
+      // Skipped, and logged in `into`, when a table it names is missing or it writes a LOCK_ONLY
+      // table. A name followed by `(` is a function (`FROM unnest(...)`), never a table.
+      const skips = (sql: string, into: string[]): boolean => {
+        const names = [...sql.matchAll(/\b(?:FROM|JOIN|UPDATE)\s+([a-z_]+)\b(?!\s*\()/g)].map(
+          (m) => m[1]
+        );
+        const skip = names.some((t) => !present.has(t)) || LOCK_ONLY.has(names[0]);
+        if (skip) into.push(sql);
+        return skip;
+      };
+      const skipped: string[] = [];
       const hold = ds.createQueryRunner();
       const erase = ds.createQueryRunner();
       await hold.connect();
@@ -852,14 +899,11 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         );
         await lockWaiters(1);
         await erase.startTransaction();
-        // Skipped when ANY table it names is missing: the association lock reads a dozen.
-        const absent = (sql: string) =>
-          [...sql.matchAll(/(?:FROM|JOIN|UPDATE)\s+([a-z_]+)/g)].some(([, t]) => !present.has(t));
         const db: ErasureDb = {
           write: async (sql, params) =>
-            absent(sql) ? 0 : ((await erase.query(sql, params)) as [unknown, number])[1],
+            skips(sql, skipped) ? 0 : ((await erase.query(sql, params)) as [unknown, number])[1],
           read: async <T>(sql: string, params: unknown[]) =>
-            absent(sql) ? [] : ((await erase.query(sql, params)) as T[]),
+            skips(sql, skipped) ? [] : ((await erase.query(sql, params)) as T[]),
         };
         erasing = eraseSocialRows(db, 'er').then(
           async (value) => {
@@ -878,7 +922,12 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       }
       // A proposal taken before the post would make this a 40P01 and abort one of them.
       expect(await accepting).toMatchObject({ value: { status: 'accepted' } });
-      expect(await erasing).toMatchObject({ value: expect.anything() });
+      // The association lock ran (AG, through er's requests), and so did the mention scrub, whose
+      // `FROM unnest(...)` is a function, not a table.
+      expect(await erasing).toMatchObject({ value: { counts: { associations_locked: 1 } } });
+      const mentions = ERASURE_STATEMENTS.find((s) => s.label === 'post_mentions')!.sql;
+      expect(skipped).not.toContain(mentions);
+      expect(skipped).not.toContain(ERASURE_ASSOCIATION_LOCK_SQL);
       await erase.release();
       expect(await proposalOf(P(16), AG)).toMatchObject({
         status: 'accepted',
@@ -894,6 +943,36 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         ])
       ).toEqual([]);
     }, 30_000);
+
+    it('the erasure locks the associations its post deletion and form rows reach', async () => {
+      // `lk`'s personal post, republished by AG2: deleting the post cascades into the republication.
+      // `lk` answered a form of A1: deleting its respondent row touches A1's form.
+      const POST = '00000000-0000-4000-8000-00000000f1c0';
+      const FORM = '00000000-0000-4000-8000-00000000f1c1';
+      await q(`INSERT INTO posts (id, "authorId") VALUES ($1, 'lk')`, [POST]);
+      await q(
+        `INSERT INTO post_republications ("postId", "associationId", "republishedBy") VALUES ($1, $2, 'pr')`,
+        [POST, AG2]
+      );
+      await q(`INSERT INTO forms (id, "associationId", "ownerId") VALUES ($1, $2, 'someone')`, [
+        FORM,
+        A1,
+      ]);
+      await q(`INSERT INTO form_respondents ("formId", "userId") VALUES ($1, 'lk')`, [FORM]);
+      const runner = ds.createQueryRunner();
+      await runner.connect();
+      try {
+        await runner.startTransaction();
+        const locked: { id: string }[] = await runner.query(ERASURE_ASSOCIATION_LOCK_SQL, ['lk']);
+        expect(locked.map((r) => r.id)).toEqual([AG2, A1].sort());
+      } finally {
+        await runner.rollbackTransaction();
+        await runner.release();
+        await q(`DELETE FROM form_respondents WHERE "userId" = 'lk'`);
+        await q(`DELETE FROM forms WHERE id = $1`, [FORM]);
+        await q(`DELETE FROM posts WHERE id = $1`, [POST]);
+      }
+    });
 
     it("the author's erasure removes the requests addressed to them", async () => {
       const statement = ERASURE_STATEMENTS.find((s) => s.label === 'proposals_to_user');

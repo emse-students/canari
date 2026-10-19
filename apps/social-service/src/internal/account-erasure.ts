@@ -581,7 +581,9 @@ export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
  * Taking every such association first puts the two in one order: whichever comes second waits
  * holding nothing. The set is EVERY association one of the erasure's writes reaches through a row
  * the delete removes - a missing source reopens the cycle for the rows it would have named.
- * Posts are not a source: `posts."associationId"` has no foreign key, so the delete never writes one.
+ * A post's own `associationId` is not a source (no foreign key: the delete never writes a post), but
+ * what hangs off a post or a form the erasure deletes IS: the republications of its personal posts
+ * (`DELETE FROM posts` cascades into them) and its respondent rows of an association's forms.
  *
  * `FOR NO KEY UPDATE`: it conflicts with the delete's `FOR UPDATE` (the edge that matters), it is the
  * lock `UPDATE associations SET "createdBy"` takes later anyway (no upgrade), and it does NOT
@@ -597,10 +599,14 @@ export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
     UNION SELECT "associationId"::text FROM association_calendar_events
            WHERE "createdBy" = $1 OR "validatedBy" = $1 OR "rejectedBy" = $1
     UNION SELECT "associationId"::text FROM forms WHERE "ownerId" = $1
+    UNION SELECT f."associationId"::text FROM form_respondents fr
+            JOIN forms f ON f.id = fr."formId" WHERE fr."userId" = $1
     UNION SELECT "fromAssociationId"::text FROM proposals
            WHERE "proposedBy" = $1 OR "decidedBy" = $1 OR "toUserId" = $1
     UNION SELECT "toAssociationId"::text FROM proposals WHERE "proposedBy" = $1 OR "decidedBy" = $1
     UNION SELECT "associationId"::text FROM post_republications WHERE "republishedBy" = $1
+    UNION SELECT pr."associationId"::text FROM post_republications pr
+            JOIN posts p ON p.id = pr."postId" WHERE p."authorId" = $1
     UNION SELECT "associationId"::text FROM booking_spaces WHERE "ownerId" = $1
     UNION SELECT s."associationId"::text FROM booking_resources r
             JOIN booking_spaces s ON s.id = r."spaceId" WHERE r."linkedUserId" = $1

@@ -236,6 +236,9 @@ describe('InternalController.deleteUserData', () => {
       queries.findIndex((q) => ERASURE_STATEMENTS.some((s) => s.sql === q))
     );
     expect(ERASURE_ASSOCIATION_LOCK_SQL).toMatch(/ORDER BY a\.id\s+FOR NO KEY UPDATE OF a$/);
+    // What hangs off a post or a form row the erasure deletes is a source too.
+    expect(ERASURE_ASSOCIATION_LOCK_SQL).toMatch(/JOIN posts p ON p\.id = pr\."postId"/);
+    expect(ERASURE_ASSOCIATION_LOCK_SQL).toMatch(/FROM form_respondents fr/);
   });
 
   it('voids with the decidedBy the proposals service writes', () => {
