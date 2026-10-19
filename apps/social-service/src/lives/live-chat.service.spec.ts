@@ -17,6 +17,7 @@ import {
   liveLimits,
 } from './live.constants';
 import type { LivesService } from './lives.service';
+import type { AssociationsService } from '../associations/associations.service';
 
 const UUID = '33333333-3333-4333-8333-333333333333';
 const b64 = (n: number) => Buffer.alloc(n, 7).toString('base64');
@@ -159,9 +160,15 @@ describe('LiveChatController', () => {
   const post = jest.fn().mockResolvedValue({ id: 'm' });
   const react = jest.fn().mockResolvedValue({ seq: 1 });
   const hide = jest.fn().mockResolvedValue({ hidden: true });
+  /** The posts' one moderator predicate, faked: a global admin, or the BDE moderator `m...`. */
+  const isContentModerator = jest.fn(
+    async (userId: string, opts?: { isGlobalAdmin?: boolean }) =>
+      opts?.isGlobalAdmin === true || userId.startsWith('m')
+  );
   const controller = new LiveChatController(
     { mayWatch } as unknown as LivesService,
-    { post, react, hide } as unknown as LiveChatService
+    { post, react, hide } as unknown as LiveChatService,
+    { isContentModerator } as unknown as AssociationsService
   );
 
   beforeEach(() => {
@@ -195,12 +202,16 @@ describe('LiveChatController', () => {
     expect(react).not.toHaveBeenCalled();
   });
 
-  it('reads staff from the header nginx sets, exactly "true"', async () => {
+  it('asks the posts\' ONE moderator predicate for staff, the admin header read as exactly "true"', async () => {
     await controller.hide(LIVE, UUID, 'a'.repeat(64), 'true');
+    expect(isContentModerator).toHaveBeenLastCalledWith('a'.repeat(64), { isGlobalAdmin: true });
     expect(hide).toHaveBeenLastCalledWith('a'.repeat(64), true, LIVE, UUID);
     for (const value of [undefined, '', '1', 'TRUE']) {
       await controller.hide(LIVE, UUID, 'a'.repeat(64), value);
       expect(hide).toHaveBeenLastCalledWith('a'.repeat(64), false, LIVE, UUID);
     }
+    // A BDE moderator with no admin header is staff too.
+    await controller.hide(LIVE, UUID, 'M'.repeat(64), undefined);
+    expect(hide).toHaveBeenLastCalledWith('m'.repeat(64), true, LIVE, UUID);
   });
 });
