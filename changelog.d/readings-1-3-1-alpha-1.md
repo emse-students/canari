@@ -1,3 +1,3 @@
-### Changed - readings of v1.3.1-alpha.1 on the iPhone 12
+### Changed - readings of v1.3.1-alpha.1 on both bench phones
 
-Version, bookings editor, booking flow and CanaReels read; the Mi 9T was locked ([readings](docs/wiki/device-readings-2026-10.md)).
+Both phones read, the first 1:1 call read with its audio numbers: six defects, the worst a decoder rejecting 30 % of the packets ([readings](docs/wiki/device-readings-2026-10.md)).
