@@ -111,6 +111,22 @@
         </dd>
       </div>
       <div>
+        <dt>Réservations</dt>
+        <dd>
+          Lorsque vous réservez un créneau (une salle, un objet, un rendez-vous), Canari enregistre
+          la réservation : la ressource, le début et la fin, votre identifiant et le nom affiché au
+          moment de la réservation, les participants que vous ajoutez et vos réponses aux questions
+          de l'espace. Ces réponses ne sont lisibles que par les organisateurs de l'espace et par
+          les administrateurs de la plateforme ; les fichiers que vous joignez (PDF ou image, 8 Mo
+          au plus) ne sont téléchargeables que par les organisateurs de l'espace, et sont conservés
+          en clair sur nos serveurs, sans chiffrement de bout en bout, pour qu'ils puissent les
+          lire. Les autres personnes ne voient votre nom que si l'espace l'affiche, sinon seulement
+          « occupé ». L'affiche d'un espace est chiffrée sur l'appareil de l'organisateur, comme
+          l'image d'une publication. Un organisateur peut exporter les réservations de son espace
+          dans un tableur ; un fichier n'y figure que par un mot, jamais par son contenu.
+        </dd>
+      </div>
+      <div>
         <dt>Appareils et notifications</dt>
         <dd>
           Pour chaque appareil : un identifiant, son nom et son système, la version de
@@ -210,6 +226,11 @@
               Exécution du service (6.1.b) ; conservation des pièces comptables : obligation légale
               (6.1.c)
             </td>
+          </tr>
+          <tr>
+            <td>Réservations</td>
+            <td>Réserver une salle, un objet ou un rendez-vous auprès d'un organisateur</td>
+            <td>Exécution du service (6.1.b)</td>
           </tr>
           <tr>
             <td>Aperçus de liens et vérification Safe Browsing</td>
@@ -417,6 +438,19 @@
             <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
           </tr>
           <tr>
+            <td>Réponses et fichiers d'une réservation</td>
+            <td>
+              Supprimés automatiquement N jours après la fin du créneau (N est choisi par
+              l'organisateur, entre 1 et 30 jours, 7 par défaut, et indiqué sous chaque question «
+              fichier ») ; un fichier envoyé sans réservation est supprimé après un jour ; les
+              fichiers subsistent ensuite jusqu'à 6 mois dans les sauvegardes
+            </td>
+          </tr>
+          <tr>
+            <td>Réservations (créneau, nom affiché, participants)</td>
+            <td>Supprimées un an après la fin du créneau</td>
+          </tr>
+          <tr>
             <td>Jeton de notification</td>
             <td
               >Supprimé à la déconnexion ou à la suppression du compte ; 90 jours au plus sans
@@ -619,10 +653,16 @@
         est immédiate : profil, publications, adhésions, appareils, jetons de notification, messages
         en attente et messages de salon (avec leurs réactions et épingles) sont effacés. Vos achats
         sont conservés sous une forme détachée de votre compte (auteur « supprimé »), pour ne pas
-        trouer la comptabilité des associations. Certaines données ne sont pas encore atteintes par
-        cette suppression, notamment vos réponses aux formulaires, vos commentaires et réactions sur
-        les publications d'autres membres et l'historique des modifications de votre profil : leur
-        intégration est en cours, et vous pouvez en demander l'effacement par e-mail dès maintenant.
+        trouer la comptabilité des associations. Vos réservations à venir sont annulées, vos
+        réponses et vos fichiers de réservation sont supprimés, et votre identifiant est effacé des
+        réservations passées, qui gardent le nom affiché jusqu'à leur suppression à un an. Vos
+        espaces de réservation personnels sont supprimés avec tout ce qu'ils contiennent, y compris
+        les réservations à venir d'autres personnes, qui n'en sont pas prévenues ; l'affiche d'un
+        espace d'association est conservée, elle appartient à l'association. Certaines données ne
+        sont pas encore atteintes par cette suppression, notamment vos réponses aux formulaires, vos
+        commentaires et réactions sur les publications d'autres membres et l'historique des
+        modifications de votre profil : leur intégration est en cours, et vous pouvez en demander
+        l'effacement par e-mail dès maintenant.
       </p>
       <p class="legal-fineprint">
         Les données supprimées subsistent dans les sauvegardes pendant la durée indiquée en section
