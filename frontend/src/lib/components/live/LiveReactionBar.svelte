@@ -25,7 +25,7 @@
   {#each LIVE_REACTION_KINDS as kind (kind)}
     <button
       type="button"
-      class="ui-icon-button rounded-full bg-black/40 text-xl outline-none hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-white motion-safe:active:scale-90"
+      class="ui-icon-button bg-cn-scrim/50 hover:bg-cn-scrim/70 rounded-full text-xl outline-none focus-visible:ring-2 focus-visible:ring-white motion-safe:active:scale-90"
       aria-label={m.live_reaction_send({ name: liveReactionLabel(kind) })}
       title={liveReactionLabel(kind)}
       onclick={() => onTap(kind)}

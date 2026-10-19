@@ -502,15 +502,25 @@ tick never answers a cursor twice. A broadcaster plays nothing, so `LiveBroadcas
 one loop: the same request once a tick, stopped for good by the server's `410` (or the `404` of a
 live deleted at its end), any other failure retried after the player's backoff.
 
-**Order and idempotence.** Blocks are applied in arrival order (a promise chain), because opening is
-asynchronous and a cursor must never move past a message not yet drawn; a block that arrives before
-the key is NOT applied and its cursor does not move (logged at `error`: a wiring defect). A message
-that does not open is dropped and logged, never drawn. My message is drawn at once as `pending` and
-replaced by the server's copy matched on its `clientId`, whichever of the answer and the poll comes
-first - never drawn twice. A failed send keeps its line with its reason; **a retry re-sends the SAME
-sealed string**, because the server's repeat is idempotent for identical bytes only and a re-seal
-(a fresh IV) would be a `409 LIVE_MESSAGE_CONFLICT`. Retry is offered for `too-fast` and `network`
-only; `muted`, `removed`, `ended`, `refused` offer discard. The list keeps the newest 200 lines.
+**Order and idempotence.** **The cursors move when a block ARRIVES** (`receive`, synchronously), not
+when its asynchronous opening ends: the next tick's `query()` can run first, and asking from the old
+cursors would bring the same rows back - the same reactions floating twice. The rows are then drawn
+in arrival order (a promise chain), **each in its own try**: a malformed row (a `null` author, a
+missing field) is dropped and logged, and the rest of the block and every later one are still
+drawn - one bad row never freezes the chat. A block that arrives before the key is NOT applied and
+its cursors do not move (logged at `error`: a wiring defect). A message that does not open is
+dropped and logged, never drawn. **Rows are deduped on `author:clientId`**, the server's idempotence
+key, not only on the server's id, so a replay under a new id is not drawn twice. My message is drawn
+at once as `pending` and replaced by the server's copy matched on its `clientId`, whichever of the
+answer and the poll comes first - never drawn twice. **My own echo from the poll is OPENED once**, as
+every other viewer opens it; if it does not open, or the server's answer names another author than
+the one the seal bound (the account id the client holds differs from the gateway's), the line says
+`unreadable` ("Les autres ne peuvent pas lire ce message") and an `error` is logged - never "sent".
+A failed send keeps its line with its reason; **a retry re-sends the SAME sealed string**, because
+the server's repeat is idempotent for identical bytes only and a re-seal (a fresh IV) would be a
+`409 LIVE_MESSAGE_CONFLICT`. Retry is offered for `too-fast` and `network` only; the other failures
+offer discard. The list keeps the newest 200 lines. **The account is read at each use**, and the
+composer's `canWrite` reactively, so an account that loads after the screen opened enables it then.
 
 **Reactions.** A tap floats at once and is summed; the sums leave as ONE burst on the next `query()`
 (one per tick at most, C7), fire and forget - a refused or lost burst is dropped and logged, never
@@ -521,7 +531,7 @@ and drops the rest; **with reduced motion nothing moves** - one static counter p
 since the viewer opened.
 
 **What a line is (C11, C15).** Text, through `EmojiText` (Noto SVG for each emoji): never markup,
-never a link, never a mention. The composer's `maxlength` is the server's `chatMessageMaxChars`
+never a link, never a mention; the name and the text are each a `<bdi>` (the text `dir="auto"`), so a U+202E in a message cannot reverse the line around it. The composer's `maxlength` is the server's `chatMessageMaxChars`
 (read once from `GET /api/lives/limits`), and `send` refuses an empty or longer message before
 sealing. Every string is Paraglide (`live_chat_*`, `live_reaction*`).
 

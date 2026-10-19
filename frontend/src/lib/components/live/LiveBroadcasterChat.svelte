@@ -45,7 +45,9 @@
 
   let lines = $state<readonly LiveChatLine[]>([]);
   let maxChars = $state<number | null>(null);
-  let canWrite = $state(false);
+  // The account is read reactively: one that loads after mount enables the composer then.
+  let ended = $state(false);
+  const canWrite = $derived(!ended && currentUserId() !== null);
   let reactions = $state<LiveReactionsLayer | null>(null);
   let session: LiveChatSession | null = null;
 
@@ -53,7 +55,7 @@
     console.debug(`[LIVE_CHAT] broadcaster chat opened on ${liveId}`);
     const s = new LiveChatSession({
       liveId,
-      me: currentUserId(),
+      me: currentUserId,
       onChange: (next) => {
         lines = next;
       },
@@ -61,7 +63,6 @@
       deps: chatDeps,
     });
     s.setKey(keyHex);
-    canWrite = s.canWrite;
     session = s;
     fetchLimits().then(
       (limits) => {
@@ -73,7 +74,7 @@
       }
     );
     const poller = new LiveBroadcasterChatPoller(liveId, s, pollerDeps, () => {
-      canWrite = false;
+      ended = true;
       onEnded?.();
     });
     poller.start();

@@ -105,3 +105,15 @@ describe('the live chat seal', () => {
     );
   });
 });
+
+describe('the other direction (h)', () => {
+  it('a chat message never opens as a SEGMENT under the same key', async () => {
+    const { openLiveSegment, LiveSegmentOpenError } = await import('./liveCrypto');
+    const message = fromBase64(await sealLiveChatMessage(KEY, LIVE, CLIENT, ALICE, 'hello there'));
+    for (const index of [0, 1, 2]) {
+      await expect(openLiveSegment(KEY, LIVE, index, message)).rejects.toBeInstanceOf(
+        LiveSegmentOpenError
+      );
+    }
+  });
+});

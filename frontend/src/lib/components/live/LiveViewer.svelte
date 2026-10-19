@@ -76,7 +76,10 @@
   let chat: LiveChatSession | null = null;
   let chatLines = $state<readonly LiveChatLine[]>([]);
   let chatMaxChars = $state<number | null>(null);
-  let chatCanWrite = $state(false);
+  // The key from the player, and the account READ REACTIVELY: an account that loads after the viewer
+  // opened enables the composer then, not never.
+  let chatKeyed = $state(false);
+  const chatCanWrite = $derived(chatKeyed && currentUserId() !== null);
   let chatOpen = $state(true);
   let reactions = $state<LiveReactionsLayer | null>(null);
 
@@ -144,10 +147,9 @@
     console.debug(`[LIVE] viewer opened on ${live.id}`);
     const session = new LiveChatSession({
       liveId: live.id,
-      me: currentUserId(),
+      me: currentUserId,
       onChange: (lines) => {
         chatLines = lines;
-        chatCanWrite = session.canWrite;
       },
       onFloat: (kind, count) => reactions?.add(kind, count),
       deps: chatDeps,
@@ -175,7 +177,7 @@
       chat: {
         onKey: (key) => {
           session.onKey(key);
-          chatCanWrite = session.canWrite;
+          chatKeyed = session.keyed;
         },
         query: () => session.query(),
         receive: (block) => void session.receive(block),
@@ -307,7 +309,7 @@
       </button>
       <button
         type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
         aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
         title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
         aria-pressed={chatOpen}
@@ -326,7 +328,7 @@
 
     {#if !terminal}
       <div
-        class="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t from-black/50 to-transparent p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
+        class="from-cn-scrim/60 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
       >
         <div class="min-w-0 flex-1">
           {#if chatOpen}

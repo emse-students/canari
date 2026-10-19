@@ -9,11 +9,15 @@
  *
  * - Messages are sealed and opened with the live key (`liveChatCrypto.ts`); one that does not open is
  *   DROPPED and logged, never drawn.
- * - Blocks are applied in the order they arrive (a chain), because opening is asynchronous and a
- *   cursor must never move past a message that was not drawn.
+ * - The cursors move when a block ARRIVES, so the next poll never asks for the same rows again (the
+ *   same reactions would float twice); the rows are then drawn in arrival order (a chain), each in
+ *   its own try, so a malformed row is dropped and never freezes the chat.
+ * - Rows are deduped on `author:clientId`, the server's idempotence key, not only on its id.
  * - A message I sent is drawn at once (`pending`) and REPLACED by the server's copy, matched by its
- *   `clientId` - so it is never drawn twice. A retry re-sends the SAME sealed bytes (the server's
- *   repeat is idempotent for identical bytes only).
+ *   `clientId` - so it is never drawn twice. Its echo from the poll is OPENED once, as every other
+ *   viewer opens it: if it does not open (or the server stored it under another author), the line
+ *   says `unreadable`, never "sent". A retry re-sends the SAME sealed bytes (the server's repeat is
+ *   idempotent for identical bytes only).
  * - Taps are summed and leave as ONE burst per tick (C7), on the next {@link query}; my own taps float
  *   at once, and the server leaves them out of the sums it serves back (C10).
  *
@@ -84,9 +88,12 @@ export function liveReactionLabel(kind: LiveReactionKind): string {
 /**
  * Why a send did not land - decided at the throw, so the panel switches on it:
  * `empty` / `too-long` (refused before sealing), `too-fast` (429), `network` (no answer - retry
- * re-sends the same bytes), `muted`, `removed`, `ended`, `refused` (any other verdict).
+ * re-sends the same bytes), `muted`, `removed`, `ended`, `refused` (any other verdict), and
+ * `unreadable`: the server stored it, but under an author other than the one it was sealed for, or
+ * its echo did not open - so every OTHER viewer drops it, and saying "sent" would be a lie.
  */
 export type LiveChatSendFailure =
+  | 'unreadable'
   | 'empty'
   | 'too-long'
   | 'too-fast'
@@ -124,8 +131,11 @@ export interface LiveChatDeps {
 /** Options of a {@link LiveChatSession}. */
 export interface LiveChatSessionOptions {
   liveId: string;
-  /** My account id (lower case), or null when not known: then I can read and react, not write. */
-  me: string | null;
+  /**
+   * My account id, READ AT EACH USE (the account may load after the screen opened), or null when
+   * not known: then I can read and react, not write.
+   */
+  me(): string | null;
   /** Told the whole list after every change. */
   onChange(lines: readonly LiveChatLine[]): void;
   /** Told reactions to float: mine at the tap, everyone else's as each poll brings them. */
@@ -164,8 +174,9 @@ function isTombstone(m: LiveChatMessageWire | LiveChatTombstoneWire): m is LiveC
 export class LiveChatSession {
   private readonly deps: LiveChatDeps;
   private readonly liveId: string;
-  private readonly me: string | null;
   private readonly opts: LiveChatSessionOptions;
+  /** My lines whose echo from the poll OPENED: proof every other viewer can read them (once each). */
+  private readonly verifiedEchoes = new Set<string>();
 
   private keyHex: string | null = null;
   private maxChars: number | null = null;
@@ -184,13 +195,22 @@ export class LiveChatSession {
   constructor(opts: LiveChatSessionOptions) {
     this.opts = opts;
     this.liveId = opts.liveId;
-    this.me = opts.me?.toLowerCase() ?? null;
     this.deps = { ...defaultDeps, ...opts.deps };
+  }
+
+  /** My account id now, lower case, as the server stores and serves it. */
+  private get me(): string | null {
+    return this.opts.me()?.toLowerCase() ?? null;
   }
 
   /** The lines on screen now, oldest first. */
   get current(): readonly LiveChatLine[] {
     return this.lines;
+  }
+
+  /** Whether the key is held - the half of `canWrite` a screen cannot read reactively. */
+  get keyed(): boolean {
+    return this.keyHex !== null;
   }
 
   /** Whether a message can be written: the key is held and I am known. */
@@ -231,11 +251,28 @@ export class LiveChatSession {
 
   /** A poll's `chat` block (absent when the server did not serve one). Applied in arrival order. */
   receive(block: LiveChatBlock | undefined): Promise<void> {
-    if (!block) return this.chain;
+    if (!block || this.stopped) return this.chain;
+    if (this.keyHex === null) {
+      // The player opens the key before its first poll; reaching this is a wiring defect. The
+      // cursors stay, so the next poll asks for these rows again.
+      console.error(
+        `[LIVE_CHAT] ${this.liveId}: a chat block arrived before the key - not applied`
+      );
+      return this.chain;
+    }
+    // THE CURSORS MOVE NOW, at arrival, not when the asynchronous opening is done: the next tick's
+    // `query()` may run before this block is drawn, and asking from the old cursors would bring the
+    // same rows - the same reactions floating twice. The rows themselves are drawn in order by the
+    // chain below, each in its own try, so moving past them loses none.
+    if (Number.isSafeInteger(block.messagesCursor)) this.messagesAfter = block.messagesCursor;
+    else console.error(`[LIVE_CHAT] ${this.liveId}: a chat block without a message cursor`);
+    if (Number.isSafeInteger(block.reactionsCursor)) this.reactionsAfter = block.reactionsCursor;
+    else console.error(`[LIVE_CHAT] ${this.liveId}: a chat block without a reaction cursor`);
     this.chain = this.chain
       .then(() => this.apply(block))
       .catch((e: unknown) => {
-        // A block that throws must not stall the chain behind it; its cursor did not move.
+        // A block that throws must not stall the chain behind it. Rows are tried one by one, so
+        // reaching this is a defect in the session itself.
         console.error(`[LIVE_CHAT] ${this.liveId}: a chat block was not applied`, e);
       });
     return this.chain;
@@ -254,19 +291,20 @@ export class LiveChatSession {
       );
       return 'too-long';
     }
-    if (!this.canWrite || this.keyHex === null || this.me === null) {
+    const me = this.me;
+    if (this.stopped || this.keyHex === null || me === null) {
       console.warn(`[LIVE_CHAT] ${this.liveId}: send before the key or the account was known`);
       return 'refused';
     }
     const clientId = this.deps.newId().toLowerCase();
     this.lines = [
       ...this.lines,
-      { id: null, clientId, authorId: this.me, text, seq: null, status: 'pending', mine: true },
+      { id: null, clientId, authorId: me, text, seq: null, status: 'pending', mine: true },
     ];
     this.changed();
     let sealed: string;
     try {
-      sealed = await this.deps.seal(this.keyHex, this.liveId, clientId, this.me, text);
+      sealed = await this.deps.seal(this.keyHex, this.liveId, clientId, me, text);
     } catch (e) {
       console.error(`[LIVE_CHAT] ${this.liveId}: the message could not be sealed`, e);
       this.markFailed(clientId, 'refused');
@@ -350,7 +388,9 @@ export class LiveChatSession {
 
   private markFailed(clientId: string, failure: LiveChatSendFailure): void {
     this.lines = this.lines.map((l) =>
-      l.clientId === clientId && l.status === 'pending' ? { ...l, status: 'failed', failure } : l
+      l.mine && l.clientId === clientId && l.status !== 'failed'
+        ? { ...l, status: 'failed', failure }
+        : l
     );
     this.changed();
   }
@@ -361,10 +401,22 @@ export class LiveChatSession {
       this.sealedByClientId.delete(clientId);
       if (isTombstone(stored)) {
         // Hidden before my retry reached it: the line goes.
-        this.lines = this.lines.filter((l) => l.clientId !== clientId);
-      } else {
-        this.confirm(stored.id, stored.seq, clientId);
+        this.lines = this.lines.filter((l) => !(l.mine && l.clientId === clientId));
+        this.changed();
+        return null;
       }
+      // The seal bound the author I believed I was; the server stored the one the gateway says I
+      // am. Two different ids mean every other viewer drops this message - said, never "sent".
+      const author = typeof stored.authorId === 'string' ? stored.authorId.toLowerCase() : null;
+      const sealedAs = this.lines.find((l) => l.mine && l.clientId === clientId)?.authorId;
+      if (author === null || (sealedAs !== undefined && author !== sealedAs)) {
+        console.error(
+          `[LIVE_CHAT] ${this.liveId}: message ${clientId} stored under another author than it was sealed for - unreadable to everyone else`
+        );
+        this.markFailed(clientId, 'unreadable');
+        return 'unreadable';
+      }
+      this.confirm(stored.id, stored.seq, clientId);
       this.changed();
       return null;
     } catch (e) {
@@ -401,69 +453,98 @@ export class LiveChatSession {
   }
 
   private async apply(block: LiveChatBlock): Promise<void> {
-    if (this.stopped) return;
     const key = this.keyHex;
-    if (key === null) {
-      // The player opens the key before its first poll; reaching this is a wiring defect.
-      console.error(
-        `[LIVE_CHAT] ${this.liveId}: a chat block arrived before the key - not applied`
-      );
-      return;
-    }
-    const known = new Set(this.lines.map((l) => l.id).filter((id): id is string => id !== null));
+    if (this.stopped || key === null) return;
+    const messages = Array.isArray(block.messages) ? block.messages : [];
     let dropped = 0;
-    for (const m of block.messages) {
-      if (isTombstone(m)) {
-        this.lines = this.lines.filter((l) => l.id !== m.id);
-        continue;
-      }
-      if (known.has(m.id)) continue;
-      const author = m.authorId.toLowerCase();
-      const mine = author === this.me;
-      if (mine && this.lines.some((l) => l.clientId === m.clientId && l.mine)) {
-        this.sealedByClientId.delete(m.clientId);
-        this.confirm(m.id, m.seq, m.clientId);
-        known.add(m.id);
-        continue;
-      }
-      let text: string;
+    for (const m of messages) {
+      // EVERY row is handled inside its own try: one malformed row is dropped and said, never a
+      // throw that leaves the rest of the block - and every later block - undrawn.
       try {
-        text = await this.deps.open(key, this.liveId, m.clientId, author, m.sealed);
+        if (!(await this.applyOne(key, m))) dropped++;
       } catch (e) {
         dropped++;
-        const reason = e instanceof LiveChatOpenError ? e.reason : String(e);
-        console.warn(`[LIVE_CHAT] ${this.liveId}: message ${m.id} dropped (${reason})`);
-        continue;
+        console.warn(`[LIVE_CHAT] ${this.liveId}: a chat row dropped (${String(e)})`);
       }
       if (this.stopped) return;
-      this.lines.push({
-        id: m.id,
-        clientId: m.clientId,
-        authorId: author,
-        text,
-        seq: m.seq,
-        status: 'sent',
-        mine,
-      });
-      known.add(m.id);
     }
-    this.messagesAfter = block.messagesCursor;
-    this.reactionsAfter = block.reactionsCursor;
-    if (block.messages.length > 0) {
-      Log.d(TAG, {
-        op: 'receive',
-        messages: block.messages.length,
-        dropped,
-        cursor: block.messagesCursor,
-      });
+    if (messages.length > 0) {
+      Log.d(TAG, { op: 'receive', messages: messages.length, dropped });
       this.changed();
     }
-    for (const w of block.reactions) {
+    for (const w of Array.isArray(block.reactions) ? block.reactions : []) {
       for (const kind of LIVE_REACTION_KINDS) {
-        const n = w.counts[kind];
-        if (n && n > 0) this.opts.onFloat?.(kind, n);
+        const n = w?.counts?.[kind];
+        if (typeof n === 'number' && n > 0) this.opts.onFloat?.(kind, n);
       }
     }
+  }
+
+  /**
+   * One row of a block. Resolves false when it was dropped (malformed, or did not open).
+   * DEDUPED ON `author:clientId` - the server's idempotence key - not only on the server id, so a
+   * replay of a message under a new id is never drawn twice.
+   */
+  private async applyOne(
+    key: string,
+    m: LiveChatMessageWire | LiveChatTombstoneWire
+  ): Promise<boolean> {
+    if (isTombstone(m)) {
+      this.lines = this.lines.filter((l) => l.id !== m.id);
+      return true;
+    }
+    if (
+      typeof m.id !== 'string' ||
+      typeof m.seq !== 'number' ||
+      typeof m.authorId !== 'string' ||
+      typeof m.clientId !== 'string' ||
+      typeof m.sealed !== 'string'
+    ) {
+      console.warn(`[LIVE_CHAT] ${this.liveId}: a malformed chat row dropped`);
+      return false;
+    }
+    const author = m.authorId.toLowerCase();
+    const clientId = m.clientId.toLowerCase();
+    const mine = author === this.me;
+    const drawn = this.lines.find((l) => l.authorId === author && l.clientId === clientId);
+    if (drawn && !(drawn.mine && !this.verifiedEchoes.has(clientId))) return true;
+    if (!drawn && this.lines.some((l) => l.id === m.id)) return true;
+    let text: string;
+    try {
+      text = await this.deps.open(key, this.liveId, clientId, author, m.sealed);
+    } catch (e) {
+      const reason = e instanceof LiveChatOpenError ? e.reason : String(e);
+      if (drawn) {
+        // MY OWN message, as the poll serves it to everyone, does not open: no other viewer can
+        // read it, whatever my screen says.
+        console.error(
+          `[LIVE_CHAT] ${this.liveId}: my own message ${m.id} does not open from the poll (${reason}) - unreadable to everyone else`
+        );
+        this.verifiedEchoes.add(clientId);
+        this.markFailed(clientId, 'unreadable');
+        return false;
+      }
+      console.warn(`[LIVE_CHAT] ${this.liveId}: message ${m.id} dropped (${reason})`);
+      return false;
+    }
+    if (drawn) {
+      // My echo opened: proof the others read it. Confirm the line once, never draw it twice.
+      this.verifiedEchoes.add(clientId);
+      this.sealedByClientId.delete(clientId);
+      this.confirm(m.id, m.seq, clientId);
+      return true;
+    }
+    if (mine) this.verifiedEchoes.add(clientId);
+    this.lines.push({
+      id: m.id,
+      clientId,
+      authorId: author,
+      text,
+      seq: m.seq,
+      status: 'sent',
+      mine,
+    });
+    return true;
   }
 }
 

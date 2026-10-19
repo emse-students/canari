@@ -65,6 +65,10 @@ function block(
 }
 
 function session(me: string | null = ME) {
+  return sessionFor(() => me);
+}
+
+function sessionFor(me: () => string | null) {
   const s = new LiveChatSession({
     liveId: LIVE,
     me,
@@ -146,7 +150,7 @@ describe('reading the chat', () => {
   });
 
   it('applies nothing before the key - the cursor does not move past an undrawn message', async () => {
-    const s = new LiveChatSession({ liveId: LIVE, me: ME, onChange: () => {}, deps });
+    const s = new LiveChatSession({ liveId: LIVE, me: () => ME, onChange: () => {}, deps });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await s.receive(block([wire(1, 'one')], 1));
     expect(s.query().messagesAfter).toBeUndefined();
@@ -401,5 +405,85 @@ describe("the broadcaster's chat loop", () => {
     expect(timers).toHaveLength(0);
     warn.mockRestore();
     poller.stop();
+  });
+});
+
+describe('the review of #2136', () => {
+  it('(a) a malformed row is dropped alone: the rest is drawn and the chat goes on', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = session();
+    const broken = { ...wire(2, 'x'), authorId: null } as unknown as LiveChatMessageWire;
+    await s.receive(block([wire(1, 'one'), broken, wire(3, 'three')], 3));
+    expect(texts()).toEqual(['one', 'three']);
+    expect(s.query().messagesAfter).toBe(3);
+    await s.receive(block([wire(4, 'four')], 4));
+    expect(texts()).toEqual(['one', 'three', 'four']);
+    warn.mockRestore();
+  });
+
+  it('(b) my own echo is OPENED: one that does not open turns my line unreadable, never "sent"', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const s = session();
+    expect(await s.send('hello')).toBeNull();
+    const clientId = lines[0].clientId;
+    expect(lines[0].status).toBe('sent');
+    await s.receive(block([{ ...wire(100, '', ME, clientId), sealed: 'tampered' }], 100));
+    expect(lines.map((l) => [l.status, l.failure])).toEqual([['failed', 'unreadable']]);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('unreadable to everyone else'));
+    error.mockRestore();
+  });
+
+  it('(b) an echo that opens is checked once, and the line stays one "sent" line', async () => {
+    const s = session();
+    await s.send('hello');
+    const clientId = lines[0].clientId;
+    await s.receive(block([wire(100, 'hello', ME, clientId)], 100));
+    await s.receive(block([wire(100, 'hello', ME, clientId)], 100));
+    expect(deps.open).toHaveBeenCalledTimes(1);
+    expect(lines.map((l) => [l.id, l.status])).toEqual([['m-100', 'sent']]);
+  });
+
+  it('(b) a message stored under another author than it was sealed for is unreadable at once', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    deps.postMessage.mockImplementationOnce(async (_l: string, clientId: string) =>
+      wire(7, 'x', BOB, clientId)
+    );
+    const s = session();
+    expect(await s.send('x')).toBe('unreadable');
+    expect(lines.map((l) => l.failure)).toEqual(['unreadable']);
+    error.mockRestore();
+  });
+
+  it('(c) two overlapping polls: the second asks from the first block cursors, so nothing floats twice', async () => {
+    const s = session();
+    const first = block([wire(1, 'slow')], 1, {
+      reactions: [{ window: 2, counts: { like: 4 } }],
+      reactionsCursor: 3,
+    });
+    const applied = s.receive(first);
+    // The next tick fires before the slow open is done.
+    expect(s.query()).toEqual({ messagesAfter: 1, reactionsAfter: 3 });
+    // So the server answers only what came after: nothing new.
+    await s.receive(block([], 1, { reactionsCursor: 3 }));
+    await applied;
+    expect(floats).toEqual([['like', 4]]);
+    expect(texts()).toEqual(['slow']);
+  });
+
+  it('(d) an account that loads after the screen opened can write then', async () => {
+    let me: string | null = null;
+    const s = sessionFor(() => me);
+    expect(s.canWrite).toBe(false);
+    me = ME;
+    expect(s.canWrite).toBe(true);
+    expect(await s.send('hi')).toBeNull();
+    expect(deps.seal).toHaveBeenCalledWith(KEY, LIVE, expect.any(String), ME, 'hi');
+  });
+
+  it('(e) a replay of a message under a NEW server id is not drawn twice', async () => {
+    const s = session();
+    await s.receive(block([wire(1, 'one', BOB, 'c-x')], 1));
+    await s.receive(block([{ ...wire(9, 'one', BOB, 'c-x') }], 9));
+    expect(texts()).toEqual(['one']);
   });
 });

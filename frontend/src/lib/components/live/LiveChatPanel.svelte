@@ -93,6 +93,8 @@
         return m.live_chat_failed_ended();
       case 'refused':
         return m.live_chat_failed_refused();
+      case 'unreadable':
+        return m.live_chat_failed_unreadable();
     }
   }
 
@@ -130,19 +132,22 @@
   >
     {#each lines as line (`${line.authorId}:${line.clientId}`)}
       <li
-        class="group flex items-start gap-2 rounded-lg bg-black/45 px-2.5 py-1.5 text-sm"
+        class="group bg-cn-scrim/60 flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-sm"
         class:opacity-60={line.status === 'pending'}
         data-live-chat-line={line.id ?? 'pending'}
         data-live-chat-status={line.status}
       >
         <p class="min-w-0 flex-1 break-words">
-          <span class="font-bold">{nameOf(line)}</span>
-          <span class="whitespace-pre-wrap"><EmojiText text={line.text} /></span>
+          <bdi class="font-bold">{nameOf(line)}</bdi>
+          <bdi class="whitespace-pre-wrap" dir="auto"><EmojiText text={line.text} /></bdi>
           {#if line.status === 'pending'}
             <span class="sr-only">{m.live_chat_pending()}</span>
           {/if}
           {#if line.status === 'failed' && line.failure}
-            <span class="mt-0.5 block text-xs text-amber-300" data-live-chat-failure={line.failure}>
+            <span
+              class="text-banner-notice mt-0.5 block text-xs"
+              data-live-chat-failure={line.failure}
+            >
               {failureText(line.failure)}
             </span>
           {/if}
@@ -191,7 +196,7 @@
     <form class="flex items-center gap-2" onsubmit={submit} data-live-chat-composer>
       <input
         type="text"
-        class="min-h-11 min-w-0 flex-1 rounded-full bg-black/50 px-4 text-sm text-white outline-none placeholder:text-white/60 focus-visible:ring-2 focus-visible:ring-white"
+        class="bg-cn-scrim/60 min-h-11 min-w-0 flex-1 rounded-full px-4 text-sm text-white outline-none placeholder:text-white/60 focus-visible:ring-2 focus-visible:ring-white"
         placeholder={m.live_chat_placeholder()}
         aria-label={m.live_chat_input_label()}
         aria-invalid={composerError !== null}
@@ -214,7 +219,7 @@
       </button>
     </form>
     {#if composerError !== null}
-      <p id="live-chat-composer-error" class="text-xs text-amber-300" role="alert">
+      <p id="live-chat-composer-error" class="text-banner-notice text-xs" role="alert">
         {composerError}
       </p>
     {/if}
@@ -224,6 +229,6 @@
 <style>
   /* The oldest lines fade out at the top, over the video, rather than ending on a hard edge. */
   .live-chat-list {
-    mask-image: linear-gradient(to bottom, transparent 0, black 1.5rem);
+    mask-image: linear-gradient(to bottom, transparent 0, var(--color-cn-scrim) 1.5rem);
   }
 </style>

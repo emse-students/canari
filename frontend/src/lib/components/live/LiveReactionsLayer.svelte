@@ -81,7 +81,7 @@
     {#each LIVE_REACTION_KINDS as kind (kind)}
       {#if totals[kind]}
         <li
-          class="rounded-full bg-black/50 px-2 py-0.5 text-sm tabular-nums"
+          class="bg-cn-scrim/60 rounded-full px-2 py-0.5 text-sm tabular-nums"
           aria-label={m.live_reaction_count({ name: liveReactionLabel(kind), count: totals[kind] })}
           data-live-reaction-counter={kind}
         >

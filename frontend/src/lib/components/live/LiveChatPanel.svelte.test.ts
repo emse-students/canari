@@ -69,6 +69,22 @@ describe('LiveChatPanel', () => {
     expect(li.textContent).toContain('Bob');
   });
 
+  it('(f) isolates every name and text in its own bidi run, so a U+202E cannot reverse the line', () => {
+    const { target } = render({ lines: [line({ text: '202Eevil' })] });
+    const runs = target.querySelectorAll('[data-live-chat-line] bdi');
+    expect(runs).toHaveLength(2);
+    expect(runs[1].getAttribute('dir')).toBe('auto');
+    expect(runs[1].textContent).toBe('202Eevil');
+  });
+
+  it('isolates each name and text in its own bidi run, so a U+202E cannot reverse the line', () => {
+    const { target } = render({ lines: [line({ text: '‮evil' })] });
+    const runs = target.querySelectorAll('[data-live-chat-line] bdi');
+    expect(runs).toHaveLength(2);
+    expect(runs[1].getAttribute('dir')).toBe('auto');
+    expect(runs[1].textContent).toBe('‮evil');
+  });
+
   it('names my own line "You"', () => {
     const { target } = render({ lines: [line({ authorId: ME, mine: true })] });
     expect(target.querySelector('[data-live-chat-line]')!.textContent).toContain(m.live_chat_you());
