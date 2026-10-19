@@ -26,7 +26,7 @@
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
   import { formatLiveElapsed } from '$lib/live/openLives';
-  import type { LiveViewerState } from '$lib/live/liveViewerState';
+  import { isTerminalLiveState, type LiveViewerState } from '$lib/live/liveViewerState';
   import type { LiveListItem } from '$lib/live/types';
   import { m } from '$lib/paraglide/messages';
 
@@ -152,11 +152,7 @@
     }
   }
 
-  const terminal = $derived(
-    viewerState.kind === 'full' ||
-      viewerState.kind === 'ended' ||
-      viewerState.kind === 'unavailable'
-  );
+  const terminal = $derived(isTerminalLiveState(viewerState));
 </script>
 
 <svelte:window onkeydown={onKeydown} />
