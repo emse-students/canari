@@ -124,8 +124,10 @@ Then, on each side:
 5. On `connected` the client logs `[Call] selected path pair=<local>/<proto>-><remote>/<proto>
    relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the only place
    that says whether a call was billed.
-6. `PeerLeft` (the other socket is gone, or this device was replaced by a sibling) ends the call;
-   a second `PeerReady` (the other party's device was replaced) rebuilds the peer connection.
+6. `PeerLeft` (the other party hung up, its away seat expired, or this device was replaced by a
+   sibling) ends the call; a second `PeerReady` (the other party's device was replaced) rebuilds the
+   peer connection, while `PeerReady { resumed: true }` keeps it - see
+   [a network blip](#a-network-blip-does-not-end-the-call-call-wifi-2026-10-19).
 7. **The ring window.** Both sides arm a timer of `ringTimeoutMs`. The caller's, if no `PeerReady`
    came, ends the call as MISSED (hangup + ring-end `cancelled` + the missed-call line). The callee's
    only covers a caller that vanished silently: the ring stops and nothing is written. A timer is a
@@ -182,6 +184,45 @@ STUN only. The phone procedure is
 **Still open from the plan:** the TURN budget estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts EVERY
 call as relayed; in P2P only `relayed=yes` calls cost, so it over-counts (harmless on dev). (A
 conversation at `none` ringing an OPEN app was closed on 2026-10-18 by the call permission below.)
+
+## A network blip does not end the call (CALL-WIFI, 2026-10-19)
+
+**Measured** on the bench ([readings](../../device-readings-2026-10.md)): a 6 s and a 14 s Wi-Fi
+outage on the Mi 9T each ended a connected call on the FIRST signalling close -
+`[Call] terminal failure: signalling WebSocket closed code=1006 - ending call` - with no reconnect
+and no ICE restart. A transport failure is not an answer, so it no longer ends anything.
+
+**The design** - every end is an answer or a spent budget, never a clock:
+
+| Event | Client (`CallService.ts`) | Server ([call-service](../../services/call-service.md#peer-to-peer-mode-2026-10-17)) |
+|---|---|---|
+| this device's signalling socket drops after `Joined` | `onSignallingLost`: re-open on the shared ladder (`utils/reconnectBackoff.ts`, the chat gateway's own 1/2/4/8/16 s), `Join` with the seat's `resume_token` | the seat stays ABSENT for `CALL_P2P_SEAT_GRACE_SEC` (60 s); the partner gets `PeerAway` |
+| resume joined | `signalling resumed on attempt N`; the next `Joined` brings a fresh token | the seat is taken back IN PLACE (same roles); both get `PeerReady { resumed: true }` |
+| `PeerReady { resumed: true }` | keep the peer connection; the INITIATOR calls `pc.restartIce()` if ICE is `disconnected`/`failed` (its offer goes out on `negotiationneeded`) | - |
+| ICE `disconnected` (first restart of a loss) or `failed` after it had connected, signalling up | initiator restarts ICE; the polite side waits for it | - |
+| `PeerAway` | the call goes on, `reconnecting = true`; ICE restart deferred until `PeerReady { resumed }` | - |
+| **ends the call** | `PeerLeft`; a resume `Refused` (`call-over`: seat expired or partner hung up); the MLS `call_hangup`; **5 resume attempts** (`CALL_SIGNALLING_RESUME_ATTEMPTS`) or **3 ICE restarts** since the path last connected (`CALL_ICE_RESTART_ATTEMPTS`) spent | Close frame = hangup -> `PeerLeft` at once; grace spent -> `PeerLeft` |
+| ICE `failed` on a path that NEVER connected | ends the call, as before: there is nothing to restore | - |
+
+A relay without the resume protocol (no `resume_token` in `Joined`) still ends the call on a drop,
+saying so: `... and the relay gave no resume token`.
+
+**THE UI CONTRACT: `callService.reconnecting` (a `Writable<boolean>`), shown with
+`m.call_reconnecting()` ("Reconnexion..." / "Reconnecting...").** `true` while a call in `incall`
+that had connected is getting its connection back: this device's signalling is resuming, the other
+party's is (`PeerAway`), or ICE is not `connected`/`completed` after having been. `false` outside a
+call, while ringing or connecting (that is `calling`), and as soon as the ended summary shows. Every
+change is logged with its three facts: `[Call] reconnecting=<bool> (signalling=lost|up
+peer=away|present ice=<state>)`. The call overlay redesign reads this field; the old overlay does not
+show it yet.
+
+**Pinned by** `CallService.p2p.test.ts` ("a network blip does not end the call": fake socket, fake
+peer connection, fake `setTimeout` stepped through the ladder, no real sleep) and
+`apps/call-service` (`src/p2p.rs` seat tests, `tests/p2p_signalling.rs` drop / resume / Close /
+grace-0 expiry / stolen token over the real binary). **Owed on a phone:** check CALL-L1 steps 8-10
+([device-verification](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)).
+Not handled here: a phone that changes network WITHOUT its socket dropping relies on ICE alone
+(`disconnected` -> one restart); cellular handover is unmeasured (no SIM on the bench).
 
 ## The user's decisions of 2026-10-18
 

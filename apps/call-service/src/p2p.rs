@@ -20,6 +20,12 @@
 //! of perfect negotiation, the one that yields on an offer collision. The roles come from arrival
 //! order, decided under one lock, so both ends always disagree about who is polite - which is the
 //! whole requirement.
+//!
+//! A NETWORK BLIP IS NOT A HANGUP (2026-10-19, CALL-WIFI). A phone losing Wi-Fi for 6 s ended its
+//! call: the socket closed, the seat was freed and the partner was told `PeerLeft`. Now a socket
+//! that dies WITHOUT a Close frame leaves its seat ABSENT for a grace (`CALL_P2P_SEAT_GRACE_SEC`),
+//! the partner is told `PeerAway`, and the same device takes the seat back with the resume token it
+//! received in `Joined`. Only a Close frame (a hangup) or the grace running out frees the seat.
 
 use std::sync::{Arc, Mutex};
 
@@ -81,25 +87,77 @@ pub(crate) enum JoinOutcome {
         /// Devices of the same user that this join replaced (one device per user per call).
         evicted: Vec<P2pPeer>,
     },
-    /// The room now holds two peers. `initiator` is the one that was there first.
+    /// The room now holds two PRESENT peers. `initiator` is the one that was there first.
     Paired {
         initiator: P2pPeer,
         evicted: Vec<P2pPeer>,
     },
+    /// The other seat is held, but its socket is gone and it may still resume (see
+    /// [`P2pRoom::mark_absent`]). The newcomer is told `PeerAway`; the pairing happens on resume.
+    PartnerAway { evicted: Vec<P2pPeer> },
     /// Two OTHER users already hold the room; a 1:1 call has no third seat. Nothing changed.
     Full,
     /// The room is held by a peer whose token names ANOTHER group. Nothing changed.
     OtherGroup,
 }
 
-/// A room in peer-to-peer mode: at most two peers of two distinct users, in arrival order.
+/// Where the OTHER seat stands after a resume.
+pub(crate) enum PartnerState {
+    /// Nobody else holds a seat. `was_paired`: somebody did, so the call is over (the other
+    /// party hung up, or its own seat expired, while this one was away).
+    Alone { was_paired: bool },
+    /// The other seat is held but away too: the pairing waits for ITS resume.
+    Away,
+    /// The other party is present: both are told `PeerReady` again.
+    Present {
+        partner: P2pPeer,
+        /// Whether the resumed seat is the room's first, so the one that offers.
+        i_am_initiator: bool,
+        /// Whether the two had been paired before. `false` when the room never held both at once
+        /// (the caller lost its socket while ringing and the callee arrived meanwhile): there is
+        /// no peer connection to keep, so both build one from nothing.
+        resumed: bool,
+    },
+}
+
+/// What a resume did. A seat is resumed IN PLACE, so the initiator stays the initiator.
+pub(crate) enum ResumeOutcome {
+    /// No seat of this user, in this group, carries that id: it expired, or the call ended.
+    Unknown,
+    Resumed {
+        /// The seat's previous socket when it was still counted present - the server had not yet
+        /// noticed that it died. Its record is closed `resumed`; it is told nothing.
+        replaced: Option<P2pPeer>,
+        partner: PartnerState,
+    },
+}
+
+/// One seat: a participant, and whether its socket is currently alive.
+///
+/// A seat whose socket died WITHOUT a Close frame is kept, ABSENT, so a network blip does not end
+/// the call: the same device may take it back with its resume token. A Close frame is a hangup and
+/// frees the seat at once.
+struct Seat {
+    peer: P2pPeer,
+    present: bool,
+}
+
+#[derive(Default)]
+struct Seats {
+    /// At most two, of two distinct users, in arrival order: `seats[0]` is the initiator.
+    seats: Vec<Seat>,
+    /// Whether the room ever held both parties present at once.
+    paired_once: bool,
+}
+
+/// A room in peer-to-peer mode: at most two seats of two distinct users, in arrival order.
 #[derive(Default)]
 pub(crate) struct P2pRoom {
-    peers: Mutex<Vec<P2pPeer>>,
+    inner: Mutex<Seats>,
 }
 
 impl P2pRoom {
-    /// Admits `peer`, replacing any device of the same user already in the room.
+    /// Admits `peer`, replacing any device of the same user already in the room (present or away).
     ///
     /// The group and capacity checks run BEFORE the eviction, so a refused join leaves the room
     /// exactly as it found it - a third user must not be able to knock a participant out by trying
@@ -107,71 +165,181 @@ impl P2pRoom {
     /// has seen it, and a token for another conversation must not seat anyone here, not even a
     /// device of a user already in the room.
     pub(crate) fn join(&self, peer: P2pPeer) -> JoinOutcome {
-        let Ok(mut peers) = self.peers.lock() else {
+        let Ok(mut room) = self.inner.lock() else {
             // A poisoned lock means a panic while holding it; refusing is the only answer that
             // cannot put a third party into a call. The caller logs the refusal.
             return JoinOutcome::Full;
         };
-        if peers.iter().any(|p| p.group_id != peer.group_id) {
+        if room.seats.iter().any(|s| s.peer.group_id != peer.group_id) {
             return JoinOutcome::OtherGroup;
         }
-        let others = peers.iter().filter(|p| p.user_id != peer.user_id).count();
+        let others = room
+            .seats
+            .iter()
+            .filter(|s| s.peer.user_id != peer.user_id)
+            .count();
         if others >= 2 {
             return JoinOutcome::Full;
         }
         let mut evicted = Vec::new();
-        peers.retain(|p| {
-            if p.user_id == peer.user_id {
-                evicted.push(p.clone());
+        room.seats.retain(|s| {
+            if s.peer.user_id == peer.user_id {
+                evicted.push(s.peer.clone());
                 false
             } else {
                 true
             }
         });
-        peers.push(peer);
-        if peers.len() == 2 {
+        room.seats.push(Seat {
+            peer,
+            present: true,
+        });
+        if room.seats.len() < 2 {
+            return JoinOutcome::Waiting { evicted };
+        }
+        if room.seats[0].present {
+            room.paired_once = true;
             JoinOutcome::Paired {
-                initiator: peers[0].clone(),
+                initiator: room.seats[0].peer.clone(),
                 evicted,
             }
         } else {
-            JoinOutcome::Waiting { evicted }
+            JoinOutcome::PartnerAway { evicted }
         }
     }
 
-    /// Removes `peer_id` and returns the peer left behind, if there is one and `peer_id` was
-    /// actually in the room. An evicted sibling's socket closing later finds itself already gone
-    /// and must not tell the remaining peer that its partner left.
+    /// Gives the seat `seat_id` to `peer` - the same user's new socket - keeping its PLACE, so its
+    /// role is unchanged. Refused (`Unknown`) unless that seat exists for the same user and group.
+    pub(crate) fn resume(&self, seat_id: &str, peer: P2pPeer) -> ResumeOutcome {
+        let Ok(mut room) = self.inner.lock() else {
+            return ResumeOutcome::Unknown;
+        };
+        let Some(idx) = room.seats.iter().position(|s| {
+            s.peer.peer_id == seat_id
+                && s.peer.user_id == peer.user_id
+                && s.peer.group_id == peer.group_id
+        }) else {
+            return ResumeOutcome::Unknown;
+        };
+        let old = std::mem::replace(
+            &mut room.seats[idx],
+            Seat {
+                peer,
+                present: true,
+            },
+        );
+        let replaced = old.present.then_some(old.peer);
+        let partner = match room.seats.iter().enumerate().find(|(i, _)| *i != idx) {
+            None => PartnerState::Alone {
+                was_paired: room.paired_once,
+            },
+            Some((_, other)) if !other.present => PartnerState::Away,
+            Some((_, other)) => {
+                let partner = other.peer.clone();
+                let resumed = room.paired_once;
+                room.paired_once = true;
+                PartnerState::Present {
+                    partner,
+                    i_am_initiator: idx == 0,
+                    resumed,
+                }
+            }
+        };
+        ResumeOutcome::Resumed { replaced, partner }
+    }
+
+    /// Marks `peer_id`'s seat ABSENT: its socket died without a Close frame. Returns `None` when
+    /// that socket no longer holds a seat (replaced by a sibling or by its own resume - already
+    /// explained), else the other party if it is present, to be told `PeerAway`.
+    pub(crate) fn mark_absent(&self, peer_id: &str) -> Option<Option<P2pPeer>> {
+        let mut room = self.inner.lock().ok()?;
+        let seat = room
+            .seats
+            .iter_mut()
+            .find(|s| s.peer.peer_id == peer_id && s.present)?;
+        seat.present = false;
+        Some(
+            room.seats
+                .iter()
+                .find(|s| s.peer.peer_id != peer_id && s.present)
+                .map(|s| s.peer.clone()),
+        )
+    }
+
+    /// Frees `peer_id`'s seat IF it is still absent: the grace ran out and nobody resumed it.
+    /// Returns `None` when there is nothing to expire (resumed, or already gone), else the other
+    /// party if it is present, to be told `PeerLeft`.
+    pub(crate) fn expire(&self, peer_id: &str) -> Option<Option<P2pPeer>> {
+        let mut room = self.inner.lock().ok()?;
+        let idx = room
+            .seats
+            .iter()
+            .position(|s| s.peer.peer_id == peer_id && !s.present)?;
+        room.seats.remove(idx);
+        Some(
+            room.seats
+                .iter()
+                .find(|s| s.present)
+                .map(|s| s.peer.clone()),
+        )
+    }
+
+    /// Removes `peer_id` (a hangup) and returns the peer left behind, if there is one, it is
+    /// present, and `peer_id` was actually in the room. An evicted sibling's socket closing later
+    /// finds itself already gone and must not tell the remaining peer that its partner left. A
+    /// partner who is away learns it on resume (`PartnerState::Alone { was_paired: true }`).
     pub(crate) fn leave(&self, peer_id: &str) -> Option<P2pPeer> {
-        let mut peers = self.peers.lock().ok()?;
-        let before = peers.len();
-        peers.retain(|p| p.peer_id != peer_id);
-        if peers.len() == before {
+        let mut room = self.inner.lock().ok()?;
+        let before = room.seats.len();
+        room.seats.retain(|s| s.peer.peer_id != peer_id);
+        if room.seats.len() == before {
             return None;
         }
-        peers.first().cloned()
+        room.seats
+            .first()
+            .filter(|s| s.present)
+            .map(|s| s.peer.clone())
     }
 
-    /// The peer a frame from `peer_id` is addressed to. `None` when the sender is not in the
-    /// room (evicted) or is alone in it.
+    /// The PRESENT peer a frame from `peer_id` is addressed to. `None` when the sender is not in
+    /// the room (evicted), is alone in it, or its partner is away.
     pub(crate) fn partner_of(&self, peer_id: &str) -> Option<P2pPeer> {
-        let peers = self.peers.lock().ok()?;
-        if !peers.iter().any(|p| p.peer_id == peer_id) {
+        let room = self.inner.lock().ok()?;
+        if !room.seats.iter().any(|s| s.peer.peer_id == peer_id) {
             return None;
         }
-        peers.iter().find(|p| p.peer_id != peer_id).cloned()
+        room.seats
+            .iter()
+            .find(|s| s.peer.peer_id != peer_id && s.present)
+            .map(|s| s.peer.clone())
     }
 
-    /// Whether `peer_id` still holds a seat.
-    pub(crate) fn contains(&self, peer_id: &str) -> bool {
-        self.peers
+    /// Whether `peer_id`'s partner holds a seat but is away: a frame for it has nowhere to go
+    /// for now, which is expected during a reconnection.
+    pub(crate) fn partner_is_away(&self, peer_id: &str) -> bool {
+        self.inner
             .lock()
-            .map(|p| p.iter().any(|x| x.peer_id == peer_id))
+            .map(|r| {
+                r.seats
+                    .iter()
+                    .any(|s| s.peer.peer_id != peer_id && !s.present)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Whether `peer_id` still holds a seat (present or away).
+    pub(crate) fn contains(&self, peer_id: &str) -> bool {
+        self.inner
+            .lock()
+            .map(|r| r.seats.iter().any(|s| s.peer.peer_id == peer_id))
             .unwrap_or(false)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.peers.lock().map(|p| p.is_empty()).unwrap_or(true)
+        self.inner
+            .lock()
+            .map(|r| r.seats.is_empty())
+            .unwrap_or(true)
     }
 }
 
@@ -337,6 +505,178 @@ mod tests {
         assert!(room.leave("bob:phone").is_none());
         assert!(room.leave("alice:pc").is_none());
         assert!(room.is_empty());
+    }
+
+    /// A socket dying without a Close frame keeps its seat: the partner is named (to be told
+    /// `PeerAway`), frames for the away seat have nowhere to go, and the room is not empty.
+    #[test]
+    fn a_lost_socket_leaves_its_seat_away_and_the_partner_is_named() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        let (b, _rb) = peer("bob", "phone");
+        room.join(a);
+        room.join(b);
+        assert_eq!(
+            room.mark_absent("bob:phone").unwrap().unwrap().peer_id,
+            "alice:pc"
+        );
+        assert!(room.contains("bob:phone"));
+        assert!(room.partner_of("alice:pc").is_none());
+        assert!(room.partner_is_away("alice:pc"));
+        assert!(!room.is_empty());
+        // Already away: a second report is nothing new.
+        assert!(room.mark_absent("bob:phone").is_none());
+    }
+
+    /// The same device takes its seat back IN PLACE: the caller stays the initiator, both are
+    /// paired again with `resumed`, and the grace that was running finds nothing to expire.
+    #[test]
+    fn a_resume_takes_the_seat_back_in_place_and_cancels_the_expiry() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        let (b, _rb) = peer("bob", "phone");
+        room.join(a);
+        room.join(b);
+        room.mark_absent("alice:pc");
+
+        let (a2, _ra2) = peer("alice", "pc-again");
+        match room.resume("alice:pc", a2) {
+            ResumeOutcome::Resumed {
+                replaced: None,
+                partner:
+                    PartnerState::Present {
+                        partner,
+                        i_am_initiator: true,
+                        resumed: true,
+                    },
+            } => assert_eq!(partner.peer_id, "bob:phone"),
+            _ => panic!("the caller must resume as the initiator, paired with bob"),
+        }
+        assert!(room.expire("alice:pc").is_none());
+        assert_eq!(
+            room.partner_of("bob:phone").unwrap().peer_id,
+            "alice:pc-again"
+        );
+    }
+
+    /// The server may not have noticed the old socket died: the resume replaces a seat still
+    /// counted present, and hands the old holder back so its record can be closed.
+    #[test]
+    fn a_resume_before_the_server_noticed_the_loss_replaces_the_live_seat() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        let (b, _rb) = peer("bob", "phone");
+        room.join(a);
+        room.join(b);
+        let (b2, _rb2) = peer("bob", "phone-again");
+        match room.resume("bob:phone", b2) {
+            ResumeOutcome::Resumed {
+                replaced: Some(old),
+                partner:
+                    PartnerState::Present {
+                        i_am_initiator: false,
+                        resumed: true,
+                        ..
+                    },
+            } => assert_eq!(old.peer_id, "bob:phone"),
+            _ => panic!("the live seat must be replaced"),
+        }
+        // The old socket closing later finds no seat: nobody is told anything.
+        assert!(room.mark_absent("bob:phone").is_none());
+        assert!(room.leave("bob:phone").is_none());
+    }
+
+    /// A seat id is not a bearer secret on its own: another user, another group or an unknown id
+    /// resumes nothing, and the room is unchanged.
+    #[test]
+    fn a_resume_of_another_users_seat_or_an_unknown_one_is_refused() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        room.join(a);
+        room.mark_absent("alice:pc");
+        let (mallory, _rm) = peer("mallory", "pc");
+        assert!(matches!(
+            room.resume("alice:pc", mallory),
+            ResumeOutcome::Unknown
+        ));
+        let (alice_other_group, _rx) = peer_in("alice", "phone", "group-2", 8);
+        assert!(matches!(
+            room.resume("alice:pc", alice_other_group),
+            ResumeOutcome::Unknown
+        ));
+        let (a2, _ra2) = peer("alice", "phone");
+        assert!(matches!(
+            room.resume("alice:nope", a2),
+            ResumeOutcome::Unknown
+        ));
+        assert!(room.contains("alice:pc"));
+    }
+
+    /// The grace ran out: the seat is freed and the present partner is named, to be told the call
+    /// is over. A later resume of that seat is refused.
+    #[test]
+    fn an_expired_seat_is_freed_and_cannot_be_resumed() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        let (b, _rb) = peer("bob", "phone");
+        room.join(a);
+        room.join(b);
+        room.mark_absent("bob:phone");
+        assert_eq!(
+            room.expire("bob:phone").unwrap().unwrap().peer_id,
+            "alice:pc"
+        );
+        assert!(!room.contains("bob:phone"));
+        let (b2, _rb2) = peer("bob", "phone-again");
+        assert!(matches!(
+            room.resume("bob:phone", b2),
+            ResumeOutcome::Unknown
+        ));
+    }
+
+    /// The partner hung up while this seat was away: the resume says the call is over.
+    #[test]
+    fn resuming_after_the_partner_hung_up_finds_the_call_over() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        let (b, _rb) = peer("bob", "phone");
+        room.join(a);
+        room.join(b);
+        room.mark_absent("bob:phone");
+        // Alice's Close frame: nobody present to tell.
+        assert!(room.leave("alice:pc").is_none());
+        let (b2, _rb2) = peer("bob", "phone-again");
+        assert!(matches!(
+            room.resume("bob:phone", b2),
+            ResumeOutcome::Resumed {
+                partner: PartnerState::Alone { was_paired: true },
+                ..
+            }
+        ));
+    }
+
+    /// The caller lost its socket while ringing and the callee answered meanwhile: the callee waits
+    /// (`PartnerAway`), and the caller's resume is a FIRST pairing - no peer connection to keep.
+    #[test]
+    fn a_callee_arriving_while_the_caller_is_away_pairs_on_the_callers_resume() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        room.join(a);
+        room.mark_absent("alice:pc");
+        let (b, _rb) = peer("bob", "phone");
+        assert!(matches!(room.join(b), JoinOutcome::PartnerAway { .. }));
+        let (a2, _ra2) = peer("alice", "pc-again");
+        assert!(matches!(
+            room.resume("alice:pc", a2),
+            ResumeOutcome::Resumed {
+                partner: PartnerState::Present {
+                    i_am_initiator: true,
+                    resumed: false,
+                    ..
+                },
+                ..
+            }
+        ));
     }
 
     #[test]

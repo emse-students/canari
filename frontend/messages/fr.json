@@ -573,6 +573,7 @@
   "call_pip_label": "Lecteur flottant (Picture-in-Picture)",
   "call_open_pip_label": "Ouvrir la vidéo dans un lecteur flottant",
   "call_connection_lost": "Appel interrompu : connexion perdue.",
+  "call_reconnecting": "Reconnexion...",
   "call_minimize_label": "Réduire l'appel",
   "call_minimize_call_label": "Réduire l'appel dans un coin",
   "call_fullscreen_label": "Plein écran",

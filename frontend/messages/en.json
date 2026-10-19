@@ -541,6 +541,7 @@
   "call_pip_label": "Picture-in-Picture player",
   "call_open_pip_label": "Open video in floating player",
   "call_connection_lost": "Call dropped: connection lost.",
+  "call_reconnecting": "Reconnecting...",
   "call_minimize_label": "Minimize call",
   "call_minimize_call_label": "Minimize call to corner",
   "call_fullscreen_label": "Fullscreen",

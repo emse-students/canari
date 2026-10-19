@@ -54,6 +54,19 @@ export class CallInitiateError extends ApiRefusalError {
 export type CallSetupStep = 'initiate' | 'ring' | 'room-token';
 
 /**
+ * The signalling relay answered a `Join` with `Refused { reason }`. An ANSWER, not a transport
+ * failure: a resume refused `call-over` (the seat expired, or the other party hung up) ends the
+ * call, where a socket that never opened is retried. The reason crosses the throw as a field, so
+ * no caller reads it back out of the message.
+ */
+export class CallSignallingRefusedError extends Error {
+  constructor(public readonly reason: string) {
+    super(`call signalling refused: ${reason}`);
+    this.name = 'CallSignallingRefusedError';
+  }
+}
+
+/**
  * This engine cannot encrypt call media end to end, so the call is REFUSED before any request.
  *
  * A call's media is encrypted with an MLS-derived key through `RTCRtpScriptTransform`. An engine
