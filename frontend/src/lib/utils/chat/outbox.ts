@@ -173,6 +173,23 @@ export class OutboxPrepareError extends Error {
   }
 }
 
+/**
+ * The preparer REFUSED this take for good (RC-5): a fact of the file or of this engine - unreadable,
+ * too long, a codec the engine cannot handle - that a new preparation of the same take on the same
+ * device answers the same way. Thrown by the PREPARER, classified at its throw; the outbox fails the
+ * entry for good with `notice` (a Paraglide sentence the preparer chose) instead of parking a
+ * retry that cannot succeed.
+ */
+export class OutboxPrepareRefusedError extends Error {
+  constructor(
+    readonly notice: string,
+    cause?: unknown
+  ) {
+    super('the take was refused by its preparer', { cause });
+    this.name = 'OutboxPrepareRefusedError';
+  }
+}
+
 /** What a preparation hands back: the bytes to upload, and what the message says about them. */
 export interface PreparedOutboxMedia {
   bytes: Uint8Array;
@@ -360,12 +377,19 @@ export interface OutboxDeps {
   /**
    * Prepares the RAW take of an entry marked `media.prepare` (a chat reel, RC-5): runs inside the
    * upload task, holding its upload slot, cancellable through `signal`. Rejects with
-   * `UploadAbortedError` on a cancel, anything else when the take cannot be prepared.
+   * `UploadAbortedError` on a cancel, {@link OutboxPrepareRefusedError} when the take can NEVER be
+   * prepared here (failed for good), anything else when this attempt failed (parked, retryable).
    */
   prepareMedia?: (
     media: NonNullable<OutboxEntry['media']>,
     opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
   ) => Promise<PreparedOutboxMedia>;
+  /**
+   * Gives back the resumable upload session `uploadId` of an entry the member WITHDREW (RC-5), so
+   * its staged parts, its slot among the owner's four open sessions and its budget are not held for
+   * the server's 24 h sweep. Best effort: resolves either way and logs what happened.
+   */
+  releaseUpload?: (uploadId: string, why: string) => Promise<void>;
   /**
    * True when the session is in a state where sending can succeed. Returns false for a session
    * unlocked offline that has no access token yet: the browser can report `online` before the
@@ -545,6 +569,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   const noAnswer = new Map<string, number>();
   /** The furthest an attempt of this entry has got, so only a NO-FURTHER attempt is counted. */
   const bestLoaded = new Map<string, number>();
+  /**
+   * The resumable session (RC-5) each entry's upload opened in THIS page life, by entry id - what a
+   * withdrawal releases when the row's own record is missing (its write failed). The row's
+   * `media.upload.uploadId` is the durable copy, read for an entry this page life never uploaded.
+   */
+  const openSessions = new Map<string, string>();
   /**
    * Consecutive ONLINE failures per attachment that are not a typed no-answer upload (see
    * {@link MAX_UNEXPECTED_ATTEMPTS}). In memory by design, like `noAnswer`: a reload, a manual retry
@@ -977,7 +1007,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * exactly the dispositions it took when the lane awaited the upload itself. A withdrawal is the one
    * outcome settled here: the row is already gone, so no lane pass will ever meet the entry again.
    */
-  function startUpload(entry: OutboxEntry, media: NonNullable<OutboxEntry['media']>): void {
+  function startUpload(queued: OutboxEntry, media: NonNullable<OutboxEntry['media']>): void {
+    // THE BYTES TRAVEL IN A HOLDER THE TASK EMPTIES, never in a closure that keeps them for the
+    // whole transfer: a raw take replaced by its prepared file must not stay alive beside it (two
+    // copies of a 90 s video through a weak-link upload, on a phone). Every closure below lives in
+    // `launchUpload`'s scope, which sees the entry WITHOUT its payload.
+    launchUpload({ ...queued, media: undefined }, { media });
+  }
+
+  /** {@link startUpload}'s body, over an entry stripped of its payload (see there). */
+  function launchUpload(
+    entry: OutboxEntry,
+    payload: { media?: NonNullable<OutboxEntry['media']> }
+  ): void {
     const task: UploadTask = {
       conversationId: entry.conversationId,
       settled: null,
@@ -990,7 +1032,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     log(
       `[OUTBOX] ${entry.id.slice(0, 8)}… upload started outside the lane of ${entry.conversationId.slice(0, 8)}…`
     );
-    void withUploadSlot(entry.id, control.signal, () => uploadAttachment(entry, media, control))
+    void withUploadSlot(entry.id, control.signal, () => uploadAttachment(entry, payload, control))
       .then(
         // The payload WITHOUT its bytes: nothing keeps a 13 MB file alive once it has left. It is
         // the payload as UPLOADED - a prepared reel's type, size and dimensions, not the raw take's.
@@ -1017,6 +1059,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           uploadTasks.delete(entry.id);
           uploadOwed.delete(entry.id);
           clearUpload(entry.id);
+          // A session this transfer opened AFTER the withdrawal released what it knew (its init was
+          // in flight then): released here, the one place that learns of it.
+          if (!settled.ok) releaseSessionOf(entry.id, undefined, 'opened during its withdrawal');
           log(
             abortedByCancel
               ? `[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`
@@ -1037,13 +1082,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   async function uploadAttachment(
     entry: OutboxEntry,
-    queued: NonNullable<OutboxEntry['media']>,
+    payload: { media?: NonNullable<OutboxEntry['media']> },
     control: AbortController
   ): Promise<{
     ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>;
     media: NonNullable<OutboxEntry['media']>;
   }> {
-    let media = queued;
+    // Taken out of the holder: from here the local is the ONLY reference this task keeps, and it is
+    // replaced by the prepared payload once a raw take is prepared.
+    let media = payload.media!;
+    payload.media = undefined;
     const uploadMedia = deps.uploadMedia;
     let uploaded: MediaRef;
     let attemptLoaded = 0;
@@ -1089,6 +1137,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             log(
               `[OUTBOX] ${entry.id.slice(0, 8)}… resumable session ${state.uploadId?.slice(0, 8) ?? '(none)'}… recorded`
             );
+            // Known in memory even when the row write below fails, so a withdrawal in this page life
+            // still releases it.
+            if (state.uploadId) openSessions.set(entry.id, state.uploadId);
             if (!storage) return;
             await storage
               .updateOutboxEntry(
@@ -1136,6 +1187,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     noAnswer.delete(entry.id);
     bestLoaded.delete(entry.id);
     unexpected.delete(entry.id);
+    // Completed: nothing left on the server to release.
+    openSessions.delete(entry.id);
     clearUpload(entry.id);
     const ref = {
       mediaId: uploaded.mediaId,
@@ -1189,6 +1242,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     } catch (e) {
       if (e instanceof UploadAbortedError) throw e;
       if (signal.aborted) throw new UploadAbortedError(signal.reason);
+      // Refused for good: the preparer's own type, passed through for `settleFailure` to retire.
+      if (e instanceof OutboxPrepareRefusedError) {
+        log(
+          `[OUTBOX] ${id}… its take was REFUSED by the preparer: ${String(e.cause).slice(0, 160)}`
+        );
+        throw e;
+      }
       log(`[OUTBOX] ${id}… its take could NOT be prepared: ${String(e).slice(0, 160)}`);
       throw new OutboxPrepareError('the take could not be prepared', e);
     }
@@ -1294,7 +1354,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function failPermanently(
     entry: OutboxEntry,
     terminalId: string,
-    cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large' | 'refused'
+    cause: 'group-deleted' | 'evicted' | 'evicted-late' | 'too-large' | 'refused' | 'unpreparable',
+    /** The thread line for `unpreparable`: the preparer's own Paraglide sentence. */
+    notice?: string
   ): Promise<FlushOutcome> {
     // THE KIND IS THE SEVERITY, and this line used to omit the one thing that decides it. A
     // `control` entry dying with its group is a read receipt or a reaction that lost a race to a
@@ -1310,20 +1372,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     clearUpload(entry.id);
     uploadTasks.delete(entry.id);
     uploadOwed.delete(entry.id);
+    // THE ROW GOES, SO ITS SESSION GOES: nothing will resume it. A refusal for good (`too-large`,
+    // `refused`) was already released by the uploader that met it.
+    if (cause === 'too-large' || cause === 'refused') openSessions.delete(entry.id);
+    else releaseSessionOf(entry.id, entry.media?.upload?.uploadId, cause);
     if (entry.kind !== 'control') {
-      if (cause === 'too-large' || cause === 'refused') {
-        // THE ONE PERMANENT FAILURE THAT IS ABOUT THE OBJECT, NOT THE GROUP: nothing about the
+      if (cause === 'too-large' || cause === 'refused' || cause === 'unpreparable') {
+        // THE PERMANENT FAILURES THAT ARE ABOUT THE OBJECT, NOT THE GROUP: nothing about the
         // conversation changed, so no banner and no eviction - only a line in the thread that tells
         // the author which message will never go and what to do about it. Best-effort, and logged.
+        const line =
+          cause === 'too-large'
+            ? m.outbox_upload_too_large()
+            : cause === 'unpreparable' && notice
+              ? notice
+              : m.outbox_upload_refused();
         await deps
-          .addMessageToChat?.(
-            'system',
-            cause === 'too-large' ? m.outbox_upload_too_large() : m.outbox_upload_refused(),
-            entry.conversationId,
-            { isSystem: true }
-          )
+          .addMessageToChat?.('system', line, entry.conversationId, { isSystem: true })
           .catch((e: unknown) =>
-            log(`[OUTBOX] ${entry.id.slice(0, 8)}… too-large notice not posted: ${String(e)}`)
+            log(`[OUTBOX] ${entry.id.slice(0, 8)}… ${cause} notice not posted: ${String(e)}`)
           );
       } else if (cause === 'group-deleted') {
         deps.markDeletedRemotely?.(terminalId);
@@ -1341,7 +1408,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         });
       }
     }
-    await storage?.deleteOutboxEntry(entry.id).catch(() => {});
+    await storage
+      ?.deleteOutboxEntry(entry.id)
+      .catch((e: unknown) =>
+        log(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… permanently failed row NOT deleted: ${String(e).slice(0, 120)}`
+        )
+      );
     logMlsMetric({
       kind: 'outbox_permanent_error',
       conversationId: terminalId,
@@ -1992,6 +2065,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (e instanceof OutboxPrepareError) {
       return parkAsError(entry, `${e.message} (${String(e.cause).slice(0, 120)})`);
     }
+    // REFUSED BY THE PREPARER, a fact of the file or the engine (too long, unreadable, a codec it
+    // cannot encode): another preparation answers the same, so a retry button would be a lie. Failed
+    // for good, with the preparer's own sentence in the thread.
+    if (e instanceof OutboxPrepareRefusedError) {
+      return failPermanently(entry, terminalId, 'unpreparable', e.notice);
+    }
     if (refusal) {
       const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;
       const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload REFUSED (${refusal}: ${String(e).slice(0, 120)}) - ${detail} in ${terminalId.slice(0, 8)}…: no retry can succeed, giving up`;
@@ -2277,6 +2356,49 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /**
+   * Releases the resumable upload session (RC-5) of an entry whose row is going away, so the server
+   * does not hold its staged parts, its slot among the owner's open sessions and its budget for 24 h.
+   * The id is this page life's (`openSessions`, which a failed row write cannot lose) or the row's.
+   * Fire and forget: `deps.releaseUpload` resolves either way and logs its own outcome.
+   */
+  function releaseSessionOf(entryId: string, rowUploadId: string | undefined, why: string): void {
+    const uploadId = openSessions.get(entryId) ?? rowUploadId;
+    openSessions.delete(entryId);
+    if (!uploadId) return;
+    if (!deps.releaseUpload) {
+      log(
+        `[OUTBOX] ${entryId.slice(0, 8)}… session ${uploadId.slice(0, 8)}… left to the server's sweep - no releaser`
+      );
+      return;
+    }
+    log(`[OUTBOX] ${entryId.slice(0, 8)}… releasing its upload session (${why})`);
+    void deps
+      .releaseUpload(uploadId, why)
+      // The contract says it never rejects; a releaser that does is said, never swallowed.
+      .catch((e: unknown) =>
+        log(`[OUTBOX] ${entryId.slice(0, 8)}… session release threw: ${String(e).slice(0, 120)}`)
+      );
+  }
+
+  /**
+   * The upload session id a queued row records, read WITHOUT its file (a withdrawal must not decrypt
+   * a 90 s video to learn an id). `undefined` for a row with none, or one that cannot be read - said.
+   */
+  async function rowUploadId(entry: OutboxEntry): Promise<string | undefined> {
+    if (entry.kind !== 'media' || !storage) return undefined;
+    if (entry.media) return entry.media.upload?.uploadId;
+    try {
+      const described = await storage.getOutboxEntry(entry.id, deviceKey(), { withFile: false });
+      return described?.media?.upload?.uploadId;
+    } catch (e) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… its upload session could not be read before the withdrawal (left to the server's sweep): ${String(e).slice(0, 120)}`
+      );
+      return undefined;
+    }
+  }
+
+  /**
    * Withdraw a queued entry that has not left this device. The body of `cancelPending`, shared with
    * the latest-wins supersede so both settle the same three copies (the durable row, a running
    * flush's snapshot, the other tabs) and the native mirror. See {@link OutboxController.cancelPending}.
@@ -2305,6 +2427,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // queued the frame. So a text that was ever answered 5xx in this run is withdrawn here AND
     // answered "maybe sent", and the delete also goes out as an event (peers that have it drop it).
     const maybeStored = (queued.serverErrors ?? 0) > 0;
+    // READ BEFORE THE ROW GOES: the reel's open upload session, which nothing could name afterwards.
+    // An entry waiting in backoff, parked as failed, or not restarted since a relaunch has no
+    // transfer running to abort - the row is the only thing that knows its session.
+    const sessionInRow = openSessions.has(messageId) ? undefined : await rowUploadId(queued);
 
     // Three things, and the order between them does not matter because none can undo another:
     // the durable row (every future flush), this tab's snapshot (a flush already walking), and
@@ -2338,6 +2464,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // The mirror is the native background sender's own copy of the queue: leaving the entry in it
     // sends the message from Android after it was withdrawn here.
     if (rowDeleted && !snapshot) await refreshMirror();
+    // The row is gone, so nothing will resume its session: give it back now. A transfer still
+    // running is aborted below and keeps it no longer (an abort never releases by itself).
+    if (rowDeleted) releaseSessionOf(messageId, sessionInRow, 'withdrawn');
     // ON THE WIRE, NOW OR AT THE START. A send cannot START after the mark was set (the flush
     // re-checks it with no await before claiming `inFlight`), and `inFlight` holds a sent id until
     // its row is deleted, so these two reads see every frame this tab let out.

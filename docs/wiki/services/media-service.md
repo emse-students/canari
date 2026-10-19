@@ -480,7 +480,9 @@ Account deletion takes it with the rest of the member's uploads; the form's mana
 
 Server half of [media-streaming-upload](media-streaming-upload.md), **additive**: its FIRST client is the chat-reel outbox
 ([reels-in-chat RC-5](../frontend/modules/reels-in-chat.md#13-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19), draft, behind the writer switch: 1 MiB parts, the state recorded in the encrypted
-outbox row before the first part, the status read after a kill); the general writer (S2) is not built,
+outbox row before the first part, the status read after a kill; `DELETE /:id` sent by the member's
+withdrawal of the entry, whatever it was doing, and by a refusal for good - never by an abort, so a
+teardown's session is resumed; only a JSON 404 is read as "gone", an edge page is retried); the general writer (S2) is not built,
 and the single-block `POST /upload` and the `upload/chunk/*` routes are untouched. Code:
 `upload-session.service.ts` (the state), `upload-session.ts` (pure geometry, header check, mutex), the five
 routes in `media.controller.ts` (NO `FileInterceptor`: a spec reads the route metadata).

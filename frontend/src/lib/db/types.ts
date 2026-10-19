@@ -628,8 +628,16 @@ export interface IStorage {
   /**
    * One entry with its full payload, or null when it is no longer queued. Throws
    * `OutboxPayloadUnreadableError` when the row exists but cannot be decrypted.
+   *
+   * `withFile: false` decodes the row's payload WITHOUT reading its attachment blob: what a caller
+   * needing only the description (a withdrawal reading the reel's upload session, RC-5) asks for, so
+   * it never decrypts a whole file to learn an id.
    */
-  getOutboxEntry(id: string, deviceKeyB64: string): Promise<OutboxEntry | null>;
+  getOutboxEntry(
+    id: string,
+    deviceKeyB64: string,
+    opts?: { withFile?: boolean }
+  ): Promise<OutboxEntry | null>;
   /**
    * Delete the attachment blobs no outbox row owns (a kill between a blob write and its row write
    * leaves one). Run once per session by the outbox. Resolves with the number removed.

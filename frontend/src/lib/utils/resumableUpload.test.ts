@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   RESUMABLE_MAX_ROUNDS,
+  releaseUploadSession,
   sealBlobRange,
   uploadResumable,
   type ResumableUploadState,
@@ -299,7 +300,7 @@ describe('uploadResumable', () => {
     await decrypts(server, done.mediaId, done.keyHex, done.ivHex, second);
   });
 
-  it('a cancel releases the session (DELETE) and throws the cancel', async () => {
+  it('an abort (a teardown says "cancel" too) throws it and KEEPS the session: a withdrawal releases it, not the abort', async () => {
     const server = new FakeSessionServer();
     const row = rowStore();
     const control = new AbortController();
@@ -317,10 +318,96 @@ describe('uploadResumable', () => {
       log: quiet,
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(UploadAbortedError);
-    await Promise.resolve();
-    await Promise.resolve();
     await new Promise((r) => queueMicrotask(() => r(undefined)));
-    expect(server.seen.some((r) => r.method === 'DELETE')).toBe(true);
+    expect(server.sent.some((r) => r.method === 'DELETE')).toBe(false);
+    expect(server.sessions.get(row.last!.uploadId!)!.closed).toBeUndefined();
+  });
+
+  it('releaseUploadSession DELETEs the session, and says it when the link is down instead of throwing', async () => {
+    const server = new FakeSessionServer();
+    const row = rowStore();
+    let puts = 0;
+    server.fault = (method) => (method === 'PUT' && ++puts === 2 ? 'drop' : undefined);
+    await up({
+      plaintext: plaintextOf(),
+      retentionClass: 'chat-reel',
+      persist: row.persist,
+      port: server.port(),
+    }).catch(() => undefined);
+    const id = row.last!.uploadId!;
+    const lines: string[] = [];
+    server.fault = (method) => (method === 'DELETE' ? 'drop' : undefined);
+    await releaseUploadSession(server.port(), id, 'withdrawn', (l) => lines.push(l));
+    expect(lines.some((l) => l.includes('NOT released'))).toBe(true);
+    server.fault = () => undefined;
+    await releaseUploadSession(server.port(), id, 'withdrawn', (l) => lines.push(l));
+    expect(server.sessions.get(id)!.closed).toBe(true);
+  });
+
+  for (const where of ['GET', 'PUT', 'complete'] as const) {
+    it(`an EDGE 404 on ${where} (a non-JSON page during a deploy) is not "session gone": thrown, retried, the session kept and resumed`, async () => {
+      const server = new FakeSessionServer();
+      const row = rowStore();
+      const plaintext = plaintextOf();
+      let puts = 0;
+      // A first attempt cut on part 2, so there is a session to resume.
+      server.fault = (method) => (method === 'PUT' && ++puts === 2 ? 'drop' : undefined);
+      await up({
+        plaintext,
+        retentionClass: 'chat-reel',
+        persist: row.persist,
+        port: server.port(),
+      }).catch(() => undefined);
+      const state = row.last!;
+      server.fault = (method, path) =>
+        (where === 'GET' && method === 'GET') ||
+        (where === 'PUT' && method === 'PUT') ||
+        (where === 'complete' && path.endsWith('/complete'))
+          ? { edge: 404 }
+          : undefined;
+      const err = await up({
+        plaintext,
+        retentionClass: 'chat-reel',
+        state,
+        persist: row.persist,
+        port: server.port(),
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(MediaUploadError);
+      expect((err as MediaUploadError).origin).toBe('edge');
+      expect((err as MediaUploadError).sessionLost).toBe(false);
+      expect(uploadRefusalCause(err)).toBeNull();
+      // Never reopened: one init, one reservation, the same session recorded.
+      expect(server.reservations).toBe(1);
+      expect(row.last!.uploadId).toBe(state.uploadId);
+      expect(server.sent.some((r) => r.method === 'DELETE')).toBe(false);
+      server.fault = () => undefined;
+      const done = await up({
+        plaintext,
+        retentionClass: 'chat-reel',
+        state: row.last,
+        persist: row.persist,
+        port: server.port(),
+      });
+      expect(server.reservations).toBe(1);
+      await decrypts(server, done.mediaId, done.keyHex, done.ivHex, plaintext);
+    });
+  }
+
+  it('an edge 409 on a part is retried as an edge answer, never read as "being completed"', async () => {
+    const server = new FakeSessionServer();
+    const row = rowStore();
+    let puts = 0;
+    server.fault = (method) => (method === 'PUT' && ++puts === 2 ? { edge: 409 } : undefined);
+    const lines: string[] = [];
+    const err = await up({
+      plaintext: plaintextOf(),
+      retentionClass: 'chat-reel',
+      persist: row.persist,
+      port: server.port(),
+      log: (l) => lines.push(l),
+    }).catch((e: unknown) => e);
+    expect((err as MediaUploadError).origin).toBe('edge');
+    expect(lines.some((l) => l.includes('re-reading the session'))).toBe(false);
   });
 
   it('a "retry" abort keeps the session: the next attempt resumes it', async () => {

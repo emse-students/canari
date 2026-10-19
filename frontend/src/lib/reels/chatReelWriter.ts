@@ -28,20 +28,10 @@ export interface ChatReelDeclaration {
 }
 
 /**
- * The declaration of a reel filmed now. The clock is passed in so no test asserts a wall clock.
- * The length is rounded to a whole millisecond and floored at 1: a zero is "no length" on the wire.
- */
-export function chatReelDeclaration(durationSeconds: number, nowMs: number): ChatReelDeclaration {
-  return {
-    intent: 'reel-message',
-    durationMs: Math.max(1, Math.round(durationSeconds * 1000)),
-    expiresAtMs: nowMs + CHAT_REEL_RETENTION_MS,
-  };
-}
-
-/**
  * The declaration of a RAW take queued now (RC-5): the intent and the expiry hint, and no length -
- * the outbox's preparation measures it and adds `durationMs` before the message is built.
+ * the outbox's preparation measures it and adds `durationMs` (whole ms, floored at 1: a zero is "no
+ * length" on the wire) before the message is built. The clock is passed in so no test asserts a
+ * wall clock.
  */
 export function chatReelPendingDeclaration(
   nowMs: number

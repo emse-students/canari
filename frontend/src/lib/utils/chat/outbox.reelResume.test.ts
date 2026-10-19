@@ -34,11 +34,16 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
   ...tabOutboxMock,
 }));
 
-import { createOutbox, type OutboxDeps, type PreparedOutboxMedia } from './outbox';
+import {
+  OutboxPrepareRefusedError,
+  createOutbox,
+  type OutboxDeps,
+  type PreparedOutboxMedia,
+} from './outbox';
 import { clearAllUploads, uploadViewOf } from './uploadProgress.svelte';
 import { uploadCaption } from './uploadLabel';
 import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
-import { uploadResumable } from '$lib/utils/resumableUpload';
+import { releaseUploadSession, uploadResumable } from '$lib/utils/resumableUpload';
 import { UploadAbortedError } from '$lib/utils/uploadXhr';
 import { decryptSegmentedMediaBuffer } from '$lib/mediaSegmented';
 import { hexEncode } from '$lib/mediaCrypto';
@@ -125,13 +130,16 @@ function life(w: World, opts: LifeOptions = {}) {
     getMessage: vi.fn(async () => null),
     saveOutboxEntry: (e: OutboxEntry, k: string) => live(() => s.saveOutboxEntry(e, k)),
     getOutboxQueue: (k: string) => live(() => s.getOutboxQueue(k)),
-    getOutboxEntry: (id: string, k: string) => live(() => s.getOutboxEntry(id, k)),
+    getOutboxEntry: (id: string, k: string, o?: { withFile?: boolean }) =>
+      live(() => s.getOutboxEntry(id, k, o)),
     updateOutboxEntry: (id: string, p: Partial<OutboxEntry>, k: string) =>
       live(() => s.updateOutboxEntry(id, p, k)),
     deleteOutboxEntry: (id: string) => live(() => s.deleteOutboxEntry(id)),
     sweepOutboxBlobs: () => live(() => s.sweepOutboxBlobs()),
   };
   const port = w.server.port();
+  /** The system lines this life posted into the thread. */
+  const notices: string[] = [];
   const mls = {
     getLocalGroups: vi.fn(() => []),
     getGroupMeta: vi.fn(async (id: string) => ({ groupId: id, deletedAt: null })),
@@ -225,11 +233,17 @@ function life(w: World, opts: LifeOptions = {}) {
     markDeletedRemotely: vi.fn(),
     uploadMedia,
     prepareMedia,
+    releaseUpload: (uploadId, why) =>
+      live(() => releaseUploadSession(port, uploadId, why, () => undefined)),
+    addMessageToChat: async (_sender, content) => {
+      notices.push(content);
+    },
   });
   return {
     outbox,
     mls,
     conversations,
+    notices,
     kill() {
       alive = false;
       // Its timers and transfers end with it; nothing it does reaches the disk or the server.
@@ -506,6 +520,129 @@ describe('a chat reel through the outbox (RC-5)', () => {
     l.outbox.retryUpload(ID);
     await expectDeliveredOnce(w, l);
     expect(w.prepares).toHaveLength(2);
+  });
+
+  it('a cancel WHILE IT WAITS IN BACKOFF (no transfer to abort) releases the session the row recorded', async () => {
+    const w = world();
+    const l = life(w);
+    let puts = 0;
+    w.server.fault = (method) => (method === 'PUT' && ++puts === 2 ? 'drop' : undefined);
+    await l.outbox.enqueue(rawTakeEntry());
+    await vi.waitFor(() => expect(uploadViewOf(ID)?.phase).toBe('waiting'));
+    const [session] = [...w.server.sessions.keys()];
+    expect(w.server.sessions.get(session)!.closed).toBeUndefined();
+    expect(await l.outbox.cancelPending(ID)).toBe(true);
+    await vi.waitFor(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
+    expect(w.sql.rows.size).toBe(0);
+    await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+  });
+
+  it('a cancel of an entry PARKED AS FAILED (no answer, three attempts) releases its session', async () => {
+    // THE LADDER IS WHAT REACHES THE PARK (a member's Retry starts the no-answer count again), so its
+    // timer is driven by hand - advanced, never waited for, and no time is asserted. Only the timer
+    // and the clock it reads are faked; fake-IndexedDB keeps its own real scheduling.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const w = world();
+      const l = life(w);
+      w.server.fault = (method, path) =>
+        method === 'PUT' && path.endsWith('/parts/1') ? 'reset' : undefined;
+      await l.outbox.enqueue(rawTakeEntry());
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        await vi.waitFor(() => expect(w.settled).toBeGreaterThanOrEqual(attempt));
+        await vi.waitFor(() => expect(['waiting', 'failed']).toContain(uploadViewOf(ID)?.phase));
+        if (uploadViewOf(ID)?.phase === 'waiting') await vi.advanceTimersByTimeAsync(61_000);
+      }
+      await vi.waitFor(() => expect(uploadViewOf(ID)?.phase).toBe('failed'));
+      const [session] = [...w.server.sessions.keys()];
+      expect(w.server.sessions.size).toBe(1);
+      expect(w.server.sessions.get(session)!.closed).toBeUndefined();
+      expect(await l.outbox.cancelPending(ID)).toBe(true);
+      await vi.waitFor(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
+      l.kill();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a cancel AFTER A RELAUNCH, before any transfer restarted, releases the session the row recorded', async () => {
+    const w = world();
+    const first = life(w);
+    w.server.fault = (method, path) => {
+      if (method === 'PUT' && path.endsWith('/parts/2')) {
+        first.kill();
+        return 'hang';
+      }
+      return undefined;
+    };
+    await first.outbox.enqueue(rawTakeEntry());
+    await vi.waitFor(() => expect(w.server.partsReceived()).toBe(2));
+    w.server.fault = () => undefined;
+    const [session] = [...w.server.sessions.keys()];
+
+    const second = life(w);
+    expect(await second.outbox.cancelPending(ID)).toBe(true);
+    await vi.waitFor(() => expect(w.server.sessions.get(session)!.closed).toBe(true));
+    expect(w.server.partsReceived()).toBe(2);
+    expect(w.sql.rows.size).toBe(0);
+    await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
+  });
+
+  it('a TEARDOWN (the app killed mid-upload) never releases the session: the next life resumes it', async () => {
+    const w = world();
+    const first = life(w);
+    w.server.fault = (method, path) =>
+      method === 'PUT' && path.endsWith('/parts/2') ? 'hang' : undefined;
+    await first.outbox.enqueue(rawTakeEntry());
+    await vi.waitFor(() => expect(w.server.partsReceived()).toBe(2));
+    // dispose() aborts the transfer with the same reason a cancel uses.
+    first.outbox.dispose();
+    await vi.waitFor(() => expect(w.settled).toBe(1));
+    expect(w.server.sent.some((r) => r.method === 'DELETE')).toBe(false);
+    first.kill();
+    w.server.fault = () => undefined;
+    const second = life(w);
+    await second.outbox.flush();
+    await expectDeliveredOnce(w, second);
+    expect(w.server.reservations).toBe(1);
+  });
+
+  it('the prepared file CANNOT BE STORED: no byte is uploaded, and the entry is parked as an error with the take kept', async () => {
+    const w = world();
+    const l = life(w);
+    const execute = w.sql.db.execute;
+    let inserts = 0;
+    // The first INSERT queues the take; the second would name the prepared file.
+    w.sql.db.execute = async (q: string, p?: any[]) => {
+      if (q.includes('INSERT OR REPLACE INTO outbox') && ++inserts === 2) {
+        throw new Error('database or disk is full');
+      }
+      return execute(q, p);
+    };
+    await l.outbox.enqueue(rawTakeEntry());
+    await vi.waitFor(() => expect(uploadViewOf(ID)?.phase).toBe('error'));
+    expect(w.server.sent).toEqual([]);
+    w.sql.db.execute = execute;
+    const kept = (await w.storage.getOutboxEntry(ID, KEY))!;
+    expect(sameBytes(kept.media?.fileBytes, RAW)).toBe(true);
+    expect(sends(l)).toBe(0);
+  });
+
+  it('a take its preparer REFUSES FOR GOOD fails for good: no retry offered, the row gone, the reason in the thread', async () => {
+    const w = world();
+    const l = life(w, {
+      prepare: async () => {
+        throw new OutboxPrepareRefusedError('too long to send', new Error('too-long'));
+      },
+    });
+    await l.outbox.enqueue(rawTakeEntry());
+    await vi.waitFor(() => expect(w.sql.rows.size).toBe(0));
+    expect(l.notices).toEqual(['too long to send']);
+    expect(uploadViewOf(ID)?.phase).not.toBe('error');
+    expect(w.server.sent).toEqual([]);
+    expect(sends(l)).toBe(0);
+    expect(w.prepares).toHaveLength(1);
+    await vi.waitFor(async () => expect(await w.blobs.list()).toEqual([]));
   });
 
   it('A FLAKY LINK (a seeded share of the parts lost): each retry resumes, one object is stored, no part is sent twice without cause', async () => {

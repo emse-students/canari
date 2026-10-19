@@ -34,6 +34,7 @@ import {
 import { generateMediaCek, generateMediaIv, hexDecode, hexEncode } from '$lib/mediaCrypto';
 import { MEDIA_REQUEST_BODY_BUDGET_BYTES } from '$lib/utils/mediaRequestLimits';
 import { uploadRefusalCause, uploadRefusalFrom } from '$lib/utils/mediaErrors';
+import { responseOrigin } from '$lib/utils/apiRefusal';
 import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type { MediaRetentionClass } from '$lib/media';
@@ -171,14 +172,45 @@ export async function sealBlobRange(
 }
 
 /**
+ * Gives an open session (its staged parts, its slot among the owner's open sessions, its budget)
+ * back to the server: `DELETE /session/:id`. Best effort and logged either way - the server's sweep
+ * (24 h) is what holds when it cannot be reached. Never throws.
+ */
+export async function releaseUploadSession(
+  port: ResumableUploadPort,
+  uploadId: string,
+  why: string,
+  log: (line: string) => void
+): Promise<void> {
+  try {
+    const res = await port.request('DELETE', `/${uploadId}`, null);
+    log(`[UPLOAD-RESUME] session ${uploadId} released (${why}): HTTP ${res.status}`);
+  } catch (e) {
+    log(
+      `[UPLOAD-RESUME] session ${uploadId} NOT released (${why}), the server's sweep holds it: ${String(e)}`
+    );
+  }
+}
+
+/**
+ * The SERVER said this session is gone (404) or not in a state to take this request (409) - read
+ * from the answer's ORIGIN as well as its status: a non-JSON 404/409 is the edge or a proxy speaking
+ * (a deploy, a restart), which says nothing about the session and is retried like any edge answer.
+ */
+function sessionAnswered(res: Response, ...statuses: number[]): boolean {
+  return statuses.includes(res.status) && responseOrigin(res) === 'gateway';
+}
+
+/**
  * Uploads `plaintext` as a `segmented-v1` blob through a resumable session, resuming what `state`
  * names. NO PART THE SERVER HOLDS IS SENT AGAIN, and a session the server already completed is
  * answered from its memo without a byte (a kill between `complete` and the ref's write).
  *
  * Throws what the outbox already classifies: a `MediaUploadError` for an answer (typed at the throw,
  * `sessionLost` when the session is gone and could not be reopened within {@link RESUMABLE_MAX_ROUNDS}),
- * a transport failure as the transport threw it, `UploadAbortedError` on a cancel. A failure that
- * is not a cancel or a refusal keeps the session: the next call resumes it.
+ * a transport failure as the transport threw it, `UploadAbortedError` on any abort. Only a refusal
+ * for good releases the session here; anything else keeps it for the next call, and a withdrawal
+ * releases it through {@link releaseUploadSession}.
  */
 export async function uploadResumable(
   opts: ResumableUploadOptions
@@ -242,19 +274,15 @@ export async function uploadResumable(
       null,
       transport && { signal: transport.signal }
     );
-    if (res.status === 404) return null;
+    if (sessionAnswered(res, 404)) return null;
     if (!res.ok) await answer(res, 'upload session status failed');
     return (await res.json()) as SessionStatus;
   };
 
   const release = (why: string) => {
     const id = state?.uploadId;
-    if (!id) return;
-    // Best effort, never awaited by the failure it follows: the server's sweep is the backstop.
-    port
-      .request('DELETE', `/${id}`, null)
-      .then((res) => log(`[UPLOAD-RESUME] session ${id} released (${why}): HTTP ${res.status}`))
-      .catch((e) => log(`[UPLOAD-RESUME] session ${id} NOT released (${why}): ${String(e)}`));
+    // Never awaited by the failure it follows: the server's sweep is the backstop.
+    if (id) void releaseUploadSession(port, id, why, log);
   };
 
   try {
@@ -313,7 +341,7 @@ export async function uploadResumable(
               transport.onProgress?.({ loaded: base + p.loaded, total: totalBytes }),
           }
         );
-        if (res.status === 404 || res.status === 409) {
+        if (sessionAnswered(res, 404, 409)) {
           // Closed under us (expired, cancelled elsewhere) or being completed: re-read the fact.
           log(`[UPLOAD-RESUME] part ${i} answered ${res.status} - re-reading the session`);
           reread = true;
@@ -342,9 +370,7 @@ export async function uploadResumable(
             encoding: SEGMENTED_MEDIA_ENCODING,
           };
         }
-        if (res.status !== 404 && res.status !== 409) {
-          await answer(res, 'upload session complete failed');
-        }
+        if (!sessionAnswered(res, 404, 409)) await answer(res, 'upload session complete failed');
         log(`[UPLOAD-RESUME] complete answered ${res.status} - re-reading the session`);
       }
       if (round >= RESUMABLE_MAX_ROUNDS) {
@@ -356,12 +382,14 @@ export async function uploadResumable(
       }
     }
   } catch (e) {
-    // A CANCEL and a REFUSAL FOR GOOD end this upload: give the session (and its budget) back now.
-    // Anything else - no answer, a 5xx, a local failure, a 'retry' abort - keeps it, and the next
-    // attempt resumes it. Decided by type (`uploadRefusalCause` reads status and origin).
+    // A REFUSAL FOR GOOD ends this upload: give the session (and its budget) back now. Anything
+    // else - no answer, a 5xx, an edge page, a local failure, any abort - keeps it. AN ABORT IS NOT A
+    // WITHDRAWAL: a teardown aborts too, and its row resumes at the next launch. The member's
+    // withdrawal releases the session itself, from the id it reads in the row ({@link
+    // releaseUploadSession}), which covers the entries with no transfer running to abort.
+    // Decided by type (`uploadRefusalCause` reads status and origin).
     const cause = e instanceof UploadAbortedError ? null : uploadRefusalCause(e);
-    if (e instanceof UploadAbortedError && e.reason === 'cancel') release('cancelled');
-    else if (cause) release(`refused: ${cause}`);
+    if (cause) release(`refused: ${cause}`);
     else
       log(
         `[UPLOAD-RESUME] attempt ended (${e instanceof Error ? e.name : typeof e}${isTransportFailure(e) ? ', no answer' : ''}) - session ${state?.uploadId ?? '(none)'} kept for the next attempt`

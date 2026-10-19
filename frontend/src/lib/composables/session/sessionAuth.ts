@@ -183,6 +183,8 @@ import {
   unregisterOutbox,
   flushOutbox,
   applyOutboxPendingStatuses,
+  OutboxPrepareRefusedError,
+  type PreparedOutboxMedia,
 } from '$lib/utils/chat/outbox';
 import {
   getCallSystemMessageContext,
@@ -338,15 +340,14 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     ) => {
       const { MediaService } = await import('$lib/media');
       const bytes = media.fileBytes ?? new Uint8Array(0);
-      const file = new File([bytes.buffer as ArrayBuffer], media.fileName ?? 'file', {
-        type: media.mimeType,
-      });
       const retentionClass = uploadClassFor(media);
       // A CHAT REEL GOES THROUGH A RESUMABLE SESSION (RC-5): a cut or a kill resends only the parts
-      // the server lacks. Everything else keeps the one-shot route it always took.
+      // the server lacks. It is sealed from the outbox's own bytes, part by part - no `File` copy.
+      // Everything else keeps the one-shot route it always took.
       if (retentionClass === 'chat-reel' && resume) {
         return new MediaService().uploadResumably(
-          file,
+          bytes,
+          { mimeType: media.mimeType, fileName: media.fileName },
           getToken,
           { width: media.width, height: media.height },
           retentionClass,
@@ -354,6 +355,9 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
           transport
         );
       }
+      const file = new File([bytes.buffer as ArrayBuffer], media.fileName ?? 'file', {
+        type: media.mimeType,
+      });
       const token = await getToken();
       return new MediaService().encryptAndUpload(
         file,
@@ -364,6 +368,10 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       );
     },
     prepareMedia: prepareQueuedChatReel,
+    releaseUpload: async (uploadId: string, why: string) => {
+      const { MediaService } = await import('$lib/media');
+      await new MediaService().releaseResumableUpload(uploadId, getToken, why);
+    },
   };
 }
 
@@ -376,13 +384,18 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
 async function prepareQueuedChatReel(
   media: NonNullable<import('$lib/db').OutboxEntry['media']>,
   opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
-): Promise<import('$lib/utils/chat/outbox').PreparedOutboxMedia> {
-  const [{ MediaService }, { prepareVideoForUpload, isVideoPrepareError }, { UploadAbortedError }] =
-    await Promise.all([
-      import('$lib/media'),
-      import('$lib/video/prepareVideoForUpload'),
-      import('$lib/utils/uploadXhr'),
-    ]);
+): Promise<PreparedOutboxMedia> {
+  const [
+    { MediaService },
+    { prepareVideoForUpload, isVideoPrepareError },
+    { UploadAbortedError },
+    { videoPrepareFailureMessage, isUnpreparableFault },
+  ] = await Promise.all([
+    import('$lib/media'),
+    import('$lib/video/prepareVideoForUpload'),
+    import('$lib/utils/uploadXhr'),
+    import('$lib/video/videoPrepareMessages'),
+  ]);
   const raw = media.fileBytes ?? new Uint8Array(0);
   const source = new File([raw.buffer as ArrayBuffer], media.fileName ?? 'take', {
     type: media.mimeType,
@@ -405,6 +418,14 @@ async function prepareQueuedChatReel(
   } catch (e) {
     if (isVideoPrepareError(e) && e.fault === 'aborted') {
       throw new UploadAbortedError(opts.signal.reason);
+    }
+    // A FACT OF THE TAKE OR THE ENGINE, classified here at the throw by its typed fault: failed for
+    // good with the composer's own sentence for it, never a retry that is refused the same way.
+    if (isVideoPrepareError(e) && isUnpreparableFault(e.fault)) {
+      throw new OutboxPrepareRefusedError(
+        videoPrepareFailureMessage(e) ?? m.video_prepare_failed(),
+        e
+      );
     }
     throw e;
   }

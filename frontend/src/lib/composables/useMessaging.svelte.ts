@@ -71,11 +71,7 @@ import {
 import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
-import {
-  chatReelDeclaration,
-  chatReelPendingDeclaration,
-  isChatReelTake,
-} from '$lib/reels/chatReelWriter';
+import { chatReelPendingDeclaration, isChatReelTake } from '$lib/reels/chatReelWriter';
 import { capturePosterOf } from '$lib/reels/capturePoster';
 import {
   applyEditToBody,
@@ -1470,14 +1466,10 @@ export function useMessaging() {
             // (the optimistic message shows a skeleton + pending clock until then).
             const type = mediaTypeFromMime(entry.file.type);
             // A chat reel's declaration, made at the send so its 30 days count from it. Empty for
-            // anything else: an ordinary attachment is encoded exactly as before.
-            // A RAW take (RC-5) declares its intent and expiry now and its LENGTH once the outbox has
+            // anything else: an ordinary attachment is encoded exactly as before. The take is RAW
+            // (RC-5): its intent and expiry are declared now, its LENGTH once the outbox has
             // prepared it - the encoder is what measures it.
-            const reelDeclaration = entry.prepareRaw
-              ? chatReelPendingDeclaration(sentAt)
-              : entry.reelDurationMs
-                ? chatReelDeclaration(entry.reelDurationMs / 1000, sentAt)
-                : {};
+            const reelDeclaration = entry.prepareRaw ? chatReelPendingDeclaration(sentAt) : {};
             const placeholder = serializeEnvelope(
               mkMediaEnvelope(
                 {
@@ -1741,18 +1733,6 @@ export function useMessaging() {
         const placeholder = await placeholderForImageFile(entry.file);
         if (placeholder) entry = { ...entry, placeholder };
       }
-      if (entry.reelDurationMs) {
-        // The tile's ThumbHash comes from the take's first picture, the one the camera kept.
-        const poster = capturePosterOf(file);
-        if (poster) {
-          const { placeholderForImageFile } = await import('$lib/utils/mediaPlaceholder');
-          const placeholder = await placeholderForImageFile(
-            new File([poster], 'poster.jpg', { type: poster.type })
-          );
-          if (placeholder) entry = { ...entry, placeholder };
-        }
-        ctx.log(`[MEDIA] a chat reel of ${entry.reelDurationMs} ms staged`);
-      }
       readyFiles.push(entry);
     }
     return readyFiles;
@@ -1788,16 +1768,7 @@ export function useMessaging() {
         `[MEDIA] video prepared: ${(prepared.sourceBytes / 1024 / 1024).toFixed(1)} Mo -> ` +
           `${(prepared.outputBytes / 1024 / 1024).toFixed(1)} Mo, ${prepared.width}x${prepared.height}`
       );
-      return {
-        file: prepared.file,
-        width: prepared.width,
-        height: prepared.height,
-        // The take is prepared into a NEW file: the chat camera's mark follows it here, with the
-        // prepared length, or a reel would be sent as an ordinary video.
-        ...(isChatReelTake(file)
-          ? { reelDurationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)) }
-          : {}),
-      };
+      return { file: prepared.file, width: prepared.width, height: prepared.height };
     } catch (e) {
       if (!isVideoPrepareError(e)) throw e;
       const message = videoPrepareFailureMessage(e);

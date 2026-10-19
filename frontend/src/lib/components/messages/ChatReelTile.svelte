@@ -12,7 +12,7 @@
    * sender's expiry hint has passed it is a TOMBSTONE: the same box, no blurred ghost of the video,
    * and the age only (no "N days left" chip). The server's 410 remains the truth for an early loss.
    */
-  import { CircleAlert, Play, Trash2, Video as VideoIcon, VideoOff } from '@lucide/svelte';
+  import { CircleAlert, Play, Trash2, Video as VideoIcon, VideoOff, X } from '@lucide/svelte';
   import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
   import type { MediaRef } from '$lib/media';
   import { formatVideoTime } from '$lib/utils/videoPlayback';
@@ -81,8 +81,8 @@
   fallbackAspect={9 / 16}
   placeholder={expired ? undefined : mediaRef.placeholder}
   class="group/media max-w-full {bleed ? 'w-68' : 'w-56 rounded-3xl'} {expired
-    ? 'bg-black/10 dark:bg-white/10'
-    : 'bg-black/30'}"
+    ? 'bg-cn-scrim/10 dark:bg-text-main/10'
+    : 'bg-cn-scrim/30'}"
 >
   {#if expired}
     <!-- The tombstone is not a control: nothing opens, there is nothing left to open. -->
@@ -103,7 +103,7 @@
       data-reel-tile-pending
     >
       {#if uploadFailed || orphan}
-        <CircleAlert size={22} class="text-red-500" />
+        <CircleAlert size={22} class="text-red-err" />
         <p class="text-2xs leading-tight font-semibold">
           {uploadFailed ? m.upload_failed_label() : m.media_orphan_label()}
         </p>
@@ -123,11 +123,27 @@
         {/if}
       {:else if upload}
         <UploadAction view={upload} onCancel={onCancelUpload} onRetry={onRetryUpload} />
-        <p class="text-2xs rounded-full bg-black/50 px-2 py-0.5 leading-tight font-semibold">
+        <p class="text-2xs bg-cn-scrim/50 rounded-full px-2 py-0.5 leading-tight font-semibold">
           {uploadCaption(upload, mediaRef.size)}
         </p>
       {:else}
+        <!-- Queued with no transfer running yet (a lane busy, a relaunch not restarted): still the
+             sender's to withdraw, so the cancel is offered here too, never only once bytes move. -->
         <VideoIcon size={32} class="animate-pulse opacity-40" />
+        {#if onCancelUpload}
+          <button
+            type="button"
+            onclick={(e) => {
+              e.stopPropagation();
+              onCancelUpload();
+            }}
+            aria-label={m.upload_cancel_label()}
+            title={m.upload_cancel_label()}
+            class="ui-icon-button bg-cn-scrim/50 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-current"
+          >
+            <X size={18} strokeWidth={2.5} />
+          </button>
+        {/if}
       {/if}
     </div>
   {:else}
@@ -139,20 +155,20 @@
       }}
       onpointerdown={(e) => e.stopPropagation()}
       aria-label={label}
-      class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-inset"
+      class="focus-visible:ring-cn-yellow absolute inset-0 flex flex-col items-center justify-center gap-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-inset"
       data-reel-tile
     >
       <span
-        class="flex h-14 w-14 items-center justify-center rounded-full bg-black/50 transition-transform duration-300 md:group-hover/media:scale-110"
+        class="bg-cn-scrim/50 flex h-14 w-14 items-center justify-center rounded-full transition-transform duration-300 md:group-hover/media:scale-110"
       >
         <Play size={26} strokeWidth={2.25} fill="currentColor" />
       </span>
-      <span class="rounded-full bg-black/50 px-3 py-1 text-xs font-semibold">
+      <span class="bg-cn-scrim/50 rounded-full px-3 py-1 text-xs font-semibold">
         {m.reel_chat_tile_tap()}
       </span>
       {#if duration}
         <span
-          class="absolute right-2.5 bottom-2.5 rounded-full bg-black/50 px-2 py-0.5 text-xs font-semibold tabular-nums"
+          class="bg-cn-scrim/50 absolute right-2.5 bottom-2.5 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
         >
           {duration}
         </span>

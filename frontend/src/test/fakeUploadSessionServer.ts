@@ -9,11 +9,17 @@
 import { expect } from 'vitest';
 import { REEL_UPLOAD_PART_BYTES, type ResumableUploadPort } from '$lib/utils/resumableUpload';
 import { hexEncode } from '$lib/mediaCrypto';
-import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
+import {
+  UploadAbortedError,
+  UploadNetworkError,
+  type XhrUploadOptions,
+} from '$lib/utils/uploadXhr';
 
 export type Fault =
   /** No answer, and the server never saw the request (the link died before it left). */
   | 'drop'
+  /** As `drop`, thrown the way the XHR transport throws it (`UploadNetworkError`): counted by the outbox. */
+  | 'reset'
   /** The server handled it, and the answer was lost on the way back. */
   | 'lose-answer'
   /** The process was killed with the request in flight, before it reached the server: no answer, ever. */
@@ -21,7 +27,9 @@ export type Fault =
   /** The server handled it, and the process was killed before the answer arrived: no answer, ever. */
   | 'hang-after'
   /** The server answered this status without handling the request. */
-  | number;
+  | number
+  /** Something IN FRONT of the server (a proxy, the WAF) answered this status with an HTML page. */
+  | { edge: number };
 
 interface FakeSession {
   owner: string;
@@ -61,7 +69,14 @@ export class FakeSessionServer {
         const n = this.sent.filter((r) => r.method === method && r.path === path).length;
         const fault = this.fault(method, path, n);
         if (fault === 'drop') throw new TypeError('Failed to fetch');
+        if (fault === 'reset') throw new UploadNetworkError(path);
         if (fault === 'hang') return this.hung(transport);
+        if (typeof fault === 'object') {
+          return new Response('<html><body>Not Found</body></html>', {
+            status: fault.edge,
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }
         if (typeof fault === 'number') {
           return new Response(JSON.stringify({ message: 'injected' }), {
             status: fault,

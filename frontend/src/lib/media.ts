@@ -167,14 +167,9 @@ export interface PendingMediaFile {
   /** Set only by the voice recorder's own send path - see {@link MediaRef.voiceNote}. */
   voiceNote?: boolean;
   /**
-   * Set when the chat camera filmed this video as a CanaReel (`chatReelWriter.ts`): its length in
-   * milliseconds. The send turns it into the declaration (`intent`, `durationMs`, `expiresAtMs`).
-   */
-  reelDurationMs?: number;
-  /**
-   * The file is the chat camera's RAW take, queued at once and prepared by the outbox inside its
-   * upload task (reels-in-chat RC-5) - its length is known only once prepared. Exclusive with
-   * `reelDurationMs`, which a take prepared in the foreground carries.
+   * The file is the chat camera's RAW take (a CanaReel, `chatReelWriter.ts`), queued at once and
+   * prepared by the outbox inside its upload task (reels-in-chat RC-5) - its length is known only
+   * once prepared. The send declares the intent and the expiry from it.
    */
   prepareRaw?: 'chat-reel';
 }
@@ -222,6 +217,7 @@ import {
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { fetchWithAnswerDeadline } from '$lib/utils/uploadDeadline';
 import {
+  releaseUploadSession,
   uploadResumable,
   type ResumableUploadPort,
   type ResumableUploadState,
@@ -946,12 +942,15 @@ export class MediaService {
    * hold are sent, so a cut - or a kill, once `resume.persist` has recorded the session - costs at
    * most one part again. See `uploadResumable` for the protocol and the nonce-reuse guard.
    *
+   * @param plaintext The prepared bytes as the outbox holds them - NOT copied into a `File` first:
+   *               parts are sealed from this view one at a time, so the file is in memory once.
    * @param token  Read before EVERY request, so a long upload over a weak link never sends a token
    *               that expired since it began (`fetchUpload` still renews once on a 401).
    * @param resume The state a previous attempt recorded, and where to record this one's.
    */
   async uploadResumably(
-    file: File,
+    plaintext: Uint8Array,
+    file: { mimeType: string; fileName?: string },
     token: () => Promise<string>,
     dimensions: Partial<ImageDimensions> | undefined,
     retentionClass: MediaRetentionClass,
@@ -962,10 +961,47 @@ export class MediaService {
     transport?: XhrUploadOptions
   ): Promise<MediaRef> {
     console.debug(
-      `[media] uploadResumably: ${file.type || 'unknown'}, ${file.size} bytes, ${resume.state?.uploadId ? `resuming ${resume.state.uploadId}` : 'new session'}`
+      `[media] uploadResumably: ${file.mimeType || 'unknown'}, ${plaintext.byteLength} bytes, ${resume.state?.uploadId ? `resuming ${resume.state.uploadId}` : 'new session'}`
     );
+    const done = await uploadResumable({
+      plaintext,
+      retentionClass,
+      state: resume.state,
+      persist: resume.persist,
+      port: this.uploadSessionPort(token),
+      transport,
+      log: appendLog,
+    });
+    const width =
+      dimensions?.width && dimensions.width > 0 ? Math.round(dimensions.width) : undefined;
+    const height =
+      dimensions?.height && dimensions.height > 0 ? Math.round(dimensions.height) : undefined;
+    return {
+      type: file.mimeType.startsWith('video/') ? 'video' : 'file',
+      mediaId: done.mediaId,
+      key: done.keyHex,
+      iv: done.ivHex,
+      mimeType: file.mimeType,
+      size: plaintext.byteLength,
+      fileName: file.fileName,
+      ...(width && height ? { width, height } : {}),
+      encoding: done.encoding,
+    };
+  }
+
+  /**
+   * Releases a resumable session the member withdrew (`DELETE /api/media/upload/session/:id`), so
+   * its staged parts and its slot among the owner's open sessions are not held for the server's
+   * 24 h sweep. Best effort, logged, never throws ({@link releaseUploadSession}).
+   */
+  releaseResumableUpload(uploadId: string, token: () => Promise<string>, why: string) {
+    return releaseUploadSession(this.uploadSessionPort(token), uploadId, why, appendLog);
+  }
+
+  /** How a resumable session's requests reach media-service: one `fetchUpload` per request. */
+  private uploadSessionPort(token: () => Promise<string>): ResumableUploadPort {
     const base = `${this.baseUrl}/api/media/upload/session`;
-    const port: ResumableUploadPort = {
+    return {
       request: async (method, path, body, partTransport) =>
         fetchUpload(
           `${base}${path}`,
@@ -981,30 +1017,6 @@ export class MediaService {
           await token(),
           partTransport
         ),
-    };
-    const done = await uploadResumable({
-      plaintext: new Uint8Array(await file.arrayBuffer()),
-      retentionClass,
-      state: resume.state,
-      persist: resume.persist,
-      port,
-      transport,
-      log: appendLog,
-    });
-    const width =
-      dimensions?.width && dimensions.width > 0 ? Math.round(dimensions.width) : undefined;
-    const height =
-      dimensions?.height && dimensions.height > 0 ? Math.round(dimensions.height) : undefined;
-    return {
-      type: file.type.startsWith('video/') ? 'video' : 'file',
-      mediaId: done.mediaId,
-      key: done.keyHex,
-      iv: done.ivHex,
-      mimeType: file.type,
-      size: file.size,
-      fileName: file.name,
-      ...(width && height ? { width, height } : {}),
-      encoding: done.encoding,
     };
   }
 
