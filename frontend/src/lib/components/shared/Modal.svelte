@@ -253,7 +253,7 @@
         ? 'z-(--z-critical)'
         : inViewer
           ? 'z-(--z-viewer-dialog)'
-        : 'z-(--z-modal)'} flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
+          : 'z-(--z-modal)'} flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
         ? 'modal-phone-full'
         : ''}"
       onclick={handleBackdropClick}

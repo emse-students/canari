@@ -31,6 +31,7 @@ import {
 import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
 import { publishFailureMessage } from '$lib/posts/publishFailure';
 import { withCommentCountDelta, type CommentChange } from '$lib/posts/commentChange';
+import { PostListeners } from '$lib/posts/postListeners';
 import { Log } from '$lib/utils/Log';
 import { m } from '$lib/paraglide/messages';
 
@@ -61,38 +62,22 @@ export type CommentOutcome = 'sent' | 'refused' | 'failed';
 
 type CommentsListener = (change: CommentChange, from: object) => void;
 /** Surfaces listening for a thread written elsewhere, by post id. */
-// eslint-disable-next-line svelte/prefer-svelte-reactivity -- a registry of callbacks, never rendered
-const listeners = new Map<string, Set<CommentsListener>>();
+const listeners = new PostListeners<[change: CommentChange, from: object]>(
+  'post-comments',
+  'comments'
+);
 
 /**
  * Tells every surface showing `postId` a write made on another one (`from`, which its own
  * listener ignores). A listener that throws is logged and does not stop the others.
  */
 export function publishPostComments(postId: string, change: CommentChange, from: object): void {
-  for (const listener of listeners.get(postId) ?? []) {
-    try {
-      listener(change, from);
-    } catch (err) {
-      console.error(`[post-comments] a surface failed to take the comments of ${postId}`, err);
-    }
-  }
+  listeners.publish(postId, change, from);
 }
 
 /** Listens for {@link publishPostComments} on `postId`. Returns the unsubscribe. */
 export function onPostComments(postId: string, listener: CommentsListener): () => void {
-  let set = listeners.get(postId);
-  if (!set) {
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a registry of callbacks, never rendered
-    set = new Set();
-    listeners.set(postId, set);
-  }
-  set.add(listener);
-  return () => {
-    const current = listeners.get(postId);
-    if (!current) return;
-    current.delete(listener);
-    if (current.size === 0) listeners.delete(postId);
-  };
+  return listeners.on(postId, listener);
 }
 
 /** The comments of `post` with `id` replaced by `row` (or removed when `row` is null). */
