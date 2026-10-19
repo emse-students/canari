@@ -169,6 +169,7 @@ export class PostsController {
       promo: query.promo,
       formation: query.formation?.trim() || undefined,
       kind: query.kind,
+      singlePhotos: query.singlePhotos === true,
     });
   }
 

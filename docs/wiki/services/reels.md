@@ -90,6 +90,17 @@ Every post row - feed, search, `GET /api/posts/:id`, the notification link - now
 feed*). The full-screen viewer asks for `kind=reel` and pages with `limit`/`offset` like the feed.
 Every filter the feed has applies (blocked authors, moderation-hidden, promo gate, service account).
 
+**`singlePhotos=true` (with `kind=reel`, 2026-10-19)** adds the posts whose ONLY content is one
+picture - the photo pages of the CanaReels viewer ([client half](../frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)).
+The clause is `SINGLE_PHOTO_POST_SQL` (`posts/single-photo-sql.ts`): exactly one element in
+`images`, typed `image` (or untyped with an `image/` mime type, a legacy row), no poll, no form, no
+attached form. It is OR-ed into the reel filter of every feed arm, behind the same visibility rules,
+and keys its own cache entry. Without `kind=reel` it means nothing. **An older server strips the
+unknown parameter** (`ValidationPipe({ whitelist: true })`) and answers reels only, so a newer
+client against it simply shows no photo pages. Pinned photo posts sort first, as pinned posts do
+in the feed. Pinned by `posts.service.reels.spec.ts` (every arm) and
+`single-photo-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
+
 **An expired reel is never served**, whether the worker has reached it or not: a reel whose
 `expiresAt` has passed is excluded from every read (`GET /api/posts/:id` answers `404`). The client
 needs no clock to decide that - it simply never receives one. The row and its blob go at the next

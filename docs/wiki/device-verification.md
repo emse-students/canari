@@ -1269,6 +1269,30 @@ account, the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[
    choosing "Anonyme" in the step: the composer shows the edited text and "Anonyme"; publishing it
    lands on the "Tout" feed.
 
+## RR. The CanaReels rail, the comments sheet and the photo pages - owed on BOTH phones
+
+**Proves** [the rail, the sheet and the photo pages](frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)
+on real fingers and a real keyboard: every gate here is jsdom, which has no layout, no keyboard
+and no WebView. **Precondition:** a build carrying `ReelActionRail` against a social-service
+carrying `singlePhotos`, a bench account, at least two reels and one post of exactly one photo;
+the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-viewer]` and
+`[reel-comments]` lines.
+
+1. **The rail**: open CanaReels. Expect heart, comments and send bottom-right over every page, with
+   their numbers, clear of the caption and of the player's bar, at 1x and at 200 % text.
+2. **The heart**: tap it - filled, the count +1, one `heart ... like` line; tap again - empty, a
+   `take back` line. A double tap on the rail likes nothing more (no burst at the finger).
+3. **The sheet**: tap comments - the sheet rises over the lower ~60 %, the reel keeps playing above.
+   Type a comment: the keyboard does not cover the field. Send it; close the viewer - the card shows
+   it. Close the sheet each way: drag the grabber down, Back (the viewer stays open), tap the reel
+   above, the X. A swipe over the list scrolls it and does not close the sheet.
+4. **Report a comment from the sheet**: the reason dialog is drawn ABOVE the viewer.
+5. **Send**: a toast says the link is copied; the clipboard holds `/posts/<id>`.
+6. **Photo pages**: the one-photo post appears among the reels as a page, its picture whole, no
+   player bar, the caption lower, the same rail. A post of two photos never appears.
+7. **VoiceOver / TalkBack**: the rail reads "J'aime, N réactions", "Commentaires, N commentaires",
+   "Partager"; the sheet takes the focus on open and gives it back to the comments button on close.
+
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 
 Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11

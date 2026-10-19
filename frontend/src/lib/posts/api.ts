@@ -273,6 +273,12 @@ export interface ListPostsOptions {
   formation?: string;
   /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
   kind?: PostKind;
+  /**
+   * With `kind: 'reel'`: the posts whose only content is ONE picture come too - the CanaReels list
+   * (`reels/fullScreenPost.ts`). A server older than it drops the unknown parameter and answers
+   * the reels alone.
+   */
+  singlePhotos?: boolean;
 }
 
 export interface ScheduledPost {
@@ -346,6 +352,7 @@ function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
+  if (options.singlePhotos) p.set('singlePhotos', 'true');
   const s = p.toString();
   return s ? `?${s}` : '';
 }

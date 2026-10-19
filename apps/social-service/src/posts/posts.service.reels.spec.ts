@@ -24,6 +24,7 @@ import type { PostNotificationsService } from './post-notifications.service';
 import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { PushService } from '../push/push.service';
 import { DAY_MS, REEL_RETENTION_DAYS } from './reel.constants';
+import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const BLOB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -154,6 +155,32 @@ describe('reads exclude a reel past its month', () => {
       expect(feedQuery?.sql).toContain(`posts.kind <> 'reel' OR posts."expiresAt" > NOW()`);
       expect(feedQuery?.sql).toContain(`posts.kind = 'reel'`);
     }
+  });
+
+  it('with singlePhotos, reels AND one-picture posts, in EVERY feed arm', async () => {
+    for (const feed of ['all', 'associations', 'custom'] as const) {
+      const { service, queries } = makeService({});
+      await service.listPosts({
+        limit: 10,
+        offset: 0,
+        feed,
+        kind: 'reel',
+        singlePhotos: true,
+        viewerUserId: 'alice',
+      });
+      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
+      expect(sql).toContain(`posts.kind = 'reel' OR (posts.kind = 'post' AND`);
+      expect(sql).toContain(SINGLE_PHOTO_POST_SQL);
+      // The visibility of a post is still asked of every row the arm serves.
+      expect(sql).toContain(`posts.kind <> 'reel' OR posts."expiresAt" > NOW()`);
+    }
+  });
+
+  it('singlePhotos means nothing without kind=reel', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({ limit: 10, offset: 0, feed: 'all', singlePhotos: true });
+    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(sql).not.toContain(SINGLE_PHOTO_POST_SQL);
   });
 
   it('absent kind means both: no kind clause, but the live-reel clause stays', async () => {

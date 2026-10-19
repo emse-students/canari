@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
@@ -339,6 +339,16 @@ export class ListPostsQueryDto {
   @IsOptional()
   @IsIn(['post', 'reel'])
   kind?: 'post' | 'reel';
+
+  /**
+   * With `kind=reel`: the posts whose only content is ONE picture come too - the CanaReels list
+   * (user, 2026-10-19: photos in CanaReels, as on Instagram). Ignored without `kind=reel`. A query
+   * string carries text, so only the literal `true` turns it on.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  singlePhotos?: boolean;
 
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()

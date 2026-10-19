@@ -7,6 +7,7 @@
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
+  import { insideViewerLayer } from '$lib/utils/viewerLayer';
   import {
     pushHistoryOverlay,
     closeHistoryOverlayFromUi,
@@ -109,6 +110,9 @@
     children,
     footer,
   }: Props = $props();
+
+  /** Opened from inside a full-screen viewer, the modal rung is under it (`utils/viewerLayer.ts`). */
+  const inViewer = insideViewerLayer();
 
   const backdropAlignClass = $derived(
     fullViewport || topAnchored || phoneFullScreen
@@ -247,6 +251,8 @@
       data-keyboard-aware-overlay
       class="fixed {layer === 'critical'
         ? 'z-(--z-critical)'
+        : inViewer
+          ? 'z-(--z-viewer-dialog)'
         : 'z-(--z-modal)'} flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
         ? 'modal-phone-full'
         : ''}"

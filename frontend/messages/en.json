@@ -3506,6 +3506,29 @@
   "reels_viewer_prev": "Previous CanaReel",
   "reels_viewer_next": "Next CanaReel",
   "reels_viewer_load_error": "The next CanaReels could not be loaded.",
+  "reels_rail_label": "CanaReel actions",
+  "reels_rail_like": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Like, {count} reaction",
+        "countPlural=other": "Like, {count} reactions"
+      }
+    }
+  ],
+  "reels_rail_comments": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Comments, {count} comment",
+        "countPlural=other": "Comments, {count} comments"
+      }
+    }
+  ],
+  "reels_comments_title": "Comments",
+  "reels_comments_close": "Close the comments",
   "reels_save": "Save to the gallery",
   "reels_save_done": "CanaReel saved to your gallery",
   "reels_save_denied": "Canari cannot reach your gallery: allow it in the phone's settings.",

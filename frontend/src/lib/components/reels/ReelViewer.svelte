@@ -11,10 +11,20 @@
    *
    * IT IS A HISTORY ENTRY (`bindHistoryOverlay`), so Android's Back closes it, and it covers the
    * screen (`coversScreen`), so the iOS native tab bar steps aside.
+   *
+   * THE RAIL AND THE COMMENTS SHEET (user, 2026-10-19, Instagram's Reels): each page of a post gets
+   * the heart, the comments and the send (`ReelActionRail`); the comments open over the playing
+   * reel (`ReelCommentsSheet`). A conversation's reel is not a post and gets neither - the rail is
+   * drawn only for a signed-in reader (`likerId`). A dialog opened from in here (a report, the GIF
+   * picker) is drawn above the viewer (`markViewerLayer`).
    */
   import { onMount } from 'svelte';
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
   import ReelSlide from './ReelSlide.svelte';
+  import ReelCommentsSheet from './ReelCommentsSheet.svelte';
+  import { markViewerLayer } from '$lib/utils/viewerLayer';
+  import { railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
+  import { sharePostLink } from '$lib/posts/sharePost';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
@@ -69,7 +79,10 @@
    * Touches on these belong to them: the player's bar seeks, a button is pressed, and an EXPANDED
    * caption scrolls its own text (`ReelSlide`) - a swipe there must not turn the reel.
    */
-  const NOT_A_GESTURE = 'button, [data-video-controls], [data-reel-caption-open]';
+  const NOT_A_GESTURE =
+    'button, [data-video-controls], [data-reel-caption-open], [data-reel-rail], [data-reel-comments]';
+
+  markViewerLayer();
 
   let reels = $state<PostEntity[]>([]);
   let index = $state(0);
@@ -166,6 +179,62 @@
       }
     );
     return true;
+  }
+
+  /**
+   * THE RAIL'S HEART (`reels/reelRail.ts`): it takes the reader's reaction back if they hold one,
+   * and gives "J'aime" if not - the card's toggle, on the card's path (`posts/postReaction.ts`):
+   * the same refusal before any request, the same request, the same failure sentence as a toast.
+   */
+  function toggleHeart(post: PostEntity) {
+    const me = likerId;
+    if (!me) return;
+    if (reactionRefusedLocally()) {
+      console.debug(`[reel-viewer] heart on ${post.id}: refused, the reader is muted`);
+      showToast(m.post_action_not_allowed(), 'error');
+      return;
+    }
+    const before = post.reactions ?? {};
+    const { type, wasReacted } = railHeartToggle(before, me);
+    console.debug(`[reel-viewer] heart on ${post.id}: ${wasReacted ? 'take back' : 'like'}`);
+    setReactions(post.id, toggledReactions(before, me, type).next);
+    sendPostReaction(post.id, type, wasReacted).then(
+      (reactions) => {
+        setReactions(post.id, reactions);
+        publishPostReactions(post.id, reactions);
+      },
+      (err: unknown) => {
+        console.warn(`[reel-viewer] the heart on ${post.id} was not recorded`, err);
+        setReactions(post.id, before);
+        showToast(publishFailureMessage(err, m.post_reaction_error()), 'error');
+      }
+    );
+  }
+
+  /** The post whose comments sheet is open, by id - the sheet follows the row, not an index. */
+  let commentsFor = $state<string | null>(null);
+  const commentsPost = $derived(
+    commentsFor ? (reels.find((r) => r.id === commentsFor) ?? null) : null
+  );
+
+  /** Replaces the loaded post `next.id` - a comment written in the sheet. */
+  function setPost(next: PostEntity) {
+    reels = reels.map((r) => (r.id === next.id ? next : r));
+  }
+
+  /** The rail's actions for one page, or none outside a signed-in reader's posts. */
+  function railFor(post: PostEntity): ReelRailActions | undefined {
+    const me = likerId;
+    if (!me) return undefined;
+    return {
+      readerId: me,
+      onHeart: () => toggleHeart(post),
+      onComments: () => {
+        console.debug(`[reel-viewer] comments opened on ${post.id}`);
+        commentsFor = post.id;
+      },
+      onSend: () => void sharePostLink(post.id),
+    };
   }
 
   function reducedMotion(): boolean {
@@ -328,7 +397,8 @@
 
   /** The keyboard: up/down page, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
-    if (e.defaultPrevented || settling) return;
+    // The comments sheet has the keyboard while it is open: its field types, and Escape closes IT.
+    if (e.defaultPrevented || settling || commentsFor) return;
     if (scrollOpenCaption(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'PageDown') {
       e.preventDefault();
@@ -372,6 +442,7 @@
               active={i === index}
               preload={i === index + 1}
               onLike={likerId ? () => likeReel(reels[i]) : undefined}
+              rail={railFor(reels[i])}
             />
           </div>
         {/each}
@@ -417,5 +488,15 @@
         <ChevronDown size={22} strokeWidth={2.5} />
       </button>
     </div>
+
+    {#if commentsPost && likerId}
+      <ReelCommentsSheet
+        post={commentsPost}
+        currentUserId={likerId}
+        {authToken}
+        onChange={setPost}
+        onClose={() => (commentsFor = null)}
+      />
+    {/if}
   </div>
 </div>
