@@ -13,7 +13,8 @@ import type {
   LivePlayerDeps,
   LiveSourceBufferLike,
 } from '$lib/live/livePlayer';
-import type { LiveListItem } from '$lib/live/types';
+import type { LiveChatDeps } from '$lib/live/liveChat';
+import type { LiveLimits, LiveListItem, LiveManifest } from '$lib/live/types';
 import { videoSound } from '$lib/stores/videoSound.svelte';
 import { m } from '$lib/paraglide/messages';
 
@@ -25,11 +26,17 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: async () => 'Ada',
 }));
 vi.mock('$lib/associations/api', () => ({ getAssociation: vi.fn() }));
+vi.mock('$lib/stores/userState.svelte', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/userState.svelte')>()),
+  currentUserId: () => 'a'.repeat(64),
+}));
 vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
   ...(await orig<typeof import('$lib/utils/historyOverlayStack')>()),
   pushHistoryOverlay: vi.fn(),
   closeHistoryOverlayFromUi: vi.fn((close: () => void) => close()),
 }));
+
+const LIMITS = { chatMessageMaxChars: 300, reactionTapsPerWindow: 10 } as LiveLimits;
 
 const LIVE: LiveListItem = {
   id: '0b6f3a2e-9c1d-4e5f-8a7b-1c2d3e4f5a6b',
@@ -75,6 +82,7 @@ let timers: (() => void)[];
 let liveErrors: unknown[];
 let manifestErrors: unknown[];
 let deps: Partial<LivePlayerDeps>;
+let chatDeps: Partial<LiveChatDeps>;
 const mounted: Record<string, unknown>[] = [];
 
 beforeEach(() => {
@@ -82,6 +90,14 @@ beforeEach(() => {
   liveErrors = [];
   manifestErrors = [];
   videoSound.setMuted(true);
+  chatDeps = {
+    postMessage: vi.fn(),
+    postReactions: vi.fn(async (_l: string, burstId: string) => ({ burstId, seq: 1 })),
+    hideMessage: vi.fn(),
+    seal: vi.fn(async (_k, _l, _c, _a, text: string) => `S:${text}`),
+    open: vi.fn(async (_k, _l, _c, _a, sealed: string) => sealed.slice(2)),
+    newId: () => '00000000-0000-4000-8000-000000000001',
+  };
   // happy-dom's media element does not play; the player only needs play() to answer.
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
@@ -150,7 +166,12 @@ async function render() {
   const onClose = vi.fn();
   const target = document.createElement('div');
   document.body.appendChild(target);
-  mounted.push(mount(LiveViewer, { target, props: { live: LIVE, onClose, deps } }));
+  mounted.push(
+    mount(LiveViewer, {
+      target,
+      props: { live: LIVE, onClose, deps, chatDeps, fetchLimits: async () => LIMITS },
+    })
+  );
   await settle();
   return { onClose };
 }
@@ -253,5 +274,67 @@ describe('LiveViewer', () => {
     expect(onClose).toHaveBeenCalled();
     unmount(mounted.pop()!);
     expect(deps.leaveSeat).toHaveBeenCalledWith(LIVE.id);
+  });
+
+  it('the chat rides the manifest poll: a line drawn, a tap sent as one burst at the next tick, gone on the end', async () => {
+    const plain = deps.fetchManifest!;
+    deps.fetchManifest = vi.fn(async (...args: Parameters<typeof plain>) => {
+      const manifest: LiveManifest = await plain(...args);
+      const first = args[2]?.messagesAfter === undefined;
+      return {
+        ...manifest,
+        chat: {
+          messages: first
+            ? [
+                {
+                  id: 'm-1',
+                  seq: 1,
+                  authorId: 'b'.repeat(64),
+                  clientId: '33333333-3333-4333-8333-333333333333',
+                  sealed: 'S:bonjour',
+                  createdAt: '2026-10-19T10:01:00.000Z',
+                },
+              ]
+            : [],
+          messagesCursor: 1,
+          reactions: [],
+          reactionsCursor: 0,
+        },
+      };
+    });
+    await render();
+    expect(vi.mocked(deps.fetchManifest).mock.calls[0][2]).toEqual({
+      messagesAfter: undefined,
+      reactionsAfter: undefined,
+    });
+    expect(document.querySelector('[data-live-chat-line="m-1"]')?.textContent).toContain('bonjour');
+    expect(document.querySelector('[data-live-chat-composer]')).not.toBeNull();
+
+    document.querySelector<HTMLButtonElement>('[data-live-reaction="canari"]')!.click();
+    document.querySelector<HTMLButtonElement>('[data-live-reaction="canari"]')!.click();
+    expect(chatDeps.postReactions).not.toHaveBeenCalled();
+    timers.shift()!();
+    await settle();
+    expect(chatDeps.postReactions).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(chatDeps.postReactions!).mock.calls[0][2]).toEqual({ canari: 2 });
+    expect(vi.mocked(deps.fetchManifest).mock.calls.at(-1)![2]).toEqual({
+      messagesAfter: 1,
+      reactionsAfter: 0,
+    });
+
+    manifestErrors.push(refusal('ended', 410));
+    timers.shift()!();
+    await settle();
+    expect(document.querySelector('[data-live-chat]')).toBeNull();
+  });
+
+  it('the chat toggle hides the lines and keeps the reactions', async () => {
+    await render();
+    const toggle = document.querySelector<HTMLButtonElement>('[data-live-chat-toggle]')!;
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    toggle.click();
+    flushSync();
+    expect(document.querySelector('[data-live-chat]')).toBeNull();
+    expect(document.querySelector('[data-live-reactions]')).not.toBeNull();
   });
 });

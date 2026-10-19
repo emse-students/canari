@@ -4157,5 +4157,28 @@
         "countPlural=other": "{count} coupures précédentes"
       }
     }
-  ]
+  ],
+  "live_chat_label": "Discussion du live",
+  "live_chat_placeholder": "Écrire un message...",
+  "live_chat_input_label": "Message au live",
+  "live_chat_send": "Envoyer",
+  "live_chat_pending": "Envoi...",
+  "live_chat_you": "Vous",
+  "live_chat_someone": "Un membre",
+  "live_chat_retry": "Renvoyer",
+  "live_chat_discard": "Supprimer",
+  "live_chat_hide": "Masquer ce message",
+  "live_chat_toggle_show": "Afficher la discussion",
+  "live_chat_toggle_hide": "Masquer la discussion",
+  "live_chat_failed_empty": "Écrivez d'abord quelque chose.",
+  "live_chat_failed_too_long": "Trop long : {max} caractères au plus.",
+  "live_chat_failed_too_fast": "Doucement : attendez quelques secondes.",
+  "live_chat_failed_network": "Non envoyé : pas de connexion.",
+  "live_chat_failed_muted": "Vous ne pouvez pas écrire pour le moment.",
+  "live_chat_failed_removed": "Vous avez été retiré de ce live.",
+  "live_chat_failed_ended": "Le live est terminé.",
+  "live_chat_failed_refused": "Non envoyé.",
+  "live_reactions_label": "Réactions",
+  "live_reaction_send": "Envoyer {name}",
+  "live_reaction_count": "{name} : {count}"
 }

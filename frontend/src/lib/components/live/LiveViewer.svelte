@@ -17,16 +17,35 @@
    */
   import { onMount, tick } from 'svelte';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import { LoaderCircle, Radio, Volume2, VolumeX, X } from '@lucide/svelte';
+  import {
+    LoaderCircle,
+    MessageCircle,
+    MessageCircleOff,
+    Radio,
+    Volume2,
+    VolumeX,
+    X,
+  } from '@lucide/svelte';
   import LiveBadge from './LiveBadge.svelte';
   import LiveIdentity from './LiveIdentity.svelte';
   import LiveReportControl from './LiveReportControl.svelte';
+  import LiveChatPanel from './LiveChatPanel.svelte';
+  import LiveReactionBar from './LiveReactionBar.svelte';
+  import LiveReactionsLayer from './LiveReactionsLayer.svelte';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { followVideoSound } from '$lib/actions/playWhileVisible';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
+  import { fetchLiveLimits } from '$lib/live/api';
+  import {
+    LiveChatSession,
+    type LiveChatDeps,
+    type LiveChatLine,
+    type LiveChatSendFailure,
+  } from '$lib/live/liveChat';
+  import { currentUserId } from '$lib/stores/userState.svelte';
   import { formatLiveElapsed } from '$lib/live/openLives';
   import { isTerminalLiveState, type LiveViewerState } from '$lib/live/liveViewerState';
   import type { LiveListItem } from '$lib/live/types';
@@ -37,9 +56,13 @@
     onClose: () => void;
     /** Replaces the player's outside world - for tests; the browser's otherwise. */
     deps?: Partial<LivePlayerDeps>;
+    /** Replaces the chat's outside world - for tests. */
+    chatDeps?: Partial<LiveChatDeps>;
+    /** Replaces the limits fetch - for tests. */
+    fetchLimits?: typeof fetchLiveLimits;
   }
 
-  let { live, onClose, deps }: Props = $props();
+  let { live, onClose, deps, chatDeps, fetchLimits = fetchLiveLimits }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */
@@ -49,6 +72,13 @@
   let elapsedMs = $state<number | null>(null);
   let name = $state('');
   let player: LivePlayer | null = null;
+  // The live chat (WP-L6): one session riding the player's poll, drawn by the panel and the layer.
+  let chat: LiveChatSession | null = null;
+  let chatLines = $state<readonly LiveChatLine[]>([]);
+  let chatMaxChars = $state<number | null>(null);
+  let chatCanWrite = $state(false);
+  let chatOpen = $state(true);
+  let reactions = $state<LiveReactionsLayer | null>(null);
 
   const overlay = bindHistoryOverlay(
     () => true,
@@ -112,6 +142,27 @@
     const el = video;
     if (!el) return;
     console.debug(`[LIVE] viewer opened on ${live.id}`);
+    const session = new LiveChatSession({
+      liveId: live.id,
+      me: currentUserId(),
+      onChange: (lines) => {
+        chatLines = lines;
+        chatCanWrite = session.canWrite;
+      },
+      onFloat: (kind, count) => reactions?.add(kind, count),
+      deps: chatDeps,
+    });
+    chat = session;
+    fetchLimits().then(
+      (limits) => {
+        session.setLimits(limits);
+        chatMaxChars = session.messageMaxChars;
+      },
+      (e: unknown) => {
+        // The composer still works; a message past the bound is the server's 400, said on its line.
+        console.warn(`[LIVE_CHAT] the live limits could not be read (${String(e)})`);
+      }
+    );
     const p = new LivePlayer({
       liveId: live.id,
       video: videoFor(el),
@@ -120,6 +171,14 @@
       },
       onElapsed: (ms) => {
         elapsedMs = ms;
+      },
+      chat: {
+        onKey: (key) => {
+          session.onKey(key);
+          chatCanWrite = session.canWrite;
+        },
+        query: () => session.query(),
+        receive: (block) => void session.receive(block),
       },
       deps: { attach: attachTo(el), ...deps },
     });
@@ -137,8 +196,16 @@
       window.removeEventListener('pageshow', onPageShow);
       p.stop();
       player = null;
+      session.stop();
+      chat = null;
     };
   });
+
+  /** The composer's send; the session exists from mount to teardown, the panel only between. */
+  function sendChat(text: string): Promise<LiveChatSendFailure | null> {
+    if (!chat) return Promise.resolve('refused');
+    return chat.send(text);
+  }
 
   function toggleSound() {
     videoSound.toggle();
@@ -238,7 +305,45 @@
           <Volume2 size={22} />
         {/if}
       </button>
+      <button
+        type="button"
+        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+        title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+        aria-pressed={chatOpen}
+        onclick={() => (chatOpen = !chatOpen)}
+        data-live-chat-toggle
+      >
+        {#if chatOpen}
+          <MessageCircle size={22} />
+        {:else}
+          <MessageCircleOff size={22} />
+        {/if}
+      </button>
     </div>
+
+    <LiveReactionsLayer bind:this={reactions} />
+
+    {#if !terminal}
+      <div
+        class="pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t from-black/50 to-transparent p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
+      >
+        <div class="min-w-0 flex-1">
+          {#if chatOpen}
+            <LiveChatPanel
+              lines={chatLines}
+              canWrite={chatCanWrite}
+              maxChars={chatMaxChars}
+              send={sendChat}
+              retry={(id) => void chat?.retry(id)}
+              discard={(id) => chat?.discard(id)}
+              hide={(id) => void chat?.hide(id)}
+            />
+          {/if}
+        </div>
+        <LiveReactionBar onTap={(kind) => chat?.tap(kind)} />
+      </div>
+    {/if}
 
     <div class="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
       <div class="pointer-events-auto max-w-sm text-center" role="status" aria-live="polite">

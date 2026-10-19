@@ -240,8 +240,8 @@ not end-to-end encryption against the server, and no page may call it that.
 
 WP-L5's VIEWER half, **behind `LIVE_ENABLED` (`frontend/src/lib/features.ts`): on for dev builds only**,
 by the same `deployEnvironment() === 'development'` test as `CALLS_ENABLED`. A production binary asks
-`/api/lives` nothing and draws nothing; the server answers `404` there anyway. Not built: the
-chat and reactions (WP-L6), moderation (WP-L8).
+`/api/lives` nothing and draws nothing; the server answers `404` there anyway. The
+chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); not built: moderation (WP-L8).
 
 | File | What it holds |
 | --- | --- |
@@ -479,6 +479,66 @@ ten minutes on air watched, background and return, past the window, a network cu
 unplugged, the screen kept on; and whether the iOS app's WKWebView honours
 `videoKeyFrameIntervalDuration` (WP-L1 read Safari only).
 
+## The chat and the floating reactions, client half (WP-L6, 2026-10-19, draft)
+
+The server half and its sixteen decisions (C1-C16) are on
+[lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6); this is what the client
+does with them. Behind `LIVE_ENABLED` like the rest: the chat exists only inside the viewer.
+
+| File | What it holds |
+| --- | --- |
+| `lib/live/liveChatCrypto.ts` | The chat seal (C12): `sealLiveChatMessage` / `openLiveChatMessage`, AES-256-GCM under the live key, AAD `canari-live-chat-v1` 0x00 + live id + clientId (16 raw bytes each) + author id; `LiveChatOpenError` (`malformed`, `unauthentic`, `not-text`). A label distinct from the segments', so a segment never opens as a message |
+| `lib/live/liveChat.ts` | `LiveChatSession` (no timer of its own), `liveChatSendFailure` (the ONE classification of a failed send), `LiveBroadcasterChatPoller` (the broadcaster's one loop), the five kinds mapped onto the post reactions' emoji and names |
+| `lib/live/livePlayer.ts` | The `chat` hook (`LivePlayerChatHook`): `onKey` at the open, `query()` before each manifest request, `receive(block)` after it |
+| `components/live/LiveChatPanel.svelte` | The lines (a `log` live region) and the composer; a hide button per line for a moderator |
+| `components/live/LiveReactionBar.svelte`, `LiveReactionsLayer.svelte` | The five buttons; the rising floats, at most 24 on screen |
+| `components/live/LiveBroadcasterChat.svelte` | The broadcaster's view with hide buttons, a HOOK for the broadcaster screen of #2115 (unmerged when written): mounted with the live's id and key |
+
+**One loop, not two (C3).** The viewer's chat rides the player's manifest poll: the player asks the
+session for its cursors before each request (`?chat=1&messagesAfter=&reactionsAfter=`) and hands it
+the answer's `chat` block. The session owns no timer, so a stopped player (closed, ended, removed,
+full) stops the chat with it; the catch-up's second fetch of the newest window asks no chat, so one
+tick never answers a cursor twice. A broadcaster plays nothing, so `LiveBroadcasterChatPoller` is ITS
+one loop: the same request once a tick, stopped for good by the server's `410` (or the `404` of a
+live deleted at its end), any other failure retried after the player's backoff.
+
+**Order and idempotence.** Blocks are applied in arrival order (a promise chain), because opening is
+asynchronous and a cursor must never move past a message not yet drawn; a block that arrives before
+the key is NOT applied and its cursor does not move (logged at `error`: a wiring defect). A message
+that does not open is dropped and logged, never drawn. My message is drawn at once as `pending` and
+replaced by the server's copy matched on its `clientId`, whichever of the answer and the poll comes
+first - never drawn twice. A failed send keeps its line with its reason; **a retry re-sends the SAME
+sealed string**, because the server's repeat is idempotent for identical bytes only and a re-seal
+(a fresh IV) would be a `409 LIVE_MESSAGE_CONFLICT`. Retry is offered for `too-fast` and `network`
+only; `muted`, `removed`, `ended`, `refused` offer discard. The list keeps the newest 200 lines.
+
+**Reactions.** A tap floats at once and is summed; the sums leave as ONE burst on the next `query()`
+(one per tick at most, C7), fire and forget - a refused or lost burst is dropped and logged, never
+retried (a moment). Past the server's `reactionTapsPerWindow` a tap still floats but is not sent,
+since the server would refuse the whole burst. Everyone else's sums float with their counts as each
+poll brings them; the server already left my own out (C10). **The layer draws at most 24 floats**
+and drops the rest; **with reduced motion nothing moves** - one static counter per kind, the total
+since the viewer opened.
+
+**What a line is (C11, C15).** Text, through `EmojiText` (Noto SVG for each emoji): never markup,
+never a link, never a mention. The composer's `maxlength` is the server's `chatMessageMaxChars`
+(read once from `GET /api/lives/limits`), and `send` refuses an empty or longer message before
+sealing. Every string is Paraglide (`live_chat_*`, `live_reaction*`).
+
+**Hiding (C14).** The broadcaster's view (`LiveBroadcasterChat`) has a hide button on every line;
+the line goes at once on the server's answer, and every viewer's next poll carries the tombstone.
+**Staff hiding from the VIEWER is not drawn**: the client does not know who holds `isContentModerator`,
+and the route already answers staff - the viewer's `canModerate` is the open hook for WP-L8.
+
+**Logs** (`[LIVE_CHAT]`, `LiveChat`): entry and decisions at `debug`, a dropped message, a dropped
+burst and a failed send at `warn`, a wiring defect at `error`; lengths and ids only, never the key,
+a text or a ciphertext.
+
+**Verified by tests only** (`liveChatCrypto.test.ts` against real WebCrypto, `liveChat.test.ts`,
+`livePlayer.test.ts`'s chat block, `api.test.ts`'s chat routes, `LiveChatPanel.svelte.test.ts`,
+`LiveViewer.svelte.test.ts`'s chat cases). **Owed**: the crypto review of the chat seal, and a phone
+reading of the panel, the bar and the floats on the Mi 9T and the iPhone 12 ([backlog](../../backlog.md)).
+
 ## Open questions for the user, each with a recommendation
 
 Answered on 2026-10-15 and moved to the decisions table: viewer cap (L8), simultaneous lives (L9),
@@ -510,7 +570,7 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 | **WP-L3** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
 | **WP-L4** (**built 2026-10-19, server and nginx, [lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4); cap 24 viewers from the measured ~90 Mb/s, [viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)**) | **Segments served by nginx**: an unauthenticated route for sealed live segments answered by Canari's own nginx (cache or static files), never reaching media-service or the database; the per-host viewer cap from WP-L1's uplink figure, refused with a clear "live full" screen. | `infrastructure/local/Dockerfile.frontend` (Canari's nginx), `GET /api/media/public/:id` as the model | a second viewer's fetch is served without a media-service log line; viewer N+1 past the cap is refused |
 | **WP-L5** (**viewer and broadcaster built 2026-10-19 behind `LIVE_ENABLED`, dev builds only, [viewer](#the-viewer-as-built-2026-10-19), [broadcaster](#the-broadcaster-as-built); the phone readings are owed**) | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
-| **WP-L6** (**server half built 2026-10-19, draft; the 16 decisions C1-C16 are on [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6): PostgreSQL rows erased with the live, carried by the manifest poll, NOT the WS gateway**) | **Live comments and floating reactions ARE wanted (user, 2026-10-19, D5)**, encrypted with the live key, ephemeral. | the manifest poll (`lives.controller.ts`), the segment seal (`liveCrypto.ts`) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
+| **WP-L6** (**server half and client half built 2026-10-19, two stacked drafts - the client is [here](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); the 16 decisions C1-C16 are on [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6): PostgreSQL rows erased with the live, carried by the manifest poll, NOT the WS gateway**) | **Live comments and floating reactions ARE wanted (user, 2026-10-19, D5)**, encrypted with the live key, ephemeral. | the manifest poll (`lives.controller.ts`), the segment seal (`liveCrypto.ts`) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
 | **WP-L7** (**server half built 2026-10-19, [lives](../../services/lives.md#the-push-to-the-followers-wp-l7-server-half); a tap lands on the feed (`appRouteForDeepLink` owns the `live` host), where the LIVE card is (dev builds only, [viewer](#the-viewer-as-built-2026-10-19)); the live's own viewer route is still owed**) | **Announcement**: LIVE card at the top of the feed; push to followers (L10), sent at the first stored segment. | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
 | **WP-L8** (**RELEASE BLOCKER before any stable, D3; moderation works like posts, D6: reuse the posts code path, no parallel mechanism. SERVER HALF BUILT 2026-10-19** ([lives](../../services/lives.md#moderation-wp-l8-server-half)): a live reported through `content_reports`, the staff cut `POST /api/lives/:id/cut` (410 `endReason: 'cut'`), the first-live rules acceptance recorded (L11), remove-viewer and blocks as built in WP-L2; **client half built 2026-10-19, the viewer's report control included** (cut screens, bell row, admin cut button: [the moderation client](#the-moderation-client-wp-l8s-client-half-2026-10-19); the broadcaster's rules sheet is built), chat hiding inside WP-L6 by the contract written there, and the strike policy and cut retention, the user's) | **Moderation**: hide message, remove viewer, block, report a live through `content_reports` like a post, staff remote cut (the live equivalent of "delete the post"). | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
 | **WP-L9** (Q2 answers precede any store submission, D3; **the answers and what is missing: [store-ugc-answers](../../store-ugc-answers.md)**) | **Store review**: UGC answers (Q2), the review video for live, then a pre-release to testers. | [mobile](../mobile.md) submission notes | accepted builds on both stores |

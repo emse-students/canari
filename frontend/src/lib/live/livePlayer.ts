@@ -52,7 +52,7 @@ import {
   liveRetryDelayMs,
   type LiveViewerState,
 } from './liveViewerState';
-import type { LiveManifest, LiveManifestSegment } from './types';
+import type { LiveChatBlock, LiveChatQuery, LiveManifest, LiveManifestSegment } from './types';
 
 /** The `buffered` ranges of a source buffer, as MSE gives them. */
 export interface LiveTimeRanges {
@@ -106,6 +106,16 @@ export interface LivePlayerDeps {
   schedule(fn: () => void, ms: number): () => void;
 }
 
+/**
+ * What the player asks of a chat riding its poll (`LiveChatSession` implements it). `onKey` hands it
+ * the live key the open fetched; `query` and `receive` frame each manifest request.
+ */
+export interface LivePlayerChatHook {
+  onKey(keyHex: string): void;
+  query(): LiveChatQuery;
+  receive(block: LiveChatBlock | undefined): void;
+}
+
 /** Options of a {@link LivePlayer}. */
 export interface LivePlayerOptions {
   liveId: string;
@@ -114,6 +124,11 @@ export interface LivePlayerOptions {
   onState(state: LiveViewerState): void;
   /** Told the live's age at each manifest (the database's clock on both ends), in ms. */
   onElapsed?(ms: number): void;
+  /**
+   * The live chat (WP-L6), riding THIS poll: asked for its cursors before each manifest request and
+   * handed the answer's `chat` block - one request a tick, no second timer. Absent: no chat asked.
+   */
+  chat?: LivePlayerChatHook;
   deps?: Partial<LivePlayerDeps>;
 }
 
@@ -310,6 +325,20 @@ export class LivePlayer {
 
   // ------------------------------------------------------------------------------------------
 
+  /**
+   * The manifest, with the chat's cursors when a chat rides the poll. The catch-up's second fetch
+   * (the newest window) asks no chat: one chat block a tick, so a cursor is never answered twice.
+   */
+  private manifestWithChat(from?: number): Promise<LiveManifest> {
+    const chat = this.opts.chat;
+    if (!chat) {
+      return from === undefined
+        ? this.deps.fetchManifest(this.liveId)
+        : this.deps.fetchManifest(this.liveId, from);
+    }
+    return this.deps.fetchManifest(this.liveId, from, chat.query());
+  }
+
   private resetRun(): void {
     this.keyHex = null;
     this.lastInit = null;
@@ -439,6 +468,7 @@ export class LivePlayer {
         }
         this.seated = true;
         this.keyHex = live.key;
+        this.opts.chat?.onKey(live.key);
         this.startedAtMs = Date.parse(live.startedAt);
         this.retryAttempt = 0;
       }
@@ -475,10 +505,11 @@ export class LivePlayer {
 
   /** Step 3: the newest window, the init once, the newest segment, the edge. */
   private async join(gen: number): Promise<void> {
-    const manifest = await this.deps.fetchManifest(this.liveId);
+    const manifest = await this.manifestWithChat();
     if (!this.alive(gen)) return;
     this.retryAttempt = 0;
     this.readClock(manifest);
+    this.opts.chat?.receive(manifest.chat);
     const newest = manifest.segments.at(-1);
     if (!newest) {
       // On air, no segment stored yet: ask again at the poll's pace.
@@ -501,10 +532,11 @@ export class LivePlayer {
   /** Step 4: one manifest poll and what it brought. */
   private async poll(gen: number): Promise<void> {
     try {
-      const manifest = await this.deps.fetchManifest(this.liveId, this.last + 1);
+      const manifest = await this.manifestWithChat(this.last + 1);
       if (!this.alive(gen)) return;
       this.retryAttempt = 0;
       this.readClock(manifest);
+      this.opts.chat?.receive(manifest.chat);
       let fresh = manifest.segments.filter((s) => s.index > this.last);
       let edge = this.stalled;
       // How far behind the broadcaster this viewer is, from the server's own count. `?from=` answers
