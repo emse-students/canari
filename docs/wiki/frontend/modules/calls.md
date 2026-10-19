@@ -164,7 +164,7 @@ session found the worker counting a failed decrypt as `decryptOk` (fixed: `decry
 | A room is bound to its group; a token for it is refused for another group, an unknown room and after the ring window | `apps/chat-delivery-service/src/services/calls.service.spec.ts` |
 | The client speaks that protocol (Join p2p, roles, offers only as initiator, answers as polite, refuses without the transform, rebuilds on replacement), honours the ring window on both sides, and writes no missed call for a call that never rang | `CallService.p2p.test.ts` (fakes of WebSocket, RTCPeerConnection, worker) |
 | Two Chrome 155 contexts connect DIRECT (`host/udp->host/udp`) through the real relay, the REAL `encryption.worker.ts` encrypts and decrypts Opus, and the callee hears the caller's 440 Hz tone (RMS 0.71, peak 445 Hz) | a scratch page mirroring `CallService`'s negotiation, by hand, chrome-devtools MCP; a wrong key yields only `decryptError` and no decoded sample |
-| The signalling socket survives an idle call | the same run: one socket held 3.6 h with only the 25 s keepalive pings (local, no proxy in front) |
+| The signalling socket survives an idle call | the same run: one socket held 3.6 h with only the keepalive pings, then every 25 s - every 10 s, and answered, since 2026-10-19 (local, no proxy in front) |
 
 **NOT verified - owed:** the real app end to end (no local estate was up); a TURN-relayed call;
 anything on the Mi 9T or the iPhone (Android System WebView's and
@@ -197,22 +197,90 @@ and no ICE restart. A transport failure is not an answer, so it no longer ends a
 
 | Event | Client (`CallService.ts`) | Server ([call-service](../../services/call-service.md#peer-to-peer-mode-2026-10-17)) |
 |---|---|---|
-| this device's signalling socket drops after `Joined` | `onSignallingLost`: re-open on the shared ladder (`utils/reconnectBackoff.ts`, the chat gateway's own 1/2/4/8/16 s), `Join` with the seat's `resume_token`; each attempt has ONE deadline for open AND `Joined` (`CALL_SIGNALLING_RESUME_TIMEOUT_MS`, 5 s - a resource bound: a socket stuck CONNECTING on a black-holed network costs one attempt, not the ladder) | the seat stays ABSENT for `CALL_P2P_SEAT_GRACE_SEC` (60 s); the partner gets `PeerAway` |
+| this device's signalling socket drops after `Joined` | `onSignallingLost`: re-open on the shared ladder CAPPED at 4 s (`cappedReconnectDelayMs` in `utils/reconnectBackoff.ts`: 1, 2, 4, 4, 4... s), `Join` with the seat's `resume_token`; each attempt has ONE deadline for open AND `Joined` (`CALL_SIGNALLING_RESUME_TIMEOUT_MS`, 5 s - a resource bound: a socket stuck CONNECTING on a black-holed network costs one attempt, not the ladder) | the seat stays ABSENT for `CALL_P2P_SEAT_GRACE_SEC` (60 s) from when the server HOLDS the socket dead - a write error, or two keepalive pings unanswered (`keepalive-lost`, at most 30 s); the partner gets `PeerAway` |
 | resume joined | `signalling resumed on attempt N`; the next `Joined` brings a fresh token | the seat is taken back IN PLACE (same roles); both get `PeerReady { resumed: true }` |
-| `PeerReady { resumed: true }` | keep the peer connection; the INITIATOR calls `pc.restartIce()` if ICE is `disconnected`/`failed` (its offer goes out on `negotiationneeded`) | - |
-| ICE `disconnected` (first restart of a loss) or `failed` after it had connected, signalling up | initiator restarts ICE; the POLITE side sends `IceRestartRequest` (it cannot offer), on its OWN 3-per-loss budget, and the initiator restarts even if its own path looks connected (one restart in flight absorbs a second ask) | relays `IceRestartRequest` verbatim |
-| `PeerAway` | the call goes on, `reconnecting = true`; ICE restart deferred until `PeerReady { resumed }` | - |
-| **ends the call** | `PeerLeft`; a resume `Refused` (`call-over`: seat expired or partner hung up); the MLS `call_hangup`; **5 resume attempts** (`CALL_SIGNALLING_RESUME_ATTEMPTS`) or **3 ICE restarts or restart requests** since the path last connected (`CALL_ICE_RESTART_ATTEMPTS`) spent | Close frame = hangup -> `PeerLeft` at once; grace spent -> `PeerLeft` |
+| `PeerReady { resumed: true }` | keep the peer connection; `restartIfMediaDidNotSurvive` reads EVIDENCE: either state machine down, no inbound audio packet since the break (`getStats`), or - on the initiator - an offer still pending (its answer died with a socket). Any of them -> the initiator sends an explicit restart offer, the polite side a request | - |
+| ICE `disconnected` (first restart of a loss), or ICE OR `connectionState` `failed`, after it had connected, signalling up | initiator: `createOffer({ iceRestart: true })`, sent at once, after rolling back any pending offer; the POLITE side sends `IceRestartRequest` (it cannot offer), on its OWN 3-per-loss budget, and the initiator restarts even if its own path looks connected. ONE offer (or request) per pairing is in flight: its answer comes over a live relay, or the pair breaks and a new pairing starts | relays `IceRestartRequest` verbatim |
+| `PeerAway` | the call goes on, `reconnecting = true`; a new pairing (an offer sent before is never waited on again); ICE restart deferred until `PeerReady { resumed }` | - |
+| **ends the call** | `PeerLeft`; a resume `Refused` (`call-over`: seat expired or partner hung up); the MLS `call_hangup`; **15 resume attempts** (`CALL_SIGNALLING_RESUME_ATTEMPTS`, the last starting at +55 s) or **3 ICE restarts or restart requests** since the path last connected (`CALL_ICE_RESTART_ATTEMPTS`) spent | Close frame = hangup -> `PeerLeft` at once; grace spent -> `PeerLeft` |
 | ICE `failed` on a path that NEVER connected | ends the call, as before: there is nothing to restore | - |
 
 A relay without the resume protocol (no `resume_token` in `Joined`) still ends the call on a drop,
 saying so: `... and the relay gave no resume token`.
 
-**The two clocks are not one.** Five attempts of at most 5 s on a 1/2/4/8/16 s ladder end within
-56 s of the CLIENT's loss, and the seat grace is 60 s from when the SERVER sees the socket die - two
-different moments, and a session refresh before an attempt is not bounded here. So the server MAY
-give up first; the late resume is then answered `call-over` and the call ends, the outcome the
-budget would have reached anyway.
+**The two clocks are not one.** On a network that refuses at once, the 15th attempt starts 55 s
+after the CLIENT's loss; the seat grace is 60 s from when the SERVER holds the socket dead (up to
+30 s later). On a black-holed network each attempt runs its 5 s deadline, and a session refresh
+before an attempt is not bounded here, so the server MAY give up first; the late resume is then
+answered `call-over` and the call ends, the outcome the budget would have reached anyway. **The
+partner of a device that never comes back ends at most ~90 s after the loss** (keepalive detection
+<= 30 s, then the 60 s grace, then `PeerLeft`) - bounded by the server's answer, never by a client
+timer, and its own socket dropping hands it to its own attempt budget.
+
+### What the `1.3.1-alpha.2` bench reading found (2026-10-19), and the fix
+
+[Readings](../../device-readings-2026-10.md): 6 s outage `PASS`; 14 s `FAIL` (resumed only at
+attempt 5, +32 s, a restart request went out, then nothing - both phones on "Reconnexion..." with no
+audio); 90 s `FAIL` (the Mi 9T ended itself at +30 s, the iPhone sat on "Reconnexion..." for 100+ s).
+Read from the Mi 9T's exported log and the code, three causes, one chain:
+
+1. **The server never saw the Mi 9T's socket die.** Wi-Fi off leaves a HALF-OPEN socket: the 25 s
+   ping write landed in the kernel buffer and "succeeded", so no `PeerAway`, no grace, no `PeerLeft`
+   - the 90 s ghost. **Fix (server):** the keepalive is 10 s and the peer must ANSWER it - two
+   pings in a row with no frame of any kind back and the socket ends `keepalive-lost`, which keeps
+   the seat for a resume like any network failure
+   ([call-service](../../services/call-service.md#peer-to-peer-mode-2026-10-17)).
+2. **The iPhone's restart offer went into that dead socket and was lost**, leaving its peer
+   connection in `have-local-offer`. Every later `pc.restartIce()` then fired no
+   `negotiationneeded` (it only does from `stable`), so nothing was ever offered again; and the Mi
+   9T's `IceRestartRequest` after its resume was dropped because "a restart was in flight" - a
+   restart of a pairing that no longer existed. **Fix (client):** the restart is an EXPLICIT
+   `createOffer({ iceRestart: true })`, sent at once, after rolling back any pending offer; and an
+   offer or request belongs to the PAIRING it was sent in (`pairEpoch`, bumped on every signalling
+   break and every `PeerReady`), so one from an earlier pairing never blocks a new one.
+   **Two invariants keep an answer with ITS offer** (review of #2148): every negotiation step -
+   the relay's frames (all but `Joined` and `Refused`, which settle the socket itself and are
+   handled at once), `negotiationneeded`, an ICE restart offer - runs on ONE queue
+   (`signalQueue`), so no offer is rolled back or made while an answer is half applied; and every
+   offer carries a NUMBER (`seq`, inside the `sdp` string the relay already forwards verbatim -
+   `call-service` is unchanged) that the answerer echoes. An answer to any offer but the pending one
+   is dropped, named. A client older than the numbering sends none, and its answers are matched by
+   signaling state alone, as before (calls are dev-only, so both phones carry it after one deploy).
+   An engine that cannot CREATE the restart offer ends the call with
+   `ICE restart offer could not be made: <error>` - a retry would meet the same connection in the
+   same state.
+3. **The resume itself was late:** the uncapped ladder put attempt 5 at +31 s. **Fix:** capped at
+   4 s, 15 attempts (the 14 s outage resumes at +15 s).
+
+Also read in that log: Android Chromium reached `connectionState=failed` while
+`iceConnectionState` stayed `disconnected`, so `connectionState=failed` now triggers the restart
+too (`mediaPathDown` reads both). And the resume decides from the inbound audio packet count
+across the outage, not from a state that may still read `connected` on a path carrying nothing.
+
+**The restart budget counts per media LOSS, across pairings** (`CALL_ICE_RESTART_ATTEMPTS`). An
+offer that went into a dead socket costs one restart - the price of a bound a flapping peer cannot
+escape, since the keepalive can now break a pairing every 20-30 s. It is CHARGED when the offer is
+actually made (`sendIceRestartOffer`, after its pairing check; the polite side's request when it is
+sent), so a restart dropped in the queue costs nothing. It is REFUNDED on evidence, not only on a
+state transition: when ICE connects, when a resume finds MORE packets after the outage than before
+it (unreadable stats are no evidence, and refund nothing), or when
+the inbound packet count at a new break is above the count taken when the last restart's
+negotiation completed (`packetsAtRestart`) - a restart that worked while ICE never left `connected`
+(review of #2148: otherwise a long call ended at its third blip). **Every queued step belongs to
+the call it was queued for**: a step whose call is over (another call, idle, or the 1.5 s ended
+summary) is dropped - SILENTLY when it is still that call's ended summary (an ordinary hangup
+delivers both the MLS hangup and `PeerLeft`: expected), logged once per call
+(`... dropped - the call is now ...`) when it met a different call or none - and `failCall`
+on a call already over does nothing - so a late `PeerLeft` or restart can never end the next call
+or print a second "terminal failure". Two edges are recorded, not built (F6, F7 in
+[backlog](../../backlog.md)). The resume ladder has no jitter: two clients that lost the same
+network at the same moment retry in step (P3 in [backlog](../../backlog.md)).
+
+**A BEHAVIOUR CHANGE: A SUSPENDED APP NOW LEAVES THE CALL.** The keepalive's Pong comes from a
+RUNNING process. An iOS or Android app the OS froze mid-call (screen locked, sent to the
+background) answers nothing, so it is held dead 20-30 s in and its partner gets `PeerLeft` ~60 s
+later; before, its half-open socket kept the seat "present" indefinitely. Whether the bench phones
+stay running in a call is owed: CALL-L1 row 11.
 
 **AN ACCEPTED COST: AN APP KILLED BY THE OS NOW LOOKS LIKE A BLIP.** A killed app sends no Close
 frame and no MLS hangup, so the server cannot tell it from a network loss: the partner sees
@@ -231,9 +299,17 @@ peer=away|present ice=<state>)`. **No component reads it in this change (#2137)*
 survives the blip with nothing on screen saying so.
 
 **Pinned by** `CallService.p2p.test.ts` ("a network blip does not end the call": fake socket, fake
-peer connection, fake `setTimeout` stepped through the ladder, no real sleep) and
-`apps/call-service` (`src/p2p.rs` seat tests, `tests/p2p_signalling.rs` drop / resume / Close /
-grace-0 expiry / stolen token over the real binary). **Owed on a phone:** check CALL-L1 steps 8-10
+peer connection with rollback and inbound packet stats, fake `setTimeout` stepped through the
+ladder, no real sleep - including "the bench outages of 2026-10-19, replayed": 6 s, 14 s on each
+phone, 90 s on each phone) and `apps/call-service` (`src/p2p.rs` seat tests,
+`tests/p2p_signalling.rs` drop / resume / Close / grace-0 expiry / stolen token / a silent
+half-open peer held dead by the keepalive, and its resume, over the real binary). **What the
+fakes cannot prove:** the ORDER in which a real engine completes a rollback, an offer and a
+remote answer. The async fake (`latency`) reproduces ONE interleaving class - an operation started
+beside another overlapping it - and a mutation check shows it catches both a step run beside the
+queue and a missing offer-number check; WebKit's and Chromium's real ordering is read only on a
+phone. **Owed on a phone:** check CALL-L1 row 0 first (an idle call proves the Pong crosses the
+tunnel and nginx), then steps 8-11
 ([device-verification](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)).
 Not handled here: a phone that changes network WITHOUT its socket dropping relies on ICE alone
 (`disconnected` -> one restart); cellular handover is unmeasured (no SIM on the bench).

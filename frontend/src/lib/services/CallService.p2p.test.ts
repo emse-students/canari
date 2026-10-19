@@ -6,9 +6,10 @@ import {
   CALL_ICE_RESTART_ATTEMPTS,
   CALL_ICE_TRANSPORT_POLICY,
   CALL_SIGNALLING_RESUME_ATTEMPTS,
+  CALL_SIGNALLING_RESUME_MAX_DELAY_MS,
   CALL_SIGNALLING_RESUME_TIMEOUT_MS,
 } from './CallService';
-import { reconnectDelayMs } from '$lib/utils/reconnectBackoff';
+import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
 import { m } from '$lib/paraglide/messages';
 import { flushMacrotask } from '../../test/flush';
@@ -187,12 +188,39 @@ class FakePeerConnection {
   closed = false;
   iceConnectionState: RTCIceConnectionState = 'new';
   connectionState: RTCPeerConnectionState = 'new';
+  /** ICE restart offers created (`createOffer({ iceRestart: true })`). */
   restarts = 0;
-  restartIce() {
-    this.restarts += 1;
+  /** Unanswered local offers rolled back. */
+  rollbacks = 0;
+  /** Inbound audio RTP packets the stats report; `null` = no inbound stream yet. */
+  inboundPackets: number | null = null;
+  /**
+   * Microtask turns each description operation takes before it completes. 0 = at once; above it,
+   * an operation started beside another one INTERLEAVES with it, as the browser's can - the only
+   * way a race between the frame chain and an offer made outside it shows up here.
+   */
+  latency = 0;
+  /** When set, `createOffer` refuses with it (an engine that cannot make the offer). */
+  offerError: Error | null = null;
+  private async lag() {
+    for (let i = 0; i < this.latency; i++) await Promise.resolve();
+  }
+  async createOffer(options?: RTCOfferOptions) {
+    await this.lag();
+    if (this.offerError) throw this.offerError;
+    if (options?.iceRestart) this.restarts += 1;
+    return { type: 'offer' as const, sdp: `v=0 offer${options?.iceRestart ? ' ice-restart' : ''}` };
   }
   async getStats() {
-    return new Map();
+    const stats = new Map<string, unknown>();
+    if (this.inboundPackets !== null) {
+      stats.set('in-1', {
+        type: 'inbound-rtp',
+        kind: 'audio',
+        packetsReceived: this.inboundPackets,
+      });
+    }
+    return stats;
   }
   /** The ICE agent moves: the state, then its event, as the browser orders them. */
   setIce(state: RTCIceConnectionState) {
@@ -216,12 +244,31 @@ class FakePeerConnection {
   getTransceivers() {
     return this.senders.map((sender, i) => ({ sender, receiver: this.receivers[i] }));
   }
-  async setLocalDescription() {
+  async setLocalDescription(desc?: RTCSessionDescriptionInit) {
+    await this.lag();
+    if (desc?.type === 'rollback') {
+      if (this.signalingState !== 'have-local-offer')
+        throw new Error('InvalidStateError: rollback');
+      this.rollbacks += 1;
+      this.localDescription = null;
+      this.signalingState = 'stable';
+      return;
+    }
+    if (desc?.type === 'offer') {
+      this.localDescription = desc;
+      this.signalingState = 'have-local-offer';
+      return;
+    }
     const type = this.signalingState === 'have-remote-offer' ? 'answer' : 'offer';
     this.localDescription = { type, sdp: `v=0 ${type}` };
     this.signalingState = type === 'offer' ? 'have-local-offer' : 'stable';
   }
   async setRemoteDescription(sdp: RTCSessionDescriptionInit) {
+    await this.lag();
+    // As the browser: an answer applies only to an offer of ours that is pending.
+    if (sdp.type === 'answer' && this.signalingState !== 'have-local-offer') {
+      throw new Error(`InvalidStateError: answer in ${this.signalingState}`);
+    }
     this.remoteDescription = sdp;
     this.signalingState = sdp.type === 'offer' ? 'have-remote-offer' : 'stable';
   }
@@ -851,13 +898,29 @@ describe('a network blip does not end the call', () => {
     return { ws, pc };
   }
 
+  /** The delay before resume attempt `n` (1-based), on the call's CAPPED ladder. */
+  const resumeDelay = (n: number) =>
+    cappedReconnectDelayMs(n - 1, CALL_SIGNALLING_RESUME_MAX_DELAY_MS);
+
   /** Steps the ladder to resume attempt `n` (1-based) and returns the socket it opened. */
   async function resumeAttempt(n: number) {
     const before = FakeSocket.instances.length;
-    await vi.advanceTimersByTimeAsync(reconnectDelayMs(n - 1));
+    await vi.advanceTimersByTimeAsync(resumeDelay(n));
     await settle();
     expect(FakeSocket.instances).toHaveLength(before + 1);
     return FakeSocket.instances[before];
+  }
+
+  /** The other party's answer to this side's latest offer, through the relay. */
+  async function answer(ws: FakeSocket) {
+    ws.deliver({ type: 'Answer', sdp: JSON.stringify({ type: 'answer', sdp: 'v=0 answer' }) });
+    await settle();
+  }
+
+  /** Moves ICE and lets the restart it may trigger (an async offer) be sent. */
+  async function ice(pc: FakePeerConnection, state: RTCIceConnectionState) {
+    pc.setIce(state);
+    await settle();
   }
 
   it('resumes the seat with its token, keeps the peer connection, and the initiator restarts ICE', async () => {
@@ -868,7 +931,7 @@ describe('a network blip does not end the call', () => {
     expect(get(service.callState)).toBe('incall');
     expect(get(service.reconnecting)).toBe(true);
     // The media path goes down with the network; no restart while the relay cannot carry it.
-    pc.setIce('disconnected');
+    await ice(pc, 'disconnected');
     expect(pc.restarts).toBe(0);
 
     const ws2 = await resumeAttempt(1);
@@ -886,12 +949,12 @@ describe('a network blip does not end the call', () => {
     expect(FakePeerConnection.instances).toHaveLength(1);
     expect(pc.closed).toBe(false);
     expect(pc.restarts).toBe(1);
-    // The restart's offer goes out on the NEW socket.
-    await pc.onnegotiationneeded!();
+    // The restart's offer goes out at once, on the NEW socket.
     expect(ws2.framesOfType('Offer')).toHaveLength(1);
     expect(get(service.reconnecting)).toBe(true);
 
-    pc.setIce('connected');
+    await answer(ws2);
+    await ice(pc, 'connected');
     expect(get(service.reconnecting)).toBe(false);
     expect(get(service.callState)).toBe('incall');
 
@@ -902,7 +965,17 @@ describe('a network blip does not end the call', () => {
     expect(ws3.sent[0]).toMatchObject({ type: 'Join', room_token: 'resume-2' });
   });
 
-  it('retries a resume that fails in transport, on the shared ladder, and ends only when the attempt budget is spent', async () => {
+  it('caps the resume ladder at 4 s: a call cannot wait 8 or 16 s for a network that is back', () => {
+    const delays = Array.from({ length: CALL_SIGNALLING_RESUME_ATTEMPTS }, (_, i) =>
+      resumeDelay(i + 1)
+    );
+    expect(delays.slice(0, 5)).toEqual([1000, 2000, 4000, 4000, 4000]);
+    expect(Math.max(...delays)).toBe(CALL_SIGNALLING_RESUME_MAX_DELAY_MS);
+    // The last attempt still starts inside the relay's 60 s seat grace.
+    expect(delays.reduce((a, b) => a + b, 0)).toBeLessThan(60_000);
+  });
+
+  it('retries a resume that fails in transport, on the capped ladder, and ends only when the attempt budget is spent', async () => {
     const { showToast } = await import('$lib/stores/toast.svelte');
     vi.mocked(showToast).mockClear();
     const service = new CallService(fakeMls);
@@ -973,6 +1046,7 @@ describe('a network blip does not end the call', () => {
     ws.deliver({ type: 'PeerLeft' });
     await settle();
     expect(get(service.callState)).toBe('ended');
+    expect(get(service.reconnecting)).toBe(false);
   });
 
   it('defers the ICE restart while the other party is away, and makes it when it comes back', async () => {
@@ -981,42 +1055,62 @@ describe('a network blip does not end the call', () => {
 
     ws.deliver({ type: 'PeerAway' });
     await settle();
-    pc.setIce('failed');
+    await ice(pc, 'failed');
     expect(pc.restarts).toBe(0);
     expect(get(service.callState)).toBe('incall');
 
     ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
     await settle();
     expect(pc.restarts).toBe(1);
+    expect(ws.framesOfType('Offer')).toHaveLength(1);
     expect(FakePeerConnection.instances).toHaveLength(1);
   });
 
-  it('restarts ICE on a lost media path while signalling holds, and ends after the restart budget', async () => {
+  it('restarts ICE on a lost media path while signalling holds, one offer at a time, and ends after the restart budget', async () => {
     const service = new CallService(fakeMls);
-    const { pc } = await connectedCaller(service);
+    const { ws, pc } = await connectedCaller(service);
 
-    // `disconnected` triggers the first restart; each later one needs ICE to report `failed`.
-    pc.setIce('disconnected');
+    // `disconnected` triggers the first restart; each later one needs the path to report `failed`
+    // AFTER the previous offer was answered - one offer in flight, its answer a relay away.
+    await ice(pc, 'disconnected');
     expect(pc.restarts).toBe(1);
-    pc.setIce('disconnected');
+    await ice(pc, 'disconnected');
+    await ice(pc, 'failed');
     expect(pc.restarts).toBe(1);
     for (let n = 2; n <= CALL_ICE_RESTART_ATTEMPTS; n++) {
-      pc.setIce('failed');
+      await answer(ws);
+      await ice(pc, 'failed');
       expect(pc.restarts).toBe(n);
       expect(get(service.callState)).toBe('incall');
     }
-    pc.setIce('failed');
+    await answer(ws);
+    await ice(pc, 'failed');
     expect(pc.restarts).toBe(CALL_ICE_RESTART_ATTEMPTS);
     expect(get(service.callState)).toBe('ended');
   });
 
+  it('acts on connectionState=failed when ICE itself stays disconnected (Android Chromium)', async () => {
+    const service = new CallService(fakeMls);
+    const { ws, pc } = await connectedCaller(service);
+
+    await ice(pc, 'disconnected');
+    expect(pc.restarts).toBe(1);
+    await answer(ws);
+    pc.setConnection('failed');
+    await settle();
+    expect(pc.iceConnectionState).toBe('disconnected');
+    expect(pc.restarts).toBe(2);
+    expect(ws.framesOfType('Offer')).toHaveLength(2);
+  });
+
   it('a reconnected media path resets the restart budget', async () => {
     const service = new CallService(fakeMls);
-    const { pc } = await connectedCaller(service);
+    const { ws, pc } = await connectedCaller(service);
 
     for (let loss = 0; loss < CALL_ICE_RESTART_ATTEMPTS + 2; loss++) {
-      pc.setIce('failed');
-      pc.setIce('connected');
+      await ice(pc, 'failed');
+      await answer(ws);
+      await ice(pc, 'connected');
     }
     expect(get(service.callState)).toBe('incall');
     expect(pc.restarts).toBe(CALL_ICE_RESTART_ATTEMPTS + 2);
@@ -1047,25 +1141,38 @@ describe('a network blip does not end the call', () => {
     await settle();
     const pc = FakePeerConnection.instances[0];
     pc.setIce('connected');
+    pc.setConnection('connected');
     return { ws, pc };
   }
 
-  it('the polite side never restarts ICE itself: it ASKS the initiator, on its own budget', async () => {
+  /** The initiator's (restart) offer reaching the polite side. */
+  async function offer(ws: FakeSocket) {
+    ws.deliver({ type: 'Offer', sdp: JSON.stringify({ type: 'offer', sdp: 'v=0 ice-restart' }) });
+    await settle();
+  }
+
+  it('the polite side never restarts ICE itself: it ASKS the initiator, one request at a time, on its own budget', async () => {
     const service = new CallService(fakeMls);
     const { ws, pc } = await connectedCallee(service);
 
-    pc.setIce('disconnected');
+    await ice(pc, 'disconnected');
+    expect(ws.framesOfType('IceRestartRequest')).toHaveLength(1);
+    // Until the initiator's offer arrives, a second loss event asks nothing more.
+    await ice(pc, 'failed');
     expect(ws.framesOfType('IceRestartRequest')).toHaveLength(1);
     for (let n = 2; n <= CALL_ICE_RESTART_ATTEMPTS; n++) {
-      pc.setIce('failed');
+      await offer(ws);
+      await ice(pc, 'failed');
       expect(ws.framesOfType('IceRestartRequest')).toHaveLength(n);
       expect(get(service.callState)).toBe('incall');
     }
     expect(pc.restarts).toBe(0);
+    expect(ws.framesOfType('Offer')).toHaveLength(0);
     expect(get(service.reconnecting)).toBe(true);
 
     // The initiator never brought the path back: the polite side's budget ends the call.
-    pc.setIce('failed');
+    await offer(ws);
+    await ice(pc, 'failed');
     expect(ws.framesOfType('IceRestartRequest')).toHaveLength(CALL_ICE_RESTART_ATTEMPTS);
     expect(get(service.callState)).toBe('ended');
   });
@@ -1078,20 +1185,21 @@ describe('a network blip does not end the call', () => {
     await settle();
     expect(pc.restarts).toBe(1);
 
-    // Both sides saw the loss: a request arriving while a restart is in flight adds none.
+    // Both sides saw the loss: a request arriving while this pairing's offer is in flight adds none.
     ws.deliver({ type: 'IceRestartRequest' });
     await settle();
     expect(pc.restarts).toBe(1);
 
-    // The restart did not heal it: the next request is honoured, and the budget ends a loop.
-    pc.setIce('failed');
-    expect(pc.restarts).toBe(2);
+    // Answered, and still not healed: the next request is honoured, and the budget ends a loop.
+    await answer(ws);
     ws.deliver({ type: 'IceRestartRequest' });
     await settle();
     expect(pc.restarts).toBe(2);
-    pc.setIce('failed');
+    await answer(ws);
+    await ice(pc, 'failed');
     expect(pc.restarts).toBe(CALL_ICE_RESTART_ATTEMPTS);
-    pc.setIce('failed');
+    await answer(ws);
+    await ice(pc, 'failed');
     expect(get(service.callState)).toBe('ended');
   });
 
@@ -1134,9 +1242,368 @@ describe('a network blip does not end the call', () => {
     await settle();
     const pc = FakePeerConnection.instances[0];
 
-    pc.setIce('failed');
+    await ice(pc, 'failed');
 
     expect(pc.restarts).toBe(0);
     expect(['ended', 'idle']).toContain(get(service.callState));
+  });
+
+  /**
+   * The three outages of the 2026-10-19 bench reading of `1.3.1-alpha.2`, replayed. The Mi 9T is
+   * the POLITE callee whose Wi-Fi goes off; the iPhone is the INITIATOR, whose own socket never
+   * drops. Each side is driven alone, with the frames the relay sends it in that outage.
+   */
+  describe('the bench outages of 2026-10-19, replayed', () => {
+    /** Steps attempts `from..to`, each refused at once by a network that is still off. */
+    async function failAttempts(from: number, to: number) {
+      for (let n = from; n <= to; n++) {
+        const ws = await resumeAttempt(n);
+        ws.drop();
+        await settle();
+      }
+    }
+
+    it('6 s (PASS on alpha.2, kept): the media came back on its own, so nothing is restarted', async () => {
+      const service = new CallService(fakeMls);
+      const { pc } = await connectedCallee(service);
+      pc.inboundPackets = 300;
+
+      FakeSocket.instances[0].drop();
+      await ice(pc, 'disconnected');
+      await failAttempts(1, 2); // +1 s, +3 s: still off
+      // The network is back at +6 s: ICE heals on its own and audio flows again.
+      pc.inboundPackets = 420;
+      await ice(pc, 'connected');
+      const ws = await resumeAttempt(3); // +7 s
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-c' });
+      ws.deliver({ type: 'PeerReady', initiator: false, resumed: true });
+      await settle();
+
+      expect(ws.framesOfType('IceRestartRequest')).toHaveLength(0);
+      expect(get(service.reconnecting)).toBe(false);
+      expect(get(service.callState)).toBe('incall');
+    });
+
+    it('14 s, the Mi (polite): resumed at +15 s, finds no packet since the break, and ASKS for the restart that brings the audio back', async () => {
+      const service = new CallService(fakeMls);
+      const { pc } = await connectedCallee(service);
+      pc.inboundPackets = 300;
+
+      FakeSocket.instances[0].drop();
+      await ice(pc, 'disconnected');
+      pc.setConnection('failed');
+      await settle();
+      expect(get(service.callState)).toBe('incall');
+
+      await failAttempts(1, 4); // +1, +3, +7, +11 s
+      const ws = await resumeAttempt(5); // +15 s - was +31 s on the uncapped ladder
+      expect([1, 2, 3, 4, 5].reduce((t, n) => t + resumeDelay(n), 0)).toBe(15_000);
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-c' });
+      ws.deliver({ type: 'PeerReady', initiator: false, resumed: true });
+      await settle();
+
+      // Not one packet arrived across the outage: the polite side asks, on the NEW socket.
+      expect(ws.framesOfType('IceRestartRequest')).toHaveLength(1);
+      expect(get(service.reconnecting)).toBe(true);
+      // The initiator's restart offer arrives and is answered; ICE reconnects; audio is back.
+      await offer(ws);
+      expect(ws.framesOfType('Answer')).toHaveLength(1);
+      pc.inboundPackets = 360;
+      pc.setConnection('connected');
+      await ice(pc, 'connected');
+      expect(get(service.reconnecting)).toBe(false);
+      expect(get(service.callState)).toBe('incall');
+    });
+
+    it('14 s, the iPhone (initiator): its first restart offer died in the dead socket; on the resume it rolls it back and offers again', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+      pc.inboundPackets = 500;
+
+      // The path drops; the restart offer goes to the relay, which hands it to the Mi's DEAD
+      // socket. Nothing answers it: the connection is left in `have-local-offer`.
+      await ice(pc, 'disconnected');
+      await ice(pc, 'failed');
+      expect(pc.restarts).toBe(1);
+      expect(pc.signalingState).toBe('have-local-offer');
+
+      // The Mi resumes before the relay held its old socket dead: no PeerAway, straight PeerReady.
+      ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+      expect(pc.rollbacks).toBe(1);
+      expect(pc.restarts).toBe(2);
+      expect(ws.framesOfType('Offer')).toHaveLength(2);
+
+      // The Mi's own request crosses that offer: it is not a second restart.
+      ws.deliver({ type: 'IceRestartRequest' });
+      await settle();
+      expect(pc.restarts).toBe(2);
+
+      await answer(ws);
+      expect(pc.signalingState).toBe('stable');
+      await ice(pc, 'connected');
+      expect(get(service.reconnecting)).toBe(false);
+      expect(get(service.callState)).toBe('incall');
+    });
+
+    it('a stale answer to a rolled-back offer is dropped, never a call failure', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+
+      await ice(pc, 'disconnected');
+      await answer(ws);
+      await answer(ws); // a second answer: nothing of ours is pending
+      expect(get(service.callState)).toBe('incall');
+      expect(pc.signalingState).toBe('stable');
+    });
+
+    it('90 s, the Mi: gives up by its attempt budget, inside the relay grace', async () => {
+      const service = new CallService(fakeMls);
+      await connectedCallee(service);
+
+      FakeSocket.instances[0].drop();
+      await failAttempts(1, CALL_SIGNALLING_RESUME_ATTEMPTS);
+
+      expect(get(service.callState)).toBe('ended');
+      expect(get(service.reconnecting)).toBe(false);
+    });
+
+    it('90 s, the iPhone: told PeerAway once the relay holds the Mi dead, then PeerLeft at the grace - and the call ENDS', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+
+      await ice(pc, 'disconnected');
+      await ice(pc, 'failed');
+      // Within 30 s: the Mi answered no keepalive ping (`keepalive-lost`), its seat goes away.
+      ws.deliver({ type: 'PeerAway' });
+      await settle();
+      expect(get(service.reconnecting)).toBe(true);
+      await ice(pc, 'failed');
+      expect(pc.restarts).toBe(1);
+
+      // 60 s later the seat's grace runs out: the relay ANSWERS, and the screen leaves "Reconnexion...".
+      ws.deliver({ type: 'PeerLeft' });
+      await settle();
+      expect(get(service.callState)).toBe('ended');
+      expect(get(service.reconnecting)).toBe(false);
+    });
+
+    /** The number the latest offer this side sent carries. */
+    const lastOfferSeq = (ws: FakeSocket) =>
+      (JSON.parse(ws.framesOfType('Offer').at(-1)!.sdp as string) as { seq: number }).seq;
+    /** The peer's answer to offer `seq`, numbered as a current client numbers it. */
+    const answerTo = (seq: number) => ({
+      type: 'Answer',
+      sdp: JSON.stringify({ type: 'answer', sdp: `v=0 answer #${seq}`, seq }),
+    });
+
+    it('with every description operation ASYNCHRONOUS, a late answer to the rolled-back offer never fails the call nor pairs with its replacement, whenever it lands', async () => {
+      // The answer to the offer that went into the dead socket is delivered at EVERY point of the
+      // resume: before, during and after the rollback and the new offer. Only the queue and the
+      // offer number keep it from an InvalidStateError or from being applied to the new offer.
+      for (let turns = 0; turns <= 24; turns += 2) {
+        FakeSocket.instances = [];
+        FakePeerConnection.instances = [];
+        const service = new CallService(fakeMls);
+        const { ws, pc } = await connectedCaller(service);
+        await ice(pc, 'disconnected');
+        const lost = lastOfferSeq(ws);
+        // Longer than the queue's hand-off between two steps, so a step run BESIDE the queue
+        // overlaps the rollback (measured: at 3 turns a bypass of the queue went unnoticed; at 8,
+        // turning `enqueueIceRestartOffer` into a direct call fails this test, as does removing
+        // the offer-number check).
+        pc.latency = 8;
+
+        ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+        for (let i = 0; i < turns; i++) await Promise.resolve();
+        ws.deliver(answerTo(lost));
+        await settle();
+
+        expect(get(service.callState), `turns=${turns}`).toBe('incall');
+        const latest = lastOfferSeq(ws);
+        expect(latest, `turns=${turns}`).toBeGreaterThan(lost);
+        expect(pc.signalingState, `turns=${turns}`).toBe('have-local-offer');
+        ws.deliver(answerTo(latest));
+        await settle();
+        expect(pc.signalingState, `turns=${turns}`).toBe('stable');
+        expect(pc.remoteDescription?.sdp, `turns=${turns}`).toBe(`v=0 answer #${latest}`);
+        service.endCall();
+      }
+    });
+
+    it('an answer to an earlier offer is dropped while a later one is pending', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+      await ice(pc, 'disconnected');
+      const lost = lastOfferSeq(ws);
+      ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+      expect(pc.rollbacks).toBe(1);
+
+      ws.deliver(answerTo(lost));
+      await settle();
+      expect(pc.signalingState).toBe('have-local-offer');
+      expect(get(service.callState)).toBe('incall');
+    });
+
+    it('the polite side answers with the number of the offer it answers', async () => {
+      const service = new CallService(fakeMls);
+      const { ws } = await connectedCallee(service);
+      ws.deliver({
+        type: 'Offer',
+        sdp: JSON.stringify({ type: 'offer', sdp: 'v=0 ice-restart', seq: 7 }),
+      });
+      await settle();
+      const answer = JSON.parse(ws.framesOfType('Answer').at(-1)!.sdp as string);
+      expect(answer).toMatchObject({ type: 'answer', seq: 7 });
+    });
+
+    it('an engine that cannot CREATE the restart offer ends the call, and says why', async () => {
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      const service = new CallService(fakeMls);
+      const { pc } = await connectedCaller(service);
+      pc.offerError = new Error('OperationError: refused');
+
+      await ice(pc, 'disconnected');
+
+      expect(get(service.callState)).toBe('ended');
+      expect(vi.mocked(appendLog).mock.calls.map(([l]) => l)).toContain(
+        '[Call] terminal failure: ICE restart offer could not be made: Error: OperationError: refused - ending call'
+      );
+    });
+
+    it('a peer that keeps dropping its signalling cannot restart for ever: the budget counts per media loss, across pairings', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+
+      await ice(pc, 'failed');
+      expect(pc.restarts).toBe(1);
+      for (let flap = 2; flap <= CALL_ICE_RESTART_ATTEMPTS; flap++) {
+        ws.deliver({ type: 'PeerAway' });
+        ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+        await settle();
+        expect(pc.restarts).toBe(flap);
+        expect(get(service.callState)).toBe('incall');
+      }
+      // The path never came back across three pairings: the next one ends the call.
+      ws.deliver({ type: 'PeerAway' });
+      ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+      expect(pc.restarts).toBe(CALL_ICE_RESTART_ATTEMPTS);
+      expect(get(service.callState)).toBe('ended');
+    });
+
+    it('a restart that WORKED is refunded on packet evidence, even when ICE never left connected: four blips do not end a call', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+      pc.inboundPackets = 100;
+
+      for (let blip = 1; blip <= CALL_ICE_RESTART_ATTEMPTS + 1; blip++) {
+        // The Mi drops its signalling; ICE on this side never leaves `connected`.
+        ws.deliver({ type: 'PeerAway' });
+        await settle();
+        ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+        await settle();
+        // No packet across the outage: the evidence forces a restart.
+        expect(pc.restarts, `blip ${blip}`).toBe(blip);
+        await answer(ws);
+        // The restart worked: audio flows again, ICE still reads `connected` throughout.
+        pc.inboundPackets += 50;
+        expect(pc.iceConnectionState).toBe('connected');
+        expect(get(service.callState), `blip ${blip}`).toBe('incall');
+      }
+    });
+
+    it('a restart dropped before it was sent (its pairing broke while it queued) costs no budget', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+
+      // The request is decided, then queued behind the PeerAway that arrived in the same tick:
+      // when its turn comes the pairing is gone, and it is dropped unsent.
+      ws.deliver({ type: 'IceRestartRequest' });
+      ws.deliver({ type: 'PeerAway' });
+      await settle();
+      expect(pc.restarts).toBe(0);
+      ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+
+      // The WHOLE budget is still there: three restarts go out before the fourth loss ends it.
+      for (let n = 1; n <= CALL_ICE_RESTART_ATTEMPTS; n++) {
+        await ice(pc, 'failed');
+        expect(pc.restarts).toBe(n);
+        expect(get(service.callState)).toBe('incall');
+        await answer(ws);
+      }
+      await ice(pc, 'failed');
+      expect(get(service.callState)).toBe('ended');
+    });
+
+    it('steps queued for the SAME call, arriving after its hangup, are dropped SILENTLY and fail nothing', async () => {
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+      pc.latency = 8;
+
+      // An ordinary hangup: the MLS hangup ends the call, and the relay's frames - a PeerLeft
+      // among them - still arrive. They are expected, so no line names them.
+      ws.deliver({ type: 'IceRestartRequest' });
+      ws.deliver({ type: 'IceRestartRequest' });
+      ws.deliver({ type: 'PeerLeft' });
+      vi.mocked(appendLog).mockClear();
+      service.endCall();
+      await settle();
+
+      const lines = vi.mocked(appendLog).mock.calls.map(([l]) => l as string);
+      expect(lines.filter((l) => l.includes('dropped - the call is now'))).toHaveLength(0);
+      expect(lines.some((l) => l.includes('terminal failure'))).toBe(false);
+      expect(get(service.callState)).toBe('ended');
+    });
+
+    it('steps that outlived their call into the next state (cleaned up) are dropped and logged ONCE', async () => {
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      const service = new CallService(fakeMls);
+      const { ws } = await connectedCaller(service);
+
+      ws.deliver({ type: 'IceRestartRequest' });
+      ws.deliver({ type: 'PeerLeft' });
+      vi.mocked(appendLog).mockClear();
+      service.endCall();
+      // The ended summary's 1.5 s passes BEFORE the queued steps get their turn (synchronous
+      // advance: no microtask runs), so they meet a different call - none.
+      vi.advanceTimersByTime(2_000);
+      expect(get(service.callState)).toBe('idle');
+      await settle();
+
+      const lines = vi.mocked(appendLog).mock.calls.map(([l]) => l as string);
+      expect(lines.filter((l) => l.includes('dropped - the call is now none'))).toHaveLength(1);
+      expect(lines.some((l) => l.includes('terminal failure'))).toBe(false);
+    });
+
+    it('no refund without evidence: unreadable stats across a resume give nothing back', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+      expect(pc.inboundPackets).toBeNull();
+
+      await ice(pc, 'disconnected');
+      expect(pc.restarts).toBe(1);
+      await answer(ws);
+      // ICE recovers without the browser saying so (no transition event): only evidence refunds.
+      pc.iceConnectionState = 'connected';
+      ws.deliver({ type: 'PeerAway' });
+      ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+      expect(pc.restarts).toBe(1);
+
+      // The first restart is still charged: two more, then the call ends.
+      for (let n = 2; n <= CALL_ICE_RESTART_ATTEMPTS; n++) {
+        await ice(pc, 'failed');
+        expect(pc.restarts).toBe(n);
+        await answer(ws);
+      }
+      await ice(pc, 'failed');
+      expect(get(service.callState)).toBe('ended');
+    });
   });
 });

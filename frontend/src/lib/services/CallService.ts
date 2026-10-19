@@ -22,7 +22,7 @@ import {
   CallSignallingRefusedError,
   describeCallFailure,
 } from '$lib/utils/callFailure';
-import { reconnectDelayMs } from '$lib/utils/reconnectBackoff';
+import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
@@ -79,15 +79,24 @@ export const CALL_ICE_TRANSPORT_POLICY: RTCIceTransportPolicy = 'all';
 
 /**
  * How many times the signalling socket is re-opened after it drops mid-call, on the shared
- * reconnect ladder (1, 2, 4, 8, 16 s: the last attempt starts 31 s after the loss). A BUDGET BY
- * COUNT, never by wall time. `call-service` keeps the away seat 60 s (`DEFAULT_P2P_SEAT_GRACE`),
- * counted from when IT sees the socket die: five attempts of at most
- * {@link CALL_SIGNALLING_RESUME_TIMEOUT_MS} each end within 56 s of the client's loss, but the two
- * clocks start at different moments (and a session refresh before an attempt is not bounded
- * here), so the server MAY give up first. Then the resume is answered `call-over` and the call
- * ends - the same outcome the budget would have reached.
+ * reconnect ladder CAPPED at {@link CALL_SIGNALLING_RESUME_MAX_DELAY_MS} (1, 2, 4, 4, 4... s: on a
+ * network that refuses at once, attempt n starts `3 + 4 (n - 2)` s after the loss, the 15th at
+ * 55 s). A BUDGET BY COUNT, never by wall time. `call-service` keeps the away seat 60 s
+ * (`DEFAULT_P2P_SEAT_GRACE`) counted from when IT holds the socket dead - up to 30 s after the
+ * loss on a half-open socket (`MISSED_PONGS_LIMIT`) - so the server MAY still give up first on a
+ * black-holed network where every attempt runs its full timeout. Then the resume is answered
+ * `call-over` and the call ends - the same outcome the budget would have reached.
+ *
+ * Was 5 on the UNCAPPED ladder (1, 2, 4, 8, 16 s) until the 2026-10-19 bench reading: a 14 s
+ * Wi-Fi outage was only resumed by attempt 5, at +32 s, and a 90 s one was given up at +30 s.
  */
-export const CALL_SIGNALLING_RESUME_ATTEMPTS = 5;
+export const CALL_SIGNALLING_RESUME_ATTEMPTS = 15;
+
+/**
+ * The longest wait between two resume attempts. A call cannot wait 8 or 16 s for a network that
+ * came back - the shared ladder's upper rungs are for a chat socket nobody is listening to.
+ */
+export const CALL_SIGNALLING_RESUME_MAX_DELAY_MS = 4_000;
 
 /**
  * One resume attempt's deadline, for the socket to open AND the relay to answer `Joined`. Past it
@@ -98,11 +107,53 @@ export const CALL_SIGNALLING_RESUME_ATTEMPTS = 5;
 export const CALL_SIGNALLING_RESUME_TIMEOUT_MS = 5_000;
 
 /**
- * How many ICE restarts the initiator makes for ONE loss of the media path (the count resets the
- * moment ICE connects again). Each one after the first is triggered by ICE reporting `failed`,
- * which the browser's ICE agent always reaches - so the budget ends on events, not on a clock.
+ * How many ICE restarts the initiator makes for ONE loss of the media path, ACROSS signalling
+ * pairings (the count resets only when ICE connects again, or the peer connection is rebuilt). An
+ * offer that went into a dead socket costs one: that is the price of a bound a flapping peer cannot
+ * escape, now that the keepalive can break a pairing every 20-30 s. Each restart after the first is
+ * triggered by ICE reporting `failed` or by a re-formed pairing finding the path still down - events,
+ * not a clock.
  */
 export const CALL_ICE_RESTART_ATTEMPTS = 3;
+
+/**
+ * The media path of `pc` is down by EITHER of its two state machines. Both are read because they
+ * disagree in the field: on the Mi 9T (Android Chromium, 2026-10-19) `connectionState` reached
+ * `failed` while `iceConnectionState` stayed `disconnected`.
+ */
+export function mediaPathDown(pc: RTCPeerConnection): boolean {
+  const ice = pc.iceConnectionState;
+  const conn = pc.connectionState;
+  return ice === 'disconnected' || ice === 'failed' || conn === 'disconnected' || conn === 'failed';
+}
+
+/**
+ * Audio RTP packets received so far on `pc`, summed over its inbound streams - the LIVENESS
+ * evidence of a media path, read twice around an outage: a count that did not grow across it is a
+ * path that carried nothing, whatever its state machines still say. `null` when there is no
+ * inbound audio stream to read (nothing to compare), or the read failed (logged).
+ */
+export async function inboundAudioPackets(pc: RTCPeerConnection): Promise<number | null> {
+  try {
+    const stats = await pc.getStats();
+    let total = 0;
+    let seen = false;
+    stats.forEach((report: { type?: string; kind?: string; packetsReceived?: number }) => {
+      if (
+        report.type === 'inbound-rtp' &&
+        report.kind === 'audio' &&
+        typeof report.packetsReceived === 'number'
+      ) {
+        total += report.packetsReceived;
+        seen = true;
+      }
+    });
+    return seen ? total : null;
+  } catch (e) {
+    appendLog(`[Call] reading inbound packet counts failed: ${String(e)}`);
+    return null;
+  }
+}
 
 /** A server-to-client frame of the signalling socket (`apps/call-service`, `SignalMessage`). */
 export type SignalFrame =
@@ -114,6 +165,25 @@ export type SignalFrame =
   | { type: 'Refused'; reason: string }
   | { type: 'Offer' | 'Answer'; sdp: string }
   | { type: 'IceCandidate'; candidate: string };
+
+/**
+ * A session description as it travels inside an `Offer`/`Answer` frame's `sdp` string. `seq` is
+ * the offer's IDENTITY: the offerer numbers each offer it sends, the answerer echoes the number of
+ * the offer it answers, so an answer is matched to ITS offer and never to a later one (an answer to
+ * an offer rolled back after its socket died would otherwise pair with the restart offer that
+ * replaced it). It lives inside the string the relay already forwards verbatim, so `call-service`
+ * is unchanged; a client older than it sends no `seq` and its answers are matched by signaling
+ * state alone, as before.
+ */
+export type WireDescription = RTCSessionDescriptionInit & { seq?: number };
+
+/** Serialises a local description for the relay, carrying the offer number it is or answers. */
+export function wireDescription(
+  desc: RTCSessionDescriptionInit | null,
+  seq: number | undefined
+): string {
+  return JSON.stringify({ type: desc?.type, sdp: desc?.sdp, seq });
+}
 
 /**
  * Manages 1:1 calls: MLS signalling for ring/answer/hangup, a PEER-TO-PEER media path negotiated
@@ -160,8 +230,37 @@ export class CallService {
   private mediaEverConnected = false;
   /** ICE restarts since the media path was last connected. See the restart budget. */
   private iceRestarts = 0;
-  /** A restart was made and ICE has neither connected nor failed since. */
-  private iceRestartPending = false;
+  /**
+   * Bumped every time the signalling PAIR breaks (this socket lost, `PeerAway`) or re-forms
+   * (`PeerReady`). A restart offer or request belongs to the pairing it was sent in: one sent in
+   * an earlier pairing may have gone into a dead socket, so it never blocks a new one.
+   */
+  private pairEpoch = 0;
+  /** The pairing whose restart OFFER awaits its answer (initiator); `null` when none does. */
+  private restartOfferEpoch: number | null = null;
+  /** The pairing whose restart REQUEST awaits the initiator's offer (polite); `null` when none. */
+  private restartRequestEpoch: number | null = null;
+  /** Inbound audio packets when the pair broke, compared once it re-forms. */
+  private packetsAtLoss: Promise<number | null> | null = null;
+  /**
+   * Inbound audio packets when the latest restart's negotiation completed (its answer applied on
+   * the initiator, the asked-for offer answered on the polite side). Packets counted ABOVE it later
+   * prove the restart worked even if ICE never left `connected` - the refund evidence.
+   */
+  private packetsAtRestart: Promise<number | null> | null = null;
+  /** The call whose queued steps were last dropped as stale - logged once per call. */
+  private staleStepsOfCall: string | null = null;
+  /** The number of the last offer this side sent (see {@link WireDescription}). */
+  private localOfferSeq = 0;
+  /** The number of this side's offer awaiting its answer; `null` when none is. */
+  private pendingOfferSeq: number | null = null;
+  /**
+   * EVERY negotiation step runs here, one at a time, in order: the relay's frames AND this side's
+   * own offers (`negotiationneeded`, an ICE restart). An offer made beside the frame chain could be
+   * rolled back or replaced while an answer frame was half applied - the race the async fake of
+   * `CallService.p2p.test.ts` reproduces.
+   */
+  private signalQueue: Promise<void> = Promise.resolve();
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
@@ -570,7 +669,10 @@ export class CallService {
    * call one peer's failed relay must not end everyone else's call.
    */
   private failCall(reason: string): void {
-    if (get(this.callState) === 'idle') return;
+    const state = get(this.callState);
+    // A call already over (idle, or showing its ended summary) cannot fail: a late step saying so
+    // would only print a second, false "terminal failure" and a toast.
+    if (state === 'idle' || state === 'ended') return;
     appendLog(`[Call] terminal failure: ${reason} - ending call`);
     showToast(m.call_connection_lost(), 'error');
     this.endCall(false);
@@ -610,7 +712,14 @@ export class CallService {
     this.peerAway = false;
     this.mediaEverConnected = false;
     this.iceRestarts = 0;
-    this.iceRestartPending = false;
+    this.pairEpoch = 0;
+    this.restartOfferEpoch = null;
+    this.restartRequestEpoch = null;
+    this.packetsAtLoss = null;
+    this.packetsAtRestart = null;
+    this.localOfferSeq = 0;
+    this.pendingOfferSeq = null;
+    this.signalQueue = Promise.resolve();
     this.reconnecting.set(false);
     this.removeBackgroundHandler();
     this.syncCallPresence(false);
@@ -838,11 +947,32 @@ export class CallService {
    * that collides with our own is dropped by the impolite side and wins on the polite side, where
    * `setRemoteDescription` rolls our offer back implicitly. Every applied offer is answered.
    */
-  private async handleRemoteDescription(sdp: RTCSessionDescriptionInit): Promise<void> {
+  private async handleRemoteDescription(sdp: WireDescription): Promise<void> {
     const pc = this.pc;
     if (!pc) {
       appendLog(`[Call] remote ${sdp.type} with no peer connection - dropped`);
       return;
+    }
+    if (sdp.type === 'answer') {
+      if (pc.signalingState !== 'have-local-offer') {
+        // The answer to an offer this side rolled back for a newer restart: nothing to apply it to.
+        appendLog(
+          `[Call] answer to offer #${sdp.seq ?? '?'} with no offer of ours pending (signaling=${pc.signalingState}) - dropped`
+        );
+        return;
+      }
+      if (sdp.seq !== undefined && sdp.seq !== this.pendingOfferSeq) {
+        // An answer to an EARLIER offer (one rolled back after its socket died), arriving while a
+        // newer one is pending: applied, it would pair the new offer with a stale answer.
+        appendLog(
+          `[Call] answer to offer #${sdp.seq} while offer #${this.pendingOfferSeq ?? '?'} is pending - stale, dropped`
+        );
+        return;
+      }
+      if (sdp.seq === undefined) {
+        // A client older than the offer numbering: matched by signaling state alone, as before.
+        appendLog('[Call] unnumbered answer (older client) - applied to the pending offer');
+      }
     }
     const collision = sdp.type === 'offer' && (this.makingOffer || pc.signalingState !== 'stable');
     this.ignoreOffer = !this.polite && collision;
@@ -850,12 +980,23 @@ export class CallService {
       appendLog('[Call] offer collision - the impolite side keeps its own offer');
       return;
     }
-    await pc.setRemoteDescription(sdp);
+    await pc.setRemoteDescription({ type: sdp.type, sdp: sdp.sdp });
     await this.flushPendingRemoteIceCandidates();
+    if (sdp.type === 'answer') {
+      this.pendingOfferSeq = null;
+      this.restartOfferEpoch = null;
+    }
+    if (this.iceRestarts > 0) this.packetsAtRestart = inboundAudioPackets(pc);
     if (sdp.type === 'offer') {
+      // The initiator's offer is what a restart request asked for; an offer of ours it collided
+      // with on this (polite) side was rolled back by `setRemoteDescription`.
+      this.restartRequestEpoch = null;
+      this.pendingOfferSeq = null;
       await pc.setLocalDescription();
-      appendLog(`[Call] answer (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`);
-      this.sendSignal({ type: 'Answer', sdp: JSON.stringify(pc.localDescription) });
+      appendLog(
+        `[Call] answer to offer #${sdp.seq ?? '?'} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
+      );
+      this.sendSignal({ type: 'Answer', sdp: wireDescription(pc.localDescription, sdp.seq) });
     }
     await configureCallAudioSenders(pc, this.callHasVideo);
   }
@@ -956,9 +1097,6 @@ export class CallService {
       // The relay seated us on THIS socket. Only a socket that was joined can be LOST: one that
       // failed before its `Joined` has already rejected, and its close is not a second event.
       let joined = false;
-      // Frames are handled ONE AT A TIME, in arrival order: building the peer connection on
-      // `PeerReady` awaits the E2E worker, and the initiator's Offer can arrive meanwhile.
-      let chain: Promise<void> = Promise.resolve();
 
       const fail = (err: unknown) => {
         if (settled) return;
@@ -1052,14 +1190,57 @@ export class CallService {
           }
           return;
         }
-        chain = chain
-          .then(() => this.handleSignalFrame(frame))
-          .catch((err) => {
-            appendLog(`[Call] signalling ${frame.type} failed: ${String(err)}`);
-            this.failCall(`signalling ${frame.type} failed`);
-          });
+        void this.serialized(`signalling ${frame.type}`, () => this.handleSignalFrame(frame));
       };
     });
+  }
+
+  /**
+   * Appends one negotiation step to {@link signalQueue}. A step that throws is a negotiation this
+   * side could not complete: named, and the call ends (an unanswerable offer leaves nothing to
+   * wait for). Returns the step's own completion, which the caller may await.
+   */
+  private serialized(label: string, step: () => Promise<void>): Promise<void> {
+    const callId = this.currentCallId;
+    const run = this.signalQueue
+      .then(async () => {
+        if (!this.isCallLive(callId)) {
+          this.dropStaleStep(label, callId);
+          return;
+        }
+        await step();
+      })
+      .catch((err: unknown) => {
+        appendLog(`[Call] ${label} failed: ${String(err)}`);
+        // A step of a call already over ends nothing: the call it belonged to is gone.
+        if (!this.isCallLive(callId)) return;
+        this.failCall(`${label} failed`);
+      });
+    this.signalQueue = run;
+    return run;
+  }
+
+  /**
+   * A queued step outlived its call (hung up, or a new call began, while it waited): it would act
+   * on the wrong call - a `PeerLeft` ending the next one, a restart on its peer connection. Logged
+   * ONCE per call, the drops after the first being the same fact. A call showing its ended summary
+   * is over too ({@link isCallLive}).
+   */
+  private dropStaleStep(label: string, callId: string | null): void {
+    // The SAME call, merely over: an ordinary hangup delivers both the MLS hangup and the relay's
+    // `PeerLeft`, so a step dropped here is expected and says nothing worth a line.
+    if (this.currentCallId === callId) return;
+    if (this.staleStepsOfCall === callId) return;
+    this.staleStepsOfCall = callId;
+    appendLog(
+      `[Call] ${label} of call ${callId ?? 'none'} dropped - the call is now ${this.currentCallId ?? 'none'} (${get(this.callState)})`
+    );
+  }
+
+  /** `callId` is still the call in progress, and that call is not over (idle, or its ended summary). */
+  private isCallLive(callId: string | null): boolean {
+    const state = get(this.callState);
+    return this.currentCallId === callId && state !== 'idle' && state !== 'ended';
   }
 
   /** Acts on one frame from the relay, after the room is joined. */
@@ -1082,11 +1263,12 @@ export class CallService {
         // `PeerLeft` next.
         appendLog('[Call] the other party lost its signalling connection - waiting for it');
         this.peerAway = true;
+        this.onPairBroken('peer away');
         this.updateReconnecting();
         return;
       case 'Offer':
       case 'Answer': {
-        const sdp = JSON.parse(frame.sdp) as RTCSessionDescriptionInit;
+        const sdp = JSON.parse(frame.sdp) as WireDescription;
         appendLog(`[Call] peer -> ${frame.type} (signaling=${this.pc?.signalingState ?? 'none'})`);
         await this.handleRemoteDescription(sdp);
         return;
@@ -1105,19 +1287,20 @@ export class CallService {
    *
    * `resumed`: the pair is back together after one side's signalling dropped and was RESUMED in
    * place (same seats, same roles). The peer connection is kept - the media may never have
-   * stopped - and the initiator restarts ICE if the path is down ({@link maybeRestartIce}).
+   * stopped - and {@link restartIfMediaDidNotSurvive} decides, from evidence, whether ICE restarts.
    */
   private async onPeerReady(initiator: boolean, resumed = false): Promise<void> {
     this.polite = !initiator;
     this.peerArrived = true;
     this.peerAway = false;
     this.clearRingTimer();
+    this.pairEpoch += 1;
     appendLog(
-      `[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}${resumed ? ' (resumed)' : ''}`
+      `[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}${resumed ? ' (resumed)' : ''} (pairing ${this.pairEpoch})`
     );
     if (this.pc && resumed) {
       this.updateReconnecting();
-      this.maybeRestartIce('signalling resumed');
+      await this.restartIfMediaDidNotSurvive();
       return;
     }
     if (this.pc) {
@@ -1130,7 +1313,11 @@ export class CallService {
       this.ignoreOffer = false;
       this.mediaEverConnected = false;
       this.iceRestarts = 0;
-      this.iceRestartPending = false;
+      this.restartOfferEpoch = null;
+      this.restartRequestEpoch = null;
+      this.packetsAtLoss = null;
+      this.packetsAtRestart = null;
+      this.pendingOfferSeq = null;
     }
     await this.initPeerConnection();
     this.updateReconnecting();
@@ -1153,6 +1340,7 @@ export class CallService {
     appendLog(`[Call] signalling WebSocket closed code=${code} - resuming (call=${roomId})`);
     this.signallingLost = true;
     this.resumeAttempts = 0;
+    this.onPairBroken('signalling lost');
     this.updateReconnecting();
     this.scheduleSignallingResume(roomId);
   }
@@ -1173,7 +1361,7 @@ export class CallService {
       return;
     }
     this.resumeAttempts = attempt;
-    const delay = reconnectDelayMs(attempt - 1);
+    const delay = cappedReconnectDelayMs(attempt - 1, CALL_SIGNALLING_RESUME_MAX_DELAY_MS);
     appendLog(
       `[Call] signalling resume attempt ${attempt}/${CALL_SIGNALLING_RESUME_ATTEMPTS} in ${delay} ms`
     );
@@ -1219,77 +1407,219 @@ export class CallService {
   }
 
   /**
-   * Restarts ICE when the media path is down and the pair can renegotiate. Called on the two
-   * events that can heal it: the signalling pair coming back together (a resume), and ICE itself
-   * reporting `disconnected` (first restart only) or `failed`.
+   * The signalling pair broke (this side's socket, or the other's: `PeerAway`). Opens a new
+   * pairing - so a restart offer or request sent before is never waited on again, since it may
+   * have gone into the dead socket - and snapshots the inbound packet count, the evidence
+   * {@link restartIfMediaDidNotSurvive} compares once the pair re-forms. The FIRST break of an
+   * outage keeps its snapshot: a second one inside the same outage measures nothing new.
    *
-   * Only the INITIATOR restarts - it is the side that offers, and two restarts would collide. The
-   * restart is `pc.restartIce()`, whose `negotiationneeded` sends the new offer through the relay.
-   * The POLITE side sends `IceRestartRequest` instead, which the initiator honours
-   * ({@link onIceRestartRequested}). The budget counts restarts (or requests) since the path was
-   * last connected; spent, the call ends.
+   * The restart BUDGET is NOT reset here: it counts per media loss, across pairings. An offer sent
+   * into a dead socket costs one restart, and since the keepalive can break a pairing every 20-30 s,
+   * a reset per pairing would let a flapping peer restart for ever.
    */
-  private maybeRestartIce(reason: string): void {
+  private onPairBroken(why: string): void {
+    this.pairEpoch += 1;
+    if (this.pc && !this.packetsAtLoss) this.packetsAtLoss = inboundAudioPackets(this.pc);
+    appendLog(`[Call] signalling pair broken (${why}) - pairing ${this.pairEpoch}`);
+  }
+
+  /**
+   * The pair re-formed after an outage (`PeerReady { resumed }`). Decides from EVIDENCE whether the
+   * media path survived, never from a timer: it did not when either state machine says it is down
+   * ({@link mediaPathDown}), when not one audio packet arrived between the break and now (a path
+   * whose state still reads `connected` while carrying nothing), or - on the initiator - when an
+   * offer is still pending: its answer was lost with the dead socket, and until it is rolled back
+   * no restart can ever be negotiated (`restartIce()` fires no `negotiationneeded` outside
+   * `stable` - the 2026-10-19 bench stall, both phones on "Reconnexion..." for good).
+   */
+  private async restartIfMediaDidNotSurvive(): Promise<void> {
+    const pc = this.pc;
+    if (!pc) return;
+    const before = this.packetsAtLoss ? await this.packetsAtLoss : null;
+    this.packetsAtLoss = null;
+    const atRestart = this.packetsAtRestart ? await this.packetsAtRestart : null;
+    const now = await inboundAudioPackets(pc);
+    if (this.pc !== pc) return;
+    if (this.iceRestarts > 0 && atRestart !== null && before !== null && before > atRestart) {
+      // Audio arrived after the last restart and before this outage: that restart WORKED, even if
+      // ICE never left `connected` to say so. The budget is per media loss, and that loss is over.
+      this.refundIceRestarts(`audio packets ${atRestart} -> ${before} after the last restart`);
+    }
+    const staleOffer = !this.polite && pc.signalingState === 'have-local-offer';
+    const stalled = before !== null && now !== null && now <= before;
+    const down = mediaPathDown(pc);
+    appendLog(
+      `[Call] pair resumed: ice=${pc.iceConnectionState} connection=${pc.connectionState} signaling=${pc.signalingState} audio packets ${before ?? '?'} -> ${now ?? '?'}`
+    );
+    if (!staleOffer && !stalled && !down) {
+      appendLog('[Call] the media path carried audio across the outage - no ICE restart');
+      // Refunded only on PROOF that audio flowed: unreadable stats (`null`) are no evidence.
+      if (this.iceRestarts > 0 && before !== null && now !== null && now > before) {
+        this.refundIceRestarts(`audio carried across the outage (packets ${before} -> ${now})`);
+      }
+      return;
+    }
+    const why = [
+      staleOffer && 'unanswered offer',
+      stalled && 'no packet since the break',
+      down && 'path down',
+    ]
+      .filter(Boolean)
+      .join(', ');
+    this.maybeRestartIce(`signalling resumed: ${why}`, true);
+  }
+
+  /**
+   * Restarts ICE when the media path is down and the pair can renegotiate. Called on the events
+   * that can heal it: the pair re-forming after an outage (`force`, the evidence already read),
+   * and either state machine reporting the path `disconnected` (first restart only) or `failed`.
+   *
+   * Only the INITIATOR offers ({@link sendIceRestartOffer}); two offerers would collide. The
+   * POLITE side sends `IceRestartRequest` instead, which the initiator honours
+   * ({@link onIceRestartRequested}). One offer or one request per pairing is in flight at a time:
+   * its answer (or the offer it asked for) comes over a live relay, or the pair breaks and a new
+   * pairing starts - a fact either way, never a timeout. The budget counts restarts (or requests)
+   * since the path was last connected; spent, the call ends.
+   */
+  private maybeRestartIce(reason: string, force = false): void {
     const pc = this.pc;
     if (!pc) return;
     const ice = pc.iceConnectionState;
-    if (ice !== 'disconnected' && ice !== 'failed') return;
+    if (!force && !mediaPathDown(pc)) return;
     if (this.signallingLost || this.peerAway) {
       appendLog(
         `[Call] ICE ${ice} (${reason}) - restart deferred until both parties are back on the relay`
       );
       return;
     }
-    if (ice === 'disconnected' && this.iceRestarts > 0 && reason !== 'signalling resumed') {
-      // A restart is already under way for this loss; the next one waits for `failed`.
+    if (this.restartOfferEpoch === this.pairEpoch) {
+      appendLog(`[Call] ICE ${ice} (${reason}) - a restart offer is already awaiting its answer`);
       return;
     }
+    if (this.polite && this.restartRequestEpoch === this.pairEpoch) {
+      appendLog(`[Call] ICE ${ice} (${reason}) - a restart request is already awaiting its offer`);
+      return;
+    }
+    const failed = ice === 'failed' || pc.connectionState === 'failed';
+    if (!force && !failed && this.iceRestarts > 0) {
+      // A restart already ran for this loss and was answered; the next one waits for `failed`.
+      return;
+    }
+    if (this.polite) {
+      // Only the initiator offers, and it may see its own path as fine: ASK it, on THIS side's
+      // budget, so a loss only the polite side sees still ends in a restart or in the call's end.
+      // Charged HERE: the request leaves in this same call.
+      if (this.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
+        this.failCall(`media path not restored after ${CALL_ICE_RESTART_ATTEMPTS} ICE restarts`);
+        return;
+      }
+      this.iceRestarts += 1;
+      appendLog(
+        `[Call] ICE ${ice} (${reason}) - asking the initiator to restart (${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS})`
+      );
+      this.restartRequestEpoch = this.pairEpoch;
+      this.sendSignal({ type: 'IceRestartRequest' });
+      return;
+    }
+    this.enqueueIceRestartOffer(`${reason}, ice=${ice}`);
+  }
+
+  /**
+   * Decides an initiator restart NOW (the pairing's in-flight mark is set at once, so a second
+   * trigger in the same tick adds none) and runs it on {@link signalQueue}, after whatever frame is
+   * being applied - never beside it.
+   */
+  private enqueueIceRestartOffer(why: string): void {
+    const epoch = this.pairEpoch;
+    this.restartOfferEpoch = epoch;
+    appendLog(`[Call] ICE restart decided (${why})`);
+    void this.serialized('ICE restart offer', () => this.sendIceRestartOffer(epoch));
+  }
+
+  /**
+   * The initiator's restart: an EXPLICIT `createOffer({ iceRestart: true })`, sent at once, after
+   * rolling back any offer still pending (its answer died with a socket - see
+   * {@link restartIfMediaDidNotSurvive}). Not `pc.restartIce()`: that only flags the next
+   * negotiation, and a connection stuck in `have-local-offer` never starts one. Runs on the queue
+   * only.
+   *
+   * An engine that cannot CREATE the offer ends the call, named: nothing this side does next would
+   * differ (same connection, same state), so a retry would only repeat the refusal.
+   */
+  private async sendIceRestartOffer(epoch: number): Promise<void> {
+    const pc = this.pc;
+    if (!pc) return;
+    if (epoch !== this.pairEpoch) {
+      // The pair broke again before this step ran: the next `PeerReady` decides afresh.
+      appendLog(`[Call] ICE restart of pairing ${epoch} dropped - pairing ${this.pairEpoch} now`);
+      return;
+    }
+    // Charged HERE, once the offer is certain to be made: a restart dropped above cost nothing.
     if (this.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
       this.failCall(`media path not restored after ${CALL_ICE_RESTART_ATTEMPTS} ICE restarts`);
       return;
     }
     this.iceRestarts += 1;
-    if (this.polite) {
-      // Only the initiator offers, and it may see its own path as fine: ASK it, on THIS side's
-      // budget, so a loss only the polite side sees still ends in a restart or in the call's end.
+    appendLog(`[Call] ICE restart ${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS}`);
+    this.makingOffer = true;
+    try {
+      if (pc.signalingState === 'have-local-offer') {
+        appendLog(
+          `[Call] rolling back unanswered offer #${this.pendingOfferSeq ?? '?'} - its answer can no longer come`
+        );
+        await pc.setLocalDescription({ type: 'rollback' });
+        this.pendingOfferSeq = null;
+      }
+      await pc.setLocalDescription(await pc.createOffer({ iceRestart: true }));
+      if (this.pc !== pc) return;
+      const seq = this.nextOfferSeq();
       appendLog(
-        `[Call] ICE ${ice} (${reason}) - asking the initiator to restart (${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS})`
+        `[Call] ICE restart offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
       );
-      this.sendSignal({ type: 'IceRestartRequest' });
-      return;
+      this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) });
+    } catch (e) {
+      if (this.pc !== pc) return;
+      this.failCall(`ICE restart offer could not be made: ${String(e)}`);
+    } finally {
+      this.makingOffer = false;
     }
-    this.restartIceNow(`${reason}, ice=${ice}`);
-  }
-
-  /** The initiator's restart: one `restartIce()`, its offer sent on `negotiationneeded`. */
-  private restartIceNow(why: string): void {
-    const pc = this.pc;
-    if (!pc) return;
-    this.iceRestartPending = true;
-    appendLog(`[Call] ICE restart ${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS} (${why})`);
-    pc.restartIce();
   }
 
   /**
-   * The polite side asked for an ICE restart. Honoured unless one is already in flight (both sides
-   * saw the loss), and counted against this side's budget too - the asker's budget is what ends a
-   * loss that never heals, and this one keeps a misbehaving peer from driving restarts for ever.
+   * Gives the restart budget back: the media loss it was counting is PROVEN over by packets, not by
+   * a state machine (which may never have left `connected`).
+   */
+  private refundIceRestarts(evidence: string): void {
+    appendLog(`[Call] media path restored after ${this.iceRestarts} ICE restart(s) - ${evidence}`);
+    this.iceRestarts = 0;
+    this.packetsAtRestart = null;
+  }
+
+  /** Numbers the offer this side is about to send, and marks it as the one awaiting an answer. */
+  private nextOfferSeq(): number {
+    this.localOfferSeq += 1;
+    this.pendingOfferSeq = this.localOfferSeq;
+    return this.localOfferSeq;
+  }
+
+  /**
+   * The polite side asked for an ICE restart. Honoured unless this side's own restart offer of
+   * the SAME pairing is awaiting its answer (both sides saw the loss: the asker gets that offer).
+   * An offer of an earlier pairing never blocks it - that is what stalled the 2026-10-19 bench
+   * call. Counted against this side's budget too, so a misbehaving peer cannot drive restarts for
+   * ever.
    */
   private onIceRestartRequested(): void {
     if (!this.pc || this.polite) {
       appendLog('[Call] ICE restart request ignored - this side does not offer');
       return;
     }
-    if (this.iceRestartPending) {
-      appendLog('[Call] ICE restart request - a restart is already in flight');
+    if (this.restartOfferEpoch === this.pairEpoch) {
+      appendLog("[Call] ICE restart request - this pairing's restart offer is already on its way");
       return;
     }
-    if (this.iceRestarts >= CALL_ICE_RESTART_ATTEMPTS) {
-      this.failCall(`media path not restored after ${CALL_ICE_RESTART_ATTEMPTS} ICE restarts`);
-      return;
-    }
-    this.iceRestarts += 1;
-    this.restartIceNow('requested by the other party');
+    // Counted when the offer is made (`sendIceRestartOffer`), against this side's budget too.
+    this.enqueueIceRestartOffer('requested by the other party');
   }
 
   /**
@@ -1421,21 +1751,34 @@ export class CallService {
       }
     };
 
-    pc.onnegotiationneeded = async () => {
-      // The polite side never opens the negotiation: it answers the initiator's first offer,
-      // which already carries a slot for its tracks. After that, either side may renegotiate.
-      if (this.polite && !pc.remoteDescription) return;
-      try {
-        this.makingOffer = true;
-        await pc.setLocalDescription();
-        appendLog(`[Call] offer (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`);
-        this.sendSignal({ type: 'Offer', sdp: JSON.stringify(pc.localDescription) });
-      } catch (e) {
-        appendLog(`[Call] creating an offer failed: ${String(e)}`);
-      } finally {
-        this.makingOffer = false;
-      }
-    };
+    // On the negotiation queue like every other step, so an offer is never made while a frame
+    // is half applied.
+    pc.onnegotiationneeded = () =>
+      this.serialized('offer', async () => {
+        // The polite side never opens the negotiation: it answers the initiator's first offer,
+        // which already carries a slot for its tracks. After that, either side may renegotiate.
+        if (this.pc !== pc || (this.polite && !pc.remoteDescription)) return;
+        if (pc.signalingState !== 'stable') {
+          // A step queued before this one (an ICE restart offer) already opened a negotiation.
+          appendLog(
+            `[Call] negotiationneeded in signaling=${pc.signalingState} - already offering`
+          );
+          return;
+        }
+        try {
+          this.makingOffer = true;
+          await pc.setLocalDescription();
+          const seq = this.nextOfferSeq();
+          appendLog(
+            `[Call] offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
+          );
+          this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) });
+        } catch (e) {
+          appendLog(`[Call] creating an offer failed: ${String(e)}`);
+        } finally {
+          this.makingOffer = false;
+        }
+      });
 
     pc.onicegatheringstatechange = () => {
       appendLog(`[Call] iceGatheringState=${pc.iceGatheringState}`);
@@ -1480,8 +1823,10 @@ export class CallService {
       }
       if (state === 'failed') {
         if (this.mediaEverConnected) {
-          // A path that HAD connected: the ICE handler below restarts it, on its own budget.
-          appendLog('[Call] connectionState=failed after a connection - left to the ICE restart');
+          // A path that HAD connected. Acted on HERE too: Android Chromium was measured reaching
+          // connectionState=failed while iceConnectionState stayed `disconnected`.
+          this.maybeRestartIce('connectionState=failed');
+          this.updateReconnecting();
         } else {
           this.failCall('connectionState=failed');
         }
@@ -1498,7 +1843,9 @@ export class CallService {
         }
         this.mediaEverConnected = true;
         this.iceRestarts = 0;
-        this.iceRestartPending = false;
+        this.packetsAtRestart = null;
+        this.restartOfferEpoch = null;
+        this.restartRequestEpoch = null;
       } else if (iceState === 'failed' && !this.mediaEverConnected) {
         // Never connected: there is no path at all, and a restart would find the same candidates.
         appendLog(
@@ -1508,7 +1855,6 @@ export class CallService {
         return;
       } else if (iceState === 'disconnected' || iceState === 'failed') {
         // A path that had connected and was lost - a network change, a blip. Restart, not end.
-        if (iceState === 'failed') this.iceRestartPending = false;
         this.maybeRestartIce(`iceConnectionState=${iceState}`);
       }
       this.updateReconnecting();

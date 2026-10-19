@@ -7,7 +7,9 @@
 //! 1:1 call since 2026-10-17: the media never touches this service.
 //!
 //! WHAT IT DOES NOT. No browser and no ICE: whether two browsers then connect is the clients' half,
-//! taken by hand (docs/wiki/frontend/modules/calls.md). The 25 s keepalive is not waited for here.
+//! taken by hand (docs/wiki/frontend/modules/calls.md). The default 10 s keepalive is not waited
+//! for here; the keepalive tests shorten it with `CALL_KEEPALIVE_MS` and keep every socket that must
+//! stay alive POLLED (a socket answers a Ping only while it is read - see `drained`).
 //!
 //! THE TIMEOUTS ARE LIVENESS GUARDS ONLY: each wait is for a frame, and the bound exists so a hang
 //! fails instead of stalling CI. Nothing is asserted on elapsed time.
@@ -27,6 +29,9 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 const JWT_SECRET: &str = "test-jwt-secret";
 const ROOM_SECRET: &str = "test-room-secret";
 const LIVENESS: Duration = Duration::from_secs(20);
+/// The keepalive of the half-open tests: short enough that detection (<= 3 periods) is quick, long
+/// enough that a loaded CI runner never leaves a POLLED socket a full period without its Pong.
+const TEST_KEEPALIVE_MS: u64 = 1000;
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -69,10 +74,20 @@ async fn start() -> Service {
 /// [`start`], with `CALL_P2P_SEAT_GRACE_SEC` set when `grace_secs` is given. A grace of 0 makes the
 /// expiry of an away seat an EVENT that follows its `PeerAway` at once - no wait in any test.
 async fn start_with_grace(grace_secs: Option<u64>) -> Service {
+    start_with(grace_secs, None).await
+}
+
+/// [`start_with_grace`], plus `CALL_KEEPALIVE_MS` when `keepalive_ms` is given: a short period
+/// makes a silent peer's detection an event that follows within a few ticks.
+async fn start_with(grace_secs: Option<u64>, keepalive_ms: Option<u64>) -> Service {
     let mut command = Command::new(env!("CARGO_BIN_EXE_call-service"));
     match grace_secs {
         Some(secs) => command.env("CALL_P2P_SEAT_GRACE_SEC", secs.to_string()),
         None => command.env_remove("CALL_P2P_SEAT_GRACE_SEC"),
+    };
+    match keepalive_ms {
+        Some(ms) => command.env("CALL_KEEPALIVE_MS", ms.to_string()),
+        None => command.env_remove("CALL_KEEPALIVE_MS"),
     };
     let mut child = command
         .env("PORT", "0")
@@ -592,4 +607,86 @@ async fn a_resume_over_a_live_socket_closes_the_old_one() {
     let offer = json!({ "type": "Offer", "sdp": "{\"type\":\"offer\",\"sdp\":\"v=0 again\"}" });
     send(&mut bob, offer.clone()).await;
     assert_eq!(recv(&mut alice).await, offer);
+}
+
+/// Reads `ws` on a task of its own for as long as it lives, forwarding each JSON frame. A socket is
+/// answered (Pong) only while it is READ, so a party that must stay alive under a short keepalive
+/// is never left unpolled while the test drives the other one - no window of time decides a test.
+fn drained(mut ws: Ws) -> tokio::sync::mpsc::UnboundedReceiver<Value> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        while let Some(Ok(msg)) = ws.next().await {
+            if let Message::Text(t) = msg {
+                if tx.send(serde_json::from_str::<Value>(&t).unwrap()).is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    rx
+}
+
+/// The next frame a drained socket forwarded.
+async fn next(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>) -> Value {
+    timeout(LIVENESS, rx.recv())
+        .await
+        .expect("no frame arrived")
+        .expect("socket ended")
+}
+
+/// Alice joins and is drained AT ONCE, then Bob joins and reads his pairing; Bob's socket is then
+/// left unread - a half-open socket's shape - while Alice keeps answering every Ping.
+async fn paired_with_a_silent_bob(
+    svc: &Service,
+    room: &str,
+) -> (tokio::sync::mpsc::UnboundedReceiver<Value>, Ws, String) {
+    let mut alice = join(svc, "alice", room).await;
+    joined(&mut alice, room).await;
+    let mut alice = drained(alice);
+    let mut bob = join(svc, "bob", room).await;
+    let bob_resume = joined(&mut bob, room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false })
+    );
+    assert_eq!(
+        next(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true })
+    );
+    (alice, bob, bob_resume)
+}
+
+/// The bench's 14 s and 90 s failures (2026-10-19): a phone losing Wi-Fi leaves a HALF-OPEN socket
+/// that never errors, so the seat was never marked away and the partner never learnt anything. Now
+/// a peer that answers no keepalive ping is held dead: the partner gets `PeerAway`, and - grace 0
+/// here - `PeerLeft` right after, so a ghost call ends on the partner too.
+#[tokio::test]
+async fn a_silent_half_open_peer_is_held_dead_and_the_partner_is_told() {
+    let svc = start_with(Some(0), Some(TEST_KEEPALIVE_MS)).await;
+    let room = "room-half-open";
+    let (mut alice, _bob_silent, _) = paired_with_a_silent_bob(&svc, room).await;
+
+    assert_eq!(next(&mut alice).await, json!({ "type": "PeerAway" }));
+    assert_eq!(next(&mut alice).await, json!({ "type": "PeerLeft" }));
+}
+
+/// The same silent peer, with a grace: it comes back on a new socket and resumes its seat. Alice is
+/// polled throughout, so she is never the one held dead while Bob rejoins.
+#[tokio::test]
+async fn a_peer_held_dead_by_the_keepalive_can_still_resume() {
+    let svc = start_with(None, Some(TEST_KEEPALIVE_MS)).await;
+    let room = "room-half-open-resume";
+    let (mut alice, _bob_silent, bob_resume) = paired_with_a_silent_bob(&svc, room).await;
+    assert_eq!(next(&mut alice).await, json!({ "type": "PeerAway" }));
+
+    let mut bob = join_with(&svc, "bob", room, &bob_resume).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "resumed": true })
+    );
+    assert_eq!(
+        next(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "resumed": true })
+    );
 }

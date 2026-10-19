@@ -120,10 +120,39 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
   partner `PeerLeft`. Now the record's FIRST disposition decides what a socket's end does:
   - `client-close` (a Close frame: a hangup) or `rate-limited` -> the seat is freed and the present
     partner gets `PeerLeft`, at once.
-  - `transport-error`, `stream-ended`, `send-failed` (the network went) -> the seat stays, ABSENT,
-    for `CALL_P2P_SEAT_GRACE_SEC` (default 60 s, longer than the client's 5-attempt ladder, whose
-    last attempt starts 31 s after the loss). The present partner gets `PeerAway`. Frames for an
-    away partner are dropped with an `info` line (expected), not the `warn` of a lone peer.
+  - `transport-error`, `stream-ended`, `send-failed`, `keepalive-lost` (the network went) -> the
+    seat stays, ABSENT, for `CALL_P2P_SEAT_GRACE_SEC` (default 60 s; the client's 15 attempts on a
+    ladder capped at 4 s start their last at +55 s). The present partner gets `PeerAway`. Frames
+    for an away partner are dropped with an `info` line (expected), not the `warn` of a lone peer.
+  - **The keepalive is the liveness PROOF (2026-10-19).** Wi-Fi off on a phone leaves a HALF-OPEN
+    socket: a ping write lands in the kernel buffer and "succeeds" for minutes, so no write error
+    ever came - measured on the bench, the seat was never marked away, the partner's ICE restart
+    offer was relayed into the dead socket, and after a 90 s outage the partner sat on
+    "Reconnexion..." for good. Now a Ping goes out every 10 s (`CALL_KEEPALIVE_MS`) and ANY frame
+    from the peer (a running browser answers every Ping with a Pong from its network stack) resets
+    the count; two pings in a row unanswered (`MISSED_PONGS_LIMIT`) end the socket
+    `keepalive-lost`, at most 30 s after the peer's last frame. A COUNT of ticks, so the partner of
+    a device that never returns is told `PeerAway` within 30 s and `PeerLeft` within ~90 s. The
+    loop's `select!` is `biased` with the socket read FIRST and the outbound queue (`Shutdown`)
+    before the tick, so a Pong already readable is never counted missing and a socket whose seat
+    was resumed is never accused; the interval is `MissedTickBehavior::Delay`, so a stalled loop
+    does not fire its missed ticks back to back. **Every write the loop makes is bounded by one
+    keepalive period** (`bounded_write`): a peer that stops READING fills the TCP window, and an
+    unbounded write would park the loop - and its liveness tick - for as long as the kernel keeps
+    the connection. A frame not taken in time ends the socket `send-failed`, a Ping
+    `keepalive-lost`, each with a `... not taken within N ms - the peer reads nothing (TCP
+    backpressure), held dead` line; both keep the p2p seat. Pinned by the unit test
+    `a_write_the_peer_never_takes_ends_at_its_bound` (a write that never completes, so no clock
+    decides it); an end-to-end backpressure test would race the keepalive itself, whichever fills
+    first.
+  - **A BEHAVIOUR CHANGE THIS BUYS, OWED A READING.** The Pong comes from a RUNNING process - a
+    throttled background tab answers. A SUSPENDED one does not: an iOS or Android app the OS froze
+    mid-call (screen locked, app backgrounded) now ends `keepalive-lost` 20-30 s in, and its
+    partner gets `PeerLeft` ~60 s later; before, a suspended app's socket sat half-open and the
+    seat stayed "present". Whether the bench phones stay running in a call with the screen locked
+    is CALL-L1 row 11
+    ([device-verification](../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both));
+    Android's background microphone is already CALL-LOCK-ANDROID.
   - **Resume:** every p2p `Joined` carries `resume_token`, a room token this service mints with the
     same `CALL_ROOM_SECRET` plus a `seat` claim (the peer id), valid 4 h (the longest call
     chat-delivery counts). A `Join` with it takes THAT seat back IN PLACE - same user and group
@@ -133,7 +162,8 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
     (expired, never this user's, room gone) is `Refused { call-over }` and never creates a room. If
     the server had not yet seen the old socket die, the resume replaces the live seat, the old
     record ends `resumed` (expected) and the old socket is CLOSED (an internal `Shutdown` its loop
-    turns into a Close frame), so a half-open socket never lingers until the keepalive.
+    turns into a Close frame), so a half-open socket never lingers until the keepalive holds it
+    dead.
   - `IceRestartRequest` (client -> partner) is relayed verbatim like an SDP: the polite side asks
     the initiator to restart ICE, since only the initiator offers. No counter, one relay line each.
   - **Grace end:** `[call] p2p seat EXPIRED room= peer=` at `warn`, the seat is freed, a present
@@ -147,9 +177,11 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
   cannot see it - printing an ICE state would be a column answering a question it never measured.
   `paired_ms=-` means the other party never came. Plus `[call] p2p paired room= initiator= polite=`
   and one `[call] p2p offer|answer relayed` line per SDP (none per candidate).
-- **Keepalive (both modes):** the socket loop sends a WebSocket Ping every 25 s. A P2P call sends no
-  signalling once connected, and production's host nginx closes a proxied socket after 60 s without
-  a read from upstream (realtime-media-feasibility section 9, 4a).
+- **Keepalive (both modes):** the socket loop sends a WebSocket Ping every 10 s (25 s until
+  2026-10-19). A P2P call sends no signalling once connected, and production's host nginx closes a
+  proxied socket after 60 s without a read from upstream (realtime-media-feasibility section 9,
+  4a). Since 2026-10-19 it is also the liveness proof: two pings unanswered end the socket
+  `keepalive-lost` (see the network-blip item above).
 - **Pinned by** `src/p2p.rs` tests and `tests/p2p_signalling.rs`, which runs the real binary over
   real WebSockets with real room tokens. Each test starts the binary on `PORT=0` and reads the port
   it BOUND from its `Call service listening on <addr>` line (logged after `bind`, so it is also the
@@ -259,9 +291,10 @@ the cause. The tokens are a contract the campaign greps on, pinned by
 | `rate-limited` | > 50 frames/s; the SFU disconnected it | warn |
 | `send-failed` | the SFU could not write to this peer | warn |
 | `room-reaped` | the room was still held when the 30-minute reaper ran | warn |
+| `keepalive-lost` | the peer answered none of the last two keepalive pings — a half-open socket, the network gone (p2p: the seat stays away for a resume) | warn |
 | `unknown` | no branch classified the ending — a hole in `main.rs`, not in the call | warn |
 
-Only the first three are endings the design intends; everything else accuses. In p2p mode `transport-error`, `stream-ended` and `send-failed` keep the seat away for a resume ([peer-to-peer mode](#peer-to-peer-mode-2026-10-17)) - the record still accuses, because the network went.
+Only the first three are endings the design intends; everything else accuses. In p2p mode `transport-error`, `stream-ended`, `send-failed` and `keepalive-lost` keep the seat away for a resume ([peer-to-peer mode](#peer-to-peer-mode-2026-10-17)) - the record still accuses, because the network went.
 
 ### The fields that separate the causes
 
@@ -310,6 +343,7 @@ duration is present or absent.
 | `CALL_ROOM_SECRET` | **yes** | - | Secret for room access tokens. Unset or empty, the service REFUSES TO START (it used to disable room access control; no dev flag exists, the local compose supplies a dev value) |
 | `PORT` | no | `3004` | Listen port |
 | `CALL_P2P_SEAT_GRACE_SEC` | no | `60` | How long a p2p seat whose socket dropped without a Close frame waits for its device to resume ([above](#peer-to-peer-mode-2026-10-17)). Not a number -> logged, default kept |
+| `CALL_KEEPALIVE_MS` | no | `10000` | Keepalive ping period; two pings in a row unanswered end the socket `keepalive-lost` ([above](#peer-to-peer-mode-2026-10-17)). Set only by the integration tests. Not a positive number -> logged, default kept |
 | `CLOUDFLARE_CALLS_API_TOKEN` | no | - | Cloudflare API token for TURN credentials |
 | `CLOUDFLARE_TURN_KEY_ID` | no | - | Cloudflare TURN key ID |
 | `CLOUDFLARE_TURN_TTL_SECONDS` | no | `7200` | TURN credential TTL |
