@@ -136,7 +136,15 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
     loop's `select!` is `biased` with the socket read FIRST and the outbound queue (`Shutdown`)
     before the tick, so a Pong already readable is never counted missing and a socket whose seat
     was resumed is never accused; the interval is `MissedTickBehavior::Delay`, so a stalled loop
-    does not fire its missed ticks back to back.
+    does not fire its missed ticks back to back. **Every write the loop makes is bounded by one
+    keepalive period** (`bounded_write`): a peer that stops READING fills the TCP window, and an
+    unbounded write would park the loop - and its liveness tick - for as long as the kernel keeps
+    the connection. A frame not taken in time ends the socket `send-failed`, a Ping
+    `keepalive-lost`, each with a `... not taken within N ms - the peer reads nothing (TCP
+    backpressure), held dead` line; both keep the p2p seat. Pinned by the unit test
+    `a_write_the_peer_never_takes_ends_at_its_bound` (a write that never completes, so no clock
+    decides it); an end-to-end backpressure test would race the keepalive itself, whichever fills
+    first.
   - **A BEHAVIOUR CHANGE THIS BUYS, OWED A READING.** The Pong comes from a RUNNING process - a
     throttled background tab answers. A SUSPENDED one does not: an iOS or Android app the OS froze
     mid-call (screen locked, app backgrounded) now ends `keepalive-lost` 20-30 s in, and its

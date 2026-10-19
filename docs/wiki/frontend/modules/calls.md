@@ -238,8 +238,9 @@ Read from the Mi 9T's exported log and the code, three causes, one chain:
    `createOffer({ iceRestart: true })`, sent at once, after rolling back any pending offer; and an
    offer or request belongs to the PAIRING it was sent in (`pairEpoch`, bumped on every signalling
    break and every `PeerReady`), so one from an earlier pairing never blocks a new one.
-   **Two invariants keep an answer with ITS offer** (review of #2148): EVERY negotiation step -
-   the relay's frames, `negotiationneeded`, an ICE restart offer - runs on ONE queue
+   **Two invariants keep an answer with ITS offer** (review of #2148): every negotiation step -
+   the relay's frames (all but `Joined` and `Refused`, which settle the socket itself and are
+   handled at once), `negotiationneeded`, an ICE restart offer - runs on ONE queue
    (`signalQueue`), so no offer is rolled back or made while an answer is half applied; and every
    offer carries a NUMBER (`seq`, inside the `sdp` string the relay already forwards verbatim -
    `call-service` is unchanged) that the answerer echoes. An answer to any offer but the pending one
@@ -256,10 +257,20 @@ Also read in that log: Android Chromium reached `connectionState=failed` while
 too (`mediaPathDown` reads both). And the resume decides from the inbound audio packet count
 across the outage, not from a state that may still read `connected` on a path carrying nothing.
 
-**The restart budget counts per media LOSS, across pairings** (`CALL_ICE_RESTART_ATTEMPTS`, reset
-only when ICE connects or the peer connection is rebuilt). An offer that went into a dead socket
-costs one restart - the price of a bound a flapping peer cannot escape, since the keepalive can now
-break a pairing every 20-30 s. The resume ladder has no jitter: two clients that lost the same
+**The restart budget counts per media LOSS, across pairings** (`CALL_ICE_RESTART_ATTEMPTS`). An
+offer that went into a dead socket costs one restart - the price of a bound a flapping peer cannot
+escape, since the keepalive can now break a pairing every 20-30 s. It is CHARGED when the offer is
+actually made (`sendIceRestartOffer`, after its pairing check; the polite side's request when it is
+sent), so a restart dropped in the queue costs nothing. It is REFUNDED on evidence, not only on a
+state transition: when ICE connects, when a resume finds audio carried across the outage, or when
+the inbound packet count at a new break is above the count taken when the last restart's
+negotiation completed (`packetsAtRestart`) - a restart that worked while ICE never left `connected`
+(review of #2148: otherwise a long call ended at its third blip). **Every queued step belongs to
+the call it was queued for**: a step whose call is over (another call, idle, or the 1.5 s ended
+summary) is dropped and logged once per call (`... dropped - the call is now ...`), and `failCall`
+on a call already over does nothing - so a late `PeerLeft` or restart can never end the next call
+or print a second "terminal failure". Two edges are recorded, not built (F6, F7 in
+[backlog](../../backlog.md)). The resume ladder has no jitter: two clients that lost the same
 network at the same moment retry in step (P3 in [backlog](../../backlog.md)).
 
 **A BEHAVIOUR CHANGE: A SUSPENDED APP NOW LEAVES THE CALL.** The keepalive's Pong comes from a
@@ -294,7 +305,8 @@ fakes cannot prove:** the ORDER in which a real engine completes a rollback, an 
 remote answer. The async fake (`latency`) reproduces ONE interleaving class - an operation started
 beside another overlapping it - and a mutation check shows it catches both a step run beside the
 queue and a missing offer-number check; WebKit's and Chromium's real ordering is read only on a
-phone. **Owed on a phone:** check CALL-L1 steps 8-11
+phone. **Owed on a phone:** check CALL-L1 row 0 first (an idle call proves the Pong crosses the
+tunnel and nginx), then steps 8-11
 ([device-verification](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)).
 Not handled here: a phone that changes network WITHOUT its socket dropping relies on ICE alone
 (`disconnected` -> one restart); cellular handover is unmeasured (no SIM on the bench).

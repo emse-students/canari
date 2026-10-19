@@ -29,6 +29,9 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 const JWT_SECRET: &str = "test-jwt-secret";
 const ROOM_SECRET: &str = "test-room-secret";
 const LIVENESS: Duration = Duration::from_secs(20);
+/// The keepalive of the half-open tests: short enough that detection (<= 3 periods) is quick, long
+/// enough that a loaded CI runner never leaves a POLLED socket a full period without its Pong.
+const TEST_KEEPALIVE_MS: u64 = 1000;
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -607,7 +610,7 @@ async fn a_resume_over_a_live_socket_closes_the_old_one() {
 }
 
 /// Reads `ws` on a task of its own for as long as it lives, forwarding each JSON frame. A socket is
-/// answered (Pong) only while it is READ, so a party that must stay alive under a 100 ms keepalive
+/// answered (Pong) only while it is READ, so a party that must stay alive under a short keepalive
 /// is never left unpolled while the test drives the other one - no window of time decides a test.
 fn drained(mut ws: Ws) -> tokio::sync::mpsc::UnboundedReceiver<Value> {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -659,7 +662,7 @@ async fn paired_with_a_silent_bob(
 /// here - `PeerLeft` right after, so a ghost call ends on the partner too.
 #[tokio::test]
 async fn a_silent_half_open_peer_is_held_dead_and_the_partner_is_told() {
-    let svc = start_with(Some(0), Some(100)).await;
+    let svc = start_with(Some(0), Some(TEST_KEEPALIVE_MS)).await;
     let room = "room-half-open";
     let (mut alice, _bob_silent, _) = paired_with_a_silent_bob(&svc, room).await;
 
@@ -671,7 +674,7 @@ async fn a_silent_half_open_peer_is_held_dead_and_the_partner_is_told() {
 /// polled throughout, so she is never the one held dead while Bob rejoins.
 #[tokio::test]
 async fn a_peer_held_dead_by_the_keepalive_can_still_resume() {
-    let svc = start_with(None, Some(100)).await;
+    let svc = start_with(None, Some(TEST_KEEPALIVE_MS)).await;
     let room = "room-half-open-resume";
     let (mut alice, _bob_silent, bob_resume) = paired_with_a_silent_bob(&svc, room).await;
     assert_eq!(next(&mut alice).await, json!({ "type": "PeerAway" }));

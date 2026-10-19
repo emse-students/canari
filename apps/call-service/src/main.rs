@@ -92,6 +92,30 @@ const DEFAULT_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(10
 /// `(MISSED_PONGS_LIMIT + 1) x keepalive` (30 s by default) after the peer's last frame.
 const MISSED_PONGS_LIMIT: u32 = 2;
 
+/// What one bounded write of the socket loop came to.
+#[derive(Debug, PartialEq)]
+enum WriteOutcome<E> {
+    Sent,
+    Failed(E),
+    /// Not taken within the bound: the peer reads nothing and the TCP window is full.
+    NotTaken,
+}
+
+/// Bounds one write of the socket loop by `bound` (one keepalive period). A peer that stops
+/// READING fills the TCP window, and an unbounded write then parks the loop - and with it the
+/// keepalive tick that would have held the peer dead - for as long as the kernel keeps the
+/// connection. Every write the loop makes goes through here.
+async fn bounded_write<E>(
+    bound: std::time::Duration,
+    write: impl std::future::Future<Output = Result<(), E>>,
+) -> WriteOutcome<E> {
+    match tokio::time::timeout(bound, write).await {
+        Ok(Ok(())) => WriteOutcome::Sent,
+        Ok(Err(e)) => WriteOutcome::Failed(e),
+        Err(_) => WriteOutcome::NotTaken,
+    }
+}
+
 /// Reads the keepalive period from `CALL_KEEPALIVE_MS`; absent or not a positive number of
 /// milliseconds, the default stands (a bad value is logged).
 fn keepalive_from(raw: Option<String>) -> std::time::Duration {
@@ -1026,7 +1050,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                     // Our seat was resumed on another socket: this one is the same device's stale
                     // connection. Its record already says `resumed`.
                     info!("[call] {} closing - its seat was resumed on a new socket", peer_id);
-                    let _ = writer_socket.send(Message::Close(None)).await;
+                    // Bounded like every write: a stale socket the peer no longer reads must not
+                    // hold this loop.
+                    let _ = bounded_write(period, writer_socket.send(Message::Close(None))).await;
                     end_session(&session, Disposition::Resumed);
                     break;
                 }
@@ -1039,11 +1065,26 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                         continue;
                     }
                 };
-                // `.into()`: axum 0.8 carries text frames as `Utf8Bytes`, not `String`.
-                if let Err(e) = writer_socket.send(Message::Text(text.into())).await {
-                    error!("[call] {} socket write failed on {}: {}", peer_id, msg.kind(), e);
-                    end_session(&session, Disposition::SendFailed);
-                    break;
+                // `.into()`: axum 0.8 carries text frames as `Utf8Bytes`, not `String`. Bounded
+                // by one keepalive period: a peer that reads nothing fills the TCP window, and an
+                // unbounded write would park this loop - and its liveness tick - for good.
+                match bounded_write(period, writer_socket.send(Message::Text(text.into()))).await {
+                    WriteOutcome::Sent => {}
+                    WriteOutcome::Failed(e) => {
+                        error!("[call] {} socket write failed on {}: {}", peer_id, msg.kind(), e);
+                        end_session(&session, Disposition::SendFailed);
+                        break;
+                    }
+                    WriteOutcome::NotTaken => {
+                        warn!(
+                            "[call] {} write of {} not taken within {} ms - the peer reads nothing (TCP backpressure), held dead",
+                            peer_id,
+                            msg.kind(),
+                            period.as_millis()
+                        );
+                        end_session(&session, Disposition::SendFailed);
+                        break;
+                    }
                 }
             }
             _ = keepalive.tick() => {
@@ -1062,10 +1103,23 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                 }
                 unanswered_pings += 1;
                 // A Ping frame, answered by the browser's own Pong; nothing in the page sees it.
-                if let Err(e) = writer_socket.send(Message::Ping(Default::default())).await {
-                    warn!("[call] {} keepalive ping failed: {}", peer_id, e);
-                    end_session(&session, Disposition::SendFailed);
-                    break;
+                // Bounded like every write (see the frame writer above).
+                match bounded_write(period, writer_socket.send(Message::Ping(Default::default()))).await {
+                    WriteOutcome::Sent => {}
+                    WriteOutcome::Failed(e) => {
+                        warn!("[call] {} keepalive ping failed: {}", peer_id, e);
+                        end_session(&session, Disposition::SendFailed);
+                        break;
+                    }
+                    WriteOutcome::NotTaken => {
+                        warn!(
+                            "[call] {} keepalive ping not taken within {} ms - the peer reads nothing (TCP backpressure), held dead",
+                            peer_id,
+                            period.as_millis()
+                        );
+                        end_session(&session, Disposition::KeepaliveLost);
+                        break;
+                    }
                 }
             }
         }
@@ -2800,6 +2854,26 @@ mod tests {
         ] {
             assert!(!d.keeps_p2p_seat(), "{} must free the seat", d.as_str());
         }
+    }
+
+    /// A write the peer never takes (a pending future: a full TCP window) ends at its bound instead
+    /// of parking the loop; a write taken at once, or refused, is reported as such. Deterministic:
+    /// a pending future never completes, so the bound is the only way out whatever the clock does.
+    #[tokio::test]
+    async fn a_write_the_peer_never_takes_ends_at_its_bound() {
+        let bound = std::time::Duration::from_millis(10);
+        assert_eq!(
+            bounded_write(bound, std::future::pending::<Result<(), ()>>()).await,
+            WriteOutcome::NotTaken
+        );
+        assert_eq!(
+            bounded_write(bound, async { Ok::<(), ()>(()) }).await,
+            WriteOutcome::Sent
+        );
+        assert_eq!(
+            bounded_write(bound, async { Err::<(), &str>("reset") }).await,
+            WriteOutcome::Failed("reset")
+        );
     }
 
     /// The keepalive period is read from the environment; zero or not a number keeps the default.
