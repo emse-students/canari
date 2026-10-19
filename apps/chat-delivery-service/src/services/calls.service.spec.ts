@@ -43,8 +43,8 @@ describe('CallsService', () => {
     findOne: jest.fn(),
     find: jest.fn(),
     manager: {
-      query: jest.fn((_sql: string, _params?: unknown[]): Promise<unknown[]> =>
-        Promise.resolve([])
+      query: jest.fn(
+        (_sql: string, _params?: unknown[]): Promise<unknown[]> => Promise.resolve([])
       ),
     },
   };
