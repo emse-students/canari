@@ -34,6 +34,7 @@ import { keystoreCommand } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
+import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -333,17 +334,7 @@ export class TauriMlsService extends BaseMlsService {
       `[WS] Opening connection → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (no token)'}`
     );
 
-    // NativeWebSocket.connect() resolves when the handshake completes, rejects on failure.
-    // Impose the same 15-second timeout as WebMlsService to prevent silent hangs on Android.
-    let resolved = false;
-    const connectPromise = NativeWebSocket.connect(wsUrl);
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => {
-        if (!resolved) reject(new Error('WebSocket connection timeout after 15s'));
-      }, 15_000)
-    );
-    this.ws = await Promise.race([connectPromise, timeoutPromise]);
-    resolved = true;
+    this.ws = await connectNativeSocket(NativeWebSocket.connect(wsUrl), NATIVE_CONNECT_TIMEOUT_MS);
     console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {

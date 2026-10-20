@@ -357,6 +357,35 @@ taken for a "not there", with a destructive branch behind it.
 Always take a base from `utils/apiUrl.ts` (`coreUrl` / `socialUrl` / `gatewayUrl` / `deliveryUrl`)
 or `historyBaseUrl`. `apiUrl.absolute.test.ts` is the guard.
 
+## The native socket races IPv6 and IPv4
+
+**The chat socket on a native build is a THIRD network stack**, beside the WebView and the HTTP
+plugin: `tauri-plugin-websocket`, Rust `tokio-tungstenite`. Until 2026-10-20 it connected with
+`TcpStream::connect("host:port")`, which tries the resolved addresses IN TURN and waits for each to
+fail. On a Wi-Fi that hands out IPv6 addresses but routes no IPv6 traffic, the IPv6 attempt hung for
+the OS connect timeout (20-21 s on the Mi 9T) before IPv4 was tried, past the page's 15 s deadline
+every time: the phone sent, fetched and dialled (HTTP is `reqwest`/`hyper-util`, which falls back to
+IPv4 after 300 ms; call signalling is the WebView's own socket), and received NO live frame and NO
+call invite for as long as it stayed on that network (CALL-WS-V6,
+[readings](../device-readings-2026-10.md)).
+
+- **The connect is Happy Eyeballs (RFC 8305)**, in [happy_eyeballs.rs](../../../frontend/src-tauri/src/happy_eyeballs.rs):
+  addresses interleaved by family, the next attempt started 250 ms after the previous one (at once if
+  it fails), first to connect wins, the others are dropped. The plugin is PATCHED to take it
+  (`patches/tauri-plugin-websocket`, `Builder::tcp_connector`, the `CANARI PATCH` hunks); TLS and the
+  WebSocket handshake are upstream's. The dependency is pinned EXACT, and an unpatched version has no
+  `tcp_connector`, so it fails to compile rather than install silently.
+- **A win by anything but the preferred address is logged at WARN** (`[WS-NET] ... NOT the preferred
+  address - lost: ...`), naming each attempt it beat and whether it failed or was still pending. On a
+  healthy network the line does not exist; on a broken-IPv6 one it appears once per connect, and it is
+  the only witness that the network, not the app, is degraded.
+- **A connect the page abandoned is CLOSED when it completes** ([nativeSocketConnect.ts](../../../frontend/src/lib/services/nativeSocketConnect.ts)).
+  The plugin's `connect` cannot be cancelled: before this, each late completion left an open,
+  authenticated socket whose frames reached a listener set nobody would ever add to, and the gateway
+  counts every socket of a device as a session, so the ghost kept the device "online" while what it
+  received went nowhere. Logged at WARN, because a late socket means the connect was slower than the
+  deadline.
+
 ## Rules that hold across both platforms
 
 **Push is all-FCM.** One transport for Android and iOS alike: the backend sends every `PushToken`

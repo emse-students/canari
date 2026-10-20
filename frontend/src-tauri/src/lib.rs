@@ -4,6 +4,7 @@
 mod app_group;
 mod commands;
 mod concurrency;
+mod happy_eyeballs;
 mod keystore_bridge;
 mod state;
 
@@ -824,7 +825,13 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
-        .plugin(tauri_plugin_websocket::init())
+        // The chat socket's TCP connect races IPv6 and IPv4 (RFC 8305) instead of trying them in
+        // turn (CALL-WS-V6): see `happy_eyeballs.rs` and the patch in `patches/tauri-plugin-websocket`.
+        .plugin(
+            tauri_plugin_websocket::Builder::new()
+                .tcp_connector(happy_eyeballs::tcp_connector())
+                .build(),
+        )
         .plugin(tauri_plugin_store::Builder::default().build())
         // Publishes the COMPILE-TIME target OS to the WebView (window.__TAURI_OS_PLUGIN_INTERNALS__).
         // The frontend used to read the platform out of navigator.userAgent, which an iPad WKWebView

@@ -31,7 +31,12 @@ import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/c
 import { CALLS_ENABLED } from '$lib/features';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
-import { audioCodecOrder, describeAudioCodecs, describeSelectedPair } from '$lib/utils/callStats';
+import {
+  audioCodecOrder,
+  describeAudioCodecs,
+  describeSelectedPair,
+  relayGapIsSuspect,
+} from '$lib/utils/callStats';
 import {
   describeE2eReport,
   e2eBypassedSides,
@@ -1877,15 +1882,17 @@ export class CallService {
         this.sendSignal({ type: 'IceCandidate', candidate: JSON.stringify(e.candidate) });
       } else {
         appendLog(
-          `[Call] ICE gathering complete (host=${gathered.host} srflx=${gathered.srflx} relay=${gathered.relay})`
+          `[Call] ICE gathering complete (host=${gathered.host} srflx=${gathered.srflx} relay=${gathered.relay} ice=${pc.iceConnectionState})`
         );
         this.sendSignal({
           type: 'IceCandidate',
           candidate: JSON.stringify({ candidate: '' } satisfies RTCIceCandidateInit),
         });
-        if (gathered.relay === 0) {
+        // A working direct pair stops libwebrtc's gathering before TURN answers (CALL-GATHER-0):
+        // `relay=0` is only suspect while ICE has no working pair yet.
+        if (relayGapIsSuspect(gathered.relay, pc.iceConnectionState)) {
           appendLog(
-            '[Call] WARN no TURN relay candidate - a call that cannot go direct will fail (Cloudflare TURN unreachable or misconfigured)'
+            `[Call] WARN no TURN relay candidate and no working pair yet (ice=${pc.iceConnectionState}) - a call that cannot go direct will fail (Cloudflare TURN unreachable or misconfigured)`
           );
         }
       }

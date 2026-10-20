@@ -339,6 +339,14 @@ searches), `HEAD` content-length.
 
 Mechanism of both: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix). Delete each with its fix.
 
+## P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)
+
+The line [calls](frontend/modules/calls.md) calls "the only place that says whether a call was billed" is written ONCE, at `connected`; ICE may move to a better pair afterwards. Bench P1 logged `relayed=yes` on both ends while `getStats` read `host/udp -> host/udp` at the end ([readings](device-readings-2026-10.md)). Fix: log the pair again when the selected pair changes (or at hang-up), so the last line is the one billed. Delete with its fix.
+
+## P1 - CALL-WS-V6 is fixed on a branch and owed ONE phone reading (2026-10-20)
+
+The native chat socket now races IPv6 and IPv4 and closes a connect it abandoned ([mobile](frontend/mobile.md#the-native-socket-races-ipv6-and-ipv4)). Owed on the Mi 9T, on the alpha that carries it: the PC's mobile hotspot with broken IPv6 (bench P6), `Connected to Chat Gateway` within a second, one `[WS-NET] ... NOT the preferred address` WARN per connect in `logcat`, and the iPhone's call RINGING the phone. Delete with that reading.
+
 ## P3 - The call resume ladder has no jitter (review of #2148, 2026-10-19, not built)
 
 `CallService`'s signalling resume retries at fixed moments (1, 2, 4, 4, 4... s, `cappedReconnectDelayMs`), so two clients that lost the same Wi-Fi at the same instant reconnect in lockstep - harmless at two phones, a burst on `call-service` once many share a network. Jitter must not become a clock that decides anything: it spreads WHEN an attempt starts, the budget stays a count. Mechanism: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix). Delete this item when jitter ships or the burst is measured as irrelevant.
