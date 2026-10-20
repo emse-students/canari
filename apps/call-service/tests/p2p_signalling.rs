@@ -572,6 +572,34 @@ async fn an_ice_restart_request_reaches_the_initiator() {
     );
 }
 
+/// The sender's OS took its microphone: the partner is told, verbatim, and told again when the
+/// microphone comes back - the only way it can tell a suspended microphone from a silent speaker.
+#[tokio::test]
+async fn a_suspended_microphone_is_told_to_the_partner_both_ways() {
+    let svc = start().await;
+    let room = "room-mic-suspended";
+    let (mut alice, _, mut bob, _) = paired(&svc, room).await;
+
+    send(
+        &mut bob,
+        json!({ "type": "MicSuspended", "suspended": true }),
+    )
+    .await;
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "MicSuspended", "suspended": true })
+    );
+    send(
+        &mut bob,
+        json!({ "type": "MicSuspended", "suspended": false }),
+    )
+    .await;
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "MicSuspended", "suspended": false })
+    );
+}
+
 /// A resume can arrive before the server saw the old socket die. The old socket is then CLOSED,
 /// not left half-open for the keepalive to find, and its closing tells the partner nothing.
 #[tokio::test]

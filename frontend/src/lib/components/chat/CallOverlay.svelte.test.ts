@@ -42,6 +42,8 @@ function fakeService(state: CallState) {
     endedAt: writable<number | null>(null),
     reconnecting: writable(false),
     e2eProven: writable(false),
+    localMicSuspended: writable(false),
+    peerMicSuspended: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
     acceptCall: vi.fn(async () => {}),
@@ -131,6 +133,37 @@ describe('the encryption line', () => {
     service.e2eProven.set(true);
     flushSync();
     expect(line()).toBe(m.call_e2e_encrypted_title());
+  });
+});
+
+describe('a microphone a system took (WP-C-BG-I)', () => {
+  // CALL-IOS-MIC-HIDDEN (2026-10-20): the partner heard nothing and nothing on its screen said why.
+  it("says the other party's phone took its microphone, and announces it, while it lasts", async () => {
+    const service = fakeService('incall');
+    await render(service);
+    const notice = () => document.querySelector('[data-testid="call-mic-notice"]');
+    const announcer = () => document.querySelector('[data-testid="call-announcer"]');
+    expect(notice()).toBeNull();
+
+    service.peerMicSuspended.set(true);
+    flushSync();
+    expect(notice()?.textContent?.trim()).toBe(m.call_mic_suspended_peer({ name: 'Bob' }));
+    expect(announcer()?.textContent).toBe(m.call_mic_suspended_peer({ name: 'Bob' }));
+
+    service.peerMicSuspended.set(false);
+    flushSync();
+    expect(notice()).toBeNull();
+    expect(announcer()?.textContent).toBe(m.call_live_announcement());
+  });
+
+  it('says it is THIS phone when the system holds the local microphone', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    service.localMicSuspended.set(true);
+    flushSync();
+    expect(document.querySelector('[data-testid="call-mic-notice"]')?.textContent?.trim()).toBe(
+      m.call_mic_suspended_local()
+    );
   });
 });
 

@@ -734,6 +734,14 @@ enum SignalMessage {
     /// down and it cannot restart ICE itself (only the initiator offers), so it asks the initiator
     /// to. Bounded by the asker's own restart budget.
     IceRestartRequest,
+    /// P2P only, client -> server -> partner, relayed verbatim: the SENDER's operating system took
+    /// its microphone (`suspended: true`: the capture track went `muted`, which is not the user's
+    /// mute button) or gave it back (`false`). The partner hears nothing in between and has no
+    /// other way to tell that from a silent speaker or a lost path; only the sender knows, so the
+    /// sender says it (WP-C-BG-I, calls.md).
+    MicSuspended {
+        suspended: bool,
+    },
     /// Server-internal, never on the wire: tells a socket loop to send a Close frame and end -
     /// the seat it held was resumed by the same device on a new socket.
     #[serde(skip)]
@@ -763,6 +771,7 @@ impl SignalMessage {
             SignalMessage::PeerLeft => "peer-left",
             SignalMessage::PeerAway => "peer-away",
             SignalMessage::IceRestartRequest => "ice-restart-request",
+            SignalMessage::MicSuspended { .. } => "mic-suspended",
             SignalMessage::Shutdown => "shutdown",
             SignalMessage::Refused { .. } => "refused",
         }
@@ -1624,6 +1633,16 @@ async fn handle_signal(
             )
             .await;
         }
+        SignalMessage::MicSuspended { suspended } if session.mode == RoomMode::P2p => {
+            p2p_relay(
+                state,
+                session,
+                peer_id,
+                RelayedKind::MicSuspended,
+                SignalMessage::MicSuspended { suspended },
+            )
+            .await;
+        }
         SignalMessage::Offer { sdp } => {
             let Some((room_id, room)) = resolve_room(state, session, peer_id, "offer") else {
                 return;
@@ -1754,8 +1773,9 @@ async fn handle_signal(
         | SignalMessage::PeerAway
         | SignalMessage::Shutdown
         | SignalMessage::IceRestartRequest
+        | SignalMessage::MicSuspended { .. }
         | SignalMessage::Refused { .. } => {
-            // Server -> client only (and an ICE restart request outside p2p mode). A client sending one is confused, and the line says which.
+            // Server -> client only (and an ICE restart request or a microphone state outside p2p mode). A client sending one is confused, and the line says which.
             warn!(
                 "[call] {} sent server-only frame {} - dropped",
                 peer_id,

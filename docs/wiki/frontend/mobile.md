@@ -3437,6 +3437,17 @@ owed.**
 **0.14.15 also carries `48d31eaa` itself**, which is owed regardless of calls: it is why an iPad
 could not obtain an FCM token either, and therefore received no message notification of any kind.
 
+**The `audio` background mode follows the same rule as `voip`, and is in PRE-RELEASE builds only
+(2026-10-20, WP-C-BG-I).** WKWebView mutes a page's microphone the moment the app is hidden or the
+screen locks unless `UIBackgroundModes` holds `audio` (measured on the iPhone: the process and its
+WebRTC stack kept running, only the capture stopped -
+[calls](modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)). A
+pre-release can call, so `ios.yml` patches `audio` into that build's `Info.plist`, in the branch
+that writes `VITE_DEPLOY_ENVIRONMENT=development`; a stable cannot, so the committed plist does not
+declare it until `CALLS_COMPILED` flips (`callsCompiled.test.ts`). **A TestFlight build for EXTERNAL
+testers goes through Beta App Review**, which may ask what the mode is for: the answer is the in-app
+1:1 call, which that build places.
+
 ### Where the three channels actually are - READ THEM, NEVER READ THIS
 
 **THIS SECTION NAMES NO VERSION, DELIBERATELY, AND IT USED TO.** It carried a `2026-09-04` snapshot

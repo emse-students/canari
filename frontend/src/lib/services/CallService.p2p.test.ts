@@ -2228,3 +2228,131 @@ describe('a network blip does not end the call', () => {
     });
   });
 });
+
+/**
+ * THE OS TAKING THE MICROPHONE (WP-C-BG-I, CALL-IOS-MIC-HIDDEN): measured on the iPhone, locked or in
+ * the background, the capture track goes `muted` while the call and its WebRTC stack keep running -
+ * the partner hears nothing and, before this, nothing said why. The sender tells the partner over
+ * the relay; each pairing rebuilds that state from the sender's own truth.
+ */
+describe('a microphone the system took', () => {
+  /** A capture track whose `mute` / `unmute` the OS fires - an EventTarget, as the real one is. */
+  class FakeMic extends EventTarget {
+    kind = 'audio';
+    enabled = true;
+    muted = false;
+    readyState = 'live';
+    stop = vi.fn();
+    systemTakes() {
+      this.muted = true;
+      this.dispatchEvent(new Event('mute'));
+    }
+    systemGivesBack() {
+      this.muted = false;
+      this.dispatchEvent(new Event('unmute'));
+    }
+  }
+
+  let mic: FakeMic;
+  beforeEach(() => {
+    mic = new FakeMic();
+    const stream = {
+      getTracks: () => [mic],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [mic],
+    };
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      mediaDevices: { getUserMedia: vi.fn(async () => stream) },
+    });
+  });
+
+  async function pairedCaller(service: CallService) {
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    return ws;
+  }
+
+  it('tells the other party when the system takes the microphone and when it gives it back', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+
+    mic.systemTakes();
+    expect(get(service.localMicSuspended)).toBe(true);
+    expect(ws.framesOfType('MicSuspended')).toEqual([{ type: 'MicSuspended', suspended: true }]);
+    // Not the user's mute: the button state is untouched.
+    expect(get(service.isMuted)).toBe(false);
+
+    mic.systemGivesBack();
+    expect(get(service.localMicSuspended)).toBe(false);
+    expect(ws.framesOfType('MicSuspended').at(-1)).toEqual({
+      type: 'MicSuspended',
+      suspended: false,
+    });
+    // The screen was hidden while it lasted: the user is told on the way back.
+    expect(showToast).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows what the other party said, and clears it when it says the microphone is back', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+
+    ws.deliver({ type: 'MicSuspended', suspended: true });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(true);
+    ws.deliver({ type: 'MicSuspended', suspended: false });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(false);
+  });
+
+  it('says nothing before the pairing, and announces a microphone still held when the pair forms', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+
+    mic.systemTakes();
+    expect(get(service.localMicSuspended)).toBe(true);
+    expect(ws.framesOfType('MicSuspended')).toHaveLength(0);
+
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    expect(ws.framesOfType('MicSuspended')).toEqual([{ type: 'MicSuspended', suspended: true }]);
+  });
+
+  it("forgets the other party's report at a new pairing: a `false` lost with a socket cannot leave it stuck", async () => {
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+    ws.deliver({ type: 'MicSuspended', suspended: true });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(true);
+
+    ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(false);
+  });
+
+  it('a track handed over already muted counts from the start', async () => {
+    mic.muted = true;
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    expect(get(service.localMicSuspended)).toBe(true);
+  });
+
+  it('leaves no state and no listener behind when the call ends', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+    mic.systemTakes();
+    ws.deliver({ type: 'MicSuspended', suspended: true });
+    await settle();
+
+    service.endCall();
+    await settle();
+    expect(get(service.localMicSuspended)).toBe(false);
+    expect(get(service.peerMicSuspended)).toBe(false);
+    const sentBefore = ws.sent.length;
+    mic.systemGivesBack();
+    expect(ws.sent.length).toBe(sentBefore);
+  });
+});
