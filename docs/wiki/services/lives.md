@@ -618,6 +618,22 @@ below is reversible and names its reason.
 | C15 | **The live ends** | Every chat route answers what the live's other routes answer: `410 LIVE_ENDED` WITH its `endedAt` and `endReason` (WP-L8's one `liveEnded`, so `cut` is told apart), and a write that reaches a live purged after a cut gets that `410 cut` too (`refuseIfCut`); the rows go with the live (C2) | One end, the row's (Q5). |
 | C16 | **Push** | **None.** A live message notifies nobody | A live chat is read while watching; a push per message to 24 viewers is noise (CLAUDE.md). |
 
+**What the chat seal does NOT protect, accepted and stated (review of #2136, 2026-10-19).** The
+seal (C12) binds a message to its live, its author and its `clientId`, and nothing else:
+
+- **The sequence number is not in the AAD**, so the server (which holds the key anyway) can
+  REORDER, DROP or REPLAY messages - a replay under a new id is not drawn twice, since the client
+  dedupes on `author:clientId`, but a dropped one is simply never seen.
+- **A tombstone is not authenticated**: a hide is the server's word, and moderation is the
+  server's job by design (C14). A client cannot tell a moderator's hide from any other removal.
+- **The ciphertext length gives away the exact UTF-8 length** of the message (iv 12 + text + tag
+  16, no padding).
+- **Reactions are PLAINTEXT**: kind counts per member per 2 s window (C7, C12), which the server
+  must read to add them up.
+
+As for the segments, this guards against the store and the database's readers, never against
+social-service.
+
 ### The contract
 
 | Route | Who | Answers |

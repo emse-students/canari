@@ -21,6 +21,10 @@ import { responseOrigin } from '$lib/utils/apiRefusal';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type {
+  LiveChatHidden,
+  LiveChatMessageWire,
+  LiveChatQuery,
+  LiveChatTombstoneWire,
   LiveEndResult,
   LiveIngestResult,
   LiveLimits,
@@ -29,6 +33,7 @@ import type {
   LiveEndReason,
   LiveListItem,
   LiveManifest,
+  LiveReactionKind,
   LiveRefusalKind,
   LiveRemovedViewer,
   LiveRulesStatus,
@@ -251,9 +256,79 @@ export async function fetchLive(liveId: string): Promise<LiveView> {
  * `from`, the newest `manifestWindow` segments (the join); with it, from that index on. Same kinds
  * as {@link fetchLive}.
  */
-export async function fetchLiveManifest(liveId: string, from?: number): Promise<LiveManifest> {
-  const query = from === undefined ? '' : `?from=${from}`;
-  return liveJson<LiveManifest>(`${livePath(liveId)}/manifest${query}`, 'Live manifest');
+export async function fetchLiveManifest(
+  liveId: string,
+  from?: number,
+  chat?: LiveChatQuery
+): Promise<LiveManifest> {
+  return liveJson<LiveManifest>(
+    `${livePath(liveId)}/manifest${manifestQuery(from, chat)}`,
+    'Live manifest'
+  );
+}
+
+/**
+ * The manifest's query string. `chat` asks for the chat block (WP-L6, C3) - the chat RIDES the poll
+ * the viewer already makes, one request a tick; an absent cursor is the first poll's (C13).
+ */
+export function manifestQuery(from?: number, chat?: LiveChatQuery): string {
+  const params = new URLSearchParams();
+  if (from !== undefined) params.set('from', String(from));
+  if (chat) {
+    params.set('chat', '1');
+    if (chat.messagesAfter !== undefined) params.set('messagesAfter', String(chat.messagesAfter));
+    if (chat.reactionsAfter !== undefined)
+      params.set('reactionsAfter', String(chat.reactionsAfter));
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+/**
+ * `POST /api/lives/:id/messages` - one chat message, SEALED with the live key by the caller
+ * (`sealLiveChatMessage`). A repeat with the same `clientId` and bytes answers the stored message
+ * (a lost answer retried). Kinds: `rate-limited` (`LIVE_MESSAGE_TOO_FAST`), `refused`
+ * (`LIVE_MUTED`, `LIVE_MESSAGE_INVALID`, `LIVE_MESSAGE_CONFLICT`), and the watch refusals.
+ */
+export async function postLiveMessage(
+  liveId: string,
+  clientId: string,
+  sealed: string
+): Promise<LiveChatMessageWire | LiveChatTombstoneWire> {
+  console.debug(`[LIVE_CHAT] send ${clientId} on ${liveId}: ${sealed.length} b64 chars`);
+  return liveJson(`${livePath(liveId)}/messages`, 'Live message', {
+    method: 'POST',
+    body: JSON.stringify({ clientId, sealed }),
+  });
+}
+
+/**
+ * `POST /api/lives/:id/reactions` - the taps of one tick, summed by kind (C7). Never one request a
+ * tap. `rate-limited` (`LIVE_REACTION_TOO_FAST`) drops the burst: a floating reaction is a moment.
+ */
+export async function postLiveReactions(
+  liveId: string,
+  burstId: string,
+  counts: Partial<Record<LiveReactionKind, number>>
+): Promise<{ burstId: string; seq: number }> {
+  console.debug(`[LIVE_CHAT] reactions ${burstId} on ${liveId}`);
+  return liveJson(`${livePath(liveId)}/reactions`, 'Live reactions', {
+    method: 'POST',
+    body: JSON.stringify({ burstId, counts }),
+  });
+}
+
+/**
+ * `POST /api/lives/:id/messages/:messageId/hide` - the broadcaster or staff hides a message (C14).
+ * Idempotent; `not-found` for a message not on that live or a caller who may not moderate it.
+ */
+export async function hideLiveMessage(liveId: string, messageId: string): Promise<LiveChatHidden> {
+  console.debug(`[LIVE_CHAT] hide ${messageId} on ${liveId}`);
+  return liveJson<LiveChatHidden>(
+    `${livePath(liveId)}/messages/${encodeURIComponent(messageId)}/hide`,
+    'Live hide message',
+    { method: 'POST' }
+  );
 }
 
 /**

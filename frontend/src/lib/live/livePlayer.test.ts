@@ -23,7 +23,7 @@ import {
 import { LiveRefusalError } from './api';
 import { LiveSegmentOpenError, openLiveSegment, sealLiveSegment } from './liveCrypto';
 import { TransportFailureError } from '$lib/utils/transportFailure';
-import type { LiveViewerState } from './liveViewerState';
+import { liveFailureOutcome, type LiveViewerState } from './liveViewerState';
 import type { LiveManifest, LiveView } from './types';
 
 const LIVE = '0b6f3a2e-9c1d-4e5f-8a7b-1c2d3e4f5a6b';
@@ -591,6 +591,51 @@ describe('every refusal has its screen', () => {
   });
 });
 
+describe('a refusal the chat heard (WP-L6)', () => {
+  it.each([
+    ['ended', 410],
+    ['not-found', 404],
+    ['removed', 403],
+  ] as const)(
+    "a chat write's %s stops on the screen the player's own poll would show",
+    async (kind, status) => {
+      const p = await joined();
+      const error = refusal(kind, status);
+      const outcome = liveFailureOutcome(error, true);
+      p.refusedElsewhere(error);
+      expect(outcome).not.toBe('retry');
+      expect(states.at(-1)).toEqual((outcome as { stop: unknown }).stop);
+      const pending = timers.length;
+      await flush();
+      expect(timers).toHaveLength(pending);
+    }
+  );
+
+  it("a chat 410 with endReason 'cut' stops on the cut screen", async () => {
+    const p = await joined();
+    p.refusedElsewhere(
+      new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null, 'cut')
+    );
+    expect(states.at(-1)).toEqual({ kind: 'ended', cut: true });
+  });
+
+  it("a refusal that is only a retry (429, no answer) is not the chat's to act on", async () => {
+    const p = await joined();
+    const before = states.length;
+    p.refusedElsewhere(refusal('rate-limited', 429));
+    expect(states).toHaveLength(before);
+    expect(states.at(-1)!.kind).toBe('playing');
+  });
+
+  it('after a stop, it does nothing', async () => {
+    const p = await joined();
+    p.stop();
+    const before = states.length;
+    p.refusedElsewhere(refusal('ended', 410));
+    expect(states).toHaveLength(before);
+  });
+});
+
 describe('closing', () => {
   it('cancels the poll, detaches the source and gives the seat back', async () => {
     const p = await joined();
@@ -699,5 +744,81 @@ describe('closing', () => {
     expect(signals[0]?.aborted).toBe(true);
     expect(signals[1]?.aborted).toBe(false);
     expect(states.at(-1)?.kind).toBe('connecting');
+  });
+});
+
+describe('the live chat riding the poll (WP-L6, C3)', () => {
+  function chatHook() {
+    let n = 0;
+    return {
+      onKey: vi.fn(),
+      query: vi.fn(() => ({ messagesAfter: n, reactionsAfter: n })),
+      receive: vi.fn(() => {
+        n++;
+      }),
+    };
+  }
+
+  function chatPlayer(chat: ReturnType<typeof chatHook>) {
+    return new LivePlayer({ liveId: LIVE, video, onState: (s) => states.push(s), deps, chat });
+  }
+
+  it('hands the chat the key, then ONE manifest request a tick carries its cursors and its block', async () => {
+    const chat = chatHook();
+    live.push(3);
+    chatPlayer(chat).start();
+    await flush();
+    expect(chat.onKey).toHaveBeenCalledWith('ab'.repeat(32));
+    expect(vi.mocked(deps.fetchManifest).mock.calls).toEqual([
+      [LIVE, undefined, { messagesAfter: 0, reactionsAfter: 0 }],
+    ]);
+    live.push(1);
+    await tickTimer();
+    expect(vi.mocked(deps.fetchManifest).mock.calls.at(-1)).toEqual([
+      LIVE,
+      3,
+      { messagesAfter: 1, reactionsAfter: 1 },
+    ]);
+    expect(chat.receive).toHaveBeenCalledTimes(2);
+    // No second timer: the player still keeps exactly one.
+    expect(timers).toHaveLength(1);
+  });
+
+  it('the catch-up fetch of the newest window asks no chat, so a block is never answered twice', async () => {
+    const chat = chatHook();
+    live.push(3);
+    chatPlayer(chat).start();
+    await flush();
+    live.push(30);
+    await tickTimer();
+    const calls = vi.mocked(deps.fetchManifest).mock.calls.slice(-2);
+    expect(calls[0][2]).toEqual({ messagesAfter: 1, reactionsAfter: 1 });
+    expect(calls[1]).toEqual([LIVE]);
+    expect(chat.query).toHaveBeenCalledTimes(2);
+    expect(chat.receive).toHaveBeenCalledTimes(2);
+  });
+
+  it('chats while the live has no segment yet, at the same pace', async () => {
+    const chat = chatHook();
+    chatPlayer(chat).start();
+    await flush();
+    await tickTimer();
+    expect(chat.receive).toHaveBeenCalledTimes(2);
+  });
+
+  it('a stopped player asks nothing more of the chat', async () => {
+    const chat = chatHook();
+    live.push(3);
+    const p = chatPlayer(chat);
+    p.start();
+    await flush();
+    p.stop();
+    expect(timers).toHaveLength(0);
+    expect(chat.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('without a chat, the manifest is asked exactly as before', async () => {
+    await joined(3);
+    expect(vi.mocked(deps.fetchManifest).mock.calls).toEqual([[LIVE]]);
   });
 });

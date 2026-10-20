@@ -40,6 +40,7 @@
     type LiveStartProblem,
   } from '$lib/live/liveBroadcast.svelte';
   import { batteryWarrantsWarning, openLiveCamera, readBatteryLevel } from '$lib/live/liveDevice';
+  import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
 
   interface Props {
     /** Broadcast AS this association (`POST_AS_ASSO` there), or null for the member. */
@@ -415,6 +416,24 @@
           {/if}
         </button>
       {/if}
+    </div>
+  {/if}
+
+  <!-- The chat while on air (WP-L6): its own ONE loop, a hide button on every line, above the End
+       button. Under the away layer in paint order, and kept mounted through it, so its lines and
+       cursors survive a camera taken away. A verdict that the live is over goes to the machine. -->
+  {#if onAir && broadcast.liveId && broadcast.chatKey}
+    <div
+      class="pointer-events-none absolute inset-x-0 top-1/3 bottom-[calc(var(--safe-area-inset-bottom,0px)+5rem)]"
+      data-live-broadcaster-chat-box
+    >
+      {#key broadcast.liveId}
+        <LiveBroadcasterChat
+          liveId={broadcast.liveId}
+          keyHex={broadcast.chatKey}
+          onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
+        />
+      {/key}
     </div>
   {/if}
 
