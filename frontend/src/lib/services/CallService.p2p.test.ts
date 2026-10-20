@@ -1340,6 +1340,109 @@ describe('the E2E worker report (2026-10-19)', () => {
       );
     });
 
+    /** The next camera capture waits for `release()`: a permission prompt still up. */
+    function holdNextCapture() {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const md = navigator.mediaDevices as unknown as {
+        getUserMedia: (c: MediaStreamConstraints) => Promise<unknown>;
+      };
+      const real = md.getUserMedia;
+      md.getUserMedia = async (c) => {
+        md.getUserMedia = real;
+        await gate;
+        return real(c);
+      };
+      return release;
+    }
+
+    it('never adopts a capture that resolves after its call ended - not into the NEXT call', async () => {
+      const { service, lines } = await connectedCall();
+      const release = holdNextCapture();
+      const pending = service.toggleVideo();
+      service.endCall();
+      await vi.advanceTimersByTimeAsync(1_500);
+      // Another call is up before the old prompt answers.
+      const next = service.startCall('group-1', false);
+      await settle();
+      const ws = FakeSocket.instances[FakeSocket.instances.length - 1];
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-2' });
+      await next;
+      release();
+      await pending;
+      const cam = cameras[cameras.length - 1];
+      expect(cam.stop).toHaveBeenCalled();
+      expect(get(service.isVideoOff)).toBe(true);
+      expect(
+        (
+          service as unknown as { localStream: { getVideoTracks: () => unknown[] } }
+        ).localStream.getVideoTracks()
+      ).toEqual([]);
+      expect(lines().some((l) => l.includes('resolved after it ended - capture stopped'))).toBe(
+        true
+      );
+    });
+
+    it('an OFF tapped while the camera is still opening wins: the camera ends OFF', async () => {
+      const { service, pc, lines } = await connectedCall();
+      const release = holdNextCapture();
+      const opening = service.toggleVideo();
+      // The button already shows ON's destination; this tap means OFF and is queued, not dropped.
+      await service.toggleVideo();
+      expect(lines()).toContain(
+        '[Call] camera off queued - applied once the running camera operation ends'
+      );
+      release();
+      await opening;
+      await settle();
+      const cam = cameras[cameras.length - 1];
+      expect(cam.stop).toHaveBeenCalled();
+      expect(get(service.isVideoOff)).toBe(true);
+      const t = pc.getTransceivers().find((x) => x.sender.kind === 'video');
+      expect(t?.sender.track ?? null).toBeNull();
+    });
+
+    it('the background turns the camera OFF for real and the return turns it ON again - never black frames', async () => {
+      const { service, pc } = await connectedCall();
+      const first = await turnCameraOn(service);
+      const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+      let hidden = true;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      try {
+        document.dispatchEvent(new Event('visibilitychange'));
+        await settle();
+        expect(first.stop).toHaveBeenCalled();
+        expect(first.enabled).toBe(true); // never the black-frame pause
+        expect(t.sender.track).toBeNull();
+        expect(t.direction).toBe('recvonly');
+
+        hidden = false;
+        document.dispatchEvent(new Event('visibilitychange'));
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+        expect(t.direction).toBe('sendrecv');
+        expect(get(service.isVideoOff)).toBe(false);
+      } finally {
+        delete (document as unknown as { hidden?: boolean }).hidden;
+      }
+    });
+
+    it('names a non-VP8 video frame ONCE per call at ERROR, and the kind of a failed decrypt', async () => {
+      const { lines } = await connectedCall();
+      const post = (data: Record<string, unknown>) =>
+        workerAnswers.last?.onmessage?.({ data } as MessageEvent);
+      post({ type: 'videoCodecUnexpected', mimeType: 'video/H264', count: 1 });
+      post({ type: 'videoCodecUnexpected', mimeType: 'video/H264', count: 2 });
+      post({ type: 'decryptError', detail: 'OperationError', count: 1, mediaKind: 'video' });
+      expect(lines().filter((l) => l.includes('not VP8'))).toEqual([
+        '[Call] ERROR E2E: video frames of video/H264, not VP8, crossed the transform - encrypted whole, they cannot decode (1 so far)',
+      ]);
+      expect(lines()).toContain('[Call] E2E decrypt failed (video, 1): OperationError');
+    });
+
     it("republishes the remote stream when the peer's camera goes off (its track mutes)", async () => {
       const { service, pc } = await connectedCall();
       pc.remoteOfferAdds('video');

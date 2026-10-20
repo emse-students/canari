@@ -26,6 +26,8 @@ export interface E2eWorkerReport {
   videoKeyframesIn?: number;
   /** Video frames of a codec other than VP8: encrypted whole, so they cannot decode. */
   videoCodecUnexpected?: number;
+  /** Sender video frames shorter than their clear VP8 header: dropped, never sent. */
+  videoTooShortSent?: number;
   /** Receiver frames shorter than an IV, dropped; `tooShortEmpty` of them were empty. */
   tooShort: number;
   tooShortEmpty: number;
@@ -221,7 +223,7 @@ export function describeVideoFrames(r: E2eWorkerReport, epoch?: number): string 
   return (
     `video ${framesIn}encrypted=${r.encrypted.video} decrypted=${r.decrypted.video} ` +
     `decrypt-failed=${r.decryptFailuresBy?.video ?? '?'} keyframes-in=${r.videoKeyframesIn ?? '?'} ` +
-    `not-vp8=${r.videoCodecUnexpected ?? 0} | `
+    `not-vp8=${r.videoCodecUnexpected ?? 0} short-sent=${r.videoTooShortSent ?? 0} | `
   );
 }
 

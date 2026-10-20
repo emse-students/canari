@@ -896,7 +896,21 @@ experiment rows of the rig (below) settle it on Chrome 155:
   never opens the camera (`call_camera_unavailable`, ERROR line); a transceiver that refuses the
   preference has its sender removed before any negotiation carries it. A video frame that still
   names another codec is encrypted WHOLE (it cannot decode) and counted `not-vp8` - the worker
-  report then leads with ERROR. Never a clear frame.
+  report then leads with ERROR and the call logs one `ERROR E2E: video frames of <mime>, not VP8`
+  line. Never a clear frame. **The frame's own check FAILS CLOSED**: an engine whose frame metadata
+  names no codec is not read as VP8 - its frames are encrypted whole and counted, the clear split
+  is taken only on the engine's word (`setCodecPreferences` stays the real guard).
+- **Short frames are handled the same way on both sides**: an EMPTY video frame is passed through
+  untouched by sender and receiver (it carries nothing); a non-empty one shorter than its header
+  (not a frame an encoder emits) is DROPPED by the sender and counted (`short-sent`) - framed whole,
+  the receiver would read its first IV byte as a header and split it elsewhere. A flipped P bit
+  moves the split (3 read as 10, or 10 as 3) and the frame does not decrypt: the header LENGTH is
+  bound too (worker test).
+- **No E2E replay window.** Nothing in the frame layout numbers frames: a frame replayed inside the
+  same call decrypts. Replay is covered hop by hop by SRTP (DTLS-SRTP keys per peer connection),
+  as for audio since lot 1; a relay that is not a party cannot inject.
+- **The audio IV window stays audio's**: the ring the double-encryption probe reads holds audio IVs
+  only, so 30 video frames a second never flush it.
 - **Camera OFF** stops the capture (the light goes out), `replaceTrack(null)`, direction
   `recvonly`: the peer's track MUTES and its screen shows the avatar (`remote track muted`). **ON
   again** hands a new capture to the SAME sender, `sendrecv` - its transform stays attached and fed
@@ -905,6 +919,13 @@ experiment rows of the rig (below) settle it on Chrome 155:
   with an EXACT `facingMode`, `replaceTrack` on the same sender. A switch that cannot open the other
   camera turns the camera OFF, said (`call_camera_switch_failed`) and logged at ERROR - never a
   silent keep of the old one. Offered only when `enumerateDevices` lists two cameras.
+- **One camera operation at a time, OFF always wins**: a tap while an on or a switch is still
+  opening the camera means OFF and is QUEUED, applied when that operation ends. A capture that
+  resolves after its call ended - or after ANOTHER call began, the permission prompt still up - is
+  stopped and never adopted (the operation remembers its call id and local stream).
+- **The background turns the camera OFF for real** (the same `cameraOff`: capture stopped, peer
+  sees the avatar) and the return turns it ON again; never `track.enabled = false`, which kept the
+  capture open and sent black frames. A button tap meanwhile cancels the automatic resume.
 - **640x480 at 30 fps, capped at 700 kb/s** (`CALL_VIDEO_MAX_BITRATE`); the cap is on the SENDER's
   encodings, so it survives a switch.
 - **The screen**: the peer's picture full screen only while its track is live AND unmuted (else the
@@ -939,7 +960,15 @@ Audio stays clean on every row (match 0.96-0.98, LSD 3.92-4.02 dB on the gated r
 | Mi 9T to desktop Chrome, `bun callpeer.mjs --browser w3 --launch --dial --video --hangup` (and the phone dialling) | `video ... VP8`, ~30 fps, freezes 0, key frames a handful; the worker line's `video frames` growing both ways, `not-vp8=0`; `E2E proven`                                                                               |
 | Mi 9T: off/on, switch front/back, minimise                                                                         | the desktop's picture mutes to the avatar and comes back; the back camera is not mirrored; the bar shows the thumbnail and the camera button                                                                           |
 | Mi 9T: rotate                                                                                                      | the desktop's picture is `contain` in landscape, `cover` in portrait; the corner turns                                                                                                                                 |
-| iPhone 12 (WKWebView)                                                                                              | `RTCRtpReceiver.getCapabilities('video')` lists VP8 and `setCodecPreferences` exists (else the camera stays off, said), frame metadata names `video/VP8`; orientation; the camera purpose string at the native revival |
+| iPhone 12 (WKWebView)                                                                                              | `RTCRtpReceiver.getCapabilities('video')` lists VP8 and `setCodecPreferences` exists (else the camera stays off, said), frame metadata names `video/VP8` (a WebKit that names nothing FAILS CLOSED: whole frame, a `not-vp8` ERROR); orientation; the camera purpose string at the native revival |
+
+**Notes, accepted as they stand:**
+
+- **RTX on WebKit is unverified.** The preference list keeps VP8's RTX; whether WebKit pairs it and
+  retransmits through the transform has not been read on the iPhone.
+- **An old client cannot decrypt the new video** (a `<=1.3.1-alpha.4` dev build framed video whole).
+  Those builds had `CALLS_VIDEO_ENABLED = false` and only dev builds call at all, so no shipped
+  build is affected; audio between the two is unchanged.
 
 ## The call UI: the whole screen, or a bar at the top (2026-10-19)
 

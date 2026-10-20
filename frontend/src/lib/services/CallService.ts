@@ -386,8 +386,17 @@ export class CallService {
    * went on in this peer connection.
    */
   private cameraTransceiver: RTCRtpTransceiver | null = null;
-  /** A camera operation (on, off, switch) is running: a second tap waits for nothing, it is dropped. */
+  /** A camera operation (on, off, switch) is running; another tap is dropped, except OFF (`offPending`). */
   private cameraBusy = false;
+  /**
+   * An OFF asked while an on or a switch was in flight: applied when that operation ends, so the
+   * last word is OFF whatever the order the two finished in (off always wins).
+   */
+  private offPending = false;
+  /** Where the running camera operation leads: `on` (on, switch) or `off`. */
+  private cameraOpTarget: 'on' | 'off' = 'off';
+  /** The worker's `videoCodecUnexpected` was logged in this call: one ERROR line, not one per post. */
+  private videoCodecUnexpectedLogged = false;
 
   public callState = writable<CallState>('idle');
   /**
@@ -866,6 +875,8 @@ export class CallService {
     this.callHasVideo = false;
     this.cameraTransceiver = null;
     this.cameraBusy = false;
+    this.offPending = false;
+    this.videoCodecUnexpectedLogged = false;
     this.cameraFacing.set('user');
     this.canSwitchCamera.set(false);
     this.isVideoOff.set(true);
@@ -2380,7 +2391,9 @@ export class CallService {
       ) => {
         const { type, detail, count, mediaKind } = event.data ?? {};
         if (type === 'decryptError') {
-          appendLog(`[Call] E2E decrypt failed (${count ?? '?'}): ${detail ?? 'unknown'}`);
+          appendLog(
+            `[Call] E2E decrypt failed (${mediaKind ?? '?'}, ${count ?? '?'}): ${detail ?? 'unknown'}`
+          );
         } else if (type === 'keyError') {
           appendLog(`[Call] E2E worker key error: ${detail ?? 'unknown'}`);
         } else if (type === 'droppedNoKey') {
@@ -2394,6 +2407,15 @@ export class CallService {
         } else if (type === 'inPath') {
           const d = event.data as unknown as { side: string; epoch: number; mediaKind: string };
           this.noteE2eEvidence(worker, d.side, d.epoch, d.mediaKind);
+        } else if (type === 'videoCodecUnexpected') {
+          // Once per call: the worker keeps counting, and the report line carries the count.
+          if (!this.videoCodecUnexpectedLogged) {
+            this.videoCodecUnexpectedLogged = true;
+            const mime = (event.data as unknown as { mimeType?: string }).mimeType ?? '?';
+            appendLog(
+              `[Call] ERROR E2E: video frames of ${mime}, not VP8, crossed the transform - encrypted whole, they cannot decode (${count ?? '?'} so far)`
+            );
+          }
         } else if (type === 'videoKeyframeIn') {
           appendLog(`[Call] remote video keyframe received (#${count})`);
         } else if (type === 'opusInvalid') {
@@ -2576,25 +2598,25 @@ export class CallService {
   }
 
   /**
-   * Pauses the camera while the tab/app is backgrounded (and resumes on return). Mobile
-   * browsers freeze a hidden tab's encoder anyway, so this just stops wasting relay
-   * bandwidth on a frozen frame; audio keeps flowing so the call continues in background.
+   * The camera goes OFF while the app is in the background and comes back ON when it returns -
+   * through the SAME `cameraOff` / `cameraOn` as the button, never `track.enabled = false` (which
+   * keeps the capture open and sends black frames the peer cannot tell from a camera). The peer
+   * sees the avatar meanwhile; the audio goes on. A phone's OS stops a hidden page's capture
+   * anyway, so this is what the peer would get - said instead of frozen.
    */
   private installBackgroundHandler() {
     if (typeof document === 'undefined' || this.backgroundVisibilityHandler) return;
     const handler = () => {
       if (!this.localStream) return;
       if (document.hidden) {
-        if (get(this.isVideoOff)) return; // camera already off - nothing to pause
-        const liveVideo = this.localStream.getVideoTracks().filter((t) => t.enabled);
-        if (liveVideo.length === 0) return;
-        liveVideo.forEach((t) => (t.enabled = false));
+        if (get(this.isVideoOff) && !this.cameraBusy) return; // camera already off - nothing to pause
         this.videoPausedByBackground = true;
-        appendLog('[Call] backgrounded - camera paused (audio continues)');
+        appendLog('[Call] backgrounded - camera off until the app returns (audio continues)');
+        void this.cameraOff('app in the background');
       } else if (this.videoPausedByBackground) {
-        this.localStream.getVideoTracks().forEach((t) => (t.enabled = true));
         this.videoPausedByBackground = false;
-        appendLog('[Call] foregrounded - camera resumed');
+        appendLog('[Call] foregrounded - camera on again');
+        void this.cameraOn();
       }
     };
     document.addEventListener('visibilitychange', handler);
@@ -2731,10 +2753,14 @@ export class CallService {
    * renegotiates `recvonly`, so the peer's track MUTES and its screen shows the avatar; ON opens a
    * capture and hands it to the SAME sender, `sendrecv` again. A call that had no camera yet gets
    * one on a FRESH transceiver. Never `track.enabled = false`: that keeps the camera open and sends
-   * black frames the peer cannot tell from a camera.
+   * black frames the peer cannot tell from a camera. A tap while an ON or a switch is still opening
+   * the camera means OFF (the button already shows where that operation leads).
    */
   public async toggleVideo(): Promise<void> {
-    if (get(this.isVideoOff)) await this.cameraOn();
+    // The user decides now: an automatic resume pending from the background is dropped.
+    this.videoPausedByBackground = false;
+    const turnOn = this.cameraBusy ? this.cameraOpTarget === 'off' : get(this.isVideoOff);
+    if (turnOn) await this.cameraOn();
     else await this.cameraOff('turned off');
   }
 
@@ -2746,7 +2772,8 @@ export class CallService {
    */
   public async switchCamera(): Promise<void> {
     const old = this.localStream?.getVideoTracks()[0];
-    if (!old || get(this.isVideoOff) || !this.beginCameraOp('switch')) return;
+    if (!old || get(this.isVideoOff) || !this.beginCameraOp('switch', 'on')) return;
+    const call = this.cameraCallToken();
     try {
       const next: CameraFacing = get(this.cameraFacing) === 'user' ? 'environment' : 'user';
       this.releaseCameraTrack(old);
@@ -2758,12 +2785,13 @@ export class CallService {
         track = cam.getVideoTracks()[0];
         if (!track) throw new Error('no video track in the capture');
       } catch (e) {
+        if (!this.sameCameraCall(call, 'switch')) return;
         appendLog(`[Call] ERROR camera switch to ${next} failed: ${String(e)} - the camera is off`);
         showToast(m.call_camera_switch_failed(), 'warning');
         await this.sendNoCamera('the switch failed');
         return;
       }
-      if (!this.callUp()) {
+      if (!this.sameCameraCall(call, 'switch')) {
         track.stop();
         return;
       }
@@ -2774,8 +2802,29 @@ export class CallService {
         `[Call] camera switched to ${get(this.cameraFacing)}${t ? ' (replaceTrack: same sender, same transform)' : ''}`
       );
     } finally {
-      this.cameraBusy = false;
+      this.endCameraOp();
     }
+  }
+
+  /**
+   * What a camera operation was started FOR: the call and its local stream. A capture that
+   * resolves after either changed (the call ended, another one began while the permission prompt
+   * was up) belongs to nobody and is stopped - never adopted by the NEXT call.
+   */
+  private cameraCallToken(): { callId: string | null; stream: MediaStream | null } {
+    return { callId: this.currentCallId, stream: this.localStream };
+  }
+
+  /** The call a camera operation was started for is still the live one (`cameraCallToken`). */
+  private sameCameraCall(
+    token: { callId: string | null; stream: MediaStream | null },
+    what: string
+  ): boolean {
+    if (this.isCallLive(token.callId) && this.localStream === token.stream) return true;
+    appendLog(
+      `[Call] camera ${what} of call ${token.callId ?? 'none'} resolved after it ended - capture stopped, not adopted`
+    );
+    return false;
   }
 
   /** Whether a call is up (ringing, connecting or in progress): a camera opened now has a use. */
@@ -2784,14 +2833,32 @@ export class CallService {
     return state !== 'idle' && state !== 'ended' && !!this.localStream;
   }
 
-  /** Takes the camera lock, or says why a tap was dropped (one camera operation at a time). */
-  private beginCameraOp(what: string): boolean {
+  /**
+   * Takes the camera lock for an operation leading to `target`, or says why a tap was dropped (one
+   * camera operation at a time). An OFF asked while another runs is not dropped: it is kept as the
+   * final state (`offPending`), applied by `endCameraOp` - off always wins.
+   */
+  private beginCameraOp(what: string, target: 'on' | 'off'): boolean {
     if (this.cameraBusy) {
-      appendLog(`[Call] camera ${what} dropped - another camera operation is running`);
+      if (target === 'off' && this.cameraOpTarget === 'on') {
+        this.offPending = true;
+        appendLog(`[Call] camera ${what} queued - applied once the running camera operation ends`);
+      } else {
+        appendLog(`[Call] camera ${what} dropped - another camera operation is running`);
+      }
       return false;
     }
     this.cameraBusy = true;
+    this.cameraOpTarget = target;
     return true;
+  }
+
+  /** Releases the camera lock, then applies an OFF that was asked meanwhile (`offPending`). */
+  private endCameraOp(): void {
+    this.cameraBusy = false;
+    if (!this.offPending) return;
+    this.offPending = false;
+    void this.cameraOff('turned off while the camera was opening');
   }
 
   /** The camera transceiver, if it still belongs to the live peer connection. */
@@ -2836,7 +2903,8 @@ export class CallService {
    * connection exists - into the local stream, which `initPeerConnection` adds.
    */
   private async cameraOn(): Promise<void> {
-    if (!this.callUp() || !this.beginCameraOp('on')) return;
+    if (!this.callUp() || !this.beginCameraOp('on', 'on')) return;
+    const call = this.cameraCallToken();
     try {
       if (!canHoldVideoToVp8()) {
         appendLog('[Call] ERROR this engine cannot hold video to VP8 - the camera stays off');
@@ -2852,12 +2920,13 @@ export class CallService {
         track = cam.getVideoTracks()[0];
         if (!track) throw new Error('no video track in the capture');
       } catch (e) {
+        if (!this.sameCameraCall(call, 'on')) return;
         appendLog(`[Call] WARN the camera could not open: ${String(e)} - it stays off`);
         showToast(m.call_camera_unavailable(), 'warning');
         return;
       }
-      // The call may have ended while the permission prompt was up.
-      if (!this.callUp()) {
+      // The call may have ended - and another begun - while the permission prompt was up.
+      if (!this.sameCameraCall(call, 'on')) {
         track.stop();
         return;
       }
@@ -2879,7 +2948,7 @@ export class CallService {
       }
       this.addCameraTransceiver(pc, track);
     } finally {
-      this.cameraBusy = false;
+      this.endCameraOp();
     }
   }
 
@@ -2939,7 +3008,7 @@ export class CallService {
    * emptied with the transceiver `recvonly` (`sendNoCamera`), so the peer's track mutes.
    */
   private async cameraOff(why: string): Promise<void> {
-    if (!this.beginCameraOp('off')) return;
+    if (!this.beginCameraOp('off', 'off')) return;
     try {
       for (const track of this.localStream?.getVideoTracks() ?? []) this.releaseCameraTrack(track);
       await this.sendNoCamera(why);
@@ -2950,7 +3019,6 @@ export class CallService {
 
   /** The camera is off: nothing on its sender, `recvonly` (renegotiates), the screen says so. */
   private async sendNoCamera(why: string): Promise<void> {
-    this.videoPausedByBackground = false;
     this.isVideoOff.set(true);
     this.localStreamStore.set(this.localStream);
     const t = this.liveCameraTransceiver();

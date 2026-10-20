@@ -34,18 +34,22 @@ export function isVp8KeyFrame(payload: Uint8Array): boolean {
 }
 
 /**
- * Whether `mimeType` - the frame metadata's, when the engine names one - is a codec whose frames
- * this transform knows how to encrypt with a clear header. An engine that names no codec is read
- * as VP8: the call's video m-lines negotiate nothing else (`vp8CodecPreferences`).
+ * Whether `mimeType` - the frame metadata's - is a codec whose frames this transform encrypts with
+ * a clear header. FAIL CLOSED: an engine that names no codec is NOT read as VP8, so its frames are
+ * encrypted whole and counted (`not-vp8`) - the clear split is taken only on the engine's word.
+ * What keeps the call on VP8 is `vp8CodecPreferences` on every transceiver; this is the frame's
+ * own check, and it never trusts a silence.
  */
 export function isCallVideoCodec(mimeType: string | undefined): boolean {
-  return mimeType === undefined || mimeType.toLowerCase() === CALL_VIDEO_MIME_TYPE;
+  return mimeType !== undefined && mimeType.toLowerCase() === CALL_VIDEO_MIME_TYPE;
 }
 
 /**
- * How many leading bytes of `payload` stay in clear: 10 for a VP8 key frame, 3 for an interframe,
- * bounded by the payload; 0 for audio and for any video codec other than VP8 (encrypted whole).
- * The SAME function runs on both sides, on the clear first byte, so the two agree with no field.
+ * How many leading bytes of `payload` stay in clear: 10 for a VP8 key frame, 3 for an interframe;
+ * 0 for audio and for any video codec other than VP8 (encrypted whole). The SAME function runs on
+ * both sides, on the clear first byte, so the two agree with no field. It is NOT bounded by the
+ * payload: a frame shorter than its header cannot be split the same way on both sides, and the
+ * sender drops it (`encryption.worker.ts`, `encryptFrame`).
  */
 export function clearHeaderBytes(
   kind: 'audio' | 'video',
@@ -53,8 +57,7 @@ export function clearHeaderBytes(
   payload: Uint8Array
 ): number {
   if (kind !== 'video' || !isCallVideoCodec(mimeType)) return 0;
-  const wanted = isVp8KeyFrame(payload) ? VP8_KEY_FRAME_CLEAR_BYTES : VP8_INTER_FRAME_CLEAR_BYTES;
-  return Math.min(wanted, payload.byteLength);
+  return isVp8KeyFrame(payload) ? VP8_KEY_FRAME_CLEAR_BYTES : VP8_INTER_FRAME_CLEAR_BYTES;
 }
 
 /** The subset of `RTCRtpCodec` the preference filter reads. */

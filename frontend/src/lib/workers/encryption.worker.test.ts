@@ -360,6 +360,69 @@ describe('encryption.worker - video frames (lot 2, 2026-10-20)', () => {
     expect(after.decryptFailuresBy.video - before.decryptFailuresBy.video).toBe(1);
   });
 
+  it('binds the header LENGTH: a flipped P bit (3 read as 10, or 10 as 3) never decrypts', async () => {
+    metadata = VP8;
+    const failures = async (tag: string) => {
+      await scope.onmessage!({ data: { type: 'report', tag } } as MessageEvent);
+      const r = posted.find((m) => m.tag === tag) as { decryptFailuresBy: { video: number } };
+      return r.decryptFailuresBy.video;
+    };
+    const before = await failures('pbit-before');
+    const [k, i] = await video('sender', [keyFrame(), interFrame()]);
+    k[0] ^= 0x01; // the key frame now reads as an interframe: 3 clear bytes, the IV split moves
+    i[0] ^= 0x01; // and the interframe as a key frame: 10 clear bytes
+    expect(await video('receiver', [k, i])).toEqual([]);
+    expect((await failures('pbit-after')) - before).toBe(2);
+  });
+
+  it('passes an EMPTY video frame through on both sides, and decrypt-fails nothing', async () => {
+    metadata = VP8;
+    const sent = await video('sender', [new Uint8Array(0)]);
+    expect(sent).toEqual([new Uint8Array(0)]);
+    expect(await video('receiver', sent)).toEqual([new Uint8Array(0)]);
+    expect(posted.some((m) => m.type === 'decryptError' || m.type === 'warn')).toBe(false);
+  });
+
+  it('drops a sender video frame shorter than its header - never framed so the receiver splits it elsewhere', async () => {
+    metadata = VP8;
+    expect(await video('sender', [Uint8Array.from([0x10, 1, 2, 3, 4])])).toEqual([]);
+    expect(posted).toContainEqual(
+      expect.objectContaining({
+        type: 'warn',
+        detail: expect.stringContaining('sender video frame of 5 byte(s) dropped'),
+      })
+    );
+  });
+
+  it('FAILS CLOSED when the engine names no codec: the frame is encrypted whole and counted', async () => {
+    metadata = () => ({ payloadType: 96 });
+    const plain = keyFrame();
+    const [sent] = await video('sender', [plain]);
+    expect(sent.byteLength).toBe(12 + plain.byteLength + 16);
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: 'videoCodecUnexpected', mimeType: '?' })
+    );
+  });
+
+  it('keeps the audio IV window for audio: video frames in between never flush it', async () => {
+    let i = 0;
+    metadata = () => ({ ...OPUS_METADATA(), rtpTimestamp: 960 * i++ });
+    const once = await run(
+      'sender',
+      Array.from({ length: 50 }, () => opus())
+    );
+    metadata = VP8;
+    await video(
+      'sender',
+      Array.from({ length: 100 }, () => interFrame())
+    );
+    posted.length = 0;
+    i = 0;
+    metadata = () => ({ ...OPUS_METADATA(), rtpTimestamp: 960 * i++ });
+    await run('sender', once);
+    expect(posted.find((m) => m.type === 'senderAudioShape')).toMatchObject({ ownIv: 50 });
+  });
+
   it('a video frame of another codec is encrypted WHOLE and named - never sent in clear', async () => {
     metadata = () => ({ payloadType: 102, mimeType: 'video/H264' });
     const plain = Uint8Array.from([0, 0, 0, 1, 0x65, ...Array(30).fill(4)]);

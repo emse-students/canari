@@ -22,6 +22,11 @@ const decryptFailuresBy = { audio: 0, video: 0 };
  * so the receiver cannot decode them - the call's video m-lines are meant to carry VP8 only.
  */
 let videoCodecUnexpected = 0;
+/**
+ * Sender VIDEO frames shorter than their clear header (`encryptFrame`): not a VP8 frame an encoder
+ * emits, and one that cannot be framed so the receiver splits it the same way - dropped, never sent.
+ */
+let videoTooShortSent = 0;
 /** Receiver frames too short to carry an IV, dropped before any decrypt (see `decryptFrame`). */
 let tooShort = 0;
 /** How many of the too-short frames were EMPTY (carry nothing; counted, not named). */
@@ -175,7 +180,7 @@ workerScope.onrtctransform = (event: Event) => {
             const valid = checkOpus(frame, payload, 'sender', meta);
             recordSenderShape(shape, payload, valid, meta?.rtpTimestamp);
           }
-          await encryptFrame(frame, controller, mediaKind, mimeType);
+          if (!(await encryptFrame(frame, controller, mediaKind, mimeType))) return;
           encrypted[mediaKind]++;
           postInPath(mediaKind);
           if (encrypted[mediaKind] === 1 || encrypted[mediaKind] % 300 === 0) {
@@ -230,6 +235,7 @@ function workerReport(tag: string) {
     decryptFailuresBy: { ...decryptFailuresBy },
     videoKeyframesIn,
     videoCodecUnexpected,
+    videoTooShortSent,
     tooShort,
     tooShortEmpty,
     droppedNoKey,
@@ -447,19 +453,37 @@ function recordSenderShape(
 /**
  * Encrypts one frame as `clear header || IV || AES-GCM(rest)`. The clear header is empty for audio
  * (the layout every audio build has sent) and the VP8 payload header for video
- * (`clearHeaderBytes`), bound as additional data so it cannot be altered unseen.
+ * (`clearHeaderBytes`), bound as additional data so it cannot be altered unseen. Returns whether a
+ * frame was ENCRYPTED: an empty video frame is passed through as it is (it carries nothing, and
+ * the receiver passes it the same way), and a non-empty one shorter than its header is dropped -
+ * framed whole, the receiver would read its first IV byte as a header and split it elsewhere.
  */
 async function encryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   controller: TransformStreamDefaultController,
   mediaKind: 'audio' | 'video',
   mimeType: string | undefined
-) {
+): Promise<boolean> {
   const data = new Uint8Array(frame.data);
   const clear = clearHeaderBytes(mediaKind, mimeType, data);
+  if (mediaKind === 'video' && data.byteLength === 0) {
+    controller.enqueue(frame);
+    return false;
+  }
+  if (data.byteLength < clear) {
+    videoTooShortSent++;
+    if (videoTooShortSent <= 3 || videoTooShortSent % 100 === 0) {
+      self.postMessage({
+        type: 'warn',
+        detail: `sender video frame of ${data.byteLength} byte(s) dropped: shorter than its ${clear}-byte VP8 header (${videoTooShortSent} so far)`,
+      });
+    }
+    return false;
+  }
   const header = data.subarray(0, clear);
   const iv = crypto.getRandomValues(new Uint8Array(ivLength));
-  rememberIv(iv);
+  // The ring is the AUDIO double-encryption probe's window: 30 video IVs a second would flush it.
+  if (mediaKind === 'audio') rememberIv(iv);
   const ciphertext = await crypto.subtle.encrypt(
     clear > 0 ? { name: 'AES-GCM', iv, additionalData: header } : { name: 'AES-GCM', iv },
     callKey!,
@@ -473,6 +497,7 @@ async function encryptFrame(
 
   frame.data = packed.buffer;
   controller.enqueue(frame);
+  return true;
 }
 
 /** Names a video frame of a codec this transform cannot frame (`isCallVideoCodec`), a few times. */
@@ -498,6 +523,11 @@ async function decryptFrame(
   mimeType: string | undefined
 ): Promise<boolean> {
   const data = new Uint8Array(frame.data);
+  // An empty video frame was passed through by the sender (`encryptFrame`): passed on the same way.
+  if (mediaKind === 'video' && data.byteLength === 0) {
+    controller.enqueue(frame);
+    return false;
+  }
   // The receiver reads the SAME clear first byte the sender read, so both find the same length.
   const clear = clearHeaderBytes(mediaKind, mimeType, data);
   if (data.byteLength < clear + ivLength) {

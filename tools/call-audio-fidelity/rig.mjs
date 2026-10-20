@@ -322,6 +322,9 @@ async function renegotiate(from, to, offerExpr) {
  * what the measurement needs to judge them: the sender's video frames when the last step was taken
  * (frames AFTER it prove the transform stayed fed) and the receiver's track while the camera was off.
  */
+/** How long a camera OFF may take to mute the peer's track before the row reads it as never. */
+const OFF_MUTE_BOUND_MS = 5_000;
+
 async function runVideoOps(row, caller, callee, down) {
   if (!row.video) return null;
   const vtx = down ? callee : caller;
@@ -339,8 +342,14 @@ async function runVideoOps(row, caller, callee, down) {
   if (ops.includes('off-on')) {
     await Bun.sleep(3000);
     await renegotiate(vtx, vrx, 'rig.cameraOff()');
-    await Bun.sleep(3000);
+    // Polled, bounded: the mute is read as soon as it lands; a peer that never mutes is read once
+    // the bound is spent and fails `video-mute-when-off` with what it showed.
+    const deadline = Date.now() + OFF_MUTE_BOUND_MS;
     offState = await vrx.cdp.eval('rig.remoteVideoState()');
+    while (!offState?.muted && Date.now() < deadline) {
+      await Bun.sleep(100);
+      offState = await vrx.cdp.eval('rig.remoteVideoState()');
+    }
     await renegotiate(vtx, vrx, 'rig.cameraOn()');
   }
   const atOp = ops.length ? await vtx.cdp.eval('rig.report()') : null;

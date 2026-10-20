@@ -240,7 +240,7 @@ describe('the video segment of the report (lot 2)', () => {
       videoCodecUnexpected: 0,
     });
     expect(describeVideoFrames(r, 3)).toBe(
-      'video frames in sender=900 receiver=880 encrypted=900 decrypted=879 decrypt-failed=1 keyframes-in=3 not-vp8=0 | '
+      'video frames in sender=900 receiver=880 encrypted=900 decrypted=879 decrypt-failed=1 keyframes-in=3 not-vp8=0 short-sent=0 | '
     );
   });
 

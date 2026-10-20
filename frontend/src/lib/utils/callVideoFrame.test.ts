@@ -38,17 +38,20 @@ describe('clearHeaderBytes', () => {
     expect(clearHeaderBytes('video', 'video/H264', key)).toBe(0);
   });
 
-  it('reads an engine that names no codec as VP8, and never runs past a short payload', () => {
-    expect(clearHeaderBytes('video', undefined, key)).toBe(10);
-    expect(clearHeaderBytes('video', 'video/VP8', Uint8Array.from([0x10, 0, 0]))).toBe(3);
+  it('FAILS CLOSED on an engine that names no codec: encrypted whole, never split on a guess', () => {
+    expect(clearHeaderBytes('video', undefined, key)).toBe(0);
+  });
+
+  it('is not bounded by a short payload: the sender drops a frame shorter than its header', () => {
+    expect(clearHeaderBytes('video', 'video/VP8', Uint8Array.from([0x10, 0, 0]))).toBe(10);
   });
 });
 
 describe('isCallVideoCodec', () => {
-  it('is VP8 in any case, or no name at all', () => {
+  it('is VP8 in any case, and never an engine that names no codec', () => {
     expect(isCallVideoCodec('video/VP8')).toBe(true);
     expect(isCallVideoCodec('video/vp8')).toBe(true);
-    expect(isCallVideoCodec(undefined)).toBe(true);
+    expect(isCallVideoCodec(undefined)).toBe(false);
     expect(isCallVideoCodec('video/H264')).toBe(false);
     expect(isCallVideoCodec('video/VP9')).toBe(false);
   });
