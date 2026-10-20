@@ -106,6 +106,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   const facts = new Map<string, Record<string, unknown>>();
   /** Runs while the facts are built - i.e. between `book`'s first read of the space and its lock. */
   let duringFacts: (() => Promise<void>) | null = null;
+  /** The answers each facts build was handed, in order. */
+  const builtAnswers: Record<string, string[]>[] = [];
   /** core-service's profile call fails while set (`listedSpaces`). */
   let profileDown = false;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
@@ -165,7 +167,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         ),
     } as unknown as AssociationsService;
     const pricingFacts = {
-      build: async ({ userId }: { userId: string }) => {
+      build: async ({ userId, answers }: { userId: string; answers: Record<string, string[]> }) => {
+        builtAnswers.push(answers);
         await duringFacts?.();
         return facts.get(userId) ?? {};
       },
@@ -1064,6 +1067,29 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await refusal(service.calendarLink(id, as(ALICE)))).toEqual({
         code: 'already-cancelled',
       });
+    });
+
+    it('judges answers keyed by the declared questions only: a __proto__ key reaches no map', async () => {
+      const items = [{ id: 'q', label: 'Remarque', required: true, type: 'short_text' }];
+      const { space, resourceIds } = await setup({ items: items as never });
+      // As a JSON body arrives: `__proto__` an OWN key, which a `{}` literal turns into its prototype.
+      const answers = JSON.parse('{"q":"oui","__proto__":["x"],"undeclared":"y"}') as Record<
+        string,
+        string
+      >;
+      builtAnswers.length = 0;
+      const { id } = await service.book(
+        space.id,
+        { resourceId: resourceIds[0], startsAt: on('10:00'), endsAt: on('10:30'), answers },
+        as(ALICE),
+        NOW
+      );
+      const judged = builtAnswers[builtAnswers.length - 1];
+      expect(Object.getPrototypeOf(judged)).toBeNull();
+      expect(Object.keys(judged)).toEqual(['q']);
+      expect(judged.q).toEqual(['oui']);
+      const [row] = await q(`SELECT answers FROM bookings WHERE id = $1`, [id]);
+      expect(row.answers).toEqual({ q: 'oui' });
     });
 
     it('serves the .ics on its signature alone, with no answer, private text or name', async () => {

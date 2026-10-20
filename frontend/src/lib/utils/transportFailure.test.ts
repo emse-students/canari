@@ -31,11 +31,13 @@ describe('isTransportFailure', () => {
     expect(isTransportFailure(new TypeError('Failed to fetch'))).toBe(false);
   });
   it('reads a programming TypeError thrown inside a request try as a bug, not as no answer', async () => {
-    const f = conformNativeFetch(vi.fn().mockResolvedValue(new Response('ok')));
+    const f = conformNativeFetch(vi.fn().mockResolvedValue(new Response('null')));
     let caught: unknown;
     try {
-      await f('https://x/api');
-      void (undefined as unknown as { x: { y: number } }).x.y;
+      const res = await f('https://x/api');
+      // The bug a caller really writes: a field read off a body that came back null.
+      const body = JSON.parse(await res.text()) as { x: { y: number } };
+      void body.x.y;
     } catch (e) {
       caught = e;
     }

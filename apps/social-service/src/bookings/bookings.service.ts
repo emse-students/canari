@@ -17,6 +17,7 @@ import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
 import {
+  answerSelections,
   normaliseCondition,
   profileHiddenItemIds,
   visibleItemIds,
@@ -698,10 +699,9 @@ export class BookingsService {
   ): Promise<Record<string, string | string[] | number> | null> {
     const items = (space.items ?? []) as (ConditionalItem & { required?: boolean })[];
     if (items.length === 0) return null;
-    const selections: Record<string, string[]> = {};
-    for (const [k, v] of Object.entries(answers)) {
-      selections[k] = Array.isArray(v) ? v : [String(v)];
-    }
+    // Keyed by the space's own question ids only: a `__proto__` key off the body never reaches
+    // a map (`answerSelections`, the forms' rule).
+    const selections = answerSelections(items, answers);
     const visible = visibleItemIds(items, await this.factsFor(space, holderId, selections));
     const kept: Record<string, string | string[] | number> = {};
     for (const item of items) {
