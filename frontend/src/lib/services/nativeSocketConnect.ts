@@ -9,6 +9,10 @@
  * so each one kept the device "online" while the frames it received went nowhere. A late socket is
  * therefore closed the moment it appears, and said so at WARN - a late completion means the connect
  * was slower than the deadline, which is the defect, not the close.
+ *
+ * The close is not harmless: what the gateway sent the socket before it - the connect-time drain of
+ * `pending_welcome_notify`, any live frame - is lost to this device (FCM resends a still-pending
+ * welcome request). It stops the loss from going on; only a fast connect prevents it.
  */
 
 /** Same deadline as the browser socket in `WebMlsService`. */

@@ -134,7 +134,9 @@ export function audioCodecOrder(sdp: string | undefined): string {
  * gather-once policy stops the allocator the moment a connection is writable, so a callee whose
  * direct pair answers before its STUN/TURN servers do finishes with `relay=0` and a WORKING call -
  * the old WARN fired on every LAN call and blamed TURN. A missing relay is only suspect when
- * gathering ends while ICE still has no working pair: that call has nothing to fall back on.
+ * gathering ends while ICE still has no working pair - and since the state read at that moment may
+ * lag the pair that ended gathering, `CallService` only REMEMBERS a suspect gap and accuses it if
+ * ICE then fails without ever connecting.
  */
 export function relayGapIsSuspect(relayCount: number, ice: RTCIceConnectionState): boolean {
   return relayCount === 0 && ice !== 'connected' && ice !== 'completed';

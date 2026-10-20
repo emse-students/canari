@@ -372,19 +372,32 @@ call invite for as long as it stayed on that network (CALL-WS-V6,
 - **The connect is Happy Eyeballs (RFC 8305)**, in [happy_eyeballs.rs](../../../frontend/src-tauri/src/happy_eyeballs.rs):
   addresses interleaved by family, the next attempt started 250 ms after the previous one (at once if
   it fails), first to connect wins, the others are dropped. The plugin is PATCHED to take it
-  (`patches/tauri-plugin-websocket`, `Builder::tcp_connector`, the `CANARI PATCH` hunks); TLS and the
-  WebSocket handshake are upstream's. The dependency is pinned EXACT, and an unpatched version has no
-  `tcp_connector`, so it fails to compile rather than install silently.
-- **A win by anything but the preferred address is logged at WARN** (`[WS-NET] ... NOT the preferred
-  address - lost: ...`), naming each attempt it beat and whether it failed or was still pending. On a
-  healthy network the line does not exist; on a broken-IPv6 one it appears once per connect, and it is
-  the only witness that the network, not the app, is degraded.
+  (`patches/tauri-plugin-websocket`, the `CANARI PATCH` hunks): `Builder::new` REQUIRES the connector
+  and upstream's `init()` is gone, so no build can reach the sequential connect, `ws://` or `wss://`;
+  TLS and the WebSocket handshake are upstream's. The dependency is pinned EXACT, and an unpatched
+  version's `Builder::new` takes no argument, so it fails to compile rather than install silently. A
+  vendored fork: Dependabot does not move it, an upstream release is rebased by hand.
+- **The line says what the race PROVES, not who won.** The preferred address won: `debug`. Another
+  address won while the preferred attempt was still PENDING: `INFO` (`... while the preferred address
+  was still pending - lost: ...`) - one lost SYN on a healthy link looks exactly like this, and the
+  attempt is dropped before it could fail, so it accuses nothing. The preferred attempt FAILED with an
+  error: `WARN` (`... the preferred address FAILED - lost: ...`). A blackholed IPv6, the CALL-WS-V6
+  network, therefore shows as one INFO line per connect, and a WARN appears only where the preferred
+  path refused or errored. Every address failing is a WARN; a name that does not resolve (offline) is
+  `debug`, since the page already reports the rejection with its retry.
 - **A connect the page abandoned is CLOSED when it completes** ([nativeSocketConnect.ts](../../../frontend/src/lib/services/nativeSocketConnect.ts)).
   The plugin's `connect` cannot be cancelled: before this, each late completion left an open,
   authenticated socket whose frames reached a listener set nobody would ever add to, and the gateway
   counts every socket of a device as a session, so the ghost kept the device "online" while what it
   received went nowhere. Logged at WARN, because a late socket means the connect was slower than the
-  deadline.
+  deadline. The patch registers a connection's writer BEFORE the id reaches the page (upstream did it
+  in the spawned task), so that `disconnect()` cannot meet `ConnectionNotFound`.
+- **Closing a late socket is necessary, not harmless.** Whatever the gateway sent it before the close
+  is lost to this device: on connect the gateway drains `pending_welcome_notify:{user}` into the new
+  socket and deletes the key once the send succeeded (`apps/chat-gateway/src/handlers.rs`), so a late
+  socket can consume those signals; the delivery service's FCM resend of a still-pending
+  `welcome_request` is what covers them. The cure is the connect being fast, which is what the race is
+  for; the close only stops the ghost from going on consuming.
 
 ## Rules that hold across both platforms
 

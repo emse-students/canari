@@ -1869,6 +1869,49 @@ describe('a network blip does not end the call', () => {
     expect(['ended', 'idle']).toContain(get(service.callState));
   });
 
+  /** CALL-GATHER-0: a gathering cut short by a working direct pair is not a TURN fault. */
+  describe('the no-relay WARN accuses only a call that settled with no working pair', () => {
+    async function callWithRelayGap() {
+      const service = new CallService(fakeMls);
+      const started = service.startCall('group-1', false);
+      await settle();
+      const ws = FakeSocket.instances[0];
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-1' });
+      await started;
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      const pc = FakePeerConnection.instances[0];
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      vi.mocked(appendLog).mockClear();
+      // Gathering ends with host candidates only, ICE still checking.
+      pc.iceConnectionState = 'checking';
+      const onCandidate = pc.onicecandidate as unknown as (e: {
+        candidate: RTCIceCandidate | null;
+      }) => void;
+      onCandidate({ candidate: { type: 'host' } as RTCIceCandidate });
+      onCandidate({ candidate: null });
+      const warned = () =>
+        vi
+          .mocked(appendLog)
+          .mock.calls.some(([l]) => String(l).includes('WARN no TURN relay candidate'));
+      return { pc, warned };
+    }
+
+    it('is silent when the direct pair then connects', async () => {
+      const { pc, warned } = await callWithRelayGap();
+      expect(warned()).toBe(false);
+      await ice(pc, 'connected');
+      expect(warned()).toBe(false);
+    });
+
+    it('warns when ICE then fails without ever connecting', async () => {
+      const { pc, warned } = await callWithRelayGap();
+      await ice(pc, 'failed');
+      expect(warned()).toBe(true);
+    });
+  });
+
   /**
    * The three outages of the 2026-10-19 bench reading of `1.3.1-alpha.2`, replayed. The Mi 9T is
    * the POLITE callee whose Wi-Fi goes off; the iPhone is the INITIATOR, whose own socket never

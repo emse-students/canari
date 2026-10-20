@@ -35,7 +35,8 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2.7"
 # EXACT, and PATCHED (`[patch.crates-io]` below): the app supplies the TCP connect. An unpatched
-# version has no `Builder::tcp_connector`, so it fails to COMPILE rather than install silently.
+# version's `Builder::new` takes no connector (and its `init()` exists), so the app's
+# `Builder::new(happy_eyeballs::tcp_connector())` fails to COMPILE rather than install silently.
 tauri-plugin-websocket = "=2.5.0"
 tauri-plugin-log = "2"
 tauri-plugin-store = "2.5"
@@ -68,9 +69,11 @@ tauri-plugin-system-components = { path = "patches/tauri-plugin-system-component
 # tauri-plugin-websocket 2.5.0 connects through `tokio-tungstenite`'s `TcpStream::connect`, which
 # tries the resolved addresses IN TURN: on a network handing out an IPv6 that routes nowhere, the
 # chat socket waited 20 s on IPv6 before trying IPv4 and missed the page's 15 s deadline every time
-# (CALL-WS-V6, 2026-10-20). The local patch adds `Builder::tcp_connector`, through which the app's
-# Happy Eyeballs connect (`src/happy_eyeballs.rs`) runs before the unchanged TLS and WebSocket
-# handshakes - the `CANARI PATCH` hunks in `src/lib.rs`; everything else is the published crate.
+# (CALL-WS-V6, 2026-10-20). The local patch makes `Builder::new` REQUIRE a TCP connector, through
+# which the app's Happy Eyeballs connect (`src/happy_eyeballs.rs`) runs before the unchanged TLS
+# and WebSocket handshakes, and registers a connection's writer BEFORE answering its id (so a
+# `disconnect()` right after the id cannot miss it) - the `CANARI PATCH` hunks in `src/lib.rs`;
+# everything else is the published crate. A vendored fork: an upstream release is rebased by hand.
 tauri-plugin-websocket = { path = "patches/tauri-plugin-websocket" }
 
 # The native iOS tab bar - Liquid Glass on iOS 26 (docs/wiki/frontend/mobile.md#the-native-ios-tab-bar).

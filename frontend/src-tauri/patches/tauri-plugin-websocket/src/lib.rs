@@ -27,18 +27,8 @@ use tauri::{
     plugin::{Builder as PluginBuilder, TauriPlugin},
 };
 use tokio::{net::TcpStream, sync::Mutex};
-#[cfg(any(
-    feature = "rustls-tls",
-    feature = "rustls-tls-native-roots",
-    feature = "native-tls"
-))]
-use tokio_tungstenite::connect_async_tls_with_config;
-#[cfg(not(any(
-    feature = "rustls-tls",
-    feature = "rustls-tls-native-roots",
-    feature = "native-tls"
-)))]
-use tokio_tungstenite::connect_async_with_config;
+// CANARI PATCH: upstream imported `connect_async_tls_with_config` / `connect_async_with_config`
+// here; both run tokio-tungstenite's sequential `TcpStream::connect` and are no longer called.
 use tokio_tungstenite::{
     Connector, MaybeTlsStream, WebSocketStream,
     tungstenite::{
@@ -60,16 +50,18 @@ use std::sync::Arc;
 /// the resolved addresses ONE AFTER ANOTHER and waits for each to fail: on a network that hands out
 /// IPv6 addresses but carries no IPv6 traffic, the first (IPv6) attempt hangs for the OS connect
 /// timeout (20 s measured on Android) before IPv4 is even tried (CALL-WS-V6). The app supplies a
-/// Happy Eyeballs connect (RFC 8305) here; the plugin keeps the TLS and WebSocket handshakes.
-/// Arguments: host as the URL names it (an IPv6 literal without brackets), and port.
+/// Happy Eyeballs connect (RFC 8305) here, and it is MANDATORY: [`Builder::new`] takes it and
+/// upstream's `init()` / `Default` are removed, so an app cannot build the plugin without it. The
+/// plugin keeps the TLS (when a TLS feature is on) and WebSocket handshakes, for `ws://` and
+/// `wss://` alike. Arguments: host as the URL names it (an IPv6 literal without brackets), port.
 pub type TcpConnectFn = Arc<
     dyn Fn(String, u16) -> Pin<Box<dyn Future<Output = std::io::Result<TcpStream>> + Send>>
         + Send
         + Sync,
 >;
 
-/// CANARI PATCH: the connector installed by [`Builder::tcp_connector`], if any.
-struct TcpConnector(Option<TcpConnectFn>);
+/// CANARI PATCH: the connector [`Builder::new`] was given.
+struct TcpConnector(TcpConnectFn);
 
 type Id = u32;
 type WebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -208,52 +200,50 @@ async fn connect<R: Runtime>(
         None => None,
     };
 
-    // CANARI PATCH: the app's own TCP connect when it installed one, then the same TLS and
-    // WebSocket handshakes upstream runs (`client_async_tls_with_config` is what
-    // `connect_async_tls_with_config` calls after its sequential `TcpStream::connect`).
+    // CANARI PATCH: the app's TCP connect, ALWAYS, then the same handshakes upstream runs after
+    // its sequential `TcpStream::connect` (`client_async_tls_with_config` for a TLS build,
+    // `client_async_with_config` on a plain stream otherwise).
+    let tcp_connect = window.state::<TcpConnector>().0.clone();
+    let (host, port) = request_host_port(&request)?;
+    let stream = tcp_connect(host, port)
+        .await
+        .map_err(tokio_tungstenite::tungstenite::Error::Io)?;
     #[cfg(any(
         feature = "rustls-tls",
         feature = "rustls-tls-native-roots",
         feature = "native-tls"
     ))]
-    let tcp_connect = window
-        .try_state::<TcpConnector>()
-        .and_then(|c| c.0.clone());
-    #[cfg(any(
-        feature = "rustls-tls",
-        feature = "rustls-tls-native-roots",
-        feature = "native-tls"
-    ))]
-    let (ws_stream, _) = match tcp_connect {
-        Some(tcp_connect) => {
-            let (host, port) = request_host_port(&request)?;
-            let stream = tcp_connect(host, port)
-                .await
-                .map_err(tokio_tungstenite::tungstenite::Error::Io)?;
-            tokio_tungstenite::client_async_tls_with_config(
-                request,
-                stream,
-                config.map(Into::into),
-                tls_connector,
-            )
-            .await?
-        }
-        None => {
-            connect_async_tls_with_config(request, config.map(Into::into), false, tls_connector)
-                .await?
-        }
-    };
+    let (ws_stream, _) = tokio_tungstenite::client_async_tls_with_config(
+        request,
+        stream,
+        config.map(Into::into),
+        tls_connector,
+    )
+    .await?;
     #[cfg(not(any(
         feature = "rustls-tls",
         feature = "rustls-tls-native-roots",
         feature = "native-tls"
     )))]
-    let (ws_stream, _) = connect_async_with_config(request, config.map(Into::into), false).await?;
+    let (ws_stream, _) = tokio_tungstenite::client_async_with_config(
+        request,
+        MaybeTlsStream::Plain(stream),
+        config.map(Into::into),
+    )
+    .await?;
+
+    // CANARI PATCH: the writer is registered BEFORE `Ok(id)` reaches the page. Upstream inserted
+    // it inside the spawned task, so a `send` (a `disconnect()`) issued as soon as the id arrived
+    // could find no connection - the close of a socket the page had abandoned did exactly that.
+    let (write, read) = ws_stream.split();
+    window
+        .state::<ConnectionManager>()
+        .0
+        .lock()
+        .await
+        .insert(id, write);
 
     tauri::async_runtime::spawn(async move {
-        let (write, read) = ws_stream.split();
-        let manager = window.state::<ConnectionManager>();
-        manager.0.lock().await.insert(id, write);
         read.for_each(move |message| {
             let window_ = window.clone();
             let on_message_ = on_message.clone();
@@ -299,11 +289,6 @@ async fn connect<R: Runtime>(
 /// CANARI PATCH: the host and port `tokio-tungstenite`'s own `connect` derives from a request -
 /// the URL's port, else 443 for `wss` and 80 for `ws` - with an IPv6 literal's brackets removed so
 /// the result is a name a resolver accepts.
-#[cfg(any(
-    feature = "rustls-tls",
-    feature = "rustls-tls-native-roots",
-    feature = "native-tls"
-))]
 fn request_host_port(
     request: &tokio_tungstenite::tungstenite::handshake::client::Request,
 ) -> std::result::Result<(String, u16), tokio_tungstenite::tungstenite::Error> {
@@ -355,34 +340,25 @@ async fn send(
     }
 }
 
-/// Initializes the plugin with the default [`Builder`], i.e. without a custom TLS [`Connector`].
-pub fn init<R: Runtime>() -> TauriPlugin<R> {
-    Builder::default().build()
-}
+// CANARI PATCH: upstream's `init()` is removed - it built the plugin with no TCP connector.
 
 /// Builder for the WebSocket plugin, used to configure a custom TLS [`Connector`] before calling [`Builder::build`].
-#[derive(Default)]
+// CANARI PATCH: no `Default` - a builder without a TCP connector cannot be made.
 pub struct Builder {
     tls_connector: Option<Connector>,
     // CANARI PATCH
-    tcp_connector: Option<TcpConnectFn>,
+    tcp_connector: TcpConnectFn,
 }
 
 impl Builder {
-    /// Creates a new [`Builder`] with no custom TLS [`Connector`] configured.
-    pub fn new() -> Self {
+    /// CANARI PATCH: creates a [`Builder`] whose every connection, `ws://` and `wss://`, goes
+    /// through `tcp_connector` in place of `tokio-tungstenite`'s sequential `TcpStream::connect`
+    /// (see [`TcpConnectFn`]); no custom TLS [`Connector`] configured.
+    pub fn new(tcp_connector: TcpConnectFn) -> Self {
         Self {
             tls_connector: None,
-            tcp_connector: None,
+            tcp_connector,
         }
-    }
-
-    /// CANARI PATCH: sets the TCP connect every connection goes through, in place of
-    /// `tokio-tungstenite`'s sequential `TcpStream::connect` (see [`TcpConnectFn`]). The TLS and
-    /// WebSocket handshakes are unchanged. Only `wss://` builds (a TLS feature on) honour it.
-    pub fn tcp_connector(mut self, connector: TcpConnectFn) -> Self {
-        self.tcp_connector.replace(connector);
-        self
     }
 
     /// Sets the TLS [`Connector`] used to establish `wss://` connections.

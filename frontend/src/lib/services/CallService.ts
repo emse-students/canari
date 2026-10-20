@@ -1874,6 +1874,8 @@ export class CallService {
     this.transformEpoch += 1;
 
     const gathered = { host: 0, srflx: 0, relay: 0, prflx: 0 };
+    /** Gathering ended with no relay candidate and no working pair yet - see `onicecandidate`. */
+    let relayGap = false;
 
     pc.onicecandidate = (e) => {
       if (e.candidate) {
@@ -1888,13 +1890,11 @@ export class CallService {
           type: 'IceCandidate',
           candidate: JSON.stringify({ candidate: '' } satisfies RTCIceCandidateInit),
         });
-        // A working direct pair stops libwebrtc's gathering before TURN answers (CALL-GATHER-0):
-        // `relay=0` is only suspect while ICE has no working pair yet.
-        if (relayGapIsSuspect(gathered.relay, pc.iceConnectionState)) {
-          appendLog(
-            `[Call] WARN no TURN relay candidate and no working pair yet (ice=${pc.iceConnectionState}) - a call that cannot go direct will fail (Cloudflare TURN unreachable or misconfigured)`
-          );
-        }
+        // A working direct pair stops libwebrtc's gathering before TURN answers (CALL-GATHER-0),
+        // and the ICE state the attribute shows here may lag the pair that ended it. So nothing
+        // is concluded now: the gap is remembered, and accused only if ICE then FAILS without
+        // ever connecting (`oniceconnectionstatechange` below).
+        relayGap = relayGapIsSuspect(gathered.relay, pc.iceConnectionState);
       }
     };
 
@@ -2001,6 +2001,12 @@ export class CallService {
         appendLog(
           '[Call] ICE failed - no direct path and no TURN relay pair (check Cloudflare TURN on chat-delivery)'
         );
+        if (relayGap) {
+          // The call settled with no working pair AND no relay gathered: now the gap is evidence.
+          appendLog(
+            '[Call] WARN no TURN relay candidate was gathered and no direct pair worked (Cloudflare TURN unreachable or misconfigured)'
+          );
+        }
         this.failCall('iceConnectionState=failed');
         return;
       } else if (iceState === 'disconnected' || iceState === 'failed') {
