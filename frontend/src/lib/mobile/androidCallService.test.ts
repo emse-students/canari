@@ -7,9 +7,11 @@ vi.mock('$lib/utils/sessionLog', () => ({
 
 import {
   NATIVE_CALL_EVENT,
+  hasAndroidCallService,
   ongoingCallSpec,
   openAndroidCallSession,
   parseNativeCallEvent,
+  releaseCallServiceOfPreviousPage,
   type AndroidCallBridge,
   type AndroidCallHost,
   type OngoingCallSpec,
@@ -23,6 +25,7 @@ function host(withBridge = true) {
     start: (arg) => calls.push({ method: 'start', arg }),
     update: (arg) => calls.push({ method: 'update', arg }),
     stop: (arg) => calls.push({ method: 'stop', arg }),
+    pageLoaded: () => calls.push({ method: 'pageLoaded', arg: '' }),
   };
   const h: AndroidCallHost & { emit: (detail: unknown) => void } = {
     canariCall: withBridge ? bridge : undefined,
@@ -123,27 +126,78 @@ describe('openAndroidCallSession - the bridge', () => {
     expect(onHangUp).not.toHaveBeenCalled();
   });
 
-  it("hands the notification's hang-up to the call", () => {
-    const { h } = host();
+  it("hands the notification's hang-up to the call, and sends no stop afterwards: the service already left", () => {
+    const { h, calls } = host();
     const onHangUp = vi.fn();
-    openAndroidCallSession(h, onHangUp);
+    const session = openAndroidCallSession(h, onHangUp);
+    session.publish(SPEC, 'live');
     h.emit({ kind: 'hangup' });
+    session.publish(null, 'ended');
+    session.dispose();
     expect(onHangUp).toHaveBeenCalledTimes(1);
+    expect(calls.map((c) => c.method)).toEqual(['start']);
   });
 
-  it('a refusal is logged at ERROR and never retried for this call', () => {
+  it('a refusal coded `refused` is logged at ERROR and never asked again, even on a resume', () => {
     const { h, calls } = host();
     const session = openAndroidCallSession(h, () => {});
     session.publish(SPEC, 'live');
-    h.emit({ kind: 'failed', reason: 'start: the app is not on screen' });
+    h.emit({ kind: 'failed', code: 'refused', reason: 'start: RECORD_AUDIO is not granted' });
+    h.emit({ kind: 'foreground' });
     session.publish({ ...SPEC, speaker: false }, 'earpiece');
     session.publish(null, 'ended');
     expect(calls.map((c) => c.method)).toEqual(['start']);
     expect(
-      logs.some((l) =>
-        l.includes('ERROR ongoing-call service refused: start: the app is not on screen')
-      )
+      logs.some((l) => l.includes('ERROR ongoing-call service refused: start: RECORD_AUDIO'))
     ).toBe(true);
+  });
+
+  it('an `off-screen` refusal waits for the resume EVENT, then asks once with the current description', () => {
+    const { h, calls } = host();
+    const session = openAndroidCallSession(h, () => {});
+    session.publish({ ...SPEC, connectedAtMs: null }, 'ringing');
+    h.emit({ kind: 'failed', code: 'off-screen', reason: 'start: the app is not on screen' });
+    // Nothing is sent while waiting: no clock, no retry loop.
+    session.publish(SPEC, 'live');
+    expect(calls.map((c) => c.method)).toEqual(['start']);
+    expect(logs.some((l) => l.includes('WARN ongoing-call service refused'))).toBe(true);
+    h.emit({ kind: 'foreground' });
+    expect(calls.map((c) => c.method)).toEqual(['start', 'start']);
+    expect(JSON.parse(calls[1].arg)).toEqual(SPEC);
+    session.publish(null, 'ended');
+    expect(calls.map((c) => c.method)).toEqual(['start', 'start', 'stop']);
+  });
+
+  it('a second `off-screen` refusal in the same call is final', () => {
+    const { h, calls } = host();
+    const session = openAndroidCallSession(h, () => {});
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'failed', code: 'off-screen', reason: 'a' });
+    h.emit({ kind: 'foreground' });
+    h.emit({ kind: 'failed', code: 'off-screen', reason: 'b' });
+    h.emit({ kind: 'foreground' });
+    session.publish({ ...SPEC, speaker: false }, 'earpiece');
+    session.publish(null, 'ended');
+    expect(calls.map((c) => c.method)).toEqual(['start', 'start']);
+    expect(logs.some((l) => l.includes('ERROR ongoing-call service refused: b'))).toBe(true);
+  });
+
+  it('a `foreground` nobody waits for asks nothing', () => {
+    const { h, calls } = host();
+    const session = openAndroidCallSession(h, () => {});
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'foreground' });
+    expect(calls.map((c) => c.method)).toEqual(['start']);
+  });
+
+  it('a call that ends while waiting for the resume asks nothing on the resume', () => {
+    const { h, calls } = host();
+    const session = openAndroidCallSession(h, () => {});
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'failed', code: 'off-screen', reason: 'a' });
+    session.publish(null, 'ended');
+    h.emit({ kind: 'foreground' });
+    expect(calls.map((c) => c.method)).toEqual(['start']);
   });
 
   it('a stop Android made on its own is a WARN, and the session asks nothing more', () => {
@@ -164,14 +218,35 @@ describe('openAndroidCallSession - the bridge', () => {
   });
 });
 
+describe('the page-load release and the speaker route', () => {
+  it('a page that loads tells native once, which stops a service the previous page left', () => {
+    const { h, calls } = host();
+    releaseCallServiceOfPreviousPage(h);
+    expect(calls.map((c) => c.method)).toEqual(['pageLoaded']);
+  });
+
+  it('without the bridge there is no service, no release to ask, and no speaker route', () => {
+    const { h, calls } = host(false);
+    releaseCallServiceOfPreviousPage(h);
+    expect(calls).toEqual([]);
+    expect(hasAndroidCallService(h)).toBe(false);
+    expect(hasAndroidCallService(host().h)).toBe(true);
+  });
+});
+
 describe('parseNativeCallEvent', () => {
-  it('reads the four kinds the Kotlin side sends and nothing else', () => {
+  it('reads the five kinds the Kotlin side sends and nothing else', () => {
     expect(parseNativeCallEvent({ kind: 'started' })).toEqual({ kind: 'started' });
     expect(parseNativeCallEvent({ kind: 'hangup' })).toEqual({ kind: 'hangup' });
-    expect(parseNativeCallEvent({ kind: 'failed', reason: 'x' })).toEqual({
+    expect(parseNativeCallEvent({ kind: 'foreground' })).toEqual({ kind: 'foreground' });
+    expect(parseNativeCallEvent({ kind: 'failed', code: 'off-screen', reason: 'x' })).toEqual({
       kind: 'failed',
+      code: 'off-screen',
       reason: 'x',
     });
+    // A refusal is acted on by its code: one without a known code is unreadable, never guessed.
+    expect(parseNativeCallEvent({ kind: 'failed', reason: 'x' })).toBeNull();
+    expect(parseNativeCallEvent({ kind: 'failed', code: 'later', reason: 'x' })).toBeNull();
     expect(parseNativeCallEvent({ kind: 'stopped', reason: 'y' })).toEqual({
       kind: 'stopped',
       reason: 'y',

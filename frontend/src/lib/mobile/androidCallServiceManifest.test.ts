@@ -15,7 +15,7 @@ import { NATIVE_CALL_EVENT } from './androidCallService';
  * flips. Asserted as AGREEMENT with `CALLS_COMPILED`, as `callsCompiled.test.ts` does for the five
  * switches, so the revival commit fails here only if it forgets this one.
  *
- * The bridge is three names on each side of the WebView - the event, the interface, its methods -
+ * The bridge is a handful of names on each side of the WebView - the event, the interface, its methods -
  * and nothing compiles them against each other; read here as text. This proves what is written,
  * never what runs: the Mi 9T reading in calls.md is what proves the second.
  */
@@ -31,6 +31,7 @@ const gradle = read(resolve(APP, 'build.gradle.kts'));
 const bridgeKt = read(resolve(KOTLIN, 'CallBridge.kt'));
 const activityKt = read(resolve(KOTLIN, 'MainActivity.kt'));
 const bridgeTs = read(resolve(here, 'androidCallService.ts'));
+const layout = read(resolve(here, '../../routes/+layout.svelte'));
 
 const COMPILED = /export const CALLS_COMPILED = true;/.test(features);
 
@@ -56,6 +57,16 @@ describe('the ongoing-call foreground service declaration', () => {
     expect(service[0]).toContain('android:name="fr.emse.canari.CallForegroundService"');
     expect(service[0]).toContain('android:foregroundServiceType="microphone"');
     expect(service[0]).toContain('android:exported="false"');
+  });
+
+  it('the Android workflow reads the BUILT manifests and fails on a service where calls are not placed', () => {
+    const workflow = read(resolve(here, '../../../../.github/workflows/android.yml'));
+    expect(workflow).toContain(
+      '- name: Check the built manifests carry the call service only where calls are placed'
+    );
+    expect(workflow).toContain('android\\.permission\\.FOREGROUND_SERVICE_MICROPHONE');
+    expect(workflow).toContain('fr\\.emse\\.canari\\.CallForegroundService');
+    expect(workflow).toContain('export const CALLS_COMPILED = true;');
   });
 
   it('gradle merges the overlay on the same fact that turns CALLS_ENABLED on', () => {
@@ -84,8 +95,13 @@ describe('the bridge, both sides of the WebView', () => {
     expect(bridgeTs).toContain('canariCall?: AndroidCallBridge');
   });
 
-  it('the three methods the page calls are the three the interface exposes', () => {
-    for (const method of ['start(json: String)', 'update(json: String)', 'stop(reason: String)']) {
+  it('the four methods the page calls are the four the interface exposes', () => {
+    for (const method of [
+      'start(json: String)',
+      'update(json: String)',
+      'stop(reason: String)',
+      'pageLoaded()',
+    ]) {
       expect(bridgeKt).toMatch(
         new RegExp(`@JavascriptInterface\\s+fun ${method.replace(/[()]/g, '\\$&')}`)
       );
@@ -94,12 +110,31 @@ describe('the bridge, both sides of the WebView', () => {
       'start(json: string): void;',
       'update(json: string): void;',
       'stop(reason: string): void;',
+      'pageLoaded(): void;',
     ]) {
       expect(bridgeTs).toContain(method);
     }
   });
 
-  it('a destroyed activity takes the call service down with its page', () => {
+  it('the two refusal codes are the same words on both sides', () => {
+    expect(bridgeKt).toContain('const val CODE_OFF_SCREEN = "off-screen"');
+    expect(bridgeKt).toContain('const val CODE_REFUSED = "refused"');
+    expect(bridgeTs).toContain("export type NativeCallRefusal = 'off-screen' | 'refused';");
+  });
+
+  it('the start is a plain startService: a refused startForeground is a logged stop, never an fgRequired crash', () => {
+    expect(bridgeKt).toContain('context.startService(');
+    expect(bridgeKt).not.toMatch(/\.startForegroundService\(/);
+  });
+
+  it('a resume answers a pending off-screen refusal', () => {
+    expect(activityKt).toContain('CallBridge.onActivityResumed()');
+  });
+
+  it('a destroyed activity takes the call service down with its page, and a loaded page releases an orphan', () => {
     expect(activityKt).toContain('CallForegroundService.stopForPageGone(this)');
+    expect(layout).toMatch(
+      /if \(isAndroidTauriRuntime\(\)\) releaseCallServiceOfPreviousPage\(window\);/
+    );
   });
 });

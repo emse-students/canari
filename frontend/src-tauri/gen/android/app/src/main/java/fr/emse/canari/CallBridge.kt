@@ -1,12 +1,9 @@
 package fr.emse.canari
 
 import android.Manifest
-import android.app.ForegroundServiceStartNotAllowedException
 import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -22,17 +19,19 @@ import org.json.JSONObject
  * (WP-C-BG-A).
  *
  * Down: `MainActivity` registers [JsInterface] as `window.canariCall` - `start(json)`, `update(json)`,
- * `stop(reason)` - ONLY in a build whose manifest declares the service (the `calls` manifest overlay,
- * see `app/build.gradle.kts`). The page reads the absence of `canariCall` as "this build cannot keep a
- * call alive in the background" and says so at error level when it is placing calls
- * (`frontend/src/lib/mobile/androidCallService.ts`).
+ * `stop(reason)`, `pageLoaded()` - ONLY in a build whose manifest declares the service (the `calls`
+ * manifest overlay, see `app/build.gradle.kts`). The page reads the absence of `canariCall` as "this
+ * build cannot keep a call alive in the background" and says so at error level when it is placing
+ * calls (`frontend/src/lib/mobile/androidCallService.ts`).
  *
  * Up: every outcome reaches the page as ONE DOM event, `canari:call-native`, whose `detail.kind` is
- * `started`, `failed`, `stopped` or `hangup` (the notification's hang-up button). The page owns the
- * call: a hang-up is forwarded to it and it ends the call, then sends `stop` like any other end.
+ * `started`, `failed` (with a `code`: [CODE_OFF_SCREEN] or [CODE_REFUSED]), `stopped` (the service
+ * left on its own, unexpectedly), `hangup` (the notification's button - the service has ALREADY left
+ * the foreground, the page ends the call) or `foreground` (the activity resumed while a start refused
+ * for being off screen was pending: the page may ask once more).
  *
- * Nothing here retries or substitutes: a refused start is reported with its reason and the call
- * goes on in the foreground only, exactly as before this service existed - which the page logs.
+ * Nothing here retries or substitutes: a refused start is reported with its reason and the call goes
+ * on in the foreground only, exactly as before this service existed - which the page logs.
  */
 object CallBridge {
     private const val TAG = "CallBridge"
@@ -40,8 +39,17 @@ object CallBridge {
     /** The DOM event the page listens to. Its twin is `NATIVE_CALL_EVENT` in `androidCallService.ts`. */
     const val EVENT = "canari:call-native"
 
+    /** A start refused because the activity was not resumed: the page may ask again on `foreground`. */
+    const val CODE_OFF_SCREEN = "off-screen"
+
+    /** Any other refusal: the page does not ask again for this call. */
+    const val CODE_REFUSED = "refused"
+
     /** The live page, set by `MainActivity.onWebViewCreate`, cleared by its `onDestroy`. Main thread. */
     @Volatile private var webView: WebView? = null
+
+    /** A start was refused for [CODE_OFF_SCREEN] and the activity has not resumed since. */
+    @Volatile private var offScreenRefusalPending = false
 
     fun attach(view: WebView) {
         webView = view
@@ -54,6 +62,18 @@ object CallBridge {
 
     /** Whether a page is attached - the service's hang-up has nowhere to go without one. */
     fun hasPage(): Boolean = webView != null
+
+    /**
+     * `MainActivity.onResume`. A start refused for being off screen (the first call's microphone
+     * prompt, a dial and an instant HOME) can now be asked again - told by an EVENT, the resume
+     * itself, never by a clock. One event per refusal.
+     */
+    fun onActivityResumed() {
+        if (!offScreenRefusalPending) return
+        offScreenRefusalPending = false
+        Log.i(TAG, "resumed with an off-screen refusal pending - telling the page it may start again")
+        emit("foreground")
+    }
 
     /**
      * Whether THIS build declares the service. The `calls` manifest overlay is merged only into a
@@ -70,7 +90,7 @@ object CallBridge {
      * Sends one event to the page. `detail` is built with [JSONObject], whose `toString()` is valid
      * JavaScript, so no field is spliced into the script as text.
      */
-    fun emit(kind: String, reason: String? = null) {
+    fun emit(kind: String, reason: String? = null, code: String? = null) {
         val view = webView
         if (view == null) {
             Log.w(TAG, "event $kind (${reason ?: "-"}) not delivered: no page is attached")
@@ -78,6 +98,7 @@ object CallBridge {
         }
         val detail = JSONObject().put("kind", kind)
         if (reason != null) detail.put("reason", reason)
+        if (code != null) detail.put("code", code)
         val script = "window.dispatchEvent(new CustomEvent('$EVENT',{detail:$detail}))"
         view.post { view.evaluateJavascript(script, null) }
     }
@@ -92,11 +113,14 @@ object CallBridge {
             val spec = parse(json, "start") ?: return
             // ANDROID GRANTS A MICROPHONE SERVICE ONLY TO AN APP THAT IS ON SCREEN: started from the
             // background, `startForeground` with type `microphone` throws (API 34+) or the service
-            // runs with no microphone capability (API 30-33). The web starts the service from the
-            // gesture that placed or answered the call, so this holds by construction; when it does
-            // not, the reason is KNOWN here and the start is not attempted.
+            // runs with no microphone capability (API 30-33). RESUMED is the stricter reading of "on
+            // screen" (a paused activity can still be visible, under a permission dialog), chosen
+            // because it is the one fact this process holds; a refusal for it is answered by the
+            // next resume ([onActivityResumed]), so being strict costs a short delay, never the call.
             if (!MainActivity.isInForeground) {
-                refuse("start", "the app is not on screen - Android grants a microphone service only from the foreground")
+                offScreenRefusalPending = true
+                Log.w(TAG, "start refused: the app is not resumed - waiting for the next resume")
+                emit("failed", "start: the app is not on screen", CODE_OFF_SCREEN)
                 return
             }
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
@@ -105,17 +129,16 @@ object CallBridge {
                 refuse("start", "RECORD_AUDIO is not granted - a microphone service cannot start")
                 return
             }
-            val intent = CallForegroundService.intentFor(context, CallServiceCommand.Start(spec))
+            // A PLAIN `startService`, never `startForegroundService`: the app is on screen (checked
+            // above), so Android lets it start a service, and the service then enters the foreground
+            // itself. A refused `startForeground` is then an exception the service logs and reports -
+            // where after `startForegroundService` the system would count the service stopping
+            // without `startForeground` as a crash of the whole process.
             try {
-                ContextCompat.startForegroundService(context, intent)
+                context.startService(CallForegroundService.intentFor(context, CallServiceCommand.Start(spec)))
                 Log.i(TAG, "start sent (connected=${spec.connectedAtMs != null} speaker=${spec.speaker})")
-            } catch (e: Exception) {
-                // `ForegroundServiceStartNotAllowedException` (API 31+) is the one the platform
-                // documents here; anything else is logged with its class so a reading can name it.
-                val what = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                    e is ForegroundServiceStartNotAllowedException
-                ) "ForegroundServiceStartNotAllowedException" else e.javaClass.simpleName
-                refuse("start", "$what: ${e.message}")
+            } catch (e: IllegalStateException) {
+                refuse("start", "startService: ${e.message}")
             }
         }
 
@@ -128,6 +151,19 @@ object CallBridge {
         @JavascriptInterface
         fun stop(reason: String) {
             deliver(CallServiceCommand.Stop(reason.ifBlank { "unspecified" }), "stop")
+        }
+
+        /**
+         * A page has just loaded (a reload mid-call, a renderer that crashed and came back): no call
+         * exists in it, so a service still in the foreground is an ORPHAN of the page before - its
+         * notification, wake lock, mode and route would outlive the call they were for. Called once
+         * per page load; nothing is sent when no service runs, so a normal boot is silent.
+         */
+        @JavascriptInterface
+        fun pageLoaded() {
+            if (!CallForegroundService.running) return
+            Log.w(TAG, "a page loaded while the call service ran - the call of the previous page is gone")
+            deliver(CallServiceCommand.Stop("a new page loaded - the call of the previous page is gone"), "stop")
         }
 
         /**
@@ -166,7 +202,7 @@ object CallBridge {
 
         private fun refuse(what: String, reason: String) {
             Log.e(TAG, "$what refused: $reason")
-            emit("failed", "$what: $reason")
+            emit("failed", "$what: $reason", CODE_REFUSED)
         }
     }
 }

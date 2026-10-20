@@ -45,12 +45,12 @@
   import { fade } from 'svelte/transition';
   import type { Snippet } from 'svelte';
   import { m } from '$lib/paraglide/messages';
+  import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
   import {
-    isAndroidTauriRuntime,
-    isIosTauriRuntime,
-    isMobileTauriRuntime,
-  } from '$lib/utils/appVersion';
-  import { ongoingCallSpec, openAndroidCallSession } from '$lib/mobile/androidCallService';
+    hasAndroidCallService,
+    ongoingCallSpec,
+    openAndroidCallSession,
+  } from '$lib/mobile/androidCallService';
   import { CALLS_VIDEO_ENABLED } from '$lib/features';
   import { useCallModel } from '$lib/composables/useCallModel.svelte';
   import { callView } from '$lib/stores/callView.svelte';
@@ -186,7 +186,13 @@
       'mediaDevices' in navigator &&
       typeof AudioContext !== 'undefined'
   );
-  let isMobileRtc = $derived(isMobileTauriRuntime());
+  /**
+   * Whether the speaker toggle can route anything: on iOS the page's `setSinkId`; on Android the
+   * ongoing-call service's output, so a build without the service shows no toggle that does nothing.
+   */
+  let speakerRoutable = $derived(
+    isIosTauriRuntime() || (isAndroidTauriRuntime() && hasAndroidCallService(window))
+  );
 
   /**
    * Routes remote audio to speaker or earpiece on iOS, by output-device LABEL. Best-effort and
@@ -588,7 +594,7 @@
         </div>
       {:else if !isEnded}
         <div class="flex items-start justify-center gap-4 sm:gap-6">
-          {#if isMobileRtc && speakerSupported}
+          {#if speakerRoutable && speakerSupported}
             {#snippet speakerIcon()}
               {#if isSpeakerOn}<Volume2 size={26} />{:else}<Speaker size={26} />{/if}
             {/snippet}

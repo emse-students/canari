@@ -46,12 +46,12 @@ import fr.emse.canari.call.pickCallOutput
  *
  * What it holds, all of it released in [leave], which every exit goes through:
  * - the ONGOING `CallStyle` notification: the other party's name, a chronometer from the first
- *   `connected` (`CallService.connectedAt`, never this service's clock), a hang-up button handed to
- *   the page, which owns the call;
- * - the audio mode `MODE_IN_COMMUNICATION` and the call's output ([pickCallOutput]), re-chosen when a
- *   headset comes or goes, the previous mode restored at the end;
- * - a PARTIAL wake lock for the call's lifetime - no timeout, because the call's end is what
- *   releases it, and the notification is the visible witness that it is held.
+ *   `connected` (`CallService.connectedAt`, never this service's clock), and a hang-up button. A
+ *   press LEAVES THE FOREGROUND HERE and tells the page, which ends the call: the service's end never
+ *   depends on a page being there to send `stop` (a reload mid-call leaves no listener);
+ * - the call's OUTPUT ([pickCallOutput]), re-chosen when a headset comes or goes. The audio MODE is
+ *   set only if nobody set it before (see [CallAudio]) and is never "restored" from a saved value;
+ * - a PARTIAL wake lock released by [leave]; its timeout is a LAST RESORT, see [WAKE_LOCK_BOUND_MS].
  *
  * Every command goes through [decide], and every effect is logged with the command that caused it.
  */
@@ -71,6 +71,16 @@ class CallForegroundService : Service() {
 
         /** The ongoing-call channel: silent, created on the first call of a build that places calls. */
         const val CHANNEL_ID = "canari_call_ongoing"
+
+        /**
+         * THE WAKE LOCK'S LAST-RESORT BOUND: 4 h, the server's call horizon (the room binding expires
+         * with the ring window plus 4 h, `calls.service.ts`), so no call this service carries can
+         * outlive it. Every real end releases the lock in [leave]: the call's end, the page's `stop`,
+         * a new page loading, the task removed, the service destroyed. If the bound is reached with
+         * the service still up, one of those paths was missed, and that is logged at ERROR - the call
+         * itself is not ended by a clock.
+         */
+        private const val WAKE_LOCK_BOUND_MS = 4L * 60 * 60 * 1000
 
         /** One call at a time, so one notification id. Distinct from every push notification id. */
         private const val NOTIFICATION_ID = 0x0CA11
@@ -97,7 +107,7 @@ class CallForegroundService : Service() {
          */
         fun stopForPageGone(context: Context) {
             if (!running) return
-            Log.w(TAG, "the page that held the call is gone - stopping the call service")
+            Log.i(TAG, "the page that held the call is gone - stopping the call service")
             try {
                 context.startService(intentFor(context, CallServiceCommand.Stop("the page that held the call is gone")))
             } catch (e: IllegalStateException) {
@@ -164,7 +174,8 @@ class CallForegroundService : Service() {
         when (effect) {
             is CallServiceEffect.EnterForeground -> enterForeground(effect.spec)
             is CallServiceEffect.Refresh -> refresh(effect.spec)
-            is CallServiceEffect.Leave -> leave(effect.reason)
+            // The page asked (or the page is gone): it knows, so nothing is sent back.
+            is CallServiceEffect.Leave -> leave(effect.reason, tellPage = false)
             CallServiceEffect.ForwardHangUp -> forwardHangUp()
             is CallServiceEffect.Ignore -> {
                 Log.w(TAG, "ignored: ${effect.reason}")
@@ -184,16 +195,18 @@ class CallForegroundService : Service() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0,
             )
         } catch (e: Exception) {
-            // A SecurityException (a while-in-use type started from the background, a missing
-            // FOREGROUND_SERVICE_MICROPHONE) or ForegroundServiceStartNotAllowedException. The call
-            // goes on in the foreground only; the page is told why. CallBridge checks both known
-            // preconditions (on screen, RECORD_AUDIO) before it asks, so this is reached only by a
-            // refusal nobody has named yet - and Android may count a service started with
-            // `startForegroundService` that stops without `startForeground` as a crash of the app.
-            // That is the loud outcome a refusal nobody named should have; it is NOT papered over by
-            // starting without the microphone type.
+            // A SecurityException (a while-in-use type from the background, a missing
+            // FOREGROUND_SERVICE_MICROPHONE) or ForegroundServiceStartNotAllowedException. CallBridge
+            // checks both known preconditions (resumed, RECORD_AUDIO) before it asks, so this is a
+            // refusal nobody has named yet. The service was started with a plain `startService`, so
+            // stopping here is an ordinary stop - logged and reported, never a process kill - and the
+            // call goes on in the foreground only. Not papered over by dropping the microphone type.
             Log.e(TAG, "startForeground refused: ${e.javaClass.simpleName}: ${e.message}")
-            CallBridge.emit("failed", "startForeground: ${e.javaClass.simpleName}: ${e.message}")
+            CallBridge.emit(
+                "failed",
+                "startForeground: ${e.javaClass.simpleName}: ${e.message}",
+                CallBridge.CODE_REFUSED,
+            )
             stopSelf()
             return
         }
@@ -202,8 +215,9 @@ class CallForegroundService : Service() {
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:ongoing-call").apply {
             setReferenceCounted(false)
-            acquire()
+            acquire(WAKE_LOCK_BOUND_MS)
         }
+        main.postDelayed(wakeLockBoundReached, WAKE_LOCK_BOUND_MS)
         audio = CallAudio(getSystemService(Context.AUDIO_SERVICE) as AudioManager).also { it.open(spec.speaker) }
         val notifications = NotificationManagerCompat.from(this).areNotificationsEnabled()
         Log.i(TAG, "in the foreground: microphone service, wake lock held, notifications shown=$notifications")
@@ -221,27 +235,49 @@ class CallForegroundService : Service() {
         manager.notify(NOTIFICATION_ID, notification(spec))
     }
 
+    /**
+     * The notification's hang-up. The service LEAVES ITSELF, then the page ends the call (MLS hangup,
+     * relay close). The page's own `stop` that would follow is not sent: `androidCallService.ts`
+     * marks its session over on `hangup`. With no page attached (a page that reloaded has no call),
+     * leaving is the whole answer.
+     */
     private fun forwardHangUp() {
-        if (!CallBridge.hasPage()) {
-            leave("hang-up pressed and no page holds the call")
-            return
+        if (CallBridge.hasPage()) {
+            CallBridge.emit("hangup")
+        } else {
+            Log.w(TAG, "hang-up pressed and no page is attached - the call is already gone with its page")
         }
-        // The page ends the call (MLS hangup, relay close) and then sends `stop`, which is what
-        // takes this service down - one end path, whoever pressed what.
-        CallBridge.emit("hangup")
+        leave("hang-up pressed in the notification", tellPage = false)
     }
 
-    /** Every exit: the call ended, the page went, the task was removed. Idempotent. */
-    private fun leave(reason: String) {
+    /**
+     * Every exit: the call ended, the page went, the task was removed, the hang-up. Idempotent.
+     * [tellPage] is true only for an exit the page did not cause and cannot otherwise learn of.
+     */
+    private fun leave(reason: String, tellPage: Boolean) {
         val wasRunning = running
         release()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
         Log.i(TAG, "left the foreground: $reason (was running=$wasRunning)")
-        if (wasRunning) CallBridge.emit("stopped", reason)
+        if (wasRunning && tellPage) CallBridge.emit("stopped", reason)
+    }
+
+    private val main = Handler(Looper.getMainLooper())
+
+    /** [WAKE_LOCK_BOUND_MS] reached with the service still up: an end path was missed. */
+    private val wakeLockBoundReached = Runnable {
+        if (running) {
+            Log.e(
+                TAG,
+                "the wake lock's 4 h bound was reached with the call service still up - " +
+                    "an end path was missed; the lock was released by its timeout",
+            )
+        }
     }
 
     private fun release() {
+        main.removeCallbacks(wakeLockBoundReached)
         running = false
         spec = null
         audio?.close()
@@ -253,7 +289,8 @@ class CallForegroundService : Service() {
     /** The user swiped the app away from Recents: the activity, its WebView and the call are gone. */
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        if (running) leave("the task was removed from Recents")
+        // The page goes with the task: nobody to tell.
+        if (running) leave("the task was removed from Recents", tellPage = false)
     }
 
     override fun onDestroy() {
@@ -329,7 +366,8 @@ private class CallAudio(private val manager: AudioManager) {
         const val TAG = "CallAudio"
     }
 
-    private var previousMode: Int? = null
+    /** Whether THIS class set `MODE_IN_COMMUNICATION` - the only case in which it ever resets it. */
+    private var modeSetHere = false
     private var speaker = true
     private var applied: CallOutput? = null
     private var appliedOnce = false
@@ -339,11 +377,27 @@ private class CallAudio(private val manager: AudioManager) {
         override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = route("a device was removed")
     }
 
+    /**
+     * THE MODE HAS ANOTHER OWNER, AND THIS CLASS NEVER RESTORES A SAVED VALUE. Chromium's audio
+     * manager may set `MODE_IN_COMMUNICATION` itself when the page opens a capture for a call and put
+     * it back when the capture closes. This service starts AFTER the capture (`micHeld`), so a mode
+     * saved here would usually BE `MODE_IN_COMMUNICATION`, and "restoring" it after Chromium had put
+     * `MODE_NORMAL` back would leave the process stuck in communication mode. So: a mode already
+     * `MODE_IN_COMMUNICATION` is left to its owner; only otherwise does this class set it, and only
+     * then does [close] reset it - to `MODE_NORMAL`, and only if it still reads
+     * `MODE_IN_COMMUNICATION`. Which branch the WebView takes is a reading owed (`dumpsys audio`,
+     * calls.md). The OUTPUT is this class's alone.
+     */
     fun open(speaker: Boolean) {
-        previousMode = manager.mode
-        manager.mode = AudioManager.MODE_IN_COMMUNICATION
+        val found = manager.mode
+        if (found == AudioManager.MODE_IN_COMMUNICATION) {
+            Log.i(TAG, "mode already MODE_IN_COMMUNICATION (set by the page's capture) - left to its owner")
+        } else {
+            manager.mode = AudioManager.MODE_IN_COMMUNICATION
+            modeSetHere = true
+            Log.i(TAG, "mode $found -> MODE_IN_COMMUNICATION, set by the service (read back ${manager.mode})")
+        }
         this.speaker = speaker
-        Log.i(TAG, "mode ${previousMode} -> MODE_IN_COMMUNICATION (read back ${manager.mode})")
         route("call started")
         // Called back on the main looper, where every other method here runs.
         manager.registerAudioDeviceCallback(devices, Handler(Looper.getMainLooper()))
@@ -390,8 +444,13 @@ private class CallAudio(private val manager: AudioManager) {
             @Suppress("DEPRECATION")
             manager.isSpeakerphoneOn = false
         }
-        previousMode?.let { manager.mode = it }
-        Log.i(TAG, "released: output cleared, mode restored to $previousMode")
+        val now = manager.mode
+        if (modeSetHere && now == AudioManager.MODE_IN_COMMUNICATION) {
+            manager.mode = AudioManager.MODE_NORMAL
+            Log.i(TAG, "released: output cleared, mode MODE_IN_COMMUNICATION -> MODE_NORMAL (set here)")
+        } else {
+            Log.i(TAG, "released: output cleared, mode left to its owner (now $now, set here=$modeSetHere)")
+        }
     }
 
     private fun classify(type: Int): CallOutput = when (type) {

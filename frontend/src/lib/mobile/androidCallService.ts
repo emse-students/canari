@@ -41,14 +41,22 @@ export interface AndroidCallBridge {
   start(json: string): void;
   update(json: string): void;
   stop(reason: string): void;
+  pageLoaded(): void;
 }
+
+/**
+ * Why a start was refused (`CallBridge.CODE_*`): `off-screen` is answered by the next resume (a
+ * `foreground` event), `refused` is final for the call.
+ */
+export type NativeCallRefusal = 'off-screen' | 'refused';
 
 /** What the native side reports, `detail` of {@link NATIVE_CALL_EVENT}. */
 export type NativeCallEvent =
   | { kind: 'started' }
-  | { kind: 'failed'; reason: string }
+  | { kind: 'failed'; code: NativeCallRefusal; reason: string }
   | { kind: 'stopped'; reason: string }
-  | { kind: 'hangup' };
+  | { kind: 'hangup' }
+  | { kind: 'foreground' };
 
 /**
  * Reads an event's `detail`. Returns null for anything the Kotlin side does not send - logged by the
@@ -56,15 +64,18 @@ export type NativeCallEvent =
  */
 export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
   if (typeof detail !== 'object' || detail === null) return null;
-  const d = detail as { kind?: unknown; reason?: unknown };
+  const d = detail as { kind?: unknown; reason?: unknown; code?: unknown };
   const reason = typeof d.reason === 'string' ? d.reason : '';
   switch (d.kind) {
     case 'started':
       return { kind: 'started' };
     case 'hangup':
       return { kind: 'hangup' };
+    case 'foreground':
+      return { kind: 'foreground' };
     case 'failed':
-      return { kind: 'failed', reason };
+      if (d.code !== 'off-screen' && d.code !== 'refused') return null;
+      return { kind: 'failed', code: d.code, reason };
     case 'stopped':
       return { kind: 'stopped', reason };
     default:
@@ -113,6 +124,24 @@ export interface AndroidCallHost {
   removeEventListener(type: string, listener: (e: Event) => void): void;
 }
 
+/**
+ * Whether this build has the service - and therefore the audio ROUTE: on Android the speaker toggle
+ * is the service's `setCommunicationDevice`, so without the service it would do nothing.
+ */
+export function hasAndroidCallService(host: AndroidCallHost): boolean {
+  return !!host.canariCall;
+}
+
+/**
+ * Called ONCE per page load on Android. A page that has just loaded holds no call, so a service still
+ * in the foreground belongs to the page before it (a reload mid-call, a renderer that crashed and was
+ * reloaded): its notification, wake lock and route would outlive the call. Native stops it, and says
+ * nothing when none runs - an ordinary boot is silent.
+ */
+export function releaseCallServiceOfPreviousPage(host: AndroidCallHost): void {
+  host.canariCall?.pageLoaded();
+}
+
 /** One call's handle on the service. */
 export interface AndroidCallSession {
   /** The call's current description; null ends the foreground (the call is over or not ours yet). */
@@ -122,8 +151,8 @@ export interface AndroidCallSession {
 }
 
 /**
- * Opens the session for one call. `onHangUp` is what the notification's button does: the page ends
- * the call, and the end then reaches {@link AndroidCallSession.publish} as `null` like any other.
+ * Opens the session for one call. `onHangUp` is what the notification's button does: the service has
+ * already left the foreground, and the page ends the call.
  */
 export function openAndroidCallSession(
   host: AndroidCallHost,
@@ -137,9 +166,30 @@ export function openAndroidCallSession(
     return { publish: () => {}, dispose: () => {} };
   }
   let started = false;
-  /** Set once the service refused or left on its own: this call is not retried, it is reported. */
+  /** Set once the service is final for this call (refused, left on its own, hung up): no more asks. */
   let over = false;
-  let last: string | null = null;
+  /** A start refused for `off-screen`, not asked again yet: the next `foreground` event asks once. */
+  let waitingForeground = false;
+  /** The one second ask after an `off-screen` refusal has been spent. */
+  let askedAgain = false;
+  /** The description last sent, or to send if a `foreground` comes. */
+  let current: OngoingCallSpec | null = null;
+  let lastSent: string | null = null;
+
+  const send = (spec: OngoingCallSpec, why: string) => {
+    const json = JSON.stringify(spec);
+    if (json === lastSent) return;
+    lastSent = json;
+    const facts = `${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker}`;
+    if (!started) {
+      started = true;
+      appendLog(`[Call] ongoing-call service start (${facts})`);
+      bridge.start(json);
+      return;
+    }
+    appendLog(`[Call] ongoing-call service update (${facts})`);
+    bridge.update(json);
+  };
 
   const onEvent = (e: Event) => {
     const event = parseNativeCallEvent((e as CustomEvent).detail);
@@ -156,24 +206,43 @@ export function openAndroidCallSession(
         );
         return;
       case 'failed':
-        // Not retried: a refusal names a state (not on screen, no microphone grant, a missing
-        // declaration) that a second ask in the same call would meet again. The call goes on, on
+        started = false;
+        lastSent = null;
+        if (event.code === 'off-screen' && !askedAgain) {
+          // The app was not resumed at the ask (a dial then an instant HOME, a dialog over it).
+          // Native says when it resumes; that EVENT, not a clock, is the one second ask.
+          appendLog(
+            `[Call] WARN ongoing-call service refused (${event.reason}) - asking once more when the app is back on screen`
+          );
+          waitingForeground = true;
+          return;
+        }
+        // Final: a second ask in the same call would meet the same state. The call goes on, on
         // screen only, as before this service existed.
         appendLog(
           `[Call] ERROR ongoing-call service refused: ${event.reason} - not asked again for this call`
         );
-        started = false;
+        waitingForeground = false;
         over = true;
+        return;
+      case 'foreground':
+        if (!waitingForeground || over) return;
+        waitingForeground = false;
+        askedAgain = true;
+        if (current) send(current, 'the app is back on screen');
         return;
       case 'stopped':
         if (started) {
-          // Not asked by this page: the service left on its own (task removed, page gone).
+          // Not asked by this page and not a hang-up: the service left on its own.
           appendLog(`[Call] WARN ongoing-call service stopped by Android: ${event.reason}`);
           started = false;
           over = true;
         }
         return;
       case 'hangup':
+        // The service has already left the foreground: nothing to stop afterwards.
+        started = false;
+        over = true;
         appendLog('[Call] hang-up from the ongoing-call notification');
         onHangUp();
         return;
@@ -182,35 +251,24 @@ export function openAndroidCallSession(
   host.addEventListener(NATIVE_CALL_EVENT, onEvent);
 
   const stop = (reason: string) => {
+    waitingForeground = false;
     if (!started) return;
     started = false;
-    last = null;
+    lastSent = null;
     appendLog(`[Call] ongoing-call service stop (${reason})`);
     bridge.stop(reason);
   };
 
   return {
     publish(spec, why) {
+      current = spec;
       if (over) return;
       if (!spec) {
         stop(why);
         return;
       }
-      const json = JSON.stringify(spec);
-      if (json === last) return;
-      last = json;
-      if (!started) {
-        started = true;
-        appendLog(
-          `[Call] ongoing-call service start (${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker})`
-        );
-        bridge.start(json);
-        return;
-      }
-      appendLog(
-        `[Call] ongoing-call service update (${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker})`
-      );
-      bridge.update(json);
+      if (waitingForeground) return;
+      send(spec, why);
     },
     dispose() {
       stop('the call surface closed');

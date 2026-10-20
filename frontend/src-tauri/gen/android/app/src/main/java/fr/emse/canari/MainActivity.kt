@@ -349,6 +349,8 @@ class MainActivity : TauriActivity() {
         // The notification plugin's empty "Default" channel, created at its load (see the helper).
         CanariApplication.removePluginDefaultChannel(this)
         pushForeground(true)
+        // A call service start refused while the activity was not resumed may be asked again now.
+        CallBridge.onActivityResumed()
         Log.d("MainActivity", "onResume: isInForeground=true, worker failure flag reset")
         // Migrates pending_push_secret.txt → Keystore on first foreground resume after
         // FCM registration (store_push_secret writes the file during the live session;

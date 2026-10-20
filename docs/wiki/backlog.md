@@ -254,7 +254,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
-| **fill the Play Console "Foreground service permissions" declaration for `FOREGROUND_SERVICE_MICROPHONE`** (in-app calls, with a video) if the first pre-release carrying WP-C-BG-A is refused by Play - pre-release builds declare it, stables do not | 1 console form | [calls](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) |
+| **fill the Play Console "Foreground service permissions" declaration for `FOREGROUND_SERVICE_MICROPHONE`** (App content; in-app 1:1 calls, a description and a video of the call kept while the app is backgrounded). EXPECT the first pre-release carrying WP-C-BG-A to be refused at the `internal` upload until this form is filled - Play may refuse a bundle declaring an undeclared foreground-service permission on any track; not verified on this console. The GitHub release APK is built either way. Filled BEFORE that pre-release, the refusal never happens. Pre-release builds declare it, stables do not (`android.yml` checks) | 1 console form + a video | [calls](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) |
 | **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
@@ -1086,10 +1086,17 @@ its own ([calls](frontend/modules/calls.md#the-call-in-the-background-2026-10-19
 
 - **WP-C-BG-A (Android): BUILT 2026-10-20, draft PR, OWED THE Mi 9T READING** - a `microphone`
   foreground service (not `phoneCall`: that needs a `ConnectionService`), the ongoing `CallStyle`
-  notification, `MODE_IN_COMMUNICATION` and `setCommunicationDevice` in place of `setSinkId`, merged
-  only into builds that place calls; started at the caller's `ringing` / the callee's `connecting`
-  once the microphone is held. Six readings owed and the Play declaration risk:
-  [calls](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20).
+  notification, `setCommunicationDevice` in place of `setSinkId` (the mode left to Chromium when
+  Chromium set it), merged only into builds that place calls and checked absent from a stable's
+  built manifest; started at the caller's `ringing` / the callee's `connecting` once the microphone
+  is held. Twelve readings owed (the API 28-30 paths have no bench device) and the Play declaration
+  risk: [calls](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20).
+- **P3 - `canariCall` is an `addJavascriptInterface` bridge, reachable from ANY frame the WebView
+  loads**, not only the app's origin. `WebViewCompat.addWebMessageListener` takes an origin
+  allowlist and would bound it to the app's own origin. Today the WebView loads only the embedded
+  frontend, and the methods can do no more than start, update or stop a call notification the app
+  itself could, so this is hardening, not an open hole; it applies to every bridge `MainActivity`
+  registers, not to this one alone, and would move them together.
 - **WP-C-BG-I (iOS) - BUILT 2026-10-20, owed its hardware reading.** Measured first: a locked
   iPhone is NOT suspended (same pid, WebRTC stack alive, the partner's audio received) - only its
   microphone is muted, by WKWebView, for want of the `audio` background mode. So the fix is that

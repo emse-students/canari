@@ -17,7 +17,8 @@
   import { isFullScreenPlace } from '$lib/navigation/places';
   import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
   import { screenCover } from '$lib/actions/coversScreen.svelte';
-  import { isIosTauriRuntime } from '$lib/utils/appVersion';
+  import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+  import { releaseCallServiceOfPreviousPage } from '$lib/mobile/androidCallService';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
   import AnnouncementModal from '$lib/components/shared/AnnouncementModal.svelte';
@@ -130,6 +131,9 @@
   onMount(() => {
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
+    // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
+    // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
+    if (isAndroidTauriRuntime()) releaseCallServiceOfPreviousPage(window);
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
