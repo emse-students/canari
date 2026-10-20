@@ -7,7 +7,7 @@ interface TransformEventLike {
   transformer: {
     readable: ReadableStream;
     writable: WritableStream;
-    options?: { side?: string };
+    options?: { side?: string; epoch?: number };
   };
 }
 
@@ -38,6 +38,17 @@ const transformersPerSide: Record<string, number> = {};
  * the one number that says whether the transform is in the media path at all (`report`).
  */
 const framesIn: Record<string, number> = {};
+/**
+ * The same count keyed `<epoch>|<side>|<kind>` (`framesKey`): the epoch is the peer connection the
+ * transform was made for (`CallService` passes it in the transform's options), so a rebuilt peer
+ * connection is judged on ITS frames, not the dead one's, and audio and video are judged apart.
+ */
+const framesInBy: Record<string, number> = {};
+
+/** The key of `framesInBy`, shared with the main thread (`utils/callE2eReport.ts` reads it). */
+function framesKey(epoch: number | undefined, side: string, kind: string): string {
+  return `${epoch ?? 0}|${side}|${kind}`;
+}
 /**
  * The IVs of the last frames this worker ENCRYPTED, as hex. A sender input that STARTS with one of
  * them is a frame this worker already encrypted, handed back for a second pass: exact, and no
@@ -86,7 +97,11 @@ self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffe
 
 workerScope.onrtctransform = (event: Event) => {
   const transformEvent = event as unknown as TransformEventLike;
-  const side = (transformEvent.transformer.options as { side?: string } | undefined)?.side;
+  const options = transformEvent.transformer.options as
+    | { side?: string; epoch?: number }
+    | undefined;
+  const side = options?.side;
+  const epoch = options?.epoch;
 
   if (side !== 'sender' && side !== 'receiver') {
     self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
@@ -98,11 +113,25 @@ workerScope.onrtctransform = (event: Event) => {
   transformersPerSide[sideKey] = (transformersPerSide[sideKey] ?? 0) + 1;
   const sideCount = transformersPerSide[sideKey];
   let firstFrameSeen = false;
+  /** Whether this transformer already posted its `inPath` evidence (once, on its first success). */
+  let inPathPosted = false;
+  /**
+   * EVIDENCE that this transformer is in the media path: its first frame encrypted (sender) or
+   * decrypted (receiver), posted ONCE per transformer with its epoch, so a rebuilt peer connection
+   * earns the screen's "end-to-end encrypted" again from its OWN transforms.
+   */
+  const postInPath = (mediaKind: string) => {
+    if (inPathPosted) return;
+    inPathPosted = true;
+    self.postMessage({ type: 'inPath', side: sideKey, epoch: epoch ?? 0, mediaKind });
+  };
   const shape = newSenderShape(id);
 
   const transform = new TransformStream({
     transform: async (frame, controller) => {
       framesIn[sideKey] = (framesIn[sideKey] ?? 0) + 1;
+      const kindKey = framesKey(epoch, sideKey, frameTypeLabel(frame));
+      framesInBy[kindKey] = (framesInBy[kindKey] ?? 0) + 1;
       if (!callKey) {
         droppedNoKey++;
         if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
@@ -137,6 +166,7 @@ workerScope.onrtctransform = (event: Event) => {
           }
           await encryptFrame(frame, controller);
           encrypted[mediaKind]++;
+          postInPath(mediaKind);
           if (encrypted[mediaKind] === 1 || encrypted[mediaKind] % 300 === 0) {
             self.postMessage({ type: 'encryptOk', count: encrypted[mediaKind], mediaKind });
           }
@@ -153,6 +183,7 @@ workerScope.onrtctransform = (event: Event) => {
           // too made a wrong-key call log `decryptOk` (measured in Chrome 155, 2026-10-17).
           if (!(await decryptFrame(frame, controller))) return;
           decrypted[mediaKind]++;
+          postInPath(mediaKind);
           if (decrypted[mediaKind] === 1 || decrypted[mediaKind] % 300 === 0) {
             self.postMessage({ type: 'decryptOk', count: decrypted[mediaKind], mediaKind });
           }
@@ -181,6 +212,7 @@ function workerReport(tag: string) {
     tag,
     transformers: { ...transformersPerSide },
     framesIn: { ...framesIn },
+    framesInBy: { ...framesInBy },
     encrypted: { ...encrypted },
     decrypted: { ...decrypted },
     decryptFailures,

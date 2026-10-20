@@ -1,4 +1,5 @@
 import { m } from '$lib/paraglide/messages';
+import type { E2eBypass } from './callE2eReport';
 import {
   ApiRefusalError,
   describeApiRefusal,
@@ -92,9 +93,24 @@ export class CallE2eUnsupportedError extends Error {
  * exactly that while its screen said "end-to-end encrypted".
  */
 export class CallE2eBypassedError extends Error {
-  constructor(public readonly sides: readonly ('sender' | 'receiver')[]) {
+  constructor(public readonly sides: readonly E2eBypass[]) {
     super(`media flowed around the E2E transform (${sides.join(' and ')})`);
     this.name = 'CallE2eBypassedError';
+  }
+}
+
+/**
+ * A transform could not be ATTACHED (the worker holds no call key, or the engine refused the
+ * assignment), so the call ENDS rather than carry that track unencrypted. Distinct from
+ * {@link CallE2eBypassedError}, which is a transform attached and then bypassed.
+ */
+export class CallE2eSetupError extends Error {
+  constructor(
+    public readonly what: string,
+    options?: { cause?: unknown }
+  ) {
+    super(`E2E transform could not be attached: ${what}`, options);
+    this.name = 'CallE2eSetupError';
   }
 }
 
@@ -117,6 +133,7 @@ export class CallE2eBypassedError extends Error {
 export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
   if (error instanceof CallE2eBypassedError) return m.call_e2e_bypassed();
+  if (error instanceof CallE2eSetupError) return m.call_e2e_setup_failed();
   // A block, on either side: neutral, as every block refusal is - never who blocked whom.
   if (refusalCode(error) === USER_BLOCKED_CODE) return m.call_unavailable();
   const status = refusalStatus(error);

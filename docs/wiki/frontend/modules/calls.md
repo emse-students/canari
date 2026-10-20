@@ -765,6 +765,37 @@ arrived. WebKit has no such short-circuit; the iPhone really encrypted.
   and the claim stays unproven. This is a PROOF from two counters, not a deadline; it bounds a
   regression to the first 5 s, it does not replace the ordering.
 
+**The same class, one step removed: a transceiver the PEER's offer created** (review of #2158,
+measured on the Mi 9T 2026-10-20 in the same loopback: one side sends two audio m-lines, the other
+one, so `setRemoteDescription` creates the second transceiver; later `addTrack` REUSES it):
+
+| The reused, offer-created transceiver | its sender's frames | packets on that m-line |
+| --- | --- | --- |
+| receiver transform assigned in `ontrack` | (receiver) 293-299, fed | flowing |
+| sender left bare in `ontrack`, transform assigned in the SAME task as the later `addTrack` | **0**, transformer 1 | ~205 out, in clear |
+| the same, transform one task after `addTrack` | **0** | flowing |
+| sender transform assigned in `ontrack` too, `addTrack` later | 203, fed | flowing |
+| a FRESH `addTransceiver` instead, transforms in its task | 201, fed | flowing |
+
+So Chromium decides when the transceiver is CREATED, by `setRemoteDescription` as by `addTrack`. The
+app's `toggleVideo` would have reused the peer's video transceiver for the camera, sent it clear,
+and kept the screen's claim. Now: `handleRemoteTrack` attaches the receiver AND the sender of the
+transceiver in the `ontrack` task, and `toggleVideo` always creates a FRESH transceiver
+(`addTransceiver`). The rig shows both: `late-reuse` (the app's path now) PASS, tx=1753;
+`fault-reuse-bare-sender` (the old path) silence, tx=0.
+
+**The path check, per kind and per peer connection.** Each transform carries its peer connection's
+`epoch` (`transformEpoch`, never reset); the worker counts frames as `<epoch>|<side>|<kind>`
+(`framesInBy`) and posts `inPath` once per transformer on its first frame encrypted or decrypted.
+`checkE2eInPath` reads the RTP packets FIRST, then the worker (frames read later can only be ahead,
+so a first packet landing between the reads cannot look like a bypass), and judges audio and video
+apart on the current epoch only. It runs 5 s after each peer connection's first `connected`, after
+the camera is added and after a new remote m-line (`scheduleE2ePathCheck`, one pending check moved to
+cover a new trigger). A rebuilt peer connection (`onPeerReady` for a replaced device) resets the
+evidence and the check; evidence from an older epoch or another call's worker is logged and lends
+nothing. A transform that cannot be attached ends the call with a typed `CallE2eSetupError`
+(`call_e2e_setup_failed`), never "connection lost".
+
 **What is still owed, on the phones** (a dev pre-release with this change):
 
 | Read | Expected |

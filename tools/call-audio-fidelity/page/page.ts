@@ -37,6 +37,18 @@ interface RigConfig {
   codecOrder?: string[];
   /** SCENARIO: send nothing at first; `addLateTrack()` later puts the audio on a NEW m-line. */
   lateTrack?: boolean;
+  /**
+   * SCENARIO with `lateTrack`: the late audio goes on the transceiver the OTHER side's offer created
+   * (`addTrack` reuses it) instead of a fresh one - its sender got its transform in `ontrack`, as
+   * `CallService.handleRemoteTrack` does since 2026-10-20.
+   */
+  reuseRemoteTransceiver?: boolean;
+  /**
+   * FAULT ROW with `reuseRemoteTransceiver`: `ontrack` attaches the RECEIVER only (the app before
+   * 2026-10-20), so the reused sender was bare at its creation and Chromium short-circuited it -
+   * a transform assigned at `addTrack`, even in the same task, is never fed.
+   */
+  bareSenderInOntrack?: boolean;
   /** FAULT ROW: this side's sender applies the app transform twice. */
   doubleEncrypt?: boolean;
   /** FAULT ROW: this side derives a DIFFERENT key (two MLS epochs - review item F5). */
@@ -160,6 +172,10 @@ async function setup(config: RigConfig) {
     const late = !!worker && !e.receiver.transform && !cfg.noReceiverTransform;
     if (late)
       e.receiver.transform = new RTCRtpScriptTransform(worker!, transformOptions('receiver'));
+    // As CallService.handleRemoteTrack: the SENDER of a transceiver the offer created, in the same
+    // task - a bare one is short-circuited for good if `addTrack` reuses it later.
+    if (late && !cfg.bareSenderInOntrack && !e.transceiver.sender.transform)
+      e.transceiver.sender.transform = new RTCRtpScriptTransform(worker!, transformOptions('sender'));
     note(`ontrack ${e.track.kind}${late ? ' - receiver transform attached LATE, in ontrack' : ''}`);
   };
   pc.onconnectionstatechange = () => note(`connectionState=${pc.connectionState}`);
@@ -196,6 +212,16 @@ async function setup(config: RigConfig) {
  */
 async function addLateTrack() {
   const track = localStream!.getAudioTracks()[0];
+  if (cfg.reuseRemoteTransceiver) {
+    const sender = pc.addTrack(track, localStream!);
+    const reused = pc.getTransceivers().length === 1;
+    // In the same task as `addTrack`: what the app did, and still not enough on a bare sender.
+    if (worker && !sender.transform)
+      sender.transform = new RTCRtpScriptTransform(worker, transformOptions('sender'));
+    note(`late track on ${reused ? 'the transceiver the offer created' : 'a NEW transceiver'}`);
+    await pc.setLocalDescription();
+    return gathered();
+  }
   const t = pc.addTransceiver(track, { direction: 'sendrecv', streams: [localStream!] });
   if (worker) {
     t.sender.transform = new RTCRtpScriptTransform(worker, transformOptions('sender'));

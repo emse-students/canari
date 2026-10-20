@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import {
   CallE2eBypassedError,
+  CallE2eSetupError,
   CallE2eUnsupportedError,
   CallInitiateError,
   describeCallFailure,
@@ -121,9 +122,16 @@ describe('describeCallFailure', () => {
   });
 
   it('reads media that flowed around the transform as an E2E failure, by type', () => {
-    const error = new CallE2eBypassedError(['sender', 'receiver']);
+    const error = new CallE2eBypassedError(['sender:audio', 'receiver:video']);
 
     expect(describeCallFailure(error)).toBe(m.call_e2e_bypassed());
-    expect(error.message).toContain('sender and receiver');
+    expect(error.message).toContain('sender:audio and receiver:video');
+  });
+
+  it('reads a transform that could not be attached as its own E2E failure, by type', () => {
+    const error = new CallE2eSetupError('receiver (video)');
+
+    expect(describeCallFailure(error)).toBe(m.call_e2e_setup_failed());
+    expect(describeCallFailure(error)).not.toBe(m.call_connection_lost());
   });
 });

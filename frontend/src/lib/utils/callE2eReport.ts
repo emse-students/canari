@@ -15,6 +15,8 @@ export interface E2eWorkerReport {
   tag: string;
   transformers: Record<string, number>;
   framesIn: Record<string, number>;
+  /** Frames per peer connection, side and kind, keyed `<epoch>|<side>|<kind>` (`framesFor`). */
+  framesInBy?: Record<string, number>;
   encrypted: { audio: number; video: number };
   decrypted: { audio: number; video: number };
   decryptFailures: number;
@@ -170,38 +172,74 @@ export function describeE2eReport(
   );
 }
 
-/** RTP packets this peer connection sent and received, every media kind summed (`rtpPacketCounts`). */
+/** The media kinds a call carries, each judged on its own (`e2eBypassedSides`). */
+export type CallMediaKind = 'audio' | 'video';
+
+/** One way media can miss the worker: a side and a kind, e.g. `sender:video`. */
+export type E2eBypass = `${'sender' | 'receiver'}:${CallMediaKind}`;
+
+/** RTP packets this peer connection sent and received, per media kind (`rtpPacketCounts`). */
 export interface RtpPacketCounts {
-  sent: number;
-  received: number;
+  sent: Record<CallMediaKind, number>;
+  received: Record<CallMediaKind, number>;
 }
 
-/** Sums `packetsSent` over the outbound RTP streams and `packetsReceived` over the inbound ones. */
+/** Sums `packetsSent` over the outbound RTP streams and `packetsReceived` over the inbound ones, per kind. */
 export function rtpPacketCounts(stats: RTCStatsReport): RtpPacketCounts {
-  const counts: RtpPacketCounts = { sent: 0, received: 0 };
-  stats.forEach((s: { type?: string; packetsSent?: number; packetsReceived?: number }) => {
-    if (s.type === 'outbound-rtp') counts.sent += s.packetsSent ?? 0;
-    if (s.type === 'inbound-rtp') counts.received += s.packetsReceived ?? 0;
-  });
+  const counts: RtpPacketCounts = {
+    sent: { audio: 0, video: 0 },
+    received: { audio: 0, video: 0 },
+  };
+  stats.forEach(
+    (s: { type?: string; kind?: string; packetsSent?: number; packetsReceived?: number }) => {
+      if (s.kind !== 'audio' && s.kind !== 'video') return;
+      if (s.type === 'outbound-rtp') counts.sent[s.kind] += s.packetsSent ?? 0;
+      if (s.type === 'inbound-rtp') counts.received[s.kind] += s.packetsReceived ?? 0;
+    }
+  );
   return counts;
 }
 
 /**
- * The sides whose media crossed the network AROUND the E2E transform: packets went out while the
- * sender transform was handed no frame (clear media sent), or came in while the receiver transform
- * was handed none (the other party's ciphertext fed to the decoder). Empty when the transform is in
- * the path, or when nothing flowed on that side (nothing to prove either way).
+ * The frames the worker counted for ONE peer connection (`epoch`), one side and one kind - the
+ * worker's `framesInBy`, keyed `<epoch>|<side>|<kind>` by `encryption.worker.ts`.
+ */
+export function framesFor(
+  r: E2eWorkerReport,
+  epoch: number,
+  side: 'sender' | 'receiver',
+  kind: CallMediaKind
+): number {
+  return r.framesInBy?.[`${epoch}|${side}|${kind}`] ?? 0;
+}
+
+/**
+ * The side/kind pairs whose media crossed the network AROUND the E2E transform on the peer
+ * connection `epoch`: packets of that kind went out while no sender transform of that peer
+ * connection was handed a frame of it (clear media sent), or came in while no receiver transform
+ * was (the other party's ciphertext fed to the decoder). Empty when every flowing kind went through
+ * the worker, or when nothing flowed (nothing to prove either way).
  *
- * A PROOF from two counters read in the same call, never a timeout: on Chromium a short-circuited
- * transform keeps its transformer (the worker counts one per side) and is simply never fed
- * (CALL-E2E-BYPASS-MI9T, 2026-10-20, measured on the Mi 9T's WebView 152 and desktop Chrome 155).
+ * A PROOF from two counters, never a timeout - provided the packets were read BEFORE the frames:
+ * a frame passes the sender transform before its packet leaves, and a received packet reaches the
+ * receiver transform after it was counted, so frames read later can only be ahead. On Chromium a
+ * short-circuited transform keeps its transformer and is simply never fed (CALL-E2E-BYPASS-MI9T,
+ * 2026-10-20, measured on the Mi 9T's WebView 152 and desktop Chrome 155). Per KIND because a
+ * camera added mid-call is its own sender, and can be short-circuited while the audio is not.
  */
 export function e2eBypassedSides(
   r: E2eWorkerReport,
-  packets: RtpPacketCounts
-): ('sender' | 'receiver')[] {
-  const sides: ('sender' | 'receiver')[] = [];
-  if (packets.sent > 0 && (r.framesIn.sender ?? 0) === 0) sides.push('sender');
-  if (packets.received > 0 && (r.framesIn.receiver ?? 0) === 0) sides.push('receiver');
-  return sides;
+  packets: RtpPacketCounts,
+  epoch: number
+): E2eBypass[] {
+  const out: E2eBypass[] = [];
+  for (const kind of ['audio', 'video'] as const) {
+    if (packets.sent[kind] > 0 && framesFor(r, epoch, 'sender', kind) === 0) {
+      out.push(`sender:${kind}`);
+    }
+    if (packets.received[kind] > 0 && framesFor(r, epoch, 'receiver', kind) === 0) {
+      out.push(`receiver:${kind}`);
+    }
+  }
+  return out;
 }

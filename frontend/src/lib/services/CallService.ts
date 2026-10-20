@@ -18,6 +18,7 @@ import {
 import { publishCallPresence } from '$lib/utils/callPresence';
 import {
   CallE2eBypassedError,
+  CallE2eSetupError,
   CallE2eUnsupportedError,
   CallInitiateError,
   CallSignallingRefusedError,
@@ -34,6 +35,7 @@ import { audioCodecOrder, describeAudioCodecs, describeSelectedPair } from '$lib
 import {
   describeE2eReport,
   e2eBypassedSides,
+  framesFor,
   readE2eEngineFacts,
   rtpPacketCounts,
   type E2eWorkerReport,
@@ -274,15 +276,26 @@ export class CallService {
    * (CALL-E2E-BYPASS-MI9T), so the key is in the worker BEFORE the first track is added.
    */
   private workerKeyApplied = false;
-  /** The worker encrypted a frame of this call (`encryptOk`): the sender transform is in the path. */
+  /** A sender transform of the CURRENT peer connection encrypted a frame (worker `inPath`). */
   private e2eSenderSeen = false;
-  /** The worker decrypted a frame of this call (`decryptOk`): the peer encrypts, under our key. */
+  /** A receiver transform of the CURRENT peer connection decrypted a frame from the peer (`inPath`). */
   private e2eReceiverSeen = false;
-  /** The one E2E worker report of a call, 5 s after its first `connected` (`logE2eReport`). */
-  private e2eReportTimer: number | null = null;
   /**
-   * Whether that 5 s report RAN. The timer id stays set after it fires, so it cannot answer this;
-   * the end report judges a side with no frame only when this is true (`diagnoseE2eReport`).
+   * Which peer connection a transform belongs to, passed in its options and echoed by the worker
+   * (`inPath`, `framesInBy`). Incremented by every `initPeerConnection` and NEVER reset, so a
+   * rebuilt peer connection - or a late message from the previous call's worker - can never lend
+   * its evidence to this one.
+   */
+  private transformEpoch = 0;
+  /** A path check is due (`scheduleE2ePathCheck`): its timer, so two triggers make one check. */
+  private e2ePathCheckTimer: number | null = null;
+  /** The triggers the pending path check covers, as its log tag. */
+  private e2ePathCheckReason = '';
+  /** Whether the CURRENT peer connection's first `connected` already scheduled its path check. */
+  private e2eConnectChecked = false;
+  /**
+   * Whether a path check (`scheduleE2ePathCheck`) RAN in this call - media had its delay to flow.
+   * The end report judges a side with no frame only when this is true (`diagnoseE2eReport`).
    */
   private e2eReportFired = false;
   /** All remote tracks merged for 1:1 display (audio + video in one MediaStream). */
@@ -720,10 +733,7 @@ export class CallService {
     const endedCallId = this.currentCallId;
     const fiveSecondReportRan = this.e2eReportFired;
     this.e2eReportFired = false;
-    if (this.e2eReportTimer !== null) {
-      window.clearTimeout(this.e2eReportTimer);
-      this.e2eReportTimer = null;
-    }
+    this.resetE2eEvidence();
     this.clearRingTimer();
     this.clearResumeTimer();
     this.inviteSent = false;
@@ -791,9 +801,6 @@ export class CallService {
       else worker.terminate();
     }
 
-    this.e2eSenderSeen = false;
-    this.e2eReceiverSeen = false;
-    this.e2eProven.set(false);
     this.remoteStream.set(null);
     this.remoteStreams.set(new Map());
     this.connectedAt.set(null);
@@ -1334,6 +1341,9 @@ export class CallService {
       appendLog('[Call] the other device was replaced - rebuilding the peer connection');
       this.pc.close();
       this.pc = null;
+      // The new peer connection earns its own E2E claim and its own path check: nothing the dead
+      // one proved is evidence about it.
+      this.resetE2eEvidence();
       this.mergedRemoteStream = null;
       this.pendingRemoteIceCandidates = [];
       this.makingOffer = false;
@@ -1668,27 +1678,37 @@ export class CallService {
   }
 
   /** Wires decrypt transform before exposing the track to the UI (avoids black video). */
-  private async handleRemoteTrack(track: MediaStreamTrack, receiver: RTCRtpReceiver) {
+  private async handleRemoteTrack(
+    track: MediaStreamTrack,
+    receiver: RTCRtpReceiver,
+    transceiver: RTCRtpTransceiver | undefined
+  ) {
     appendLog(
       `[Call] remote track kind=${track.kind} id=${track.id.slice(0, 8)}… readyState=${track.readyState} muted=${track.muted}`
     );
 
+    // A transceiver the peer's offer CREATED (a kind this side never sent): both its transforms go
+    // on HERE, in the task `ontrack` fires in - SYNCHRONOUSLY, nothing awaited first. Measured on
+    // the Mi 9T's WebView 152 (2026-10-20): its receiver attached here is fed, and so is its SENDER;
+    // but a sender left bare and reused LATER by `addTrack` is short-circuited even when its
+    // transform is assigned in the same task as that `addTrack` - Chromium decided when the
+    // transceiver was created. So the sender gets its transform now, before it carries anything.
+    const newMline = !receiver.transform;
     try {
-      if (!receiver.transform) {
-        // A receiver the peer's offer created (a kind this side never sent). Attached here, in the
-        // task `ontrack` fires in - SYNCHRONOUSLY, nothing awaited first: the rig measured such a
-        // transform fed on Chrome 155 (row "new m-line"), and one task later Chromium short-circuits
-        // it for good. The 5 s path check (`checkE2eInPath`) is what proves it either way.
-        appendLog(
-          `[Call] E2E receiver transform attached in ontrack (${track.kind}, a new m-line)`
-        );
-      }
       this.attachReceiverTransform(receiver, track.kind);
+      if (transceiver) this.attachSenderTransform(transceiver.sender, track.kind);
     } catch (e) {
       appendLog(`[Call] E2E receiver transform failed: ${String(e)}`);
-      this.failCall('E2E receiver transform failed');
+      this.failCall(
+        'E2E receiver transform failed',
+        e instanceof CallE2eSetupError
+          ? e
+          : new CallE2eSetupError(`receiver (${track.kind})`, { cause: e })
+      );
       return;
     }
+    // A new m-line is media the 5 s check of the first connect may not have seen: check it again.
+    if (newMline && this.pc) this.scheduleE2ePathCheck(this.pc, `after a new ${track.kind} m-line`);
 
     if (!this.mergedRemoteStream) {
       this.mergedRemoteStream = new MediaStream();
@@ -1755,6 +1775,7 @@ export class CallService {
       iceTransportPolicy: CALL_ICE_TRANSPORT_POLICY,
     });
     this.pc = pc;
+    this.transformEpoch += 1;
 
     const gathered = { host: 0, srflx: 0, relay: 0, prflx: 0 };
 
@@ -1817,8 +1838,8 @@ export class CallService {
     };
 
     pc.ontrack = (e) => {
-      const { track, receiver } = e;
-      void this.handleRemoteTrack(track, receiver);
+      const { track, receiver, transceiver } = e;
+      void this.handleRemoteTrack(track, receiver, transceiver);
     };
 
     pc.onconnectionstatechange = () => {
@@ -1835,14 +1856,11 @@ export class CallService {
         // The RTP streams bind their codec on the first packet, after `connected`: read once
         // the media has had time to flow (a diagnostic read, nothing waits on it).
         setTimeout(() => this.logAudioCodecs(pc), CallService.CODEC_READ_DELAY_MS);
-        // ONE report per call, at the first connect (a reconnect does not re-arm it): frames
-        // per transform side, read from the worker itself, plus the one at the end (`cleanup`).
-        if (this.e2eReportTimer === null && this.encryptionWorker) {
-          const worker = this.encryptionWorker;
-          this.e2eReportTimer = window.setTimeout(() => {
-            this.e2eReportFired = true;
-            void this.checkE2eInPath(pc, worker);
-          }, CallService.E2E_REPORT_DELAY_MS);
+        // ONE path check per peer connection at its first connect (a reconnect does not re-arm
+        // it; a rebuilt peer connection does), plus the report at the end (`cleanup`).
+        if (!this.e2eConnectChecked) {
+          this.e2eConnectChecked = true;
+          this.scheduleE2ePathCheck(pc, '5 s after connected');
         }
       }
       if (state === 'disconnected') {
@@ -1951,32 +1969,90 @@ export class CallService {
   }
 
   /**
-   * The 5 s report, and the PROOF it is read against: the RTP packets the peer connection sent and
-   * received. A side whose packets crossed the network while its transform was handed no frame is
-   * media flowing AROUND the worker - clear audio sent, or the peer's ciphertext fed to the decoder -
-   * and the call ENDS, typed (`CallE2eBypassedError`), rather than go on unencrypted. No answer from
-   * the worker, or no stats, proves nothing either way: logged, and the screen's claim simply stays
-   * unproven (`e2eProven`).
+   * Forgets every piece of E2E evidence and every pending path check: a new call, or a peer
+   * connection rebuilt for a replaced device, earns its claim from its OWN transforms.
    */
-  private async checkE2eInPath(pc: RTCPeerConnection, worker: Worker): Promise<void> {
-    const report = await this.logE2eReport('5 s after connected', worker, true);
-    if (!report || this.pc !== pc) return;
+  private resetE2eEvidence(): void {
+    if (this.e2ePathCheckTimer !== null) {
+      window.clearTimeout(this.e2ePathCheckTimer);
+      this.e2ePathCheckTimer = null;
+    }
+    this.e2eConnectChecked = false;
+    this.e2eSenderSeen = false;
+    this.e2eReceiverSeen = false;
+    this.e2eProven.set(false);
+  }
+
+  /**
+   * Arms ONE path check `E2E_REPORT_DELAY_MS` from now for `pc` (a check already pending covers
+   * this trigger too). Triggers: the first `connected` of a peer connection, a camera added, a new
+   * remote m-line - each is media the previous check did not see. The delay only lets packets flow
+   * so there is something to compare; the verdict is the comparison (`checkE2eInPath`).
+   */
+  private scheduleE2ePathCheck(pc: RTCPeerConnection, why: string): void {
+    const worker = this.encryptionWorker;
+    if (!worker) {
+      appendLog(`[Call] WARN E2E path check (${why}) not armed: no worker`);
+      return;
+    }
+    // A check already pending is moved to cover this trigger too, with both reasons: the newest
+    // media gets its full delay to flow, and one check reads them all.
+    let reason = why;
+    if (this.e2ePathCheckTimer !== null) {
+      window.clearTimeout(this.e2ePathCheckTimer);
+      reason = `${this.e2ePathCheckReason}, ${why}`;
+    }
+    this.e2ePathCheckReason = reason;
+    this.e2ePathCheckTimer = window.setTimeout(() => {
+      this.e2ePathCheckTimer = null;
+      this.e2eReportFired = true;
+      void this.checkE2eInPath(pc, worker, reason);
+    }, CallService.E2E_REPORT_DELAY_MS);
+  }
+
+  /**
+   * The worker's report, and the PROOF it is read against: this peer connection's RTP packets, per
+   * kind, read FIRST - a frame passes the sender transform before its packet leaves and reaches the
+   * receiver transform after its packet was counted, so frames read afterwards can only be ahead,
+   * and a first packet landing between the two reads cannot look like a bypass. A side and kind
+   * whose packets crossed the network while no transform OF THIS PEER CONNECTION saw a frame of
+   * it is media around the worker - clear media sent, or the peer's ciphertext fed to the decoder -
+   * and the call ENDS, typed (`CallE2eBypassedError`). No stats, or no answer from the worker,
+   * proves nothing either way: logged, and the screen's claim simply stays unproven (`e2eProven`).
+   */
+  private async checkE2eInPath(pc: RTCPeerConnection, worker: Worker, why: string): Promise<void> {
     let packets;
     try {
       packets = rtpPacketCounts(await pc.getStats());
     } catch (e) {
-      appendLog(`[Call] WARN E2E path check: getStats failed (${String(e)}) - nothing proven`);
-      return;
-    }
-    const sides = e2eBypassedSides(report, packets);
-    if (sides.length === 0) {
       appendLog(
-        `[Call] E2E path check: no media around the transform (packets sent=${packets.sent} received=${packets.received})`
+        `[Call] WARN E2E path check (${why}): getStats failed (${String(e)}) - nothing proven`
       );
       return;
     }
+    const epoch = this.transformEpoch;
+    const report = await this.logE2eReport(why, worker, true);
+    if (!report) return;
+    if (this.pc !== pc || this.encryptionWorker !== worker) {
+      appendLog(
+        `[Call] E2E path check (${why}) dropped: its peer connection was replaced or the call ended`
+      );
+      return;
+    }
+    const counts = `packets sent audio=${packets.sent.audio} video=${packets.sent.video} received audio=${packets.received.audio} video=${packets.received.video}`;
+    const sides = e2eBypassedSides(report, packets, epoch);
+    if (sides.length === 0) {
+      appendLog(`[Call] E2E path check (${why}): no media around the transform (${counts})`);
+      return;
+    }
+    const frames = sides
+      .map((k) => {
+        const [side, kind] = k.split(':') as ['sender' | 'receiver', 'audio' | 'video'];
+        return `${k}=${framesFor(report, epoch, side, kind)}`;
+      })
+      .join(' ');
     appendLog(
-      `[Call] ERROR E2E path check: media flowed AROUND the transform on ${sides.join(' and ')} (packets sent=${packets.sent} received=${packets.received}, frames in sender=${report.framesIn.sender ?? 0} receiver=${report.framesIn.receiver ?? 0})`
+      `[Call] ERROR E2E path check (${why}): media flowed AROUND the transform on ${sides.join(' and ')} (${counts}; frames ${frames})`
     );
     this.failCall('E2E transform bypassed', new CallE2eBypassedError(sides));
   }
@@ -2036,8 +2112,9 @@ export class CallService {
 
   private getOrCreateEncryptionWorker(): Worker {
     if (!this.encryptionWorker) {
-      this.encryptionWorker = new EncryptionWorker();
-      this.encryptionWorker.onmessage = (
+      const worker = new EncryptionWorker();
+      this.encryptionWorker = worker;
+      worker.onmessage = (
         event: MessageEvent<{ type: string; detail?: string; count?: number; mediaKind?: string }>
       ) => {
         const { type, detail, count, mediaKind } = event.data ?? {};
@@ -2051,10 +2128,11 @@ export class CallService {
           appendLog(`[Call] E2E worker: ${detail ?? 'warn'}`);
         } else if (type === 'encryptOk') {
           appendLog(`[Call] E2E encrypting ${mediaKind ?? '?'} (${count} frame(s))`);
-          this.noteE2eEvidence('sender');
         } else if (type === 'decryptOk') {
           appendLog(`[Call] E2E decrypting ${mediaKind ?? '?'} (${count} frame(s))`);
-          this.noteE2eEvidence('receiver');
+        } else if (type === 'inPath') {
+          const d = event.data as unknown as { side: string; epoch: number; mediaKind: string };
+          this.noteE2eEvidence(worker, d.side, d.epoch, d.mediaKind);
         } else if (type === 'videoKeyframeIn') {
           appendLog(`[Call] remote video keyframe received (#${count})`);
         } else if (type === 'opusInvalid') {
@@ -2098,12 +2176,20 @@ export class CallService {
   }
 
   /**
-   * One side of the E2E evidence: the worker encrypted (`sender`) or decrypted (`receiver`) a frame
-   * of this call. Both seen = `e2eProven`, the only thing the screen's encryption claim reads.
+   * One side of the E2E evidence: a transform of THIS call's worker and THIS peer connection
+   * (`epoch`) encrypted (`sender`) or decrypted (`receiver`) its first frame. Both seen =
+   * `e2eProven`, the only thing the screen's encryption claim reads. A late message from a previous
+   * call's worker, or from a peer connection since rebuilt, is logged and lends nothing.
    */
-  private noteE2eEvidence(side: 'sender' | 'receiver'): void {
+  private noteE2eEvidence(worker: Worker, side: string, epoch: number, mediaKind: string): void {
+    if (this.encryptionWorker !== worker || epoch !== this.transformEpoch) {
+      appendLog(
+        `[Call] E2E ${side} evidence (${mediaKind}) from a stale transform (epoch ${epoch}, current ${this.transformEpoch}) - ignored`
+      );
+      return;
+    }
     if (side === 'sender') this.e2eSenderSeen = true;
-    else this.e2eReceiverSeen = true;
+    else if (side === 'receiver') this.e2eReceiverSeen = true;
     if (this.e2eSenderSeen && this.e2eReceiverSeen && !get(this.e2eProven)) {
       appendLog('[Call] E2E proven: this device encrypted a frame and decrypted one from the peer');
       this.e2eProven.set(true);
@@ -2153,11 +2239,16 @@ export class CallService {
    * (`CallE2eUnsupportedError` already refused an engine without the API). SYNCHRONOUS on purpose -
    * see `attachSenderTransform`.
    */
-  private keyedWorker(side: 'sender' | 'receiver'): Worker {
+  private keyedWorker(side: 'sender' | 'receiver', mediaKind: string): Worker {
     if (!this.callKey || !this.encryptionWorker || !this.workerKeyApplied) {
-      throw new Error(`the E2E worker holds no call key - no ${side} transform can be attached`);
+      throw new CallE2eSetupError(`${side} (${mediaKind}): the worker holds no call key`);
     }
     return this.encryptionWorker;
+  }
+
+  /** A transform's options: its side, and the peer connection it belongs to (`transformEpoch`). */
+  private transformOptions(side: 'sender' | 'receiver') {
+    return { side, epoch: this.transformEpoch };
   }
 
   /**
@@ -2166,18 +2257,25 @@ export class CallService {
    * one task late, for good, and then sends clear media while the transform sits unfed
    * (CALL-E2E-BYPASS-MI9T, 2026-10-20). THROWS when the worker holds no key.
    */
-  private attachSenderTransform(sender: RTCRtpSender): void {
+  private attachSenderTransform(
+    sender: RTCRtpSender,
+    mediaKind = sender.track?.kind ?? 'unknown'
+  ): void {
     if (sender.transform) return;
-    sender.transform = new RTCRtpScriptTransform(this.keyedWorker('sender'), { side: 'sender' });
-    appendLog(`[Call] E2E sender transform attached (${sender.track?.kind ?? 'unknown'})`);
+    sender.transform = new RTCRtpScriptTransform(
+      this.keyedWorker('sender', mediaKind),
+      this.transformOptions('sender')
+    );
+    appendLog(`[Call] E2E sender transform attached (${mediaKind})`);
   }
 
   /** Attaches the E2E decrypt transform to a receiver: synchronous and throwing, like the sender. */
   private attachReceiverTransform(receiver: RTCRtpReceiver, mediaKind = 'unknown'): void {
     if (receiver.transform) return;
-    receiver.transform = new RTCRtpScriptTransform(this.keyedWorker('receiver'), {
-      side: 'receiver',
-    });
+    receiver.transform = new RTCRtpScriptTransform(
+      this.keyedWorker('receiver', mediaKind),
+      this.transformOptions('receiver')
+    );
     appendLog(`[Call] E2E receiver transform attached (${mediaKind})`);
   }
 
@@ -2305,15 +2403,18 @@ export class CallService {
         if (!videoTrack) return;
         this.localStream.addTrack(videoTrack);
         this.callHasVideo = true;
-        // `addTrack` and both transforms of its transceiver in ONE task, as in `initPeerConnection`
-        // (Chromium short-circuits a transform assigned later). `negotiationneeded` then carries the
-        // new m-line to the peer.
+        // A FRESH transceiver, never `addTrack`: `addTrack` may REUSE a transceiver the peer's
+        // offer created, whose sender Chromium already short-circuited if it was bare at its
+        // creation (measured on the Mi 9T, 2026-10-20). Both transforms in the task that creates
+        // it, as in `initPeerConnection`. `negotiationneeded` then carries the new m-line.
         const pc = this.pc;
-        const sender = pc.addTrack(videoTrack, this.localStream);
+        const transceiver = pc.addTransceiver(videoTrack, {
+          direction: 'sendrecv',
+          streams: [this.localStream],
+        });
+        const sender = transceiver.sender;
         try {
-          this.attachSenderTransform(sender);
-          const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
-          if (!transceiver) throw new Error('no transceiver for the video sender just added');
+          this.attachSenderTransform(sender, 'video');
           this.attachReceiverTransform(transceiver.receiver, 'video');
         } catch (e) {
           // Never a video sender without its transform: removed before any negotiation carries it.
@@ -2321,9 +2422,15 @@ export class CallService {
           videoTrack.stop();
           this.localStream.removeTrack(videoTrack);
           appendLog(`[Call] E2E transform for the camera failed: ${String(e)}`);
-          this.failCall('E2E transform for the camera failed');
+          this.failCall(
+            'E2E transform for the camera failed',
+            e instanceof CallE2eSetupError
+              ? e
+              : new CallE2eSetupError('sender (video)', { cause: e })
+          );
           return;
         }
+        this.scheduleE2ePathCheck(pc, 'after the camera was added');
         void this.applyVideoSenderLimits(sender);
         this.localStreamStore.set(this.localStream);
         this.isVideoOff.set(false);
