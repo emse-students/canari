@@ -40,10 +40,10 @@ a live started while the switch was on is still ended and deleted after it is tu
 | Starts per account | 6 in a rolling hour; ONE open at a time (the partial unique index) | `LIVE_STARTS_PER_HOUR`, `LIVE_START_WINDOW_MS` | same route (`startsPerHour`) |
 | Ingests storing at once, per instance | 4 (the database pool is 10) | `LIVE_INGEST_MAX_CONCURRENT` | - |
 | Store timeout / reservation age | 30 s / 35 s | `LIVE_STORE_TIMEOUT_MS`, `LIVE_RESERVATION_TTL_MS` | - |
-| Viewer cap of the HOST, all lives together | 24 = floor(90 Mb/s `LIVE_HOST_EGRESS_BPS` x 0.8 `LIVE_EGRESS_SHARE` / 3 Mb/s `LIVE_VIEWER_BITRATE_BPS`) | `LIVE_VIEWER_CAP`, same file | same route (`viewerCap`) |
+| Viewer cap of the HOST, all lives together (**the user wants NO cap, 2026-10-20; the cap stays until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured**) | 24 = floor(90 Mb/s `LIVE_HOST_EGRESS_BPS` x 0.8 `LIVE_EGRESS_SHARE` / 3 Mb/s `LIVE_VIEWER_BITRATE_BPS`) | `LIVE_VIEWER_CAP`, same file | same route (`viewerCap`) |
 | Seat lease | 30 s after the last key read or manifest poll | `LIVE_SEAT_LEASE_MS` | same route (`seatLeaseMs`) |
 | First-live rules version (L11) | 1 | `LIVE_RULES_VERSION` | same route (`rulesVersion`), and `GET /api/lives/rules` |
-| How long a staff cut is kept | 365 days (a planning figure, owed the user's decision) | `LIVE_CUT_RETENTION_MS` | - |
+| How long a staff cut is kept | **90 days, decided 2026-10-20**; the constant still says 365 days until WP-L8b changes it | `LIVE_CUT_RETENTION_MS` | - |
 
 The 60 s window, the bitrate, the margin and the one-second segment floor are planning figures,
 **to be confirmed on the WP-L1 bench**.
@@ -487,13 +487,12 @@ outlives the purge; a cut, a segment and a viewer join fired together - whicheve
 refusal is `410 cut` and nothing is served after it. A viewer whose key read began before the cut
 committed may take a seat AFTER the purge freed them: that seat lasts at most its 30 s lease (its
 next poll is a `410` that renews nothing). The same holds for every kind of end, not only a cut -
-filed in [backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-and-four-decisions-are-owed-2026-10-19).
+filed in [backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19).
 
 **Repeat offenders: RECORDED, NO POLICY.** No strike or ban mechanism exists for posts (only the
 manual mute), so none is invented here: `live_cuts` keeps who, when and why, `priorCuts` (on the
 cut's answer) and `broadcasterCuts` (in the queue) show the count, and the mute is the moderator's
-manual sanction. **What a count should trigger, and how long a cut is kept (365 days today), are the
-user's to decide** ([backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+manual sanction. **DECIDED 2026-10-20: [a strike ladder and a 90-day retention](#decisions-of-2026-10-20-moderation-reactions-the-audience); the code described here is still the recorded-only state.**
 
 ### The first-live rules (L11)
 
@@ -529,8 +528,8 @@ is built in rather than added:
 - **A removed viewer cannot post**: the chat send checks `live_removed_viewers` and blocks, as the
   key does.
 - **Staff reach**: a cut ends the chat with the live. Reporting ONE chat line (`contentType:
-  'live_chat'`) would mean the reporter attaching the decrypted text - the privacy decision that kept
-  `message` out of `content_reports` - so it is NOT planned; a viewer reports the live or the person.
+  'live_chat'`) was NOT planned here, for the privacy decision that kept `message` out of
+  `content_reports`; **the user decided otherwise on 2026-10-20** ([below](#a-reported-chat-line-is-kept-until-handled-reverses-c2)), and the work is owed.
 
 ### What the client still owes (strings for Paraglide)
 
@@ -540,6 +539,55 @@ live row and cut button and the `LiveEndReason` / `LiveRefusalCode` additions ar
 What is left:
 
 - **The push for a cut**: `notif_social_live_cut_*` in both native apps, then `skipPush` goes.
+
+## Decisions of 2026-10-20: moderation, reactions, the audience
+
+The user's answers to the open moderation questions. **None is built**; the work is WP-L8b in the
+[backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19).
+
+| Question | Decision | What it changes in what exists |
+| --- | --- | --- |
+| Strike policy | **Warning, then suspension, then withdrawal.** 1st abuse: a warning and the live is cut. 2nd: the right to broadcast is SUSPENDED. 3rd: the right is WITHDRAWN, **decided by staff** | Today a cut is recorded and counted (`priorCuts`, `broadcasterCuts`) and nothing follows; the only sanction is the posting mute, which also silences posts, so a suspension of broadcasting is a NEW state beside it (the moderation table above says "no ban state other than the mute"). **OPEN: how long a suspension lasts** - the answer did not say |
+| Cut retention | **90 days** | `LIVE_CUT_RETENTION_MS` is 365 days; register row C20 now says 90. The ladder counts cuts, so a 90-day purge forgets the first offence: **OPEN whether the ladder counts every cut still on record, which makes it a rolling window** |
+| Automatic cut on N reports | **No** - staff cut by hand only | Matches the code (a live is never cut by a count); posts keep their own auto-hide at 5 |
+| Response time to the stores | **24 hours** for live reports | Nothing measures it: the queue has no age alarm. A commitment with no report is found by hand, a day late (CLAUDE.md): the oldest pending report's age must be measured and reported |
+| First-live rules text | **The posts' publication rules, no live-specific clause** | The sheet's four `live_rules_*` lines are live-specific. **No standalone "posts publication rules" text exists**: what posts are judged by is the terms of use, section 6 ([moderation-and-blocking](../moderation-and-blocking.md)); the sheet must show or link that text, and `LIVE_RULES_VERSION` rises when it does |
+| Viewer cap | **None wanted** ("Je ne veux pas de plafond") | The cap is 24 and stays in code until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured; it is the wish of L8 (2026-10-15) again, which the cap was the honest answer to |
+
+### A reported chat line is kept until handled (REVERSES C2)
+
+**Decided:** a chat message that is REPORTED is KEPT, encrypted, for staff, until the report is
+handled, then ERASED; every other message vanishes with the live. This reverses C2's "no grace period:
+a reported message is gone with its live", which was the lead's choice, not the user's. What it
+implies, none of it built:
+
+- **The cascade must stop at a reported line.** `live_chat_messages` has a FOREIGN KEY on the live
+  that CASCADES (C1), so the line must be COPIED into a table that does not cascade, at report time,
+  with its author, its `clientId` and the report id. Erasure is then ONE rule on durable state: the
+  report's handled flag, never a timer.
+- **A kept ciphertext opens with the live key, and the live key goes with the live row.** Keeping
+  the line without what opens it keeps nothing readable. Either the key is kept too, for as long as
+  a report on that live is open (a longer life for a secret that protects the whole live, whose
+  other segments and lines are already deleted), or the reporter's client hands over the plaintext
+  (the privacy decision that kept `message` out of `content_reports`; C12 gives the server no
+  plaintext). **OPEN, and a crypto review's question.**
+- **A new report type** (`live_chat`, naming the live and the message, once per person per message)
+  and a staff view showing the line to a moderator, who then reads text the server could not before.
+  The terms, the privacy policy and register row C20 must say so.
+- **"Until handled" has no upper bound.** Handled is a person's act; an unhandled report would keep a
+  private message for ever. The 24 h commitment bounds it in practice, and a pending report older
+  than that is the alarm (WP-L8b item e). **OPEN whether to add a hard ceiling.**
+- **An erased account** (the erasure statements) must also erase its kept lines and the copies tied
+  to its reports, or the erasure is incomplete.
+
+### The five reactions of 2026-10-20
+
+**Decided:** heart, laugh, bravo (clap), fire and the canary chick (🐤). C8's "no sad, no angry" holds.
+**C8 said these are "five of the post reaction set", and that is no longer true**: the posts' set
+(`frontend/src/lib/posts/reactions.ts`) has no clap and no fire, so two kinds need new ASCII wire
+names, labels, Noto pictures ([emoji](../frontend/emoji.md)) and an entry in `LIVE_REACTION_KINDS`;
+`love` and `happy` leave the list. A burst of an old kind from an older client is then refused
+`400 LIVE_REACTION_INVALID` - dev builds only today, so nothing in the field breaks.
 
 ## A deleted account
 
@@ -602,13 +650,13 @@ below is reversible and names its reason.
 | # | Question | Decision | Why |
 | --- | --- | --- | --- |
 | C1 | **Storage** | **PostgreSQL rows** (`live_chat_messages`, `live_reaction_bursts`, migration 098), with a FOREIGN KEY on the live that CASCADES - not a Redis ring buffer | Every rule a chat needs is already a row rule here: the order is the live's row lock (C4), idempotence is a unique index (C5), the rate is a COUNT of durable rows (C6), the account erasure is two SQL statements its coverage spec sees, and the retention is the live row's own deletion (C2). A Redis list would need its own erasure scan, its own idempotence keys and its own expiry - three mechanisms the row gets for free. Redis stays what it is here: the seat counter. |
-| C2 | **Retention** | **Erased with the live, at its end** - by the cascade when the live's row is deleted (at once at the broadcaster's end, or by the 30 s sweep). **No 24 h grace, no replay of the chat** | L3 (no replay): an ended live answers `410` to every read, so a kept message is one nobody can ever read again - except the server, which holds the live key. Keeping it would only serve a moderator reading a report after the end, and the report path (WP-L8) owns what it keeps. **The longest a message lives is the live (60 min at most) plus the purge** (seconds, or until the media store proves the segments gone - the row waits for that proof, lives.md "Deletion"). Database backups may hold the rows of a live that crossed a nightly dump (register C19). |
+| C2 | **Retention** | **REVERSED IN PART 2026-10-20 by the user: a REPORTED line is kept until handled ([below](#a-reported-chat-line-is-kept-until-handled-reverses-c2)); the rest of this row is what the code still does.** **Erased with the live, at its end** - by the cascade when the live's row is deleted (at once at the broadcaster's end, or by the 30 s sweep). **No 24 h grace, no replay of the chat** | L3 (no replay): an ended live answers `410` to every read, so a kept message is one nobody can ever read again - except the server, which holds the live key. Keeping it would only serve a moderator reading a report after the end, and the report path (WP-L8) owns what it keeps. **The longest a message lives is the live (60 min at most) plus the purge** (seconds, or until the media store proves the segments gone - the row waits for that proof, lives.md "Deletion"). Database backups may hold the rows of a live that crossed a nightly dump (register C19). |
 | C3 | **Transport** | **The manifest poll the viewer already makes, once a second**: `GET /api/lives/:id/manifest?chat=1&messagesAfter=<seq>&reactionsAfter=<seq>` carries a `chat` block. **Not the WebSocket gateway, and not a second endpoint** | ONE request per viewer per tick, not two: 24 viewers are 24 requests a second either way, each with an `auth_request` sub-request, and a sibling route would double both. The gateway (chat-delivery) routes MLS frames to DEVICES of CONVERSATIONS; a live's audience is a visibility predicate in social-service (spaces, blocks, removals) the gateway knows nothing of, so a WebSocket fan-out would need a per-viewer filter in a second service, a resubscription on every reconnect, and a catch-up read on HTTP anyway for a late joiner. The picture is already 5-10 s behind (option C), so the 1 s poll adds at most a second to a chat that is ahead of the video. No timer is added: the cursor is a sequence number (C4), so a lost poll loses nothing. The nginx limits are untouched: `/api/lives` limits only `PUT` per address (`lives_ingest`), and `limit_conn ... 24` is the SEGMENT location's alone. |
 | C4 | **Order** | A **server sequence per live** - `lives."chatSeq"` for messages, `lives."reactionSeq"` for reaction bursts - incremented under the live's ROW LOCK in the same transaction that inserts the row | A `bigserial` would number rows in the order they START and commit them in any order, so a poller reading "after 10" while 10 is still uncommitted and 11 is visible would skip 10 for ever. Under the row lock, a sequence number is allocated and committed in one order, so any snapshot sees a gapless PREFIX and the cursor "the highest seq I was given" can never skip a row. The lock is the one every other write of a live takes (lives.md "The end is the row's state"), so a post also serialises against the end and a removal (C9). |
 | C5 | **Idempotence** | The client's `clientId` (a uuid) is unique per `(live, author)`; a repeat with the same sealed bytes answers the stored message, other bytes are `409 LIVE_MESSAGE_CONFLICT`. A reaction burst carries a `burstId`, unique the same way | Durable state, never a clock (CLAUDE.md). A lost answer retried is the same row, not a second message. |
 | C6 | **Rate limits, per account per live** | **3 messages per rolling 5 s**; **2 reaction bursts and 10 taps per rolling 2 s** - counted from the rows themselves under the row lock (the database clock), `429 LIVE_MESSAGE_TOO_FAST` / `429 LIVE_REACTION_TOO_FAST`, each with `retryAfterMs` - when the OLDEST row of the window leaves it, read from the rows by the database clock, never a constant | A count held in durable state, as the segment rate is. 10 taps per 2 s is 5 a second, faster than a thumb sustains; the client sends at most one burst per poll tick (1 s), so two per window leaves room for jitter. |
 | C7 | **Reactions are aggregated by the SERVER** | A tap is never an event: the client sums its taps and sends ONE burst `{ burstId, counts: { like: 3 } }` per tick at most; the poll answers `reactions: [{ window, counts }]`, the sums of every burst since the cursor **per 2 s window** (`window` = the burst's age into the live in 2 s steps), minus the viewer's own bursts (already drawn by its own client) and minus bursts of accounts blocked either way | One aggregate per window per poll, whatever the audience: 24 viewers tapping produce one small object a second, never 24 x taps events. |
-| C8 | **The five reaction kinds** | `like` ❤️, `love` 😍, `laugh` 😂, `happy` 😊, `canari` 🐤 - five of the post reaction set (`frontend/src/lib/posts/reactions.ts`), drawn with the Noto SVG pictures every emoji uses ([emoji](../frontend/emoji.md)) | The post set's own pictures and labels; ASCII wire names (a new wire, so no accented key). Sad and angry are left out of a floating stream on purpose. Server: `LIVE_REACTION_KINDS`. |
+| C8 | **The five reaction kinds** | **SUPERSEDED 2026-10-20 (the user's list, not yet in code): heart, laugh, bravo, fire, the canary chick ([below](#the-five-reactions-of-2026-10-20)); what follows is what the code still has.** `like` ❤️, `love` 😍, `laugh` 😂, `happy` 😊, `canari` 🐤 - five of the post reaction set (`frontend/src/lib/posts/reactions.ts`), drawn with the Noto SVG pictures every emoji uses ([emoji](../frontend/emoji.md)) | The post set's own pictures and labels; ASCII wire names (a new wire, so no accented key). Sad and angry are left out of a floating stream on purpose. Server: `LIVE_REACTION_KINDS`. |
 | C9 | **Who may post** | Exactly who may WATCH (`assertMayWatch`: the rule of a post, not blocked with the broadcaster, not removed, the live open), **and not muted** (`403 LIVE_MUTED`, the account-level mute of [moderation](../moderation-and-blocking.md), the same code as a muted start). The ended and removed checks are **repeated under the row lock**, so a removal or an end that commits first is never overtaken by a message. **No seat is needed**: a seat is bandwidth, and a message costs none of it | "A banned or removed viewer cannot post" (user): banned is the account mute, removed is the broadcaster's per-live list. |
 | C10 | **Blocks between viewers** | A viewer never receives the messages, or the reaction taps, of an account blocked either way (`blockedUserIdsFor`, filtered per poll) | As the feed hides a blocked author. |
 | C11 | **Content** | **Plain text only**, at most **300 characters** (UTF-16 units, the client's to enforce before sealing - the server sees ciphertext). The server bounds the SEALED size: 29 to 928 bytes (12 IV + at most 900 UTF-8 bytes + 16 tag). **No link is rendered** (a URL stays text), **no mention in v1**, no media | The server cannot read a message, so length and shape are the client's; the byte bound is what the server CAN hold. A rendered link or a mention would need the server to resolve something it cannot read. |
@@ -653,9 +701,9 @@ The numbers (`chatMessageMaxChars`, `chatSealedMaxBytes`, the two rates, `chatBa
 sees them), but it emits no tombstone: a tombstone needs a new sequence number under each live's
 row lock, one per message, inside the erasure's transaction. A viewer who already drew such a
 message keeps it until it closes the viewer - at most the live's hour - and nothing can fetch it
-again. **Reporting ONE chat message is not possible**: `content_reports` takes `contentType:
-'live'` only, so a report names the live, and the server could not read the message anyway
-([backlog](../backlog.md)).
+again. **Reporting ONE chat message is not possible YET**: `content_reports` takes `contentType:
+'live'` only, so a report names the live, and the server could not read the message anyway. The user
+decided on 2026-10-20 that a reported line is kept until handled ([above](#a-reported-chat-line-is-kept-until-handled-reverses-c2)); the work is owed ([backlog](../backlog.md)).
 
 ### The row lock, extended
 

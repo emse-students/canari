@@ -27,7 +27,7 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
-## P1 - Live moderation (WP-L8): the server half is BUILT, the client half and four decisions are owed (2026-10-19)
+## P1 - Live moderation (WP-L8): the server half is BUILT, the client half is BUILT, the decisions of 2026-10-20 are taken and their server work is owed (2026-10-19)
 
 A RELEASE BLOCKER (D3): no stable carries lives before it. Built on the server, draft PR: a live is
 reported through `content_reports`, staff cut it (`POST /api/lives/:id/cut`, 410 `endReason: 'cut'`),
@@ -36,12 +36,23 @@ the first-live rules acceptance is recorded and required ([lives](services/lives
 `live_cut` bell row and the admin queue's live row with its cut button
 ([live](frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
 **Built 2026-10-19, draft PR:** the viewer's report control (a Flag in the top bar, the report dialog, the block offer; reporting one chat line stays impossible by the server's contract). **Owed, code:** the chat-line hiding inside WP-L6, by the contract written there; a push for the cut
-once `notif_social_live_cut_*` exist in both native apps. **Owed, the user:** (1) the STRIKE POLICY -
-what N cuts trigger (a mute, a broadcasting ban, nothing), today only recorded and counted;
-(2) how long a cut is kept (365 days, a planning figure); (3) whether a live past N pending reports is
-cut automatically (today never: a person cuts); (4) the store answers that only the user can give
-- the response-time commitment, the filtering statement, the terms' lives paragraph
-([store-ugc-answers](store-ugc-answers.md)).
+once `notif_social_live_cut_*` exist in both native apps. **DECIDED BY THE USER, 2026-10-20** (substance and contradictions with what exists:
+[lives](services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience)): strike policy =
+warning, then suspension, then withdrawal by staff; a cut is kept **90 days**; **no automatic cut on N
+reports**; live reports answered within **24 hours**; **a reported chat message is kept (encrypted,
+for staff) until handled** - this REVERSES C2's "no grace period"; floating reactions = heart, laugh,
+bravo, fire, the canary chick; the first-live rules reuse the posts' publication rules; **no viewer cap
+wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)).
+**Owed, code, NOT built (WP-L8b):** (a) the strike ladder: a warning notice on the first cut, a
+SUSPENSION state apart from the mute (its length is an OPEN question), a withdrawal only staff can
+set, `LIVE_CUT_RETENTION_MS` 365 -> 90 days; (b) the REPORTED chat line: a `live_chat` report type, a
+copy of the sealed line AND what opens it (the live key is deleted with the live row) that survives
+the cascade, a staff reader, erasure once the report is handled
+([lives](services/lives.md#a-reported-chat-line-is-kept-until-handled-reverses-c2)); (c) the five
+reaction kinds in `LIVE_REACTION_KINDS`, the picker, labels and Noto pictures; (d) the rules sheet
+showing the posts' rules; (e) the age of the oldest pending report measured and reported, so the 24 h
+is watched rather than hoped for; (f) the viewer cap lifted, after the plan's measurements. **Owed, the
+user:** the filtering statement and the terms' lives paragraph ([store-ugc-answers](store-ugc-answers.md)).
 
 **P3, found by the review of the server half: a seat taken AFTER an end's release outlives the end
 by up to its 30 s lease.** A viewer whose key read began before an end (a cut, the broadcaster's end,
@@ -221,7 +232,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **decide the live strike policy, the cut retention, an automatic cut on N reports, and the store answers only you can give** (a response-time commitment, the filtering statement, the terms' lives paragraph) | 4 decisions, 1 text | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-and-four-decisions-are-owed-2026-10-19) |
+| **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
 | **send the DPO dossier to the school's DPO** and bring back the answers to its three questions (the school's role, the hosting agreement with the DSI, the MiGallery DPIA); MiTV keeps the proof of each member's face-recognition consent | 1 e-mail, 1 conversation | [the GDPR entry](#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16), [dso-dossier](compliance/dso-dossier.md) |
 | **wipe the real-data copy dev still holds, once the fictional seed has merged and a pre-release has moved `dev-deployed`, and BEFORE the next stable - that stable ships the privacy page and dev banner saying dev holds no production data, which is false until this wipe has run and verified** (owner, 2026-10-16, GDPR): run `scheduled.yml` `job=dev-reset` with `dry_run=true`, then `false`; delete any leftover copy dump (`/tmp/canari-copy.*`) and the copy-era dev log archives on the host; grant your own dev row `admin` after signing in. A production-estate write, the owner's | 1 dispatch, 1 ssh session | [dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16) |
 | **decide the LOCAL copy of production** (`pull-prod-dump.sh` + `restore-into-local.sh`, PII included onto a developer's machine) - the one copy of production left after the dev copy was deleted on 2026-10-16 | 1 decision | [dev-environment](infrastructure/dev-environment.md#what-the-copy-was-kept-so-nobody-rebuilds-it), [databases](infrastructure/databases.md) |
@@ -338,7 +349,7 @@ Mounting `ChatArea` on 300 messages costs 2.0 s in happy-dom, on 70 messages 0.5
 
 ## P2 - Live chat and floating reactions (WP-L6): the server is MERGED (#2131), the client in review (#2136), five things are owed (2026-10-19)
 
-The sixteen decisions (C1-C16: PostgreSQL rows erased with the live, the manifest poll as transport, a sequence under the live's row lock, server-side reaction sums) are on [lives](services/lives.md#live-chat-and-floating-reactions-wp-l6), taken by the lead on the user's instruction, each reversible. **Owed before any stable carries it:** (a) the adversarial crypto review of the chat seal (C12, `liveChatCrypto.ts`), as for the segment seal; (b) a dev reading with several viewers chatting while a broadcaster sends segments - the chat writes now share the live's row lock with the ingest, and nothing has measured that contention; (c) the user's ruling on two of the lead's choices: NO grace period after the end (C2 - a reported message is gone with its live), and five reaction kinds without sad or angry (C8); (d) **reporting ONE chat message is not possible**: WP-L8 (merged, #2134) reports through `content_reports` with `contentType: 'live'` only, so a report names the live, never a message - a message report needs its own content type AND a decision on what it keeps, since the server cannot read the text (the reporter's client would have to hand the plaintext over, which C12 does not give the server today); (e) a phone reading of the panel, the reaction bar and the floating layer on the Mi 9T and the iPhone 12, the broadcaster's on-air chat included ([live](frontend/modules/live.md#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft)). Accepted, stated: a viewer refused `LIVE_FULL` sees no chat either (the chat rides the manifest, C3); a message whose transaction commits after its author's erasure survives until its live ends (at most an hour); an erased account's messages leave no tombstone, so a screen that drew them keeps them until it closes ([lives](services/lives.md#an-erased-account-and-a-single-message-reported)).
+The sixteen decisions (C1-C16: PostgreSQL rows erased with the live, the manifest poll as transport, a sequence under the live's row lock, server-side reaction sums) are on [lives](services/lives.md#live-chat-and-floating-reactions-wp-l6), taken by the lead on the user's instruction, each reversible. **Owed before any stable carries it:** (a) the adversarial crypto review of the chat seal (C12, `liveChatCrypto.ts`), as for the segment seal; (b) a dev reading with several viewers chatting while a broadcaster sends segments - the chat writes now share the live's row lock with the ingest, and nothing has measured that contention; (c) the user's ruling on two of the lead's choices, GIVEN 2026-10-20: C2's "no grace period" is REVERSED for a reported message, and the reactions are heart, laugh, bravo, fire and the canary chick (no sad or angry holds) - [lives](services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience); (d) **reporting ONE chat message is not possible YET (decided 2026-10-20, work owed in WP-L8b)**: WP-L8 (merged, #2134) reports through `content_reports` with `contentType: 'live'` only, so a report names the live, never a message - a message report needs its own content type AND a decision on what it keeps, since the server cannot read the text (the reporter's client would have to hand the plaintext over, which C12 does not give the server today); (e) a phone reading of the panel, the reaction bar and the floating layer on the Mi 9T and the iPhone 12, the broadcaster's on-air chat included ([live](frontend/modules/live.md#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft)). Accepted, stated: a viewer refused `LIVE_FULL` sees no chat either (the chat rides the manifest, C3); a message whose transaction commits after its author's erasure survives until its live ends (at most an hour); an erased account's messages leave no tombstone, so a screen that drew them keeps them until it closes ([lives](services/lives.md#an-erased-account-and-a-single-message-reported)).
 
 ## P3 - iOS: the system theme does not follow a live switch of the phone's theme (2026-10-19)
 
