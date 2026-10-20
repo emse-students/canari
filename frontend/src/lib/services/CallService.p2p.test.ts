@@ -264,8 +264,11 @@ class FakePeerConnection {
     if (options?.iceRestart) this.restarts += 1;
     return { type: 'offer' as const, sdp: `v=0 offer${options?.iceRestart ? ' ice-restart' : ''}` };
   }
+  /** When set, `getStats` refuses with it. */
+  statsError: Error | null = null;
   async getStats() {
     workerAnswers.reads.push('stats');
+    if (this.statsError) throw this.statsError;
     const stats = new Map<string, unknown>();
     if (this.videoOutboundPackets !== null) {
       stats.set('out-v', {
@@ -988,6 +991,85 @@ describe('the E2E worker report (2026-10-19)', () => {
       '[Call] E2E path check (after the camera unmuted): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
     expect(get(service.e2eProven)).toBe(true);
+  });
+
+  it('a verdict one check away is never dropped by a spent budget (delta review of #2159)', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await turnCameraOn(service);
+    pc.directions.set(pc.senders.length - 1, null);
+    // Six re-checks spend the budget on the camera's m-line...
+    await vi.advanceTimersByTimeAsync(5_000 * CALL_E2E_PATH_RECHECKS);
+    // ...and the check that would exhaust it sees video packets with no frame through the transform.
+    pc.videoInboundPackets = 50;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines().some((l) => l.includes('still not judged after'))).toBe(false);
+    pc.videoInboundPackets = 300;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(
+      lines().some((l) =>
+        l.startsWith(
+          '[Call] ERROR E2E path check (re-check): media flowed AROUND the transform on receiver:video'
+        )
+      )
+    ).toBe(true);
+    expect(get(service.callState)).toBe('ended');
+  });
+
+  it('an INITIAL local track unmuting re-checks, as the mid-call camera does (delta review of #2159)', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await turnCameraOn(service);
+    pc.directions.set(pc.senders.length - 1, null);
+    await vi.advanceTimersByTimeAsync(5_000 * (CALL_E2E_PATH_RECHECKS + 1));
+    pc.directions.delete(pc.senders.length - 1);
+    pc.videoOutboundPackets = 100;
+    pc.videoInboundPackets = 100;
+    workerAnswers.video = { sender: 90, receiver: 90 };
+    const mic = pc.senders[0].track as { onunmute?: (() => void) | null };
+    expect(typeof mic.onunmute).toBe('function');
+    mic.onunmute?.();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] E2E path check (after the local audio unmuted): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+    );
+  });
+
+  it('unreadable stats withdraw the claim and re-check, as a silent worker does (delta review of #2159)', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    const epoch = workerAnswers.epoch;
+    inPath('sender', epoch);
+    inPath('receiver', epoch);
+    pc.statsError = new Error('boom');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] WARN E2E claim withdrawn (5 s after connected): the stats cannot be read'
+    );
+    expect(lines()).toContain(
+      '[Call] E2E path check (5 s after connected): not yet judged: getStats failed (Error: boom) (no packet counts) - re-checking, at most 6 times'
+    );
+    expect(get(service.e2eProven)).toBe(false);
+    pc.statsError = null;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(get(service.e2eProven)).toBe(true);
+  });
+
+  it('accuses a silent worker ONCE per silence, and says when it answers again (delta review of #2159)', async () => {
+    const { pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    workerAnswers.report = null;
+    await vi.advanceTimersByTimeAsync(3 * (5_000 + 1_500));
+    expect(lines().filter((l) => l.includes('the worker did not answer in'))).toHaveLength(1);
+    workerAnswers.report = { sender: 250, receiver: 251 };
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain('[Call] E2E worker report (re-check): the worker answers again');
   });
 
   it('a negotiation reaching stable re-checks media the last check could not judge', async () => {

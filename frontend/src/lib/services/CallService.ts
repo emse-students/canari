@@ -133,6 +133,9 @@ export const CALL_ICE_RESTART_ATTEMPTS = 3;
  */
 export const CALL_E2E_PATH_RECHECKS = 6;
 
+/** The suffix of an unjudged kind with packets and no frame yet: its verdict is the next check. */
+const CARRIED_NO_FRAME_YET = ' carried packets, no frame yet';
+
 /**
  * The media path of `pc` is down by EITHER of its two state machines. Both are read because they
  * disagree in the field: on the Mi 9T (Android Chromium, 2026-10-19) `connectionState` reached
@@ -324,6 +327,8 @@ export class CallService {
    * evidence brings it back, only an answered, conclusive path check (`claimE2eIfProven`).
    */
   private e2eClaimWithdrawn = false;
+  /** The worker missed its last report request: the ERROR was logged once, until it answers again. */
+  private e2eWorkerSilent = false;
   /** Whether the CURRENT peer connection's first `connected` already scheduled its path check. */
   private e2eConnectChecked = false;
   /**
@@ -1974,6 +1979,8 @@ export class CallService {
         // a receiver that already decrypts.
         const sender = pc.addTrack(track, this.localStream);
         this.attachSenderTransform(sender);
+        // A track muted by the OS (or not producing yet) starts sending with no negotiation.
+        track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
         const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
         if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
         this.attachReceiverTransform(transceiver.receiver, track.kind);
@@ -2001,13 +2008,21 @@ export class CallService {
         if (event.data?.type !== 'report' || event.data.tag !== tag) return;
         window.clearTimeout(timer);
         worker.removeEventListener('message', onAnswer);
+        if (this.e2eWorkerSilent) {
+          this.e2eWorkerSilent = false;
+          appendLog(`[Call] E2E worker report (${tag}): the worker answers again`);
+        }
         resolve(event.data as E2eWorkerReport);
       };
       const timer = window.setTimeout(() => {
         worker.removeEventListener('message', onAnswer);
-        appendLog(
-          `[Call] ERROR E2E worker report (${tag}): the worker did not answer in ${CallService.E2E_REPORT_ANSWER_MS} ms - its messages do not reach this thread`
-        );
+        // ONE line per silence, not one per re-check: the next answer says it is over.
+        if (!this.e2eWorkerSilent) {
+          this.e2eWorkerSilent = true;
+          appendLog(
+            `[Call] ERROR E2E worker report (${tag}): the worker did not answer in ${CallService.E2E_REPORT_ANSWER_MS} ms - its messages do not reach this thread`
+          );
+        }
         resolve(null);
       }, CallService.E2E_REPORT_ANSWER_MS);
       worker.addEventListener('message', onAnswer);
@@ -2032,6 +2047,7 @@ export class CallService {
     this.e2eLastUnjudged = '';
     this.e2ePrevPackets = null;
     this.e2eClaimWithdrawn = false;
+    this.e2eWorkerSilent = false;
     this.e2eSenderSeen = false;
     this.e2eReceiverSeen = false;
     this.e2eProven.set(false);
@@ -2084,22 +2100,27 @@ export class CallService {
    */
   private async checkE2eInPath(pc: RTCPeerConnection, worker: Worker, why: string): Promise<void> {
     const recheck = this.e2eRechecks > 0;
-    let packets: RtpPacketCounts;
+    let packets: RtpPacketCounts | null = null;
+    let statsError = '';
     try {
       packets = rtpPacketCounts(await pc.getStats());
     } catch (e) {
-      appendLog(
-        `[Call] WARN E2E path check (${why}): getStats failed (${String(e)}) - nothing proven`
-      );
-      return;
+      statsError = String(e);
     }
     const epoch = this.transformEpoch;
-    const report = await this.askE2eReport(why, worker);
+    // Without packets there is nothing to read the frames against: the worker is not asked.
+    const report = packets ? await this.askE2eReport(why, worker) : null;
     // Stale FIRST: a check of a replaced peer connection may not withdraw the new one's claim.
     if (this.pc !== pc || this.encryptionWorker !== worker) {
       appendLog(
         `[Call] E2E path check (${why}) dropped: its peer connection was replaced or the call ended`
       );
+      return;
+    }
+    if (!packets) {
+      // Unverifiable, exactly as a worker that does not answer: withdrawn, and re-checked.
+      this.withdrawE2eClaim(why, 'the stats cannot be read');
+      this.recheckE2ePath(pc, why, [`getStats failed (${statsError})`], 'no packet counts');
       return;
     }
     const counts = describePacketCounts(packets);
@@ -2127,7 +2148,7 @@ export class CallService {
       return;
     }
     const unjudged = [
-      ...e2eBypassedSides(report, packets, epoch).map((k) => `${k} carried packets, no frame yet`),
+      ...e2eBypassedSides(report, packets, epoch).map((k) => `${k}${CARRIED_NO_FRAME_YET}`),
       ...inconclusiveMedia(
         pc.getTransceivers().map((t) => ({
           kind: t.receiver.track?.kind ?? t.sender.track?.kind ?? '',
@@ -2169,14 +2190,18 @@ export class CallService {
   ): void {
     this.e2ePathInconclusive = true;
     const state = unjudged.join(', ');
-    if (this.e2eRechecks >= CALL_E2E_PATH_RECHECKS) {
+    // Packets with no frame YET is judged by the very next check - a frame through the transform,
+    // or a bypass against this reading - so that state cannot repeat, and its next check is owed
+    // OUTSIDE the budget: spending the budget must never drop a verdict that is one check away.
+    const verdictNext = unjudged.some((u) => u.endsWith(CARRIED_NO_FRAME_YET));
+    if (!verdictNext && this.e2eRechecks >= CALL_E2E_PATH_RECHECKS) {
       appendLog(
         `[Call] WARN E2E path check (${why}): still not judged after ${CALL_E2E_PATH_RECHECKS} re-checks (${state}; ${counts}) - waiting for media to start`
       );
       this.withdrawE2eClaim(why, `media not judged (${state})`);
       return;
     }
-    this.e2eRechecks += 1;
+    if (!verdictNext) this.e2eRechecks += 1;
     if (state !== this.e2eLastUnjudged) {
       this.e2eLastUnjudged = state;
       appendLog(

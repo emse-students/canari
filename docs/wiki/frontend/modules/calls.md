@@ -762,12 +762,14 @@ arrived. WebKit has no such short-circuit; the iPhone really encrypted.
   frame, or packets received with no receiver frame, judged against the PREVIOUS check's packets
   (below), is media around the worker - logged `ERROR E2E path check: media
   flowed AROUND the transform on ...`, and the call ENDS with `CallE2eBypassedError`, read to the user
-  as `call_e2e_bypassed`. Unreadable stats prove nothing: logged. A worker that does not answer
-  WITHDRAWS the claim (`e2eProven` back to false, `WARN E2E claim withdrawn`), whatever it proved
-  before: a worker that cannot be asked cannot be verified. The check is re-armed, and frame
-  evidence alone (`inPath`) does not bring the claim back - only an answered, conclusive check does.
-  This is a PROOF from two counters, not a deadline; it bounds a regression to the first two checks,
-  it does not replace the ordering.
+  as `call_e2e_bypassed`. A worker that does not answer, or stats that cannot be read, WITHDRAWS the
+  claim (`e2eProven` back to false, `WARN E2E claim withdrawn`), whatever it proved before: what
+  cannot be read cannot be verified. The check is re-armed, the silent worker's ERROR is logged once
+  per silence (`the worker answers again` ends it), and frame evidence alone (`inPath`) does not
+  bring the claim back - only an answered, conclusive check does. This is a PROOF from two counters,
+  not a deadline, and it does not replace the ordering: a bypass of media that flows when a check
+  runs is ended by the NEXT check (two checks, about 10 s, after the media starts); media that only
+  starts later is judged once something starts it (below).
 
 **The same class, one step removed: a transceiver the PEER's offer created** (review of #2158,
 measured on the Mi 9T 2026-10-20 in the same loopback: one side sends two audio m-lines, the other
@@ -817,8 +819,17 @@ passed trivially and never been looked at again, the claim already on. So:
   and no report per re-check. Past it the check logs a WARN and WITHDRAWS the claim, and the next
   event that starts media re-checks with a fresh budget (`recheckE2eOnMediaStart`): signalling back
   to `stable` (a completed negotiation, or a rollback - one more look, never a verdict), a remote
-  track unmuting, or the camera unmuting (an OS-muted camera starts with no negotiation). A
-  conclusive check resets the budget and returns a withdrawn claim.
+  track unmuting, or ANY local track this peer connection sends unmuting - the initial microphone
+  and camera (`initPeerConnection`) as well as a camera added mid-call (`toggleVideo`): a track muted
+  by the OS starts sending with no negotiation. A conclusive check resets the budget and returns a
+  withdrawn claim.
+- A check that lists `carried packets, no frame yet` ALWAYS schedules its next check, OUTSIDE the
+  budget: that verdict is one check away (a frame through the transform, or a bypass against this
+  reading), so the state cannot repeat, and spending the budget must never drop it.
+- **A healthy call LOSES the claim, by design**: a negotiated camera the OS keeps muted sends nothing,
+  so after the budget (6 re-checks, about 35 s after it was added) the screen goes back to
+  "Verification du chiffrement..." and stays there until video starts. Nothing is ended - zero
+  packets is no leak - but nothing was verified either.
 - A check whose peer connection was replaced while it waited is dropped BEFORE anything else: it may
   not withdraw the new one's claim. A rebuild also resets `e2eReportFired`, so the end report judges
   the new peer connection's frames only once its own check ran.
@@ -826,7 +837,13 @@ passed trivially and never been looked at again, the claim already on. So:
   key by it, and the app carries at most one media-carrying m-line per kind and direction - the
   camera's fresh transceiver sends, the peer's offer-created one receives. Keying by `mid` would need
   the mid passed in the transform options at attach time, which an offer-created transceiver only
-  has once negotiated; not worth it while that holds.
+  has once negotiated; not worth it while that holds. **Two limits of comparing CUMULATIVE per-kind
+  counts**: a second m-line of the same kind (two cameras, or a screen share sent as video) would let
+  one fed transform mask a short-circuited one, so the day the app sends one, keying by `mid` is owed;
+  and padding or probe packets (bandwidth estimation, RTX) count in `packetsSent` with no frame
+  behind them - not measured: a call whose only video packets are probes before the first frame
+  would read `carried packets, no frame yet`, and one with probes and no frame two checks running
+  would be accused. Unverified on the engines; a reading owed before calls are compiled in.
 - The reports name the peer connection they judge (review L3): after a rebuild the worker's lifetime
   counts include the dead one's frames, so the 5 s and the end report print and judge
   `frames in ... (peer connection N)` from `framesInBy`.
