@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   describeE2eReport,
   diagnoseE2eReport,
+  e2eBypassedSides,
   engineFromUserAgent,
+  rtpPacketCounts,
   transformAttribute,
   type E2eEngineFacts,
   type E2eWorkerReport,
@@ -116,5 +118,50 @@ describe('diagnoseE2eReport / describeE2eReport', () => {
     expect(
       diagnoseE2eReport(report({ doubleEncrypted: 1, framesIn: {} }), NATIVE, false)?.level
     ).toBe('fault');
+  });
+});
+
+describe('e2eBypassedSides (CALL-E2E-BYPASS-MI9T)', () => {
+  const packets = (sa: number, ra: number, sv = 0, rv = 0) => ({
+    sent: { audio: sa, video: sv },
+    received: { audio: ra, video: rv },
+  });
+  const by = (m: Record<string, number>) => report({ framesInBy: m });
+
+  it('names each side and kind whose packets crossed the network while no transform saw a frame', () => {
+    // The Mi 9T's reading of 2026-10-20: transformers 1/1, frames 0/0, media flowing both ways.
+    expect(e2eBypassedSides(by({}), packets(250, 248), 1)).toEqual([
+      'sender:audio',
+      'receiver:audio',
+    ]);
+    // A camera added mid-call on a short-circuited sender, while the audio goes through.
+    expect(
+      e2eBypassedSides(
+        by({ '1|sender|audio': 250, '1|receiver|audio': 240, '1|receiver|video': 90 }),
+        packets(250, 240, 120, 90),
+        1
+      )
+    ).toEqual(['sender:video']);
+  });
+
+  it('judges only the peer connection it is asked about: the frames of a dead one prove nothing', () => {
+    const old = by({ '1|sender|audio': 900, '1|receiver|audio': 900 });
+    expect(e2eBypassedSides(old, packets(250, 240), 2)).toEqual(['sender:audio', 'receiver:audio']);
+  });
+
+  it('accuses nothing when every flowing kind went through the worker, or nothing flowed', () => {
+    const fed = by({ '1|sender|audio': 250, '1|receiver|audio': 251 });
+    expect(e2eBypassedSides(fed, packets(250, 251), 1)).toEqual([]);
+    expect(e2eBypassedSides(by({}), packets(0, 0), 1)).toEqual([]);
+  });
+
+  it('sums the packets of every outbound and inbound RTP stream, per kind', () => {
+    const stats = new Map<string, unknown>([
+      ['o1', { type: 'outbound-rtp', kind: 'audio', packetsSent: 200 }],
+      ['o2', { type: 'outbound-rtp', kind: 'video', packetsSent: 50 }],
+      ['i1', { type: 'inbound-rtp', kind: 'audio', packetsReceived: 240 }],
+      ['c', { type: 'codec' }],
+    ]) as unknown as RTCStatsReport;
+    expect(rtpPacketCounts(stats)).toEqual(packets(200, 240, 50, 0));
   });
 });

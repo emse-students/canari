@@ -90,6 +90,13 @@ export const MATRIX = [
     callee: { ...APP, lateTrack: true },
   },
   {
+    name: 'late-reuse',
+    what: "SCENARIO: the callee's late audio REUSES the transceiver the caller's offer created (addTrack); its sender got its transform in ontrack, as the app does since 2026-10-20. Measures callee -> caller",
+    measure: 'down',
+    caller: APP,
+    callee: { ...APP, lateTrack: true, reuseRemoteTransceiver: true },
+  },
+  {
     name: 'fault-wrong-key',
     what: 'FAULT: the callee derives a different key (two MLS epochs, review item F5)',
     fault: true,
@@ -109,6 +116,21 @@ export const MATRIX = [
     fault: true,
     caller: APP,
     callee: { ...APP, noReceiverTransform: true },
+  },
+  {
+    name: 'fault-transform-late',
+    what: "FAULT: both sides assign their transforms one task after addTrack (the app's order until 2026-10-20) - Chromium short-circuits them, clear media flows around the worker",
+    fault: true,
+    caller: { ...APP, transformOneTaskLate: true },
+    callee: { ...APP, transformOneTaskLate: true },
+  },
+  {
+    name: 'fault-reuse-bare-sender',
+    what: "FAULT: the callee's ontrack leaves the offer-created transceiver's sender bare (the app until 2026-10-20) and addTrack reuses it later - Chromium short-circuited it at creation, the callee's audio leaves in clear",
+    measure: 'down',
+    fault: true,
+    caller: APP,
+    callee: { ...APP, lateTrack: true, reuseRemoteTransceiver: true, bareSenderInOntrack: true },
   },
 ];
 

@@ -86,7 +86,15 @@ vi.mock('$lib/utils/apiFetch', () => ({
 /** How the fake E2E worker answers a `report` request; `null` = it never answers. */
 const workerAnswers = {
   report: { sender: 250, receiver: 251 } as { sender: number; receiver: number } | null,
+  /** Video frames the worker reports for the CURRENT epoch (`framesInBy`). */
+  video: { sender: 0, receiver: 0 },
+  /** The epoch of the last transform the service made: the report counts its frames under it. */
+  epoch: 0,
+  /** The order the path check read its two counters in (`stats`, `report`). */
+  reads: [] as string[],
   terminated: 0,
+  /** The last worker the service created: a test posts the transforms' own messages through it. */
+  last: null as { onmessage: ((e: MessageEvent) => void) | null } | null,
 };
 
 /** The E2E worker: answers `setKey` with `keyReady` and `report` with counters, as the real one does. */
@@ -94,6 +102,9 @@ vi.mock('../workers/encryption.worker?worker', () => ({
   default: class {
     onmessage: ((e: MessageEvent) => void) | null = null;
     private listeners: ((e: MessageEvent) => void)[] = [];
+    constructor() {
+      workerAnswers.last = this;
+    }
     addEventListener(_: string, l: (e: MessageEvent) => void) {
       this.listeners.push(l);
     }
@@ -104,12 +115,21 @@ vi.mock('../workers/encryption.worker?worker', () => ({
       if (msg.type === 'report') {
         const frames = workerAnswers.report;
         if (!frames) return;
+        workerAnswers.reads.push('report');
+        const e = workerAnswers.epoch;
+        const video = workerAnswers.video;
         queueMicrotask(() => {
           const data = {
             type: 'report',
             tag: msg.tag,
             transformers: { sender: 1, receiver: 1 },
             framesIn: { ...frames },
+            framesInBy: {
+              [`${e}|sender|audio`]: frames.sender,
+              [`${e}|receiver|audio`]: frames.receiver,
+              [`${e}|sender|video`]: video.sender,
+              [`${e}|receiver|video`]: video.receiver,
+            },
             encrypted: { audio: frames.sender, video: 0 },
             decrypted: { audio: frames.receiver, video: 0 },
             decryptFailures: 0,
@@ -124,7 +144,9 @@ vi.mock('../workers/encryption.worker?worker', () => ({
         return;
       }
       if (msg.type !== 'setKey') return;
-      queueMicrotask(() => {
+      // A TASK, as a real worker's answer is (another thread posts it): an `addTrack` whose
+      // transform waited for it would be one task late, which Chromium short-circuits.
+      void flushMacrotask().then(() => {
         const e = { data: { type: 'keyReady' } } as MessageEvent;
         this.onmessage?.(e);
         // A copy: the service removes its listener from inside the callback.
@@ -172,12 +194,34 @@ class FakeSocket {
   }
 }
 
+/**
+ * A sender's or receiver's `transform` slot, as Chromium treats it: a transform assigned AFTER the
+ * task that created the sender/transceiver is short-circuited for good - attached, never fed
+ * (CALL-E2E-BYPASS-MI9T, measured on WebView 152 and Chrome 155, 2026-10-20). `late` records it.
+ */
+function withTransformSlot<T extends object>(o: T): T & { transform: unknown; late?: boolean } {
+  let sameTask = true;
+  void flushMacrotask().then(() => (sameTask = false));
+  let value: unknown = null;
+  const slot = o as T & { transform: unknown; late?: boolean };
+  Object.defineProperty(slot, 'transform', {
+    get: () => value,
+    set: (v: unknown) => {
+      if (!sameTask) slot.late = true;
+      value = v;
+    },
+    enumerable: true,
+  });
+  return slot;
+}
+
 class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
   signalingState: RTCSignalingState = 'stable';
   localDescription: RTCSessionDescriptionInit | null = null;
   remoteDescription: RTCSessionDescriptionInit | null = null;
-  senders: { track: { kind: string }; transform: unknown }[] = [];
+  senders: { track: { kind: string } | null; kind: string; transform: unknown; late?: boolean }[] =
+    [];
   onnegotiationneeded: (() => Promise<void>) | null = null;
   onicecandidate = null;
   ontrack = null;
@@ -194,6 +238,12 @@ class FakePeerConnection {
   rollbacks = 0;
   /** Inbound audio RTP packets the stats report; `null` = no inbound stream yet. */
   inboundPackets: number | null = null;
+  /** Outbound RTP packets the stats report; `null` = no outbound stream yet. */
+  outboundPackets: number | null = null;
+  /** Video RTP packets sent; `null` = no outbound video stream. */
+  videoOutboundPackets: number | null = null;
+  /** `addTrack` calls that REUSED a transceiver the peer's offer created. */
+  reusedByAddTrack = 0;
   /**
    * Microtask turns each description operation takes before it completes. 0 = at once; above it,
    * an operation started beside another one INTERLEAVES with it, as the browser's can - the only
@@ -212,12 +262,27 @@ class FakePeerConnection {
     return { type: 'offer' as const, sdp: `v=0 offer${options?.iceRestart ? ' ice-restart' : ''}` };
   }
   async getStats() {
+    workerAnswers.reads.push('stats');
     const stats = new Map<string, unknown>();
+    if (this.videoOutboundPackets !== null) {
+      stats.set('out-v', {
+        type: 'outbound-rtp',
+        kind: 'video',
+        packetsSent: this.videoOutboundPackets,
+      });
+    }
     if (this.inboundPackets !== null) {
       stats.set('in-1', {
         type: 'inbound-rtp',
         kind: 'audio',
         packetsReceived: this.inboundPackets,
+      });
+    }
+    if (this.outboundPackets !== null) {
+      stats.set('out-1', {
+        type: 'outbound-rtp',
+        kind: 'audio',
+        packetsSent: this.outboundPackets,
       });
     }
     return stats;
@@ -234,12 +299,63 @@ class FakePeerConnection {
   constructor(public config: RTCConfiguration) {
     FakePeerConnection.instances.push(this);
   }
-  receivers: { transform: unknown }[] = [];
+  receivers: { transform: unknown; late?: boolean }[] = [];
+  /**
+   * As the browser: `addTrack` REUSES a transceiver of the same kind whose sender never had a
+   * track - one the peer's offer created (`remoteOfferAdds`). Its sender slot was created back
+   * then, so a transform assigned now is `late`, as Chromium measured (2026-10-20).
+   */
   addTrack(track: { kind: string }) {
-    const sender = { track, transform: null as unknown };
+    const free = this.senders.find((x) => x.track === null && x.kind === track.kind);
+    if (free) {
+      free.track = track;
+      this.reusedByAddTrack += 1;
+      return free;
+    }
+    const sender = withTransformSlot({ track, kind: track.kind } as {
+      track: { kind: string } | null;
+      kind: string;
+    });
     this.senders.push(sender);
-    this.receivers.push({ transform: null });
+    this.receivers.push(withTransformSlot({}));
     return sender;
+  }
+  /** Always a NEW transceiver, created in this task. */
+  addTransceiver(track: { kind: string }) {
+    const sender = withTransformSlot({ track, kind: track.kind } as {
+      track: { kind: string } | null;
+      kind: string;
+    });
+    const receiver = withTransformSlot({});
+    this.senders.push(sender);
+    this.receivers.push(receiver);
+    return { sender, receiver };
+  }
+  ontrackHandler() {
+    return this.ontrack as unknown as ((e: unknown) => void) | null;
+  }
+  /**
+   * The peer's offer carries a NEW m-line of `kind`: `setRemoteDescription` creates its
+   * transceiver (a bare sender, a receiver) and fires `ontrack` in the same task, as the browser.
+   */
+  remoteOfferAdds(kind: string) {
+    const sender = withTransformSlot({ track: null, kind } as {
+      track: { kind: string } | null;
+      kind: string;
+    });
+    const receiver = withTransformSlot({});
+    this.senders.push(sender);
+    this.receivers.push(receiver);
+    const track = { kind, id: `remote-${kind}-1`, readyState: 'live', muted: false };
+    this.ontrackHandler()?.({ track, receiver, transceiver: { sender, receiver } });
+    return { sender, receiver };
+  }
+  removeTrack(sender: unknown) {
+    const i = this.senders.indexOf(sender as (typeof this.senders)[number]);
+    if (i >= 0) {
+      this.senders.splice(i, 1);
+      this.receivers.splice(i, 1);
+    }
   }
   getTransceivers() {
     return this.senders.map((sender, i) => ({ sender, receiver: this.receivers[i] }));
@@ -281,8 +397,10 @@ class FakePeerConnection {
 class FakeTransform {
   constructor(
     public worker: unknown,
-    public options: { side: string }
-  ) {}
+    public options: { side: string; epoch?: number }
+  ) {
+    workerAnswers.epoch = options.epoch ?? 0;
+  }
 }
 
 const fakeTrack = () => ({ kind: 'audio', stop: vi.fn(), enabled: true });
@@ -294,8 +412,14 @@ const fakeMls = {
   }),
 } as unknown as IMlsService;
 
-/** Lets every pending promise and microtask of the service settle. */
-const settle = () => flushMacrotask();
+/**
+ * Lets every pending promise and microtask of the service settle - TWO tasks: the fake worker
+ * answers `keyReady` in a task of its own, as a real worker does.
+ */
+const settle = async () => {
+  await flushMacrotask();
+  await flushMacrotask();
+};
 
 beforeEach(() => {
   server.ringTimeoutMs = 60_000;
@@ -306,6 +430,8 @@ beforeEach(() => {
   server.ringHold = null;
   workerAnswers.report = { sender: 250, receiver: 251 };
   workerAnswers.terminated = 0;
+  workerAnswers.video = { sender: 0, receiver: 0 };
+  workerAnswers.reads = [];
   order.length = 0;
   FakeSocket.instances = [];
   FakePeerConnection.instances = [];
@@ -396,6 +522,9 @@ describe('a peer-to-peer call, client side', () => {
     // And on the RECEIVER of the same transceiver, before negotiation: Chrome 155 delivers no
     // frame to a receiver transform attached later, in `ontrack` (measured 2026-10-17).
     expect((pc.receivers[0].transform as FakeTransform).options.side).toBe('receiver');
+    // Both in the TASK that created them: one task later Chromium short-circuits them for good.
+    expect(pc.senders[0].late).toBeUndefined();
+    expect(pc.receivers[0].late).toBeUndefined();
 
     await pc.onnegotiationneeded!();
     const offers = ws.framesOfType('Offer');
@@ -523,6 +652,12 @@ describe('the E2E worker report (2026-10-19)', () => {
     vi.useRealTimers();
   });
 
+  /** The worker's evidence that a transform of `epoch` is in the path (its first good frame). */
+  function inPath(side: 'sender' | 'receiver', epoch: number) {
+    const data = { type: 'inPath', side, epoch, mediaKind: 'audio' };
+    workerAnswers.last?.onmessage?.({ data } as MessageEvent);
+  }
+
   async function connectedCall() {
     const service = new CallService(fakeMls);
     const ws = await callerJoined(service);
@@ -577,6 +712,146 @@ describe('the E2E worker report (2026-10-19)', () => {
     const line = lines().find((l) => l.includes('E2E worker report'));
     expect(line?.startsWith('[Call] ERROR E2E worker report')).toBe(true);
     expect(line).toContain('no frame reached the RECEIVER transform');
+  });
+
+  it('ENDS a call whose media flowed around the transform, typed, and never claims E2E (CALL-E2E-BYPASS-MI9T)', async () => {
+    // The Mi 9T's reading of 2026-10-20: transformers on both sides, not one frame, packets flowing.
+    workerAnswers.report = { sender: 0, receiver: 0 };
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 248;
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    // The codec read (3 s) also reads stats: only the path check's own reads are compared.
+    await vi.advanceTimersByTimeAsync(4_999);
+    workerAnswers.reads = [];
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(lines()).toContain(
+      '[Call] ERROR E2E path check (5 s after connected): media flowed AROUND the transform on sender:audio and receiver:audio (packets sent audio=250 video=0 received audio=248 video=0; frames sender:audio=0 receiver:audio=0)'
+    );
+    // The packets are read BEFORE the frames: a first packet between the two reads cannot look
+    // like a bypass (frames read later can only be ahead).
+    expect(workerAnswers.reads).toEqual(['stats', 'report']);
+    expect(lines()).toContain('[Call] terminal failure: E2E transform bypassed - ending call');
+    expect(vi.mocked(showToast)).toHaveBeenCalledWith(m.call_e2e_bypassed(), 'error');
+    expect(get(service.callState)).toBe('ended');
+    expect(get(service.e2eProven)).toBe(false);
+  });
+
+  it('keeps a call whose transforms carry the media, and proves E2E from the worker alone', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    const epoch = workerAnswers.epoch;
+    inPath('sender', epoch);
+    // One side seen is not the claim: the peer's frames must decrypt too.
+    expect(get(service.e2eProven)).toBe(false);
+    inPath('receiver', epoch);
+    expect(get(service.e2eProven)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] E2E path check (5 s after connected): no media around the transform (packets sent audio=250 video=0 received audio=251 video=0)'
+    );
+    expect(get(service.callState)).toBe('incall');
+
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    // The claim belongs to ONE call.
+    expect(get(service.e2eProven)).toBe(false);
+  });
+
+  it('ignores evidence from a stale transform: an old epoch never proves the current call', async () => {
+    const { service, lines } = await connectedCall();
+    const epoch = workerAnswers.epoch;
+    inPath('sender', epoch - 1);
+    inPath('receiver', epoch - 1);
+    expect(get(service.e2eProven)).toBe(false);
+    expect(lines().some((l) => l.includes('from a stale transform'))).toBe(true);
+  });
+
+  it('a REBUILT peer connection loses the claim and gets its own path check', async () => {
+    const { service, pc, lines } = await connectedCall();
+    const first = workerAnswers.epoch;
+    inPath('sender', first);
+    inPath('receiver', first);
+    expect(get(service.e2eProven)).toBe(true);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    // The other device was replaced: the relay pairs us again, a new peer connection is built.
+    const ws = FakeSocket.instances[0];
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await settle();
+    expect(pc.closed).toBe(true);
+    expect(get(service.e2eProven)).toBe(false);
+    const rebuilt = FakePeerConnection.instances[1];
+    expect(workerAnswers.epoch).toBeGreaterThan(first);
+    // The dead one's evidence lends nothing; the new one is checked on its own frames.
+    inPath('sender', first);
+    expect(get(service.e2eProven)).toBe(false);
+    rebuilt.setConnection('connected');
+    rebuilt.outboundPackets = 120;
+    await vi.advanceTimersByTimeAsync(5_000);
+    const checks = lines().filter((l) => l.includes('E2E path check (5 s after connected)'));
+    expect(checks).toHaveLength(2);
+  });
+
+  it('a transceiver the peer created gets BOTH transforms in ontrack, and the camera goes on a FRESH one', async () => {
+    const { service, pc, lines } = await connectedCall();
+    // The peer turns its camera on: its offer carries a new video m-line.
+    const created = pc.remoteOfferAdds('video');
+    expect((created.receiver.transform as FakeTransform).options.side).toBe('receiver');
+    // Its SENDER too, in the same task: reused bare later, Chromium would have short-circuited it.
+    expect((created.sender.transform as FakeTransform).options.side).toBe('sender');
+    expect(created.sender.late).toBeUndefined();
+    expect(created.receiver.late).toBeUndefined();
+    expect(lines().filter((l) => l.includes('receiver transform attached'))).toHaveLength(1);
+
+    // Our camera: a NEW transceiver, both transforms in its creating task - never the reused one.
+    const camTrack = { kind: 'video', stop: vi.fn(), enabled: true };
+    const local = service as unknown as {
+      localStream: { addTrack: () => void; getVideoTracks: () => unknown[] };
+    };
+    local.localStream.addTrack = () => {};
+    local.localStream.getVideoTracks = () => [];
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      mediaDevices: { getUserMedia: vi.fn(async () => ({ getVideoTracks: () => [camTrack] })) },
+    });
+    await service.toggleVideo();
+    expect(pc.reusedByAddTrack).toBe(0);
+    const cam = pc.senders.find((x) => x.track === camTrack)!;
+    expect(cam).not.toBe(created.sender);
+    expect((cam.transform as FakeTransform).options.side).toBe('sender');
+    expect(cam.late).toBeUndefined();
+  });
+
+  it('checks the camera on its own: a video sender that carried packets and no frame ends the call', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(get(service.callState)).toBe('incall');
+
+    const camTrack = { kind: 'video', stop: vi.fn(), enabled: true };
+    const local = service as unknown as {
+      localStream: { addTrack: () => void; getVideoTracks: () => unknown[] };
+    };
+    local.localStream.addTrack = () => {};
+    local.localStream.getVideoTracks = () => [];
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      mediaDevices: { getUserMedia: vi.fn(async () => ({ getVideoTracks: () => [camTrack] })) },
+    });
+    await service.toggleVideo();
+    pc.videoOutboundPackets = 120;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] ERROR E2E path check (after the camera was added): media flowed AROUND the transform on sender:video (packets sent audio=250 video=120 received audio=251 video=0; frames sender:video=0)'
+    );
+    expect(get(service.callState)).toBe('ended');
   });
 
   it('does not accuse an empty side at the end of a call shorter than the 5 s report', async () => {

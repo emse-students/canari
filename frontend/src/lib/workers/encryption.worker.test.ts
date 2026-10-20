@@ -56,7 +56,11 @@ async function encrypt(
 }
 
 /** Runs frames through one transform of the worker and returns what it forwarded. */
-async function run(side: 'sender' | 'receiver', payloads: Uint8Array[]): Promise<Uint8Array[]> {
+async function run(
+  side: 'sender' | 'receiver',
+  payloads: Uint8Array[],
+  epoch?: number
+): Promise<Uint8Array[]> {
   const input = new ReadableStream({
     start(c) {
       for (const p of payloads) c.enqueue(new RTCEncodedAudioFrame(p.slice().buffer));
@@ -75,7 +79,7 @@ async function run(side: 'sender' | 'receiver', payloads: Uint8Array[]): Promise
     },
   });
   scope.onrtctransform!({
-    transformer: { readable: input, writable, options: { side } },
+    transformer: { readable: input, writable, options: { side, epoch } },
   } as unknown as Event);
   await finished;
   return out;
@@ -265,6 +269,27 @@ describe('encryption.worker - the report the call asks for (2026-10-19)', () => 
       sender: (transformers.sender ?? 0) + 1,
       receiver: (transformers.receiver ?? 0) + 1,
     });
+  });
+
+  it('counts per epoch and kind, and posts ONE inPath evidence per transformer on its first success', async () => {
+    const before = await report('by-before');
+    const by = (before.framesInBy ?? {}) as Record<string, number>;
+    const sent = await run('sender', [opus(), opus()], 7);
+    await run('receiver', sent, 7);
+    const after = await report('by-after');
+    const byAfter = after.framesInBy as Record<string, number>;
+    expect(byAfter['7|sender|audio'] - (by['7|sender|audio'] ?? 0)).toBe(2);
+    expect(byAfter['7|receiver|audio'] - (by['7|receiver|audio'] ?? 0)).toBe(2);
+    const evidence = posted.filter((m) => m.type === 'inPath' && m.epoch === 7);
+    expect(evidence).toEqual([
+      expect.objectContaining({ side: 'sender', mediaKind: 'audio' }),
+      expect.objectContaining({ side: 'receiver', mediaKind: 'audio' }),
+    ]);
+  });
+
+  it('posts no inPath evidence for a receiver whose frames never decrypt', async () => {
+    await run('receiver', [Uint8Array.from({ length: 40 }, () => 9)], 8);
+    expect(posted.filter((m) => m.type === 'inPath' && m.epoch === 8)).toEqual([]);
   });
 
   it('counts an EMPTY receiver frame without a line, and names a non-empty one shorter than an IV', async () => {

@@ -60,5 +60,12 @@ moves the lag during a call.
 
 Gated rows are the app as shipped (clean, double talk, 5 % loss). Experiments (no E2E, processing
 off, RED, DTX, loss with and without E2E, a late m-line) explain a gated number. FAULT rows inject
-what the phones might be doing - a wrong key, no receiver transform, a sender that encrypts twice -
-and must FAIL; their signatures are what a phone reading is compared with.
+what the phones might be doing - a wrong key, no receiver transform, a sender that encrypts twice,
+transforms assigned one task after `addTrack` - and must FAIL; their signatures are what a phone
+reading is compared with. `fault-transform-late` is the app's order until 2026-10-20: Chromium
+short-circuits both transforms, the audio is CLEAN and unencrypted, and only `transform-in-path`
+fails it - which is why clean audio is never evidence of E2E. `late-reuse` puts the callee's late
+audio on the transceiver the caller's offer created (`addTrack` reuses it; `ontrack` armed its
+sender, as the app does) and must PASS; `fault-reuse-bare-sender` leaves that sender bare in
+`ontrack`, as the app did, and must fail
+([calls](../../docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).

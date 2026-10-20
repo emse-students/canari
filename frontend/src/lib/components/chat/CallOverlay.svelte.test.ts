@@ -41,6 +41,7 @@ function fakeService(state: CallState) {
     connectedAt: writable<number | null>(state === 'incall' ? 1 : null),
     endedAt: writable<number | null>(null),
     reconnecting: writable(false),
+    e2eProven: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
     acceptCall: vi.fn(async () => {}),
@@ -115,6 +116,21 @@ describe('the live region', () => {
     service.reconnecting.set(true);
     flushSync();
     expect(announcer()?.textContent).toBe(m.call_reconnecting());
+  });
+});
+
+describe('the encryption line', () => {
+  // CALL-E2E-BYPASS-MI9T (2026-10-20): the screen said "end-to-end encrypted" on calls whose
+  // frames never crossed the worker. The claim is drawn from evidence only.
+  it('claims end-to-end encryption only once the service proved it', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    const line = () => document.querySelector('[data-testid="call-e2e-line"]')?.textContent?.trim();
+    expect(line()).toBe(m.call_e2e_verifying());
+
+    service.e2eProven.set(true);
+    flushSync();
+    expect(line()).toBe(m.call_e2e_encrypted_title());
   });
 });
 
