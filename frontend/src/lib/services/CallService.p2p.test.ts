@@ -216,13 +216,42 @@ function withTransformSlot<T extends object>(o: T): T & { transform: unknown; la
   return slot;
 }
 
+type FakeSender = {
+  track: { kind: string } | null;
+  kind: string;
+  transform: unknown;
+  late?: boolean;
+  replaceTrack: (t: { kind: string } | null) => Promise<void>;
+};
+
+/** A sender whose `replaceTrack` swaps its track in place, as the browser's (no negotiation). */
+function fakeSender(track: { kind: string } | null, kind: string): FakeSender {
+  const sender = withTransformSlot({ track, kind } as {
+    track: { kind: string } | null;
+    kind: string;
+  }) as FakeSender;
+  sender.replaceTrack = async (t) => {
+    sender.track = t;
+  };
+  return sender;
+}
+
+/** A transceiver: its `direction` is what this side asks, `codecs` what `setCodecPreferences` set. */
+type FakeTransceiver = {
+  sender: FakeSender;
+  receiver: { transform: unknown; late?: boolean };
+  direction: RTCRtpTransceiverDirection;
+  readonly currentDirection: RTCRtpTransceiverDirection | null | undefined;
+  codecs: { mimeType: string }[] | null;
+  setCodecPreferences: (c: { mimeType: string }[]) => void;
+};
+
 class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
   signalingState: RTCSignalingState = 'stable';
   localDescription: RTCSessionDescriptionInit | null = null;
   remoteDescription: RTCSessionDescriptionInit | null = null;
-  senders: { track: { kind: string } | null; kind: string; transform: unknown; late?: boolean }[] =
-    [];
+  senders: FakeSender[] = [];
   onnegotiationneeded: (() => Promise<void>) | null = null;
   onicecandidate = null;
   ontrack = null;
@@ -325,24 +354,18 @@ class FakePeerConnection {
       this.reusedByAddTrack += 1;
       return free;
     }
-    const sender = withTransformSlot({ track, kind: track.kind } as {
-      track: { kind: string } | null;
-      kind: string;
-    });
+    const sender = fakeSender(track, track.kind);
     this.senders.push(sender);
     this.receivers.push(withTransformSlot({}));
     return sender;
   }
   /** Always a NEW transceiver, created in this task. */
   addTransceiver(track: { kind: string }) {
-    const sender = withTransformSlot({ track, kind: track.kind } as {
-      track: { kind: string } | null;
-      kind: string;
-    });
+    const sender = fakeSender(track, track.kind);
     const receiver = withTransformSlot({});
     this.senders.push(sender);
     this.receivers.push(receiver);
-    return { sender, receiver };
+    return this.transceiverOf(sender);
   }
   ontrackHandler() {
     return this.ontrack as unknown as ((e: unknown) => void) | null;
@@ -352,16 +375,14 @@ class FakePeerConnection {
    * transceiver (a bare sender, a receiver) and fires `ontrack` in the same task, as the browser.
    */
   remoteOfferAdds(kind: string) {
-    const sender = withTransformSlot({ track: null, kind } as {
-      track: { kind: string } | null;
-      kind: string;
-    });
+    const sender = fakeSender(null, kind);
     const receiver = withTransformSlot({});
     this.senders.push(sender);
     this.receivers.push(receiver);
     const track = { kind, id: `remote-${kind}-1`, readyState: 'live', muted: false };
-    this.ontrackHandler()?.({ track, receiver, transceiver: { sender, receiver } });
-    return { sender, receiver };
+    const transceiver = this.transceiverOf(sender);
+    this.ontrackHandler()?.({ track, receiver, transceiver });
+    return transceiver;
   }
   removeTrack(sender: unknown) {
     const i = this.senders.indexOf(sender as (typeof this.senders)[number]);
@@ -375,12 +396,33 @@ class FakePeerConnection {
    * Unset entries read `sendrecv`, a call whose offer/answer completed.
    */
   directions = new Map<number, RTCRtpTransceiverDirection | null>();
+  /** One transceiver object per sender, as the browser: identity holds across `getTransceivers`. */
+  private transceivers = new Map<FakeSender, FakeTransceiver>();
+  transceiverOf(sender: FakeSender): FakeTransceiver {
+    let t = this.transceivers.get(sender);
+    if (!t) {
+      const negotiated = () => {
+        const i = this.senders.indexOf(sender);
+        return this.directions.has(i) ? this.directions.get(i) : 'sendrecv';
+      };
+      t = {
+        sender,
+        receiver: this.receivers[this.senders.indexOf(sender)],
+        direction: 'sendrecv',
+        get currentDirection() {
+          return negotiated();
+        },
+        codecs: null,
+        setCodecPreferences(c) {
+          this.codecs = c;
+        },
+      };
+      this.transceivers.set(sender, t);
+    }
+    return t;
+  }
   getTransceivers() {
-    return this.senders.map((sender, i) => ({
-      sender,
-      receiver: this.receivers[i],
-      currentDirection: this.directions.has(i) ? this.directions.get(i) : 'sendrecv',
-    }));
+    return this.senders.map((sender) => this.transceiverOf(sender));
   }
   async setLocalDescription(desc?: RTCSessionDescriptionInit) {
     await this.lag();
@@ -480,16 +522,89 @@ beforeEach(() => {
       }
     }
   );
-  const stream = {
-    getTracks: () => [fakeTrack()],
-    getVideoTracks: () => [],
-    getAudioTracks: () => [],
+  cameras.length = 0;
+  vi.stubGlobal('RTCRtpReceiver', { getCapabilities: () => ({ codecs: VIDEO_CODECS }) });
+  vi.stubGlobal(
+    'RTCRtpTransceiver',
+    class {
+      setCodecPreferences() {}
+    }
+  );
+  stubMedia();
+});
+
+/** The engine's video codecs: H.264 FIRST, as WebKit lists them - VP8 must be chosen, not found. */
+const VIDEO_CODECS = [
+  { mimeType: 'video/H264', clockRate: 90000 },
+  { mimeType: 'video/VP8', clockRate: 90000 },
+  { mimeType: 'video/rtx', clockRate: 90000 },
+];
+
+type FakeCam = {
+  kind: 'video';
+  id: string;
+  stop: ReturnType<typeof vi.fn>;
+  enabled: boolean;
+  readyState: string;
+  muted: boolean;
+  facing: string;
+  getSettings: () => { facingMode: string };
+  onended?: (() => void) | null;
+  onunmute?: (() => void) | null;
+};
+/** Every camera capture the service opened, in order. */
+const cameras: FakeCam[] = [];
+
+/** The microphone stream; the service ADDS the camera track to it, as to the browser's. */
+function fakeMicStream() {
+  const tracks: { kind: string }[] = [fakeTrack()];
+  return {
+    getTracks: () => tracks.slice(),
+    getVideoTracks: () => tracks.filter((t) => t.kind === 'video'),
+    getAudioTracks: () => tracks.filter((t) => t.kind === 'audio'),
+    addTrack: (t: { kind: string }) => tracks.push(t),
+    removeTrack: (t: { kind: string }) => {
+      const i = tracks.indexOf(t);
+      if (i >= 0) tracks.splice(i, 1);
+    },
   };
+}
+
+/**
+ * `getUserMedia`: the microphone, or a camera of the facing asked (`exact` refused when
+ * `refuseFacing` names it); `cameraCount` video inputs listed.
+ */
+function stubMedia(opts: { refuseFacing?: string; cameraCount?: number } = {}) {
   vi.stubGlobal('navigator', {
     ...navigator,
-    mediaDevices: { getUserMedia: vi.fn(async () => stream) },
+    mediaDevices: {
+      getUserMedia: vi.fn(async (c: MediaStreamConstraints) => {
+        if (!c.video) return fakeMicStream();
+        const fm = (c.video as MediaTrackConstraints).facingMode as {
+          exact?: string;
+          ideal?: string;
+        };
+        const facing = fm.exact ?? fm.ideal ?? 'user';
+        if (fm.exact && fm.exact === opts.refuseFacing) throw new Error('OverconstrainedError');
+        const cam: FakeCam = {
+          kind: 'video',
+          id: `cam-${cameras.length + 1}`,
+          stop: vi.fn(),
+          enabled: true,
+          readyState: 'live',
+          muted: false,
+          facing,
+          getSettings: () => ({ facingMode: facing }),
+        };
+        cameras.push(cam);
+        return { getVideoTracks: () => [cam] };
+      }),
+      enumerateDevices: vi.fn(async () =>
+        Array.from({ length: opts.cameraCount ?? 2 }, () => ({ kind: 'videoinput' }))
+      ),
+    },
   });
-});
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -672,6 +787,10 @@ describe('the E2E worker report (2026-10-19)', () => {
     get transform() {
       return null;
     }
+    /** The receiver's codec list (`RTCRtpReceiver.getCapabilities`), H.264 first as on WebKit. */
+    static getCapabilities() {
+      return { codecs: VIDEO_CODECS };
+    }
   }
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -690,18 +809,8 @@ describe('the E2E worker report (2026-10-19)', () => {
 
   /** Our camera goes on (`toggleVideo`), with a fake capture; returns its track. */
   async function turnCameraOn(service: CallService) {
-    const camTrack = { kind: 'video', stop: vi.fn(), enabled: true };
-    const local = service as unknown as {
-      localStream: { addTrack: () => void; getVideoTracks: () => unknown[] };
-    };
-    local.localStream.addTrack = () => {};
-    local.localStream.getVideoTracks = () => [];
-    vi.stubGlobal('navigator', {
-      ...navigator,
-      mediaDevices: { getUserMedia: vi.fn(async () => ({ getVideoTracks: () => [camTrack] })) },
-    });
     await service.toggleVideo();
-    return camTrack;
+    return cameras[cameras.length - 1];
   }
 
   async function connectedCall() {
@@ -1134,6 +1243,118 @@ describe('the E2E worker report (2026-10-19)', () => {
     expect(get(service.callState)).toBe('ended');
   });
 
+  describe('the camera (video, lot 2)', () => {
+    const mimes = (t: { codecs: { mimeType: string }[] | null }) =>
+      t.codecs?.map((c) => c.mimeType);
+
+    it("holds EVERY video transceiver to VP8, the camera's and the one the peer's offer made", async () => {
+      const { service, pc } = await connectedCall();
+      const theirs = pc.remoteOfferAdds('video');
+      expect(mimes(theirs)).toEqual(['video/VP8', 'video/rtx']);
+      const cam = await turnCameraOn(service);
+      const mine = pc.getTransceivers().find((t) => t.sender.track === cam)!;
+      expect(mimes(mine)).toEqual(['video/VP8', 'video/rtx']);
+    });
+
+    it('OFF stops the capture, empties the SAME sender and goes recvonly; ON hands it a new capture, sendrecv', async () => {
+      const { service, pc, lines } = await connectedCall();
+      const first = await turnCameraOn(service);
+      const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+      const count = pc.senders.length;
+
+      await service.toggleVideo();
+      expect(first.stop).toHaveBeenCalled();
+      expect(t.sender.track).toBeNull();
+      expect(t.direction).toBe('recvonly');
+      expect(get(service.isVideoOff)).toBe(true);
+      expect(lines()).toContain(
+        '[Call] camera off (turned off) - sender emptied, recvonly (renegotiating)'
+      );
+
+      const second = await turnCameraOn(service);
+      expect(second).not.toBe(first);
+      // The same transceiver and its transform: no new m-line, no transform to attach late.
+      expect(pc.senders.length).toBe(count);
+      expect(t.sender.track).toBe(second);
+      expect(t.direction).toBe('sendrecv');
+      expect(t.sender.late).toBeUndefined();
+      expect(get(service.isVideoOff)).toBe(false);
+    });
+
+    it('switches to the other camera on the same sender, the old capture stopped first', async () => {
+      const { service, pc } = await connectedCall();
+      const front = await turnCameraOn(service);
+      const t = pc.getTransceivers().find((x) => x.sender.track === front)!;
+      expect(get(service.canSwitchCamera)).toBe(true);
+
+      await service.switchCamera();
+      const back = cameras[cameras.length - 1];
+      expect(front.stop).toHaveBeenCalled();
+      expect(back.facing).toBe('environment');
+      expect(t.sender.track).toBe(back);
+      expect(get(service.cameraFacing)).toBe('environment');
+    });
+
+    it('a switch that cannot open the other camera leaves the camera OFF, said and logged', async () => {
+      const { service, pc, lines } = await connectedCall();
+      const front = await turnCameraOn(service);
+      const t = pc.getTransceivers().find((x) => x.sender.track === front)!;
+      stubMedia({ refuseFacing: 'environment' });
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+
+      await service.switchCamera();
+      expect(front.stop).toHaveBeenCalled();
+      expect(t.sender.track).toBeNull();
+      expect(t.direction).toBe('recvonly');
+      expect(get(service.isVideoOff)).toBe(true);
+      expect(showToast).toHaveBeenCalledWith(m.call_camera_switch_failed(), 'warning');
+      expect(
+        lines().some((l) => l.startsWith('[Call] ERROR camera switch to environment failed'))
+      ).toBe(true);
+    });
+
+    it('offers no switch on a device with one camera', async () => {
+      stubMedia({ cameraCount: 1 });
+      const { service } = await connectedCall();
+      await turnCameraOn(service);
+      expect(get(service.canSwitchCamera)).toBe(false);
+    });
+
+    it('never opens the camera on an engine that cannot hold video to VP8', async () => {
+      vi.stubGlobal('RTCRtpReceiver', {
+        getCapabilities: () => ({ codecs: [{ mimeType: 'video/H264', clockRate: 90000 }] }),
+      });
+      const { service, pc, lines } = await connectedCall();
+      const before = pc.senders.length;
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+
+      await service.toggleVideo();
+      expect(cameras).toHaveLength(0);
+      expect(pc.senders.length).toBe(before);
+      expect(get(service.isVideoOff)).toBe(true);
+      expect(showToast).toHaveBeenCalledWith(m.call_camera_unavailable(), 'warning');
+      expect(lines()).toContain(
+        '[Call] ERROR this engine cannot hold video to VP8 - the camera stays off'
+      );
+    });
+
+    it("republishes the remote stream when the peer's camera goes off (its track mutes)", async () => {
+      const { service, pc } = await connectedCall();
+      pc.remoteOfferAdds('video');
+      let published = 0;
+      const unsub = service.remoteStreams.subscribe(() => (published += 1));
+      const before = published;
+      const remote = (
+        service as unknown as { mergedRemoteStream: { tracks: { onmute?: () => void }[] } }
+      ).mergedRemoteStream.tracks.find((x) => x)!;
+      remote.onmute?.();
+      expect(published).toBe(before + 1);
+      unsub();
+    });
+  });
+
   it('arms the sender of a peer-created transceiver as armed, not attached (review L1)', async () => {
     const { pc, lines } = await connectedCall();
     pc.remoteOfferAdds('video');
@@ -1309,6 +1530,29 @@ describe('the ring window, both sides', () => {
     await pastWindow();
 
     expect(get(service.callState)).toBe('calling');
+  });
+
+  it('rings as a VIDEO call only when the invite says so, and an audio one opens no camera', async () => {
+    const video = new CallService(fakeMls);
+    await video.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      { ...invite(5), hasVideo: true },
+      'me@example.org',
+      'device-1'
+    );
+    expect(video.incomingHasVideo).toBe(true);
+
+    const audio = new CallService(fakeMls);
+    await audio.handleCallSignal(
+      'peer@example.org',
+      'group-2',
+      { ...invite(5), hasVideo: undefined },
+      'me@example.org',
+      'device-1'
+    );
+    expect(audio.incomingHasVideo).toBe(false);
+    expect(cameras).toHaveLength(0);
   });
 
   it('stops ringing the callee when the window closes, and writes nothing', async () => {

@@ -13,8 +13,12 @@
    *
    * It decides for itself whether to render, like its neighbours: only while a call is up AND
    * minimised (`callView`). The full screen, with the call's one audio sink, is `CallOverlay`.
+   *
+   * A VIDEO CALL MINIMISED keeps its camera on (as on every phone), so the bar carries the camera
+   * button while it sends - the user browsing the app can cut it without going back - and a
+   * thumbnail of the peer's picture when there is one, muted like every `<video>` of a call.
    */
-  import { Mic, MicOff, Phone, PhoneOff } from '@lucide/svelte';
+  import { Mic, MicOff, Phone, PhoneOff, Video } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { currentUserId } from '$lib/stores/user';
@@ -70,6 +74,24 @@
     service?.endCall();
   }
 
+  // The peer's thumbnail, bound to its TRACK (the full screen's element is gone while minimised).
+  let thumb: HTMLVideoElement | undefined = $state();
+  $effect(() => {
+    const el = thumb;
+    const track = call.remoteVideoTrack;
+    if (!el || !track) return;
+    el.srcObject = new MediaStream([track]);
+    el.play().catch((e: unknown) => appendLog(`[Call] bar thumbnail did not start: ${String(e)}`));
+    return () => {
+      el.srcObject = null;
+    };
+  });
+
+  function cameraOff() {
+    appendLog('[Call] camera turned off from the top banner');
+    void service?.toggleVideo();
+  }
+
   function accept() {
     if (!service) return;
     appendLog('[Call] accepted from the top banner');
@@ -93,6 +115,17 @@
       aria-label={m.call_banner_return_label({ name: peerName })}
       onclick={expand}
     >
+      {#if call.remoteVideoTrack && call.callState !== 'ended'}
+        <video
+          bind:this={thumb}
+          autoplay
+          playsinline
+          muted
+          aria-hidden="true"
+          data-testid="call-banner-video"
+          class="size-9 shrink-0 rounded-lg bg-black object-cover"
+        ></video>
+      {/if}
       <span class="relative flex size-2.5 shrink-0" aria-hidden="true">
         {#if call.kind !== 'live' && call.kind !== 'ended'}
           <span class="absolute inset-0 rounded-full bg-white/70 motion-safe:animate-ping"></span>
@@ -128,6 +161,17 @@
         <Phone size={20} class="fill-current" />
       </button>
     {:else if call.callState !== 'ended'}
+      {#if !call.isVideoOff}
+        <button
+          type="button"
+          class="ui-icon-button text-cn-ink shrink-0 rounded-full bg-white hover:bg-white/90"
+          aria-label={m.call_disable_camera_label()}
+          data-testid="call-banner-camera"
+          onclick={cameraOff}
+        >
+          <Video size={20} />
+        </button>
+      {/if}
       <button
         type="button"
         class="ui-icon-button shrink-0 rounded-full {call.isMuted

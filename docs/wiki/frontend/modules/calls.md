@@ -78,7 +78,7 @@ Nothing in this lot needs the DSI.
 |---|---|---|
 | `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `audio` (since 2026-10-20), `USE_FULL_SCREEN_INTENT`. Once it flips, the committed plist carries `audio` and `ios.yml`'s pre-release patch finds it there and adds nothing (it is idempotent; it can then be deleted). Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all six switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
-| `CALLS_VIDEO_ENABLED` | `false` | the video-call button and both camera toggles; waits for WP-C3 (whole-frame encryption vs H.264) |
+| `CALLS_VIDEO_ENABLED` | `CALLS_ENABLED` (since 2026-10-20) | the video-call button and the camera controls; on wherever calls are, so dev builds only ([video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
 
 `VITE_DEPLOY_ENVIRONMENT=development` is written by `build.yml` for the dev web estate and by
 `android.yml` / `ios.yml` for every pre-release - and those pipelines refuse a pre-release whose
@@ -862,6 +862,85 @@ passed trivially and never been looked at again, the claim already on. So:
 | desktop Chrome via `callpeer.mjs` | the same report as the Mi 9T |
 | a call to an OLD (`<=1.3.1-alpha.3`) Chromium client | its clear media fails every decrypt here; the new side's own transforms are fed, so it is not ended by its check, but the OLD side never gets `e2eProven` - expected, dev-only |
 
+## Video (lot 2, 2026-10-20) - VP8 behind a clear header, held by every transceiver
+
+**What was there.** Every piece of plumbing and none of the framing: `toggleVideo` already put a
+first camera on a FRESH `addTransceiver` with both transforms in its task, `ontrack` armed both
+transforms of a peer-created video transceiver, the path check judged `sender:video` and
+`receiver:video` on their own, and the overlay had a remote `<video>` and a mirrored corner. But the
+worker encrypted a video frame WHOLE, nothing chose the codec, `track.enabled = false` was the
+camera's off (camera light on, black frames sent), there was no switch, and `CALLS_VIDEO_ENABLED`
+was `false`.
+
+**Why a whole-frame encryption cannot carry video - measured, not argued.** The receiver's RTP
+depacketiser runs BEFORE the receiver transform and reads the codec's payload header itself. Two
+experiment rows of the rig (below) settle it on Chrome 155:
+
+| Row                 | What it does                         | Result over 34 s                                                                                              |
+| ------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `video-whole-frame` | VP8 encrypted whole (the old worker) | decodes 29.9 fps, but **503-520 key frames decoded** (two runs): the P bit is random, half the deltas read as key frames |
+| `video-h264`        | H.264 negotiated, encrypted whole    | the receiver transform is handed **0 frames**, 0 decoded, 2209 sender frames counted `not-vp8` - the packetiser found no NAL units                  |
+
+**The design** (`utils/callVideoFrame.ts`, `workers/encryption.worker.ts`, `utils/callVideo.ts`):
+
+- **A VP8 frame keeps its payload header in clear** (RFC 6386 section 9.1): 10 bytes of a key frame
+  (frame tag, start code, width, height), 3 of an interframe (frame tag). Layout
+  `header || IV(12) || AES-GCM(rest)`, the header bound as **additional data** - altered on the way,
+  the frame does not decrypt (counted in `decryptFailuresBy.video`). It reveals key-or-delta, the
+  partition size and the picture size, never a pixel - the layout of WebRTC's own e2ee sample.
+  **Audio is byte-for-byte unchanged** (no prefix, no AAD), so lot 1 clients interoperate.
+- **Every video transceiver is held to VP8 (+RTX)** by `setCodecPreferences` - the camera's, and the
+  one the peer's offer created (in `ontrack`), so whichever side offers, the answer can only be VP8.
+  WebKit lists H.264 FIRST; nothing here relies on the order.
+- **NO FALLBACK, EITHER WAY.** An engine that cannot list VP8 or has no `setCodecPreferences`
+  never opens the camera (`call_camera_unavailable`, ERROR line); a transceiver that refuses the
+  preference has its sender removed before any negotiation carries it. A video frame that still
+  names another codec is encrypted WHOLE (it cannot decode) and counted `not-vp8` - the worker
+  report then leads with ERROR. Never a clear frame.
+- **Camera OFF** stops the capture (the light goes out), `replaceTrack(null)`, direction
+  `recvonly`: the peer's track MUTES and its screen shows the avatar (`remote track muted`). **ON
+  again** hands a new capture to the SAME sender, `sendrecv` - its transform stays attached and fed
+  (rig `video-off-on`). The first camera of a call that had none is a FRESH transceiver, as before.
+- **Switch** stops the current capture first (a phone opens one camera at a time), opens the other
+  with an EXACT `facingMode`, `replaceTrack` on the same sender. A switch that cannot open the other
+  camera turns the camera OFF, said (`call_camera_switch_failed`) and logged at ERROR - never a
+  silent keep of the old one. Offered only when `enumerateDevices` lists two cameras.
+- **640x480 at 30 fps, capped at 700 kb/s** (`CALL_VIDEO_MAX_BITRATE`); the cap is on the SENDER's
+  encodings, so it survives a switch.
+- **The screen**: the peer's picture full screen only while its track is live AND unmuted (else the
+  avatar); the self view full screen until there is a peer picture, then a corner (landscape-aware);
+  mirrored for the front camera only; `cover` when the peer's picture is held the way this screen
+  is, `contain` when not (read from the picture's own `resize`). The ring says `Appel video entrant`.
+  The bar keeps the camera on (as every phone) and carries a camera-off button and the peer's
+  thumbnail. The screen stays on while a picture shows (wake lock, [background](#the-call-in-the-background-2026-10-19)).
+- **The report**: the worker line adds `video frames in sender=.. receiver=.. encrypted=..
+  decrypted=.. decrypt-failed=.. keyframes-in=.. not-vp8=..` on a call that carried video (an audio
+  call's line is unchanged), and a conclusive path check adds the decoder's own numbers
+  (`describeVideoStats`: size, fps, frames decoded, key frames, freezes, PLI, the send limit).
+
+**Measured in the rig, 2026-10-20** (Chrome 155 to Chrome 155, fake camera at 30 fps, 34 s a row,
+the app's own worker, constraints, cap and `preferVp8`):
+
+| Row                                                                   | Verdict           | Video                                                                                                                                                                                            |
+| --------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `video` (both cameras from the start)                                 | PASS              | VP8 640x480, 30 fps, 0 freezes, 3 key frames, 0 PLI, ~600 kb/s; worker frames sender 1090 / receiver 1080, decrypted 1080, failed 0; the remote picture's mean colour matches the sent one |
+| `video-camera-late` (callee's camera added mid-call)                  | PASS              | 29.6 fps, 2 key frames, 1083 / 1083                                                                                                                                                                 |
+| `video-switch`                                                        | PASS              | 29.9 fps, 1086 sender frames AFTER the switch, through the same transform                                                                                                                                  |
+| `video-off-on`                                                        | PASS              | the peer's track mutes when off; events `unmute, mute, unmute`                                                                                                                                   |
+| `video-whole-frame`, `video-h264`                                     | experiments       | the table above                                                                                                                                                                                  |
+| `fault-video-bare-sender` (a camera on a REUSED offer-created sender) | fails, as it must | sender frames 0, decrypt-failed 1140, 105 PLI                                                                                                                                                    |
+
+Audio stays clean on every row (match 0.96-0.98, LSD 3.92-4.02 dB on the gated rows, the `app` audio row unchanged at 3.92 dB).
+
+**Owed on the phones** (a dev pre-release carrying this change; until then this is the rig only):
+
+| Read                                                                                                               | Expected                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mi 9T to desktop Chrome, `bun callpeer.mjs --browser w3 --launch --dial --video --hangup` (and the phone dialling) | `video ... VP8`, ~30 fps, freezes 0, key frames a handful; the worker line's `video frames` growing both ways, `not-vp8=0`; `E2E proven`                                                                               |
+| Mi 9T: off/on, switch front/back, minimise                                                                         | the desktop's picture mutes to the avatar and comes back; the back camera is not mirrored; the bar shows the thumbnail and the camera button                                                                           |
+| Mi 9T: rotate                                                                                                      | the desktop's picture is `contain` in landscape, `cover` in portrait; the corner turns                                                                                                                                 |
+| iPhone 12 (WKWebView)                                                                                              | `RTCRtpReceiver.getCapabilities('video')` lists VP8 and `setCodecPreferences` exists (else the camera stays off, said), frame metadata names `video/VP8`; orientation; the camera purpose string at the native revival |
+
 ## The call UI: the whole screen, or a bar at the top (2026-10-19)
 
 **The user's verdict** (2026-10-19): *"l'UI de l'appel telephonique (surtout audio seul) est nulle,
@@ -993,7 +1072,7 @@ backlog item, [P1 - a call does not survive the app leaving the screen](../../ba
 | The OS knows a call is up | Media Session: title = the peer, `hangup` / `togglemicrophone` handlers, `setMicrophoneActive` (Chromium) - `utils/callMediaSession.ts`, each action in its own `try`, each refusal logged | Android: BUILT, [below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) (a `microphone` foreground service, not `phoneCall`); iOS CallKit for EVERY call (owed) |
 | The microphone in the background | nothing can hold it: Android 9+ gives a backgrounded app silence; WKWebView stops capture when hidden | Android: the foreground service (BUILT); iOS: an `AVAudioSession` call session (owed) |
 | Audio route (speaker, earpiece, Bluetooth) | iOS only: label-matched `setSinkId`, best effort, logged when there is nothing to route to | Android: `AudioManager.setCommunicationDevice` in the service (BUILT); iOS: `AVAudioSession` (owed) |
-| Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it | video (WP-C3) can take one |
+| Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it. **A video call holds one** while either picture is on screen (`ScreenWakeLock` of `live/liveDevice.ts`, tag `CALL-WAKE`), taken again on every return to the foreground | - |
 | Diagnosis | `[Call] app hidden` / `visible`, with `state=`, `mic=live/os-muted` and `voice=playing` or `paused`, `the system took the microphone`, `the voice was paused while hidden - starting it again` | - |
 | The partner is told | `MicSuspended { suspended }` over the relay, sent by the side whose OS took its microphone; a notice on both screens and in the live region, a toast on the way back ([below](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)) | - |
 
@@ -1298,7 +1377,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 |---|---|
 | `components/chat/CallOverlay.svelte` | The full-screen call (incoming, outgoing, in call, ended) and the call's one audio sink; mounted for the whole call |
 | `components/layout/CallBanner.svelte` | The minimised call: a row of the root layout's banner column |
-| `composables/useCallModel.svelte.ts` | The service's stores as runes, the status kind and the duration, for both |
+| `composables/useCallModel.svelte.ts` | The service's stores as runes, the status kind and the duration, for both; the local camera TRACK and the peer's live, unmuted video track |
 | `stores/callView.svelte.ts` | `minimised`, and `callStatusKind` |
 
 (Corrected 2026-10-15: this table named `CallUI`, `IncomingCallOverlay`, `CallButton` and
@@ -1309,7 +1388,8 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 | Service | Role |
 |---|---|
 | `CallService.ts` | WebRTC peer connection management, media capture, SFU signaling, ring/hangup push triggers |
-| `workers/encryption.worker.ts` | E2E frame transform (AES-GCM, MLS-derived key); names a plaintext audio payload that is not Opus, per side, and proves a double encryption ([above](#audio-quality-measured-2026-10-19)) |
+| `workers/encryption.worker.ts` | E2E frame transform (AES-GCM, MLS-derived key); names a plaintext audio payload that is not Opus, per side, and proves a double encryption ([above](#audio-quality-measured-2026-10-19)); a VP8 frame behind its clear payload header, bound as additional data ([video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
+| `utils/callVideoFrame.ts`, `utils/callVideo.ts` | The clear prefix of a video frame and the VP8 codec filter; the camera's constraints, its bitrate cap and `preferVp8` - imported by the rig, never copied |
 | `utils/opusPacket.ts` | `isValidOpusPacket` - RFC 6716 section 3.4 rules R1-R7, the worker's witness |
 | `utils/callE2eReport.ts` | the E2E worker report as one log line, and the engine facts it is read against ([above](#the-mi-9t-logged-no-worker-line-at-all-131-alpha2---the-worker-is-now-asked)) |
 | `utils/callAudio.ts`, `utils/callPresence.ts`, `utils/callFailure.ts` | Sender audio parameters, presence, the typed initiate failure |

@@ -10,6 +10,8 @@
 
 const APP = { processing: 'app', e2e: true };
 const RAW = { processing: 'off', e2e: true };
+/** The app with its camera on from the start (a video call). */
+const VID = { ...APP, video: true };
 
 export const MATRIX = [
   {
@@ -97,6 +99,64 @@ export const MATRIX = [
     callee: { ...APP, lateTrack: true, reuseRemoteTransceiver: true },
   },
   {
+    name: 'video',
+    what: 'VIDEO: both cameras on from the start (a video call placed and accepted), VP8 required, the app worker - caller -> callee',
+    gated: true,
+    video: true,
+    caller: VID,
+    callee: VID,
+  },
+  {
+    name: 'video-camera-late',
+    what: "VIDEO: an audio call; the callee's camera goes on mid-call on a FRESH transceiver, both transforms in its task (toggleVideo) - callee -> caller",
+    gated: true,
+    video: true,
+    measure: 'down',
+    caller: APP,
+    callee: { ...APP, lateCamera: 'fresh' },
+  },
+  {
+    name: 'video-switch',
+    what: 'VIDEO: the caller switches camera mid-call - a new capture on the SAME sender (replaceTrack), no negotiation; the transform must stay fed',
+    gated: true,
+    video: true,
+    ops: ['switch'],
+    caller: VID,
+    callee: VID,
+  },
+  {
+    name: 'video-off-on',
+    what: "VIDEO: the caller's camera off (capture stopped, replaceTrack(null), recvonly) - the callee's remote track must MUTE - then on again (replaceTrack, sendrecv)",
+    gated: true,
+    video: true,
+    ops: ['off-on'],
+    caller: VID,
+    callee: VID,
+  },
+  {
+    name: 'video-whole-frame',
+    what: 'EXPERIMENT: video encrypted WHOLE, the VP8 payload header included (the worker before 2026-10-20)',
+    video: true,
+    caller: { ...VID, wholeFrameVideo: true },
+    callee: { ...VID, wholeFrameVideo: true },
+  },
+  {
+    name: 'video-h264',
+    what: 'EXPERIMENT: video held to H.264; the app worker encrypts a non-VP8 frame whole and names it',
+    video: true,
+    caller: { ...VID, videoCodec: 'h264' },
+    callee: { ...VID, videoCodec: 'h264' },
+  },
+  {
+    name: 'fault-video-bare-sender',
+    what: "FAULT: the caller's camera is on; the callee's ontrack leaves the offer-created video sender bare and addTrack reuses it for the callee's camera (the app's toggleVideo until 2026-10-20) - Chromium short-circuited it, clear video leaves - callee -> caller",
+    fault: true,
+    video: true,
+    measure: 'down',
+    caller: VID,
+    callee: { ...APP, lateCamera: 'reuse-bare', bareSenderInOntrack: true },
+  },
+  {
     name: 'fault-wrong-key',
     what: 'FAULT: the callee derives a different key (two MLS epochs, review item F5)',
     fault: true,
@@ -161,7 +221,53 @@ export const THRESHOLDS = {
   maxClippedClean: 0,
   /** The app worker's own witness lines (`opusInvalid`, `doubleEncrypted`) in either page's log. */
   maxWitnessLines: 0,
+  /** VIDEO: frames decoded a second over the window (the fake camera sends 30, `fps=30`). */
+  minVideoFps: 27,
+  /**
+   * VIDEO: key frames DECODED over the call. The encoder sends one, plus one per PLI; 1-3 measured.
+   * An encrypted VP8 payload header reads as a key frame half the time (503 in 34 s, row
+   * `video-whole-frame`), so this is the check that sees the header-in-clear regress.
+   */
+  maxVideoKeyFrames: 5,
+  /** VIDEO: freezes over the window (`inbound-rtp.freezeCount`) on a clean network. */
+  maxVideoFreezes: 0,
+  /** VIDEO: the remote picture's mean colour against the sender's own capture, per channel. */
+  maxVideoRgbDelta: 24,
 };
+
+/**
+ * The VIDEO checks of a row that carries video (`row.video`): the app worker was handed video
+ * frames on both sides AND decrypted them with no failure (frames in = the worker's `framesInBy`,
+ * so media flowing around a short-circuited transform reads 0), the receiver decodes VP8 at a
+ * steady rate with no freeze, the picture it shows is the sender's, and - for the camera off/on
+ * row - the receiver's track muted while the camera was off and came back.
+ */
+export function videoChecks(r) {
+  const v = r.videoPath;
+  if (!v) return [];
+  const pic = v.pictures;
+  const rgbOk =
+    !!pic?.local &&
+    !!pic?.remote &&
+    pic.local.rgb.every((c, i) => Math.abs(c - pic.remote.rgb[i]) <= THRESHOLDS.maxVideoRgbDelta);
+  const checks = [
+    ['video-in-path', v.senderFrames > 0 && v.receiverFrames > 0],
+    ['video-decrypted', v.decrypted > 0 && v.decryptFailed === 0],
+    ['video-codec', /vp8/i.test(v.codec ?? '')],
+    ['video-fps', v.fps >= THRESHOLDS.minVideoFps],
+    ['video-freezes', v.freezes <= THRESHOLDS.maxVideoFreezes],
+    ['video-keyframes', v.keyFramesDecoded <= THRESHOLDS.maxVideoKeyFrames],
+    ['video-picture', rgbOk],
+  ];
+  if (v.afterOp) checks.push(['video-fed-after-op', v.afterOp.senderFrames > 0]);
+  if (v.offState) {
+    checks.push([
+      'video-mute-when-off',
+      v.offState.muted === true && v.remoteEvents.includes('unmute'),
+    ]);
+  }
+  return checks;
+}
 
 /** Log lines in which the app's E2E worker named a non-Opus payload or a double encryption. */
 export function witnessLines(r) {
@@ -201,6 +307,7 @@ export function verdict(r) {
     checks.push(['concealment', r.concealedPct <= THRESHOLDS.maxConcealedPctClean]);
     checks.push(['clipping', r.metrics.clippedSamples <= THRESHOLDS.maxClippedClean]);
   }
+  checks.push(...videoChecks(r));
   const failed = checks.filter(([, ok]) => !ok).map(([n]) => n);
   const pass = failed.length === 0;
   return { pass, failed, gated: !!r.gated, fault: !!r.fault, ok: r.fault ? !pass : pass };

@@ -55,15 +55,19 @@ async function encrypt(
   return out;
 }
 
+/** A video frame: the worker reads `video` from this class name, as from the engine's. */
+class RTCEncodedVideoFrame extends RTCEncodedAudioFrame {}
+
 /** Runs frames through one transform of the worker and returns what it forwarded. */
 async function run(
   side: 'sender' | 'receiver',
   payloads: Uint8Array[],
-  epoch?: number
+  epoch?: number,
+  Frame: typeof RTCEncodedAudioFrame = RTCEncodedAudioFrame
 ): Promise<Uint8Array[]> {
   const input = new ReadableStream({
     start(c) {
-      for (const p of payloads) c.enqueue(new RTCEncodedAudioFrame(p.slice().buffer));
+      for (const p of payloads) c.enqueue(new Frame(p.slice().buffer));
       c.close();
     },
   });
@@ -300,6 +304,76 @@ describe('encryption.worker - the report the call asks for (2026-10-19)', () => 
     expect(Number(after.tooShortEmpty) - Number(before.tooShortEmpty)).toBe(1);
     const warns = posted.filter((m) => m.type === 'warn');
     expect(warns).toHaveLength(1);
-    expect(String(warns[0].detail)).toContain('receiver frame of 5 byte(s) dropped');
+    expect(String(warns[0].detail)).toContain('receiver audio frame of 5 byte(s) dropped');
+  });
+});
+
+describe('encryption.worker - video frames (lot 2, 2026-10-20)', () => {
+  const VP8 = (): Metadata => ({ payloadType: 96, mimeType: 'video/VP8' });
+  /** A VP8 key frame: P bit (byte 0, bit 0) clear, start code 9d 01 2a, then the picture. */
+  const keyFrame = () =>
+    Uint8Array.from([
+      0x10,
+      0x02,
+      0x00,
+      0x9d,
+      0x01,
+      0x2a,
+      0x80,
+      0x02,
+      0xe0,
+      0x01,
+      ...Array(60).fill(5),
+    ]);
+  /** A VP8 interframe: P bit set. */
+  const interFrame = () => Uint8Array.from([0x31, 0x01, 0x00, ...Array(40).fill(6)]);
+  const video = (side: 'sender' | 'receiver', p: Uint8Array[], epoch?: number) =>
+    run(side, p, epoch, RTCEncodedVideoFrame);
+
+  it('leaves the VP8 payload header in clear - 10 bytes on a key frame, 3 on an interframe - and encrypts the rest', async () => {
+    metadata = VP8;
+    const key = keyFrame();
+    const inter = interFrame();
+    const [k, i] = await video('sender', [key, inter]);
+    expect(k.subarray(0, 10)).toEqual(key.subarray(0, 10));
+    expect(k.byteLength).toBe(10 + 12 + (key.byteLength - 10) + 16);
+    expect(i.subarray(0, 3)).toEqual(inter.subarray(0, 3));
+    expect(i.byteLength).toBe(3 + 12 + (inter.byteLength - 3) + 16);
+    // The picture itself never leaves in clear.
+    expect(k.subarray(22, 22 + 60)).not.toEqual(key.subarray(10));
+    expect(await video('receiver', [k, i])).toEqual([key, inter]);
+  });
+
+  it('binds the clear header: a frame whose header was altered on the way never decrypts', async () => {
+    metadata = VP8;
+    const before = (await (async () => {
+      await scope.onmessage!({ data: { type: 'report', tag: 'aad-before' } } as MessageEvent);
+      return posted.find((m) => m.tag === 'aad-before')!;
+    })()) as { decryptFailuresBy: { video: number } };
+    const [k] = await video('sender', [keyFrame()]);
+    k[7] ^= 0x01; // the frame width, in the clear header
+    expect(await video('receiver', [k])).toEqual([]);
+    await scope.onmessage!({ data: { type: 'report', tag: 'aad-after' } } as MessageEvent);
+    const after = posted.find((m) => m.tag === 'aad-after') as {
+      decryptFailuresBy: { video: number };
+    };
+    expect(after.decryptFailuresBy.video - before.decryptFailuresBy.video).toBe(1);
+  });
+
+  it('a video frame of another codec is encrypted WHOLE and named - never sent in clear', async () => {
+    metadata = () => ({ payloadType: 102, mimeType: 'video/H264' });
+    const plain = Uint8Array.from([0, 0, 0, 1, 0x65, ...Array(30).fill(4)]);
+    const [sent] = await video('sender', [plain]);
+    expect(sent.byteLength).toBe(12 + plain.byteLength + 16);
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: 'videoCodecUnexpected', mimeType: 'video/H264' })
+    );
+  });
+
+  it('names a video frame too short for its header and an IV, with its kind', async () => {
+    metadata = VP8;
+    await video('receiver', [Uint8Array.from([0x31, 1, 0, 9, 9])]);
+    const warns = posted.filter((m) => m.type === 'warn');
+    expect(String(warns[0].detail)).toContain('receiver video frame of 5 byte(s) dropped');
   });
 });

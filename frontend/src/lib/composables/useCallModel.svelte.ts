@@ -1,4 +1,5 @@
 import type { CallService, CallState } from '$lib/services/CallService';
+import type { CameraFacing } from '$lib/utils/callVideo';
 import { callStatusKind, type CallStatusKind } from '$lib/stores/callView.svelte';
 import { callElapsedMs, formatCallDuration } from '$lib/utils/callClock';
 
@@ -15,6 +16,11 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   let callState = $state<CallState>('idle');
   let isMuted = $state(false);
   let isVideoOff = $state(true);
+  let cameraFacing = $state<CameraFacing>('user');
+  let canSwitchCamera = $state(false);
+  // The camera TRACK, not the stream: a switch or an off/on swaps the track inside the SAME
+  // stream object, which a stream-valued rune would not see change.
+  let localVideoTrack = $state<MediaStreamTrack | null>(null);
   let connectedAt = $state<number | null>(null);
   let endedAt = $state<number | null>(null);
   let isReconnecting = $state(false);
@@ -34,17 +40,36 @@ export function useCallModel(getService: () => CallService | null | undefined) {
       service.callState.subscribe((v) => (callState = v)),
       service.isMuted.subscribe((v) => (isMuted = v)),
       service.isVideoOff.subscribe((v) => (isVideoOff = v)),
+      service.cameraFacing.subscribe((v) => (cameraFacing = v)),
+      service.canSwitchCamera.subscribe((v) => (canSwitchCamera = v)),
       service.connectedAt.subscribe((v) => (connectedAt = v)),
       service.endedAt.subscribe((v) => (endedAt = v)),
       service.reconnecting.subscribe((v) => (isReconnecting = v)),
       service.e2eProven.subscribe((v) => (e2eProven = v)),
       service.localMicSuspended.subscribe((v) => (localMicSuspended = v)),
       service.peerMicSuspended.subscribe((v) => (peerMicSuspended = v)),
-      service.localStreamStore.subscribe((v) => (localStream = v)),
+      service.localStreamStore.subscribe((v) => {
+        localStream = v;
+        localVideoTrack = v?.getVideoTracks().find((t) => t.readyState === 'live') ?? null;
+      }),
       service.remoteStreams.subscribe((v) => (remoteStreams = v)),
       service.remoteStream.subscribe((v) => (remoteStream = v)),
     ];
     return () => unsubs.forEach((u) => u());
+  });
+
+  /**
+   * The peer's picture, when there is one to show: a remote video track that is live AND unmuted.
+   * A muted one is the peer's camera OFF (its side went `recvonly`) or no frame yet - the avatar
+   * shows, never a frozen last frame. Re-read at every publish of the remote stream, which the
+   * service does on each `mute` / `unmute` / `ended` of a remote track.
+   */
+  const remoteVideoTrack = $derived.by<MediaStreamTrack | null>(() => {
+    for (const [, stream] of remoteStreams) {
+      const track = stream.getVideoTracks().find((t) => t.readyState === 'live' && !t.muted);
+      if (track) return track;
+    }
+    return null;
   });
 
   const kind = $derived<CallStatusKind>(callStatusKind(callState, connectedAt, isReconnecting));
@@ -76,6 +101,22 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     },
     get isVideoOff() {
       return isVideoOff;
+    },
+    /** Which camera is sending (`user` = the screen side): the self view is mirrored for it only. */
+    get cameraFacing() {
+      return cameraFacing;
+    },
+    /** Whether the device has a second camera to switch to (known once a camera was opened). */
+    get canSwitchCamera() {
+      return canSwitchCamera;
+    },
+    /** The live local camera track, or `null` when the camera is off. */
+    get localVideoTrack() {
+      return localVideoTrack;
+    },
+    /** The peer's live, unmuted video track, or `null` (avatar). */
+    get remoteVideoTrack() {
+      return remoteVideoTrack;
     },
     get connectedAt() {
       return connectedAt;

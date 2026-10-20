@@ -35,8 +35,16 @@ import {
   audioCodecOrder,
   describeAudioCodecs,
   describeSelectedPair,
+  describeVideoStats,
   relayGapIsSuspect,
 } from '$lib/utils/callStats';
+import {
+  applyCallVideoSenderLimits,
+  callVideoConstraints,
+  canHoldVideoToVp8,
+  preferVp8,
+  type CameraFacing,
+} from '$lib/utils/callVideo';
 import {
   describeE2eReport,
   e2eBypassedSides,
@@ -353,7 +361,8 @@ export class CallService {
   private currentRoomToken: string | null = null;
   /** User id of the peer who rang (incoming); used for avatar when no conversation is selected. */
   public incomingCallerId: string | null = null;
-  public incomingHasVideo = true;
+  /** The ringing invite asked for VIDEO (`CallMsg.hasVideo === true`): accepting opens the camera. */
+  public incomingHasVideo = false;
   private callKey: CryptoKey | null = null;
 
   private callHasVideo = false;
@@ -369,6 +378,16 @@ export class CallService {
   private micSuspendedSince: number | null = null;
   /** Removes the listeners {@link watchSystemMicrophone} put on the capture track. */
   private micWatchCleanup: (() => void) | null = null;
+  /**
+   * The transceiver the camera SENDS on, in the current peer connection: the `addTrack` one of a
+   * call that started with video, or the FRESH one `toggleVideo` made. Kept across camera off/on
+   * and switches - its sender keeps its E2E transform, and `replaceTrack` only changes the capture
+   * (measured fed in the rig, rows `video-switch` and `video-off-on`). Null before a camera ever
+   * went on in this peer connection.
+   */
+  private cameraTransceiver: RTCRtpTransceiver | null = null;
+  /** A camera operation (on, off, switch) is running: a second tap waits for nothing, it is dropped. */
+  private cameraBusy = false;
 
   public callState = writable<CallState>('idle');
   /**
@@ -404,7 +423,11 @@ export class CallService {
    * inferred from silence. `false` outside a call.
    */
   public peerMicSuspended = writable<boolean>(false);
-  public isVideoOff = writable<boolean>(false);
+  public isVideoOff = writable<boolean>(true);
+  /** Which camera is sending (`user` = the screen side, mirrored in the self view). */
+  public cameraFacing = writable<CameraFacing>('user');
+  /** The device has more than one camera, so the switch is offered (read once the camera is open). */
+  public canSwitchCamera = writable<boolean>(false);
   /**
    * When the media path FIRST reached `connected` (epoch ms), or null before. The call UI derives its
    * timer from this one timestamp (`utils/callClock.ts`) rather than counting ticks, so a frozen
@@ -518,7 +541,8 @@ export class CallService {
       this.currentCallId = callMsg.callId;
       this.currentGroupId = groupId;
       this.incomingCallerId = senderNorm;
-      this.incomingHasVideo = callMsg.hasVideo !== false;
+      // Video only when the invite ASKS for it: an invite that says nothing never opens a camera.
+      this.incomingHasVideo = callMsg.hasVideo === true;
       this.callState.set('incoming');
       this.armRingTimer(callMsg.callId, ringTimeoutMs, 'incoming');
 
@@ -838,8 +862,13 @@ export class CallService {
     this.polite = false;
     this.makingOffer = false;
     this.ignoreOffer = false;
-    this.incomingHasVideo = true;
+    this.incomingHasVideo = false;
     this.callHasVideo = false;
+    this.cameraTransceiver = null;
+    this.cameraBusy = false;
+    this.cameraFacing.set('user');
+    this.canSwitchCamera.set(false);
+    this.isVideoOff.set(true);
 
     this.stopWatchingMicrophone();
     if (this.localStream) {
@@ -1435,6 +1464,8 @@ export class CallService {
       // The new peer connection earns its own E2E claim and its own path check: nothing the dead
       // one proved is evidence about it.
       this.resetE2eEvidence();
+      // The new peer connection gets the camera on its own transceiver (`initPeerConnection`).
+      this.cameraTransceiver = null;
       this.mergedRemoteStream = null;
       this.pendingRemoteIceCandidates = [];
       this.makingOffer = false;
@@ -1802,6 +1833,9 @@ export class CallService {
       );
       return;
     }
+    // The peer's camera m-line is held to VP8 on this side too, so whichever side answers, the
+    // negotiated codec is the one the transform frames (`utils/callVideoFrame.ts`).
+    if (track.kind === 'video' && transceiver) preferVp8(transceiver, appendLog);
     // A new m-line is media the 5 s check of the first connect may not have seen: check it again.
     if (newMline && this.pc) this.scheduleE2ePathCheck(this.pc, `after a new ${track.kind} m-line`);
 
@@ -1825,6 +1859,13 @@ export class CallService {
       appendLog(`[Call] remote track unmuted kind=${track.kind}`);
       this.publishRemoteStream();
       this.recheckE2eOnMediaStart(`after the remote ${track.kind} unmuted`);
+    };
+    // The peer's camera OFF is a renegotiation to `recvonly` on its side, which mutes this track
+    // (measured in the rig, row `video-off-on`): the screen shows the avatar again, not a frozen
+    // last frame.
+    track.onmute = () => {
+      appendLog(`[Call] remote track muted kind=${track.kind}`);
+      this.publishRemoteStream();
     };
     // Watchdog: a remote track that never unmutes means no media reached us - the usual cause
     // of "no audio on this call". Logged so a failing call is diagnosable from the exported log.
@@ -2036,7 +2077,14 @@ export class CallService {
         const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
         if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
         this.attachReceiverTransform(transceiver.receiver, track.kind);
-        if (track.kind === 'video') void this.applyVideoSenderLimits(sender);
+        if (track.kind === 'video') {
+          if (!preferVp8(transceiver, appendLog)) {
+            this.refuseCameraSender(pc, sender, track);
+            continue;
+          }
+          this.cameraTransceiver = transceiver;
+          void applyCallVideoSenderLimits(sender, appendLog);
+        }
       }
       await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
     }
@@ -2153,9 +2201,11 @@ export class CallService {
   private async checkE2eInPath(pc: RTCPeerConnection, worker: Worker, why: string): Promise<void> {
     const recheck = this.e2eRechecks > 0;
     let packets: RtpPacketCounts | null = null;
+    let stats: RTCStatsReport | null = null;
     let statsError = '';
     try {
-      packets = rtpPacketCounts(await pc.getStats());
+      stats = await pc.getStats();
+      packets = rtpPacketCounts(stats);
     } catch (e) {
       statsError = String(e);
     }
@@ -2217,6 +2267,11 @@ export class CallService {
       this.e2ePathInconclusive = false;
       this.e2eLastUnjudged = '';
       appendLog(`[Call] E2E path check (${why}): no media around the transform (${counts})`);
+      // A call carrying video says, at each conclusive check, whether the picture DECODES - an
+      // encrypted frame can reach the decoder and still never show (frame rate, freezes, PLIs).
+      if (stats && packets.sent.video + packets.received.video > 0) {
+        appendLog(`[Call] ${describeVideoStats(stats)}`);
+      }
       if (this.e2eClaimWithdrawn) {
         this.e2eClaimWithdrawn = false;
         this.claimE2eIfProven();
@@ -2554,18 +2609,25 @@ export class CallService {
     this.videoPausedByBackground = false;
   }
 
+  /**
+   * Opens the microphone - REQUIRED: no call without it - and, for a video call, the camera
+   * (`cameraOn`). A camera that cannot open (refused, busy, absent, no VP8) does not refuse the
+   * call: it is said on screen (`call_camera_unavailable`) and logged, and the call goes on with
+   * the camera off, which the user can retry from the call screen.
+   */
   private async setupMedia(video: boolean) {
     this.callHasVideo = video;
     this.localStream = await navigator.mediaDevices.getUserMedia({
       audio: buildCallAudioConstraints(),
-      video: video ? CallService.VIDEO_CONSTRAINTS : false,
+      video: false,
     });
     logCallAudioTrackSettings(this.localStream, appendLog);
     this.localStreamStore.set(this.localStream);
     this.isMuted.set(false);
-    this.isVideoOff.set(!video);
+    this.isVideoOff.set(true);
     const mic = this.localStream.getAudioTracks()[0];
     if (mic) this.watchSystemMicrophone(mic);
+    if (video) await this.cameraOn();
   }
 
   /**
@@ -2640,39 +2702,6 @@ export class CallService {
     }
   }
 
-  /**
-   * Caps the camera capture so the stream fits the Cloudflare TURN relay (all media is
-   * relay-only here). 640x480@30 keeps motion smooth without flooding the relay.
-   */
-  private static readonly VIDEO_CONSTRAINTS: MediaTrackConstraints = {
-    facingMode: 'user',
-    width: { ideal: 640, max: 1280 },
-    height: { ideal: 480, max: 720 },
-    frameRate: { ideal: 30, max: 30 },
-  };
-
-  /** Target max video bitrate (bps). The relay path is the bottleneck, so we cap to limit loss/corruption. */
-  private static readonly MAX_VIDEO_BITRATE = 700_000;
-
-  /**
-   * Caps a video sender's bitrate so the encoder doesn't overshoot the TURN relay's
-   * capacity (which causes the blocky corruption seen on constrained links).
-   */
-  private async applyVideoSenderLimits(sender: RTCRtpSender): Promise<void> {
-    try {
-      const params = sender.getParameters();
-      if (!params.encodings || params.encodings.length === 0) {
-        params.encodings = [{}];
-      }
-      params.encodings[0].maxBitrate = CallService.MAX_VIDEO_BITRATE;
-      params.encodings[0].maxFramerate = 30;
-      await sender.setParameters(params);
-      appendLog(`[Call] video sender capped at ${CallService.MAX_VIDEO_BITRATE / 1000} kbps`);
-    } catch (e) {
-      appendLog(`[Call] applyVideoSenderLimits failed: ${String(e)}`);
-    }
-  }
-
   private async sendMlsNotification(groupId: string, appMsgPartial: canari.IAppMessage) {
     const appMsg = {
       messageId: crypto.randomUUID(),
@@ -2698,70 +2727,257 @@ export class CallService {
   }
 
   /**
-   * Toggles the local camera. When the call started audio-only there is no video
-   * track yet, so enabling it acquires the camera, adds the track (with the E2E
-   * sender transform) and renegotiates with the peer. Otherwise it just flips the
-   * existing track's `enabled` flag.
+   * The camera button: OFF stops the capture (the camera light goes out), empties the sender and
+   * renegotiates `recvonly`, so the peer's track MUTES and its screen shows the avatar; ON opens a
+   * capture and hands it to the SAME sender, `sendrecv` again. A call that had no camera yet gets
+   * one on a FRESH transceiver. Never `track.enabled = false`: that keeps the camera open and sends
+   * black frames the peer cannot tell from a camera.
    */
-  public async toggleVideo() {
-    const off = !get(this.isVideoOff);
+  public async toggleVideo(): Promise<void> {
+    if (get(this.isVideoOff)) await this.cameraOn();
+    else await this.cameraOff('turned off');
+  }
 
-    const existing = this.localStream?.getVideoTracks() ?? [];
-    if (!off && existing.length === 0) {
-      // Enabling video on a call that started audio-only: acquire the camera now.
-      if (!this.localStream || !this.pc) return;
+  /**
+   * Switches between the front and the back camera: the current capture is STOPPED first (a phone
+   * opens one camera at a time), the other one opened with an EXACT facing, and handed to the same
+   * sender - its E2E transform stays, no negotiation. A switch that cannot open the other camera
+   * leaves the camera OFF, said on screen and logged; it never silently keeps the old one.
+   */
+  public async switchCamera(): Promise<void> {
+    const old = this.localStream?.getVideoTracks()[0];
+    if (!old || get(this.isVideoOff) || !this.beginCameraOp('switch')) return;
+    try {
+      const next: CameraFacing = get(this.cameraFacing) === 'user' ? 'environment' : 'user';
+      this.releaseCameraTrack(old);
+      let track: MediaStreamTrack | undefined;
       try {
-        const camStream = await navigator.mediaDevices.getUserMedia({
-          video: CallService.VIDEO_CONSTRAINTS,
+        const cam = await navigator.mediaDevices.getUserMedia({
+          video: callVideoConstraints(next, true),
         });
-        const videoTrack = camStream.getVideoTracks()[0];
-        if (!videoTrack) return;
-        this.localStream.addTrack(videoTrack);
-        this.callHasVideo = true;
-        // A FRESH transceiver, never `addTrack`: `addTrack` may REUSE a transceiver the peer's
-        // offer created, whose sender Chromium already short-circuited if it was bare at its
-        // creation (measured on the Mi 9T, 2026-10-20). Both transforms in the task that creates
-        // it, as in `initPeerConnection`. `negotiationneeded` then carries the new m-line.
-        const pc = this.pc;
-        const transceiver = pc.addTransceiver(videoTrack, {
-          direction: 'sendrecv',
-          streams: [this.localStream],
-        });
-        const sender = transceiver.sender;
-        try {
-          this.attachSenderTransform(sender, 'video');
-          this.attachReceiverTransform(transceiver.receiver, 'video');
-        } catch (e) {
-          // Never a video sender without its transform: removed before any negotiation carries it.
-          pc.removeTrack(sender);
-          videoTrack.stop();
-          this.localStream.removeTrack(videoTrack);
-          appendLog(`[Call] E2E transform for the camera failed: ${String(e)}`);
-          this.failCall(
-            'E2E transform for the camera failed',
-            e instanceof CallE2eSetupError
-              ? e
-              : new CallE2eSetupError('sender (video)', { cause: e })
-          );
-          return;
-        }
-        this.scheduleE2ePathCheck(pc, 'after the camera was added');
-        // A camera muted by the OS starts sending when it unmutes, with no negotiation.
-        videoTrack.onunmute = () => this.recheckE2eOnMediaStart('after the camera unmuted');
-        void this.applyVideoSenderLimits(sender);
-        this.localStreamStore.set(this.localStream);
-        this.isVideoOff.set(false);
-        appendLog('[Call] camera acquired and added mid-call (renegotiating)');
+        track = cam.getVideoTracks()[0];
+        if (!track) throw new Error('no video track in the capture');
       } catch (e) {
-        const msg = String(e);
-        appendLog(`[Call] enabling camera failed: ${msg}`);
+        appendLog(`[Call] ERROR camera switch to ${next} failed: ${String(e)} - the camera is off`);
+        showToast(m.call_camera_switch_failed(), 'warning');
+        await this.sendNoCamera('the switch failed');
+        return;
       }
+      if (!this.callUp()) {
+        track.stop();
+        return;
+      }
+      this.adoptCameraTrack(track, next);
+      const t = this.liveCameraTransceiver();
+      if (t) await t.sender.replaceTrack(track);
+      appendLog(
+        `[Call] camera switched to ${get(this.cameraFacing)}${t ? ' (replaceTrack: same sender, same transform)' : ''}`
+      );
+    } finally {
+      this.cameraBusy = false;
+    }
+  }
+
+  /** Whether a call is up (ringing, connecting or in progress): a camera opened now has a use. */
+  private callUp(): boolean {
+    const state = get(this.callState);
+    return state !== 'idle' && state !== 'ended' && !!this.localStream;
+  }
+
+  /** Takes the camera lock, or says why a tap was dropped (one camera operation at a time). */
+  private beginCameraOp(what: string): boolean {
+    if (this.cameraBusy) {
+      appendLog(`[Call] camera ${what} dropped - another camera operation is running`);
+      return false;
+    }
+    this.cameraBusy = true;
+    return true;
+  }
+
+  /** The camera transceiver, if it still belongs to the live peer connection. */
+  private liveCameraTransceiver(): RTCRtpTransceiver | null {
+    const t = this.cameraTransceiver;
+    const pc = this.pc;
+    if (!t || !pc || t.currentDirection === 'stopped') return null;
+    return pc.getTransceivers().includes(t) ? t : null;
+  }
+
+  /**
+   * Makes `track` the call's camera: in the local stream (the self view, and what a rebuilt peer
+   * connection adds), its facing recorded, and its two events wired - `unmute` re-checks the E2E
+   * path (an OS-muted camera starts sending with no negotiation), `ended` is the SYSTEM taking the
+   * camera (another app, a revoked permission) and turns it off, said in the log.
+   */
+  private adoptCameraTrack(track: MediaStreamTrack, requested: CameraFacing): void {
+    this.localStream?.addTrack(track);
+    const settled = track.getSettings?.().facingMode;
+    this.cameraFacing.set(settled === 'environment' || settled === 'user' ? settled : requested);
+    track.onunmute = () => this.recheckE2eOnMediaStart('after the camera unmuted');
+    track.onended = () => {
+      if (!this.localStream?.getVideoTracks().some((t) => t === track)) return;
+      appendLog('[Call] WARN the system ended the camera - turning it off');
+      void this.cameraOff('ended by the system');
+    };
+    this.localStreamStore.set(this.localStream);
+    this.isVideoOff.set(false);
+  }
+
+  /** Stops a camera capture and takes it out of the local stream (its `ended` is not the system's). */
+  private releaseCameraTrack(track: MediaStreamTrack): void {
+    track.onended = null;
+    track.onunmute = null;
+    track.stop();
+    this.localStream?.removeTrack(track);
+  }
+
+  /**
+   * Opens the camera and sends it: on the camera transceiver this peer connection already has
+   * (`replaceTrack`, then `sendrecv`), on a FRESH transceiver when it has none, or - before the peer
+   * connection exists - into the local stream, which `initPeerConnection` adds.
+   */
+  private async cameraOn(): Promise<void> {
+    if (!this.callUp() || !this.beginCameraOp('on')) return;
+    try {
+      if (!canHoldVideoToVp8()) {
+        appendLog('[Call] ERROR this engine cannot hold video to VP8 - the camera stays off');
+        showToast(m.call_camera_unavailable(), 'warning');
+        return;
+      }
+      const facing = get(this.cameraFacing);
+      let track: MediaStreamTrack | undefined;
+      try {
+        const cam = await navigator.mediaDevices.getUserMedia({
+          video: callVideoConstraints(facing),
+        });
+        track = cam.getVideoTracks()[0];
+        if (!track) throw new Error('no video track in the capture');
+      } catch (e) {
+        appendLog(`[Call] WARN the camera could not open: ${String(e)} - it stays off`);
+        showToast(m.call_camera_unavailable(), 'warning');
+        return;
+      }
+      // The call may have ended while the permission prompt was up.
+      if (!this.callUp()) {
+        track.stop();
+        return;
+      }
+      this.callHasVideo = true;
+      this.adoptCameraTrack(track, facing);
+      void this.refreshCameraCount();
+      const pc = this.pc;
+      if (!pc) {
+        appendLog('[Call] camera on - sent once the peer connection is built');
+        return;
+      }
+      const t = this.liveCameraTransceiver();
+      if (t) {
+        await t.sender.replaceTrack(track);
+        t.direction = 'sendrecv';
+        this.scheduleE2ePathCheck(pc, 'after the camera came back');
+        appendLog('[Call] camera on again (replaceTrack on its sender, sendrecv - renegotiating)');
+        return;
+      }
+      this.addCameraTransceiver(pc, track);
+    } finally {
+      this.cameraBusy = false;
+    }
+  }
+
+  /**
+   * The first camera of a peer connection that has none: a FRESH transceiver, never `addTrack`,
+   * which may REUSE a transceiver the peer's offer created, whose sender Chromium short-circuited
+   * if it was bare at its creation (measured on the Mi 9T, 2026-10-20; rig row
+   * `fault-video-bare-sender`). Both transforms in the task that creates it, as in
+   * `initPeerConnection`; `negotiationneeded` then carries the new m-line.
+   */
+  private addCameraTransceiver(pc: RTCPeerConnection, track: MediaStreamTrack): void {
+    const transceiver = pc.addTransceiver(track, {
+      direction: 'sendrecv',
+      streams: this.localStream ? [this.localStream] : [],
+    });
+    try {
+      this.attachSenderTransform(transceiver.sender, 'video');
+      this.attachReceiverTransform(transceiver.receiver, 'video');
+    } catch (e) {
+      // Never a video sender without its transform: removed before any negotiation carries it.
+      pc.removeTrack(transceiver.sender);
+      this.releaseCameraTrack(track);
+      this.isVideoOff.set(true);
+      appendLog(`[Call] E2E transform for the camera failed: ${String(e)}`);
+      this.failCall(
+        'E2E transform for the camera failed',
+        e instanceof CallE2eSetupError ? e : new CallE2eSetupError('sender (video)', { cause: e })
+      );
       return;
     }
+    if (!preferVp8(transceiver, appendLog)) {
+      this.refuseCameraSender(pc, transceiver.sender, track);
+      return;
+    }
+    this.cameraTransceiver = transceiver;
+    this.scheduleE2ePathCheck(pc, 'after the camera was added');
+    void applyCallVideoSenderLimits(transceiver.sender, appendLog);
+    appendLog('[Call] camera added mid-call on a fresh transceiver (renegotiating)');
+  }
 
-    existing.forEach((t) => {
-      t.enabled = !off;
-    });
-    this.isVideoOff.set(off);
+  /**
+   * A camera sender whose transceiver could not be held to VP8 (`preferVp8` said why, at ERROR) is
+   * taken back before any negotiation carries it: a codec the transform does not frame is never
+   * sent, not even encrypted whole. The call goes on without the camera, said on screen.
+   */
+  private refuseCameraSender(pc: RTCPeerConnection, sender: RTCRtpSender, track: MediaStreamTrack) {
+    pc.removeTrack(sender);
+    this.releaseCameraTrack(track);
+    this.isVideoOff.set(true);
+    this.localStreamStore.set(this.localStream);
+    showToast(m.call_camera_unavailable(), 'warning');
+    appendLog('[Call] camera sender removed - not VP8, never sent');
+  }
+
+  /**
+   * Turns the camera OFF: every capture stopped (the camera light goes out), and the sender
+   * emptied with the transceiver `recvonly` (`sendNoCamera`), so the peer's track mutes.
+   */
+  private async cameraOff(why: string): Promise<void> {
+    if (!this.beginCameraOp('off')) return;
+    try {
+      for (const track of this.localStream?.getVideoTracks() ?? []) this.releaseCameraTrack(track);
+      await this.sendNoCamera(why);
+    } finally {
+      this.cameraBusy = false;
+    }
+  }
+
+  /** The camera is off: nothing on its sender, `recvonly` (renegotiates), the screen says so. */
+  private async sendNoCamera(why: string): Promise<void> {
+    this.videoPausedByBackground = false;
+    this.isVideoOff.set(true);
+    this.localStreamStore.set(this.localStream);
+    const t = this.liveCameraTransceiver();
+    if (t) {
+      try {
+        await t.sender.replaceTrack(null);
+      } catch (e) {
+        appendLog(`[Call] emptying the camera sender failed: ${String(e)}`);
+      }
+      if (t.direction !== 'recvonly' && t.direction !== 'inactive') t.direction = 'recvonly';
+    }
+    appendLog(
+      `[Call] camera off (${why})${t ? ' - sender emptied, recvonly (renegotiating)' : ''}`
+    );
+  }
+
+  /** Reads how many cameras the device has, once one is open (labels and counts need the grant). */
+  private async refreshCameraCount(): Promise<void> {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter((d) => d.kind === 'videoinput').length;
+      if (cameras >= 2 !== get(this.canSwitchCamera)) {
+        appendLog(`[Call] ${cameras} camera(s) on this device`);
+        this.canSwitchCamera.set(cameras >= 2);
+      }
+    } catch (e) {
+      appendLog(`[Call] listing the cameras failed: ${String(e)} - no camera switch offered`);
+    }
   }
 }
