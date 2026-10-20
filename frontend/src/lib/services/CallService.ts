@@ -36,6 +36,7 @@ import {
   describeE2eReport,
   e2eBypassedSides,
   framesFor,
+  inconclusiveMedia,
   readE2eEngineFacts,
   rtpPacketCounts,
   type E2eWorkerReport,
@@ -120,6 +121,14 @@ export const CALL_SIGNALLING_RESUME_TIMEOUT_MS = 5_000;
  * not a clock.
  */
 export const CALL_ICE_RESTART_ATTEMPTS = 3;
+
+/**
+ * How many times an E2E path check that could not judge some media (an m-line not negotiated yet,
+ * a kind with no packet yet - `inconclusiveMedia`) re-arms itself, `E2E_REPORT_DELAY_MS` apart. A
+ * BUDGET BY COUNT, never a verdict: past it the check waits for the next completed negotiation,
+ * the only event that brings new media. A wrong value costs a later look, never a call.
+ */
+export const CALL_E2E_PATH_RECHECKS = 6;
 
 /**
  * The media path of `pc` is down by EITHER of its two state machines. Both are read because they
@@ -291,6 +300,15 @@ export class CallService {
   private e2ePathCheckTimer: number | null = null;
   /** The triggers the pending path check covers, as its log tag. */
   private e2ePathCheckReason = '';
+  /**
+   * Re-checks spent on media the last check could not judge (`inconclusiveMedia`). A BUDGET BY
+   * COUNT: when it runs out the check stops re-arming itself and waits for the next completed
+   * negotiation (`onsignalingstatechange`), which is what makes new media appear. Reset by a
+   * conclusive check.
+   */
+  private e2eRechecks = 0;
+  /** The last path check could not judge some media: the next completed negotiation re-checks. */
+  private e2ePathInconclusive = false;
   /** Whether the CURRENT peer connection's first `connected` already scheduled its path check. */
   private e2eConnectChecked = false;
   /**
@@ -796,7 +814,8 @@ export class CallService {
         void this.logE2eReport(
           `call end, call=${endedCallId ?? '?'}`,
           worker,
-          fiveSecondReportRan
+          fiveSecondReportRan,
+          this.transformEpoch
         ).finally(() => worker.terminate());
       else worker.terminate();
     }
@@ -1032,7 +1051,7 @@ export class CallService {
       );
       this.sendSignal({ type: 'Answer', sdp: wireDescription(pc.localDescription, sdp.seq) });
     }
-    await configureCallAudioSenders(pc, this.callHasVideo);
+    await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
   }
 
   /** Queues or applies a trickle ICE candidate from the other party. */
@@ -1694,16 +1713,20 @@ export class CallService {
     // transform is assigned in the same task as that `addTrack` - Chromium decided when the
     // transceiver was created. So the sender gets its transform now, before it carries anything.
     const newMline = !receiver.transform;
+    let side: 'receiver' | 'sender' = 'receiver';
     try {
       this.attachReceiverTransform(receiver, track.kind);
-      if (transceiver) this.attachSenderTransform(transceiver.sender, track.kind);
+      side = 'sender';
+      // Armed with no track yet: it sends nothing until a later `addTrack` reuses it.
+      if (transceiver)
+        this.attachSenderTransform(transceiver.sender, track.kind, 'armed, no track yet');
     } catch (e) {
-      appendLog(`[Call] E2E receiver transform failed: ${String(e)}`);
+      appendLog(`[Call] E2E ${side} transform failed in ontrack (${track.kind}): ${String(e)}`);
       this.failCall(
-        'E2E receiver transform failed',
+        `E2E ${side} transform failed`,
         e instanceof CallE2eSetupError
           ? e
-          : new CallE2eSetupError(`receiver (${track.kind})`, { cause: e })
+          : new CallE2eSetupError(`${side} (${track.kind})`, { cause: e })
       );
       return;
     }
@@ -1835,6 +1858,13 @@ export class CallService {
 
     pc.onsignalingstatechange = () => {
       appendLog(`[Call] signalingState=${pc.signalingState}`);
+      // A negotiation COMPLETED: the media the last path check could not judge (an m-line not
+      // negotiated yet) can flow now - check it once it has had its delay.
+      if (pc.signalingState === 'stable' && this.pc === pc && this.e2ePathInconclusive) {
+        this.e2ePathInconclusive = false;
+        this.e2eRechecks = 0;
+        this.scheduleE2ePathCheck(pc, 'after a negotiation completed');
+      }
     };
 
     pc.ontrack = (e) => {
@@ -1926,7 +1956,7 @@ export class CallService {
         this.attachReceiverTransform(transceiver.receiver, track.kind);
         if (track.kind === 'video') void this.applyVideoSenderLimits(sender);
       }
-      await configureCallAudioSenders(pc, this.callHasVideo);
+      await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
     }
   }
 
@@ -1945,7 +1975,8 @@ export class CallService {
   private logE2eReport(
     tag: string,
     worker: Worker,
-    judgeFrames: boolean
+    judgeFrames: boolean,
+    epoch: number
   ): Promise<E2eWorkerReport | null> {
     return new Promise<E2eWorkerReport | null>((resolve) => {
       const onAnswer = (event: MessageEvent<{ type?: string; tag?: string }>) => {
@@ -1953,7 +1984,7 @@ export class CallService {
         window.clearTimeout(timer);
         worker.removeEventListener('message', onAnswer);
         const report = event.data as E2eWorkerReport;
-        appendLog(describeE2eReport(report, readE2eEngineFacts(), judgeFrames));
+        appendLog(describeE2eReport(report, readE2eEngineFacts(), judgeFrames, epoch));
         resolve(report);
       };
       const timer = window.setTimeout(() => {
@@ -1978,6 +2009,8 @@ export class CallService {
       this.e2ePathCheckTimer = null;
     }
     this.e2eConnectChecked = false;
+    this.e2eRechecks = 0;
+    this.e2ePathInconclusive = false;
     this.e2eSenderSeen = false;
     this.e2eReceiverSeen = false;
     this.e2eProven.set(false);
@@ -1995,18 +2028,18 @@ export class CallService {
       appendLog(`[Call] WARN E2E path check (${why}) not armed: no worker`);
       return;
     }
-    // A check already pending is moved to cover this trigger too, with both reasons: the newest
-    // media gets its full delay to flow, and one check reads them all.
-    let reason = why;
+    // A check already pending KEEPS its deadline and takes this trigger's reason too: re-arming
+    // on every trigger could postpone it for ever (review S2 of #2158). Media too young to be
+    // judged at that deadline makes the check inconclusive, and it re-arms itself.
     if (this.e2ePathCheckTimer !== null) {
-      window.clearTimeout(this.e2ePathCheckTimer);
-      reason = `${this.e2ePathCheckReason}, ${why}`;
+      this.e2ePathCheckReason = `${this.e2ePathCheckReason}, ${why}`;
+      return;
     }
-    this.e2ePathCheckReason = reason;
+    this.e2ePathCheckReason = why;
     this.e2ePathCheckTimer = window.setTimeout(() => {
       this.e2ePathCheckTimer = null;
       this.e2eReportFired = true;
-      void this.checkE2eInPath(pc, worker, reason);
+      void this.checkE2eInPath(pc, worker, this.e2ePathCheckReason);
     }, CallService.E2E_REPORT_DELAY_MS);
   }
 
@@ -2017,8 +2050,11 @@ export class CallService {
    * and a first packet landing between the two reads cannot look like a bypass. A side and kind
    * whose packets crossed the network while no transform OF THIS PEER CONNECTION saw a frame of
    * it is media around the worker - clear media sent, or the peer's ciphertext fed to the decoder -
-   * and the call ENDS, typed (`CallE2eBypassedError`). No stats, or no answer from the worker,
-   * proves nothing either way: logged, and the screen's claim simply stays unproven (`e2eProven`).
+   * and the call ENDS, typed (`CallE2eBypassedError`). No stats proves nothing either way: logged.
+   * NO ANSWER from the worker WITHDRAWS the screen's claim (`e2eProven` back to false): a worker
+   * that cannot be asked cannot be verified, whatever it proved earlier. Media too young to judge
+   * (`inconclusiveMedia`) re-arms the check, up to `CALL_E2E_PATH_RECHECKS` times, then waits for
+   * the next completed negotiation.
    */
   private async checkE2eInPath(pc: RTCPeerConnection, worker: Worker, why: string): Promise<void> {
     let packets;
@@ -2031,8 +2067,14 @@ export class CallService {
       return;
     }
     const epoch = this.transformEpoch;
-    const report = await this.logE2eReport(why, worker, true);
-    if (!report) return;
+    const report = await this.logE2eReport(why, worker, true, epoch);
+    if (!report) {
+      if (get(this.e2eProven)) {
+        appendLog(`[Call] WARN E2E claim withdrawn (${why}): the worker cannot be asked`);
+        this.e2eProven.set(false);
+      }
+      return;
+    }
     if (this.pc !== pc || this.encryptionWorker !== worker) {
       appendLog(
         `[Call] E2E path check (${why}) dropped: its peer connection was replaced or the call ended`
@@ -2042,7 +2084,33 @@ export class CallService {
     const counts = `packets sent audio=${packets.sent.audio} video=${packets.sent.video} received audio=${packets.received.audio} video=${packets.received.video}`;
     const sides = e2eBypassedSides(report, packets, epoch);
     if (sides.length === 0) {
-      appendLog(`[Call] E2E path check (${why}): no media around the transform (${counts})`);
+      const young = inconclusiveMedia(
+        pc.getTransceivers().map((t) => ({
+          kind: t.receiver.track?.kind ?? t.sender.track?.kind ?? '',
+          currentDirection: t.currentDirection ?? null,
+          hasTrack: !!t.sender.track,
+          stopped: t.currentDirection === 'stopped',
+        })),
+        packets
+      );
+      if (young.length === 0) {
+        this.e2eRechecks = 0;
+        this.e2ePathInconclusive = false;
+        appendLog(`[Call] E2E path check (${why}): no media around the transform (${counts})`);
+        return;
+      }
+      this.e2ePathInconclusive = true;
+      if (this.e2eRechecks >= CALL_E2E_PATH_RECHECKS) {
+        appendLog(
+          `[Call] WARN E2E path check (${why}): still not judged after ${CALL_E2E_PATH_RECHECKS} re-checks (${young.join(', ')}; ${counts}) - waiting for the next negotiation`
+        );
+        return;
+      }
+      this.e2eRechecks += 1;
+      appendLog(
+        `[Call] E2E path check (${why}): nothing around the transform, not yet judged: ${young.join(', ')} (${counts}) - re-check ${this.e2eRechecks}/${CALL_E2E_PATH_RECHECKS}`
+      );
+      this.scheduleE2ePathCheck(pc, 're-check');
       return;
     }
     const frames = sides
@@ -2259,14 +2327,15 @@ export class CallService {
    */
   private attachSenderTransform(
     sender: RTCRtpSender,
-    mediaKind = sender.track?.kind ?? 'unknown'
+    mediaKind = sender.track?.kind ?? 'unknown',
+    how = 'attached'
   ): void {
     if (sender.transform) return;
     sender.transform = new RTCRtpScriptTransform(
       this.keyedWorker('sender', mediaKind),
       this.transformOptions('sender')
     );
-    appendLog(`[Call] E2E sender transform attached (${mediaKind})`);
+    appendLog(`[Call] E2E sender transform ${how} (${mediaKind})`);
   }
 
   /** Attaches the E2E decrypt transform to a receiver: synchronous and throwing, like the sender. */

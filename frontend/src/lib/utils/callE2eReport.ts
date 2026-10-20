@@ -104,10 +104,11 @@ export interface E2eDiagnosis {
 export function diagnoseE2eReport(
   r: E2eWorkerReport,
   facts: E2eEngineFacts,
-  judgeFrames = true
+  judgeFrames = true,
+  epoch?: number
 ): E2eDiagnosis | null {
-  const sender = r.framesIn.sender ?? 0;
-  const receiver = r.framesIn.receiver ?? 0;
+  const sender = sideFrames(r, 'sender', epoch);
+  const receiver = sideFrames(r, 'receiver', epoch);
   const attrAbsent = facts.senderAttr === 'absent' || facts.receiverAttr === 'absent';
   if (!r.transformers.sender || !r.transformers.receiver) {
     return {
@@ -147,22 +148,38 @@ export function diagnoseE2eReport(
 }
 
 /**
+ * The frames one side was handed: on the peer connection `epoch` when given (audio and video
+ * summed, from `framesInBy`), else over the worker's whole life (`framesIn`). WHY the epoch: after
+ * a rebuilt peer connection the worker's lifetime counts include the dead one's frames, and a new
+ * peer connection whose transforms are never fed would read as fed.
+ */
+export function sideFrames(
+  r: E2eWorkerReport,
+  side: 'sender' | 'receiver',
+  epoch?: number
+): number {
+  if (epoch === undefined || !r.framesInBy) return r.framesIn[side] ?? 0;
+  return framesFor(r, epoch, side, 'audio') + framesFor(r, epoch, side, 'video');
+}
+
+/**
  * The report as ONE log line; `ERROR` leads it when `diagnoseE2eReport` names a fault, and a
  * note is appended without it. `judgeFrames` as in `diagnoseE2eReport`.
  */
 export function describeE2eReport(
   r: E2eWorkerReport,
   facts: E2eEngineFacts,
-  judgeFrames = true
+  judgeFrames = true,
+  epoch?: number
 ): string {
-  const d = diagnoseE2eReport(r, facts, judgeFrames);
+  const d = diagnoseE2eReport(r, facts, judgeFrames, epoch);
   const fault = d?.level === 'fault';
   const t = r.transformers;
-  const f = r.framesIn;
+  const scope = epoch !== undefined && r.framesInBy ? ` (peer connection ${epoch})` : '';
   return (
     `[Call] ${fault ? 'ERROR ' : ''}E2E worker report (${r.tag}): ` +
     `transformers sender=${t.sender ?? 0} receiver=${t.receiver ?? 0} | ` +
-    `frames in sender=${f.sender ?? 0} receiver=${f.receiver ?? 0} | ` +
+    `frames in sender=${sideFrames(r, 'sender', epoch)} receiver=${sideFrames(r, 'receiver', epoch)}${scope} | ` +
     `encrypted audio=${r.encrypted.audio} video=${r.encrypted.video} | ` +
     `decrypted audio=${r.decrypted.audio} video=${r.decrypted.video} | ` +
     `decrypt-failed=${r.decryptFailures} short=${r.tooShort} (empty ${r.tooShortEmpty}) no-key=${r.droppedNoKey} ` +
@@ -225,7 +242,8 @@ export function framesFor(
  * receiver transform after it was counted, so frames read later can only be ahead. On Chromium a
  * short-circuited transform keeps its transformer and is simply never fed (CALL-E2E-BYPASS-MI9T,
  * 2026-10-20, measured on the Mi 9T's WebView 152 and desktop Chrome 155). Per KIND because a
- * camera added mid-call is its own sender, and can be short-circuited while the audio is not.
+ * camera added mid-call is its own sender, and can be short-circuited while the audio is not; per
+ * kind and not per m-line because a transform does not know its `mid` (see `inconclusiveMedia`).
  */
 export function e2eBypassedSides(
   r: E2eWorkerReport,
@@ -242,4 +260,49 @@ export function e2eBypassedSides(
     }
   }
   return out;
+}
+
+/** What a path check knows of one transceiver (`inconclusiveMedia`). */
+export interface TransceiverFacts {
+  kind: string;
+  /** The NEGOTIATED direction; `null` until an offer/answer including it completed. */
+  currentDirection: RTCRtpTransceiverDirection | null;
+  /** This side gives the sender a track (it means to send). */
+  hasTrack: boolean;
+  stopped: boolean;
+}
+
+/**
+ * The media a path check could NOT judge yet, as reasons (empty = conclusive): an m-line this side
+ * sends on that is not negotiated yet, or a negotiated direction whose kind has carried no packet.
+ * Zero packets is no leak, but it is no proof either - a camera added while its negotiation took
+ * longer than the check's delay would otherwise pass trivially and never be looked at again
+ * (review S1 of #2158). `CallService` re-arms the check on these, and on the next completed
+ * negotiation.
+ *
+ * Per KIND, not per m-line: the worker cannot tell m-lines apart (a transform does not know its
+ * `mid`), and the app has at most one m-line per kind and direction that carries media - the
+ * camera's fresh transceiver sends, the peer's offer-created one receives.
+ */
+export function inconclusiveMedia(
+  transceivers: readonly TransceiverFacts[],
+  packets: RtpPacketCounts
+): string[] {
+  const out = new Set<string>();
+  for (const t of transceivers) {
+    if (t.stopped || (t.kind !== 'audio' && t.kind !== 'video')) continue;
+    const kind = t.kind;
+    const dir = t.currentDirection;
+    if (dir === null) {
+      if (t.hasTrack) out.add(`${kind} m-line not negotiated yet`);
+      continue;
+    }
+    if (t.hasTrack && (dir === 'sendrecv' || dir === 'sendonly') && packets.sent[kind] === 0) {
+      out.add(`sender:${kind} carried no packet yet`);
+    }
+    if ((dir === 'sendrecv' || dir === 'recvonly') && packets.received[kind] === 0) {
+      out.add(`receiver:${kind} carried no packet yet`);
+    }
+  }
+  return [...out];
 }

@@ -201,7 +201,7 @@ async function setup(config: RigConfig) {
     for (const t of pc.getTransceivers()) t.setCodecPreferences(ordered);
     note(`codec order ${ordered.map((c) => c.mimeType).join(',')}`);
   }
-  await configureCallAudioSenders(pc, false);
+  await configureCallAudioSenders(pc, false, note);
   return { settings, constraints: constraints() };
 }
 

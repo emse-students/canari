@@ -4,6 +4,7 @@ import {
   diagnoseE2eReport,
   e2eBypassedSides,
   engineFromUserAgent,
+  inconclusiveMedia,
   rtpPacketCounts,
   transformAttribute,
   type E2eEngineFacts,
@@ -118,6 +119,62 @@ describe('diagnoseE2eReport / describeE2eReport', () => {
     expect(
       diagnoseE2eReport(report({ doubleEncrypted: 1, framesIn: {} }), NATIVE, false)?.level
     ).toBe('fault');
+  });
+});
+
+describe('a report after a rebuilt peer connection (review L3)', () => {
+  // The dead peer connection 1 fed 900 frames; the rebuilt 2 fed its sender and not its receiver.
+  const rebuilt = report({
+    framesIn: { sender: 1150, receiver: 900 },
+    framesInBy: { '1|sender|audio': 900, '1|receiver|audio': 900, '2|sender|audio': 250 },
+  });
+
+  it('judges and prints the frames of the epoch it is asked about, never the lifetime sums', () => {
+    expect(diagnoseE2eReport(rebuilt, NATIVE, true)).toBeNull();
+    expect(diagnoseE2eReport(rebuilt, NATIVE, true, 2)?.level).toBe('fault');
+    expect(describeE2eReport(rebuilt, NATIVE, true, 2)).toContain(
+      'frames in sender=250 receiver=0 (peer connection 2)'
+    );
+  });
+});
+
+describe('inconclusiveMedia (review S1)', () => {
+  const packets = (sa: number, ra: number, sv = 0, rv = 0) => ({
+    sent: { audio: sa, video: sv },
+    received: { audio: ra, video: rv },
+  });
+  const t = (
+    kind: string,
+    currentDirection: RTCRtpTransceiverDirection | null,
+    hasTrack = true,
+    stopped = false
+  ) => ({ kind, currentDirection, hasTrack, stopped });
+
+  it('is conclusive when every negotiated direction carried packets', () => {
+    expect(inconclusiveMedia([t('audio', 'sendrecv')], packets(250, 251))).toEqual([]);
+  });
+
+  it('names a camera whose m-line is not negotiated yet, and a negotiated kind with no packet', () => {
+    expect(
+      inconclusiveMedia([t('audio', 'sendrecv'), t('video', null)], packets(250, 251))
+    ).toEqual(['video m-line not negotiated yet']);
+    expect(inconclusiveMedia([t('video', 'sendrecv')], packets(0, 0, 0, 30))).toEqual([
+      'sender:video carried no packet yet',
+    ]);
+    expect(inconclusiveMedia([t('video', 'recvonly', false)], packets(0, 0))).toEqual([
+      'receiver:video carried no packet yet',
+    ]);
+  });
+
+  it('ignores what sends nothing of ours: a bare sender, a stopped transceiver, an unknown kind', () => {
+    expect(
+      inconclusiveMedia(
+        [t('video', null, false), t('video', 'sendrecv', true, true), t('', 'sendrecv')],
+        packets(0, 0)
+      )
+    ).toEqual([]);
+    // A bare sender on a negotiated direction still receives: only its receiver is judged.
+    expect(inconclusiveMedia([t('video', 'sendrecv', false)], packets(0, 0, 0, 40))).toEqual([]);
   });
 });
 

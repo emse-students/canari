@@ -3,6 +3,7 @@ import { get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
 import {
   CallService,
+  CALL_E2E_PATH_RECHECKS,
   CALL_ICE_RESTART_ATTEMPTS,
   CALL_ICE_TRANSPORT_POLICY,
   CALL_SIGNALLING_RESUME_ATTEMPTS,
@@ -357,8 +358,17 @@ class FakePeerConnection {
       this.receivers.splice(i, 1);
     }
   }
+  /**
+   * The NEGOTIATED direction of the transceiver at that sender index; `null` = not negotiated yet.
+   * Unset entries read `sendrecv`, a call whose offer/answer completed.
+   */
+  directions = new Map<number, RTCRtpTransceiverDirection | null>();
   getTransceivers() {
-    return this.senders.map((sender, i) => ({ sender, receiver: this.receivers[i] }));
+    return this.senders.map((sender, i) => ({
+      sender,
+      receiver: this.receivers[i],
+      currentDirection: this.directions.has(i) ? this.directions.get(i) : 'sendrecv',
+    }));
   }
   async setLocalDescription(desc?: RTCSessionDescriptionInit) {
     await this.lag();
@@ -658,6 +668,22 @@ describe('the E2E worker report (2026-10-19)', () => {
     workerAnswers.last?.onmessage?.({ data } as MessageEvent);
   }
 
+  /** Our camera goes on (`toggleVideo`), with a fake capture; returns its track. */
+  async function turnCameraOn(service: CallService) {
+    const camTrack = { kind: 'video', stop: vi.fn(), enabled: true };
+    const local = service as unknown as {
+      localStream: { addTrack: () => void; getVideoTracks: () => unknown[] };
+    };
+    local.localStream.addTrack = () => {};
+    local.localStream.getVideoTracks = () => [];
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      mediaDevices: { getUserMedia: vi.fn(async () => ({ getVideoTracks: () => [camTrack] })) },
+    });
+    await service.toggleVideo();
+    return camTrack;
+  }
+
   async function connectedCall() {
     const service = new CallService(fakeMls);
     const ws = await callerJoined(service);
@@ -672,6 +698,9 @@ describe('the E2E worker report (2026-10-19)', () => {
 
   it('logs ONE report 5 s after connected and one at the end, then stops the worker', async () => {
     const { service, pc, lines } = await connectedCall();
+    // Audio flows both ways: the check is conclusive and does not re-arm.
+    pc.inboundPackets = 300;
+    pc.outboundPackets = 300;
     await vi.advanceTimersByTimeAsync(5_000);
     // A recovery does not schedule a second one.
     pc.setConnection('disconnected');
@@ -810,17 +839,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     expect(lines().filter((l) => l.includes('receiver transform attached'))).toHaveLength(1);
 
     // Our camera: a NEW transceiver, both transforms in its creating task - never the reused one.
-    const camTrack = { kind: 'video', stop: vi.fn(), enabled: true };
-    const local = service as unknown as {
-      localStream: { addTrack: () => void; getVideoTracks: () => unknown[] };
-    };
-    local.localStream.addTrack = () => {};
-    local.localStream.getVideoTracks = () => [];
-    vi.stubGlobal('navigator', {
-      ...navigator,
-      mediaDevices: { getUserMedia: vi.fn(async () => ({ getVideoTracks: () => [camTrack] })) },
-    });
-    await service.toggleVideo();
+    const camTrack = await turnCameraOn(service);
     expect(pc.reusedByAddTrack).toBe(0);
     const cam = pc.senders.find((x) => x.track === camTrack)!;
     expect(cam).not.toBe(created.sender);
@@ -835,23 +854,119 @@ describe('the E2E worker report (2026-10-19)', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(get(service.callState)).toBe('incall');
 
-    const camTrack = { kind: 'video', stop: vi.fn(), enabled: true };
-    const local = service as unknown as {
-      localStream: { addTrack: () => void; getVideoTracks: () => unknown[] };
-    };
-    local.localStream.addTrack = () => {};
-    local.localStream.getVideoTracks = () => [];
-    vi.stubGlobal('navigator', {
-      ...navigator,
-      mediaDevices: { getUserMedia: vi.fn(async () => ({ getVideoTracks: () => [camTrack] })) },
-    });
-    await service.toggleVideo();
+    await turnCameraOn(service);
     pc.videoOutboundPackets = 120;
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
       '[Call] ERROR E2E path check (after the camera was added): media flowed AROUND the transform on sender:video (packets sent audio=250 video=120 received audio=251 video=0; frames sender:video=0)'
     );
     expect(get(service.callState)).toBe('ended');
+  });
+
+  it('re-checks a camera whose negotiation outlasted the check, and catches its bypass then (review S1)', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    await vi.advanceTimersByTimeAsync(5_000);
+    const camTrack = await turnCameraOn(service);
+    const cam = pc.senders.findIndex((x) => x.track === camTrack);
+    // The answer has not come back when the check runs: zero video packets proves nothing.
+    pc.directions.set(cam, null);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] E2E path check (after the camera was added): nothing around the transform, not yet judged: video m-line not negotiated yet (packets sent audio=250 video=0 received audio=251 video=0) - re-check 1/6'
+    );
+    expect(get(service.callState)).toBe('incall');
+
+    // Negotiated, and the camera's packets flow with no frame through its transform.
+    pc.directions.delete(cam);
+    pc.videoOutboundPackets = 120;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] ERROR E2E path check (re-check): media flowed AROUND the transform on sender:video (packets sent audio=250 video=120 received audio=251 video=0; frames sender:video=0)'
+    );
+    expect(get(service.callState)).toBe('ended');
+  });
+
+  it('stops re-checking after its budget, and checks again when a negotiation completes', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    await vi.advanceTimersByTimeAsync(5_000);
+    const camTrack = await turnCameraOn(service);
+    pc.directions.set(
+      pc.senders.findIndex((x) => x.track === camTrack),
+      null
+    );
+    await vi.advanceTimersByTimeAsync(5_000 * (CALL_E2E_PATH_RECHECKS + 1));
+    expect(lines().filter((l) => l.includes('- re-check '))).toHaveLength(CALL_E2E_PATH_RECHECKS);
+    expect(lines()).toContain(
+      `[Call] WARN E2E path check (re-check): still not judged after ${CALL_E2E_PATH_RECHECKS} re-checks (video m-line not negotiated yet; packets sent audio=250 video=0 received audio=251 video=0) - waiting for the next negotiation`
+    );
+    // Nothing more until the next negotiation completes.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(lines().filter((l) => l.includes('E2E path check (re-check)'))).toHaveLength(
+      CALL_E2E_PATH_RECHECKS
+    );
+    pc.signalingState = 'stable';
+    (pc.onsignalingstatechange as unknown as () => void)();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines().some((l) => l.includes('E2E path check (after a negotiation completed)'))).toBe(
+      true
+    );
+    expect(get(service.callState)).toBe('incall');
+  });
+
+  it('keeps the EARLIEST deadline: a later trigger joins the pending check, never postpones it (review S2)', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    await vi.advanceTimersByTimeAsync(3_000);
+    await turnCameraOn(service);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(
+      lines().some((l) =>
+        l.startsWith('[Call] E2E path check (5 s after connected, after the camera was added)')
+      )
+    ).toBe(true);
+  });
+
+  it('names the SENDER when the sender transform is the one that fails in ontrack (review L1)', async () => {
+    const { service, pc, lines } = await connectedCall();
+    vi.stubGlobal(
+      'RTCRtpScriptTransform',
+      class extends FakeTransform {
+        constructor(worker: unknown, options: { side: string; epoch?: number }) {
+          if (options.side === 'sender') throw new Error('NotSupportedError');
+          super(worker, options);
+        }
+      }
+    );
+    pc.remoteOfferAdds('video');
+    expect(lines()).toContain(
+      '[Call] E2E sender transform failed in ontrack (video): Error: NotSupportedError'
+    );
+    expect(get(service.callState)).toBe('ended');
+  });
+
+  it('arms the sender of a peer-created transceiver as armed, not attached (review L1)', async () => {
+    const { pc, lines } = await connectedCall();
+    pc.remoteOfferAdds('video');
+    expect(lines()).toContain('[Call] E2E sender transform armed, no track yet (video)');
+  });
+
+  it('WITHDRAWS the claim when the worker can no longer be asked (review L4)', async () => {
+    const { service, lines } = await connectedCall();
+    const epoch = workerAnswers.epoch;
+    inPath('sender', epoch);
+    inPath('receiver', epoch);
+    expect(get(service.e2eProven)).toBe(true);
+    workerAnswers.report = null;
+    await vi.advanceTimersByTimeAsync(5_000 + 1_500);
+    expect(lines()).toContain(
+      '[Call] WARN E2E claim withdrawn (5 s after connected): the worker cannot be asked'
+    );
+    expect(get(service.e2eProven)).toBe(false);
   });
 
   it('does not accuse an empty side at the end of a call shorter than the 5 s report', async () => {

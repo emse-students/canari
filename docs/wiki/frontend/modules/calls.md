@@ -761,8 +761,9 @@ arrived. WebKit has no such short-circuit; the iPhone really encrypted.
   against the worker's `framesIn` (`e2eBypassedSides`): packets sent with no sender frame, or packets
   received with no receiver frame, is media around the worker - logged `ERROR E2E path check: media
   flowed AROUND the transform on ...`, and the call ENDS with `CallE2eBypassedError`, read to the user
-  as `call_e2e_bypassed`. A worker that does not answer, or unreadable stats, proves nothing: logged,
-  and the claim stays unproven. This is a PROOF from two counters, not a deadline; it bounds a
+  as `call_e2e_bypassed`. Unreadable stats prove nothing: logged. A worker that does not answer
+  WITHDRAWS the claim (`e2eProven` back to false, `WARN E2E claim withdrawn`), whatever it proved
+  before: a worker that cannot be asked cannot be verified. This is a PROOF from two counters, not a deadline; it bounds a
   regression to the first 5 s, it does not replace the ordering.
 
 **The same class, one step removed: a transceiver the PEER's offer created** (review of #2158,
@@ -790,11 +791,33 @@ transceiver in the `ontrack` task, and `toggleVideo` always creates a FRESH tran
 `checkE2eInPath` reads the RTP packets FIRST, then the worker (frames read later can only be ahead,
 so a first packet landing between the reads cannot look like a bypass), and judges audio and video
 apart on the current epoch only. It runs 5 s after each peer connection's first `connected`, after
-the camera is added and after a new remote m-line (`scheduleE2ePathCheck`, one pending check moved to
-cover a new trigger). A rebuilt peer connection (`onPeerReady` for a replaced device) resets the
+the camera is added and after a new remote m-line (`scheduleE2ePathCheck`). A rebuilt peer connection (`onPeerReady` for a replaced device) resets the
 evidence and the check; evidence from an older epoch or another call's worker is logged and lends
 nothing. A transform that cannot be attached ends the call with a typed `CallE2eSetupError`
 (`call_e2e_setup_failed`), never "connection lost".
+
+**When the check runs, and when it may not conclude** (review of #2158, S1/S2). Zero packets of a
+kind is no leak, and no proof either: a camera whose negotiation outlasts the 5 s delay would have
+passed trivially and never been looked at again, the claim already on. So:
+
+- A pending check KEEPS its deadline; a later trigger only adds its reason (`5 s after connected,
+  after the camera was added`). Re-arming on every trigger could postpone it for ever.
+- `inconclusiveMedia` lists what the check could not judge: an m-line this side sends on that is not
+  negotiated yet (`currentDirection` null), or a negotiated direction whose kind carried no packet.
+  Anything listed re-arms the check (`re-check n/6`, `CALL_E2E_PATH_RECHECKS`), a budget BY COUNT;
+  past it the check logs a WARN and waits for the next completed negotiation
+  (`onsignalingstatechange` to `stable`), the only event that brings new media. A conclusive check
+  resets the budget.
+- Per KIND, not per m-line (review L2): a transform does not know its `mid`, so the worker cannot
+  key by it, and the app carries at most one media-carrying m-line per kind and direction - the
+  camera's fresh transceiver sends, the peer's offer-created one receives. Keying by `mid` would need
+  the mid passed in the transform options at attach time, which an offer-created transceiver only
+  has once negotiated; not worth it while that holds.
+- The reports name the peer connection they judge (review L3): after a rebuild the worker's lifetime
+  counts include the dead one's frames, so the 5 s and the end report print and judge
+  `frames in ... (peer connection N)` from `framesInBy`.
+- `ontrack` names the side that threw (`E2E sender transform failed in ontrack (video)`), and the
+  offer-created sender it arms logs `armed, no track yet` - it sends nothing until a later `addTrack`.
 
 **What is still owed, on the phones** (a dev pre-release with this change):
 
