@@ -467,7 +467,9 @@ class FakeTransform {
   }
 }
 
-const fakeTrack = () => ({ kind: 'audio', stop: vi.fn(), enabled: true });
+/** The microphone track: an `EventTarget`, since the service watches its `mute` / `unmute` (WP-C-BG-I). */
+const fakeTrack = () =>
+  Object.assign(new EventTarget(), { kind: 'audio', stop: vi.fn(), enabled: true, muted: false });
 const fakeMls = {
   getDeviceId: () => 'device-1',
   exportSecret: vi.fn(async () => new Uint8Array(32).fill(7)),
