@@ -45,7 +45,12 @@
   import { fade } from 'svelte/transition';
   import type { Snippet } from 'svelte';
   import { m } from '$lib/paraglide/messages';
-  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+  import {
+    isAndroidTauriRuntime,
+    isIosTauriRuntime,
+    isMobileTauriRuntime,
+  } from '$lib/utils/appVersion';
+  import { ongoingCallSpec, openAndroidCallSession } from '$lib/mobile/androidCallService';
   import { CALLS_VIDEO_ENABLED } from '$lib/features';
   import { useCallModel } from '$lib/composables/useCallModel.svelte';
   import { callView } from '$lib/stores/callView.svelte';
@@ -184,9 +189,10 @@
   let isMobileRtc = $derived(isMobileTauriRuntime());
 
   /**
-   * Routes remote audio to speaker or earpiece on mobile, by output-device LABEL. Best-effort and
+   * Routes remote audio to speaker or earpiece on iOS, by output-device LABEL. Best-effort and
    * unverified on hardware: a WebView may list no labelled outputs at all, and the real route is a
-   * native call (`AudioManager` / `AVAudioSession`) - calls.md, "the call in the background".
+   * native call (`AVAudioSession`, WP-C-BG-I) - calls.md, "the call in the background". On Android
+   * the route is the ongoing-call service's (`AudioManager.setCommunicationDevice`, below).
    */
   async function applySpeakerRouting(sink: HTMLAudioElement, speaker: boolean) {
     try {
@@ -210,7 +216,7 @@
 
   $effect(() => {
     const sink = remoteAudioSink;
-    if (!sink || !speakerSupported || !isMobileRtc) return;
+    if (!sink || !speakerSupported || !isIosTauriRuntime()) return;
     void applySpeakerRouting(sink, isSpeakerOn);
   });
 
@@ -233,6 +239,23 @@
     });
   });
   $effect(() => () => clearCallMediaSession(navigator));
+
+  // -- Android: the ongoing-call foreground service (WP-C-BG-A) -------------------------------
+  // It keeps the process's network and microphone while the app is off screen, draws the CallStyle
+  // notification and owns the audio route. Opened once per call (this component lives exactly as
+  // long as one call); its hang-up ends the call like the in-app button.
+  const androidCall = isAndroidTauriRuntime()
+    ? openAndroidCallSession(window, () => callService.endCall())
+    : null;
+  $effect(() => () => androidCall?.dispose());
+  $effect(() => {
+    if (!androidCall) return;
+    const title = primary?.displayName || m.call_label();
+    androidCall.publish(
+      ongoingCallSpec(call.kind, !!call.localStream, title, call.connectedAt, isSpeakerOn),
+      `kind=${call.kind}`
+    );
+  });
 
   /**
    * What a device reading needs to say what the background did to the call: whether the page was

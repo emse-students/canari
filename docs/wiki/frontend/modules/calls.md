@@ -990,9 +990,9 @@ backlog item, [P1 - a call does not survive the app leaving the screen](../../ba
 
 | Concern | Web (done) | Native (owed) |
 |---|---|---|
-| The OS knows a call is up | Media Session: title = the peer, `hangup` / `togglemicrophone` handlers, `setMicrophoneActive` (Chromium) - `utils/callMediaSession.ts`, each action in its own `try`, each refusal logged | Android `CallStyle` ongoing notification in a `phoneCall` foreground service; iOS CallKit for EVERY call |
-| The microphone in the background | nothing can hold it: Android 9+ gives a backgrounded app silence; WKWebView stops capture when hidden | the foreground service / an `AVAudioSession` call session |
-| Audio route (speaker, earpiece, Bluetooth) | label-matched `setSinkId`, best effort, logged when there is nothing to route to | `AudioManager` / `AVAudioSession` |
+| The OS knows a call is up | Media Session: title = the peer, `hangup` / `togglemicrophone` handlers, `setMicrophoneActive` (Chromium) - `utils/callMediaSession.ts`, each action in its own `try`, each refusal logged | Android: BUILT, [below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) (a `microphone` foreground service, not `phoneCall`); iOS CallKit for EVERY call (owed) |
+| The microphone in the background | nothing can hold it: Android 9+ gives a backgrounded app silence; WKWebView stops capture when hidden | Android: the foreground service (BUILT); iOS: an `AVAudioSession` call session (owed) |
+| Audio route (speaker, earpiece, Bluetooth) | iOS only: label-matched `setSinkId`, best effort, logged when there is nothing to route to | Android: `AudioManager.setCommunicationDevice` in the service (BUILT); iOS: `AVAudioSession` (owed) |
 | Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it | video (WP-C3) can take one |
 | Diagnosis | `[Call] app hidden` / `visible`, with `state=`, `mic=live/os-muted` and `voice=playing` or `paused`, `the system took the microphone`, `the voice was paused while hidden - starting it again` | - |
 | The partner is told | `MicSuspended { suspended }` over the relay, sent by the side whose OS took its microphone; a notice on both screens and in the live region, a toast on the way back ([below](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)) | - |
@@ -1061,6 +1061,73 @@ is written before that rate is read; and a call accepted from the lock screen (t
 already muted). If the mode does not keep the capture, the next candidate is WebKit's own policy,
 read from the iPhone's syslog (`pymobiledevice3 syslog live`, `mediaserverd` / `WebKit` lines) - not a
 native audio session written blind.
+
+### WP-C-BG-A - the Android ongoing-call service (2026-10-20)
+
+**Why.** Read on the Mi 9T (`1.3.1-alpha.3`, [readings](../../device-readings-2026-10.md), CALL-L1
+row 11): locked 40 s or sent HOME 40 s, the call socket was reset 5 s in and both directions of audio
+stopped, while the page's JavaScript KEPT RUNNING (a `connection failed` every 4 s in the
+background). The process was not frozen, it was cut off from the network and the microphone - what
+Android does to a process with nothing in the foreground. A foreground service is the platform's
+answer, and the one every calling app holds.
+
+**What is built:**
+
+| Piece | Where | What it does |
+|---|---|---|
+| The service | `CallForegroundService.kt` | type `microphone`; the ONGOING `CallStyle.forOngoingCall` notification (the peer's name, a chronometer from `CallService.connectedAt`, the system's own hang-up button, a tap brings the task forward with a launcher intent - never a deep link); `MODE_IN_COMMUNICATION` with the previous mode restored at the end; a PARTIAL wake lock with no timeout, released by the call's end; silent channel `canari_call_ongoing`, created on the first call so a build that places none never shows it |
+| The route | `CallAudio` in the same file, choice in `call/OngoingCall.kt` (`pickCallOutput`) | speaker on: the loudspeaker; off: the most personal output present - hearing aid, BLE then SCO headset, wired, USB, earpiece - re-chosen when a device comes or goes, logged only when the choice changes. API 28-30: `isSpeakerphoneOn` only (no Bluetooth SCO). Replaces the label-matched `setSinkId` on Android, which found no labelled output on the Mi 9T |
+| The transition table | `call/OngoingCall.kt` (`decide`) | start / update / stop / hang-up against running or not; every command is logged with its effect. A second start is a refresh; an update before a start is refused (the two sides disagree); the hang-up is FORWARDED to the page, which ends the call and sends `stop` - one end path |
+| The bridge | `CallBridge.kt` (`window.canariCall`: `start(json)`, `update(json)`, `stop(reason)`) and one DOM event up, `canari:call-native` (`started`, `failed`, `stopped`, `hangup`) | registered by `MainActivity` ONLY when the service is in the merged manifest. `start` is refused BEFORE it is attempted when the app is not on screen or `RECORD_AUDIO` is not granted - the two preconditions of a microphone service, known here, never learnt from a crash |
+| The page's side | `lib/mobile/androidCallService.ts`, opened by `CallOverlay` once per call | `ongoingCallSpec` turns the call's status kind into the description (a Paraglide word, never the running timer); `start` once the call HOLDS the microphone and is the caller's `ringing` or the callee's `connecting` - seconds after the tap, so on screen with the grant answered; `update` only on a change; `stop` at `ended`. A refusal is logged at ERROR and NOT retried for that call; a build without the bridge logs `ERROR this Android build has no ongoing-call service` once per call |
+| Teardown | `MainActivity.onDestroy`, `onTaskRemoved`, `onBackPressed` | a destroyed activity (its WebView is destroyed with it, and the call) stops the service; a swipe from Recents stops it; Back at the root during a call moves the task back on API 28-30 (API 31+ does that itself) |
+
+**Started at `ringing`, not at `incall`** - a deviation from the backlog's wording, for a platform
+rule: Android grants a microphone service only to an app that is on screen (`startForeground` with a
+while-in-use type throws from the background on API 34+), and a caller who dials then pockets the
+phone while it rings would be refused at `incall`.
+
+**`microphone`, not `phoneCall`.** `phoneCall` is for calls placed through Telecom's
+`ConnectionService`; Android 14 starts it only for the default dialer or an app holding
+`MANAGE_OWN_CALLS` (a self-managed `ConnectionService`). This app has neither, and Android's own
+list of `microphone` uses names "communication apps". Moving to `phoneCall` means a self-managed
+`ConnectionService`, a larger piece of work with its own Play declaration.
+
+**Only in builds that place calls.** `src/calls/AndroidManifest.xml` (the service,
+`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`) is merged by `app/build.gradle.kts` into the
+debug and release build types when `VITE_DEPLOY_ENVIRONMENT` is `development` - read from the process
+environment, then `frontend/.env`, the order Vite reads them, and printed by Gradle
+(`Canari ongoing-call service: IN this build ...`). That is every pre-release and a local build that
+sets it; a stable merges nothing. `androidCallServiceManifest.test.ts` asserts the main manifest
+declares it exactly when `CALLS_COMPILED` is true - so the revival commit moves it into
+`src/main/AndroidManifest.xml` with the five switches, or fails there. `CALLS_COMPILED` stays false.
+
+**Google Play.** Since API 34 every foreground service declares a type, and Play asks the developer
+to declare each foreground-service permission in the Play Console (App content, "Foreground service
+permissions"): per permission, which feature uses it, a description, and a video showing it in use.
+**Not verified against this app's console, and two things are unknown:** whether an upload to the
+`internal` track (where every pre-release goes, `android.yml`) is refused while the declaration is
+missing, and what the review says of `microphone` for in-app calls. **The first pre-release carrying
+this is where it shows** - if the Play step of `android.yml` is refused, the GitHub release APK is
+still built, and the declaration is a one-off for the user ([backlog](../../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
+**Pinned by** `androidCallService.test.ts` (start/update/stop, no retry after a refusal, the
+hang-up, no bridge), `androidCallServiceManifest.test.ts` (the declaration, the gating, both sides
+of the bridge named alike) and `OngoingCallTest.kt` (`decide`, the spec validation, `pickCallOutput`).
+**What none of them proves:** that Android keeps this process's network and microphone with the
+service up, that the WebView is not frozen, that Chromium does not override the mode or the output.
+
+**Owed on the Mi 9T** (a build with the service: the next pre-release, or a local debug build -
+installing one over a release-signed install costs the enrolment), in a call with the iPhone or a
+desktop peer (`callpeer.mjs`): (1) lock 40 s, (2) HOME 40 s - each: the other side keeps hearing the
+Mi 9T and the Mi 9T keeps hearing it, no `closed code=1006` and no server `held dead`; (3) the
+notification shows the name and a running timer, its hang-up ends the call on both ends; (4) Back
+at the root during a call keeps it; (5) speaker / earpiece from the call screen, read with
+`adb shell dumpsys audio` (mode `MODE_IN_COMMUNICATION`, the communication device, and WHO set the
+mode - Chromium may set it too); (6) `adb shell dumpsys activity services fr.emse.canari` shows the
+service `isForeground=true` with `foregroundServiceType=0x80` during the call and gone after.
+Log lines to read: `CallFgService`, `CallAudio`, `CallBridge` in `logcat`; `[Call] ongoing-call
+service ...` in the app log.
 
 ## Responsibilities
 

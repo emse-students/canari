@@ -12,6 +12,11 @@
     <string name="notif_channel_forms_desc">Rappels avant l\'ouverture des formulaires</string>
     <string name="notif_channel_calls_name">Appels Canari</string>
     <string name="notif_channel_calls_desc">Appels entrants (sonnerie)</string>
+    <!-- The ongoing-call notification of CallForegroundService (WP-C-BG-A). Its CONTENT (the name,
+         the status line) comes from the page's Paraglide messages; only the channel is named here,
+         because Android names a channel once, at creation, from the app's resources. -->
+    <string name="notif_channel_call_ongoing_name">Appel en cours</string>
+    <string name="notif_channel_call_ongoing_desc">La notification affichée pendant un appel, avec le bouton pour raccrocher</string>
     <string name="notif_channel_mentions_name">Mentions Canari</string>
     <string name="notif_channel_mentions_desc">Messages qui vous mentionnent (@)</string>
     <string name="notif_channel_reactions_name">Réactions à vos messages</string>
