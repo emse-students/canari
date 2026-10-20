@@ -166,7 +166,9 @@ session found the worker counting a failed decrypt as `decryptOk` (fixed: `decry
 | Two Chrome 155 contexts connect DIRECT (`host/udp->host/udp`) through the real relay, the REAL `encryption.worker.ts` encrypts and decrypts Opus, and the callee hears the caller's 440 Hz tone (RMS 0.71, peak 445 Hz) | a scratch page mirroring `CallService`'s negotiation, by hand, chrome-devtools MCP; a wrong key yields only `decryptError` and no decoded sample |
 | The signalling socket survives an idle call | the same run: one socket held 3.6 h with only the keepalive pings, then every 25 s - every 10 s, and answered, since 2026-10-19 (local, no proxy in front) |
 
-**NOT verified - owed:** the real app end to end (no local estate was up); a TURN-relayed call;
+**NOT verified - owed:** the real app end to end (no local estate was up); a TURN-relayed call
+(read since, forced from outside the app on desktops and both phones, 2026-10-20 - see the TURN
+paragraph below);
 anything on the Mi 9T or the iPhone (Android System WebView's and
 WKWebView's `RTCRtpScriptTransform`, the late-receiver behaviour on WebKit, microphone permission in
 the Tauri WebViews, audio routing); cellular and campus networks; the host nginx's 60 s timeout and
@@ -688,8 +690,10 @@ becomes `bun callpeer.mjs --browser w3 --launch --url https://dev.canari-emse.fr
 ([README](../../../../tools/cross-client-harness/README.md#callpeermjs---a-desktop-chrome-as-the-other-end-of-a-phone-call)).
 
 **TURN / server.** Every row runs `host/udp` on loopback; nothing here exercises TURN. The phone
-reading's `TURN CreatePermission error response` (403 and 600, CALL-TURN) is a dev TURN credential
-or binding question and stays listed there; no production setting was read or changed.
+reading's `TURN CreatePermission error response` (403 and 600, CALL-TURN) is NOT a credential
+fault: Cloudflare refusing relay pairs to private or IPv6 peers that could never carry media, none
+when both ends relay; and the relayed path itself carries clean E2E audio over UDP, TCP and TLS 443
+([readings, 2026-10-20 afternoon](../../device-readings-2026-10.md#2026-10-20-afternoon---v131-alpha4-across-networks-forced-relay-tcp-and-tls-turn-a-nated-hotspot)).
 
 ## CALL-E2E-BYPASS-MI9T (2026-10-20) - Chromium short-circuits a transform assigned one task late
 
