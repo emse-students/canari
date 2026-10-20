@@ -243,6 +243,8 @@ class FakePeerConnection {
   outboundPackets: number | null = null;
   /** Video RTP packets sent; `null` = no outbound video stream. */
   videoOutboundPackets: number | null = null;
+  /** Video RTP packets received; `null` = no inbound video stream. */
+  videoInboundPackets: number | null = null;
   /** `addTrack` calls that REUSED a transceiver the peer's offer created. */
   reusedByAddTrack = 0;
   /**
@@ -270,6 +272,13 @@ class FakePeerConnection {
         type: 'outbound-rtp',
         kind: 'video',
         packetsSent: this.videoOutboundPackets,
+      });
+    }
+    if (this.videoInboundPackets !== null) {
+      stats.set('in-v', {
+        type: 'inbound-rtp',
+        kind: 'video',
+        packetsReceived: this.videoInboundPackets,
       });
     }
     if (this.inboundPackets !== null) {
@@ -755,13 +764,23 @@ describe('the E2E worker report (2026-10-19)', () => {
     await vi.advanceTimersByTimeAsync(4_999);
     workerAnswers.reads = [];
     await vi.advanceTimersByTimeAsync(1);
-
-    expect(lines()).toContain(
-      '[Call] ERROR E2E path check (5 s after connected): media flowed AROUND the transform on sender:audio and receiver:audio (packets sent audio=250 video=0 received audio=248 video=0; frames sender:audio=0 receiver:audio=0)'
-    );
-    // The packets are read BEFORE the frames: a first packet between the two reads cannot look
-    // like a bypass (frames read later can only be ahead).
+    // The first reading is the proof's baseline: packets with no frame YET are too young to judge.
     expect(workerAnswers.reads).toEqual(['stats', 'report']);
+    expect(get(service.callState)).toBe('incall');
+    expect(
+      lines().some((l) =>
+        l.startsWith(
+          '[Call] E2E path check (5 s after connected): not yet judged: sender:audio carried packets, no frame yet, receiver:audio carried packets, no frame yet'
+        )
+      )
+    ).toBe(true);
+
+    pc.outboundPackets = 500;
+    pc.inboundPackets = 496;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] ERROR E2E path check (re-check): media flowed AROUND the transform on sender:audio and receiver:audio (previous check packets sent audio=250 video=0 received audio=248 video=0; now packets sent audio=500 video=0 received audio=496 video=0; frames sender:audio=0 receiver:audio=0)'
+    );
     expect(lines()).toContain('[Call] terminal failure: E2E transform bypassed - ending call');
     expect(vi.mocked(showToast)).toHaveBeenCalledWith(m.call_e2e_bypassed(), 'error');
     expect(get(service.callState)).toBe('ended');
@@ -856,11 +875,45 @@ describe('the E2E worker report (2026-10-19)', () => {
 
     await turnCameraOn(service);
     pc.videoOutboundPackets = 120;
+    // The peer's camera is off: our video m-line receives nothing.
+    pc.directions.set(pc.senders.length - 1, 'sendonly');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(get(service.callState)).toBe('incall');
+    pc.videoOutboundPackets = 240;
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] ERROR E2E path check (after the camera was added): media flowed AROUND the transform on sender:video (packets sent audio=250 video=120 received audio=251 video=0; frames sender:video=0)'
+      '[Call] ERROR E2E path check (re-check): media flowed AROUND the transform on sender:video (previous check packets sent audio=250 video=120 received audio=251 video=0; now packets sent audio=250 video=240 received audio=251 video=0; frames sender:video=0)'
     );
     expect(get(service.callState)).toBe('ended');
+  });
+
+  it('never ends a healthy call for a peer camera whose first frame is still in flight (review of #2159)', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    // The peer turns its camera on 3 s after connected: its check JOINS the pending one.
+    await vi.advanceTimersByTimeAsync(3_000);
+    pc.remoteOfferAdds('video');
+    // Its first packets are counted, its first frame is not complete yet.
+    pc.videoInboundPackets = 12;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(
+      lines().some((l) =>
+        l.startsWith(
+          '[Call] E2E path check (5 s after connected, after a new video m-line): not yet judged: receiver:video carried packets, no frame yet'
+        )
+      )
+    ).toBe(true);
+    expect(get(service.callState)).toBe('incall');
+
+    // The frame went through the receiver transform: conclusive, nothing ended.
+    workerAnswers.video = { sender: 0, receiver: 30 };
+    pc.videoInboundPackets = 400;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] E2E path check (re-check): no media around the transform (packets sent audio=250 video=0 received audio=251 video=400)'
+    );
+    expect(get(service.callState)).toBe('incall');
   });
 
   it('re-checks a camera whose negotiation outlasted the check, and catches its bypass then (review S1)', async () => {
@@ -874,45 +927,87 @@ describe('the E2E worker report (2026-10-19)', () => {
     pc.directions.set(cam, null);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(lines()).toContain(
-      '[Call] E2E path check (after the camera was added): nothing around the transform, not yet judged: video m-line not negotiated yet (packets sent audio=250 video=0 received audio=251 video=0) - re-check 1/6'
+      '[Call] E2E path check (after the camera was added): not yet judged: video m-line not negotiated yet (packets sent audio=250 video=0 received audio=251 video=0) - re-checking, at most 6 times'
     );
     expect(get(service.callState)).toBe('incall');
 
-    // Negotiated, and the camera's packets flow with no frame through its transform.
-    pc.directions.delete(cam);
+    // Negotiated, sending only (the peer's camera is off), packets and no frame through its
+    // transform: too young once, then a bypass against that reading.
+    pc.directions.set(cam, 'sendonly');
     pc.videoOutboundPackets = 120;
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(lines()).toContain(
-      '[Call] ERROR E2E path check (re-check): media flowed AROUND the transform on sender:video (packets sent audio=250 video=120 received audio=251 video=0; frames sender:video=0)'
-    );
+    expect(get(service.callState)).toBe('incall');
+    pc.videoOutboundPackets = 240;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(
+      lines().some((l) =>
+        l.startsWith(
+          '[Call] ERROR E2E path check (re-check): media flowed AROUND the transform on sender:video'
+        )
+      )
+    ).toBe(true);
     expect(get(service.callState)).toBe('ended');
   });
 
-  it('stops re-checking after its budget, and checks again when a negotiation completes', async () => {
+  it('stops re-checking after its budget, withdraws the claim, and re-checks when media starts (review of #2159)', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    const epoch = workerAnswers.epoch;
+    inPath('sender', epoch);
+    inPath('receiver', epoch);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const camTrack = (await turnCameraOn(service)) as { onunmute?: (() => void) | null };
+    pc.directions.set(pc.senders.length - 1, null);
+    await vi.advanceTimersByTimeAsync(5_000 * (CALL_E2E_PATH_RECHECKS + 1));
+    // ONE line for an unchanged verdict, not one per re-check.
+    expect(lines().filter((l) => l.includes('not yet judged'))).toHaveLength(1);
+    expect(lines()).toContain(
+      `[Call] WARN E2E path check (re-check): still not judged after ${CALL_E2E_PATH_RECHECKS} re-checks (video m-line not negotiated yet; packets sent audio=250 video=0 received audio=251 video=0) - waiting for media to start`
+    );
+    expect(get(service.e2eProven)).toBe(false);
+    // The re-checks' reports are not logged: a report per re-check is noise.
+    expect(lines().filter((l) => l.includes('E2E worker report (re-check)'))).toHaveLength(0);
+    // Nothing more until something starts media.
+    const before = lines().length;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(
+      lines()
+        .slice(before)
+        .some((l) => l.includes('E2E path check'))
+    ).toBe(false);
+
+    // The camera unmutes, negotiated now: conclusive, and the claim comes back.
+    pc.directions.delete(pc.senders.length - 1);
+    pc.videoOutboundPackets = 100;
+    pc.videoInboundPackets = 100;
+    workerAnswers.video = { sender: 90, receiver: 90 };
+    camTrack.onunmute?.();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] E2E path check (after the camera unmuted): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
+    );
+    expect(get(service.e2eProven)).toBe(true);
+  });
+
+  it('a negotiation reaching stable re-checks media the last check could not judge', async () => {
     const { service, pc, lines } = await connectedCall();
     pc.outboundPackets = 250;
     pc.inboundPackets = 251;
     await vi.advanceTimersByTimeAsync(5_000);
-    const camTrack = await turnCameraOn(service);
-    pc.directions.set(
-      pc.senders.findIndex((x) => x.track === camTrack),
-      null
-    );
+    await turnCameraOn(service);
+    pc.directions.set(pc.senders.length - 1, null);
     await vi.advanceTimersByTimeAsync(5_000 * (CALL_E2E_PATH_RECHECKS + 1));
-    expect(lines().filter((l) => l.includes('- re-check '))).toHaveLength(CALL_E2E_PATH_RECHECKS);
-    expect(lines()).toContain(
-      `[Call] WARN E2E path check (re-check): still not judged after ${CALL_E2E_PATH_RECHECKS} re-checks (video m-line not negotiated yet; packets sent audio=250 video=0 received audio=251 video=0) - waiting for the next negotiation`
-    );
-    // Nothing more until the next negotiation completes.
-    await vi.advanceTimersByTimeAsync(20_000);
-    expect(lines().filter((l) => l.includes('E2E path check (re-check)'))).toHaveLength(
-      CALL_E2E_PATH_RECHECKS
-    );
+    // The answer lands: the m-line is negotiated and the camera's frames go through its transform.
+    pc.directions.delete(pc.senders.length - 1);
+    pc.videoOutboundPackets = 100;
+    pc.videoInboundPackets = 100;
+    workerAnswers.video = { sender: 90, receiver: 90 };
     pc.signalingState = 'stable';
     (pc.onsignalingstatechange as unknown as () => void)();
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(lines().some((l) => l.includes('E2E path check (after a negotiation completed)'))).toBe(
-      true
+    expect(lines()).toContain(
+      '[Call] E2E path check (after signalling reached stable): no media around the transform (packets sent audio=250 video=100 received audio=251 video=100)'
     );
     expect(get(service.callState)).toBe('incall');
   });
@@ -955,8 +1050,10 @@ describe('the E2E worker report (2026-10-19)', () => {
     expect(lines()).toContain('[Call] E2E sender transform armed, no track yet (video)');
   });
 
-  it('WITHDRAWS the claim when the worker can no longer be asked (review L4)', async () => {
-    const { service, lines } = await connectedCall();
+  it('WITHDRAWS the claim when the worker can no longer be asked, re-checks, and only an answered check returns it (review of #2159)', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
     const epoch = workerAnswers.epoch;
     inPath('sender', epoch);
     inPath('receiver', epoch);
@@ -967,6 +1064,58 @@ describe('the E2E worker report (2026-10-19)', () => {
       '[Call] WARN E2E claim withdrawn (5 s after connected): the worker cannot be asked'
     );
     expect(get(service.e2eProven)).toBe(false);
+    // Frame evidence alone does not bring it back while withdrawn.
+    inPath('sender', epoch);
+    inPath('receiver', epoch);
+    expect(get(service.e2eProven)).toBe(false);
+    // The worker answers again: the scheduled re-check concludes, and the claim returns.
+    workerAnswers.report = { sender: 500, receiver: 501 };
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] E2E path check (re-check): no media around the transform (packets sent audio=250 video=0 received audio=251 video=0)'
+    );
+    expect(get(service.e2eProven)).toBe(true);
+  });
+
+  it("a check of a REPLACED peer connection cannot withdraw the new one's claim", async () => {
+    const { service, lines } = await connectedCall();
+    workerAnswers.report = null;
+    // The check of the first peer connection is in flight (waiting for its answer)...
+    await vi.advanceTimersByTimeAsync(5_000);
+    // ...when the relay pairs us again and the new peer connection proves its transforms.
+    FakeSocket.instances[0].deliver({ type: 'PeerReady', initiator: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await settle();
+    const epoch = workerAnswers.epoch;
+    inPath('sender', epoch);
+    inPath('receiver', epoch);
+    expect(get(service.e2eProven)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(lines().some((l) => l.includes('dropped: its peer connection was replaced'))).toBe(true);
+    expect(get(service.e2eProven)).toBe(true);
+  });
+
+  it('the end report after a REBUILT peer connection does not accuse a side its own check never judged', async () => {
+    workerAnswers.report = { sender: 250, receiver: 251 };
+    const { service, pc } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    await vi.advanceTimersByTimeAsync(5_000);
+    FakeSocket.instances[0].deliver({ type: 'PeerReady', initiator: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await settle();
+    // The new peer connection's transforms have no frame yet when the call ends.
+    workerAnswers.report = { sender: 0, receiver: 0 };
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    const end = vi
+      .mocked(appendLog)
+      .mock.calls.map(([l]) => String(l))
+      .find((l) => l.includes('E2E worker report (call end'));
+    expect(end).toBeDefined();
+    expect(end).not.toContain('ERROR');
   });
 
   it('does not accuse an empty side at the end of a call shorter than the 5 s report', async () => {

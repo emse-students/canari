@@ -1,3 +1,3 @@
-### Fixed - a call's E2E path check could pass trivially on a camera still negotiating (dev builds only)
+### Fixed - a call's E2E path check could pass trivially on a camera still negotiating, or end a healthy call on a peer camera's first frame (dev builds only)
 
-The check now re-checks media it could not judge yet and again when a negotiation completes, keeps its earliest deadline, judges and reports the current peer connection's frames only, and a worker that stops answering withdraws the "encrypted end to end" claim ([calls](docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).
+A bypass is now judged against the previous check's packets, never a frame still in flight; media the check cannot judge is re-checked, then the claim is withdrawn until media starts; a pending check keeps its earliest deadline; a worker that stops answering withdraws the "encrypted end to end" claim until an answered check returns it ([calls](docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).

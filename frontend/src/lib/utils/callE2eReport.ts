@@ -237,9 +237,12 @@ export function framesFor(
  * was (the other party's ciphertext fed to the decoder). Empty when every flowing kind went through
  * the worker, or when nothing flowed (nothing to prove either way).
  *
- * A PROOF from two counters, never a timeout - provided the packets were read BEFORE the frames:
- * a frame passes the sender transform before its packet leaves, and a received packet reaches the
- * receiver transform after it was counted, so frames read later can only be ahead. On Chromium a
+ * A PROOF from two counters, never a timeout - provided `packets` were read a CHECK EARLIER than
+ * the frames (`CallService.checkE2eInPath`). Read just before them is not enough: a frame passes
+ * the sender transform before its packets leave, but `packetsReceived` counts packets and a video
+ * frame reaches the receiver transform only once all its packets are in, so a stream whose first
+ * packets just landed has packets and no frame yet. Called with this read's packets, the result is
+ * what is not proven YET, never a verdict. On Chromium a
  * short-circuited transform keeps its transformer and is simply never fed (CALL-E2E-BYPASS-MI9T,
  * 2026-10-20, measured on the Mi 9T's WebView 152 and desktop Chrome 155). Per KIND because a
  * camera added mid-call is its own sender, and can be short-circuited while the audio is not; per
@@ -305,4 +308,9 @@ export function inconclusiveMedia(
     }
   }
   return [...out];
+}
+
+/** The packet counts as the path check's log fragment. */
+export function describePacketCounts(p: RtpPacketCounts): string {
+  return `packets sent audio=${p.sent.audio} video=${p.sent.video} received audio=${p.received.audio} video=${p.received.video}`;
 }
