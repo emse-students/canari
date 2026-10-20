@@ -34,8 +34,9 @@ tauri-plugin-http = { version = "2.8", default-features = false, features = ["ru
 tauri-plugin-deep-link = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2.7"
-# EXACT, and PATCHED (`[patch.crates-io]` below): the app supplies the TCP connect. An unpatched
-# version's `Builder::new` takes no connector (and its `init()` exists), so the app's
+# EXACT, and PATCHED (`[patch.crates-io]` below): the app supplies the TCP connect. The vendored
+# patch (`patches/tauri-plugin-websocket`) makes `Builder::new` TAKE the connector and removes
+# `init()` and `Default`; an unpatched upstream `Builder::new` takes no argument, so the app's
 # `Builder::new(happy_eyeballs::tcp_connector())` fails to COMPILE rather than install silently.
 tauri-plugin-websocket = "=2.5.0"
 tauri-plugin-log = "2"

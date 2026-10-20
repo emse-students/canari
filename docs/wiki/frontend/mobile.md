@@ -395,7 +395,9 @@ call invite for as long as it stayed on that network (CALL-WS-V6,
 - **Closing a late socket is necessary, not harmless.** Whatever the gateway sent it before the close
   is lost to this device: on connect the gateway drains `pending_welcome_notify:{user}` into the new
   socket and deletes the key once the send succeeded (`apps/chat-gateway/src/handlers.rs`), so a late
-  socket can consume those signals; the delivery service's FCM resend of a still-pending
+  socket can consume those signals - and so can an ON-TIME one, whose frames may reach the plugin's
+  Channel before the page has called `addListener` (the P3 "the vendored websocket plugin" in
+  [backlog](../backlog.md)); the delivery service's FCM resend of a still-pending
   `welcome_request` is what covers them. The cure is the connect being fast, which is what the race is
   for; the close only stops the ghost from going on consuming.
 
