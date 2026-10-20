@@ -443,7 +443,14 @@ const settle = async () => {
   await flushMacrotask();
 };
 
+// EVERY test runs on a fake clock, never the real one (2026-10-20). A call a test leaves up has a
+// 5 s path check armed on `window.setTimeout`: on the real clock it FIRED seconds later, inside
+// whichever test happened to be running, ended its service and wrote a "call end" worker report
+// into a neighbour's `appendLog` (1 run in ~15 failed 'owes no report for a call that never
+// connected'). A fake clock is thrown away with its test, so nothing outlives it. `setTimeout` only:
+// the harness's own yields (`flushMacrotask`) hold the real one.
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   server.ringTimeoutMs = 60_000;
   server.initiateStatus = 200;
   server.iceStatus = 200;
@@ -485,6 +492,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
