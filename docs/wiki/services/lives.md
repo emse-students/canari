@@ -547,10 +547,10 @@ The user's answers to the open moderation questions. **None is built**; the work
 
 | Question | Decision | What it changes in what exists |
 | --- | --- | --- |
-| Strike policy | **Warning, then suspension, then withdrawal.** 1st abuse: a warning and the live is cut. 2nd: the right to broadcast is SUSPENDED. 3rd: the right is WITHDRAWN, **decided by staff** | Today a cut is recorded and counted (`priorCuts`, `broadcasterCuts`) and nothing follows; the only sanction is the posting mute, which also silences posts, so a suspension of broadcasting is a NEW state beside it (the moderation table above says "no ban state other than the mute"). **OPEN: how long a suspension lasts** - the answer did not say |
-| Cut retention | **90 days** | `LIVE_CUT_RETENTION_MS` is 365 days; register row C20 now says 90. The ladder counts cuts, so a 90-day purge forgets the first offence: **OPEN whether the ladder counts every cut still on record, which makes it a rolling window** |
+| Strike policy | **Warning, then suspension, then withdrawal.** 1st abuse: a warning and the live is cut. 2nd: the right to broadcast is SUSPENDED. 3rd: the right is WITHDRAWN, **decided by staff** | Today a cut is recorded and counted (`priorCuts`, `broadcasterCuts`) and nothing follows; the only sanction is the posting mute, which also silences posts, so a suspension of broadcasting is a NEW state beside it (the moderation table above says "no ban state other than the mute"). **A suspension lasts 30 days** (decided 2026-10-20) |
+| Cut retention | **90 days** | `LIVE_CUT_RETENTION_MS` is 365 days; register row C20 now says 90. **The ladder counts the cuts still on record: a rolling 90 days**, so an abuse older than 90 days is forgotten (decided 2026-10-20) |
 | Automatic cut on N reports | **No** - staff cut by hand only | Matches the code (a live is never cut by a count); posts keep their own auto-hide at 5 |
-| Response time to the stores | **24 hours** for live reports | Nothing measures it: the queue has no age alarm. A commitment with no report is found by hand, a day late (CLAUDE.md): the oldest pending report's age must be measured and reported |
+| Response time to the stores | **24 hours on WORKING DAYS** for live reports (decided 2026-10-20) | Nothing measures it: the queue has no age alarm. A commitment with no report is found by hand, a day late (CLAUDE.md): the oldest pending report's age must be measured and reported |
 | First-live rules text | **The posts' publication rules, no live-specific clause** | The sheet's four `live_rules_*` lines are live-specific. **No standalone "posts publication rules" text exists**: what posts are judged by is the terms of use, section 6 ([moderation-and-blocking](../moderation-and-blocking.md)); the sheet must show or link that text, and `LIVE_RULES_VERSION` rises when it does |
 | Viewer cap | **None wanted** ("Je ne veux pas de plafond") | The cap is 24 and stays in code until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured; it is the wish of L8 (2026-10-15) again, which the cap was the honest answer to |
 
@@ -565,18 +565,20 @@ implies, none of it built:
   that CASCADES (C1), so the line must be COPIED into a table that does not cascade, at report time,
   with its author, its `clientId` and the report id. Erasure is then ONE rule on durable state: the
   report's handled flag, never a timer.
-- **A kept ciphertext opens with the live key, and the live key goes with the live row.** Keeping
-  the line without what opens it keeps nothing readable. Either the key is kept too, for as long as
-  a report on that live is open (a longer life for a secret that protects the whole live, whose
-  other segments and lines are already deleted), or the reporter's client hands over the plaintext
-  (the privacy decision that kept `message` out of `content_reports`; C12 gives the server no
-  plaintext). **OPEN, and a crypto review's question.**
+- **The line is read WITHOUT keeping the live key (chosen design, 2026-10-20).** The reporter's client
+  hands over the plaintext it sees, and the server SIGNS what it received so staff can tell it from
+  an invention; the live key still goes with the live row. The signature binds the plaintext to the
+  live, the message's sequence and author, the sealed bytes the server holds and the reporter - and
+  it proves only that this reporter submitted that text, never that the author wrote it. Server
+  work (WP-L8b): the hand-over route, the signing key and its rotation, and a staff view that says
+  "as reported by X". This gives the server plaintext it never had, so `message`
+  entering a report is a privacy decision the terms and register row C20 must state.
 - **A new report type** (`live_chat`, naming the live and the message, once per person per message)
   and a staff view showing the line to a moderator, who then reads text the server could not before.
   The terms, the privacy policy and register row C20 must say so.
 - **"Until handled" has no upper bound.** Handled is a person's act; an unhandled report would keep a
   private message for ever. The 24 h commitment bounds it in practice, and a pending report older
-  than that is the alarm (WP-L8b item e). **OPEN whether to add a hard ceiling.**
+  than that is the alarm (WP-L8b item e). **STILL OPEN whether to add a hard ceiling.**
 - **An erased account** (the erasure statements) must also erase its kept lines and the copies tied
   to its reports, or the erasure is incomplete.
 

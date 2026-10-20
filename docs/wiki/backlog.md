@@ -39,15 +39,15 @@ the first-live rules acceptance is recorded and required ([lives](services/lives
 once `notif_social_live_cut_*` exist in both native apps. **DECIDED BY THE USER, 2026-10-20** (substance and contradictions with what exists:
 [lives](services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience)): strike policy =
 warning, then suspension, then withdrawal by staff; a cut is kept **90 days**; **no automatic cut on N
-reports**; live reports answered within **24 hours**; **a reported chat message is kept (encrypted,
+reports**; live reports answered within **24 hours on working days**; **a reported chat message is kept (encrypted,
 for staff) until handled** - this REVERSES C2's "no grace period"; floating reactions = heart, laugh,
 bravo, fire, the canary chick; the first-live rules reuse the posts' publication rules; **no viewer cap
 wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)).
 **Owed, code, NOT built (WP-L8b):** (a) the strike ladder: a warning notice on the first cut, a
-SUSPENSION state apart from the mute (its length is an OPEN question), a withdrawal only staff can
-set, `LIVE_CUT_RETENTION_MS` 365 -> 90 days; (b) the REPORTED chat line: a `live_chat` report type, a
-copy of the sealed line AND what opens it (the live key is deleted with the live row) that survives
-the cascade, a staff reader, erasure once the report is handled
+SUSPENSION state apart from the mute (30 days), a withdrawal only staff can set, a ladder counting
+the cuts of the last rolling 90 days, `LIVE_CUT_RETENTION_MS` 365 -> 90 days; (b) the REPORTED chat line: a `live_chat` report type, a
+copy of the sealed line that survives the cascade, the PLAINTEXT handed over by the reporter and
+signed by the server (the live key is NOT kept), a staff reader, erasure once the report is handled; still open: the erased account and an upper bound on "until handled"
 ([lives](services/lives.md#a-reported-chat-line-is-kept-until-handled-reverses-c2)); (c) the five
 reaction kinds in `LIVE_REACTION_KINDS`, the picker, labels and Noto pictures; (d) the rules sheet
 showing the posts' rules; (e) the age of the oldest pending report measured and reported, so the 24 h
