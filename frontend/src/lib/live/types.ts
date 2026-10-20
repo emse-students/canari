@@ -59,8 +59,8 @@ export interface LiveManifest {
   chat?: LiveChatBlock;
 }
 
-/** The five floating reactions (C8), the server's `LIVE_REACTION_KINDS`. */
-export type LiveReactionKind = 'like' | 'love' | 'laugh' | 'happy' | 'canari';
+/** The five floating reactions (decided 2026-10-20), the server's `LIVE_REACTION_KINDS`. */
+export type LiveReactionKind = 'like' | 'laugh' | 'clap' | 'fire' | 'canari';
 
 /** One message of the chat as the poll serves it: ciphertext under the live key, base64 (C12). */
 export interface LiveChatMessageWire {

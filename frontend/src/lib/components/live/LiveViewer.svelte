@@ -29,6 +29,7 @@
   import LiveBadge from './LiveBadge.svelte';
   import LiveIdentity from './LiveIdentity.svelte';
   import LiveReportControl from './LiveReportControl.svelte';
+  import LiveChatReportDialog from './LiveChatReportDialog.svelte';
   import LiveChatPanel from './LiveChatPanel.svelte';
   import LiveReactionBar from './LiveReactionBar.svelte';
   import LiveReactionsLayer from './LiveReactionsLayer.svelte';
@@ -86,6 +87,8 @@
   // The live chat (WP-L6): one session riding the player's poll, drawn by the panel and the layer.
   let chat: LiveChatSession | null = null;
   let chatLines = $state<readonly LiveChatLine[]>([]);
+  /** The chat line whose report dialog is open (a viewer's flag), or null. */
+  let reportedLine = $state<LiveChatLine | null>(null);
   let chatMaxChars = $state<number | null>(null);
   // The key from the player, and the account READ REACTIVELY: an account that loads after the viewer
   // opened enables the composer then, not never.
@@ -347,6 +350,12 @@
 
     <LiveReactionsLayer bind:this={reactions} />
 
+    <LiveChatReportDialog
+      liveId={live.id}
+      line={reportedLine}
+      onClose={() => (reportedLine = null)}
+    />
+
     {#if !terminal}
       <div
         class="from-cn-scrim/60 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
@@ -362,6 +371,7 @@
               retry={(id) => void chat?.retry(id)}
               discard={(id) => chat?.discard(id)}
               hide={(id) => void chat?.hide(id)}
+              report={(line) => (reportedLine = line)}
             />
           {/if}
         </div>

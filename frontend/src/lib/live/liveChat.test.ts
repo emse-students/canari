@@ -14,6 +14,7 @@ import {
   LiveChatSession,
   isLiveOverRefusal,
   liveChatSendFailure,
+  LIVE_REACTION_KINDS,
   liveReactionEmoji,
   type LiveChatDeps,
   type LiveChatLine,
@@ -310,10 +311,10 @@ describe('reactions', () => {
   it("caps a burst at the server's taps per window; past it a tap still floats", () => {
     const s = session();
     s.setLimits({ chatMessageMaxChars: 300, reactionTapsPerWindow: 2 });
-    for (let i = 0; i < 4; i++) s.tap('love');
+    for (let i = 0; i < 4; i++) s.tap('fire');
     expect(floats).toHaveLength(4);
     s.query();
-    expect(deps.postReactions.mock.calls[0][2]).toEqual({ love: 2 });
+    expect(deps.postReactions.mock.calls[0][2]).toEqual({ fire: 2 });
   });
 
   it('drops a refused burst and says so - never retried', async () => {
@@ -322,7 +323,7 @@ describe('reactions', () => {
       refusal('rate-limited', 429, 'LIVE_REACTION_TOO_FAST')
     );
     const s = session();
-    s.tap('happy');
+    s.tap('clap');
     s.query();
     await vi.waitFor(() => expect(warn).toHaveBeenCalled());
     s.query();
@@ -330,9 +331,12 @@ describe('reactions', () => {
     warn.mockRestore();
   });
 
-  it('draws the post reaction set: the same emoji for the same name', () => {
+  it('draws the five kinds: the shared names keep the post emoji, bravo and fire are new', () => {
     expect(liveReactionEmoji('canari')).toBe('🐤');
     expect(liveReactionEmoji('like')).toBe('❤️');
+    expect(liveReactionEmoji('clap')).toBe('👏');
+    expect(liveReactionEmoji('fire')).toBe('🔥');
+    expect(LIVE_REACTION_KINDS).toEqual(['like', 'laugh', 'clap', 'fire', 'canari']);
   });
 });
 

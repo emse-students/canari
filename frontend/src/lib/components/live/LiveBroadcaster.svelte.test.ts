@@ -188,10 +188,11 @@ describe('LiveBroadcaster', () => {
     await settle();
     const sheet = q('[data-live-rules]')!;
     for (const line of [
-      m.live_rules_no_harassment(),
       m.live_rules_no_illegal(),
-      m.live_rules_cut(),
-      m.live_rules_responsible(),
+      m.live_rules_no_sexual(),
+      m.live_rules_no_harassment(),
+      m.live_rules_no_malware(),
+      m.live_rules_sanction(),
     ]) {
       expect(sheet.textContent).toContain(line);
     }

@@ -125,6 +125,32 @@ export async function createReport(
   });
 }
 
+/**
+ * Reports ONE line of a live chat (`contentType: 'live_chat'`, WP-L8b). `contentId` is the
+ * message's server id, `liveId` names its live, and `message` is the plaintext the reporter's
+ * client opened - the server cannot read it (the live key goes with the live), so it signs what it
+ * receives for staff ([lives](docs/wiki/services/lives.md), "A reported chat line is kept until
+ * handled"). The reported account is read by the server from its own row, never sent. Throws
+ * {@link ModerationApiError}.
+ */
+export async function createLiveChatReport(report: {
+  liveId: string;
+  messageId: string;
+  reason: 'spam' | 'harassment' | 'inappropriate' | 'other';
+  message: string;
+}): Promise<ContentReport> {
+  return request<ContentReport>('/api/moderation/reports', {
+    method: 'POST',
+    body: JSON.stringify({
+      contentType: 'live_chat',
+      contentId: report.messageId,
+      liveId: report.liveId,
+      reason: report.reason,
+      message: report.message,
+    }),
+  });
+}
+
 /** Returns all content reports. Requires MODERATE flag or global admin. */
 export async function listReports(): Promise<ContentReport[]> {
   return request<ContentReport[]>('/api/moderation/reports');

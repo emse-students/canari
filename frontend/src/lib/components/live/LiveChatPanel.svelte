@@ -7,11 +7,11 @@
    * Plain text only (C15): a line is a text node with its emoji drawn as Noto SVG (`EmojiText`),
    * never markup, never a link. The list is a `log` live region, so a screen reader reads new lines
    * politely. `canModerate` (the broadcaster, or staff) adds a hide button to every line not one's
-   * own (C14); hiding one's own line is the same route, offered too.
+   * own (C14); `report` (a viewer) adds a flag to every line not one's own; hiding one's own line is the same route, offered too.
    */
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import { EyeOff, RotateCcw, SendHorizontal, Trash2 } from '@lucide/svelte';
+  import { EyeOff, Flag, RotateCcw, SendHorizontal, Trash2 } from '@lucide/svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { LiveChatLine, LiveChatSendFailure } from '$lib/live/liveChat';
@@ -29,6 +29,8 @@
     retry(clientId: string): void;
     discard(clientId: string): void;
     hide(messageId: string): void;
+    /** Report one line of someone else's (a viewer's flag); absent where reporting is not offered. */
+    report?(line: LiveChatLine): void;
   }
 
   let {
@@ -40,6 +42,7 @@
     retry,
     discard,
     hide,
+    report,
   }: Props = $props();
 
   let draft = $state('');
@@ -175,18 +178,32 @@
           >
             <Trash2 size={18} />
           </button>
-        {:else if canModerate && line.id !== null}
-          {@const id = line.id}
-          <button
-            type="button"
-            class="ui-icon-button shrink-0 rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white"
-            aria-label={m.live_chat_hide()}
-            title={m.live_chat_hide()}
-            onclick={() => hide(id)}
-            data-live-chat-hide
-          >
-            <EyeOff size={18} />
-          </button>
+        {:else}
+          {#if report && !line.mine && line.id !== null}
+            <button
+              type="button"
+              class="ui-icon-button shrink-0 rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white"
+              aria-label={m.live_chat_report()}
+              title={m.live_chat_report()}
+              onclick={() => report(line)}
+              data-live-chat-report
+            >
+              <Flag size={18} />
+            </button>
+          {/if}
+          {#if canModerate && line.id !== null}
+            {@const id = line.id}
+            <button
+              type="button"
+              class="ui-icon-button shrink-0 rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white"
+              aria-label={m.live_chat_hide()}
+              title={m.live_chat_hide()}
+              onclick={() => hide(id)}
+              data-live-chat-hide
+            >
+              <EyeOff size={18} />
+            </button>
+          {/if}
         {/if}
       </li>
     {/each}

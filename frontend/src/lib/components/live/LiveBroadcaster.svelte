@@ -329,11 +329,19 @@
           <h3 class="text-base font-bold">{m.live_rules_title()}</h3>
           <p class="text-sm text-white/80">{m.live_rules_intro()}</p>
           <ul class="flex list-disc flex-col gap-1 ps-5 text-sm text-white/90">
-            <li>{m.live_rules_no_harassment()}</li>
             <li>{m.live_rules_no_illegal()}</li>
-            <li>{m.live_rules_cut()}</li>
-            <li>{m.live_rules_responsible()}</li>
+            <li>{m.live_rules_no_sexual()}</li>
+            <li>{m.live_rules_no_harassment()}</li>
+            <li>{m.live_rules_no_malware()}</li>
           </ul>
+          <p class="text-sm text-white/80">{m.live_rules_sanction()}</p>
+          <a
+            href="/legal/cgu#regles"
+            class="text-sm font-semibold underline underline-offset-2"
+            data-live-rules-terms
+          >
+            {m.live_rules_terms_link()}
+          </a>
         </section>
       {/if}
 
