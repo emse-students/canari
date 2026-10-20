@@ -30,7 +30,7 @@ reached by API, and is unaffected.
 | L5 | How is a live announced? | **A LIVE card at the top of the feed for everyone**, plus a **push ONLY to the followers** of the member or association broadcasting. |
 | L6 | How is a live moderated? | **The broadcaster hides chat messages and removes viewers; any viewer can report; staff can cut a live remotely.** |
 | L7 | In what order? | **SUPERSEDED 2026-10-19 by [D1](#decisions-of-2026-10-19): lives come BEFORE the calls revival.** Was: revive calls first, then live. The user added that what mostly blocked calls is that **Apple App Review needs a VIDEO recording showing everything works** (still to do), on top of our own tests. |
-| L8 | Is there a viewer cap? | **No cap** - *"pas de plafond, mais la qualité du live ne sera pas si grande si ? quelle techno utilisent Twitch ou Facebook ?"*. **This CONFLICTS with what exists**: the call path sends one stream per viewer through Cloudflare TURN against a ~950 GB monthly budget ([below](#what-exists-read-from-the-code-on-2026-10-15)), and any other path still leaves through the host's own uplink, which is unknown and shared with the DSI. It is what forces the [architecture choice](#architecture-options-for-an-uncapped-audience), and the honest answer is **a cap set by the host's uplink, to be MEASURED**. |
+| L8 | Is there a viewer cap? | **No cap, CONFIRMED again 2026-10-20 ("Je ne veux pas de plafond"); the plan is [below](#uncapped-audience---the-plan-2026-10-20)** and the cap of 24 stays in code until it is measured. **No cap** - *"pas de plafond, mais la qualité du live ne sera pas si grande si ? quelle techno utilisent Twitch ou Facebook ?"*. **This CONFLICTS with what exists**: the call path sends one stream per viewer through Cloudflare TURN against a ~950 GB monthly budget ([below](#what-exists-read-from-the-code-on-2026-10-15)), and any other path still leaves through the host's own uplink, which is unknown and shared with the DSI. It is what forces the [architecture choice](#architecture-options-for-an-uncapped-audience), and the honest answer is **a cap set by the host's uplink, to be MEASURED**. |
 | L9 | How many lives at the same time? | **No cap.** |
 | L10 | Who is a follower, for the push? | **The existing relations**: `user_follows` for a member, `association_follows` for an association, minus `association_push_mutes`. |
 | L11 | Safety rules? | **Report, block, staff cut-off, and rules accepted before a member's first live.** Canari users are all adults (an engineering school, admission after prépa at the earliest), so **no age gate**. |
@@ -139,6 +139,120 @@ Three shapes, compared honestly.
   which contradicts C3 (*"il faut que la charge serveur soit minimale"*), unless the phone encodes two
   tiers itself, which doubles its uplink and its battery cost. So **one tier in v1**.
 
+## Uncapped audience - the plan (2026-10-20)
+
+The user, 2026-10-20: *"Je ne veux pas de plafond."* Nothing here is built and no infrastructure is
+touched; this is the work an uncapped audience needs, in the order it should be measured. **What the
+cap protects.** The cap of 24 ([the viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)) exists because every
+viewer's copy of every segment leaves the school host's uplink (~90 Mb/s measured, 3 Mb/s a viewer) from
+Canari's own nginx. Removing the number without removing that cost makes the host the victim: 1 000
+viewers are 3 Gb/s, 1.35 TB per live-hour (3 Mb/s x 3 600 s = 1.35 GB a copy), against a link shared
+with production, dev and the school's other sites.
+
+### What makes it possible: the segments are identical for every viewer
+
+A segment is ciphertext under the live key; its URL is two uuids, the second chosen at random by the
+server and learned only from the manifest; the public route checks nothing per viewer
+([lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4)). The content is protected by the KEY and
+the MANIFEST, never by the fetch, so a cache anywhere may hold the bytes without learning anything:
+**delivery can be offloaded without touching the seal, the key route or the removal rule.** What an
+edge copy adds to the threat model is retention outside the host: an ended live's ciphertext may
+outlive the live, harmless without a key (deleted with the row) but to be said in the register (C19)
+and bounded by a short edge TTL.
+
+### The delivery: sealed segments from a Cloudflare cache
+
+| Question | Reading |
+| --- | --- |
+| Can Canari put Cloudflare in front of `canari.emse.fr`? | **No.** The school owns that zone and refused to delegate it ([estate-migration](../../infrastructure/estate-migration.md)); production answers from the host's nginx with no `cf-ray` ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md) 1b). A CNAME-only setup of a subdomain is a paid-plan feature _(unverified, not read)_ and still needs the school's DNS record |
+| What can? | **A hostname on the `canari-emse.fr` zone, which is ours** and already proxied to a Cloudflare Tunnel: a name dedicated to segments, with a Cache Rule on `starts_with(http.request.uri.path, "/api/media/public/live/")` (the field is the PATH and the wildcard matches the whole path, [cloudflare-edge](../../infrastructure/cloudflare-edge.md#the-edge-caches-by-file-extension-not-by-what-the-origin-asks-for): a segment has no extension, so the default extension list never caches it) |
+| Who chooses the host? | **The server, in the manifest**, as a single `segmentBase` per estate: no client-side fallback to the origin (a fallback is a signal, never a path). Dev, where the edge is the only path, and a local estate answer their own value. The web app's CSP `connect-src 'self'` then needs that host added, and CORS must stop varying (below) |
+| Cache key | The path and nothing else: two uuids, so already unique per segment, immutable once written. The origin route already 404s any query and any non-canonical spelling, so no query can fan out keys |
+| Headers the origin must send | `Cache-Control: public, max-age=<short>` on a 200 only; **`no-store` on every other status** (a 404 for a not-yet-visible segment or a 410 for an ended live must never be cached); today media-service sets none and nginx's own cache decides locally. **No `Vary: Origin`**: the segment location echoes the caller's origin for CORS, and a shared cache holds ONE variant per key, so the first origin to fill it would be served to every other. A segment fetch needs no credentials, so a fixed `Access-Control-Allow-Origin: *` on that one location is the shape to measure |
+| TTL | Short, minutes: a viewer lags the live by 5-10 s and a manifest lists 10 segments, so a segment is useful for about a minute. Short TTL is also the bound on retention outside the host. A single-file purge by URL at the end is possible but is not the control (the key is) |
+| The path from edge to host | **The tunnel, which measured ~19 Mb/s on a MISS whatever the parallelism**, and it also carries dev and the SSH path ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md) 2b, 3d). Only MISSES cross it: one fetch per segment per edge location. At 3 Mb/s a live that one location fills costs the tunnel 3 Mb/s, so **about six lives whose segments are all missed**, whatever the audience - this is the number that replaces the cap, and it moves with how many edge locations the audience spans (**tiered caching** collapses them to one upper tier; its availability on this plan is _unverified_) |
+| The tunnel's weakness | It dropped in a 22h band in September and was not re-observed since ([cloudflare-edge](../../infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it)); a 1033 stops every live's segments at once. Viewers already past the cache would keep playing for the TTL. An accepted, stated failure mode, not one to hide behind a second path |
+| Cloudflare's terms | **The risk to settle FIRST.** The self-serve terms have restricted serving video or a disproportionate share of non-HTML content through the CDN unless a Cloudflare video or storage product carries it _(from memory of the published text, unverified against today's)_. Segments are exactly that content. Read the current terms and, if in doubt, ask Cloudflare before building: an account action would take the whole zone, production's old name included |
+| Cost | No per-GB charge for CDN traffic on the plans in use _(unverified)_; the alternatives that the terms bless are **R2** (an object store with no egress fee: sealed segments written there instead of Garage - a second store, a second erase path, and a change to the ingest) and **Stream** (transcodes, sees plaintext, per-minute price: refused by the E2E design). R2 is the one to price if the terms refuse the cache |
+| What it does NOT remove | Everything that is not a segment: the manifest, the key, the chat, the seats, below |
+
+### The manifest poll grows with the audience too
+
+Every viewer polls once a second, and each poll costs an `auth_request` sub-request, the watch-rule
+query, a Redis script renewing the seat and, with `chat=1`, the chat reads. **N viewers are N
+requests a second into social-service and Postgres, whose pool is 10 connections** (ingest alone may
+hold 4). At 24 that is invisible; at 1 000 it is the next wall, and the edge does nothing for it
+because the manifest is per-viewer by design (the segment names are the capability).
+
+- **Split the gate from the tail.** The decision "may this account watch" (spaces, blocks, removal,
+  seat) changes rarely; the tail (the last segments, the chat after a cursor, the reactions sums) is
+  the same for every viewer of a live. Check the gate on a lease (the 30 s seat lease already is one:
+  a poll inside it need not re-run the watch rule) and answer the tail from a one-second micro-cache
+  of Canari's nginx or a per-live in-process snapshot, keyed by the live id. One database read a second
+  per LIVE, not per viewer.
+- **What the tail may not carry per viewer today** and must stop carrying: the chat filtered by the
+  viewer's blocks (C10) and the viewer's own reaction bursts removed (C7). Both become the CLIENT's
+  job (it knows its blocks and its burst ids), which changes a statement: a blocked author's sealed
+  lines are then SERVED to the blocker's client and dropped there. Ciphertext the viewer holds the
+  key to, but it is a decision of the user's, not a refactor.
+- **Poll interval.** The picture is 5-10 s behind; a 2 s poll costs a second of chat latency and halves
+  the load. A server-told `pollAfterMs` (as `retryAfterMs` is told, never a constant in the client)
+  lets load shape itself without a deploy.
+- **Connections, the ceiling that remains.** A seated viewer holds up to four connections, three once
+  its segments come from the edge (app, WebSocket and its upstream leg). The shared host's proxy has
+  about 1 500 across ALL its sites and raising it is the school IT department's decision. **So even
+  with the edge, "no cap" is an audience of several hundred, not unbounded**, until the manifest too
+  stops reaching the host. That figure goes to the user as it is.
+
+### The viewer count is a signal, not a gate
+
+The seat sorted set (`live:seats`, one Lua script a poll) already knows who is watching within the
+30 s lease. Uncapped, the grant stops refusing and the set only COUNTS: `ZCARD` per live, shown to the
+broadcaster and, rounded, to viewers (**a decision**: whether viewers see a count at all). It stays
+the removal point (a removed viewer's seat is freed and its key refused) and the load figure the
+bitrate choice of D2 reads. A seat renewed every poll is N Redis scripts a second: renew once per
+lease interval, as the gate-on-a-lease change above does. `LIVE_FULL`, its screen and
+`LIVE_SEATS_UNAVAILABLE` (Redis down refused everyone, to protect a cap that no longer exists) change
+meaning: with no cap, a Redis outage should not stop playback - **a decision to state when the cap
+goes, not before**.
+
+### Abuse limits that are not a viewer cap
+
+A cap refuses a person; these refuse a behaviour and keep the door open to the next honest viewer.
+
+| Limit | Shape | Why it is not a cap |
+| --- | --- | --- |
+| Segment fetches per address | nginx `limit_req` exists (30 r/s burst 60). **`limit_conn ... 24` per address is the cap in disguise**: a lecture hall behind one campus address with 24+ viewers is refused. It must become a rate, or rise to a figure measured against the campus NAT | The same address may host a whole room |
+| Manifest polls per account per live | a floor on the interval (a poll faster than the told `pollAfterMs` / 2 answers `429` with `retryAfterMs` from the rows' clock, as the chat limits do) | Per account, so one viewer cannot cost a thousand |
+| Key reads per account per live | a count in durable state per rolling minute | A key is read once; a script reading it in a loop is the abuse |
+| Admission RATE per live | at most R new viewers a second per live, over that a `429` with a jittered `retryAfterMs` | **The push to the followers is a thundering herd**: a hundred notifications open the live in the same second. A rate smooths it and refuses nobody for good |
+| Chat and reactions | already per account per live (C6) | unchanged |
+| A global ceiling on the HOST's egress | a measured alarm, never a gate: when the origin's egress passes a threshold, a person decides | The alarm says "the plan failed", the cap said "no" |
+
+### Measurements before anything is activated
+
+Run on the LOCAL estate with headless viewers first (Q3 of the plan; **a load test on the shared host
+is not ours to run unasked**), then on dev behind its real edge, then one announced reading on
+production.
+
+1. **Cloudflare's current terms for video through the cache**: read, and the answer written here.
+2. **Edge hit ratio** on segments (`cf-cache-status`: HIT, MISS, DYNAMIC; the first request of a path
+   with no extension is DYNAMIC until the Cache Rule exists), per live, over 10 and 100 headless viewers.
+3. **Origin egress per live-hour** on the tunnel and on the host's interface: the MISS bytes. It
+   should be ~1.35 GB a live-hour per edge location filling it, independent of N.
+4. **Tunnel ceiling with several lives**: segments of 2, 4, 6 simultaneous lives through the tunnel
+   against its ~19 Mb/s, with dev's traffic running.
+5. **Manifest QPS and its cost**: requests a second at N, social-service CPU, Postgres pool wait and
+   Redis scripts a second, before and after the gate/tail split.
+6. **Host connections held** at N viewers (`ss` on the host: the 1 500 budget, read, never raised by us).
+7. **Latency to the live edge** with the edge in the path: does the cache add to the 5-10 s?
+8. **The admission spike**: the real size of a follower fan-out at the moment of a push.
+9. **A 1033 during a live**: what a viewer sees, and for how long the cache covers it.
+
+**Order of work once the user says go**: the terms (1), then the manifest split (it helps at 24 too and
+needs no edge), then the cache headers and the segment host, then the abuse rates, and the cap goes
+only when 2-6 hold.
+
 ## Decisions of 2026-10-19
 
 User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede L7 and change what blocks a stable.
@@ -151,6 +265,10 @@ User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede
 - **D6 - moderation works like posts.** A live is reported through the same `content_reports` path as a post ([moderation-and-blocking](../../moderation-and-blocking.md)); where a post's action is "delete the post", a live's is "cut the live" (staff remote cut, WP-L8). The broadcaster's own remove-viewer and message hiding stay. The posts moderation code is REUSED, not duplicated.
 
 **Open question (user, 2026-10-19): "why ask the school IT department for agreement?"** Only raising the SHARED HOST's nginx connection budget (about 1500 across all the host's sites, a host-level setting owned by the school IT department) needs it, under the standing rule of CLAUDE.md. Canari's own edge container is ours. Not needed until an audience would exceed the current budget.
+
+## Decisions of 2026-10-20
+
+The user's answers to the moderation questions, in full on [lives](../../services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience) (none is built): **strike policy** warning, then suspension of the right to broadcast, then withdrawal by staff; a cut is kept **90 days**; **no automatic cut** on N reports; live reports answered within **24 h**; **a reported chat line is kept (encrypted, for staff) until handled - this REVERSES C2** ([the consequences](../../services/lives.md#a-reported-chat-line-is-kept-until-handled-reverses-c2)); the **floating reactions** are heart, laugh, bravo, fire and the canary chick; the **first-live rules are the posts' rules**, no live-specific clause; **no viewer cap** ([the plan](#uncapped-audience---the-plan-2026-10-20)).
 
 ## The client foundation (2026-10-19)
 
