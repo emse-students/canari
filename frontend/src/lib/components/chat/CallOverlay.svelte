@@ -193,6 +193,13 @@
   let speakerRoutable = $derived(
     isIosTauriRuntime() || (isAndroidTauriRuntime() && hasAndroidCallService(window))
   );
+  /**
+   * Android: whether the service can route the audio NOW - false while its start waits for the app
+   * to come back on screen, and once it was refused or left for this call. The toggle is then shown
+   * disabled and says why, rather than taking a tap that would do nothing.
+   */
+  let androidRouteAvailable = $state(true);
+  let speakerDisabled = $derived(isAndroidTauriRuntime() && !androidRouteAvailable);
 
   /**
    * Routes remote audio to speaker or earpiece on iOS, by output-device LABEL. Best-effort and
@@ -251,7 +258,11 @@
   // notification and owns the audio route. Opened once per call (this component lives exactly as
   // long as one call); its hang-up ends the call like the in-app button.
   const androidCall = isAndroidTauriRuntime()
-    ? openAndroidCallSession(window, () => callService.endCall())
+    ? openAndroidCallSession(
+        window,
+        () => callService.endCall(),
+        (available) => (androidRouteAvailable = available)
+      )
     : null;
   $effect(() => () => androidCall?.dispose());
   $effect(() => {
@@ -399,12 +410,14 @@
   caption: string,
   onclick: () => void,
   tone: 'neutral' | 'on' | 'danger' | 'accept',
-  icon: Snippet
+  icon: Snippet,
+  disabled: boolean = false
 )}
   <div class="flex w-20 flex-col items-center gap-2">
     <button
       type="button"
-      class="call-control flex size-16 items-center justify-center rounded-full transition-transform active:scale-95 {tone ===
+      {disabled}
+      class="call-control flex size-16 items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40 disabled:active:scale-100 {tone ===
       'danger'
         ? 'bg-red-500 text-white hover:bg-red-400'
         : tone === 'accept'
@@ -600,11 +613,16 @@
             {/snippet}
             {@render control(
               'call-speaker',
-              isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
+              speakerDisabled
+                ? m.call_route_unavailable_label()
+                : isSpeakerOn
+                  ? m.call_speaker_label()
+                  : m.call_earpiece_label(),
               isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
               () => (isSpeakerOn = !isSpeakerOn),
               isSpeakerOn ? 'on' : 'neutral',
-              speakerIcon
+              speakerIcon,
+              speakerDisabled
             )}
           {/if}
           {#if CALLS_VIDEO_ENABLED}

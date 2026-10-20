@@ -36,11 +36,14 @@ export interface OngoingCallSpec {
   speaker: boolean;
 }
 
-/** `window.canariCall`, as `CallBridge.JsInterface` defines it. Each method returns at once. */
+/**
+ * `window.canariCall`, as `CallBridge.JsInterface` defines it. Each method returns at once. `start`
+ * and `update` take {@link OngoingCallSpec} plus the `callId` of the call, as JSON.
+ */
 export interface AndroidCallBridge {
   start(json: string): void;
   update(json: string): void;
-  stop(reason: string): void;
+  stop(callId: string, reason: string): void;
   pageLoaded(): void;
 }
 
@@ -50,13 +53,17 @@ export interface AndroidCallBridge {
  */
 export type NativeCallRefusal = 'off-screen' | 'refused';
 
-/** What the native side reports, `detail` of {@link NATIVE_CALL_EVENT}. */
-export type NativeCallEvent =
+/**
+ * What the native side reports, `detail` of {@link NATIVE_CALL_EVENT}. Every event names the call it
+ * is about (the id `start` carried), so one of an earlier call that lands late is dropped by a fact.
+ */
+export type NativeCallEvent = { callId: string } & (
   | { kind: 'started' }
   | { kind: 'failed'; code: NativeCallRefusal; reason: string }
   | { kind: 'stopped'; reason: string }
   | { kind: 'hangup' }
-  | { kind: 'foreground' };
+  | { kind: 'foreground' }
+);
 
 /**
  * Reads an event's `detail`. Returns null for anything the Kotlin side does not send - logged by the
@@ -64,20 +71,22 @@ export type NativeCallEvent =
  */
 export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
   if (typeof detail !== 'object' || detail === null) return null;
-  const d = detail as { kind?: unknown; reason?: unknown; code?: unknown };
+  const d = detail as { kind?: unknown; reason?: unknown; code?: unknown; callId?: unknown };
+  if (typeof d.callId !== 'string' || d.callId === '') return null;
+  const callId = d.callId;
   const reason = typeof d.reason === 'string' ? d.reason : '';
   switch (d.kind) {
     case 'started':
-      return { kind: 'started' };
+      return { callId, kind: 'started' };
     case 'hangup':
-      return { kind: 'hangup' };
+      return { callId, kind: 'hangup' };
     case 'foreground':
-      return { kind: 'foreground' };
+      return { callId, kind: 'foreground' };
     case 'failed':
       if (d.code !== 'off-screen' && d.code !== 'refused') return null;
-      return { kind: 'failed', code: d.code, reason };
+      return { callId, kind: 'failed', code: d.code, reason };
     case 'stopped':
-      return { kind: 'stopped', reason };
+      return { callId, kind: 'stopped', reason };
     default:
       return null;
   }
@@ -152,11 +161,16 @@ export interface AndroidCallSession {
 
 /**
  * Opens the session for one call. `onHangUp` is what the notification's button does: the service has
- * already left the foreground, and the page ends the call.
+ * already left the foreground, and the page ends the call. `onRoute` is told whether the service can
+ * route the audio right now: false while a start waits for the app to come back on screen, and once
+ * the service is refused or gone for this call - the speaker toggle reads it, so it is never a button
+ * that does nothing. `callId` names this call on the bridge; drawn per session.
  */
 export function openAndroidCallSession(
   host: AndroidCallHost,
-  onHangUp: () => void
+  onHangUp: () => void,
+  onRoute: (available: boolean) => void = () => {},
+  callId: string = crypto.randomUUID()
 ): AndroidCallSession {
   const bridge = host.canariCall;
   if (!bridge) {
@@ -165,6 +179,12 @@ export function openAndroidCallSession(
     );
     return { publish: () => {}, dispose: () => {} };
   }
+  let routeAvailable = true;
+  const setRoute = (available: boolean) => {
+    if (available === routeAvailable) return;
+    routeAvailable = available;
+    onRoute(available);
+  };
   let started = false;
   /** Set once the service is final for this call (refused, left on its own, hung up): no more asks. */
   let over = false;
@@ -180,15 +200,16 @@ export function openAndroidCallSession(
     const json = JSON.stringify(spec);
     if (json === lastSent) return;
     lastSent = json;
+    const payload = JSON.stringify({ ...spec, callId });
     const facts = `${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker}`;
     if (!started) {
       started = true;
       appendLog(`[Call] ongoing-call service start (${facts})`);
-      bridge.start(json);
+      bridge.start(payload);
       return;
     }
     appendLog(`[Call] ongoing-call service update (${facts})`);
-    bridge.update(json);
+    bridge.update(payload);
   };
 
   const onEvent = (e: Event) => {
@@ -196,6 +217,13 @@ export function openAndroidCallSession(
     if (!event) {
       appendLog(
         `[Call] ERROR unreadable ${NATIVE_CALL_EVENT} event: ${JSON.stringify((e as CustomEvent).detail)}`
+      );
+      return;
+    }
+    if (event.callId !== callId) {
+      // An earlier call's event landing late (its `stopped`, its `hangup`): not this call's.
+      appendLog(
+        `[Call] ongoing-call event ${event.kind} of another call - not this one's, dropped`
       );
       return;
     }
@@ -215,6 +243,7 @@ export function openAndroidCallSession(
             `[Call] WARN ongoing-call service refused (${event.reason}) - asking once more when the app is back on screen`
           );
           waitingForeground = true;
+          setRoute(false);
           return;
         }
         // Final: a second ask in the same call would meet the same state. The call goes on, on
@@ -224,11 +253,13 @@ export function openAndroidCallSession(
         );
         waitingForeground = false;
         over = true;
+        setRoute(false);
         return;
       case 'foreground':
         if (!waitingForeground || over) return;
         waitingForeground = false;
         askedAgain = true;
+        setRoute(true);
         if (current) send(current, 'the app is back on screen');
         return;
       case 'stopped':
@@ -237,6 +268,7 @@ export function openAndroidCallSession(
           appendLog(`[Call] WARN ongoing-call service stopped by Android: ${event.reason}`);
           started = false;
           over = true;
+          setRoute(false);
         }
         return;
       case 'hangup':
@@ -256,7 +288,7 @@ export function openAndroidCallSession(
     started = false;
     lastSent = null;
     appendLog(`[Call] ongoing-call service stop (${reason})`);
-    bridge.stop(reason);
+    bridge.stop(callId, reason);
   };
 
   return {

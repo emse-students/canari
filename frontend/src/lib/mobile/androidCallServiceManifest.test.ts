@@ -29,6 +29,7 @@ const mainManifest = read(resolve(APP, 'src/main/AndroidManifest.xml'));
 const callsManifest = read(resolve(APP, 'src/calls/AndroidManifest.xml'));
 const gradle = read(resolve(APP, 'build.gradle.kts'));
 const bridgeKt = read(resolve(KOTLIN, 'CallBridge.kt'));
+const pureKt = read(resolve(KOTLIN, 'call/OngoingCall.kt'));
 const activityKt = read(resolve(KOTLIN, 'MainActivity.kt'));
 const bridgeTs = read(resolve(here, 'androidCallService.ts'));
 const layout = read(resolve(here, '../../routes/+layout.svelte'));
@@ -66,7 +67,7 @@ describe('the ongoing-call foreground service declaration', () => {
     );
     expect(workflow).toContain('android\\.permission\\.FOREGROUND_SERVICE_MICROPHONE');
     expect(workflow).toContain('fr\\.emse\\.canari\\.CallForegroundService');
-    expect(workflow).toContain('export const CALLS_COMPILED = true;');
+    expect(workflow).toContain('cannot read CALLS_COMPILED');
   });
 
   it('gradle merges the overlay on the same fact that turns CALLS_ENABLED on', () => {
@@ -99,7 +100,7 @@ describe('the bridge, both sides of the WebView', () => {
     for (const method of [
       'start(json: String)',
       'update(json: String)',
-      'stop(reason: String)',
+      'stop(callId: String, reason: String)',
       'pageLoaded()',
     ]) {
       expect(bridgeKt).toMatch(
@@ -109,16 +110,23 @@ describe('the bridge, both sides of the WebView', () => {
     for (const method of [
       'start(json: string): void;',
       'update(json: string): void;',
-      'stop(reason: string): void;',
+      'stop(callId: string, reason: string): void;',
       'pageLoaded(): void;',
     ]) {
       expect(bridgeTs).toContain(method);
     }
   });
 
+  it('the call id is one field name both ways: read from start/update, echoed on every event', () => {
+    expect(bridgeKt).toContain('o.optString("callId", "")');
+    expect(bridgeKt).toContain('detail.put("callId", callId)');
+    expect(bridgeTs).toContain('JSON.stringify({ ...spec, callId })');
+    expect(bridgeTs).toContain("typeof d.callId !== 'string'");
+  });
+
   it('the two refusal codes are the same words on both sides', () => {
-    expect(bridgeKt).toContain('const val CODE_OFF_SCREEN = "off-screen"');
-    expect(bridgeKt).toContain('const val CODE_REFUSED = "refused"');
+    expect(pureKt).toContain('OFF_SCREEN("off-screen")');
+    expect(pureKt).toContain('REFUSED("refused")');
     expect(bridgeTs).toContain("export type NativeCallRefusal = 'off-screen' | 'refused';");
   });
 

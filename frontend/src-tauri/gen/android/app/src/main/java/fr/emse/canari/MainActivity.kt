@@ -350,6 +350,7 @@ class MainActivity : TauriActivity() {
         CanariApplication.removePluginDefaultChannel(this)
         pushForeground(true)
         // A call service start refused while the activity was not resumed may be asked again now.
+        // AFTER `isInForeground = true` above: the OffScreenGate's contract (call/OngoingCall.kt).
         CallBridge.onActivityResumed()
         Log.d("MainActivity", "onResume: isInForeground=true, worker failure flag reset")
         // Migrates pending_push_secret.txt → Keystore on first foreground resume after

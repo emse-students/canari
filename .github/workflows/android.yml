@@ -336,7 +336,19 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
-          if [ "$PRERELEASE" = "true" ] || grep -q '^export const CALLS_COMPILED = true;' frontend/src/lib/features.ts; then
+          # CALLS_COMPILED is read as the ONE exported boolean declaration; anything else (renamed,
+          # moved, a computed value) fails here rather than reading as false.
+          DECLS=$(grep -cE '^export const CALLS_COMPILED\b' frontend/src/lib/features.ts || true)
+          COMPILED=$(sed -nE 's/^export const CALLS_COMPILED(: boolean)? = (true|false);[[:space:]]*(\/\/.*)?$/\2/p' frontend/src/lib/features.ts)
+          if [ "$DECLS" != 1 ] || { [ "$COMPILED" != true ] && [ "$COMPILED" != false ]; }; then
+            echo "::error::cannot read CALLS_COMPILED from frontend/src/lib/features.ts (declarations=${DECLS}, value='${COMPILED}')"
+            exit 1
+          fi
+          # WHEN CALLS_COMPILED FLIPS TO true, A STABLE FAILS THIS STEP BY DESIGN: gradle still merges
+          # the service only on VITE_DEPLOY_ENVIRONMENT=development, so a stable would be built
+          # without it. The revival commit moves the declaration into src/main/AndroidManifest.xml
+          # (androidCallServiceManifest.test.ts holds it to that) - until then this step says so.
+          if [ "$PRERELEASE" = "true" ] || [ "$COMPILED" = true ]; then
             EXPECTED=1
           else
             EXPECTED=0

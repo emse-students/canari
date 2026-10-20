@@ -1075,11 +1075,11 @@ answer, and the one every calling app holds.
 
 | Piece | Where | What it does |
 |---|---|---|
-| The service | `CallForegroundService.kt` | type `microphone`; the ONGOING `CallStyle.forOngoingCall` notification (the peer's name, a chronometer from `CallService.connectedAt`, the system's own hang-up button, a tap brings the task forward with a launcher intent - never a deep link); the audio MODE set only when nobody set it before, and never restored from a saved value (see "The mode has another owner" below); a PARTIAL wake lock released by every end path, with a 4 h bound as a logged LAST RESORT (see "Every end path"); silent channel `canari_call_ongoing`, created on the first call so a build that places none never shows it |
+| The service | `CallForegroundService.kt` | type `microphone`; the ONGOING `CallStyle.forOngoingCall` notification (the peer's name, a chronometer from `CallService.connectedAt`, the system's own hang-up button, a tap brings the task forward with a launcher intent - never a deep link); the audio MODE set only when nobody set it before, and never restored from a saved value (see "The mode has another owner" below); a PARTIAL wake lock released by every end path, acquired for a 4 h period and renewed while the call is up (see "Every end path"); silent channel `canari_call_ongoing`, created on the first call so a build that places none never shows it |
 | The route | `CallAudio` in the same file, choice in `call/OngoingCall.kt` (`pickCallOutput`) | speaker on: the loudspeaker; off: the most personal output present - hearing aid, BLE then SCO headset, wired, USB, earpiece - re-chosen when a device comes or goes, logged only when the choice changes. API 28-30: `isSpeakerphoneOn` only (no Bluetooth SCO). Replaces the label-matched `setSinkId` on Android, which found no labelled output on the Mi 9T |
-| The transition table | `call/OngoingCall.kt` (`decide`) | start / update / stop / hang-up against running or not; every command is logged with its effect. A second start is a refresh; an update before a start is refused (the two sides disagree); the notification's hang-up makes the service LEAVE THE FOREGROUND ITSELF and then tells the page, which ends the call - the service's end never waits on a page being there |
-| The bridge | `CallBridge.kt` (`window.canariCall`: `start(json)`, `update(json)`, `stop(reason)`, `pageLoaded()`) and one DOM event up, `canari:call-native` (`started`, `failed` with a `code` - `off-screen` or `refused` -, `stopped`, `hangup`, `foreground`) | registered by `MainActivity` ONLY when the service is in the merged manifest. `start` is refused BEFORE it is attempted when the activity is not RESUMED (`off-screen`) or `RECORD_AUDIO` is not granted (`refused`) - the two preconditions of a microphone service, known here, never learnt from a crash. The start is a PLAIN `startService` (legal: the app is on screen), and the service calls `startForeground` in `onStartCommand`: a refusal nobody has named is then a logged exception and a `failed` event, where after `startForegroundService` a service stopping without `startForeground` is counted as a crash of the process |
-| The page's side | `lib/mobile/androidCallService.ts`, opened by `CallOverlay` once per call | `ongoingCallSpec` turns the call's status kind into the description (a Paraglide word, never the running timer); `start` once the call HOLDS the microphone and is the caller's `ringing` or the callee's `connecting` - seconds after the tap, so on screen with the grant answered; `update` only on a change; `stop` at `ended`. An `off-screen` refusal is a WARN and is asked ONCE more, with the call's current description, when native sends `foreground` (the activity resumed with that refusal pending) - an EVENT, never a clock; a second refusal, or any `refused`, is an ERROR and final for the call. A build without the bridge logs `ERROR this Android build has no ongoing-call service` once per call. The speaker toggle is shown on Android only when the bridge exists: the route IS the service's, so without it the button would do nothing |
+| The transition table | `call/OngoingCall.kt` (`decide`) | start / update / stop / hang-up against the CALL ID in the foreground (null when none); every command is logged with its effect. A start of the running call is a refresh; a start of ANOTHER call while one runs takes the foreground over and logs an ERROR (the earlier call's stop was lost); an update or a stop of a call that is not the running one is an earlier call's command landing late, or one in flight when the service had left - EXPECTED, logged at INFO with that cause; a stop naming no call (the page gone, a new page) stops whatever runs; the notification's hang-up makes the service LEAVE THE FOREGROUND ITSELF and then tells the page, which ends the call - the service's end never waits on a page being there |
+| The bridge | `CallBridge.kt` (`window.canariCall`: `start(json)`, `update(json)` - the description plus the `callId` the page draws per call -, `stop(callId, reason)`, `pageLoaded()`) and one DOM event up, `canari:call-native` (`started`, `failed` with a `code` - `off-screen` or `refused` -, `stopped`, `hangup`, `foreground`), every one naming its `callId`; the page DROPS an event of another call | registered by `MainActivity` ONLY when the service is in the merged manifest. `start` is refused BEFORE it is attempted when the activity is not RESUMED (`off-screen`) or `RECORD_AUDIO` is not granted (`refused`) - the two preconditions of a microphone service, known here, never learnt from a crash. The start is a PLAIN `startService` (legal: the app is on screen), and the service calls `startForeground` in `onStartCommand`: a refusal is then a logged exception and a `failed` event, where after `startForegroundService` a service stopping without `startForeground` is counted as a crash of the process. A `SecurityException` or `ForegroundServiceStartNotAllowedException` met while the app is NOT on screen (HOME pressed between the bridge's check and `startForeground` on the main thread) is `off-screen`, not `refused` (`classifyStartRefusal`). Every `stopSelf` names its `startId`, so a start delivered before a preceding stop was handled is not destroyed with it |
+| The page's side | `lib/mobile/androidCallService.ts`, opened by `CallOverlay` once per call | `ongoingCallSpec` turns the call's status kind into the description (a Paraglide word, never the running timer); `start` once the call HOLDS the microphone and is the caller's `ringing` or the callee's `connecting` - seconds after the tap, so on screen with the grant answered; `update` only on a change; `stop` at `ended`. An `off-screen` refusal is a WARN and is asked ONCE more, with the call's current description, when native sends `foreground` (the activity resumed with that refusal pending) - an EVENT, never a clock; a second refusal, or any `refused`, is an ERROR and final for the call. A build without the bridge logs `ERROR this Android build has no ongoing-call service` once per call. The speaker toggle is shown on Android only when the bridge exists - the route IS the service's - and is DISABLED, labelled "output unavailable for now", while a start waits for `foreground` and once the service is refused or gone for the call |
 | Teardown | `MainActivity.onDestroy`, `onTaskRemoved`, `onBackPressed`, `+layout.svelte` | a destroyed activity (its WebView is destroyed with it, and the call) stops the service; a swipe from Recents stops it; a page that LOADS calls `pageLoaded()` once (see "Every end path"); Back at the root during a call moves the task back on API 28-30 (API 31+ does that itself) |
 
 **The mode has another owner (review F1).** Chromium's `AudioManagerAndroid` may set
@@ -1103,9 +1103,18 @@ root layout calls `releaseCallServiceOfPreviousPage` once per page load on Andro
 none runs, so an ordinary boot is silent. A stop the page asked for, or caused by the page going
 (`stopForPageGone`, logged at INFO), sends no `stopped` back - the page knows, or is gone; `stopped`
 is reserved for an exit the page did not cause. The wake lock is released by `leave()` on every one
-of those paths; `acquire(4 h)` is a LAST-RESORT bound only - 4 h is the server's call horizon
-(`MAX_COUNTED_CALL_SEC`, the room binding's ring window plus 4 h) - and reaching it with the service
-still up logs an ERROR naming a missed end path. The call itself is never ended by that clock.
+of those paths. Nothing bounds a call's length - the server's 4 h is a Redis room-binding TTL and a
+counting cap (`MAX_COUNTED_CALL_SEC`), not a hang-up - so 4 h is only the EXPECTED horizon: the lock
+is acquired for 4 h (an acquire with no timeout is what Android's lint names a leak) and RENEWED for
+another 4 h, logged at INFO, while the call is still in the foreground. No clock ends a call.
+
+**A refusal for being off screen is answered by the next resume, whatever thread met it.** The
+bridge's check runs on a binder thread, `onResume` on the main thread; unlocked, the bridge could
+read "not on screen", the activity resume and find nothing pending, and the refusal then be recorded
+with no resume left to answer it. `OffScreenGate` (`call/OngoingCall.kt`) holds the pending call id
+under one lock, with the reports made inside it and `isInForeground` written before the gate is
+asked: every interleaving ends in exactly one of "the start goes ahead" or "`failed` then
+`foreground`" - which a 20 000-iteration two-thread test in `OngoingCallTest.kt` asserts.
 
 **Started at `ringing`, not at `incall`** - a deviation from the backlog's wording, for a platform
 rule: Android grants a microphone service only to an app that is on screen (`startForeground` with a
@@ -1140,13 +1149,20 @@ still built, and the declaration is a one-off for the user ([backlog](../../back
 the build (the AAB's protobuf manifest through `unzip | grep -a`, its strings are plain UTF-8; the
 APK's binary XML through `aapt2 dump xmltree`) and FAILS when `FOREGROUND_SERVICE_MICROPHONE` or
 `CallForegroundService` is present in a stable while `CALLS_COMPILED` is false - or absent from a
-pre-release. `RECORD_AUDIO` is the anchor: a dump that lost it is reported unread, never a pass.
+pre-release. `RECORD_AUDIO` is the anchor: a dump that lost it is reported unread, never a pass,
+and `CALLS_COMPILED` is parsed as the one exported boolean - anything else fails the step. **When
+`CALLS_COMPILED` flips to true, a stable FAILS this step by design**: gradle still merges the
+service only on `VITE_DEPLOY_ENVIRONMENT=development`, so the revival commit must move the
+declaration into `src/main/AndroidManifest.xml` (the manifest test holds it to that) before a stable
+can pass.
 
-**Pinned by** `androidCallService.test.ts` (start/update/stop, the one `foreground`-driven second
-ask after an `off-screen` refusal and nothing after a second, no stop after the notification's
-hang-up, the page-load release, no bridge), `androidCallServiceManifest.test.ts` (the declaration,
-the gating, the workflow step, both sides of the bridge named alike, the plain `startService`, the
-resume hook) and `OngoingCallTest.kt` (`decide`, the spec validation, `pickCallOutput`).
+**Pinned by** `androidCallService.test.ts` (start/update/stop with the call id, the one
+`foreground`-driven second ask after an `off-screen` refusal and nothing after a second, no stop
+after the notification's hang-up, an event of another call dropped, the route's availability, the
+page-load release, no bridge), `androidCallServiceManifest.test.ts` (the declaration, the gating,
+the workflow step, both sides of the bridge named alike - methods, codes, the `callId` field -, the
+plain `startService`, the resume hook) and `OngoingCallTest.kt` (`decide` by call id,
+`classifyStartRefusal`, `OffScreenGate` and its race, the spec validation, `pickCallOutput`).
 **What none of them proves:** that Android keeps this process's network and microphone with the
 service up, that the WebView is not frozen, that Chromium does not override the mode or the output.
 

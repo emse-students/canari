@@ -19,21 +19,37 @@ import {
 
 /** A window with a recording `canariCall` and a real event target the test can dispatch on. */
 function host(withBridge = true) {
-  const calls: { method: keyof AndroidCallBridge; arg: string }[] = [];
+  const calls: { method: keyof AndroidCallBridge; arg: string; callId?: string }[] = [];
   const target = new EventTarget();
   const bridge: AndroidCallBridge = {
     start: (arg) => calls.push({ method: 'start', arg }),
     update: (arg) => calls.push({ method: 'update', arg }),
-    stop: (arg) => calls.push({ method: 'stop', arg }),
+    stop: (callId, arg) => calls.push({ method: 'stop', arg, callId }),
     pageLoaded: () => calls.push({ method: 'pageLoaded', arg: '' }),
   };
   const h: AndroidCallHost & { emit: (detail: unknown) => void } = {
     canariCall: withBridge ? bridge : undefined,
     addEventListener: (t, l) => target.addEventListener(t, l),
     removeEventListener: (t, l) => target.removeEventListener(t, l),
-    emit: (detail) => target.dispatchEvent(new CustomEvent(NATIVE_CALL_EVENT, { detail })),
+    // Every event names a call; this call's unless the test says otherwise.
+    emit: (detail) =>
+      target.dispatchEvent(
+        new CustomEvent(NATIVE_CALL_EVENT, {
+          detail:
+            typeof detail === 'object' && detail !== null && !('callId' in detail)
+              ? { callId: CALL, ...detail }
+              : detail,
+        })
+      ),
   };
   return { h, calls };
+}
+
+const CALL = 'call-1';
+
+/** A session for {@link CALL}. */
+function open(h: AndroidCallHost, onHangUp = () => {}, onRoute: (a: boolean) => void = () => {}) {
+  return openAndroidCallSession(h, onHangUp, onRoute, CALL);
 }
 
 const SPEC: OngoingCallSpec = {
@@ -85,7 +101,7 @@ describe('ongoingCallSpec - when the service holds the call', () => {
 describe('openAndroidCallSession - the bridge', () => {
   it('says at ERROR level, once, that a build without the bridge cannot keep the call off screen', () => {
     const { h } = host(false);
-    const session = openAndroidCallSession(h, () => {});
+    const session = open(h);
     session.publish(SPEC, 'live');
     session.publish(null, 'ended');
     session.dispose();
@@ -96,20 +112,21 @@ describe('openAndroidCallSession - the bridge', () => {
 
   it('starts once, updates only on a change, and stops at the end', () => {
     const { h, calls } = host();
-    const session = openAndroidCallSession(h, () => {});
+    const session = open(h);
     session.publish({ ...SPEC, connectedAtMs: null }, 'ringing');
     session.publish({ ...SPEC, connectedAtMs: null }, 'ringing again');
     session.publish(SPEC, 'live');
     session.publish({ ...SPEC, speaker: false }, 'earpiece');
     session.publish(null, 'ended');
     expect(calls.map((c) => c.method)).toEqual(['start', 'update', 'update', 'stop']);
-    expect(JSON.parse(calls[0].arg)).toEqual({ ...SPEC, connectedAtMs: null });
-    expect(calls[3].arg).toBe('ended');
+    expect(JSON.parse(calls[0].arg)).toEqual({ ...SPEC, connectedAtMs: null, callId: CALL });
+    expect(JSON.parse(calls[1].arg).callId).toBe(CALL);
+    expect(calls[3]).toMatchObject({ arg: 'ended', callId: CALL });
   });
 
   it('a stop with nothing started sends nothing', () => {
     const { h, calls } = host();
-    const session = openAndroidCallSession(h, () => {});
+    const session = open(h);
     session.publish(null, 'declined');
     session.dispose();
     expect(calls).toEqual([]);
@@ -118,7 +135,7 @@ describe('openAndroidCallSession - the bridge', () => {
   it('dispose stops a started service and stops listening', () => {
     const { h, calls } = host();
     const onHangUp = vi.fn();
-    const session = openAndroidCallSession(h, onHangUp);
+    const session = open(h, onHangUp);
     session.publish(SPEC, 'live');
     session.dispose();
     expect(calls.map((c) => c.method)).toEqual(['start', 'stop']);
@@ -129,7 +146,7 @@ describe('openAndroidCallSession - the bridge', () => {
   it("hands the notification's hang-up to the call, and sends no stop afterwards: the service already left", () => {
     const { h, calls } = host();
     const onHangUp = vi.fn();
-    const session = openAndroidCallSession(h, onHangUp);
+    const session = open(h, onHangUp);
     session.publish(SPEC, 'live');
     h.emit({ kind: 'hangup' });
     session.publish(null, 'ended');
@@ -140,7 +157,7 @@ describe('openAndroidCallSession - the bridge', () => {
 
   it('a refusal coded `refused` is logged at ERROR and never asked again, even on a resume', () => {
     const { h, calls } = host();
-    const session = openAndroidCallSession(h, () => {});
+    const session = open(h);
     session.publish(SPEC, 'live');
     h.emit({ kind: 'failed', code: 'refused', reason: 'start: RECORD_AUDIO is not granted' });
     h.emit({ kind: 'foreground' });
@@ -154,7 +171,7 @@ describe('openAndroidCallSession - the bridge', () => {
 
   it('an `off-screen` refusal waits for the resume EVENT, then asks once with the current description', () => {
     const { h, calls } = host();
-    const session = openAndroidCallSession(h, () => {});
+    const session = open(h);
     session.publish({ ...SPEC, connectedAtMs: null }, 'ringing');
     h.emit({ kind: 'failed', code: 'off-screen', reason: 'start: the app is not on screen' });
     // Nothing is sent while waiting: no clock, no retry loop.
@@ -163,14 +180,14 @@ describe('openAndroidCallSession - the bridge', () => {
     expect(logs.some((l) => l.includes('WARN ongoing-call service refused'))).toBe(true);
     h.emit({ kind: 'foreground' });
     expect(calls.map((c) => c.method)).toEqual(['start', 'start']);
-    expect(JSON.parse(calls[1].arg)).toEqual(SPEC);
+    expect(JSON.parse(calls[1].arg)).toEqual({ ...SPEC, callId: CALL });
     session.publish(null, 'ended');
     expect(calls.map((c) => c.method)).toEqual(['start', 'start', 'stop']);
   });
 
   it('a second `off-screen` refusal in the same call is final', () => {
     const { h, calls } = host();
-    const session = openAndroidCallSession(h, () => {});
+    const session = open(h);
     session.publish(SPEC, 'live');
     h.emit({ kind: 'failed', code: 'off-screen', reason: 'a' });
     h.emit({ kind: 'foreground' });
@@ -184,7 +201,7 @@ describe('openAndroidCallSession - the bridge', () => {
 
   it('a `foreground` nobody waits for asks nothing', () => {
     const { h, calls } = host();
-    const session = openAndroidCallSession(h, () => {});
+    const session = open(h);
     session.publish(SPEC, 'live');
     h.emit({ kind: 'foreground' });
     expect(calls.map((c) => c.method)).toEqual(['start']);
@@ -192,7 +209,7 @@ describe('openAndroidCallSession - the bridge', () => {
 
   it('a call that ends while waiting for the resume asks nothing on the resume', () => {
     const { h, calls } = host();
-    const session = openAndroidCallSession(h, () => {});
+    const session = open(h);
     session.publish(SPEC, 'live');
     h.emit({ kind: 'failed', code: 'off-screen', reason: 'a' });
     session.publish(null, 'ended');
@@ -202,7 +219,7 @@ describe('openAndroidCallSession - the bridge', () => {
 
   it('a stop Android made on its own is a WARN, and the session asks nothing more', () => {
     const { h, calls } = host();
-    const session = openAndroidCallSession(h, () => {});
+    const session = open(h);
     session.publish(SPEC, 'live');
     h.emit({ kind: 'stopped', reason: 'the task was removed from Recents' });
     session.publish(null, 'ended');
@@ -210,9 +227,52 @@ describe('openAndroidCallSession - the bridge', () => {
     expect(logs.some((l) => l.includes('WARN ongoing-call service stopped by Android'))).toBe(true);
   });
 
+  it("an event of another call (an earlier one's, landing late) is dropped", () => {
+    const { h, calls } = host();
+    const onHangUp = vi.fn();
+    const session = open(h, onHangUp);
+    session.publish(SPEC, 'live');
+    h.emit({ callId: 'call-0', kind: 'hangup' });
+    h.emit({ callId: 'call-0', kind: 'stopped', reason: 'x' });
+    session.publish(null, 'ended');
+    expect(onHangUp).not.toHaveBeenCalled();
+    expect(calls.map((c) => c.method)).toEqual(['start', 'stop']);
+    expect(logs.some((l) => l.includes('of another call'))).toBe(true);
+  });
+
+  it('the route is unavailable while a start waits for the screen, and for good once refused', () => {
+    const { h } = host();
+    const route: boolean[] = [];
+    const session = open(
+      h,
+      () => {},
+      (a) => route.push(a)
+    );
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'failed', code: 'off-screen', reason: 'a' });
+    expect(route).toEqual([false]);
+    h.emit({ kind: 'foreground' });
+    expect(route).toEqual([false, true]);
+    h.emit({ kind: 'failed', code: 'refused', reason: 'b' });
+    expect(route).toEqual([false, true, false]);
+  });
+
+  it('the route is unavailable once Android stopped the service on its own', () => {
+    const { h } = host();
+    const route: boolean[] = [];
+    const session = open(
+      h,
+      () => {},
+      (a) => route.push(a)
+    );
+    session.publish(SPEC, 'live');
+    h.emit({ kind: 'stopped', reason: 'destroyed' });
+    expect(route).toEqual([false]);
+  });
+
   it('an event it cannot read is logged, never guessed at', () => {
     const { h } = host();
-    openAndroidCallSession(h, () => {});
+    open(h);
     h.emit({ kind: 'teleported' });
     expect(logs.some((l) => l.includes('ERROR unreadable canari:call-native'))).toBe(true);
   });
@@ -236,22 +296,33 @@ describe('the page-load release and the speaker route', () => {
 
 describe('parseNativeCallEvent', () => {
   it('reads the five kinds the Kotlin side sends and nothing else', () => {
-    expect(parseNativeCallEvent({ kind: 'started' })).toEqual({ kind: 'started' });
-    expect(parseNativeCallEvent({ kind: 'hangup' })).toEqual({ kind: 'hangup' });
-    expect(parseNativeCallEvent({ kind: 'foreground' })).toEqual({ kind: 'foreground' });
-    expect(parseNativeCallEvent({ kind: 'failed', code: 'off-screen', reason: 'x' })).toEqual({
-      kind: 'failed',
-      code: 'off-screen',
-      reason: 'x',
+    const c = { callId: 'c' };
+    expect(parseNativeCallEvent({ ...c, kind: 'started' })).toEqual({ ...c, kind: 'started' });
+    expect(parseNativeCallEvent({ ...c, kind: 'hangup' })).toEqual({ ...c, kind: 'hangup' });
+    expect(parseNativeCallEvent({ ...c, kind: 'foreground' })).toEqual({
+      ...c,
+      kind: 'foreground',
     });
+    expect(parseNativeCallEvent({ ...c, kind: 'failed', code: 'off-screen', reason: 'x' })).toEqual(
+      {
+        ...c,
+        kind: 'failed',
+        code: 'off-screen',
+        reason: 'x',
+      }
+    );
     // A refusal is acted on by its code: one without a known code is unreadable, never guessed.
-    expect(parseNativeCallEvent({ kind: 'failed', reason: 'x' })).toBeNull();
-    expect(parseNativeCallEvent({ kind: 'failed', code: 'later', reason: 'x' })).toBeNull();
-    expect(parseNativeCallEvent({ kind: 'stopped', reason: 'y' })).toEqual({
+    expect(parseNativeCallEvent({ ...c, kind: 'failed', reason: 'x' })).toBeNull();
+    expect(parseNativeCallEvent({ ...c, kind: 'failed', code: 'later', reason: 'x' })).toBeNull();
+    // An event names its call, or it cannot be told from an earlier call's.
+    expect(parseNativeCallEvent({ kind: 'started' })).toBeNull();
+    expect(parseNativeCallEvent({ callId: '', kind: 'started' })).toBeNull();
+    expect(parseNativeCallEvent({ ...c, kind: 'stopped', reason: 'y' })).toEqual({
+      ...c,
       kind: 'stopped',
       reason: 'y',
     });
-    expect(parseNativeCallEvent({ kind: 'other' })).toBeNull();
+    expect(parseNativeCallEvent({ ...c, kind: 'other' })).toBeNull();
     expect(parseNativeCallEvent(null)).toBeNull();
     expect(parseNativeCallEvent('started')).toBeNull();
   });

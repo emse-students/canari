@@ -51,11 +51,19 @@ sealed class SpecResult {
     data class Refused(val reason: String) : SpecResult()
 }
 
-/** What reaches the service: from the web (start, update, stop) or from its own notification. */
+/**
+ * What reaches the service: from the web (start, update, stop) or from its own notification.
+ *
+ * Every command of the web names its CALL: an id the page draws once per call
+ * (`androidCallService.ts`), carried by `start` and `update` and echoed by every event the service
+ * sends back, so a command or an event of an EARLIER call that lands late is told apart from the
+ * current one by a fact, never by timing. A [Stop] with a null [Stop.callId] stops whatever runs: it
+ * comes from the app itself (the page that held the call is gone, a new page loaded), not from a call.
+ */
 sealed class CallServiceCommand {
-    data class Start(val spec: OngoingCallSpec) : CallServiceCommand()
-    data class Update(val spec: OngoingCallSpec) : CallServiceCommand()
-    data class Stop(val reason: String) : CallServiceCommand()
+    data class Start(val callId: String, val spec: OngoingCallSpec) : CallServiceCommand()
+    data class Update(val callId: String, val spec: OngoingCallSpec) : CallServiceCommand()
+    data class Stop(val callId: String?, val reason: String) : CallServiceCommand()
     /** The hang-up action of the ongoing notification. */
     object HangUp : CallServiceCommand()
 }
@@ -63,39 +71,132 @@ sealed class CallServiceCommand {
 /** What the service does. Exactly one per command, so every command is logged with its effect. */
 sealed class CallServiceEffect {
     /** Enter the foreground with this call: notification, audio mode, route, wake lock. */
-    data class EnterForeground(val spec: OngoingCallSpec) : CallServiceEffect()
-    /** Already in the foreground: redraw the notification, re-apply the route if it changed. */
-    data class Refresh(val spec: OngoingCallSpec) : CallServiceEffect()
+    data class EnterForeground(val callId: String, val spec: OngoingCallSpec) : CallServiceEffect()
+    /** Already in the foreground with this call: redraw the notification, re-apply a changed route. */
+    data class Refresh(val callId: String, val spec: OngoingCallSpec) : CallServiceEffect()
+    /**
+     * A start for a NEW call while [previous] still holds the foreground: the previous call's stop
+     * never reached the service, which is a defect on the way there and is logged as one. The new call
+     * takes the foreground over (its notification, its route): leaving it unprotected would cost the
+     * user the call for a message the app lost.
+     */
+    data class Replace(val callId: String, val spec: OngoingCallSpec, val previous: String) : CallServiceEffect()
     /** Leave the foreground and stop: the call is over (or its page is gone). */
     data class Leave(val reason: String) : CallServiceEffect()
-    /** Hand the hang-up to the web, which owns the call and will send `stop` once it has ended it. */
-    object ForwardHangUp : CallServiceEffect()
-    /** Nothing to do, and the reason says why - logged, because "nothing" must be explained. */
+    /** Leave the foreground, then hand the hang-up of [callId] to the page, which ends the call. */
+    data class ForwardHangUp(val callId: String) : CallServiceEffect()
+    /**
+     * Nothing to do, and the reason says why. Every case reaching it is EXPECTED - a page command in
+     * flight when the service had already left (the user hung up from the notification, the start was
+     * refused, the page has not received that event yet) - so it is logged at INFO with that cause.
+     */
     data class Ignore(val reason: String) : CallServiceEffect()
 }
 
 /**
- * The service's whole transition table.
+ * The service's whole transition table, [current] being the id of the call in the foreground (null
+ * when none is).
  *
- * - A START while running is the same call described again (the web's effect re-ran): a refresh,
- *   never a second foreground entry.
- * - An UPDATE before any START is refused: the web sends a start first by construction, so an update
- *   alone means its state and the service's disagree, and drawing a notification from it would
- *   claim a foreground the service never took.
- * - A STOP or a HANG-UP with no call has nothing to act on.
+ * - A START of the running call is the same call described again (the web's effect re-ran): a
+ *   refresh, never a second foreground entry. A start of ANOTHER call is a [CallServiceEffect.Replace].
+ * - An UPDATE of a call that is not the running one acts on nothing: either no call runs (the start
+ *   was refused, or the user hung up from the notification, and the page had not heard yet) or it is
+ *   an earlier call's, landing late.
+ * - A STOP of the running call, or one naming no call (from the app itself), leaves; any other stop is
+ *   an earlier call's.
+ * - A HANG-UP with no call has nothing to act on: a notification press that raced the call's end.
  */
-fun decide(running: Boolean, command: CallServiceCommand): CallServiceEffect = when (command) {
-    is CallServiceCommand.Start ->
-        if (running) CallServiceEffect.Refresh(command.spec) else CallServiceEffect.EnterForeground(command.spec)
-    is CallServiceCommand.Update ->
-        if (running) CallServiceEffect.Refresh(command.spec)
-        else CallServiceEffect.Ignore("update before any start - the web and the service disagree")
-    is CallServiceCommand.Stop ->
-        if (running) CallServiceEffect.Leave(command.reason)
-        else CallServiceEffect.Ignore("stop (${command.reason}) with no call in the foreground")
+fun decide(current: String?, command: CallServiceCommand): CallServiceEffect = when (command) {
+    is CallServiceCommand.Start -> when (current) {
+        null -> CallServiceEffect.EnterForeground(command.callId, command.spec)
+        command.callId -> CallServiceEffect.Refresh(command.callId, command.spec)
+        else -> CallServiceEffect.Replace(command.callId, command.spec, current)
+    }
+    is CallServiceCommand.Update -> when (current) {
+        command.callId -> CallServiceEffect.Refresh(command.callId, command.spec)
+        null -> CallServiceEffect.Ignore(
+            "update with no call in the foreground - sent before the page heard the service had left or was refused",
+        )
+        else -> CallServiceEffect.Ignore("update of an earlier call, landing late")
+    }
+    is CallServiceCommand.Stop -> when {
+        current == null -> CallServiceEffect.Ignore(
+            "stop (${command.reason}) with no call in the foreground - the service had already left or was refused",
+        )
+        command.callId == null || command.callId == current -> CallServiceEffect.Leave(command.reason)
+        else -> CallServiceEffect.Ignore("stop (${command.reason}) of an earlier call, landing late")
+    }
     CallServiceCommand.HangUp ->
-        if (running) CallServiceEffect.ForwardHangUp
-        else CallServiceEffect.Ignore("hang-up pressed with no call in the foreground")
+        if (current != null) CallServiceEffect.ForwardHangUp(current)
+        else CallServiceEffect.Ignore("hang-up pressed as the call ended - nothing in the foreground")
+}
+
+/** Why a start was refused, as the page reads it (`NativeCallRefusal` in `androidCallService.ts`). */
+enum class StartRefusal(val code: String) {
+    /** The app was not on screen: the next resume answers it (a `foreground` event). */
+    OFF_SCREEN("off-screen"),
+    /** Anything else: final for the call. */
+    REFUSED("refused"),
+}
+
+/**
+ * Classifies a `startForeground` that threw. Android refuses a while-in-use (`microphone`) type to an
+ * app that is not on screen with a `SecurityException` or, API 31+, a
+ * `ForegroundServiceStartNotAllowedException`; [offScreenKind] says the exception is one of those two.
+ * The bridge checked "on screen" on its own thread before asking, and the user can press HOME between
+ * that check and this call on the main thread - so one of those exceptions met while the app is NOT
+ * on screen is [StartRefusal.OFF_SCREEN], answered by the next resume. The same exception with the app
+ * on screen, or any other, is a refusal nobody has named: final.
+ */
+fun classifyStartRefusal(offScreenKind: Boolean, appOnScreen: Boolean): StartRefusal =
+    if (offScreenKind && !appOnScreen) StartRefusal.OFF_SCREEN else StartRefusal.REFUSED
+
+/**
+ * THE ONE PLACE A START REFUSED FOR BEING OFF SCREEN IS REMEMBERED, AND ANSWERED BY THE NEXT RESUME.
+ *
+ * Two threads meet here: the bridge's binder thread checks "on screen" and records a refusal; the main
+ * thread marks the activity resumed and asks for what is pending. Unlocked, the bridge could read
+ * "not on screen", the activity resume and find nothing pending, and the bridge then record a refusal
+ * no resume would ever answer. Under one lock, with the caller's precondition that the "on screen"
+ * flag is written BEFORE [resumed] is called, every interleaving ends in exactly one of: the start
+ * goes ahead, or the refusal is reported and then answered - in that order, because the reports are
+ * made inside the lock.
+ */
+class OffScreenGate {
+    private val lock = Any()
+    private var pending: String? = null
+
+    /**
+     * The bridge's check. Returns true when the start may go ahead (and forgets an older pending
+     * refusal: a newer start supersedes it); otherwise records [callId] and calls [onRefused] inside
+     * the lock, so its report precedes the resume's.
+     */
+    fun admit(callId: String, onScreen: () -> Boolean, onRefused: () -> Unit): Boolean = synchronized(lock) {
+        if (onScreen()) {
+            pending = null
+            true
+        } else {
+            pending = callId
+            onRefused()
+            false
+        }
+    }
+
+    /** A refusal found later, by the service itself ([classifyStartRefusal]): recorded the same way. */
+    fun refusedOffScreen(callId: String, onRefused: () -> Unit) = synchronized(lock) {
+        pending = callId
+        onRefused()
+    }
+
+    /**
+     * The activity resumed (its "on screen" flag already written). Calls [onResumed] with the call
+     * whose start was refused, once, inside the lock; nothing when nothing is pending.
+     */
+    fun resumed(onResumed: (String) -> Unit) = synchronized(lock) {
+        val callId = pending ?: return
+        pending = null
+        onResumed(callId)
+    }
 }
 
 /**
