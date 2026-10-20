@@ -1237,6 +1237,31 @@ Record per phone: the engine's MSE flavour (`MediaSource` on the Mi 9T, `Managed
 iPhone), any `append failed` or `did not open` line, and whether `endstreaming` from
 `ManagedMediaSource` (ignored in v1) left the iPhone starved.
 
+## VQ. Call video at 720p and its quality ladder - owed on BOTH phones (Mi 9T, iPhone 12)
+
+**Proves** [the quality ladder](frontend/modules/calls.md#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop)
+where no gate here can: what a 720p VP8 encode COSTS a phone (CPU, heat, battery) and whether the
+ladder drops on a real weak link and climbs back. The desktop rig measured only Chrome on a desktop
+CPU, on loopback. **Precondition:** a dev pre-release carrying the ladder, a bench account on each
+phone and a desktop profile (`bun tools/cross-client-harness/callpeer.mjs`), the phone screen kept on,
+the phone at room temperature and above 50 % battery, unplugged during the heat runs (a charger heats it).
+The procedure, the commands and the order are on the calls page, section "Measuring it on the
+phones"; record each run's numbers in [device-readings-2026-10](device-readings-2026-10.md).
+
+1. **The climb**: a video call from the desktop on a good Wi-Fi. Within ~10 s the phone's log reads
+   `video quality up 480p30 -> 720p30`, and `callpeer` prints the phone's picture at 1280x720 (or
+   720x1280), ~30 fps, freezes 0.
+2. **The cost, 5 minutes per rung**: the CPU of the app's processes, the temperature and the battery
+   drain at 720p, then at 480p (the calls page says how to hold a rung). The verdict is a number per
+   rung, compared with an AUDIO call of the same length on the same phone.
+3. **The drop**: throttle the phone's link (procedure on the calls page) during a call: a
+   `video quality down` line within ~4 s of the throttle, naming its evidence; the screen shows "Votre
+   vidéo est envoyée en qualité réduite" once the ladder is at 360p15 or below; the call never freezes
+   for longer than the drop. Lift the throttle: the ladder climbs back one rung per ~8 s.
+4. **The CPU drop**: on the iPhone, where VP8 is software only, read `limit=` on the
+   `video ... send=` line through a 5-minute 720p call: `cpu` there, or a `video quality down ... limit=cpu`
+   line, is the iPhone saying 720p is too much, and the reading records it.
+
 ## CR. The composer's camera films a CanaReel - owed on BOTH phones
 
 **Proves** [one camera, one behaviour](frontend/modules/reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)

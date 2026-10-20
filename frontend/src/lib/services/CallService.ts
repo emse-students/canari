@@ -39,12 +39,25 @@ import {
   relayGapIsSuspect,
 } from '$lib/utils/callStats';
 import {
-  applyCallVideoSenderLimits,
+  applyCallVideoRung,
   callVideoConstraints,
   canHoldVideoToVp8,
   preferVp8,
   type CameraFacing,
 } from '$lib/utils/callVideo';
+import {
+  CALL_VIDEO_LADDER,
+  CALL_VIDEO_QUALITY_SAMPLE_MS,
+  CALL_VIDEO_REDUCED_FROM_RUNG,
+  NO_LOSS_REPORT_WARN_AFTER,
+  describeVideoQualityChange,
+  initialVideoQuality,
+  readVideoSendSample,
+  stepVideoQuality,
+  videoEvidence,
+  type VideoQualityState,
+  type VideoSendSample,
+} from '$lib/utils/callVideoQuality';
 import {
   describeE2eReport,
   e2eBypassedSides,
@@ -397,6 +410,19 @@ export class CallService {
   private cameraOpTarget: 'on' | 'off' = 'off';
   /** The worker's `videoCodecUnexpected` was logged in this call: one ERROR line, not one per post. */
   private videoCodecUnexpectedLogged = false;
+  /**
+   * The camera sender's quality ladder (`utils/callVideoQuality.ts`), for the peer connection and
+   * sender it was started on; `null` when no camera transceiver exists. `prev` is the last sample,
+   * the baseline the next one is compared with; `timer` the pending sample.
+   */
+  private videoQuality: {
+    pc: RTCPeerConnection;
+    sender: RTCRtpSender;
+    state: VideoQualityState;
+    prev: VideoSendSample | null;
+    timer: number | null;
+    statsFailed: boolean;
+  } | null = null;
 
   public callState = writable<CallState>('idle');
   /**
@@ -433,6 +459,12 @@ export class CallService {
    */
   public peerMicSuspended = writable<boolean>(false);
   public isVideoOff = writable<boolean>(true);
+  /**
+   * THIS side's picture is sent reduced: the quality ladder stands at or below
+   * `CALL_VIDEO_REDUCED_FROM_RUNG` because the link or the CPU could not carry more. The screen
+   * says so while the camera is on. `false` outside a call and while no ladder runs.
+   */
+  public videoSendReduced = writable<boolean>(false);
   /** Which camera is sending (`user` = the screen side, mirrored in the self view). */
   public cameraFacing = writable<CameraFacing>('user');
   /** The device has more than one camera, so the switch is offered (read once the camera is open). */
@@ -776,8 +808,9 @@ export class CallService {
     }
 
     // The call is over from here: a microphone the system gives back during the summary is no
-    // longer news for anyone.
+    // longer news for anyone. Nor is the link: the camera's ladder stops reading it.
     this.stopWatchingMicrophone();
+    this.stopVideoQuality();
 
     // Show the "ended" summary screen briefly (1.5 s) so the user sees the call
     // duration and result before the overlay disappears (P4).
@@ -874,6 +907,7 @@ export class CallService {
     this.incomingHasVideo = false;
     this.callHasVideo = false;
     this.cameraTransceiver = null;
+    this.stopVideoQuality();
     this.cameraBusy = false;
     this.offPending = false;
     this.videoCodecUnexpectedLogged = false;
@@ -1475,8 +1509,10 @@ export class CallService {
       // The new peer connection earns its own E2E claim and its own path check: nothing the dead
       // one proved is evidence about it.
       this.resetE2eEvidence();
-      // The new peer connection gets the camera on its own transceiver (`initPeerConnection`).
+      // The new peer connection gets the camera on its own transceiver (`initPeerConnection`),
+      // and its own ladder: the dead link's evidence says nothing about the new one.
       this.cameraTransceiver = null;
+      this.stopVideoQuality();
       this.mergedRemoteStream = null;
       this.pendingRemoteIceCandidates = [];
       this.makingOffer = false;
@@ -2094,7 +2130,7 @@ export class CallService {
             continue;
           }
           this.cameraTransceiver = transceiver;
-          void applyCallVideoSenderLimits(sender, appendLog);
+          this.startVideoQuality(pc, sender);
         }
       }
       await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
@@ -2985,8 +3021,96 @@ export class CallService {
     }
     this.cameraTransceiver = transceiver;
     this.scheduleE2ePathCheck(pc, 'after the camera was added');
-    void applyCallVideoSenderLimits(transceiver.sender, appendLog);
+    this.startVideoQuality(pc, transceiver.sender);
     appendLog('[Call] camera added mid-call on a fresh transceiver (renegotiating)');
+  }
+
+  /**
+   * Starts the camera sender's quality ladder (`utils/callVideoQuality.ts`): the start rung applied
+   * now, then one `getStats()` sample every `CALL_VIDEO_QUALITY_SAMPLE_MS`. The ladder belongs to
+   * THIS sender of THIS peer connection; a replaced one stops it (`sampleVideoQuality`).
+   */
+  private startVideoQuality(pc: RTCPeerConnection, sender: RTCRtpSender): void {
+    this.stopVideoQuality();
+    const vq = {
+      pc,
+      sender,
+      state: initialVideoQuality(),
+      prev: null,
+      timer: null,
+      statsFailed: false,
+    };
+    this.videoQuality = vq;
+    const rung = CALL_VIDEO_LADDER[vq.state.rung];
+    void applyCallVideoRung(sender, rung, appendLog).then((ok) => {
+      if (ok || this.videoQuality !== vq) return;
+      appendLog(`[Call] ERROR video quality ladder not started: the sender refused ${rung.name}`);
+      this.stopVideoQuality();
+    });
+    this.armVideoQualitySample();
+  }
+
+  /** Stops the ladder (call ended, peer connection replaced, or the engine refused a rung). */
+  private stopVideoQuality(): void {
+    const vq = this.videoQuality;
+    if (vq?.timer != null) window.clearTimeout(vq.timer);
+    this.videoQuality = null;
+    this.videoSendReduced.set(false);
+  }
+
+  private armVideoQualitySample(): void {
+    const vq = this.videoQuality;
+    if (!vq) return;
+    vq.timer = window.setTimeout(() => {
+      vq.timer = null;
+      void this.sampleVideoQuality(vq);
+    }, CALL_VIDEO_QUALITY_SAMPLE_MS);
+  }
+
+  /**
+   * One sample of the ladder: the camera sender's stats read against the previous sample, the step
+   * decided by `stepVideoQuality`, and a change applied to the sender. A camera that is off sends
+   * nothing and is no evidence (`videoEvidence`), so the ladder only waits.
+   */
+  private async sampleVideoQuality(vq: NonNullable<CallService['videoQuality']>): Promise<void> {
+    if (this.videoQuality !== vq) return;
+    if (this.pc !== vq.pc) {
+      this.stopVideoQuality();
+      return;
+    }
+    let sample: VideoSendSample | null = null;
+    if (vq.sender.track) {
+      try {
+        sample = readVideoSendSample(await vq.pc.getStats());
+      } catch (e) {
+        // One line per ladder: the next success says nothing, the samples just resume.
+        if (!vq.statsFailed) {
+          vq.statsFailed = true;
+          appendLog(`[Call] WARN video quality: getStats failed (${String(e)}) - no evidence`);
+        }
+      }
+    }
+    if (this.videoQuality !== vq) return;
+    const step = stepVideoQuality(vq.state, videoEvidence(vq.prev, sample));
+    vq.prev = sample;
+    vq.state = step.state;
+    if (step.noLossReport) {
+      appendLog(
+        `[Call] WARN video quality: no loss figure from the peer in ${NO_LOSS_REPORT_WARN_AFTER} samples - the ladder holds ${CALL_VIDEO_LADDER[vq.state.rung].name} and cannot climb`
+      );
+    }
+    if (step.change) {
+      appendLog(`[Call] ${describeVideoQualityChange(step.change)}`);
+      const ok = await applyCallVideoRung(vq.sender, CALL_VIDEO_LADDER[step.change.to], appendLog);
+      if (this.videoQuality !== vq) return;
+      if (!ok) {
+        appendLog('[Call] ERROR video quality ladder stopped: the sender refused a rung');
+        this.stopVideoQuality();
+        return;
+      }
+      this.videoSendReduced.set(step.change.to >= CALL_VIDEO_REDUCED_FROM_RUNG);
+    }
+    this.armVideoQualitySample();
   }
 
   /**

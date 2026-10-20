@@ -134,6 +134,27 @@ export const MATRIX = [
     callee: VID,
   },
   {
+    name: 'video-rung-720p',
+    what: 'EXPERIMENT: both cameras held on the 720p30 rung (2.5 Mb/s ceiling), no ladder - its encode cost',
+    video: true,
+    caller: { ...VID, videoRung: 0 },
+    callee: { ...VID, videoRung: 0 },
+  },
+  {
+    name: 'video-rung-480p',
+    what: 'EXPERIMENT: both cameras held on the 480p30 rung (1.2 Mb/s ceiling), no ladder - its encode cost',
+    video: true,
+    caller: { ...VID, videoRung: 1 },
+    callee: { ...VID, videoRung: 1 },
+  },
+  {
+    name: 'video-rung-360p',
+    what: 'EXPERIMENT: both cameras held on the 360p30 rung (700 kb/s ceiling), no ladder - its encode cost',
+    video: true,
+    caller: { ...VID, videoRung: 2 },
+    callee: { ...VID, videoRung: 2 },
+  },
+  {
     name: 'video-whole-frame',
     what: 'EXPERIMENT: video encrypted WHOLE, the VP8 payload header included (the worker before 2026-10-20)',
     video: true,
@@ -224,11 +245,13 @@ export const THRESHOLDS = {
   /** VIDEO: frames decoded a second over the window (the fake camera sends 30, `fps=30`). */
   minVideoFps: 27,
   /**
-   * VIDEO: key frames DECODED over the call. The encoder sends one, plus one per PLI; 1-3 measured.
-   * An encrypted VP8 payload header reads as a key frame half the time (503 in 34 s, row
-   * `video-whole-frame`), so this is the check that sees the header-in-clear regress.
+   * VIDEO: key frames DECODED over the call. The encoder sends one, plus one per PLI; 1-3 measured
+   * before the quality ladder, which adds one per rung change (VP8 restarts on a new resolution):
+   * 4-5 measured with its climb to 720p (2026-10-21), so the bound is 8. An encrypted VP8 payload
+   * header reads as a key frame half the time (503 in 34 s, row `video-whole-frame`) - this is still
+   * the check that sees the header-in-clear regress, two orders of magnitude away.
    */
-  maxVideoKeyFrames: 5,
+  maxVideoKeyFrames: 8,
   /** VIDEO: freezes over the window (`inbound-rtp.freezeCount`) on a clean network. */
   maxVideoFreezes: 0,
   /** VIDEO: the remote picture's mean colour against the sender's own capture, per channel. */

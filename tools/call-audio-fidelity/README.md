@@ -74,7 +74,7 @@ sender, as the app does) and must PASS; `fault-reuse-bare-sender` leaves that se
 
 `video`, `video-camera-late`, `video-switch` and `video-off-on` are GATED: both pages send Chrome's
 fake camera (`--use-fake-device-for-media-stream=fps=30`) through the app's own worker, with the
-app's `callVideoConstraints`, `applyCallVideoSenderLimits` and `preferVp8` IMPORTED from
+app's `callVideoConstraints`, `applyCallVideoRung` and `preferVp8` IMPORTED from
 `frontend/src/lib/utils/callVideo.ts`. Each adds these checks (`videoChecks`, self-tested by
 `matrix.test.mjs`):
 
@@ -85,10 +85,19 @@ app's `callVideoConstraints`, `applyCallVideoSenderLimits` and `preferVp8` IMPOR
 | `video-codec`         | the inbound video codec is VP8                                                                         |
 | `video-fps`           | decoded frames per second >= 27                                                                        |
 | `video-freezes`       | `freezeCount` = 0                                                                                      |
-| `video-keyframes`     | `keyFramesDecoded` <= 5 - a key-frame storm is the signature of a header the depacketiser cannot read  |
+| `video-keyframes`     | `keyFramesDecoded` <= 8 (a ladder change adds one) - a storm is a header the depacketiser cannot read  |
 | `video-picture`       | the mean colour of the received picture within 24 of the sent one (32x24 canvas, both before `finish`) |
 | `video-fed-after-op`  | after a switch or an off/on, the sender transform is still handed frames                               |
 | `video-mute-when-off` | the peer's remote track mutes while the camera is off, and unmutes after                               |
+
+Since 2026-10-21 each camera runs the app's quality ladder (`callVideoQuality.ts`, IMPORTED, sampled
+as `CallService` samples it) and the video table adds the SENDER's side: the size and rate it sent,
+its encoder, `totalEncodeTime / framesEncoded` (ms a frame, and that times the frame rate as a share
+of one core) and the rung the ladder ended on with its changes. `video-rung-720p`, `video-rung-480p`
+and `video-rung-360p` are experiments that HOLD one rung (`videoRung`) to measure its encode cost
+apart. The rig cannot make the ladder drop: its impairment acts on frames at the receiver
+transform, never on the wire the congestion controller reads
+([calls](../../docs/wiki/frontend/modules/calls.md#the-quality-ladder-2026-10-21---720p-and-an-automatic-drop)).
 
 `video-whole-frame` (VP8 encrypted whole) and `video-h264` (H.264 negotiated, encrypted whole) are
 the experiments that justify the clear header and the VP8-only rule; `fault-video-bare-sender` puts
