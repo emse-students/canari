@@ -174,6 +174,13 @@ class MainActivity : TauriActivity() {
         pushForeground(isInForeground)
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
         webView.addJavascriptInterface(GestureBridge(), "canariGestures")
+        // The ongoing-call service (WP-C-BG-A) exists only in a build that places calls; the page
+        // reads an absent `canariCall` as exactly that.
+        CallBridge.attach(webView)
+        if (CallBridge.serviceDeclared(this)) {
+            webView.addJavascriptInterface(CallBridge.JsInterface(applicationContext), "canariCall")
+            Log.d("MainActivity", "canariCall bridge registered (the call service is in this build)")
+        }
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyRightEdgeExclusion() }
     }
 
@@ -306,6 +313,25 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    /**
+     * A BACK PRESS AT THE ROOT DURING A CALL SENDS THE APP BACK, IT NEVER FINISHES IT.
+     *
+     * Wry's callback calls this once the WebView has no history left. Since Android 12 the platform
+     * already moves a root launcher activity's task back instead of finishing it; on API 28-30 it
+     * finishes the activity, which destroys the WebView and the call with it (see `onDestroy`). With
+     * a call in the foreground service, Back means "leave the screen", as on every phone app.
+     */
+    @Deprecated("Called by WryActivity's back callback; the dispatcher has no other hook for the root case")
+    override fun onBackPressed() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && CallForegroundService.running) {
+            Log.i("MainActivity", "Back at the root during a call on API ${Build.VERSION.SDK_INT} - moving the task back")
+            moveTaskToBack(true)
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // Keep getIntent()/deep-link getCurrent() aligned with the notification tap intent.
@@ -323,6 +349,9 @@ class MainActivity : TauriActivity() {
         // The notification plugin's empty "Default" channel, created at its load (see the helper).
         CanariApplication.removePluginDefaultChannel(this)
         pushForeground(true)
+        // A call service start refused while the activity was not resumed may be asked again now.
+        // AFTER `isInForeground = true` above: the OffScreenGate's contract (call/OngoingCall.kt).
+        CallBridge.onActivityResumed()
         Log.d("MainActivity", "onResume: isInForeground=true, worker failure flag reset")
         // Migrates pending_push_secret.txt → Keystore on first foreground resume after
         // FCM registration (store_push_secret writes the file during the live session;
@@ -379,6 +408,10 @@ class MainActivity : TauriActivity() {
             return
         }
         liveWebView = null
+        // A call lives in this page: with the page gone, its service must not hold the microphone,
+        // the audio mode and a wake lock for a call that no longer exists.
+        CallBridge.detach(webView)
+        CallForegroundService.stopForPageGone(this)
         Log.d(
             "MainActivity",
             "onDestroy: destroying the WebView (changingConfigurations=$isChangingConfigurations, finishing=$isFinishing)"

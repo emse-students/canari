@@ -45,7 +45,12 @@
   import { fade } from 'svelte/transition';
   import type { Snippet } from 'svelte';
   import { m } from '$lib/paraglide/messages';
-  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+  import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+  import {
+    hasAndroidCallService,
+    ongoingCallSpec,
+    openAndroidCallSession,
+  } from '$lib/mobile/androidCallService';
   import { CALLS_VIDEO_ENABLED } from '$lib/features';
   import { useCallModel } from '$lib/composables/useCallModel.svelte';
   import { callView } from '$lib/stores/callView.svelte';
@@ -181,12 +186,26 @@
       'mediaDevices' in navigator &&
       typeof AudioContext !== 'undefined'
   );
-  let isMobileRtc = $derived(isMobileTauriRuntime());
+  /**
+   * Whether the speaker toggle can route anything: on iOS the page's `setSinkId`; on Android the
+   * ongoing-call service's output, so a build without the service shows no toggle that does nothing.
+   */
+  let speakerRoutable = $derived(
+    isIosTauriRuntime() || (isAndroidTauriRuntime() && hasAndroidCallService(window))
+  );
+  /**
+   * Android: whether the service can route the audio NOW - false while its start waits for the app
+   * to come back on screen, and once it was refused or left for this call. The toggle is then shown
+   * disabled and says why, rather than taking a tap that would do nothing.
+   */
+  let androidRouteAvailable = $state(true);
+  let speakerDisabled = $derived(isAndroidTauriRuntime() && !androidRouteAvailable);
 
   /**
-   * Routes remote audio to speaker or earpiece on mobile, by output-device LABEL. Best-effort and
+   * Routes remote audio to speaker or earpiece on iOS, by output-device LABEL. Best-effort and
    * unverified on hardware: a WebView may list no labelled outputs at all, and the real route is a
-   * native call (`AudioManager` / `AVAudioSession`) - calls.md, "the call in the background".
+   * native call (`AVAudioSession`, WP-C-BG-I) - calls.md, "the call in the background". On Android
+   * the route is the ongoing-call service's (`AudioManager.setCommunicationDevice`, below).
    */
   async function applySpeakerRouting(sink: HTMLAudioElement, speaker: boolean) {
     try {
@@ -210,7 +229,7 @@
 
   $effect(() => {
     const sink = remoteAudioSink;
-    if (!sink || !speakerSupported || !isMobileRtc) return;
+    if (!sink || !speakerSupported || !isIosTauriRuntime()) return;
     void applySpeakerRouting(sink, isSpeakerOn);
   });
 
@@ -233,6 +252,27 @@
     });
   });
   $effect(() => () => clearCallMediaSession(navigator));
+
+  // -- Android: the ongoing-call foreground service (WP-C-BG-A) -------------------------------
+  // It keeps the process's network and microphone while the app is off screen, draws the CallStyle
+  // notification and owns the audio route. Opened once per call (this component lives exactly as
+  // long as one call); its hang-up ends the call like the in-app button.
+  const androidCall = isAndroidTauriRuntime()
+    ? openAndroidCallSession(
+        window,
+        () => callService.endCall(),
+        (available) => (androidRouteAvailable = available)
+      )
+    : null;
+  $effect(() => () => androidCall?.dispose());
+  $effect(() => {
+    if (!androidCall) return;
+    const title = primary?.displayName || m.call_label();
+    androidCall.publish(
+      ongoingCallSpec(call.kind, !!call.localStream, title, call.connectedAt, isSpeakerOn),
+      `kind=${call.kind}`
+    );
+  });
 
   /**
    * What a device reading needs to say what the background did to the call: whether the page was
@@ -370,12 +410,14 @@
   caption: string,
   onclick: () => void,
   tone: 'neutral' | 'on' | 'danger' | 'accept',
-  icon: Snippet
+  icon: Snippet,
+  disabled: boolean = false
 )}
   <div class="flex w-20 flex-col items-center gap-2">
     <button
       type="button"
-      class="call-control flex size-16 items-center justify-center rounded-full transition-transform active:scale-95 {tone ===
+      {disabled}
+      class="call-control flex size-16 items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40 disabled:active:scale-100 {tone ===
       'danger'
         ? 'bg-red-500 text-white hover:bg-red-400'
         : tone === 'accept'
@@ -565,17 +607,22 @@
         </div>
       {:else if !isEnded}
         <div class="flex items-start justify-center gap-4 sm:gap-6">
-          {#if isMobileRtc && speakerSupported}
+          {#if speakerRoutable && speakerSupported}
             {#snippet speakerIcon()}
               {#if isSpeakerOn}<Volume2 size={26} />{:else}<Speaker size={26} />{/if}
             {/snippet}
             {@render control(
               'call-speaker',
-              isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
+              speakerDisabled
+                ? m.call_route_unavailable_label()
+                : isSpeakerOn
+                  ? m.call_speaker_label()
+                  : m.call_earpiece_label(),
               isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
               () => (isSpeakerOn = !isSpeakerOn),
               isSpeakerOn ? 'on' : 'neutral',
-              speakerIcon
+              speakerIcon,
+              speakerDisabled
             )}
           {/if}
           {#if CALLS_VIDEO_ENABLED}
