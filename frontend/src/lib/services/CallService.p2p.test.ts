@@ -2333,6 +2333,63 @@ describe('a microphone the system took', () => {
     expect(get(service.peerMicSuspended)).toBe(false);
   });
 
+  it("clears the other party's report when it goes away: no fresh evidence, no claim", async () => {
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+    ws.deliver({ type: 'MicSuspended', suspended: true });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(true);
+
+    ws.deliver({ type: 'PeerAway' });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(false);
+  });
+
+  it('names the state a dead socket could not carry, and re-announces it after a RESUMED pairing', async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const service = new CallService(fakeMls);
+      const started = service.startCall('group-1', false);
+      await settle();
+      const ws = FakeSocket.instances[0];
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-1' });
+      await started;
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      const pc = FakePeerConnection.instances[0];
+      pc.setIce('connected');
+      pc.setConnection('connected');
+
+      ws.drop();
+      vi.mocked(appendLog).mockClear();
+      mic.systemTakes();
+      expect(get(service.localMicSuspended)).toBe(true);
+      expect(ws.framesOfType('MicSuspended')).toHaveLength(0);
+      expect(
+        vi
+          .mocked(appendLog)
+          .mock.calls.some(([line]) =>
+            /\[Call\] signalling MicSuspended NOT sent - socket/.test(String(line))
+          )
+      ).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(
+        cappedReconnectDelayMs(0, CALL_SIGNALLING_RESUME_MAX_DELAY_MS)
+      );
+      await settle();
+      const ws2 = FakeSocket.instances[1];
+      ws2.open();
+      ws2.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-2' });
+      ws2.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+      expect(ws2.framesOfType('MicSuspended')).toEqual([{ type: 'MicSuspended', suspended: true }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a track handed over already muted counts from the start', async () => {
     mic.muted = true;
     const service = new CallService(fakeMls);

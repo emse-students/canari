@@ -356,7 +356,11 @@ export class CallService {
   private backgroundVisibilityHandler: (() => void) | null = null;
   /** True while the camera was auto-paused because the tab/app went to the background. */
   private videoPausedByBackground = false;
-  /** When the OS took the microphone (epoch ms), while it holds it; `null` otherwise. */
+  /**
+   * When the OS took the microphone (`performance.now()`, monotonic: a wall clock moved by the
+   * network time while the phone was locked would misstate the duration), while it holds it;
+   * `null` otherwise.
+   */
   private micSuspendedSince: number | null = null;
   /** Removes the listeners {@link watchSystemMicrophone} put on the capture track. */
   private micWatchCleanup: (() => void) | null = null;
@@ -390,8 +394,9 @@ export class CallService {
   public localMicSuspended = writable<boolean>(false);
   /**
    * The OTHER party's operating system holds ITS microphone, as it said over the relay
-   * (`MicSuspended`). Rebuilt at every pairing from the sender's own truth (see
-   * {@link announceMicOnPairing}), never inferred from silence. `false` outside a call.
+   * (`MicSuspended`). Cleared when the other party goes away (`PeerAway`: no fresh evidence) and
+   * rebuilt at every pairing from the sender's own truth (see {@link announceMicOnPairing}), never
+   * inferred from silence. `false` outside a call.
    */
   public peerMicSuspended = writable<boolean>(false);
   public isVideoOff = writable<boolean>(false);
@@ -1366,6 +1371,9 @@ export class CallService {
         // `PeerLeft` next.
         appendLog('[Call] the other party lost its signalling connection - waiting for it');
         this.peerAway = true;
+        // Its microphone report is about a device we can no longer hear from: no fresh evidence,
+        // so no claim. Its `PeerReady { resumed }` re-announces a microphone still held.
+        this.peerMicSuspended.set(false);
         this.onPairBroken('peer away');
         this.updateReconnecting();
         return;
@@ -2560,7 +2568,7 @@ export class CallService {
     this.micWatchCleanup?.();
     const onMute = () => {
       if (this.micSuspendedSince !== null) return;
-      this.micSuspendedSince = Date.now();
+      this.micSuspendedSince = performance.now();
       appendLog(
         `[Call] WARN the system took the microphone (track muted, page ${typeof document !== 'undefined' && document.hidden ? 'hidden' : 'visible'}) - telling the other party`
       );
@@ -2569,7 +2577,7 @@ export class CallService {
     };
     const onUnmute = () => {
       if (this.micSuspendedSince === null) return;
-      const seconds = Math.max(1, Math.round((Date.now() - this.micSuspendedSince) / 1000));
+      const seconds = Math.max(1, Math.round((performance.now() - this.micSuspendedSince) / 1000));
       this.micSuspendedSince = null;
       appendLog(`[Call] the system gave the microphone back after ${seconds} s`);
       this.localMicSuspended.set(false);

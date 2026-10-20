@@ -264,8 +264,38 @@
 
   /** Why a voice is not getting through, when an operating system is the reason (either side). */
   let micNotice = $derived(
-    callMicNotice(call.localMicSuspended, call.peerMicSuspended, primary?.displayName)
+    callMicNotice(call.kind, call.localMicSuspended, call.peerMicSuspended, primary?.displayName)
   );
+
+  /**
+   * What the live region says once a notice ENDS, so it never falls back to "connected" - a state
+   * that did not change. The other party's microphone coming back is said ONCE; this device's is
+   * said by the toast (`call_mic_was_suspended`), so the region says nothing new rather than say it
+   * twice. `null` = no notice ended since the call was last live: the ordinary announcement.
+   */
+  let micRecovery = $state<string | null>(null);
+  /** Whose notice was SHOWN last ('local', 'peer') - a notice never shown ends with no recovery. */
+  let micShown: 'local' | 'peer' | null = null;
+  $effect(() => {
+    const live = call.kind === 'live';
+    const shown = !live
+      ? null
+      : call.localMicSuspended
+        ? 'local'
+        : call.peerMicSuspended
+          ? 'peer'
+          : null;
+    if (!live || shown) {
+      // Leaving `live` is a new state with its own announcement; a notice up says itself.
+      micRecovery = null;
+    } else if (micShown === 'local') {
+      micRecovery = '';
+    } else if (micShown === 'peer') {
+      const name = primary?.displayName;
+      micRecovery = name ? m.call_mic_restored_peer({ name }) : m.call_mic_restored_peer_unnamed();
+    }
+    micShown = shown;
+  });
 
   // -- Video (off until WP-C3; kept working so the switch does not reopen this file) -----------
   let remoteVideo: HTMLVideoElement | undefined = $state();
@@ -324,7 +354,7 @@
   /** The live line: a change of STATE is announced, never the timer's every second. */
   let announcement = $derived(
     call.kind === 'live'
-      ? (micNotice ?? m.call_live_announcement())
+      ? (micNotice ?? micRecovery ?? m.call_live_announcement())
       : callStatusText(call.kind, call.duration)
   );
 
@@ -477,7 +507,7 @@
         >
           {statusText}
         </p>
-        {#if micNotice && !isIncoming && !isEnded}
+        {#if micNotice}
           <p
             class="mt-1 inline-flex max-w-full items-center gap-2 text-sm text-amber-200"
             data-testid="call-mic-notice"

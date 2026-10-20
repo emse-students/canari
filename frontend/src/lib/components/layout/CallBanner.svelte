@@ -46,9 +46,7 @@
   const statusText = $derived(callStatusText(call.kind, call.duration));
   /** An OS holding a microphone, either side, in place of the timer while it lasts. */
   const micNotice = $derived(
-    call.kind === 'live'
-      ? callMicNotice(call.localMicSuspended, call.peerMicSuspended, peerName)
-      : null
+    callMicNotice(call.kind, call.localMicSuspended, call.peerMicSuspended, peerName)
   );
 
   // THE BAR IS NEVER UNDER A LAYER (CALL-BAR-COVERED, Mi 9T and iPhone, 2026-10-19): with the

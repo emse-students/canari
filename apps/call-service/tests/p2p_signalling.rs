@@ -39,6 +39,33 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 struct Service {
     child: Child,
     port: u16,
+    /// Every line the service logged so far - what a DROPPED frame leaves, since by definition it
+    /// reaches no socket a test could read.
+    log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl Service {
+    /// Waits for a log line containing every one of `parts`, as an EVENT: the bound is LIVENESS,
+    /// and nothing is asserted on how long it took.
+    async fn logged(&self, parts: &[&str]) -> String {
+        let log = self.log.clone();
+        let wanted: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+        timeout(LIVENESS, async move {
+            loop {
+                if let Some(line) = log
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|l| wanted.iter().all(|p| l.contains(p.as_str())))
+                {
+                    return line.clone();
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the service never logged a line with {parts:?}"))
+    }
 }
 
 impl Drop for Service {
@@ -105,9 +132,12 @@ async fn start_with(grace_secs: Option<u64>, keepalive_ms: Option<u64>) -> Servi
     // One thread reads the log for the whole run: it hands over the port, then keeps draining so
     // the child never blocks on a full pipe.
     let (tx, rx) = std::sync::mpsc::channel();
+    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = log.clone();
     std::thread::spawn(move || {
         let mut tx = Some(tx);
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            sink.lock().unwrap().push(line.clone());
             if let Some(port) = bound_port(&line) {
                 if let Some(tx) = tx.take() {
                     let _ = tx.send(port);
@@ -115,7 +145,11 @@ async fn start_with(grace_secs: Option<u64>, keepalive_ms: Option<u64>) -> Servi
             }
         }
     });
-    let mut service = Service { child, port: 0 };
+    let mut service = Service {
+        child,
+        port: 0,
+        log,
+    };
     // An event, bounded by LIVENESS: the channel closes without a port if the child exits first.
     service.port = tokio::task::spawn_blocking(move || rx.recv_timeout(LIVENESS))
         .await
@@ -598,6 +632,143 @@ async fn a_suspended_microphone_is_told_to_the_partner_both_ways() {
         recv(&mut alice).await,
         json!({ "type": "MicSuspended", "suspended": false })
     );
+}
+
+/// A microphone state sent before the `Join` completed has nobody to go to: it is dropped with a
+/// line, and the socket goes on to join and pair as if it had never been sent.
+#[tokio::test]
+async fn a_microphone_state_before_join_is_dropped_and_the_socket_lives_on() {
+    let svc = start().await;
+    let room = "room-mic-early";
+    let mut alice = connect(&svc, "alice").await;
+    send(
+        &mut alice,
+        json!({ "type": "MicSuspended", "suspended": true }),
+    )
+    .await;
+    svc.logged(&["sent mic-suspended before Join completed - dropped"])
+        .await;
+
+    send(
+        &mut alice,
+        json!({ "type": "Join", "room_id": room, "room_token": room_token("alice", room), "mode": "p2p" }),
+    )
+    .await;
+    joined(&mut alice, room).await;
+    let mut bob = join(&svc, "bob", room).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false })
+    );
+    // Bob's next frame is Alice's marker: the early state was never queued for him.
+    let marker = json!({ "type": "IceCandidate", "candidate": "{}" });
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true })
+    );
+    send(&mut alice, marker.clone()).await;
+    assert_eq!(recv(&mut bob).await, marker);
+}
+
+/// An SFU-mode session has no partner to tell: the frame is refused by name, never relayed.
+#[tokio::test]
+async fn a_microphone_state_outside_p2p_mode_is_dropped_by_name() {
+    let svc = start().await;
+    let room = "room-mic-sfu";
+    let mut alice = connect(&svc, "alice").await;
+    send(
+        &mut alice,
+        json!({ "type": "Join", "room_id": room, "room_token": room_token("alice", room) }),
+    )
+    .await;
+    assert_eq!(recv(&mut alice).await["type"], "Joined");
+    send(
+        &mut alice,
+        json!({ "type": "MicSuspended", "suspended": true }),
+    )
+    .await;
+    svc.logged(&["sent p2p-only frame mic-suspended in an SFU room - dropped"])
+        .await;
+}
+
+/// Sent while the partner is AWAY, the state is dropped (with a line, and no ICE failure counted);
+/// after the resume the sender says it again - what `CallService.announceMicOnPairing` does - and
+/// THAT one arrives, first, alone.
+#[tokio::test]
+async fn a_microphone_state_while_the_partner_is_away_is_dropped_then_re_announced() {
+    let svc = start().await;
+    let room = "room-mic-away";
+    let (mut alice, _, bob, bob_resume) = paired(&svc, room).await;
+
+    drop(bob);
+    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+    send(
+        &mut alice,
+        json!({ "type": "MicSuspended", "suspended": true }),
+    )
+    .await;
+    svc.logged(&[
+        "sent mic-suspended in p2p room",
+        "while the other party is away - dropped",
+    ])
+    .await;
+
+    let mut bob = join_with(&svc, "bob", room, &bob_resume).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "resumed": true })
+    );
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "resumed": true })
+    );
+    send(
+        &mut alice,
+        json!({ "type": "MicSuspended", "suspended": true }),
+    )
+    .await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "MicSuspended", "suspended": true })
+    );
+
+    // The dropped state is not an ICE failure: Alice's record says so when her session ends.
+    alice.close(None).await.unwrap();
+    assert_eq!(recv(&mut bob).await, json!({ "type": "PeerLeft" }));
+    let end = svc
+        .logged(&["session end room=room-mic-away", "peer=alice"])
+        .await;
+    assert!(end.contains("ice_in_failed=0"), "{end}");
+}
+
+/// The state goes to the paired seat and to no one else: a second pair in another room (the same
+/// two users, other sockets) never sees it - its next frame is its own partner's.
+#[tokio::test]
+async fn a_microphone_state_reaches_the_paired_seat_only() {
+    let svc = start().await;
+    let (mut alice, _, mut bob, _) = paired(&svc, "room-mic-one").await;
+    let (mut other_alice, _, mut other_bob, _) = paired(&svc, "room-mic-two").await;
+
+    send(
+        &mut alice,
+        json!({ "type": "MicSuspended", "suspended": true }),
+    )
+    .await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "MicSuspended", "suspended": true })
+    );
+
+    let marker = json!({ "type": "IceCandidate", "candidate": "{\"c\":1}" });
+    send(&mut other_alice, marker.clone()).await;
+    assert_eq!(recv(&mut other_bob).await, marker);
+    send(&mut other_bob, marker.clone()).await;
+    assert_eq!(recv(&mut other_alice).await, marker);
+    // And Alice, the sender, is not echoed her own frame.
+    send(&mut bob, marker.clone()).await;
+    assert_eq!(recv(&mut alice).await, marker);
 }
 
 /// A resume can arrive before the server saw the old socket die. The old socket is then CLOSED,

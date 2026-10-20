@@ -76,7 +76,7 @@ Nothing in this lot needs the DSI.
 
 | Constant | Value | Holds |
 |---|---|---|
-| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `USE_FULL_SCREEN_INTENT`. Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all six switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
+| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `audio` (since 2026-10-20), `USE_FULL_SCREEN_INTENT`. Once it flips, the committed plist carries `audio` and `ios.yml`'s pre-release patch finds it there and adds nothing (it is idempotent; it can then be deleted). Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all six switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
 | `CALLS_VIDEO_ENABLED` | `false` | the video-call button and both camera toggles; waits for WP-C3 (whole-frame encryption vs H.264) |
 
@@ -1040,19 +1040,27 @@ none was shown to be missing.
   The partner's full screen, its top bar and the live region read *"Le téléphone de X a coupé son
   micro"* while it lasts; the local screen reads *"Votre téléphone a coupé votre micro"*, and because
   that screen was hidden while it lasted, a toast says for how long on the way back
-  (`call_mic_was_suspended`). Each pairing (`PeerReady`, first, replaced or resumed) clears the
-  partner's report and re-announces a microphone still held, so a `false` lost with a dropped socket
-  cannot leave the notice stuck. Server half: [call-service](../../services/call-service.md#signal-frames).
+  (`call_mic_was_suspended`, measured on `performance.now()`, a clock no network time can move).
+  The notice shows, and is announced, only while the call is LIVE - one rule, `callMicNotice`, read
+  by the full screen, the bar and the live region alike. When it ends the live region says the
+  other party is heard again ONCE, or nothing for this device's own (the toast says it), and never
+  falls back to "connected". A `PeerAway` clears the partner's report (no fresh evidence), and each
+  pairing (`PeerReady`, first, replaced or resumed) re-announces a microphone still held, so a
+  `false` lost with a dropped socket cannot leave the notice stuck. Server half: [call-service](../../services/call-service.md#signal-frames).
 
 **Owed on hardware** (a pre-release carrying this, both phones; the steps are
 [CALL-L1](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)
 row 12): the `UIBackgroundModes of this pre-release build:` line of the iOS job lists `audio`; the
 iPhone locked 60 s and backgrounded 60 s mid-call - the Mi 9T's inbound audio packets keep rising,
 the iPhone logs NO `the system took the microphone`, and the Mi 9T's voice is heard on the locked
-iPhone; then a microphone taken another way (Siri held on the iPhone mid-call) shows the notice on the
-Mi 9T and the toast on the iPhone. If the mode does not keep the capture, the next candidate is
-WebKit's own policy, read from the iPhone's syslog (`pymobiledevice3 syslog live`, `mediaserverd` /
-`WebKit` lines) - not a native audio session written blind.
+iPhone. Three more, because the mode is APP-WIDE and the signal is new: whether a reel and a voice
+message now keep PLAYING locked or in the background (a behaviour change to accept or refuse); an
+audio route change (AirPods, a wired headset) and a short interruption mid-call, measured for a
+`mute`/`unmute` FLICKER - each one would put a false notice on the partner's screen, and no debounce
+is written before that rate is read; and a call accepted from the lock screen (the track handed over
+already muted). If the mode does not keep the capture, the next candidate is WebKit's own policy,
+read from the iPhone's syslog (`pymobiledevice3 syslog live`, `mediaserverd` / `WebKit` lines) - not a
+native audio session written blind.
 
 ## Responsibilities
 

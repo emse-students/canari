@@ -3445,8 +3445,12 @@ WebRTC stack kept running, only the capture stopped -
 pre-release can call, so `ios.yml` patches `audio` into that build's `Info.plist`, in the branch
 that writes `VITE_DEPLOY_ENVIRONMENT=development`; a stable cannot, so the committed plist does not
 declare it until `CALLS_COMPILED` flips (`callsCompiled.test.ts`). **A TestFlight build for EXTERNAL
-testers goes through Beta App Review**, which may ask what the mode is for: the answer is the in-app
-1:1 call, which that build places.
+testers goes through Beta App Review, and that is the same risk as the 2.5.4 `voip` refusal.** A
+reviewer probably cannot place a call on it: calling needs two accounts on the DEV estate and a
+direct conversation between them, so the reviewer may again find a declared mode whose feature it
+cannot locate. Internal testers are not reviewed. If an external group is ever added, the answer
+must be ready before submission: a demo pair of dev accounts in the review notes, or the mode left
+out of that group's build.
 
 ### Where the three channels actually are - READ THEM, NEVER READ THIS
 

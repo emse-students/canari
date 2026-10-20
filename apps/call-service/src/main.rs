@@ -1772,15 +1772,31 @@ async fn handle_signal(
         | SignalMessage::PeerLeft
         | SignalMessage::PeerAway
         | SignalMessage::Shutdown
-        | SignalMessage::IceRestartRequest
-        | SignalMessage::MicSuspended { .. }
         | SignalMessage::Refused { .. } => {
-            // Server -> client only (and an ICE restart request or a microphone state outside p2p mode). A client sending one is confused, and the line says which.
+            // Server -> client only. A client sending one is confused, and the line says which.
             warn!(
                 "[call] {} sent server-only frame {} - dropped",
                 peer_id,
                 signal.kind()
             );
+        }
+        SignalMessage::IceRestartRequest | SignalMessage::MicSuspended { .. } => {
+            // Peer-to-peer frames that reached this arm because the session is not in a p2p room:
+            // either nothing is joined yet, or the room is an SFU one, where there is no partner
+            // to relay them to. The two are told apart, since only the first is a timing matter.
+            if session.room_id.is_none() {
+                warn!(
+                    "[call] {} sent {} before Join completed - dropped",
+                    peer_id,
+                    signal.kind()
+                );
+            } else {
+                warn!(
+                    "[call] {} sent p2p-only frame {} in an SFU room - dropped",
+                    peer_id,
+                    signal.kind()
+                );
+            }
         }
     }
 }
@@ -2249,8 +2265,12 @@ async fn p2p_relay(
         // and the pair renegotiates on its resume), and a peer alone in the room - which the
         // client should never produce, since it offers only on `PeerReady`.
         if room.contains(peer_id) {
-            if let Some(ledger) = &session.ledger {
-                bump(&ledger.ice_in_failed);
+            // The column counts ICE that went nowhere, the one kind it was written for: an offer,
+            // a restart request or a microphone state dropped here is carried by the line below.
+            if kind == RelayedKind::Ice {
+                if let Some(ledger) = &session.ledger {
+                    bump(&ledger.ice_in_failed);
+                }
             }
             if room.partner_is_away(peer_id) {
                 info!(

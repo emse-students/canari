@@ -542,6 +542,8 @@
   "call_banner_return_label": "Return to the call with {name}",
   "call_banner_return_hint": "Return to call",
   "call_live_announcement": "Call connected",
+  "call_mic_restored_peer": "You can hear {name} again",
+  "call_mic_restored_peer_unnamed": "You can hear the other person again",
   "call_mic_suspended_local": "Your phone turned your microphone off: you cannot be heard",
   "call_mic_suspended_peer": "{name}'s phone turned their microphone off: you cannot hear them",
   "call_mic_suspended_peer_unnamed": "The other person's phone turned their microphone off: you cannot hear them",
