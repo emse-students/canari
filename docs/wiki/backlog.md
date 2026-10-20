@@ -340,6 +340,18 @@ searches), `HEAD` content-length.
 
 Mechanism of both: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix). Delete each with its fix.
 
+## P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)
+
+The line [calls](frontend/modules/calls.md) calls "the only place that says whether a call was billed" is written ONCE, at `connected`; ICE may move to a better pair afterwards. Bench P1 logged `relayed=yes` on both ends while `getStats` read `host/udp -> host/udp` at the end ([readings](device-readings-2026-10.md)). Fix: log the pair again when the selected pair changes (or at hang-up), so the last line is the one billed. Delete with its fix.
+
+## P1 - CALL-WS-V6 is fixed on a branch and owed ONE phone reading (2026-10-20)
+
+The native chat socket now races IPv6 and IPv4 and closes a connect it abandoned ([mobile](frontend/mobile.md#the-native-socket-races-ipv6-and-ipv4)). Owed on the Mi 9T, on the alpha that carries it: the PC's mobile hotspot with broken IPv6 (bench P6), `Connected to Chat Gateway` within a second, one `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` instead means the IPv6 attempt errored rather than hung - record which), no `[WS] native socket completed ... closing it` WARN, and the iPhone's call RINGING the phone; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete with that reading.
+
+## P3 - Nothing reports an upstream `tauri-plugin-websocket` release past the vendored 2.5.0 (2026-10-20, not built)
+
+The plugin is a vendored fork (`frontend/src-tauri/patches/tauri-plugin-websocket`, pinned `=2.5.0`), Dependabot does not watch `src-tauri`, and whether `cargo audit` matches advisories against a PATH package was not verified (rustsec's query is believed to scope to crates.io sources - read nowhere here). So an upstream fix, security included, would reach nobody. Wanted: a scheduled check (on `scheduled.yml`, no new workflow) that compares crates.io's latest version with the pinned one and reports a newer one, naming the rebase it asks for. Delete when it exists.
+
 ## P3 - The call resume ladder has no jitter (review of #2148, 2026-10-19, not built)
 
 `CallService`'s signalling resume retries at fixed moments (1, 2, 4, 4, 4... s, `cappedReconnectDelayMs`), so two clients that lost the same Wi-Fi at the same instant reconnect in lockstep - harmless at two phones, a burst on `call-service` once many share a network. Jitter must not become a clock that decides anything: it spreads WHEN an attempt starts, the budget stays a count. Mechanism: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix). Delete this item when jitter ships or the burst is measured as irrelevant.

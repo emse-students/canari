@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { audioCodecOrder, describeAudioCodecs, describeSelectedPair } from './callStats';
+import {
+  audioCodecOrder,
+  describeAudioCodecs,
+  describeSelectedPair,
+  relayGapIsSuspect,
+} from './callStats';
 
 /** A fake `RTCStatsReport`: what the reader uses of it is `forEach`. */
 function report(entries: Record<string, unknown>[]): RTCStatsReport {
@@ -131,5 +136,22 @@ describe('audioCodecOrder', () => {
   it('says none without an SDP or an audio section', () => {
     expect(audioCodecOrder(undefined)).toBe('none');
     expect(audioCodecOrder('v=0\r\nm=video 9 UDP 96')).toBe('none');
+  });
+});
+
+describe('relayGapIsSuspect (CALL-GATHER-0)', () => {
+  it('is quiet when a direct pair already works - gathering stopped because of it', () => {
+    expect(relayGapIsSuspect(0, 'connected')).toBe(false);
+    expect(relayGapIsSuspect(0, 'completed')).toBe(false);
+  });
+
+  it('warns when gathering ended with no relay and no working pair', () => {
+    expect(relayGapIsSuspect(0, 'checking')).toBe(true);
+    expect(relayGapIsSuspect(0, 'new')).toBe(true);
+    expect(relayGapIsSuspect(0, 'failed')).toBe(true);
+  });
+
+  it('is quiet whenever a relay was gathered', () => {
+    expect(relayGapIsSuspect(3, 'checking')).toBe(false);
   });
 });
