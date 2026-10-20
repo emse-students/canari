@@ -100,6 +100,9 @@ function serve(www) {
   });
 }
 
+/** How long one page call may take: the longest (`finish`) reads the stats and asks the worker twice. */
+const EVAL_ANSWER_MS = 60_000;
+
 /** A minimal CDP session over one page target. */
 class Cdp {
   constructor(ws) {
@@ -131,13 +134,25 @@ class Cdp {
     return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
   }
 
-  /** Evaluates `expr` in the page, awaiting a promise; throws the page's exception text. */
+  /**
+   * Evaluates `expr` in the page, awaiting a promise; throws the page's exception text. A page that
+   * does not answer within `EVAL_ANSWER_MS` fails the row, named, rather than hanging the run.
+   */
   async eval(expr) {
-    const r = await this.send('Runtime.evaluate', {
-      expression: expr,
-      awaitPromise: true,
-      returnByValue: true,
+    let timer = 0;
+    const silent = new Promise((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(`the page did not answer ${expr.slice(0, 40)} in ${EVAL_ANSWER_MS / 1000} s`)
+          ),
+        EVAL_ANSWER_MS
+      );
     });
+    const r = await Promise.race([
+      this.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
+      silent,
+    ]).finally(() => clearTimeout(timer));
     if (r.exceptionDetails) {
       throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
     }
@@ -166,7 +181,8 @@ async function launch(name, wav, url, row) {
       '--headless=new',
       '--remote-debugging-port=0',
       `--user-data-dir=${profile}`,
-      '--use-fake-device-for-media-stream',
+      // 30 fps: the app's camera constraint (the fake device's default is 20).
+      '--use-fake-device-for-media-stream=fps=30',
       '--use-fake-ui-for-media-stream',
       `--use-file-for-fake-audio-capture=${wav}`,
       '--mute-audio',
@@ -293,6 +309,97 @@ function summarise(stats) {
   };
 }
 
+/** One renegotiation started by `from` (its offer), answered by `to`. */
+async function renegotiate(from, to, offerExpr) {
+  const offer = await from.cdp.eval(offerExpr);
+  const answer = await to.cdp.eval(`rig.answer(${JSON.stringify(offer)})`);
+  await from.cdp.eval(`rig.accept(${JSON.stringify(answer)})`);
+}
+
+/**
+ * The VIDEO steps of a row, after the first negotiation and before the measured window: a camera
+ * turned on late (`lateCamera`, by the callee), a camera switch, or the camera off then on. Returns
+ * what the measurement needs to judge them: the sender's video frames when the last step was taken
+ * (frames AFTER it prove the transform stayed fed) and the receiver's track while the camera was off.
+ */
+/** How long a camera OFF may take to mute the peer's track before the row reads it as never. */
+const OFF_MUTE_BOUND_MS = 5_000;
+
+async function runVideoOps(row, caller, callee, down) {
+  if (!row.video) return null;
+  const vtx = down ? callee : caller;
+  const vrx = down ? caller : callee;
+  if (row.callee.lateCamera) {
+    await renegotiate(callee, caller, 'rig.addLateCamera()');
+    await Bun.sleep(1000);
+  }
+  const ops = row.ops ?? [];
+  let offState = null;
+  if (ops.includes('switch')) {
+    await Bun.sleep(3000);
+    await vtx.cdp.eval('rig.switchCamera()');
+  }
+  if (ops.includes('off-on')) {
+    await Bun.sleep(3000);
+    await renegotiate(vtx, vrx, 'rig.cameraOff()');
+    // Polled, bounded: the mute is read as soon as it lands; a peer that never mutes is read once
+    // the bound is spent and fails `video-mute-when-off` with what it showed.
+    const deadline = Date.now() + OFF_MUTE_BOUND_MS;
+    offState = await vrx.cdp.eval('rig.remoteVideoState()');
+    while (!offState?.muted && Date.now() < deadline) {
+      await Bun.sleep(100);
+      offState = await vrx.cdp.eval('rig.remoteVideoState()');
+    }
+    await renegotiate(vtx, vrx, 'rig.cameraOn()');
+  }
+  const atOp = ops.length ? await vtx.cdp.eval('rig.report()') : null;
+  await Bun.sleep(1000);
+  return { atOp, offState };
+}
+
+/**
+ * The measured VIDEO direction of a row: the app worker's per-kind frames on the sending side
+ * (`tx`) and the receiving side (`rx`), what the receiver decoded over the window (frames per
+ * second, freezes, key frames, PLIs, codec, size), and the two pictures.
+ */
+function summariseVideo(tx, rx, ops) {
+  const vin = rx.stats.filter((s) => s.vin_framesDecoded !== undefined);
+  const first = vin[Math.min(3, vin.length - 1)] ?? {};
+  const last = vin.at(-1) ?? {};
+  const d = (k) => (last[k] ?? 0) - (first[k] ?? 0);
+  const dt = (last.t ?? 0) - (first.t ?? 0) || 1;
+  const vout = tx.stats.filter((s) => s.vout_packetsSent !== undefined).at(-1) ?? {};
+  const framesIn = (rep, side) => rep?.framesInBy?.[`0|${side}|video`] ?? 0;
+  return {
+    senderFrames: framesIn(tx.report, 'sender'),
+    receiverFrames: framesIn(rx.report, 'receiver'),
+    encrypted: tx.report?.encrypted?.video ?? 0,
+    decrypted: rx.report?.decrypted?.video ?? 0,
+    decryptFailed: rx.report?.decryptFailuresBy?.video ?? 0,
+    notVp8: (tx.report?.videoCodecUnexpected ?? 0) + (rx.report?.videoCodecUnexpected ?? 0),
+    keyframesIn: rx.report?.videoKeyframesIn ?? 0,
+    codec: last.vin_codec ?? null,
+    decoder: last.vin_decoder ?? null,
+    size: last.vin_w ? `${last.vin_w}x${last.vin_h}` : '-',
+    fps: Math.round((d('vin_framesDecoded') / dt) * 10) / 10,
+    framesDecoded: d('vin_framesDecoded'),
+    keyFramesDecoded: last.vin_keyFramesDecoded ?? 0,
+    freezes: d('vin_freezeCount'),
+    freezeSec: Math.round(d('vin_totalFreezesDuration') * 10) / 10,
+    pli: last.vin_pliCount ?? 0,
+    rxKbps: Math.round((d('vin_bytes') * 8) / dt / 1000),
+    packetsSent: vout.vout_packetsSent ?? 0,
+    packetsReceived: last.vin_packetsReceived ?? 0,
+    sendLimit: vout.vout_limit ?? '-',
+    pictures: { local: tx.pictures?.local ?? null, remote: rx.pictures?.remote ?? null },
+    afterOp: ops?.atOp
+      ? { senderFrames: framesIn(tx.report, 'sender') - framesIn(ops.atOp, 'sender') }
+      : undefined,
+    offState: ops?.offState ?? undefined,
+    remoteEvents: rx.remoteVideo?.events ?? [],
+  };
+}
+
 async function runRow(row, wavs, url) {
   say(`row ${row.name}: ${row.what}`);
   // `measure: 'down'` measures the CALLEE's audio heard by the caller (the reference plays on the
@@ -321,11 +428,16 @@ async function runRow(row, wavs, url) {
       await callee.cdp.eval(`rig.accept(${JSON.stringify(reanswer)})`);
       await Bun.sleep(1000);
     }
+    const videoOps = await runVideoOps(row, caller, callee, down);
     await (down ? caller : callee).cdp.eval('rig.record()');
     await Promise.all([callee.cdp.eval('rig.startStats()'), caller.cdp.eval('rig.startStats()')]);
     await Bun.sleep(SECONDS * 1000);
-    const calleeOut = await callee.cdp.eval('rig.finish()');
-    const callerOut = await caller.cdp.eval('rig.finish()');
+    // The pictures first, while both sides still send (a finished side stops its camera).
+    const [calleePics, callerPics] = row.video
+      ? await Promise.all([callee.cdp.eval('rig.pictures()'), caller.cdp.eval('rig.pictures()')])
+      : [null, null];
+    const calleeOut = { ...(await callee.cdp.eval('rig.finish()')), pictures: calleePics };
+    const callerOut = { ...(await caller.cdp.eval('rig.finish()')), pictures: callerPics };
     const rx = down ? callerOut : calleeOut;
     const tx = down ? calleeOut : callerOut;
     if (rx.sampleRate !== RATE) throw new Error(`receiver recorded at ${rx.sampleRate} Hz`);
@@ -356,6 +468,7 @@ async function runRow(row, wavs, url) {
         receiverFrames: rx.report?.framesIn?.receiver ?? 0,
       },
       engine: rx.engine,
+      videoPath: row.video ? summariseVideo(tx, rx, videoOps) : undefined,
       txTargetBitrate: txStats.out_targetBitrate,
       ...summarise(rx.stats),
       metrics,
@@ -391,7 +504,22 @@ function table(results) {
     const be = (x) => (x ? `${x.identical}/${x.decoded}` : '-');
     return `| ${r.row} | ${f(r.metrics.matchCoef, 2)} | ${be(r.bitExact.measured)} / ${be(r.bitExact.reverse)} | ${f(sp.snrDb)} | ${f(sp.lsdDb, 2)} | ${f(sp.hfLossDb)} | ${r.metrics.bandwidthHz} | ${r.metrics.dropouts.events} (${r.metrics.dropouts.ms}) | ${r.concealedPct} | ${r.insertedPct}/${r.removedPct} | ${r.rxKbps} | ${r.lostPkts}${r.impairDropped ? ` (+${r.impairDropped} injected)` : ''} | ${f(sp.gainDb)} | ${f(r.metrics.silenceFloorDbfs)} | ${verdictText(r.verdict)} |`;
   });
-  return [head, sep, ...lines].join('\n');
+  return [head, sep, ...lines, videoTable(results)].join('\n');
+}
+
+/** The video rows' own table (rows without video are left out); empty when there are none. */
+function videoTable(results) {
+  const rows = results.filter((r) => r.videoPath);
+  if (!rows.length) return '';
+  const head =
+    '| row | codec (decoder) | size | decoded fps | freezes (s) | key frames | PLI | rx kbps | worker frames in tx / rx | encrypted / decrypted / failed | not-VP8 | picture rgb local / remote | after op | muted when off |';
+  const sep = `|${'---|'.repeat(14)}`;
+  const lines = rows.map((r) => {
+    const v = r.videoPath;
+    const rgb = (p) => (p ? p.rgb.join(',') : '-');
+    return `| ${r.row} | ${v.codec ?? '-'} (${v.decoder ?? '-'}) | ${v.size} | ${v.fps} | ${v.freezes} (${v.freezeSec}) | ${v.keyFramesDecoded} | ${v.pli} | ${v.rxKbps} | ${v.senderFrames} / ${v.receiverFrames} | ${v.encrypted} / ${v.decrypted} / ${v.decryptFailed} | ${v.notVp8} | ${rgb(v.pictures.local)} / ${rgb(v.pictures.remote)} | ${v.afterOp ? v.afterOp.senderFrames : '-'} | ${v.offState ? `${v.offState.muted} (${v.remoteEvents.join(',')})` : '-'} |`;
+  });
+  return `\n\nVideo (the measured direction):\n\n${[head, sep, ...lines].join('\n')}`;
 }
 
 async function main() {
@@ -423,11 +551,18 @@ async function main() {
         r = await runRow(row, wavs, url);
       } catch (e) {
         // One broken row is named and the run goes on; the exit code still fails.
-        say(`ERROR row ${row.name} did not complete: ${e?.stack ?? String(e)}`);
+        say(`ERROR row ${row.name} did not complete: ${String(e)}
+${e?.stack ?? ''}`);
         broken.push(row.name);
         continue;
       }
       results.push(r);
+      if (r.videoPath) {
+        const v = r.videoPath;
+        say(
+          `  ${r.row} video: ${v.codec} ${v.size} ${v.fps} fps, ${v.freezes} freeze(s), worker video frames tx=${v.senderFrames} rx=${v.receiverFrames}, decrypted ${v.decrypted} (failed ${v.decryptFailed})`
+        );
+      }
       say(
         `  ${r.row} [${/Chrome\/[\d.]+/.exec(r.engine?.ua ?? '')?.[0] ?? '?'}, transform frames tx=${r.transformPath.senderFrames} rx=${r.transformPath.receiverFrames}]: speech SNR ${r.metrics.segments.speech.snrDb.toFixed(1)} dB, LSD ${r.metrics.segments.speech.lsdDb.toFixed(2)} dB, bw ${r.metrics.bandwidthHz} Hz, ${verdictText(r.verdict)}`
       );

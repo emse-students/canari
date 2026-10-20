@@ -141,3 +141,46 @@ export function audioCodecOrder(sdp: string | undefined): string {
 export function relayGapIsSuspect(relayCount: number, ice: RTCIceConnectionState): boolean {
   return relayCount === 0 && ice !== 'connected' && ice !== 'completed';
 }
+
+/** The subset of a video `inbound-rtp` / `outbound-rtp` stats entry the video line reads. */
+type VideoRtpEntry = RtpCodecEntry & {
+  frameWidth?: number;
+  frameHeight?: number;
+  framesPerSecond?: number;
+  framesDecoded?: number;
+  keyFramesDecoded?: number;
+  freezeCount?: number;
+  totalFreezesDuration?: number;
+  pliCount?: number;
+  framesEncoded?: number;
+  qualityLimitationReason?: string;
+};
+
+/**
+ * Describes the call's VIDEO as the engine reports it, both directions:
+ * `video recv=video/VP8 640x480 fps=30 decoded=900 keyframes=1 freezes=0 (0 s) pli=0 | send=video/VP8 640x480 fps=30 encoded=900 limit=none`.
+ * A direction with no stream reads `none`. Logged at each conclusive E2E path check of a call that
+ * carries video, so a phone reading says whether the picture decoded smoothly, not only whether it
+ * was encrypted. Counts are cumulative over the stream's life.
+ */
+export function describeVideoStats(stats: RTCStatsReport): string {
+  const entries = new Map<string, VideoRtpEntry>();
+  stats.forEach((value: VideoRtpEntry) => entries.set(value.id, value));
+  const find = (type: 'outbound-rtp' | 'inbound-rtp') =>
+    [...entries.values()].find((e) => e.type === type && (e.kind ?? e.mediaType) === 'video');
+  const codecOf = (rtp: VideoRtpEntry) =>
+    (rtp.codecId ? entries.get(rtp.codecId)?.mimeType : undefined) ?? '?';
+  const size = (rtp: VideoRtpEntry) =>
+    rtp.frameWidth ? `${rtp.frameWidth}x${rtp.frameHeight ?? '?'}` : '?x?';
+  const fps = (rtp: VideoRtpEntry) =>
+    typeof rtp.framesPerSecond === 'number' ? Math.round(rtp.framesPerSecond) : '?';
+  const inbound = find('inbound-rtp');
+  const outbound = find('outbound-rtp');
+  const recv = inbound
+    ? `${codecOf(inbound)} ${size(inbound)} fps=${fps(inbound)} decoded=${inbound.framesDecoded ?? '?'} keyframes=${inbound.keyFramesDecoded ?? '?'} freezes=${inbound.freezeCount ?? '?'} (${Math.round(inbound.totalFreezesDuration ?? 0)} s) pli=${inbound.pliCount ?? '?'}`
+    : 'none';
+  const send = outbound
+    ? `${codecOf(outbound)} ${size(outbound)} fps=${fps(outbound)} encoded=${outbound.framesEncoded ?? '?'} limit=${outbound.qualityLimitationReason ?? '?'}`
+    : 'none';
+  return `video recv=${recv} | send=${send}`;
+}

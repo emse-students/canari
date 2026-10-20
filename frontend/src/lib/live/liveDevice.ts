@@ -66,7 +66,8 @@ export interface WakeLockApi {
 }
 
 /**
- * KEEPS THE SCREEN ON WHILE A LIVE IS ON AIR. The engine releases a screen lock by itself when the
+ * KEEPS THE SCREEN ON WHILE A LIVE IS ON AIR - or a video call is up (`tag` names whose lock it is
+ * in the log: `LIVE-WAKE`, `CALL-WAKE`). The engine releases a screen lock by itself when the
  * page is hidden, so {@link hold} is called again on every return to the screen; holding twice is a
  * no-op while the first lock stands.
  *
@@ -86,7 +87,8 @@ export class ScreenWakeLock {
   constructor(
     private readonly api: WakeLockApi | undefined = typeof navigator !== 'undefined'
       ? (navigator as Navigator & { wakeLock?: WakeLockApi }).wakeLock
-      : undefined
+      : undefined,
+    private readonly tag = 'LIVE-WAKE'
   ) {}
 
   /** Asks for the screen to stay on (again after a background). */
@@ -95,9 +97,7 @@ export class ScreenWakeLock {
     if (!this.api) {
       if (!this.#warned) {
         this.#warned = true;
-        console.warn(
-          '[LIVE-WAKE] no Screen Wake Lock API here - the screen may dim during the live'
-        );
+        console.warn(`[${this.tag}] no Screen Wake Lock API here - the screen may dim`);
       }
       return;
     }
@@ -110,16 +110,16 @@ export class ScreenWakeLock {
       if (!this.#wanted || heldAlready || (ticket !== this.#ticket && !newestRefused)) {
         // Released, held by another request, or superseded by one still in flight: this one is
         // nobody's. Superseded by one that was REFUSED it is not stale: the only lock there is.
-        console.debug('[LIVE-WAKE] a stale screen lock answered - given straight back');
+        console.debug(`[${this.tag}] a stale screen lock answered - given straight back`);
         await sentinel.release();
         return;
       }
       this.#sentinel = sentinel;
-      console.debug('[LIVE-WAKE] screen held on');
+      console.debug(`[${this.tag}] screen held on`);
     } catch (err) {
       // A hidden page, or a policy: the screen may dim. Logged, never retried on a timer.
       this.#refusedTicket = ticket;
-      console.warn('[LIVE-WAKE] the screen lock was refused', err);
+      console.warn(`[${this.tag}] the screen lock was refused`, err);
     }
   }
 
@@ -131,8 +131,8 @@ export class ScreenWakeLock {
     this.#sentinel = null;
     if (!sentinel || sentinel.released) return;
     sentinel.release().then(
-      () => console.debug('[LIVE-WAKE] screen released'),
-      (err: unknown) => console.warn('[LIVE-WAKE] releasing the screen lock failed', err)
+      () => console.debug(`[${this.tag}] screen released`),
+      (err: unknown) => console.warn(`[${this.tag}] releasing the screen lock failed`, err)
     );
   }
 }

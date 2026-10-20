@@ -54,14 +54,17 @@ export const CALLS_COMPILED = false;
 export const CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'development';
 
 /**
- * Video in a call: the video-call button and the camera toggle inside a call.
+ * Video in a call: the video-call button and the camera controls inside a call.
  *
- * **OFF.** Lot 1 of the revival is AUDIO: the E2E transform encrypts the whole frame, header
- * included, which is known to suit Opus and known to break H.264 packetization - and Safari and
- * WKWebView may negotiate H.264. **Turns back on when** the revival's WP-C3 (header-in-clear
- * framing per codec, or VP8 forced) has passed a video call Chrome <-> WKWebView.
+ * **ON WHEREVER CALLS ARE ({@link CALLS_ENABLED}: dev builds only), SINCE 2026-10-20 (lot 2).** The
+ * E2E transform now frames video per codec - VP8's payload header in clear and bound as AES-GCM
+ * additional data, the rest encrypted - and every video m-line is held to VP8, the codec it frames
+ * (`utils/callVideoFrame.ts`, `utils/callVideo.ts`). H.264, which WebKit would otherwise offer
+ * first, cannot be packetised once encrypted whole and is never negotiated. Measured Chrome to
+ * Chrome in the rig (docs/wiki/frontend/modules/calls.md, "Video, measured"); a phone reading is
+ * owed before {@link CALLS_COMPILED} carries it to production.
  */
-export const CALLS_VIDEO_ENABLED = false;
+export const CALLS_VIDEO_ENABLED = CALLS_ENABLED;
 
 /**
  * Lives, client side - ONE switch for both halves of WP-L5: watching (the LIVE card at the top of

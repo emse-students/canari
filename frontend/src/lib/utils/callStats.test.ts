@@ -3,6 +3,7 @@ import {
   audioCodecOrder,
   describeAudioCodecs,
   describeSelectedPair,
+  describeVideoStats,
   relayGapIsSuspect,
 } from './callStats';
 
@@ -153,5 +154,49 @@ describe('relayGapIsSuspect (CALL-GATHER-0)', () => {
 
   it('is quiet whenever a relay was gathered', () => {
     expect(relayGapIsSuspect(3, 'checking')).toBe(false);
+  });
+});
+
+describe('describeVideoStats', () => {
+  it('names what each video direction decodes and encodes', () => {
+    const out = describeVideoStats(
+      report([
+        {
+          id: 'I',
+          type: 'inbound-rtp',
+          kind: 'video',
+          codecId: 'C1',
+          frameWidth: 640,
+          frameHeight: 480,
+          framesPerSecond: 29.7,
+          framesDecoded: 900,
+          keyFramesDecoded: 1,
+          freezeCount: 0,
+          totalFreezesDuration: 0,
+          pliCount: 0,
+        },
+        {
+          id: 'O',
+          type: 'outbound-rtp',
+          kind: 'video',
+          codecId: 'C1',
+          frameWidth: 640,
+          frameHeight: 480,
+          framesPerSecond: 30,
+          framesEncoded: 905,
+          qualityLimitationReason: 'none',
+        },
+        { id: 'A', type: 'inbound-rtp', kind: 'audio', codecId: 'C2' },
+        { id: 'C1', type: 'codec', mimeType: 'video/VP8' },
+        { id: 'C2', type: 'codec', mimeType: 'audio/opus' },
+      ])
+    );
+    expect(out).toBe(
+      'video recv=video/VP8 640x480 fps=30 decoded=900 keyframes=1 freezes=0 (0 s) pli=0 | send=video/VP8 640x480 fps=30 encoded=905 limit=none'
+    );
+  });
+
+  it('reads none for a direction with no video stream', () => {
+    expect(describeVideoStats(report([]))).toBe('video recv=none | send=none');
   });
 });

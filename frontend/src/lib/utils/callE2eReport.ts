@@ -20,6 +20,14 @@ export interface E2eWorkerReport {
   encrypted: { audio: number; video: number };
   decrypted: { audio: number; video: number };
   decryptFailures: number;
+  /** The same failures per kind (absent from a worker older than video, 2026-10-20). */
+  decryptFailuresBy?: { audio: number; video: number };
+  /** Remote video key frames the receiver transform was handed. */
+  videoKeyframesIn?: number;
+  /** Video frames of a codec other than VP8: encrypted whole, so they cannot decode. */
+  videoCodecUnexpected?: number;
+  /** Sender video frames shorter than their clear VP8 header: dropped, never sent. */
+  videoTooShortSent?: number;
   /** Receiver frames shorter than an IV, dropped; `tooShortEmpty` of them were empty. */
   tooShort: number;
   tooShortEmpty: number;
@@ -119,6 +127,12 @@ export function diagnoseE2eReport(
   if (r.opusInvalid.sender || r.opusInvalid.receiver || r.doubleEncrypted) {
     return { level: 'fault', text: 'non-Opus audio crossed the transform' };
   }
+  if (r.videoCodecUnexpected) {
+    return {
+      level: 'fault',
+      text: 'video frames of a codec other than VP8 crossed the transform - encrypted whole, they cannot decode',
+    };
+  }
   const unfed =
     sender === 0 && receiver === 0
       ? 'no frame reached either transform'
@@ -184,8 +198,32 @@ export function describeE2eReport(
     `decrypted audio=${r.decrypted.audio} video=${r.decrypted.video} | ` +
     `decrypt-failed=${r.decryptFailures} short=${r.tooShort} (empty ${r.tooShortEmpty}) no-key=${r.droppedNoKey} ` +
     `not-opus sender=${r.opusInvalid.sender} receiver=${r.opusInvalid.receiver} double=${r.doubleEncrypted} | ` +
+    describeVideoFrames(r, epoch) +
     `engine=${facts.engine} attr sender=${facts.senderAttr} receiver=${facts.receiverAttr}` +
     (d ? ` - ${d.text}` : '')
+  );
+}
+
+/**
+ * The report's VIDEO segment, per side, or nothing on a call that never carried a video frame (an
+ * audio call's line is unchanged). Frames in are this peer connection's (`framesFor`) when an epoch
+ * is given; key frames, failures and the codec count are the worker's whole life.
+ */
+export function describeVideoFrames(r: E2eWorkerReport, epoch?: number): string {
+  const inSender =
+    epoch !== undefined && r.framesInBy ? framesFor(r, epoch, 'sender', 'video') : null;
+  const inReceiver =
+    epoch !== undefined && r.framesInBy ? framesFor(r, epoch, 'receiver', 'video') : null;
+  const any =
+    (inSender ?? 0) + (inReceiver ?? 0) + r.encrypted.video + r.decrypted.video > 0 ||
+    (r.videoCodecUnexpected ?? 0) > 0;
+  if (!any) return '';
+  const framesIn =
+    inSender === null ? '' : `frames in sender=${inSender} receiver=${inReceiver ?? 0} `;
+  return (
+    `video ${framesIn}encrypted=${r.encrypted.video} decrypted=${r.decrypted.video} ` +
+    `decrypt-failed=${r.decryptFailuresBy?.video ?? '?'} keyframes-in=${r.videoKeyframesIn ?? '?'} ` +
+    `not-vp8=${r.videoCodecUnexpected ?? 0} short-sent=${r.videoTooShortSent ?? 0} | `
   );
 }
 
