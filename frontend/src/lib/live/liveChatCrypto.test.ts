@@ -29,6 +29,14 @@ describe('the live chat seal', () => {
     expect(await openLiveChatMessage(KEY, LIVE, CLIENT, ALICE, sealed)).toBe(text);
   });
 
+  it('opens the known-answer line the SERVER opens too (social-service live-chat-seal.spec.ts)', async () => {
+    // Sealed once with a fixed IV (00..0b) by Node's own AES-256-GCM. The server opens the same
+    // bytes to check a reporter's plaintext (WP-L8b), so the two implementations of the v1 format
+    // are pinned to each other, not each to itself.
+    const kat = 'AAECAwQFBgcICQoLczpqKzo3pvhkWzb8CrrePTVHVWqR20J6Rbg3QWhWMe2XMPLR';
+    expect(await openLiveChatMessage(KEY, LIVE, CLIENT, ALICE, kat)).toBe('Salut à tous 🐤 !');
+  });
+
   it('is iv(12) + ciphertext + tag(16), within the server bound of 928 bytes at 300 chars', async () => {
     const sealed = fromBase64(await sealLiveChatMessage(KEY, LIVE, CLIENT, ALICE, 'abc'));
     expect(sealed.byteLength).toBe(12 + 3 + 16);

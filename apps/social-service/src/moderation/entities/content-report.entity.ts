@@ -12,7 +12,10 @@ export class ContentReport {
 
   /**
    * What was reported. `user` carries the reported account's id in {@link contentId}; `live` a live's
-   * id (WP-L8), its broadcaster in {@link reportedUserId}, set by the server from the live row.
+   * id (WP-L8), its broadcaster in {@link reportedUserId}, set by the server from the live row;
+   * `live_chat` one line of a live's chat (WP-L8b): the message's id, its author in
+   * {@link reportedUserId}, and the line itself kept apart in `live_chat_reported_lines` until the
+   * report is handled.
    *
    * There was a `message` case here until 2026-08-27, declared in three places and produced by
    * nobody. It could not have worked: message bodies are MLS ciphertext, so the server has nothing
@@ -20,7 +23,7 @@ export class ContentReport {
    * capability the product does not have reads, to the next person, as a capability it has.
    */
   @Column({ length: 30 })
-  contentType: 'post' | 'comment' | 'user' | 'live';
+  contentType: 'post' | 'comment' | 'user' | 'live' | 'live_chat';
 
   @Column()
   @Index()

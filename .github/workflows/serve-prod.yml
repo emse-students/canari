@@ -157,6 +157,7 @@ jobs:
           INTERNAL_SHARED_SECRET: ${{ secrets.INTERNAL_SHARED_SECRET }}
           CALL_ROOM_SECRET: ${{ secrets.CALL_ROOM_SECRET }}
           AGENDA_SIGNING_KEY: ${{ secrets.AGENDA_SIGNING_KEY }}
+          LIVE_REPORT_SIGNING_KEY: ${{ secrets.LIVE_REPORT_SIGNING_KEY }}
           APNS_VOIP_KEY_P8: ${{ secrets.APNS_VOIP_KEY_P8 }}
           APNS_VOIP_KEY_ID: ${{ secrets.APNS_VOIP_KEY_ID }}
           APNS_VOIP_TEAM_ID: ${{ secrets.APNS_VOIP_TEAM_ID }}

@@ -43,15 +43,17 @@ reports**; live reports answered within **24 hours on working days**; **a report
 for staff) until handled** - this REVERSES C2's "no grace period"; floating reactions = heart, laugh,
 bravo, fire, the canary chick; the first-live rules reuse the posts' publication rules; **no viewer cap
 wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)).
-**Owed, code, NOT built (WP-L8b):** (a) the strike ladder: a warning notice on the first cut, a
-SUSPENSION state apart from the mute (30 days), a withdrawal only staff can set, a ladder counting
-the cuts of the last rolling 90 days, `LIVE_CUT_RETENTION_MS` 365 -> 90 days; (b) the REPORTED chat line: a `live_chat` report type, a
-copy of the sealed line that survives the cascade, the PLAINTEXT handed over by the reporter and
-signed by the server (the live key is NOT kept), a staff reader, erasure once the report is handled; still open: the erased account and an upper bound on "until handled"
-([lives](services/lives.md#a-reported-chat-line-is-kept-until-handled-reverses-c2)); (c) the five
-reaction kinds in `LIVE_REACTION_KINDS`, the picker, labels and Noto pictures; (d) the rules sheet
-showing the posts' rules; (e) the age of the oldest pending report measured and reported, so the 24 h
-is watched rather than hoped for; (f) the viewer cap lifted, after the plan's measurements. **Owed, the
+**WP-L8b, server half BUILT 2026-10-21 (draft PR):** the strike ladder, the 90-day retention, the
+reported chat line (checked, signed, kept until handled and 90 days at most, the author's erasure
+included), the five reaction kinds and `LIVE_RULES_VERSION` 2 ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
+**Owed before it ships:** the GitHub secrets `LIVE_REPORT_SIGNING_KEY` and `DEV_LIVE_REPORT_SIGNING_KEY`
+(the user, one-off: REQUIRED in both estates, so a deploy is refused without them). **Owed, code:**
+(c) the client set of five kinds and (d) the rules sheet showing the posts' rules, both in #2170;
+the client half of the ladder - the `live_suspended` / `live_withdrawn` bell rows, the two start
+refusals and `GET /api/lives/standing` on the pre-live screen, the admin standing, withdraw / lift
+buttons and the `live_chat` row with its integrity ([lives](services/lives.md#what-the-client-still-owes-strings-for-paraglide));
+(e) the age of the oldest pending report measured and reported, so the 24 h is watched rather than
+hoped for; (f) the viewer cap lifted, after the plan's measurements. **Owed, the
 user:** the filtering statement and the terms' lives paragraph ([store-ugc-answers](store-ugc-answers.md)).
 
 **P3, found by the review of the server half: a seat taken AFTER an end's release outlives the end
@@ -362,7 +364,7 @@ Mounting `ChatArea` on 300 messages costs 2.0 s in happy-dom, on 70 messages 0.5
 
 ## P2 - Live chat and floating reactions (WP-L6): the server is MERGED (#2131), the client in review (#2136), five things are owed (2026-10-19)
 
-The sixteen decisions (C1-C16: PostgreSQL rows erased with the live, the manifest poll as transport, a sequence under the live's row lock, server-side reaction sums) are on [lives](services/lives.md#live-chat-and-floating-reactions-wp-l6), taken by the lead on the user's instruction, each reversible. **Owed before any stable carries it:** (a) the adversarial crypto review of the chat seal (C12, `liveChatCrypto.ts`), as for the segment seal; (b) a dev reading with several viewers chatting while a broadcaster sends segments - the chat writes now share the live's row lock with the ingest, and nothing has measured that contention; (c) the user's ruling on two of the lead's choices, GIVEN 2026-10-20: C2's "no grace period" is REVERSED for a reported message, and the reactions are heart, laugh, bravo, fire and the canary chick (no sad or angry holds) - [lives](services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience); (d) **reporting ONE chat message is not possible YET (decided 2026-10-20, work owed in WP-L8b)**: WP-L8 (merged, #2134) reports through `content_reports` with `contentType: 'live'` only, so a report names the live, never a message - a message report needs its own content type AND a decision on what it keeps, since the server cannot read the text (the reporter's client would have to hand the plaintext over, which C12 does not give the server today); (e) a phone reading of the panel, the reaction bar and the floating layer on the Mi 9T and the iPhone 12, the broadcaster's on-air chat included ([live](frontend/modules/live.md#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft)). Accepted, stated: a viewer refused `LIVE_FULL` sees no chat either (the chat rides the manifest, C3); a message whose transaction commits after its author's erasure survives until its live ends (at most an hour); an erased account's messages leave no tombstone, so a screen that drew them keeps them until it closes ([lives](services/lives.md#an-erased-account-and-a-single-message-reported)).
+The sixteen decisions (C1-C16: PostgreSQL rows erased with the live, the manifest poll as transport, a sequence under the live's row lock, server-side reaction sums) are on [lives](services/lives.md#live-chat-and-floating-reactions-wp-l6), taken by the lead on the user's instruction, each reversible. **Owed before any stable carries it:** (a) the adversarial crypto review of the chat seal (C12, `liveChatCrypto.ts`), as for the segment seal; (b) a dev reading with several viewers chatting while a broadcaster sends segments - the chat writes now share the live's row lock with the ingest, and nothing has measured that contention; (c) the user's ruling on two of the lead's choices, GIVEN 2026-10-20: C2's "no grace period" is REVERSED for a reported message, and the reactions are heart, laugh, bravo, fire and the canary chick (no sad or angry holds) - [lives](services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience); (d) reporting ONE chat message: server built in WP-L8b (`contentType: 'live_chat'`, [lives](services/lives.md#a-reported-chat-line-wp-l8b)), the client control is #2170; (e) a phone reading of the panel, the reaction bar and the floating layer on the Mi 9T and the iPhone 12, the broadcaster's on-air chat included ([live](frontend/modules/live.md#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft)). Accepted, stated: a viewer refused `LIVE_FULL` sees no chat either (the chat rides the manifest, C3); a message whose transaction commits after its author's erasure survives until its live ends (at most an hour); an erased account's messages leave no tombstone, so a screen that drew them keeps them until it closes ([lives](services/lives.md#an-erased-account-and-a-single-message-reported)).
 
 ## P3 - iOS: the system theme does not follow a live switch of the phone's theme (2026-10-19)
 

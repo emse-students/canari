@@ -213,8 +213,15 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // The live chat (WP-L6): the account's messages and reaction taps go; a count map holds no id.
   'live_chat_messages.authorId': { action: 'delete' },
   'live_reaction_bursts.userId': { action: 'delete' },
+  // The strike ladder (WP-L8b): a withdrawal is a record ABOUT the account, and goes with it; the
+  // moderator who decided is anonymised, as a cut's.
+  'live_broadcast_withdrawals.userId': { action: 'delete' },
+  'live_broadcast_withdrawals.reviewerId': { action: 'anonymise' },
+  // A REPORTED chat line stays until its report is handled or the 90-day bound, even once its
+  // author erased their account (owner, 2026-10-20): the author's id goes, the words stay for staff.
+  'live_chat_reported_lines.authorId': { action: 'anonymise' },
   'live_reaction_bursts.counts': NO_ACCOUNT(
-    'a reaction kind to tap count map (like, love, ...), never an id'
+    'a reaction kind to tap count map (like, fire, ...), never an id'
   ),
 
   // -- Not an account reference, despite the name ----------------------------------------------
@@ -326,6 +333,11 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  * LOCK ORDER: `lives` first, then `live_cuts` - the order a staff cut takes them (the live's row
  * lock, then the cut's insert) - so an erasure racing a cut waits or is waited for, never deadlocks.
  * - Its live chat messages and reaction bursts, on any live, are deleted (WP-L6, migration 098).
+ * - A withdrawal of its right to broadcast is deleted; one it decided as a moderator is anonymised.
+ * - A REPORTED line it wrote (`live_chat_reported_lines`) is KEPT, its author anonymised: the line
+ *   stays until its report is handled or the 90-day bound (owner, 2026-10-20). AFTER the messages'
+ *   delete: a chat-line report holds the message `FOR SHARE` until it commits, so this statement,
+ *   running after that delete waited, sees the kept line the report wrote.
  *
  * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
  */
@@ -367,6 +379,18 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'live_reaction_bursts',
     sql: `DELETE FROM live_reaction_bursts WHERE "userId" = $1`,
+  },
+  {
+    label: 'live_chat_reported_lines_author',
+    sql: `UPDATE live_chat_reported_lines SET "authorId" = $2 WHERE "authorId" = $1`,
+  },
+  {
+    label: 'live_broadcast_withdrawals',
+    sql: `DELETE FROM live_broadcast_withdrawals WHERE "userId" = $1`,
+  },
+  {
+    label: 'live_broadcast_withdrawals_reviewer',
+    sql: `UPDATE live_broadcast_withdrawals SET "reviewerId" = $2 WHERE "reviewerId" = $1`,
   },
 ];
 
