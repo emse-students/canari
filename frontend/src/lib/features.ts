@@ -56,15 +56,22 @@ export const CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'developm
 /**
  * Video in a call: the video-call button and the camera controls inside a call.
  *
- * **ON WHEREVER CALLS ARE ({@link CALLS_ENABLED}: dev builds only), SINCE 2026-10-20 (lot 2).** The
- * E2E transform now frames video per codec - VP8's payload header in clear and bound as AES-GCM
+ * **ON FOR A DEV BUILD ONLY, AND IT DOES NOT FOLLOW {@link CALLS_COMPILED}.** Since 2026-10-20 (lot
+ * 2) the E2E transform frames video per codec - VP8's payload header in clear and bound as AES-GCM
  * additional data, the rest encrypted - and every video m-line is held to VP8, the codec it frames
  * (`utils/callVideoFrame.ts`, `utils/callVideo.ts`). H.264, which WebKit would otherwise offer
  * first, cannot be packetised once encrypted whole and is never negotiated. Measured Chrome to
- * Chrome in the rig (docs/wiki/frontend/modules/calls.md, "Video, measured"); a phone reading is
- * owed before {@link CALLS_COMPILED} carries it to production.
+ * Chrome in the rig (docs/wiki/frontend/modules/calls.md, "Video, measured").
+ *
+ * **Why it is not `CALLS_ENABLED`** (the owner, 2026-10-21): the first public build with calls is
+ * AUDIO 1:1 ONLY; video follows later. Written as `CALLS_ENABLED` it would have gone to production
+ * with the flip of {@link CALLS_COMPILED}, unread on any phone.
+ *
+ * **Turns on for production when** the video readings of the calls page (both bench phones, both
+ * directions, camera on/off and switch) have passed and the owner opens video - its own commit,
+ * after the audio stable.
  */
-export const CALLS_VIDEO_ENABLED = CALLS_ENABLED;
+export const CALLS_VIDEO_ENABLED = deployEnvironment() === 'development';
 
 /**
  * Lives, client side - ONE switch for both halves of WP-L5: watching (the LIVE card at the top of

@@ -16,6 +16,7 @@ import {
   logCallAudioTrackSettings,
 } from '$lib/utils/callAudio';
 import { publishCallPresence } from '$lib/utils/callPresence';
+import { keyFingerprint } from '$lib/utils/callKeys';
 import {
   CallE2eBypassedError,
   CallE2eSetupError,
@@ -2372,10 +2373,13 @@ export class CallService {
       false,
       ['encrypt', 'decrypt']
     );
-    const fp = Array.from(this.callKeyBytes.slice(0, 4))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    appendLog(`[Call] encryption key derived from MLS (fp=${fp}…)`);
+    // A HASH of the key, never its bytes: the in-app log is exported and pasted into reports. Not
+    // awaited: the digest is a diagnostic, and the call's setup must not wait on it.
+    void keyFingerprint(this.callKeyBytes).then(
+      (fp) => appendLog(`[Call] encryption key derived from MLS (fp=${fp}, sha256)`),
+      (e: unknown) =>
+        appendLog(`[Call] encryption key derived from MLS (fingerprint failed: ${String(e)})`)
+    );
     // The key goes INTO the worker now, before any track is added: the transforms are attached in
     // the task that creates their sender, where nothing may be awaited (`attachSenderTransform`).
     await this.ensureWorkerKeyReady();

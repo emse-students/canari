@@ -1611,7 +1611,8 @@ run on a phone ([2026-10-18 bench](device-readings-calls-live-2026-10-18.md): `B
 
 **The log.** A store build is not inspectable: Settings > A propos > "Enregistrer le journal" saves
 the in-app log after each call. **Never paste the `[Call] encryption key derived from MLS (fp=...)`
-line into this public repository** - it prints key bytes (owed fix, [calls](frontend/modules/calls.md)).
+line of a build older than 2026-10-21 into this public repository** - it printed key bytes. From
+then on the line reads `fp=<hex>, sha256`, a hash of the key, safe to quote ([calls](frontend/modules/calls.md)).
 
 **Steps:**
 
