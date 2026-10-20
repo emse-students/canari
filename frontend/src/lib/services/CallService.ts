@@ -36,9 +36,12 @@ import {
   describeE2eReport,
   e2eBypassedSides,
   framesFor,
+  describePacketCounts,
+  inconclusiveMedia,
   readE2eEngineFacts,
   rtpPacketCounts,
   type E2eWorkerReport,
+  type RtpPacketCounts,
 } from '$lib/utils/callE2eReport';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
@@ -120,6 +123,18 @@ export const CALL_SIGNALLING_RESUME_TIMEOUT_MS = 5_000;
  * not a clock.
  */
 export const CALL_ICE_RESTART_ATTEMPTS = 3;
+
+/**
+ * How many times an E2E path check that could not judge some media (an m-line not negotiated yet,
+ * a kind with no packet yet - `inconclusiveMedia`) re-arms itself, `E2E_REPORT_DELAY_MS` apart. A
+ * BUDGET BY COUNT, never a verdict: past it the check waits for the next completed negotiation,
+ * or an event that starts media (`recheckE2eOnMediaStart`). A wrong value costs a later look and a
+ * withdrawn claim, never a call.
+ */
+export const CALL_E2E_PATH_RECHECKS = 6;
+
+/** The suffix of an unjudged kind with packets and no frame yet: its verdict is the next check. */
+const CARRIED_NO_FRAME_YET = ' carried packets, no frame yet';
 
 /**
  * The media path of `pc` is down by EITHER of its two state machines. Both are read because they
@@ -291,6 +306,29 @@ export class CallService {
   private e2ePathCheckTimer: number | null = null;
   /** The triggers the pending path check covers, as its log tag. */
   private e2ePathCheckReason = '';
+  /**
+   * Re-checks spent on media the last check could not judge. A BUDGET BY COUNT: when it runs out
+   * the claim is withdrawn and the check waits for an event that starts media (a negotiation
+   * reaching `stable`, a remote track or the camera unmuting - `recheckE2eOnMediaStart`). Reset by
+   * a conclusive check and by each such event.
+   */
+  private e2eRechecks = 0;
+  /** The last path check could not judge some media: an event that starts media re-checks. */
+  private e2ePathInconclusive = false;
+  /** What the last inconclusive check could not judge, so a re-check logs only a CHANGE. */
+  private e2eLastUnjudged = '';
+  /**
+   * The RTP packet counts read by the previous path check of this peer connection - the PROOF a
+   * bypass is judged against (`checkE2eInPath`). `null` before the first check of a peer connection.
+   */
+  private e2ePrevPackets: RtpPacketCounts | null = null;
+  /**
+   * The screen's claim was WITHDRAWN (a worker that did not answer, media never judged): no frame
+   * evidence brings it back, only an answered, conclusive path check (`claimE2eIfProven`).
+   */
+  private e2eClaimWithdrawn = false;
+  /** The worker missed its last report request: the ERROR was logged once, until it answers again. */
+  private e2eWorkerSilent = false;
   /** Whether the CURRENT peer connection's first `connected` already scheduled its path check. */
   private e2eConnectChecked = false;
   /**
@@ -793,11 +831,20 @@ export class CallService {
       this.workerKeyApplied = false;
       // The counters die with the worker, so the final report is asked BEFORE it goes.
       if (wasConnected)
-        void this.logE2eReport(
-          `call end, call=${endedCallId ?? '?'}`,
-          worker,
-          fiveSecondReportRan
-        ).finally(() => worker.terminate());
+        void this.askE2eReport(`call end, call=${endedCallId ?? '?'}`, worker)
+          .then((report) => {
+            if (report) {
+              appendLog(
+                describeE2eReport(
+                  report,
+                  readE2eEngineFacts(),
+                  fiveSecondReportRan,
+                  this.transformEpoch
+                )
+              );
+            }
+          })
+          .finally(() => worker.terminate());
       else worker.terminate();
     }
 
@@ -1032,7 +1079,7 @@ export class CallService {
       );
       this.sendSignal({ type: 'Answer', sdp: wireDescription(pc.localDescription, sdp.seq) });
     }
-    await configureCallAudioSenders(pc, this.callHasVideo);
+    await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
   }
 
   /** Queues or applies a trickle ICE candidate from the other party. */
@@ -1694,16 +1741,20 @@ export class CallService {
     // transform is assigned in the same task as that `addTrack` - Chromium decided when the
     // transceiver was created. So the sender gets its transform now, before it carries anything.
     const newMline = !receiver.transform;
+    let side: 'receiver' | 'sender' = 'receiver';
     try {
       this.attachReceiverTransform(receiver, track.kind);
-      if (transceiver) this.attachSenderTransform(transceiver.sender, track.kind);
+      side = 'sender';
+      // Armed with no track yet: it sends nothing until a later `addTrack` reuses it.
+      if (transceiver)
+        this.attachSenderTransform(transceiver.sender, track.kind, 'armed, no track yet');
     } catch (e) {
-      appendLog(`[Call] E2E receiver transform failed: ${String(e)}`);
+      appendLog(`[Call] E2E ${side} transform failed in ontrack (${track.kind}): ${String(e)}`);
       this.failCall(
-        'E2E receiver transform failed',
+        `E2E ${side} transform failed`,
         e instanceof CallE2eSetupError
           ? e
-          : new CallE2eSetupError(`receiver (${track.kind})`, { cause: e })
+          : new CallE2eSetupError(`${side} (${track.kind})`, { cause: e })
       );
       return;
     }
@@ -1729,6 +1780,7 @@ export class CallService {
     track.onunmute = () => {
       appendLog(`[Call] remote track unmuted kind=${track.kind}`);
       this.publishRemoteStream();
+      this.recheckE2eOnMediaStart(`after the remote ${track.kind} unmuted`);
     };
     // Watchdog: a remote track that never unmutes means no media reached us - the usual cause
     // of "no audio on this call". Logged so a failing call is diagnosable from the exported log.
@@ -1835,6 +1887,12 @@ export class CallService {
 
     pc.onsignalingstatechange = () => {
       appendLog(`[Call] signalingState=${pc.signalingState}`);
+      // `stable` follows a completed negotiation - the media the last path check could not judge
+      // (an m-line not negotiated yet) can flow now - and also a ROLLBACK, after which one more
+      // check costs a look and never a verdict.
+      if (pc.signalingState === 'stable' && this.pc === pc) {
+        this.recheckE2eOnMediaStart('after signalling reached stable');
+      }
     };
 
     pc.ontrack = (e) => {
@@ -1921,46 +1979,50 @@ export class CallService {
         // a receiver that already decrypts.
         const sender = pc.addTrack(track, this.localStream);
         this.attachSenderTransform(sender);
+        // A track muted by the OS (or not producing yet) starts sending with no negotiation.
+        track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
         const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
         if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
         this.attachReceiverTransform(transceiver.receiver, track.kind);
         if (track.kind === 'video') void this.applyVideoSenderLimits(sender);
       }
-      await configureCallAudioSenders(pc, this.callHasVideo);
+      await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
     }
   }
 
-  /** How long after `connected` the E2E worker is asked for its report (see `logE2eReport`). */
+  /** How long after `connected` the E2E worker is asked for its report (see `askE2eReport`). */
   private static readonly E2E_REPORT_DELAY_MS = 5_000;
   /** How long the worker has to answer a report request before the bridge itself is accused. */
   private static readonly E2E_REPORT_ANSWER_MS = 1_500;
 
   /**
-   * Asks the E2E worker for its counters and logs them as ONE line (`describeE2eReport`). WHY
-   * (2026-10-19): the Mi 9T logged no worker line in five calls, which could mean a lost message
-   * bridge, a transform never handed to the worker, or a transform never fed a frame. Asked, not
-   * waited for: no answer within `E2E_REPORT_ANSWER_MS` accuses the bridge in its own line.
-   * `judgeFrames`: whether a side with no frame is a fault (`diagnoseE2eReport`).
+   * Asks the E2E worker for its counters; the caller logs them as ONE line (`describeE2eReport`).
+   * WHY (2026-10-19): the Mi 9T logged no worker line in five calls, which could mean a lost
+   * message bridge, a transform never handed to the worker, or a transform never fed a frame.
+   * Asked, not waited for: no answer within `E2E_REPORT_ANSWER_MS` accuses the bridge in its own
+   * line and resolves `null`.
    */
-  private logE2eReport(
-    tag: string,
-    worker: Worker,
-    judgeFrames: boolean
-  ): Promise<E2eWorkerReport | null> {
+  private askE2eReport(tag: string, worker: Worker): Promise<E2eWorkerReport | null> {
     return new Promise<E2eWorkerReport | null>((resolve) => {
       const onAnswer = (event: MessageEvent<{ type?: string; tag?: string }>) => {
         if (event.data?.type !== 'report' || event.data.tag !== tag) return;
         window.clearTimeout(timer);
         worker.removeEventListener('message', onAnswer);
-        const report = event.data as E2eWorkerReport;
-        appendLog(describeE2eReport(report, readE2eEngineFacts(), judgeFrames));
-        resolve(report);
+        if (this.e2eWorkerSilent) {
+          this.e2eWorkerSilent = false;
+          appendLog(`[Call] E2E worker report (${tag}): the worker answers again`);
+        }
+        resolve(event.data as E2eWorkerReport);
       };
       const timer = window.setTimeout(() => {
         worker.removeEventListener('message', onAnswer);
-        appendLog(
-          `[Call] ERROR E2E worker report (${tag}): the worker did not answer in ${CallService.E2E_REPORT_ANSWER_MS} ms - its messages do not reach this thread`
-        );
+        // ONE line per silence, not one per re-check: the next answer says it is over.
+        if (!this.e2eWorkerSilent) {
+          this.e2eWorkerSilent = true;
+          appendLog(
+            `[Call] ERROR E2E worker report (${tag}): the worker did not answer in ${CallService.E2E_REPORT_ANSWER_MS} ms - its messages do not reach this thread`
+          );
+        }
         resolve(null);
       }, CallService.E2E_REPORT_ANSWER_MS);
       worker.addEventListener('message', onAnswer);
@@ -1978,6 +2040,14 @@ export class CallService {
       this.e2ePathCheckTimer = null;
     }
     this.e2eConnectChecked = false;
+    // A rebuilt peer connection's end report judges frames only once ITS check has run.
+    this.e2eReportFired = false;
+    this.e2eRechecks = 0;
+    this.e2ePathInconclusive = false;
+    this.e2eLastUnjudged = '';
+    this.e2ePrevPackets = null;
+    this.e2eClaimWithdrawn = false;
+    this.e2eWorkerSilent = false;
     this.e2eSenderSeen = false;
     this.e2eReceiverSeen = false;
     this.e2eProven.set(false);
@@ -1995,66 +2065,150 @@ export class CallService {
       appendLog(`[Call] WARN E2E path check (${why}) not armed: no worker`);
       return;
     }
-    // A check already pending is moved to cover this trigger too, with both reasons: the newest
-    // media gets its full delay to flow, and one check reads them all.
-    let reason = why;
+    // A check already pending KEEPS its deadline and takes this trigger's reason too: re-arming
+    // on every trigger could postpone it for ever (review S2 of #2158). Media too young to be
+    // judged at that deadline makes the check inconclusive, and it re-arms itself.
     if (this.e2ePathCheckTimer !== null) {
-      window.clearTimeout(this.e2ePathCheckTimer);
-      reason = `${this.e2ePathCheckReason}, ${why}`;
+      this.e2ePathCheckReason = `${this.e2ePathCheckReason}, ${why}`;
+      return;
     }
-    this.e2ePathCheckReason = reason;
+    this.e2ePathCheckReason = why;
     this.e2ePathCheckTimer = window.setTimeout(() => {
       this.e2ePathCheckTimer = null;
       this.e2eReportFired = true;
-      void this.checkE2eInPath(pc, worker, reason);
+      void this.checkE2eInPath(pc, worker, this.e2ePathCheckReason);
     }, CallService.E2E_REPORT_DELAY_MS);
   }
 
   /**
-   * The worker's report, and the PROOF it is read against: this peer connection's RTP packets, per
-   * kind, read FIRST - a frame passes the sender transform before its packet leaves and reaches the
-   * receiver transform after its packet was counted, so frames read afterwards can only be ahead,
-   * and a first packet landing between the two reads cannot look like a bypass. A side and kind
-   * whose packets crossed the network while no transform OF THIS PEER CONNECTION saw a frame of
-   * it is media around the worker - clear media sent, or the peer's ciphertext fed to the decoder -
-   * and the call ENDS, typed (`CallE2eBypassedError`). No stats, or no answer from the worker,
-   * proves nothing either way: logged, and the screen's claim simply stays unproven (`e2eProven`).
+   * The worker's report, and the PROOF it is read against: this peer connection's RTP packets as
+   * the PREVIOUS check read them. A side and kind that had packets then and still no frame through
+   * a transform of THIS peer connection now is media around the worker - clear media sent, or the
+   * peer's ciphertext fed to the decoder - and the call ENDS, typed (`CallE2eBypassedError`).
+   *
+   * WHY the previous reading and not this one (review of #2159): `packetsReceived` counts packets,
+   * and a video frame reaches the receiver transform only once all its packets are in, so a stream
+   * whose first packets landed just before this read has packets and no frame yet - a healthy call
+   * that a joined trigger checked early would have been ended. A whole check interval later, every
+   * packet counted then has had its frame through the transform. A kind with packets now and no
+   * frame, and no earlier reading, is too YOUNG: re-checked, never judged.
+   *
+   * Media too young, an m-line not negotiated yet, or a kind with no packet (`inconclusiveMedia`)
+   * re-arms the check, up to `CALL_E2E_PATH_RECHECKS` times; past that the claim is WITHDRAWN and
+   * the next event that starts media re-checks (`recheckE2eOnMediaStart`). NO ANSWER from the
+   * worker withdraws the claim the same way and re-checks. No stats proves nothing: logged.
    */
   private async checkE2eInPath(pc: RTCPeerConnection, worker: Worker, why: string): Promise<void> {
-    let packets;
+    const recheck = this.e2eRechecks > 0;
+    let packets: RtpPacketCounts | null = null;
+    let statsError = '';
     try {
       packets = rtpPacketCounts(await pc.getStats());
     } catch (e) {
-      appendLog(
-        `[Call] WARN E2E path check (${why}): getStats failed (${String(e)}) - nothing proven`
-      );
-      return;
+      statsError = String(e);
     }
     const epoch = this.transformEpoch;
-    const report = await this.logE2eReport(why, worker, true);
-    if (!report) return;
+    // Without packets there is nothing to read the frames against: the worker is not asked.
+    const report = packets ? await this.askE2eReport(why, worker) : null;
+    // Stale FIRST: a check of a replaced peer connection may not withdraw the new one's claim.
     if (this.pc !== pc || this.encryptionWorker !== worker) {
       appendLog(
         `[Call] E2E path check (${why}) dropped: its peer connection was replaced or the call ended`
       );
       return;
     }
-    const counts = `packets sent audio=${packets.sent.audio} video=${packets.sent.video} received audio=${packets.received.audio} video=${packets.received.video}`;
-    const sides = e2eBypassedSides(report, packets, epoch);
-    if (sides.length === 0) {
-      appendLog(`[Call] E2E path check (${why}): no media around the transform (${counts})`);
+    if (!packets) {
+      // Unverifiable, exactly as a worker that does not answer: withdrawn, and re-checked.
+      this.withdrawE2eClaim(why, 'the stats cannot be read');
+      this.recheckE2ePath(pc, why, [`getStats failed (${statsError})`], 'no packet counts');
       return;
     }
-    const frames = sides
-      .map((k) => {
-        const [side, kind] = k.split(':') as ['sender' | 'receiver', 'audio' | 'video'];
-        return `${k}=${framesFor(report, epoch, side, kind)}`;
-      })
-      .join(' ');
-    appendLog(
-      `[Call] ERROR E2E path check (${why}): media flowed AROUND the transform on ${sides.join(' and ')} (${counts}; frames ${frames})`
-    );
-    this.failCall('E2E transform bypassed', new CallE2eBypassedError(sides));
+    const counts = describePacketCounts(packets);
+    if (!report) {
+      this.withdrawE2eClaim(why, 'the worker cannot be asked');
+      this.recheckE2ePath(pc, why, ['the worker did not answer'], counts);
+      return;
+    }
+    const facts = readE2eEngineFacts();
+    const prev = this.e2ePrevPackets;
+    this.e2ePrevPackets = packets;
+    const sides = prev ? e2eBypassedSides(report, prev, epoch) : [];
+    if (prev && sides.length > 0) {
+      appendLog(describeE2eReport(report, facts, true, epoch));
+      const frames = sides
+        .map((k) => {
+          const [side, kind] = k.split(':') as ['sender' | 'receiver', 'audio' | 'video'];
+          return `${k}=${framesFor(report, epoch, side, kind)}`;
+        })
+        .join(' ');
+      appendLog(
+        `[Call] ERROR E2E path check (${why}): media flowed AROUND the transform on ${sides.join(' and ')} (previous check ${describePacketCounts(prev)}; now ${counts}; frames ${frames})`
+      );
+      this.failCall('E2E transform bypassed', new CallE2eBypassedError(sides));
+      return;
+    }
+    const unjudged = [
+      ...e2eBypassedSides(report, packets, epoch).map((k) => `${k}${CARRIED_NO_FRAME_YET}`),
+      ...inconclusiveMedia(
+        pc.getTransceivers().map((t) => ({
+          kind: t.receiver.track?.kind ?? t.sender.track?.kind ?? '',
+          currentDirection: t.currentDirection ?? null,
+          hasTrack: !!t.sender.track,
+          stopped: t.currentDirection === 'stopped',
+        })),
+        packets
+      ),
+    ];
+    if (unjudged.length === 0) {
+      appendLog(describeE2eReport(report, facts, true, epoch));
+      this.e2eRechecks = 0;
+      this.e2ePathInconclusive = false;
+      this.e2eLastUnjudged = '';
+      appendLog(`[Call] E2E path check (${why}): no media around the transform (${counts})`);
+      if (this.e2eClaimWithdrawn) {
+        this.e2eClaimWithdrawn = false;
+        this.claimE2eIfProven();
+      }
+      return;
+    }
+    // A re-check's report is logged only with a changed verdict below, and never judged: its media
+    // is the one the check already said it cannot judge yet.
+    if (!recheck) appendLog(describeE2eReport(report, facts, true, epoch));
+    this.recheckE2ePath(pc, why, unjudged, counts);
+  }
+
+  /**
+   * A check could not judge `unjudged`: re-armed while the budget lasts, logged only when what it
+   * cannot judge CHANGES; past the budget, the claim is withdrawn and an event that starts media
+   * re-checks (`recheckE2eOnMediaStart`).
+   */
+  private recheckE2ePath(
+    pc: RTCPeerConnection,
+    why: string,
+    unjudged: readonly string[],
+    counts: string
+  ): void {
+    this.e2ePathInconclusive = true;
+    const state = unjudged.join(', ');
+    // Packets with no frame YET is judged by the very next check - a frame through the transform,
+    // or a bypass against this reading - so that state cannot repeat, and its next check is owed
+    // OUTSIDE the budget: spending the budget must never drop a verdict that is one check away.
+    const verdictNext = unjudged.some((u) => u.endsWith(CARRIED_NO_FRAME_YET));
+    if (!verdictNext && this.e2eRechecks >= CALL_E2E_PATH_RECHECKS) {
+      appendLog(
+        `[Call] WARN E2E path check (${why}): still not judged after ${CALL_E2E_PATH_RECHECKS} re-checks (${state}; ${counts}) - waiting for media to start`
+      );
+      this.withdrawE2eClaim(why, `media not judged (${state})`);
+      return;
+    }
+    if (!verdictNext) this.e2eRechecks += 1;
+    if (state !== this.e2eLastUnjudged) {
+      this.e2eLastUnjudged = state;
+      appendLog(
+        `[Call] E2E path check (${why}): not yet judged: ${state} (${counts}) - re-checking, at most ${CALL_E2E_PATH_RECHECKS} times`
+      );
+    }
+    this.scheduleE2ePathCheck(pc, 're-check');
   }
 
   /** How long after `connected` the negotiated audio codecs are read (see `logAudioCodecs`). */
@@ -2190,10 +2344,44 @@ export class CallService {
     }
     if (side === 'sender') this.e2eSenderSeen = true;
     else if (side === 'receiver') this.e2eReceiverSeen = true;
-    if (this.e2eSenderSeen && this.e2eReceiverSeen && !get(this.e2eProven)) {
-      appendLog('[Call] E2E proven: this device encrypted a frame and decrypted one from the peer');
-      this.e2eProven.set(true);
+    if (this.e2eClaimWithdrawn) {
+      appendLog(
+        `[Call] E2E ${side} evidence (${mediaKind}) noted - the claim stays withdrawn until a path check concludes`
+      );
+      return;
     }
+    this.claimE2eIfProven();
+  }
+
+  /** Sets the screen's claim when both sides were seen and nothing withdrew it. */
+  private claimE2eIfProven(): void {
+    if (!this.e2eSenderSeen || !this.e2eReceiverSeen || this.e2eClaimWithdrawn) return;
+    if (get(this.e2eProven)) return;
+    appendLog('[Call] E2E proven: this device encrypted a frame and decrypted one from the peer');
+    this.e2eProven.set(true);
+  }
+
+  /**
+   * Takes the screen's claim back until an answered, conclusive path check returns it: a worker
+   * that cannot be asked, or media never judged, cannot be verified, whatever was proven before.
+   */
+  private withdrawE2eClaim(why: string, reason: string): void {
+    this.e2eClaimWithdrawn = true;
+    if (!get(this.e2eProven)) return;
+    appendLog(`[Call] WARN E2E claim withdrawn (${why}): ${reason}`);
+    this.e2eProven.set(false);
+  }
+
+  /**
+   * An event that STARTS media - signalling back to `stable`, a remote track or the camera
+   * unmuting - after a check that could not judge everything: a fresh re-check budget, one check
+   * `E2E_REPORT_DELAY_MS` later. Nothing when the last check concluded.
+   */
+  private recheckE2eOnMediaStart(why: string): void {
+    const pc = this.pc;
+    if (!pc || !this.e2ePathInconclusive) return;
+    this.e2eRechecks = 0;
+    this.scheduleE2ePathCheck(pc, why);
   }
 
   /** Pushes the MLS call key into the encryption worker and waits until it is applied. */
@@ -2259,14 +2447,15 @@ export class CallService {
    */
   private attachSenderTransform(
     sender: RTCRtpSender,
-    mediaKind = sender.track?.kind ?? 'unknown'
+    mediaKind = sender.track?.kind ?? 'unknown',
+    how = 'attached'
   ): void {
     if (sender.transform) return;
     sender.transform = new RTCRtpScriptTransform(
       this.keyedWorker('sender', mediaKind),
       this.transformOptions('sender')
     );
-    appendLog(`[Call] E2E sender transform attached (${mediaKind})`);
+    appendLog(`[Call] E2E sender transform ${how} (${mediaKind})`);
   }
 
   /** Attaches the E2E decrypt transform to a receiver: synchronous and throwing, like the sender. */
@@ -2431,6 +2620,8 @@ export class CallService {
           return;
         }
         this.scheduleE2ePathCheck(pc, 'after the camera was added');
+        // A camera muted by the OS starts sending when it unmutes, with no negotiation.
+        videoTrack.onunmute = () => this.recheckE2eOnMediaStart('after the camera unmuted');
         void this.applyVideoSenderLimits(sender);
         this.localStreamStore.set(this.localStream);
         this.isVideoOff.set(false);
