@@ -468,7 +468,7 @@ export class LiveBroadcast {
     );
     const window = this.limits?.reconnectWindowMs ?? 0;
     const drained = await this.#bounded(
-      this.#uploader?.idle() ?? Promise.resolve(),
+      this.#uploader ? this.#uploader.idle() : Promise.resolve(),
       window,
       'the last segments'
     );
