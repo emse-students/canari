@@ -17,6 +17,7 @@ import {
 } from '$lib/utils/callAudio';
 import { publishCallPresence } from '$lib/utils/callPresence';
 import {
+  CallE2eBypassedError,
   CallE2eUnsupportedError,
   CallInitiateError,
   CallSignallingRefusedError,
@@ -32,7 +33,9 @@ import { notificationPreferences } from '$lib/stores/notificationPreferences.sve
 import { audioCodecOrder, describeAudioCodecs, describeSelectedPair } from '$lib/utils/callStats';
 import {
   describeE2eReport,
+  e2eBypassedSides,
   readE2eEngineFacts,
+  rtpPacketCounts,
   type E2eWorkerReport,
 } from '$lib/utils/callE2eReport';
 
@@ -264,6 +267,17 @@ export class CallService {
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
+  /**
+   * The worker ANSWERED `keyReady` for this call's key. Read synchronously by
+   * `attachSenderTransform` / `attachReceiverTransform`, which may not await anything: Chromium
+   * short-circuits a transform assigned one task after its sender or transceiver was created
+   * (CALL-E2E-BYPASS-MI9T), so the key is in the worker BEFORE the first track is added.
+   */
+  private workerKeyApplied = false;
+  /** The worker encrypted a frame of this call (`encryptOk`): the sender transform is in the path. */
+  private e2eSenderSeen = false;
+  /** The worker decrypted a frame of this call (`decryptOk`): the peer encrypts, under our key. */
+  private e2eReceiverSeen = false;
   /** The one E2E worker report of a call, 5 s after its first `connected` (`logE2eReport`). */
   private e2eReportTimer: number | null = null;
   /**
@@ -300,6 +314,13 @@ export class CallService {
    * and while a call has not connected yet (that is `calling`, not reconnecting).
    */
   public reconnecting = writable<boolean>(false);
+  /**
+   * THE EVIDENCE behind the screen's "end-to-end encrypted": `true` once this call's worker has
+   * encrypted one frame AND decrypted one, both posted from inside the transforms. Never set from a
+   * transform being ATTACHED - on Chromium an attached transform could be short-circuited and see
+   * nothing while the screen said encrypted (CALL-E2E-BYPASS-MI9T, 2026-10-20). `false` outside a call.
+   */
+  public e2eProven = writable<boolean>(false);
   /** @deprecated Use remoteStreams for multi-party; kept for single-remote fallback. */
   public remoteStream = writable<MediaStream | null>(null);
   public remoteStreams = writable<RemoteStreams>(new Map());
@@ -668,13 +689,15 @@ export class CallService {
    * tear down once. Ends only this leg without broadcasting an MLS hangup: in a group
    * call one peer's failed relay must not end everyone else's call.
    */
-  private failCall(reason: string): void {
+  private failCall(reason: string, cause?: Error): void {
     const state = get(this.callState);
     // A call already over (idle, or showing its ended summary) cannot fail: a late step saying so
     // would only print a second, false "terminal failure" and a toast.
     if (state === 'idle' || state === 'ended') return;
     appendLog(`[Call] terminal failure: ${reason} - ending call`);
-    showToast(m.call_connection_lost(), 'error');
+    // A TYPED cause reads as its own sentence (`describeCallFailure`); anything else is a transport
+    // failure, the connection lost.
+    showToast(cause ? describeCallFailure(cause) : m.call_connection_lost(), 'error');
     this.endCall(false);
   }
 
@@ -757,6 +780,7 @@ export class CallService {
       const worker = this.encryptionWorker;
       this.encryptionWorker = null;
       this.workerKeyReady = null;
+      this.workerKeyApplied = false;
       // The counters die with the worker, so the final report is asked BEFORE it goes.
       if (wasConnected)
         void this.logE2eReport(
@@ -767,6 +791,9 @@ export class CallService {
       else worker.terminate();
     }
 
+    this.e2eSenderSeen = false;
+    this.e2eReceiverSeen = false;
+    this.e2eProven.set(false);
     this.remoteStream.set(null);
     this.remoteStreams.set(new Map());
     this.connectedAt.set(null);
@@ -1648,14 +1675,15 @@ export class CallService {
 
     try {
       if (!receiver.transform) {
-        // A receiver the peer's offer created (a kind this side never sent). Attaching here is
-        // the only option left, and Chrome 155 was measured NOT to deliver frames to a transform
-        // attached this late - so this line accuses: expect silence on this track.
+        // A receiver the peer's offer created (a kind this side never sent). Attached here, in the
+        // task `ontrack` fires in - SYNCHRONOUSLY, nothing awaited first: the rig measured such a
+        // transform fed on Chrome 155 (row "new m-line"), and one task later Chromium short-circuits
+        // it for good. The 5 s path check (`checkE2eInPath`) is what proves it either way.
         appendLog(
-          `[Call] WARN late E2E receiver transform (${track.kind}) - attached in ontrack, measured to receive no frames in Chrome`
+          `[Call] E2E receiver transform attached in ontrack (${track.kind}, a new m-line)`
         );
       }
-      await this.setupReceiverTransform(receiver, track.kind);
+      this.attachReceiverTransform(receiver, track.kind);
     } catch (e) {
       appendLog(`[Call] E2E receiver transform failed: ${String(e)}`);
       this.failCall('E2E receiver transform failed');
@@ -1813,7 +1841,7 @@ export class CallService {
           const worker = this.encryptionWorker;
           this.e2eReportTimer = window.setTimeout(() => {
             this.e2eReportFired = true;
-            void this.logE2eReport('5 s after connected', worker, true);
+            void this.checkE2eInPath(pc, worker);
           }, CallService.E2E_REPORT_DELAY_MS);
         }
       }
@@ -1864,17 +1892,20 @@ export class CallService {
       const tracks = this.localStream.getTracks();
       appendLog(`[Call] adding ${tracks.length} local track(s) to PeerConnection`);
       for (const track of tracks) {
+        // `addTrack` and BOTH transforms of its transceiver in ONE task, nothing awaited between
+        // them. Chromium short-circuits a sender or receiver whose transform is not assigned by the
+        // end of the task that created it, FOR GOOD: the transform keeps its transformer and is
+        // never handed a frame, so clear media leaves and the peer's ciphertext reaches the decoder
+        // (CALL-E2E-BYPASS-MI9T, measured on the Mi 9T's WebView 152 and desktop Chrome 155,
+        // 2026-10-20 - an await of the worker's `keyReady` here was that task boundary). The key is
+        // in the worker since `setupEncryption`. Both ends add an audio track before negotiating,
+        // and the polite side's answer reuses this transceiver, so the remote audio always lands on
+        // a receiver that already decrypts.
         const sender = pc.addTrack(track, this.localStream);
-        // Before the first frame is encoded: a sender without its transform would send clear media.
-        await this.setupSenderTransform(sender);
-        // The RECEIVER of the same transceiver, now, before any negotiation. Measured in Chrome 155
-        // (2026-10-17): a receiver transform attached in `ontrack` never sees a single frame - the
-        // call connects, packets arrive, and every sample is concealed silence. Attached here, at
-        // transceiver creation, every frame decrypts. Both ends add an audio track before
-        // negotiating, and the polite side's offer-answer reuses this transceiver, so the remote
-        // audio always lands on a receiver that already decrypts.
+        this.attachSenderTransform(sender);
         const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
-        if (transceiver) await this.setupReceiverTransform(transceiver.receiver, track.kind);
+        if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
+        this.attachReceiverTransform(transceiver.receiver, track.kind);
         if (track.kind === 'video') void this.applyVideoSenderLimits(sender);
       }
       await configureCallAudioSenders(pc, this.callHasVideo);
@@ -1893,27 +1924,61 @@ export class CallService {
    * waited for: no answer within `E2E_REPORT_ANSWER_MS` accuses the bridge in its own line.
    * `judgeFrames`: whether a side with no frame is a fault (`diagnoseE2eReport`).
    */
-  private logE2eReport(tag: string, worker: Worker, judgeFrames: boolean): Promise<void> {
-    return new Promise<void>((resolve) => {
+  private logE2eReport(
+    tag: string,
+    worker: Worker,
+    judgeFrames: boolean
+  ): Promise<E2eWorkerReport | null> {
+    return new Promise<E2eWorkerReport | null>((resolve) => {
       const onAnswer = (event: MessageEvent<{ type?: string; tag?: string }>) => {
         if (event.data?.type !== 'report' || event.data.tag !== tag) return;
         window.clearTimeout(timer);
         worker.removeEventListener('message', onAnswer);
-        appendLog(
-          describeE2eReport(event.data as E2eWorkerReport, readE2eEngineFacts(), judgeFrames)
-        );
-        resolve();
+        const report = event.data as E2eWorkerReport;
+        appendLog(describeE2eReport(report, readE2eEngineFacts(), judgeFrames));
+        resolve(report);
       };
       const timer = window.setTimeout(() => {
         worker.removeEventListener('message', onAnswer);
         appendLog(
           `[Call] ERROR E2E worker report (${tag}): the worker did not answer in ${CallService.E2E_REPORT_ANSWER_MS} ms - its messages do not reach this thread`
         );
-        resolve();
+        resolve(null);
       }, CallService.E2E_REPORT_ANSWER_MS);
       worker.addEventListener('message', onAnswer);
       worker.postMessage({ type: 'report', tag });
     });
+  }
+
+  /**
+   * The 5 s report, and the PROOF it is read against: the RTP packets the peer connection sent and
+   * received. A side whose packets crossed the network while its transform was handed no frame is
+   * media flowing AROUND the worker - clear audio sent, or the peer's ciphertext fed to the decoder -
+   * and the call ENDS, typed (`CallE2eBypassedError`), rather than go on unencrypted. No answer from
+   * the worker, or no stats, proves nothing either way: logged, and the screen's claim simply stays
+   * unproven (`e2eProven`).
+   */
+  private async checkE2eInPath(pc: RTCPeerConnection, worker: Worker): Promise<void> {
+    const report = await this.logE2eReport('5 s after connected', worker, true);
+    if (!report || this.pc !== pc) return;
+    let packets;
+    try {
+      packets = rtpPacketCounts(await pc.getStats());
+    } catch (e) {
+      appendLog(`[Call] WARN E2E path check: getStats failed (${String(e)}) - nothing proven`);
+      return;
+    }
+    const sides = e2eBypassedSides(report, packets);
+    if (sides.length === 0) {
+      appendLog(
+        `[Call] E2E path check: no media around the transform (packets sent=${packets.sent} received=${packets.received})`
+      );
+      return;
+    }
+    appendLog(
+      `[Call] ERROR E2E path check: media flowed AROUND the transform on ${sides.join(' and ')} (packets sent=${packets.sent} received=${packets.received}, frames in sender=${report.framesIn.sender ?? 0} receiver=${report.framesIn.receiver ?? 0})`
+    );
+    this.failCall('E2E transform bypassed', new CallE2eBypassedError(sides));
   }
 
   /** How long after `connected` the negotiated audio codecs are read (see `logAudioCodecs`). */
@@ -1963,6 +2028,10 @@ export class CallService {
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
     appendLog(`[Call] encryption key derived from MLS (fp=${fp}…)`);
+    // The key goes INTO the worker now, before any track is added: the transforms are attached in
+    // the task that creates their sender, where nothing may be awaited (`attachSenderTransform`).
+    await this.ensureWorkerKeyReady();
+    appendLog('[Call] E2E worker holds the call key');
   }
 
   private getOrCreateEncryptionWorker(): Worker {
@@ -1982,8 +2051,10 @@ export class CallService {
           appendLog(`[Call] E2E worker: ${detail ?? 'warn'}`);
         } else if (type === 'encryptOk') {
           appendLog(`[Call] E2E encrypting ${mediaKind ?? '?'} (${count} frame(s))`);
+          this.noteE2eEvidence('sender');
         } else if (type === 'decryptOk') {
           appendLog(`[Call] E2E decrypting ${mediaKind ?? '?'} (${count} frame(s))`);
+          this.noteE2eEvidence('receiver');
         } else if (type === 'videoKeyframeIn') {
           appendLog(`[Call] remote video keyframe received (#${count})`);
         } else if (type === 'opusInvalid') {
@@ -2026,6 +2097,19 @@ export class CallService {
     return this.encryptionWorker;
   }
 
+  /**
+   * One side of the E2E evidence: the worker encrypted (`sender`) or decrypted (`receiver`) a frame
+   * of this call. Both seen = `e2eProven`, the only thing the screen's encryption claim reads.
+   */
+  private noteE2eEvidence(side: 'sender' | 'receiver'): void {
+    if (side === 'sender') this.e2eSenderSeen = true;
+    else this.e2eReceiverSeen = true;
+    if (this.e2eSenderSeen && this.e2eReceiverSeen && !get(this.e2eProven)) {
+      appendLog('[Call] E2E proven: this device encrypted a frame and decrypted one from the peer');
+      this.e2eProven.set(true);
+    }
+  }
+
   /** Pushes the MLS call key into the encryption worker and waits until it is applied. */
   private ensureWorkerKeyReady(): Promise<void> {
     if (!this.callKey) return Promise.resolve();
@@ -2042,6 +2126,8 @@ export class CallService {
         if (event.data?.type === 'keyReady') {
           window.clearTimeout(timeout);
           worker.removeEventListener('message', onReady);
+          // Only if this is still the call's worker: a call ended meanwhile cleared it.
+          if (this.encryptionWorker === worker) this.workerKeyApplied = true;
           resolve();
         } else if (event.data?.type === 'keyError') {
           window.clearTimeout(timeout);
@@ -2063,25 +2149,35 @@ export class CallService {
   }
 
   /**
-   * Attaches the E2E encrypt transform to a sender. THROWS when it cannot: a call is refused,
-   * never sent in clear (`CallE2eUnsupportedError` already refused an engine without the API).
+   * The keyed worker a transform is attached to, or a THROW: a call is refused, never sent in clear
+   * (`CallE2eUnsupportedError` already refused an engine without the API). SYNCHRONOUS on purpose -
+   * see `attachSenderTransform`.
    */
-  private async setupSenderTransform(sender: RTCRtpSender): Promise<void> {
+  private keyedWorker(side: 'sender' | 'receiver'): Worker {
+    if (!this.callKey || !this.encryptionWorker || !this.workerKeyApplied) {
+      throw new Error(`the E2E worker holds no call key - no ${side} transform can be attached`);
+    }
+    return this.encryptionWorker;
+  }
+
+  /**
+   * Attaches the E2E encrypt transform to a sender, in the SAME task as the `addTrack` that created
+   * it: SYNCHRONOUS, it awaits nothing. Chromium short-circuits a sender whose transform is assigned
+   * one task late, for good, and then sends clear media while the transform sits unfed
+   * (CALL-E2E-BYPASS-MI9T, 2026-10-20). THROWS when the worker holds no key.
+   */
+  private attachSenderTransform(sender: RTCRtpSender): void {
     if (sender.transform) return;
-    if (!this.callKey) throw new Error('no call key for the sender transform');
-    const worker = this.getOrCreateEncryptionWorker();
-    await this.ensureWorkerKeyReady();
-    sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
+    sender.transform = new RTCRtpScriptTransform(this.keyedWorker('sender'), { side: 'sender' });
     appendLog(`[Call] E2E sender transform attached (${sender.track?.kind ?? 'unknown'})`);
   }
 
-  /** Attaches the E2E decrypt transform to a receiver. THROWS when it cannot, like the sender. */
-  private async setupReceiverTransform(receiver: RTCRtpReceiver, mediaKind = 'unknown') {
+  /** Attaches the E2E decrypt transform to a receiver: synchronous and throwing, like the sender. */
+  private attachReceiverTransform(receiver: RTCRtpReceiver, mediaKind = 'unknown'): void {
     if (receiver.transform) return;
-    if (!this.callKey) throw new Error('no call key for the receiver transform');
-    const worker = this.getOrCreateEncryptionWorker();
-    await this.ensureWorkerKeyReady();
-    receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
+    receiver.transform = new RTCRtpScriptTransform(this.keyedWorker('receiver'), {
+      side: 'receiver',
+    });
     appendLog(`[Call] E2E receiver transform attached (${mediaKind})`);
   }
 
@@ -2209,10 +2305,25 @@ export class CallService {
         if (!videoTrack) return;
         this.localStream.addTrack(videoTrack);
         this.callHasVideo = true;
-        // `negotiationneeded` fires from this addTrack and carries the new m-line to the peer; no
-        // frame leaves before that negotiation completes, so the transform is in place first.
-        const sender = this.pc.addTrack(videoTrack, this.localStream);
-        await this.setupSenderTransform(sender);
+        // `addTrack` and both transforms of its transceiver in ONE task, as in `initPeerConnection`
+        // (Chromium short-circuits a transform assigned later). `negotiationneeded` then carries the
+        // new m-line to the peer.
+        const pc = this.pc;
+        const sender = pc.addTrack(videoTrack, this.localStream);
+        try {
+          this.attachSenderTransform(sender);
+          const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
+          if (!transceiver) throw new Error('no transceiver for the video sender just added');
+          this.attachReceiverTransform(transceiver.receiver, 'video');
+        } catch (e) {
+          // Never a video sender without its transform: removed before any negotiation carries it.
+          pc.removeTrack(sender);
+          videoTrack.stop();
+          this.localStream.removeTrack(videoTrack);
+          appendLog(`[Call] E2E transform for the camera failed: ${String(e)}`);
+          this.failCall('E2E transform for the camera failed');
+          return;
+        }
         void this.applyVideoSenderLimits(sender);
         this.localStreamStore.set(this.localStream);
         this.isVideoOff.set(false);

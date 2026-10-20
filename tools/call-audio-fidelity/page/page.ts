@@ -43,6 +43,12 @@ interface RigConfig {
   wrongKey?: boolean;
   /** FAULT ROW: this side encrypts but attaches NO receiver transform (ciphertext to the decoder). */
   noReceiverTransform?: boolean;
+  /**
+   * FAULT ROW: both transforms are assigned ONE TASK after `addTrack` - the app's order until
+   * 2026-10-20 (an await of the worker's `keyReady` in between). Chromium short-circuits them: the
+   * transformers exist and are never fed (CALL-E2E-BYPASS-MI9T).
+   */
+  transformOneTaskLate?: boolean;
 }
 
 const KEY = Uint8Array.from({ length: 32 }, (_, i) => i * 7 + 3);
@@ -161,6 +167,7 @@ async function setup(config: RigConfig) {
   localStream = stream;
   for (const track of cfg.lateTrack ? [] : stream.getTracks()) {
     const sender = pc.addTrack(track, stream);
+    if (worker && cfg.transformOneTaskLate) await new Promise((r) => setTimeout(r, 0));
     if (worker) {
       sender.transform = new RTCRtpScriptTransform(worker, transformOptions('sender'));
       const t = pc.getTransceivers().find((x) => x.sender === sender)!;

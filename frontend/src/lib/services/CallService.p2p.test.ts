@@ -87,6 +87,8 @@ vi.mock('$lib/utils/apiFetch', () => ({
 const workerAnswers = {
   report: { sender: 250, receiver: 251 } as { sender: number; receiver: number } | null,
   terminated: 0,
+  /** The last worker the service created: a test posts the transforms' own messages through it. */
+  last: null as { onmessage: ((e: MessageEvent) => void) | null } | null,
 };
 
 /** The E2E worker: answers `setKey` with `keyReady` and `report` with counters, as the real one does. */
@@ -94,6 +96,9 @@ vi.mock('../workers/encryption.worker?worker', () => ({
   default: class {
     onmessage: ((e: MessageEvent) => void) | null = null;
     private listeners: ((e: MessageEvent) => void)[] = [];
+    constructor() {
+      workerAnswers.last = this;
+    }
     addEventListener(_: string, l: (e: MessageEvent) => void) {
       this.listeners.push(l);
     }
@@ -124,7 +129,9 @@ vi.mock('../workers/encryption.worker?worker', () => ({
         return;
       }
       if (msg.type !== 'setKey') return;
-      queueMicrotask(() => {
+      // A TASK, as a real worker's answer is (another thread posts it): an `addTrack` whose
+      // transform waited for it would be one task late, which Chromium short-circuits.
+      void flushMacrotask().then(() => {
         const e = { data: { type: 'keyReady' } } as MessageEvent;
         this.onmessage?.(e);
         // A copy: the service removes its listener from inside the callback.
@@ -172,12 +179,33 @@ class FakeSocket {
   }
 }
 
+/**
+ * A sender's or receiver's `transform` slot, as Chromium treats it: a transform assigned AFTER the
+ * task that created the sender/transceiver is short-circuited for good - attached, never fed
+ * (CALL-E2E-BYPASS-MI9T, measured on WebView 152 and Chrome 155, 2026-10-20). `late` records it.
+ */
+function withTransformSlot<T extends object>(o: T): T & { transform: unknown; late?: boolean } {
+  let sameTask = true;
+  void flushMacrotask().then(() => (sameTask = false));
+  let value: unknown = null;
+  const slot = o as T & { transform: unknown; late?: boolean };
+  Object.defineProperty(slot, 'transform', {
+    get: () => value,
+    set: (v: unknown) => {
+      if (!sameTask) slot.late = true;
+      value = v;
+    },
+    enumerable: true,
+  });
+  return slot;
+}
+
 class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
   signalingState: RTCSignalingState = 'stable';
   localDescription: RTCSessionDescriptionInit | null = null;
   remoteDescription: RTCSessionDescriptionInit | null = null;
-  senders: { track: { kind: string }; transform: unknown }[] = [];
+  senders: { track: { kind: string }; transform: unknown; late?: boolean }[] = [];
   onnegotiationneeded: (() => Promise<void>) | null = null;
   onicecandidate = null;
   ontrack = null;
@@ -194,6 +222,8 @@ class FakePeerConnection {
   rollbacks = 0;
   /** Inbound audio RTP packets the stats report; `null` = no inbound stream yet. */
   inboundPackets: number | null = null;
+  /** Outbound RTP packets the stats report; `null` = no outbound stream yet. */
+  outboundPackets: number | null = null;
   /**
    * Microtask turns each description operation takes before it completes. 0 = at once; above it,
    * an operation started beside another one INTERLEAVES with it, as the browser's can - the only
@@ -220,6 +250,13 @@ class FakePeerConnection {
         packetsReceived: this.inboundPackets,
       });
     }
+    if (this.outboundPackets !== null) {
+      stats.set('out-1', {
+        type: 'outbound-rtp',
+        kind: 'audio',
+        packetsSent: this.outboundPackets,
+      });
+    }
     return stats;
   }
   /** The ICE agent moves: the state, then its event, as the browser orders them. */
@@ -234,12 +271,19 @@ class FakePeerConnection {
   constructor(public config: RTCConfiguration) {
     FakePeerConnection.instances.push(this);
   }
-  receivers: { transform: unknown }[] = [];
+  receivers: { transform: unknown; late?: boolean }[] = [];
   addTrack(track: { kind: string }) {
-    const sender = { track, transform: null as unknown };
+    const sender = withTransformSlot({ track });
     this.senders.push(sender);
-    this.receivers.push({ transform: null });
+    this.receivers.push(withTransformSlot({}));
     return sender;
+  }
+  removeTrack(sender: unknown) {
+    const i = this.senders.indexOf(sender as (typeof this.senders)[number]);
+    if (i >= 0) {
+      this.senders.splice(i, 1);
+      this.receivers.splice(i, 1);
+    }
   }
   getTransceivers() {
     return this.senders.map((sender, i) => ({ sender, receiver: this.receivers[i] }));
@@ -294,8 +338,14 @@ const fakeMls = {
   }),
 } as unknown as IMlsService;
 
-/** Lets every pending promise and microtask of the service settle. */
-const settle = () => flushMacrotask();
+/**
+ * Lets every pending promise and microtask of the service settle - TWO tasks: the fake worker
+ * answers `keyReady` in a task of its own, as a real worker does.
+ */
+const settle = async () => {
+  await flushMacrotask();
+  await flushMacrotask();
+};
 
 beforeEach(() => {
   server.ringTimeoutMs = 60_000;
@@ -396,6 +446,9 @@ describe('a peer-to-peer call, client side', () => {
     // And on the RECEIVER of the same transceiver, before negotiation: Chrome 155 delivers no
     // frame to a receiver transform attached later, in `ontrack` (measured 2026-10-17).
     expect((pc.receivers[0].transform as FakeTransform).options.side).toBe('receiver');
+    // Both in the TASK that created them: one task later Chromium short-circuits them for good.
+    expect(pc.senders[0].late).toBeUndefined();
+    expect(pc.receivers[0].late).toBeUndefined();
 
     await pc.onnegotiationneeded!();
     const offers = ws.framesOfType('Offer');
@@ -577,6 +630,48 @@ describe('the E2E worker report (2026-10-19)', () => {
     const line = lines().find((l) => l.includes('E2E worker report'));
     expect(line?.startsWith('[Call] ERROR E2E worker report')).toBe(true);
     expect(line).toContain('no frame reached the RECEIVER transform');
+  });
+
+  it('ENDS a call whose media flowed around the transform, typed, and never claims E2E (CALL-E2E-BYPASS-MI9T)', async () => {
+    // The Mi 9T's reading of 2026-10-20: transformers on both sides, not one frame, packets flowing.
+    workerAnswers.report = { sender: 0, receiver: 0 };
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 248;
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(lines()).toContain(
+      '[Call] ERROR E2E path check: media flowed AROUND the transform on sender and receiver (packets sent=250 received=248, frames in sender=0 receiver=0)'
+    );
+    expect(lines()).toContain('[Call] terminal failure: E2E transform bypassed - ending call');
+    expect(vi.mocked(showToast)).toHaveBeenCalledWith(m.call_e2e_bypassed(), 'error');
+    expect(get(service.callState)).toBe('ended');
+    expect(get(service.e2eProven)).toBe(false);
+  });
+
+  it('keeps a call whose transforms carry the media, and proves E2E from the worker alone', async () => {
+    const { service, pc, lines } = await connectedCall();
+    pc.outboundPackets = 250;
+    pc.inboundPackets = 251;
+    const post = (data: unknown) => workerAnswers.last?.onmessage?.({ data } as MessageEvent);
+    post({ type: 'encryptOk', count: 1, mediaKind: 'audio' });
+    // One side seen is not the claim: the peer's frames must decrypt too.
+    expect(get(service.e2eProven)).toBe(false);
+    post({ type: 'decryptOk', count: 1, mediaKind: 'audio' });
+    expect(get(service.e2eProven)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(lines()).toContain(
+      '[Call] E2E path check: no media around the transform (packets sent=250 received=251)'
+    );
+    expect(get(service.callState)).toBe('incall');
+
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    // The claim belongs to ONE call.
+    expect(get(service.e2eProven)).toBe(false);
   });
 
   it('does not accuse an empty side at the end of a call shorter than the 5 s report', async () => {

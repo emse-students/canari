@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   describeE2eReport,
   diagnoseE2eReport,
+  e2eBypassedSides,
   engineFromUserAgent,
+  rtpPacketCounts,
   transformAttribute,
   type E2eEngineFacts,
   type E2eWorkerReport,
@@ -116,5 +118,34 @@ describe('diagnoseE2eReport / describeE2eReport', () => {
     expect(
       diagnoseE2eReport(report({ doubleEncrypted: 1, framesIn: {} }), NATIVE, false)?.level
     ).toBe('fault');
+  });
+});
+
+describe('e2eBypassedSides (CALL-E2E-BYPASS-MI9T)', () => {
+  it('names a side whose packets crossed the network while its transform saw no frame', () => {
+    // The Mi 9T's reading of 2026-10-20: transformers 1/1, frames 0/0, media flowing both ways.
+    const unfed = report({ framesIn: {} });
+    expect(e2eBypassedSides(unfed, { sent: 250, received: 248 })).toEqual(['sender', 'receiver']);
+    expect(
+      e2eBypassedSides(report({ framesIn: { receiver: 240 } }), { sent: 250, received: 240 })
+    ).toEqual(['sender']);
+    expect(
+      e2eBypassedSides(report({ framesIn: { sender: 250 } }), { sent: 250, received: 240 })
+    ).toEqual(['receiver']);
+  });
+
+  it('accuses nothing when the transform is in the path, or when nothing flowed on that side', () => {
+    expect(e2eBypassedSides(report(), { sent: 250, received: 251 })).toEqual([]);
+    expect(e2eBypassedSides(report({ framesIn: {} }), { sent: 0, received: 0 })).toEqual([]);
+  });
+
+  it('sums the packets of every outbound and inbound RTP stream', () => {
+    const stats = new Map<string, unknown>([
+      ['o1', { type: 'outbound-rtp', packetsSent: 200 }],
+      ['o2', { type: 'outbound-rtp', packetsSent: 50 }],
+      ['i1', { type: 'inbound-rtp', packetsReceived: 240 }],
+      ['c', { type: 'codec' }],
+    ]) as unknown as RTCStatsReport;
+    expect(rtpPacketCounts(stats)).toEqual({ sent: 250, received: 240 });
   });
 });

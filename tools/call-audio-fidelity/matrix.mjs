@@ -110,6 +110,13 @@ export const MATRIX = [
     caller: APP,
     callee: { ...APP, noReceiverTransform: true },
   },
+  {
+    name: 'fault-transform-late',
+    what: "FAULT: both sides assign their transforms one task after addTrack (the app's order until 2026-10-20) - Chromium short-circuits them, clear media flows around the worker",
+    fault: true,
+    caller: { ...APP, transformOneTaskLate: true },
+    callee: { ...APP, transformOneTaskLate: true },
+  },
 ];
 
 /**

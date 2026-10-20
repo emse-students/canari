@@ -616,6 +616,12 @@ report.
 | CALL-GATHER-0 | **P3** | one call (Mi 9T polite, call 4) logged `ICE gathering complete (host=2 srflx=0 relay=0)` then `WARN no TURN relay candidate - a call that cannot go direct will fail` 50 ms after `connected`; the same device gathered srflx and relay candidates in every other call | the Mi 9T console, 08:21:17 |
 | WS-PAUSE-NOISE | **P3** | at the Mi 9T's lock: `[WS] pauseSocket: native disconnect failed: Trying to work with closed connection` (WARN); on the iPhone, a `signalling WebSocket error` after a call had ended | both logs |
 
+**Cause of CALL-E2E-BYPASS-MI9T, measured afterwards on this Mi 9T over CDP (2026-10-20):** Chromium short-circuits a
+transform assigned one task after its sender or transceiver was created, and the app awaited the worker's `keyReady`
+in between, so EVERY Chromium client sent clear audio and fed the iPhone's ciphertext to its decoder - which is
+CALL-AUDIO-1 too, and why the 2026-10-19 Mi 9T to desktop pairing was clean (clear both ways). See
+[calls](frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late).
+
 CALL-WIFI-14 and CALL-WIFI-GHOST of `1.3.1-alpha.2` are **closed** by rows 9 and 10 on both phones and both roles.
 CALL-BAR-COVERED is closed for the chat camera; CALL-OS-BANNER is closed on one ring.
 

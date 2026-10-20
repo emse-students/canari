@@ -18,6 +18,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   let connectedAt = $state<number | null>(null);
   let endedAt = $state<number | null>(null);
   let isReconnecting = $state(false);
+  let e2eProven = $state(false);
   let localStream = $state<MediaStream | null>(null);
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- replaced whole by the service's store, never mutated here
   let remoteStreams = $state<Map<string, MediaStream>>(new Map());
@@ -34,6 +35,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
       service.connectedAt.subscribe((v) => (connectedAt = v)),
       service.endedAt.subscribe((v) => (endedAt = v)),
       service.reconnecting.subscribe((v) => (isReconnecting = v)),
+      service.e2eProven.subscribe((v) => (e2eProven = v)),
       service.localStreamStore.subscribe((v) => (localStream = v)),
       service.remoteStreams.subscribe((v) => (remoteStreams = v)),
       service.remoteStream.subscribe((v) => (remoteStream = v)),
@@ -73,6 +75,13 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     },
     get connectedAt() {
       return connectedAt;
+    },
+    /**
+     * Whether THIS call's media was seen crossing the E2E worker both ways (`CallService.e2eProven`).
+     * The screen claims "end-to-end encrypted" on this evidence only, never on a transform attached.
+     */
+    get e2eProven() {
+      return e2eProven;
     },
     /** `mm:ss` since the media path connected; frozen once the call ended. */
     get duration() {

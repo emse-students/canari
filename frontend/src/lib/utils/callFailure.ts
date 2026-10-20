@@ -82,6 +82,23 @@ export class CallE2eUnsupportedError extends Error {
 }
 
 /**
+ * Media crossed the network AROUND this device's E2E transform: RTP packets were sent (or received)
+ * while the worker was never handed one frame on that side, so the engine sent clear media (or fed
+ * the other party's ciphertext to the decoder). Proven from two counters (`e2eBypassedSides`), never
+ * inferred, and the call ENDS: carrying it on would be the transport-only call the app refuses.
+ *
+ * WHY (CALL-E2E-BYPASS-MI9T, 2026-10-20): Chromium short-circuits a transform assigned one task after
+ * its sender or transceiver was created, for good, and every Chromium client of `1.3.1-alpha.*` did
+ * exactly that while its screen said "end-to-end encrypted".
+ */
+export class CallE2eBypassedError extends Error {
+  constructor(public readonly sides: readonly ('sender' | 'receiver')[]) {
+    super(`media flowed around the E2E transform (${sides.join(' and ')})`);
+    this.name = 'CallE2eBypassedError';
+  }
+}
+
+/**
  * THE SENTENCE A FAILED CALL SETUP READS AS, chosen from the status and nothing else.
  *
  * 404 is answered BEFORE `describeApiRefusal`, and that is the one deliberate departure: the
@@ -99,6 +116,7 @@ export class CallE2eUnsupportedError extends Error {
  */
 export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
+  if (error instanceof CallE2eBypassedError) return m.call_e2e_bypassed();
   // A block, on either side: neutral, as every block refusal is - never who blocked whom.
   if (refusalCode(error) === USER_BLOCKED_CODE) return m.call_unavailable();
   const status = refusalStatus(error);

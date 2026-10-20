@@ -169,3 +169,39 @@ export function describeE2eReport(
     (d ? ` - ${d.text}` : '')
   );
 }
+
+/** RTP packets this peer connection sent and received, every media kind summed (`rtpPacketCounts`). */
+export interface RtpPacketCounts {
+  sent: number;
+  received: number;
+}
+
+/** Sums `packetsSent` over the outbound RTP streams and `packetsReceived` over the inbound ones. */
+export function rtpPacketCounts(stats: RTCStatsReport): RtpPacketCounts {
+  const counts: RtpPacketCounts = { sent: 0, received: 0 };
+  stats.forEach((s: { type?: string; packetsSent?: number; packetsReceived?: number }) => {
+    if (s.type === 'outbound-rtp') counts.sent += s.packetsSent ?? 0;
+    if (s.type === 'inbound-rtp') counts.received += s.packetsReceived ?? 0;
+  });
+  return counts;
+}
+
+/**
+ * The sides whose media crossed the network AROUND the E2E transform: packets went out while the
+ * sender transform was handed no frame (clear media sent), or came in while the receiver transform
+ * was handed none (the other party's ciphertext fed to the decoder). Empty when the transform is in
+ * the path, or when nothing flowed on that side (nothing to prove either way).
+ *
+ * A PROOF from two counters read in the same call, never a timeout: on Chromium a short-circuited
+ * transform keeps its transformer (the worker counts one per side) and is simply never fed
+ * (CALL-E2E-BYPASS-MI9T, 2026-10-20, measured on the Mi 9T's WebView 152 and desktop Chrome 155).
+ */
+export function e2eBypassedSides(
+  r: E2eWorkerReport,
+  packets: RtpPacketCounts
+): ('sender' | 'receiver')[] {
+  const sides: ('sender' | 'receiver')[] = [];
+  if (packets.sent > 0 && (r.framesIn.sender ?? 0) === 0) sides.push('sender');
+  if (packets.received > 0 && (r.framesIn.receiver ?? 0) === 0) sides.push('receiver');
+  return sides;
+}

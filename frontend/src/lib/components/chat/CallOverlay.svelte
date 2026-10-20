@@ -35,6 +35,7 @@
     Phone,
     PhoneOff,
     PictureInPicture2,
+    Shield,
     ShieldCheck,
     Speaker,
     Video,
@@ -410,12 +411,20 @@
       >
         <ChevronDown size={26} />
       </button>
+      <!-- Claimed on EVIDENCE only (CallService.e2eProven): a frame encrypted and one decrypted
+           by this call's worker. A transform merely attached proved nothing on Chromium. -->
       <span
         class="inline-flex min-w-0 items-center gap-1.5 truncate text-xs text-white/70"
-        title={m.call_e2e_encrypted_title()}
+        title={call.e2eProven ? m.call_e2e_encrypted_title() : m.call_e2e_verifying()}
+        data-testid="call-e2e-line"
       >
-        <ShieldCheck size={14} class="shrink-0" />
-        <span class="truncate">{m.call_e2e_encrypted_title()}</span>
+        {#if call.e2eProven}
+          <ShieldCheck size={14} class="shrink-0" />
+          <span class="truncate">{m.call_e2e_encrypted_title()}</span>
+        {:else}
+          <Shield size={14} class="shrink-0" />
+          <span class="truncate">{m.call_e2e_verifying()}</span>
+        {/if}
       </span>
       {#if remoteVideoStream && pipSupported}
         <button

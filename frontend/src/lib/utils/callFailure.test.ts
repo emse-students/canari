@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
-import { CallE2eUnsupportedError, CallInitiateError, describeCallFailure } from './callFailure';
+import {
+  CallE2eBypassedError,
+  CallE2eUnsupportedError,
+  CallInitiateError,
+  describeCallFailure,
+} from './callFailure';
 
 /**
  * A CALL THAT COULD NOT START SAYS WHAT THE SERVER ANSWERED, NOT WHAT IT WROTE.
@@ -113,5 +118,12 @@ describe('describeCallFailure', () => {
 
     expect(describeCallFailure(error)).toBe(m.call_e2e_unsupported());
     expect(describeCallFailure(error)).not.toBe(error.message);
+  });
+
+  it('reads media that flowed around the transform as an E2E failure, by type', () => {
+    const error = new CallE2eBypassedError(['sender', 'receiver']);
+
+    expect(describeCallFailure(error)).toBe(m.call_e2e_bypassed());
+    expect(error.message).toContain('sender and receiver');
   });
 });

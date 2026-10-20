@@ -501,7 +501,8 @@ blocks with the reference; LSD on the speech segment):
    `audioLevel` 1.000 and "formless noise". A wrong key gives SILENCE (every frame dropped), never
    noise, so the F5 key mismatch is not this defect. Random bytes break Opus's framing rules
    (RFC 6716 R1-R7) about half the time, which is the decoder's `Decode error` share.
-3. **So the fault sits on a side the rig does not run**: the iPhone's WebKit sender (WebKit's
+3. **(Corrected 2026-10-20: it was the Chromium receivers - every Chromium client short-circuited
+   both transforms, [CALL-E2E-BYPASS-MI9T](#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late).)** **So the fault sits on a side the rig does not run**: the iPhone's WebKit sender (WebKit's
    encoded transform handing over, or sending, something other than one encrypted Opus frame) or the
    Mi 9T's Android WebView receiver not decrypting. Both are named by the log line below.
 4. **Voice processing, not the codec, sets the band**: with the app's `echoCancellation`,
@@ -629,7 +630,8 @@ both ways (0 decode errors, [device-readings](../../device-readings-2026-10.md))
 encrypts (the rig taps it), so the Mi 9T's receiver transform decrypts, and its sender transform
 encrypts: frames DO reach the Mi 9T's worker. **So the likely fault is posts from inside the
 transform not reaching the main thread on Android WebView 152**, not a transform that is off. That
-is an inference from two builds; the next reading settles it.
+is an inference from two builds; the next reading settles it. **REFUTED 2026-10-20**: both Chromium
+ends were bypassing, so the clean pairing carried clear audio, see [CALL-E2E-BYPASS-MI9T](#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late).
 
 **Desktop Chrome 152 does not reproduce it.** The rig run on Chrome for Testing 152.0.7977.82 (the
 WebView's major) and on 155 shows every transform-context line and the transform in the path:
@@ -688,6 +690,90 @@ becomes `bun callpeer.mjs --browser w3 --launch --url https://dev.canari-emse.fr
 **TURN / server.** Every row runs `host/udp` on loopback; nothing here exercises TURN. The phone
 reading's `TURN CreatePermission error response` (403 and 600, CALL-TURN) is a dev TURN credential
 or binding question and stays listed there; no production setting was read or changed.
+
+## CALL-E2E-BYPASS-MI9T (2026-10-20) - Chromium short-circuits a transform assigned one task late
+
+**The reading** ([device-readings](../../device-readings-2026-10.md), `1.3.1-alpha.3`): on the Mi 9T
+the worker report said `transformers sender=1 receiver=1 | frames in sender=0 receiver=0`, `attr
+native`, in ten reports over five calls, while audio flowed both ways; the iPhone failed to decrypt
+every frame from the Mi 9T; the screen said "Appel chiffre de bout en bout".
+
+**The cause, measured on the Mi 9T itself** (its WebView `Chrome/152.0.7977.64`, driven over CDP
+from the running app's page, no new build), with a two-peer-connection loopback inside the WebView,
+an oscillator or the microphone, and either a counting blob worker or the APP's own
+`encryption.worker` keyed through its `setKey`:
+
+| Where the transforms are assigned | frames in (sender / receiver, per side, ~4 s) | packets |
+| --- | --- | --- |
+| synchronously after `addTrack` / on its transceiver (the rig's order) | 188-196 / 188-195, every frame decrypted by the app's worker | flowing |
+| after an `await Promise.resolve()` (a microtask) | 191-194 / 191-194 | flowing |
+| after a `setTimeout(0)` (ONE task) | **0 / 0**, transformers 1 / 1 | **flowing** |
+| after a worker round trip (what `ensureWorkerKeyReady` was) | **0 / 0**, transformers 1 / 1 | - |
+| after the offerer's `setLocalDescription` / the answerer's `setRemoteDescription` | **0 / 0**, transformers 1 / 1 | flowing |
+
+Desktop Chrome 155 (headless) gives the same two rows (microtask fed, one task 0 / 0). So Chromium
+decides at the end of the task that created a sender or transceiver: no transform by then, and it
+is SHORT-CIRCUITED for good. The transform assigned later still gets its `rtctransform` event (the
+worker counts a transformer), `sender.transform` reads back set, and nothing is ever handed to it.
+
+**What the app did.** `initPeerConnection` called `pc.addTrack(...)`, then `await
+setupSenderTransform(sender)`, whose first statement awaited `ensureWorkerKeyReady()` - the FIRST
+use of the worker, so a script load plus a `setKey`/`keyReady` round trip: a task boundary, on every
+engine. So on EVERY Chromium client (Android WebView, desktop Chrome, the Tauri desktop apps) both
+transforms were short-circuited: clear Opus left, and received frames went to the decoder as they
+arrived. WebKit has no such short-circuit; the iPhone really encrypted.
+
+**What that reconciles.**
+
+- Mi 9T and desktop Chrome, CLEAN both ways on `1.3.1-alpha.1`: BOTH bypassed - clear Opus both ways,
+  decoded perfectly, **no E2E at all**. Reproduced in the rig: row `fault-transform-late` scores match
+  0.98, 0 % concealed, with `transform frames tx=0 rx=0`. Clean audio was never evidence of E2E.
+- iPhone to Mi 9T or desktop, NOISY (56-70 % concealed, ~14.5 `Decode error`/s): the iPhone's
+  ciphertext fed to a Chromium decoder - the rig's `fault-no-decrypt` signature (53 % concealed,
+  ~half the frames rejected). **CALL-AUDIO-1 is this defect**, and "the iPhone's SENDER is the faulty
+  side" (2026-10-19) was the wrong side: the iPhone was the only one encrypting.
+- iPhone receiving the Mi 9T: clear Opus authenticates under nothing - `decrypt-failed` on every
+  frame, silence on the iPhone.
+- The rig never saw it: it keys its worker BEFORE `addTrack` and assigns synchronously, so it
+  measured an order the app did not have. `fault-transform-late` now runs the app's old order and
+  must fail `transform-in-path` (it does: tx=0 rx=0, audio clean).
+
+**The fix (primary path).**
+
+1. `setupEncryption` puts the key INTO the worker (`ensureWorkerKeyReady`, logged `E2E worker holds
+   the call key`) before signalling is joined, so before any track exists.
+2. `attachSenderTransform` / `attachReceiverTransform` are SYNCHRONOUS and THROW when the worker holds
+   no key (`keyedWorker`). `initPeerConnection` does `addTrack` and both transforms of its
+   transceiver with nothing awaited between them; so does `toggleVideo` (and removes the camera
+   sender if an attach throws, before any negotiation carries it); `handleRemoteTrack` attaches a
+   new m-line's receiver in the `ontrack` task.
+3. Pinned by `CallService.p2p.test.ts`: the fake worker now answers `keyReady` in a TASK of its own,
+   as a real worker does, and the fake sender/receiver records a transform assigned after its
+   creating task (`late`) - the old code fails it.
+
+**No claim without evidence, and no call around the worker.**
+
+- `CallService.e2eProven` is `true` only once this call's worker has posted `encryptOk` AND
+  `decryptOk` (a frame encrypted, and a frame from the peer decrypted under the call key). The call
+  screen shows "Appel chiffre de bout en bout" on that store and "Verification du chiffrement..."
+  until then (`CallOverlay`, `call_e2e_verifying`).
+- At the 5 s report, `checkE2eInPath` reads the peer connection's RTP packets (`rtpPacketCounts`)
+  against the worker's `framesIn` (`e2eBypassedSides`): packets sent with no sender frame, or packets
+  received with no receiver frame, is media around the worker - logged `ERROR E2E path check: media
+  flowed AROUND the transform on ...`, and the call ENDS with `CallE2eBypassedError`, read to the user
+  as `call_e2e_bypassed`. A worker that does not answer, or unreadable stats, proves nothing: logged,
+  and the claim stays unproven. This is a PROOF from two counters, not a deadline; it bounds a
+  regression to the first 5 s, it does not replace the ordering.
+
+**What is still owed, on the phones** (a dev pre-release with this change):
+
+| Read | Expected |
+| --- | --- |
+| Mi 9T report, both roles, iPhone and desktop as peers | `frames in` ~250 per side at 5 s, `E2E path check: no media around the transform`, `E2E proven` within a second of `connected` |
+| Mi 9T hearing the iPhone | no NetEq `Decode error` flood, concealed near 0 % (CALL-AUDIO-1 closes here or it was not this) |
+| iPhone hearing the Mi 9T | `decrypted audio` growing, `decrypt-failed` ~0, the voice audible |
+| desktop Chrome via `callpeer.mjs` | the same report as the Mi 9T |
+| a call to an OLD (`<=1.3.1-alpha.3`) Chromium client | its clear media fails every decrypt here; the new side's own transforms are fed, so it is not ended by its check, but the OLD side never gets `e2eProven` - expected, dev-only |
 
 ## The call UI: the whole screen, or a bar at the top (2026-10-19)
 
