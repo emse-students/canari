@@ -352,6 +352,9 @@ pub(crate) enum RelayedKind {
     /// The polite side asking the initiator to restart ICE. Rare (a few per lost path at most), so
     /// it has no counter: its relay line is the record.
     IceRestartRequest,
+    /// The sender's operating system took or gave back its microphone. Rare (one per background
+    /// transition), so it has no counter either: its relay line is the record.
+    MicSuspended,
 }
 
 /// Counts a frame on both ledgers: received from the sender, handed to the partner. Kept in one
@@ -370,7 +373,7 @@ pub(crate) fn count_relayed(kind: RelayedKind, from: &CallLedger, to: &CallLedge
             bump(&from.ice_in);
             bump(&to.ice_out);
         }
-        RelayedKind::IceRestartRequest => {}
+        RelayedKind::IceRestartRequest | RelayedKind::MicSuspended => {}
     }
 }
 

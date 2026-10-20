@@ -1090,16 +1090,23 @@ its own ([calls](frontend/modules/calls.md#the-call-in-the-background-2026-10-19
   backgrounded app's microphone SILENCE and the WebView's timers are throttled. Plus the real audio
   route (`AudioManager.MODE_IN_COMMUNICATION`, `setCommunicationDevice` for speaker/earpiece/Bluetooth)
   in place of the label-matched `setSinkId`.
-- **WP-C-BG-I (iOS)**: report every call (outgoing and answered in-app, not only rung) to CallKit
-  (`CXProvider` / `CXCallController`) and configure `AVAudioSession` `.playAndRecord` / `.voiceChat`,
-  with an `audio` (or `voip`) background mode. With none of it, as today, the app is suspended
-  seconds after it leaves the screen and WKWebView stops capture when the page is hidden: the call
-  goes silent, then the peer connection drops. The `voip` mode is one of the five switches and
-  App Review refused it once (2.5.4), so this rides the revival commit.
-- **Owed on hardware before either is written**: the readings the new log lines make possible -
-  `[Call] app hidden ... mic=... voice=...`, `the system took the microphone`, `the voice was paused
-  while hidden` - on the Mi 9T and the iPhone with the screen locked for 60 s, so the native work
-  starts from what each engine actually did.
+- **WP-C-BG-I (iOS) - BUILT 2026-10-20, owed its hardware reading.** Measured first: a locked
+  iPhone is NOT suspended (same pid, WebRTC stack alive, the partner's audio received) - only its
+  microphone is muted, by WKWebView, for want of the `audio` background mode. So the fix is that
+  mode on every pre-release build (`ios.yml`), the sixth switch for the stable, plus the partner
+  told over the relay (`MicSuspended`) - no CallKit and no native audio session, neither shown
+  missing ([calls](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20),
+  which carries the owed steps). CallKit for every call stays with the `voip` revival.
+- **Read on both phones before either was written** (`1.3.1-alpha.3` and `-alpha.4`, 2026-10-20,
+  [device readings](device-readings-2026-10.md)): the Mi 9T loses its call socket and all audio 5 s
+  into a lock (WP-C-BG-A's case); the iPhone keeps the call and loses only its microphone (WP-C-BG-I's).
+
+### P2 - a call that never paired, and a ring for a call already hung up (2026-10-20)
+
+CALL-PAIR-STALL and CALL-LATE-RING, met on the bench while measuring WP-C-BG-I, both after the
+Mi 9T's chat socket had gone zombie ([device readings](device-readings-2026-10.md#found-on-the-way-not-filed-against-wp-c-bg-i)).
+Owed first: the dev `call-service` log of that minute (did the callee's `Join` arrive?) and the
+iPhone's exported log, before any cause is named.
 
 ### P3 - an OS incoming-call banner over the in-app ring, if it outlives the web fix (2026-10-19)
 

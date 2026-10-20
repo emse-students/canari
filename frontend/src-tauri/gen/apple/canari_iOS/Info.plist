@@ -33,6 +33,11 @@
 		     commit that flips CALLS_COMPILED and restores CanariCallKitSetup(), never before: an
 		     undeclared-but-unused mode is a rejection, and a used-but-undeclared one cannot get a
 		     PushKit token at all. -->
+		<!-- NO `audio` HERE EITHER, FOR THE SAME REASON (WP-C-BG-I). WKWebView mutes a page's
+		     microphone when the app is hidden or the screen locks unless this array holds `audio`
+		     (measured on the iPhone 2026-10-20), so a call needs it - and a stable places no call.
+		     ios.yml adds it to every PRE-RELEASE build, the builds that can call; it comes here in
+		     the commit that flips CALLS_COMPILED (callsCompiled.test.ts asserts both). -->
 	</array>
 	<!-- BGTaskScheduler identifiers the app may submit. Must list every identifier passed to
 	     registerForTaskWithIdentifier: / submitTaskRequest: or BGTaskScheduler throws. This

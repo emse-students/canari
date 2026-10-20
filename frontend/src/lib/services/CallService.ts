@@ -182,6 +182,7 @@ export type SignalFrame =
   | { type: 'PeerLeft' }
   | { type: 'PeerAway' }
   | { type: 'IceRestartRequest' }
+  | { type: 'MicSuspended'; suspended: boolean }
   | { type: 'Refused'; reason: string }
   | { type: 'Offer' | 'Answer'; sdp: string }
   | { type: 'IceCandidate'; candidate: string };
@@ -355,6 +356,14 @@ export class CallService {
   private backgroundVisibilityHandler: (() => void) | null = null;
   /** True while the camera was auto-paused because the tab/app went to the background. */
   private videoPausedByBackground = false;
+  /**
+   * When the OS took the microphone (`performance.now()`, monotonic: a wall clock moved by the
+   * network time while the phone was locked would misstate the duration), while it holds it;
+   * `null` otherwise.
+   */
+  private micSuspendedSince: number | null = null;
+  /** Removes the listeners {@link watchSystemMicrophone} put on the capture track. */
+  private micWatchCleanup: (() => void) | null = null;
 
   public callState = writable<CallState>('idle');
   /**
@@ -377,6 +386,19 @@ export class CallService {
   public remoteStreams = writable<RemoteStreams>(new Map());
   public localStreamStore = writable<MediaStream | null>(null);
   public isMuted = writable<boolean>(false);
+  /**
+   * THIS device's operating system holds the microphone: the capture track is `muted`, which no
+   * button here set (that is {@link isMuted}). The other party hears nothing meanwhile. Measured on
+   * the iPhone, locked or in the background (CALL-IOS-MIC-HIDDEN, 2026-10-20). `false` outside a call.
+   */
+  public localMicSuspended = writable<boolean>(false);
+  /**
+   * The OTHER party's operating system holds ITS microphone, as it said over the relay
+   * (`MicSuspended`). Cleared when the other party goes away (`PeerAway`: no fresh evidence) and
+   * rebuilt at every pairing from the sender's own truth (see {@link announceMicOnPairing}), never
+   * inferred from silence. `false` outside a call.
+   */
+  public peerMicSuspended = writable<boolean>(false);
   public isVideoOff = writable<boolean>(false);
   /**
    * When the media path FIRST reached `connected` (epoch ms), or null before. The call UI derives its
@@ -715,6 +737,10 @@ export class CallService {
       }
     }
 
+    // The call is over from here: a microphone the system gives back during the summary is no
+    // longer news for anyone.
+    this.stopWatchingMicrophone();
+
     // Show the "ended" summary screen briefly (1.5 s) so the user sees the call
     // duration and result before the overlay disappears (P4).
     if (get(this.callState) === 'incall' || get(this.callState) === 'calling') {
@@ -810,6 +836,7 @@ export class CallService {
     this.incomingHasVideo = true;
     this.callHasVideo = false;
 
+    this.stopWatchingMicrophone();
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;
@@ -1344,8 +1371,19 @@ export class CallService {
         // `PeerLeft` next.
         appendLog('[Call] the other party lost its signalling connection - waiting for it');
         this.peerAway = true;
+        // Its microphone report is about a device we can no longer hear from: no fresh evidence,
+        // so no claim. Its `PeerReady { resumed }` re-announces a microphone still held.
+        this.peerMicSuspended.set(false);
         this.onPairBroken('peer away');
         this.updateReconnecting();
+        return;
+      case 'MicSuspended':
+        appendLog(
+          frame.suspended
+            ? "[Call] the other party's system took its microphone - it cannot be heard"
+            : "[Call] the other party's system gave its microphone back"
+        );
+        this.peerMicSuspended.set(frame.suspended === true);
         return;
       case 'Offer':
       case 'Answer': {
@@ -1379,6 +1417,7 @@ export class CallService {
     appendLog(
       `[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}${resumed ? ' (resumed)' : ''} (pairing ${this.pairEpoch})`
     );
+    this.announceMicOnPairing();
     if (this.pc && resumed) {
       this.updateReconnecting();
       await this.restartIfMediaDidNotSurvive();
@@ -2512,6 +2551,80 @@ export class CallService {
     this.localStreamStore.set(this.localStream);
     this.isMuted.set(false);
     this.isVideoOff.set(!video);
+    const mic = this.localStream.getAudioTracks()[0];
+    if (mic) this.watchSystemMicrophone(mic);
+  }
+
+  /**
+   * THE OS TAKING THE MICROPHONE, told to both ends. A capture track goes `muted` when the system
+   * stops feeding it - on the iPhone at every lock or trip to the background (CALL-IOS-MIC-HIDDEN,
+   * measured 2026-10-20: the process and its WebRTC stack kept running, only the capture stopped) -
+   * and that is not the user's mute: nothing on this screen set it. The partner is told over the
+   * relay (`MicSuspended`), because only THIS side knows why the voice stopped; on the partner's
+   * side silence, a lost path and a quiet room look the same. On the way back the user is told how
+   * long they could not be heard, since the screen was not visible while it lasted.
+   */
+  private watchSystemMicrophone(mic: MediaStreamTrack): void {
+    this.micWatchCleanup?.();
+    const onMute = () => {
+      if (this.micSuspendedSince !== null) return;
+      this.micSuspendedSince = performance.now();
+      appendLog(
+        `[Call] WARN the system took the microphone (track muted, page ${typeof document !== 'undefined' && document.hidden ? 'hidden' : 'visible'}) - telling the other party`
+      );
+      this.localMicSuspended.set(true);
+      this.sendMicState(true);
+    };
+    const onUnmute = () => {
+      if (this.micSuspendedSince === null) return;
+      const seconds = Math.max(1, Math.round((performance.now() - this.micSuspendedSince) / 1000));
+      this.micSuspendedSince = null;
+      appendLog(`[Call] the system gave the microphone back after ${seconds} s`);
+      this.localMicSuspended.set(false);
+      this.sendMicState(false);
+      showToast(m.call_mic_was_suspended({ seconds }), 'warning');
+    };
+    const onEnded = () => appendLog('[Call] WARN the microphone track ended');
+    mic.addEventListener('mute', onMute);
+    mic.addEventListener('unmute', onUnmute);
+    mic.addEventListener('ended', onEnded);
+    this.micWatchCleanup = () => {
+      mic.removeEventListener('mute', onMute);
+      mic.removeEventListener('unmute', onUnmute);
+      mic.removeEventListener('ended', onEnded);
+    };
+    // A track can be handed over already muted (the app was hidden while the call was set up).
+    if (mic.muted) onMute();
+  }
+
+  /** Drops the capture track's listeners and both microphone states: the call is over. */
+  private stopWatchingMicrophone(): void {
+    this.micWatchCleanup?.();
+    this.micWatchCleanup = null;
+    this.micSuspendedSince = null;
+    this.localMicSuspended.set(false);
+    this.peerMicSuspended.set(false);
+  }
+
+  /** Sends this device's microphone state to the partner, once the pair exists to receive it. */
+  private sendMicState(suspended: boolean): void {
+    // Before the pairing there is nobody to tell; `announceMicOnPairing` sends it then.
+    if (!this.peerArrived) return;
+    this.sendSignal({ type: 'MicSuspended', suspended });
+  }
+
+  /**
+   * A pairing (first, a replaced device, or a resume) starts from what each side KNOWS of itself:
+   * the partner's earlier report may be about a device that is gone, or its `false` may have died
+   * in a socket that dropped, so it is cleared, and this side re-announces a microphone the system
+   * still holds. Both ends receive `PeerReady`, so both rebuild the pair's state the same way.
+   */
+  private announceMicOnPairing(): void {
+    this.peerMicSuspended.set(false);
+    if (this.micSuspendedSince !== null) {
+      appendLog('[Call] the system still holds the microphone - telling the other party again');
+      this.sendSignal({ type: 'MicSuspended', suspended: true });
+    }
   }
 
   /**

@@ -16,7 +16,7 @@
 > App Review refused the `voip` background mode under guideline 2.5.4 on 2026-08-31 for a VoIP
 > service it could not locate - correctly, on the build it tested.
 >
-> **Five things were switched off together and must come back together, in one commit:**
+> **Five things were switched off together, and the `audio` mode joined them on 2026-10-20; all six come back together, in one commit:**
 >
 > | Switch | Where | What it holds |
 > |---|---|---|
@@ -25,6 +25,7 @@
 > | `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | `showIncomingCallNotification` |
 > | `voip` | `canari_iOS/Info.plist` `UIBackgroundModes` | PushKit tokens (absent = no token, ever) |
 > | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | the locked-screen CallStyle ring |
+> | `audio` (since 2026-10-20) | `canari_iOS/Info.plist` `UIBackgroundModes` | the microphone of a hidden or locked iPhone ([WP-C-BG-I](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)); every PRE-RELEASE build gets it from `ios.yml` |
 >
 > **A SIXTH THING MOVED WHILE CALLS WERE OFF, AND IT IS NOT A SWITCH (2026-09-22).** A push payload
 > no longer carries `senderName` or `groupName` on a SILENT frame: those two are unbounded user text,
@@ -75,7 +76,7 @@ Nothing in this lot needs the DSI.
 
 | Constant | Value | Holds |
 |---|---|---|
-| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `USE_FULL_SCREEN_INTENT`. Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all five switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
+| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `audio` (since 2026-10-20), `USE_FULL_SCREEN_INTENT`. Once it flips, the committed plist carries `audio` and `ios.yml`'s pre-release patch finds it there and adds nothing (it is idempotent; it can then be deleted). Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all six switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
 | `CALLS_VIDEO_ENABLED` | `false` | the video-call button and both camera toggles; waits for WP-C3 (whole-frame encryption vs H.264) |
 
@@ -416,13 +417,14 @@ build, all of it blocks production):
 ## The switches agree, and a silent frame stays unread
 
 **One test, one fact (2026-10-18).** `frontend/src/lib/mobile/callsCompiled.test.ts` reads
-`CALLS_COMPILED` from `features.ts` and asserts that the four other switches of the table at the top
+`CALLS_COMPILED` from `features.ts` and asserts that the other switches of the table at the top
 of this page AGREE with it - the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`, the `voip`
-entry of `UIBackgroundModes`, the `USE_FULL_SCREEN_INTENT` tag - and that the microphone purpose
+and (since 2026-10-20) `audio` entries of `UIBackgroundModes`, the `USE_FULL_SCREEN_INTENT` tag -
+that `ios.yml` adds `audio` to a pre-release build in the branch that turns in-app calls on, and that the microphone purpose
 string (base `Info.plist`, `fr.lproj`, `en.lproj`) names calls exactly when calls are compiled. It
 replaced three tests that each asserted "off" (`iosCallDeclarations.test.ts`, two cases of
 `androidFcmManifest.test.ts`, one of `pushSilentDecrypt.test.ts`): a hard-coded "off" fails the
-revival commit for doing its job, an agreement fails it only when it forgets one of the five. Read
+revival commit for doing its job, an agreement fails it only when it forgets one of the six. Read
 as text: it proves what is written, never what runs.
 
 **The revival no longer reopens the Android push lane.** The Kotlin silent-frame guard used to be
@@ -993,9 +995,72 @@ backlog item, [P1 - a call does not survive the app leaving the screen](../../ba
 | Audio route (speaker, earpiece, Bluetooth) | label-matched `setSinkId`, best effort, logged when there is nothing to route to | `AudioManager` / `AVAudioSession` |
 | Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it | video (WP-C3) can take one |
 | Diagnosis | `[Call] app hidden` / `visible`, with `state=`, `mic=live/os-muted` and `voice=playing` or `paused`, `the system took the microphone`, `the voice was paused while hidden - starting it again` | - |
+| The partner is told | `MicSuspended { suspended }` over the relay, sent by the side whose OS took its microphone; a notice on both screens and in the live region, a toast on the way back ([below](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)) | - |
 
-**Not verified on any device.** The Mi 9T runs whatever build is installed; a dev build is needed to
-call at all (`CALLS_ENABLED` is dev-only), and the reading owed is the backlog item's last bullet.
+**Read on both phones since** ([device readings](../../device-readings-2026-10.md)): the Mi 9T loses its
+call socket and all audio 5 s into a lock (CALL-LOCK-ANDROID, WP-C-BG-A); the iPhone keeps the call
+and loses only its microphone - next section.
+
+## WP-C-BG-I - the iPhone's microphone in the background (2026-10-20)
+
+**What was measured first** (`v1.3.1-alpha.4`, TestFlight build 100300104, iPhone 12 on iOS 27.0.1,
+Mi 9T caller, same Wi-Fi; the Mi 9T's `getStats()` every 5 s over CDP, the iPhone's app state through
+WDA every 15 s). The iPhone was locked by WDA for 3 min 20 s mid-call:
+
+| Observable | During the lock |
+| --- | --- |
+| The iPhone's process | the SAME pid before and after, WDA app state `3` (running in the background) at every poll, never `2` (suspended) |
+| The iPhone's WebRTC stack | ALIVE: its RTCP receiver reports kept reaching the Mi 9T (`remote-inbound-rtp` round-trip measurements 4 -> 39, the iPhone's `remote-outbound-rtp` reports 3 -> 42), so it was receiving the Mi 9T's audio and answering for it |
+| The iPhone's microphone | GONE within 3 s: the Mi 9T's inbound audio packets froze at 1020 and did not move for the whole lock (its concealed samples climbing by 240 000 every 5 s) |
+| On unlock | packets again within 10 s (1020 -> 1614), audio level back |
+
+That is the alpha.3 reading (`WARN the system took the microphone (track muted)`) with its cause
+separated: **nothing is suspended, CallKit or not; only the capture is muted.** WKWebView mutes a
+page's microphone when the app is hidden **unless `UIBackgroundModes` contains `audio`** - stated by
+WebKit's media-capture maintainer ([WebKit bug 226620](https://bugs.webkit.org/show_bug.cgi?id=226620),
+comment 3) and reported fixed by exactly that on iOS 17.5
+([Apple forums 689182](https://developer.apple.com/forums/thread/689182)). WebKit configures the audio
+session itself while it captures (`playAndRecord`), so no native `AVAudioSession` code is written:
+none was shown to be missing.
+
+**What was built:**
+
+- **The `audio` mode on every PRE-RELEASE iPhone build**, patched by `ios.yml` in the SAME branch that
+  writes `VITE_DEPLOY_ENVIRONMENT=development` (the line that turns in-app calls on), never into the
+  committed `Info.plist`. A stable cannot call (`CALLS_COMPILED = false`), and a mode declared and
+  unused is what App Review refused once (2.5.4). It becomes the SIXTH switch: `callsCompiled.test.ts`
+  asserts the committed mode follows `CALLS_COMPILED` and that `ios.yml` adds it only in that branch.
+- **CallKit is NOT the fix for this.** The process was never suspended, so a CallKit report would buy
+  nothing the measurement shows missing; reporting every call to CallKit stays with the `voip` revival
+  (it is mandatory for a VoIP push, which the in-app call does not use).
+- **The partner is told, whatever the cause** (Siri, another app's call, a build without the mode):
+  `CallService.watchSystemMicrophone` listens to the capture track's `mute` / `unmute` (moved there
+  from `CallOverlay`, which only logged them) and sends `MicSuspended { suspended }` over the relay;
+  only the sender knows, and silence, a lost path and a quiet room look the same from the other end.
+  The partner's full screen, its top bar and the live region read *"Le téléphone de X a coupé son
+  micro"* while it lasts; the local screen reads *"Votre téléphone a coupé votre micro"*, and because
+  that screen was hidden while it lasted, a toast says for how long on the way back
+  (`call_mic_was_suspended`, measured on `performance.now()`, a clock no network time can move).
+  The notice shows, and is announced, only while the call is LIVE - one rule, `callMicNotice`, read
+  by the full screen, the bar and the live region alike. When it ends the live region says the
+  other party is heard again ONCE, or nothing for this device's own (the toast says it), and never
+  falls back to "connected". A `PeerAway` clears the partner's report (no fresh evidence), and each
+  pairing (`PeerReady`, first, replaced or resumed) re-announces a microphone still held, so a
+  `false` lost with a dropped socket cannot leave the notice stuck. Server half: [call-service](../../services/call-service.md#signal-frames).
+
+**Owed on hardware** (a pre-release carrying this, both phones; the steps are
+[CALL-L1](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)
+row 12): the `UIBackgroundModes of this pre-release build:` line of the iOS job lists `audio`; the
+iPhone locked 60 s and backgrounded 60 s mid-call - the Mi 9T's inbound audio packets keep rising,
+the iPhone logs NO `the system took the microphone`, and the Mi 9T's voice is heard on the locked
+iPhone. Three more, because the mode is APP-WIDE and the signal is new: whether a reel and a voice
+message now keep PLAYING locked or in the background (a behaviour change to accept or refuse); an
+audio route change (AirPods, a wired headset) and a short interruption mid-call, measured for a
+`mute`/`unmute` FLICKER - each one would put a false notice on the partner's screen, and no debounce
+is written before that rate is read; and a call accepted from the lock screen (the track handed over
+already muted). If the mode does not keep the capture, the next candidate is WebKit's own policy,
+read from the iPhone's syslog (`pymobiledevice3 syslog live`, `mediaserverd` / `WebKit` lines) - not a
+native audio session written blind.
 
 ## Responsibilities
 

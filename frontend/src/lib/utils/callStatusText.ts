@@ -24,3 +24,27 @@ export function callStatusText(kind: CallStatusKind, duration: string): string {
       return '';
   }
 }
+
+/**
+ * Why a voice is not getting through when an OPERATING SYSTEM is the reason, or `null`. Shown, and
+ * announced, only while the call is LIVE - the one rule the full screen, the banner and the live
+ * region all read from here, so the three can never disagree: while it rings, connects or
+ * reconnects, that status is the more urgent fact. This device's own suspension wins: the user can
+ * act on it (bring the app back), and it is the one they could not see happening. The partner's is
+ * what it TOLD us (`MicSuspended`), never a guess from silence.
+ */
+export function callMicNotice(
+  kind: CallStatusKind,
+  localSuspended: boolean,
+  peerSuspended: boolean,
+  peerName: string | undefined
+): string | null {
+  if (kind !== 'live') return null;
+  if (localSuspended) return m.call_mic_suspended_local();
+  if (peerSuspended) {
+    return peerName
+      ? m.call_mic_suspended_peer({ name: peerName })
+      : m.call_mic_suspended_peer_unnamed();
+  }
+  return null;
+}

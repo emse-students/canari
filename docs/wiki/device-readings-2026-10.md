@@ -718,3 +718,28 @@ Rig lessons: `callpeer.mjs` reloads the page to install its tracker, and on a pr
 reload the `--dial` role needs the PIN again (`pin.mjs --port 9223 --account third`) after the reload, so the dial was
 done from the live page; with the conversation open on both a desktop and the iPhone signed in as `gamma`, a Mi 9T
 call rings both, and the desktop's accept stops the iPhone's ring.
+
+## 2026-10-20 (afternoon) - `v1.3.1-alpha.4`: what a locked iPhone keeps, measured for WP-C-BG-I
+
+Same builds and accounts as the morning (Mi 9T `delta`, iPhone 12 `gamma`, iOS 27.0.1), same Wi-Fi. The Mi 9T's
+console and a `getStats()` poll every 5 s over CDP (a constructor hook on `RTCPeerConnection` installed before the
+dial); the iPhone's app state and lock through WDA every 15 s. Mi 9T called, the iPhone accepted, then WDA locked the
+iPhone for 3 min 20 s.
+
+| Observable | Verdict |
+| --- | --- |
+| iPhone process during the lock | **alive**: the same pid before and after, app state `3` (background, running) at all 12 polls, never `2` |
+| iPhone WebRTC during the lock | **alive**: its RTCP kept arriving at the Mi 9T (`remote-inbound-rtp` round-trip measurements 4 -> 39, `remote-outbound-rtp` reports 3 -> 42) |
+| iPhone microphone during the lock | **muted within 3 s**: the Mi 9T's inbound audio packets froze at 1020 for the whole lock, concealment +240 000 samples per 5 s |
+| After unlock | packets again within 10 s (1020 -> 1614), audio level back; the call never left `connected` |
+
+So CALL-IOS-MIC-HIDDEN is the capture alone - the reasoning and the fix are
+[calls, WP-C-BG-I](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20).
+
+### Found on the way (not filed against WP-C-BG-I)
+
+| Id | What | Evidence |
+| --- | --- | --- |
+| CALL-PAIR-STALL | the first call of the session never paired: the iPhone accepted and showed "Connexion..." for the whole window, the Mi 9T (caller) logged `call_answered` (`signal from ...`) but no `PeerReady`, then its call socket closed `1006` at exactly +60 s (`signalling pair broken`) and the ring window closed. The Mi 9T's CHAT socket had logged `4 pings without server response - closing zombie connection` before it. Neither the dev `call-service` log nor the iPhone's log was read | Mi 9T console 15:16:33-15:17:35 local |
+| CALL-LATE-RING | after the Mi 9T's chat socket reconnected (15:18:50), it rang for the iPhone's call `87214182...` that the iPhone had ALREADY hung up: the invite and the hangup arrived together, the full-screen ring stayed up, and a new outgoing call was then refused locally as `busy (state=incoming ...)` | Mi 9T console 15:18:50-15:19:11 |
+| BENCH-SHARED | during the measured call the Mi 9T received invites from `gamma` and from another `delta` device (`ignoring invite from own account on another device`): another client of both accounts was calling at the same time. The measurement is unaffected (one peer connection, its counters above), but a run on these accounts is not isolated | Mi 9T console 15:20:35-15:22:38 |

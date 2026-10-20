@@ -42,6 +42,8 @@ function fakeService(state: CallState) {
     endedAt: writable<number | null>(null),
     reconnecting: writable(false),
     e2eProven: writable(false),
+    localMicSuspended: writable(false),
+    peerMicSuspended: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
     acceptCall: vi.fn(async () => {}),
@@ -131,6 +133,59 @@ describe('the encryption line', () => {
     service.e2eProven.set(true);
     flushSync();
     expect(line()).toBe(m.call_e2e_encrypted_title());
+  });
+});
+
+describe('a microphone a system took (WP-C-BG-I)', () => {
+  // CALL-IOS-MIC-HIDDEN (2026-10-20): the partner heard nothing and nothing on its screen said why.
+  const notice = () => document.querySelector('[data-testid="call-mic-notice"]');
+  const announcer = () => document.querySelector('[data-testid="call-announcer"]');
+
+  it('says the other party\'s phone took its microphone, then announces its return ONCE - never "connected" again', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    expect(notice()).toBeNull();
+    expect(announcer()?.textContent).toBe(m.call_live_announcement());
+
+    service.peerMicSuspended.set(true);
+    flushSync();
+    expect(notice()?.textContent?.trim()).toBe(m.call_mic_suspended_peer({ name: 'Bob' }));
+    expect(announcer()?.textContent).toBe(m.call_mic_suspended_peer({ name: 'Bob' }));
+
+    service.peerMicSuspended.set(false);
+    flushSync();
+    expect(notice()).toBeNull();
+    expect(announcer()?.textContent).toBe(m.call_mic_restored_peer({ name: 'Bob' }));
+  });
+
+  it('says it is THIS phone, and leaves the return to the toast (no second announcement)', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    service.localMicSuspended.set(true);
+    flushSync();
+    expect(notice()?.textContent?.trim()).toBe(m.call_mic_suspended_local());
+    expect(announcer()?.textContent).toBe(m.call_mic_suspended_local());
+
+    service.localMicSuspended.set(false);
+    flushSync();
+    expect(notice()).toBeNull();
+    expect(announcer()?.textContent).toBe('');
+  });
+
+  it('shows nothing while the call reconnects: that state is the more urgent one', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    service.peerMicSuspended.set(true);
+    service.reconnecting.set(true);
+    flushSync();
+    expect(notice()).toBeNull();
+    expect(announcer()?.textContent).toBe(m.call_reconnecting());
+
+    // Back to live: announced as such, not as a recovery the region never reported.
+    service.peerMicSuspended.set(false);
+    service.reconnecting.set(false);
+    flushSync();
+    expect(announcer()?.textContent).toBe(m.call_live_announcement());
   });
 });
 

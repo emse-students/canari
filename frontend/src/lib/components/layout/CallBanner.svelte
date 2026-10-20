@@ -20,7 +20,7 @@
   import { currentUserId } from '$lib/stores/user';
   import { callView } from '$lib/stores/callView.svelte';
   import { useCallModel } from '$lib/composables/useCallModel.svelte';
-  import { callStatusText } from '$lib/utils/callStatusText';
+  import { callMicNotice, callStatusText } from '$lib/utils/callStatusText';
   import { resolveCallPeers } from '$lib/utils/chat/callPeers';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { appendLog } from '$lib/utils/sessionLog';
@@ -44,6 +44,10 @@
     return peers[0]?.displayName || m.call_label();
   });
   const statusText = $derived(callStatusText(call.kind, call.duration));
+  /** An OS holding a microphone, either side, in place of the timer while it lasts. */
+  const micNotice = $derived(
+    callMicNotice(call.kind, call.localMicSuspended, call.peerMicSuspended, peerName)
+  );
 
   // THE BAR IS NEVER UNDER A LAYER (CALL-BAR-COVERED, Mi 9T and iPhone, 2026-10-19): with the
   // new-post composer or its camera open, the bar sat under that layer and its hang-up could not be
@@ -97,8 +101,10 @@
       </span>
       <span class="min-w-0 truncate text-sm font-semibold">{peerName}</span>
       <span class="shrink-0 text-sm text-white/85" aria-hidden="true">·</span>
-      <span class="shrink-0 text-sm text-white/85 tabular-nums" data-testid="call-banner-status"
-        >{callView.audioBlocked ? m.call_tap_to_hear() : statusText}</span
+      <span
+        class="text-sm text-white/85 tabular-nums {micNotice ? 'min-w-0 truncate' : 'shrink-0'}"
+        data-testid="call-banner-status"
+        >{callView.audioBlocked ? m.call_tap_to_hear() : (micNotice ?? statusText)}</span
       >
       <span class="ml-auto hidden shrink-0 text-xs text-white/75 sm:inline"
         >{m.call_banner_return_hint()}</span
