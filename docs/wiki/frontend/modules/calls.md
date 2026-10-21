@@ -1716,7 +1716,8 @@ environment, then `frontend/.env`, the order Vite reads them, and printed by Gra
 (`Canari ongoing-call service: IN this build ...`). That is every pre-release and a local build that
 sets it; a stable merges nothing. `androidCallServiceManifest.test.ts` asserts the main manifest
 declares it exactly when `CALLS_COMPILED` is true - so the revival commit moves it into
-`src/main/AndroidManifest.xml` with the five switches, or fails there. `CALLS_COMPILED` stays false.
+`src/main/AndroidManifest.xml` with the other `CALLS_COMPILED` switches, or fails there (not with
+the native ring's `CALLS_NATIVE_RING_COMPILED`: an in-app call needs it). `CALLS_COMPILED` stays false.
 
 **Google Play.** Since API 34 every foreground service declares a type, and Play asks the developer
 to declare each foreground-service permission in the Play Console (App content, "Foreground service
