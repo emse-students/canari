@@ -193,6 +193,20 @@ export const LIVE_WITHDRAWAL_FROM_CUTS = 3;
 export const LIVE_CHAT_REPORT_MAX_KEEP_MS = 90 * DAY_MS;
 
 /**
+ * THE RESPONSE COMMITMENT TO THE STORES (owner, 2026-10-20): a live report (`live` or `live_chat`)
+ * is answered within 24 hours ON WORKING DAYS. A pending report whose WORKING age passes this is
+ * named at `error` by the hourly `[LIVE_REPORT_AGE]` report (`LiveReportAgeScheduler`).
+ */
+export const LIVE_REPORT_RESPONSE_WORKING_MS = DAY_MS;
+
+/**
+ * The zone whose Saturdays and Sundays are not working days for {@link LIVE_REPORT_RESPONSE_WORKING_MS}:
+ * the school's. Public holidays are NOT left out (no calendar of them exists here), so the alarm can
+ * fire on a bank holiday a day early - early, never late.
+ */
+export const LIVE_REPORT_WORKING_ZONE = 'Europe/Paris';
+
+/**
  * THE VERSION OF THE RULES A MEMBER ACCEPTS BEFORE BROADCASTING (L11). A start is refused 403
  * `LIVE_RULES_NOT_ACCEPTED` unless the member's recorded acceptance (`live_rules_acceptances`) is at
  * least this version, or the start itself carries `acceptedRulesVersion` equal to it - which records

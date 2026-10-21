@@ -32,6 +32,7 @@ import { LivesService } from './lives.service';
 import { LiveChatService } from './live-chat.service';
 import { liveChatAad } from './live-chat-seal';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
+import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
 import { seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore } from './live-segment-store';
@@ -2749,6 +2750,42 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         content: 'verified',
         author: 'erased',
         reporter: 'verified',
+      });
+    });
+  });
+
+  describe('the 24 h alarm on the live report queue (WP-L8b item e)', () => {
+    /** A report row, its `createdAt` moved back by SQL from the database's own `now()`. */
+    const report = (contentType: string, status: string, age: string) =>
+      q(
+        `INSERT INTO content_reports ("reporterId", "contentType", "contentId", reason, status, "createdAt")
+         VALUES ($1, $2, gen_random_uuid()::text, 'spam', $3, now() - $4::interval)`,
+        [CAROL, contentType, status, age]
+      );
+
+    it('reads only the PENDING live and live_chat reports, and their age on the database clock', async () => {
+      await report('live', 'pending', '10 days'); // ten days always hold more than 24 working hours
+      await report('live_chat', 'pending', '0 seconds');
+      await report('post', 'pending', '20 days');
+      await report('live', 'reviewed', '30 days');
+      await report('live_chat', 'dismissed', '30 days');
+
+      const reading = await new LiveReportAgeScheduler(ds).reportOnce();
+      expect(reading.pending).toBe(2);
+      expect(reading.overdue).toBe(1);
+      // The `timestamp` column read back as the instant it was written: ten days, to the minute.
+      const tenDays = 10 * 24 * 3_600_000;
+      expect(reading.oldestWallMs).toBeGreaterThanOrEqual(tenDays);
+      expect(reading.oldestWallMs).toBeLessThan(tenDays + 60_000);
+    });
+
+    it('reads an empty queue on one row, with the clock', async () => {
+      await report('post', 'pending', '20 days');
+      expect(await new LiveReportAgeScheduler(ds).reportOnce()).toEqual({
+        pending: 0,
+        overdue: 0,
+        oldestWallMs: null,
+        oldestWorkingMs: null,
       });
     });
   });

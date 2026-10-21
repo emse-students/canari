@@ -12,7 +12,7 @@ decisions"): architecture **C** (segmented HTTP, no transcoding), key design **Q
 production** (below).
 
 Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep, `live-seats.ts`,
-`live-announcer.ts`, `live-chat.service.ts`, `live-chat.controller.ts`), migrations `091_lives.sql`,
+`live-announcer.ts`, `live-chat.service.ts`, `live-chat.controller.ts`, `live-report-age.scheduler.ts`), migrations `091_lives.sql`,
 `094_live_announced_at.sql`, `097_live_moderation.sql`, `098_live_chat.sql` and
 `099_live_strikes_and_reported_chat_lines.sql`,
 `apps/media-service/src/media/live-segments.service.ts` (the bytes), and the `live_segments` cache in
@@ -48,6 +48,7 @@ a live started while the switch was on is still ended and deleted after it is tu
 | A suspension of broadcasting | 30 days from the cut that set it (strike 2 and later) | `LIVE_SUSPENSION_FROM_STRIKE`, `LIVE_SUSPENSION_MS` | same route (`suspensionMs`) |
 | A withdrawal may be taken from | 3 cuts on record | `LIVE_WITHDRAWAL_FROM_CUTS` | - |
 | Longest a reported chat line is kept | 90 days from `keptAt`, or the report handled, whichever is first | `LIVE_CHAT_REPORT_MAX_KEEP_MS` | - |
+| Response commitment to a live report | 24 h of WORKING time (Monday to Friday, `Europe/Paris`) - past it, the [hourly alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e) is an `error` | `LIVE_REPORT_RESPONSE_WORKING_MS`, `LIVE_REPORT_WORKING_ZONE` | - |
 
 The 60 s window, the bitrate, the margin and the one-second segment floor are planning figures,
 **to be confirmed on the WP-L1 bench**.
@@ -609,6 +610,39 @@ hides a line automatically.
 report's `reporterId` (the posts' rule for `content_reports`) and the line stays the same way; in
 both cases that account's signature alone reads `erased`. Register row C20 states it.
 
+### The 24 h alarm on the live report queue (WP-L8b item e)
+
+The owner's commitment to the stores (2026-10-20): a live report is answered within **24 hours on
+working days**. Until 2026-10-21 nothing measured it. `LiveReportAgeScheduler`
+(`lives/live-report-age.scheduler.ts`), hourly at :53, reads every PENDING `live` and `live_chat`
+report and prints ONE line:
+
+| Queue | Level | Line |
+| --- | --- | --- |
+| empty | `log` | `[LIVE_REPORT_AGE] pending=0` - printed anyway, so an alarm that stopped never reads as an empty queue |
+| every report inside the commitment | `log` | `pending=<n> overdue=0 oldest=<h>h working (<h>h wall), inside the 24.0h` |
+| one or more past it | **`error`**, every hour until answered | `pending=<n> overdue=<k> oldest=<h>h working (<h>h wall): <k> live report(s) past the 24.0h working-day commitment to the stores - answer them in /admin/moderation` |
+| the queue cannot be read | **`error`** | `could not read the live report queue - the 24 h commitment is unwatched this hour` |
+
+- **No user data**: no report id, no account, no reason - counts and ages. The queue is where a
+  moderator goes from it.
+- **Working time, not wall time** (`workingMsBetween`, `lives/live-report-age.ts`): the parts of
+  the age that fall Monday to Friday in `Europe/Paris`, each day cut at the zone's own midnights, so
+  a report filed on a Friday evening is not late on Sunday. A span crossing a weekend that holds a
+  daylight-saving change is tested and exact (2026-10-23 to 26: 73 h on the wall, 24 h of work).
+  **Public holidays count as working days** - no calendar of them exists here - so the
+  alarm may fire a day EARLY around one, never late. Overdue is strictly past 24 h.
+- **One clock, the database's**: `now()` and the creation instants come from one statement.
+  `content_reports."createdAt"` is a `timestamp` without zone written by `now()`; `::timestamptz`
+  reads it back in the same session zone, so the instant is exact (asserted on PostgreSQL: a report
+  moved ten days back reads ten days, to the minute).
+- Runs whatever `LIVE_ENABLED` says, like the sweep: a report filed while the switch was on is still
+  owed its answer. Purely a report: it changes nothing.
+
+Pinned by `live-report-age.spec.ts` (the arithmetic across a weekend and the October DST night, the
+three levels, no id in the line) and `lives.integration.spec.ts` (the SQL: only pending live and
+live_chat reports, the cast).
+
 ### The first-live rules (L11)
 
 `live_rules_acceptances`: one row per account, the version accepted and when. A start is refused
@@ -662,7 +696,7 @@ What is left:
 ## Decisions of 2026-10-20: moderation, reactions, the audience
 
 The user's answers to the open moderation questions. **The ladder, the 90 days, the reported line
-and the reactions are BUILT (2026-10-21, server)**; the 24 h alarm and the viewer cap are not - WP-L8b in the
+and the reactions are BUILT (2026-10-21, server)**, and so is [the 24 h alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e); the viewer cap is not - WP-L8b in the
 [backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19).
 
 | Question | Decision | What it changes in what exists |
@@ -670,7 +704,7 @@ and the reactions are BUILT (2026-10-21, server)**; the 24 h alarm and the viewe
 | Strike policy | **Warning, then suspension, then withdrawal.** 1st abuse: a warning and the live is cut. 2nd: the right to broadcast is SUSPENDED. 3rd: the right is WITHDRAWN, **decided by staff** | **BUILT** ([the ladder](#the-strike-ladder-wp-l8b)). **A suspension lasts 30 days** (decided 2026-10-20) |
 | Cut retention | **90 days** | **BUILT**: `LIVE_CUT_RETENTION_MS` is 90 days, as register row C20 says. **The ladder counts the cuts still on record: a rolling 90 days**, so an abuse older than 90 days is forgotten (decided 2026-10-20) |
 | Automatic cut on N reports | **No** - staff cut by hand only | Matches the code (a live is never cut by a count); posts keep their own auto-hide at 5 |
-| Response time to the stores | **24 hours on WORKING DAYS** for live reports (decided 2026-10-20) | Nothing measures it: the queue has no age alarm. A commitment with no report is found by hand, a day late (CLAUDE.md): the oldest pending report's age must be measured and reported |
+| Response time to the stores | **24 hours on WORKING DAYS** for live reports (decided 2026-10-20) | **BUILT 2026-10-21**: the [hourly alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e) names the oldest pending live report's working age at `error` once it is past 24 h |
 | First-live rules text | **The posts' publication rules, no live-specific clause** | The sheet's four `live_rules_*` lines are live-specific. **No standalone "posts publication rules" text exists**: what posts are judged by is the terms of use, section 6 ([moderation-and-blocking](../moderation-and-blocking.md)); the sheet must show or link that text. **`LIVE_RULES_VERSION` is 2 since 2026-10-21** (the client sheet that shows it is #2170), so every member accepts once more |
 | Viewer cap | **None wanted** ("Je ne veux pas de plafond") | The cap is 24 and stays in code until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured; it is the wish of L8 (2026-10-15) again, which the cap was the honest answer to |
 
