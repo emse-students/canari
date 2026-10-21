@@ -5,6 +5,9 @@ const COMMANDS: &[&str] = &[
     "save_video",
     "discard_video",
     "open_app_settings",
+    "share_text",
+    "share_staged",
+    "discard_shared_out",
 ];
 
 fn main() {

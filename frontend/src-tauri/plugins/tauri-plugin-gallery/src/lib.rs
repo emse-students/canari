@@ -7,6 +7,11 @@
 //! on Android, `PHPhotoLibrary` in add-only mode on iOS) and removes it; `discard_video` removes it
 //! when the save stops before that. `open_app_settings` opens this app's page in the system
 //! settings, where a refused camera, microphone or photo permission is given back.
+//!
+//! The same staging serves the system SHARE sheet: `share_staged` moves a staged file into the
+//! cache's `share_out/` directory and opens the sheet on it (Android `ACTION_SEND` through the app's
+//! FileProvider, iOS `UIActivityViewController`), and `share_text` opens it on a text. See
+//! `docs/wiki/frontend/share-out.md`.
 #[cfg(mobile)]
 use tauri::Manager;
 use tauri::{
@@ -46,7 +51,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::append_video_chunk,
             commands::save_video,
             commands::discard_video,
-            commands::open_app_settings
+            commands::open_app_settings,
+            commands::share_text,
+            commands::share_staged,
+            commands::discard_shared_out
         ])
         .setup(|_app, _api| {
             commands::sweep_staged(_app);
