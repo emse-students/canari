@@ -18,8 +18,9 @@ jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 const PRODUCT_ID = '11111111-1111-1111-1111-111111111111';
-const USER_ID = '22222222-2222-2222-2222-222222222222';
 const VENDOR = 'vendor-token-of-asso-a';
+// The order_ref names the checkout ATTEMPT (migration 101), never the buyer.
+const CHECKOUT_ID = '33333333-3333-3333-3333-333333333333';
 
 function makeController(verdict: LydiaCallbackVerdict) {
   const paymentService = {
@@ -117,24 +118,49 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
     ).rejects.toMatchObject({ status: 503 });
   });
 
-  it('fulfils NOTHING on a verified product confirm, and logs why at ERROR (no stored checkout until B3)', async () => {
-    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  it('hands a verified product confirm to social-service as a TRIGGER naming the attempt and the verified Business', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { outcome: 'paid' } });
     const controller = makeController(VERIFIED);
 
     const result = await controller.handleLydiaRequestCallback('confirm', {
       request_id: 'r1',
       amount: '12.34',
-      order_ref: `product:${PRODUCT_ID}:${USER_ID}`,
+      order_ref: `product:${PRODUCT_ID}:${CHECKOUT_ID}`,
       sig: 'valid-sig',
     });
 
     expect(result).toEqual({ received: true });
+    expect(mockedAxios.post.mock.calls).toHaveLength(1);
+    const [url, body] = mockedAxios.post.mock.calls[0];
+    expect(url).toContain(`/associations/products/${PRODUCT_ID}/purchase-completed`);
+    // No amount and no buyer cross: the attempt row holds both, and Lydia's answer decides.
+    expect(body).toEqual({ checkoutId: CHECKOUT_ID, requestId: 'r1', vendorToken: VENDOR });
+  });
+
+  it('answers a retryable 503 when social-service could not read the attempt request at Lydia', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { outcome: 'unreadable' } });
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = makeController(VERIFIED);
+    await expect(
+      controller.handleLydiaRequestCallback('confirm', {
+        request_id: 'r1',
+        order_ref: `product:${PRODUCT_ID}:${CHECKOUT_ID}`,
+        sig: 'valid-sig',
+      })
+    ).rejects.toMatchObject({ status: 503, message: 'Failed to process callback' });
+  });
+
+  it('never reaches social-service for a product confirm whose signature does not verify', async () => {
+    const controller = makeController(REFUSED);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await expect(
+      controller.handleLydiaRequestCallback('confirm', {
+        request_id: 'r1',
+        order_ref: `product:${PRODUCT_ID}:${CHECKOUT_ID}`,
+        sig: 'forged',
+      })
+    ).rejects.toThrow(/Invalid signature/);
     expect(mockedAxios.post.mock.calls).toHaveLength(0);
-    const line = String(errorSpy.mock.calls[0]?.[0]);
-    expect(line).toContain(`product ${PRODUCT_ID}`);
-    expect(line).toContain('NOT fulfilled');
-    expect(line).toContain('stores no row');
-    errorSpy.mockRestore();
   });
 
   it('cancels a pending submission naming its request and the verified Business', async () => {
@@ -171,12 +197,12 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
     }
   );
 
-  it('does nothing on a cancelled/expired product order_ref - no pending row exists to undo', async () => {
+  it('applies nothing on a cancelled/expired product attempt - its next read at Lydia decides', async () => {
     const controller = makeController(VERIFIED);
 
     const result = await controller.handleLydiaRequestCallback('cancel', {
       request_id: 'r1',
-      order_ref: `product:${PRODUCT_ID}:${USER_ID}`,
+      order_ref: `product:${PRODUCT_ID}:${CHECKOUT_ID}`,
       sig: 'valid-sig',
     });
 

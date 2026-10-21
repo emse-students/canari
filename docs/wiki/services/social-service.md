@@ -681,7 +681,8 @@ Live broadcasts, behind `LIVE_ENABLED`; every route, its rights and its refusal 
 | PATCH | `/api/associations/:id/events/:eventId` | Update calendar event |
 | DELETE | `/api/associations/:id/events/:eventId` | Delete calendar event |
 | POST | `/api/associations/:id/products` | Create boutique product |
-| POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for product |
+| POST | `/api/associations/:id/products/:productId/checkout` | Open ONE checkout attempt (a `product_checkouts` row, then the Lydia request) - see [payments](../frontend/modules/payments.md#a-product-checkout-is-a-row-one-per-attempt-2026-10-21) |
+| POST | `/api/associations/:id/products/:productId/checkouts/:checkoutId/confirm` | The buyer's return: reads the attempt's own request at Lydia, records it if paid, answers its status (throttled) |
 | POST | `/api/associations/:id/partnerships` | Create a partnership card (`MANAGE_PARTNERSHIPS`) |
 | POST | `/api/associations/:id/partnerships/:cardId/claim` | Claim a partnership (any logged-in member; `membersOnly` gated server-side) |
 

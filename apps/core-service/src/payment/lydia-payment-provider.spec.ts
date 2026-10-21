@@ -233,7 +233,7 @@ describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
   // The pair measured on the sandbox 2026-10-15: request_uuid AND vendor_token.
   it('posts request/state with the uuid and the vendor_token', async () => {
     mockedAxios.post.mockResolvedValue({ data: { state: '1', used_ease_of_payment: '0' } });
-    await makeProvider().getCheckoutRequestState('req-uuid-1', 'vendor-token-abc');
+    await makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, 'vendor-token-abc');
     const [url, body] = mockedAxios.post.mock.calls[0];
     expect(url).toBe('https://homologation.lydia-app.com/api/request/state.json');
     const sent = new URLSearchParams(body as string);
@@ -258,14 +258,43 @@ describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
   ])('reads state %p as %s, never guessing an unmeasured code', async (raw, state) => {
     mockedAxios.post.mockResolvedValue({ data: { state: raw } });
     await expect(
-      makeProvider().getCheckoutRequestState('req-uuid-1', 'vendor-token-abc')
+      makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, 'vendor-token-abc')
     ).resolves.toEqual({ state, raw: raw === undefined ? '' : String(raw) });
   });
 
+  // The pair measured on the sandbox 2026-10-15 to find the request too: order_ref + vendor_token.
+  it('reads an attempt by its order_ref when it has no uuid, and nothing else', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { state: '0' } });
+    await expect(
+      makeProvider().getCheckoutRequestState({ orderRef: 'product:p:c' }, 'vendor-token-abc')
+    ).resolves.toEqual({ state: 'open', raw: '0' });
+    const sent = new URLSearchParams(mockedAxios.post.mock.calls[0][1] as string);
+    expect(Object.fromEntries(sent)).toEqual({
+      order_ref: 'product:p:c',
+      vendor_token: 'vendor-token-abc',
+    });
+  });
+
+  it('answers not-found to an order_ref no request carries (error 2, "Requete introuvable")', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: '2', message: 'Requete introuvable' } });
+    await expect(
+      makeProvider().getCheckoutRequestState({ orderRef: 'product:p:c' }, 'vendor-token-abc')
+    ).resolves.toEqual({ state: 'not-found', raw: 'error 2' });
+  });
+
+  it('keeps error 2 a REFUSAL for a uuid, which Canari got from Lydia itself', async () => {
+    // The control: answering not-found here would close an attempt Lydia did issue.
+    mockedAxios.post.mockResolvedValue({ data: { error: '2', message: 'Requete introuvable' } });
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await expect(
+      makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, 'vendor-token-abc')
+    ).rejects.toThrow('Requete introuvable');
+  });
+
   it('refuses without a vendor_token, before calling Lydia', async () => {
-    await expect(makeProvider().getCheckoutRequestState('req-uuid-1', '')).rejects.toThrow(
-      'vendor_token'
-    );
+    await expect(
+      makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, '')
+    ).rejects.toThrow('vendor_token');
     expect(mockedAxios.post.mock.calls).toHaveLength(0);
   });
 });

@@ -26,6 +26,7 @@ import { createRoutedFetch } from '$lib/utils/fetchRouting';
 import { conformNativeFetch } from '$lib/utils/transportFailure';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
+import { shopReturnPath } from '$lib/shop/checkoutReturn';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
@@ -297,9 +298,9 @@ if (isTauriRuntime()) {
                 const productId =
                   u.searchParams.get('product_id') ?? u.searchParams.get('productId');
                 if (purchaseSuccess && productId) {
-                  navigate(
-                    `/shop?purchase_success=${encodeURIComponent(purchaseSuccess)}&productId=${encodeURIComponent(productId)}`
-                  );
+                  // The attempt the server named (`checkout_id`) is carried, so the shop asks
+                  // about THAT one.
+                  navigate(shopReturnPath('purchase_success', u.searchParams));
                 } else if (submissionId) {
                   navigate(`/forms/success?submission_id=${encodeURIComponent(submissionId)}`);
                 } else if (registered) {
@@ -311,7 +312,7 @@ if (isTauriRuntime()) {
                 }
               } else if (path === '/cancel') {
                 if (u.searchParams.get('purchase_cancel')) {
-                  navigate('/shop?purchase_cancel=1');
+                  navigate(shopReturnPath('purchase_cancel', u.searchParams));
                 } else if (submissionId) {
                   navigate(`/forms/cancel?submission_id=${encodeURIComponent(submissionId)}`);
                 } else {

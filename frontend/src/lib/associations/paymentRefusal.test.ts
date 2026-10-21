@@ -94,6 +94,37 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(err)).toBe(m.form_already_answered());
   });
 
+  it("words a boutique attempt still open with the shop's own bound, not the form's 30 minutes", () => {
+    const err = new SocialApiError(
+      'The previous payment request for this product is still open.',
+      'PREVIOUS_CHECKOUT_OPEN',
+      409
+    );
+    expect(providerRefusalMessage(err)).toBe(m.shop_previous_checkout_open());
+    expect(m.shop_previous_checkout_open()).not.toBe(m.form_previous_payment_open());
+  });
+
+  it('words "already purchased" and a double click from their codes, never the server English', () => {
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
+          'You have already purchased this product',
+          'PRODUCT_ALREADY_PURCHASED',
+          409
+        )
+      )
+    ).toBe(m.shop_already_purchased());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
+          'A checkout of this product is already being opened.',
+          'CHECKOUT_IN_PROGRESS',
+          409
+        )
+      )
+    ).toBe(m.shop_checkout_in_progress());
+  });
+
   it('is null for any other failure, so each surface keeps its own generic line', () => {
     expect(providerRefusalMessage(new SocialApiError('boom', null, 500))).toBeNull();
     expect(providerRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();

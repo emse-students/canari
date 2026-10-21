@@ -14,7 +14,11 @@ import axios from 'axios';
 import { PaymentService } from './payment.service';
 import type { LydiaCallbackVerdict } from './lydia-callback-verification';
 import { parseLydiaOrderRef } from './lydia-order-ref';
-import { internalSocialRequestConfig, internalSubmissionUrl } from './social-internal-client';
+import {
+  internalSocialRequestConfig,
+  internalSubmissionUrl,
+  productPurchaseCompletedUrl,
+} from './social-internal-client';
 import { describeHttpError } from '../common/http-error-log';
 
 const SUBMISSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
@@ -91,6 +95,32 @@ export class PaymentWebhookController {
   }
 
   /**
+   * Hands a VERIFIED boutique confirm callback to social-service as a TRIGGER, by the same rule as a
+   * form's: social-service finds the ATTEMPT row the order_ref names (`checkoutId`) for that
+   * product, checks the Business that verified the callback is the one the attempt was issued to
+   * and that `requestId` is not another request than the attempt's, then reads the attempt's own
+   * request at Lydia and records it only if Lydia answers paid - product, buyer and amount from the
+   * row. Answers the status social-service read (`unreadable` when Lydia could not be asked).
+   */
+  private async confirmProductFromCallback(
+    productId: string,
+    checkoutId: string,
+    vendorToken: string,
+    requestId: string
+  ): Promise<{ outcome?: string }> {
+    const { data } = await axios.post<{ outcome?: string }>(
+      productPurchaseCompletedUrl(productId),
+      { checkoutId, requestId, vendorToken },
+      {
+        ...internalSocialRequestConfig(),
+        timeout: 30_000,
+        validateStatus: (s) => s >= 200 && s < 300,
+      }
+    );
+    return data ?? {};
+  }
+
+  /**
    * Hands a VERIFIED cancel/expire callback to social-service as a trigger, naming the request
    * Lydia reported (its numeric `request_id`): social-service applies it only if that is still the
    * row's current request and the row's payee account is `vendorToken`, the Business whose key
@@ -136,8 +166,9 @@ export class PaymentWebhookController {
    * callback (social-service unreachable, the row's request unreadable at Lydia), is a 503, the
    * status Lydia may retry: neither is a verdict about the callback.
    *
-   * A verified `product:` confirm FULFILS NOTHING until a boutique checkout is a stored row (B3):
-   * logged at ERROR and acknowledged (payments.md, "What confirms a payment").
+   * A verified `product:` confirm is a trigger on the ATTEMPT row its order_ref names (migration
+   * 101, payments.md "A product checkout is a row, one per attempt"); a verified product cancel or
+   * expire changes nothing here - the attempt is read at Lydia on its next return, retry or confirm.
    */
   @Post('lydia-request-callback')
   // Reads the text fields of a `multipart/form-data` body: the global parsers only know JSON and
@@ -219,21 +250,31 @@ export class PaymentWebhookController {
             `Lydia confirm of request ${requestId} for submission ${ref.submissionId}: ${settled ?? 'unknown'}`
           );
         } else {
-          // REFUSED until a boutique checkout is a STORED row naming its request (lot B3). A
-          // verified signature proves only that the Business's key signed it, and that key is
-          // whatever its payout manager typed: settling from the callback would let that manager
-          // grant any tag, fire any Cercle webhook and record any purchase, with no money moved.
-          // A form settles from its own row; a product has none to settle from. Acknowledged
-          // (2xx): no retry can change the answer, and the line names what a human must settle.
-          this.logger.error(
-            `Lydia confirm of request ${requestId} for product ${ref.productId} (user ` +
-              `${ref.userId}) NOT fulfilled: a boutique checkout stores no row to settle from, ` +
-              `so a callback alone fulfils nothing - settle it by hand`
+          // A TRIGGER on the attempt row, never the payment: a verified signature proves only that
+          // the key the payout manager TYPED signed it, so nothing of the callback but the attempt
+          // it names is used - social-service reads that attempt's own request at Lydia.
+          const { outcome: settled } = await this.confirmProductFromCallback(
+            ref.productId,
+            ref.checkoutId,
+            verifiedVendorToken,
+            requestId
+          );
+          if (settled === 'unreadable') {
+            // Lydia could not be asked: a 2xx would tell Lydia a payment was handled when nothing
+            // was recorded, so it becomes the retryable 503 below.
+            throw new Error(`the attempt's request could not be read at Lydia`);
+          }
+          this.logger.log(
+            `Lydia confirm of request ${requestId} for product checkout ${ref.checkoutId}: ${settled ?? 'unknown'}`
           );
         }
+      } else if (ref.kind === 'product') {
+        // A cancel or expire closes nothing on its own word: the attempt is read at Lydia on its
+        // next return, retry or confirm, which is where a closed request is told from a paid one.
+        this.logger.log(
+          `Lydia ${outcome} of request ${requestId} for product checkout ${ref.checkoutId}: nothing applied`
+        );
       } else if (ref.kind === 'form') {
-        // No pending row exists for a boutique purchase (unlike a form submission), so a
-        // cancelled/expired Lydia request for one is simply never fulfilled - nothing to undo.
         // A trigger, like a confirm: social-service reads the row's own request at Lydia and
         // releases the seat only when Lydia says it is closed.
         const { outcome: read } = await this.cancelPendingSubmissionInternal(

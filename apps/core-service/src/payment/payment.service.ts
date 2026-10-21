@@ -10,6 +10,7 @@ import type {
   BusinessLegalProfile,
   CancelRequestOutcome,
   CheckoutLineItem,
+  CheckoutRequestLookup,
   CheckoutRequestState,
   CheckoutSessionResult,
   ConnectAccountStatusResponse,
@@ -145,10 +146,10 @@ export class PaymentService {
 
   /** Reads a payment request's state (`PaymentProvider.getCheckoutRequestState`). */
   async getCheckoutRequestState(
-    sessionId: string,
+    lookup: CheckoutRequestLookup,
     connectAccountId: string
   ): Promise<CheckoutRequestState> {
-    return (await this.getProvider()).getCheckoutRequestState(sessionId, connectAccountId);
+    return (await this.getProvider()).getCheckoutRequestState(lookup, connectAccountId);
   }
 
   /** Retrieves the charges-enabled status for a Connect-style account. */

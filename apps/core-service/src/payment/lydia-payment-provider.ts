@@ -3,6 +3,7 @@ import axios from 'axios';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
   CancelRequestOutcome,
+  CheckoutRequestLookup,
   CheckoutRequestState,
   CheckoutRequestStateKind,
   CheckoutSessionResult,
@@ -39,6 +40,9 @@ export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
 
 /** `request/cancel`'s answer for a request already cancelled or expired (sandbox, 2026-10-15). */
 const LYDIA_CANCEL_ALREADY_SETTLED = '2';
+
+/** `request/state`'s answer for an order_ref no request carries, "Requete introuvable" (sandbox, 2026-10-15). */
+const LYDIA_STATE_NOT_FOUND = '2';
 
 /**
  * Every `request/state` code Lydia answers that has been MEASURED on the sandbox (2026-10-15 and
@@ -292,28 +296,42 @@ export class LydiaPaymentProvider implements PaymentProvider {
    * know which answer the request belongs to - it reads by the uuid its own row stored.
    * The code is classified HERE, once (`LYDIA_REQUEST_STATES`): 0 open, 1 paid, 5 declined by the
    * payer, 6 cancelled or expired, all measured. Any other code is `unknown`, at WARN.
+   *
+   * By `orderRef` instead (`order_ref` + `vendor_token`, measured to find the request the same way):
+   * the read of an attempt whose issuing call never answered a uuid. Only THERE is Lydia's error 2
+   * ("Requete introuvable", measured on an unknown order_ref) an answer - `not-found`, no request
+   * carries it - while for a uuid, which Canari got from Lydia itself, it stays a refusal.
    */
   async getCheckoutRequestState(
-    sessionId: string,
+    lookup: CheckoutRequestLookup,
     connectAccountId: string
   ): Promise<CheckoutRequestState> {
     if (!this.providerToken) throw new BadRequestException('Lydia not configured');
     if (!connectAccountId) {
       throw new BadRequestException('Lydia request/state requires the vendor_token');
     }
-    const data = await this.postForm<{ state?: string | number }>('/api/request/state', {
-      request_uuid: sessionId,
-      vendor_token: connectAccountId,
-    });
+    const byOrderRef = 'orderRef' in lookup;
+    const named = byOrderRef ? lookup.orderRef : lookup.requestUuid;
+    const data = await this.postForm<{ state?: string | number }>(
+      '/api/request/state',
+      byOrderRef
+        ? { order_ref: lookup.orderRef, vendor_token: connectAccountId }
+        : { request_uuid: lookup.requestUuid, vendor_token: connectAccountId },
+      byOrderRef ? [LYDIA_STATE_NOT_FOUND] : []
+    );
+    if (byOrderRef && String(data.error ?? '0') === LYDIA_STATE_NOT_FOUND) {
+      this.logger.log(`Lydia holds no request with order_ref ${named}`);
+      return { state: 'not-found', raw: `error ${LYDIA_STATE_NOT_FOUND}` };
+    }
     const raw = data.state === undefined || data.state === null ? '' : String(data.state);
     // `Object.hasOwn`: a code such as "constructor" must not read the prototype as a state.
     const state: CheckoutRequestStateKind = Object.hasOwn(LYDIA_REQUEST_STATES, raw)
       ? LYDIA_REQUEST_STATES[raw]
       : 'unknown';
     if (state === 'unknown') {
-      this.logger.warn(`Lydia request ${sessionId} answered an unknown state code "${raw}"`);
+      this.logger.warn(`Lydia request ${named} answered an unknown state code "${raw}"`);
     } else {
-      this.logger.debug(`Lydia request ${sessionId} is ${state} (code ${raw})`);
+      this.logger.debug(`Lydia request ${named} is ${state} (code ${raw})`);
     }
     return { state, raw };
   }

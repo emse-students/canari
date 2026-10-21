@@ -7,6 +7,7 @@ import {
   ForbiddenException,
   Get,
   Headers,
+  HttpCode,
   Logger,
   Param,
   ParseUUIDPipe,
@@ -21,9 +22,11 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { isUUID } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
+import { CONFIRM_PAYMENT_PER_MINUTE } from '../forms/forms.controller';
 import {
   PERM_FLAG_KEY,
   GlobalAdminOrAssociationRoleGuard,
@@ -1485,6 +1488,27 @@ export class AssociationsController {
     );
   }
 
+  /**
+   * The payer's return from Lydia for ONE checkout attempt (`checkout_id` on the shop page): asks
+   * the provider about the attempt's own request, records it if paid, and answers its status. Only
+   * the BUYER may ask, about their own attempt of this product (anything else is a 404). NOT a
+   * mark-paid: the caller names an attempt, and the payment is Lydia's answer about the request the
+   * row stored (`ProductsService.confirmCheckout`). Throttled per user and attempt like the form's
+   * `confirm-payment`, since each call may spend a `request/state`.
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: CONFIRM_PAYMENT_PER_MINUTE, ttl: 60_000 } })
+  @Post(':id/products/:productId/checkouts/:checkoutId/confirm')
+  @HttpCode(200)
+  confirmCheckout(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('checkoutId', ParseUUIDPipe) checkoutId: string,
+    @Headers('x-user-id') userId: string
+  ) {
+    return this.productsService.confirmCheckout(id, productId, checkoutId, userId);
+  }
+
   /** Lists failed Cercle webhook deliveries for admin retry. Requires MANAGE_PRODUCTS flag. */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -1776,29 +1800,33 @@ export class AssociationsController {
   }
 
   /**
-   * Fulfils a product purchase - refused unless `vendorToken` is the product's payee. NO CALLER
-   * since 2026-10-16: core-service refuses to fulfil a product from a Lydia callback until a
-   * boutique checkout is a stored row to settle from (lot B3, payments.md "What confirms a
-   * payment"). Kept as the entry point B3 wires back.
+   * A VERIFIED Lydia confirm callback for a boutique attempt, handed over by core-service as a
+   * trigger (`ProductsService.handlePurchaseCompleted`): `checkoutId` is the attempt the order_ref
+   * names, `requestId` Lydia's numeric id and `vendorToken` the Business whose key verified it. No
+   * buyer and no amount are accepted - the attempt row holds both. Internal secret only.
    */
   @Post('products/:productId/purchase-completed')
+  @HttpCode(200)
   purchaseCompleted(
-    @Param('productId') productId: string,
-    @Body()
-    body: { userId: string; amountCents: number; paymentIntentId: string; vendorToken?: unknown },
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Body() body: { checkoutId?: unknown; requestId?: unknown; vendorToken?: unknown },
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    const vendorToken = typeof body?.vendorToken === 'string' ? body.vendorToken : '';
-    if (!vendorToken) {
-      this.logger.warn(`[SHOP] purchase-completed refused: no vendorToken`);
-      throw new BadRequestException('vendorToken is required');
+    const text = (value: unknown) => (typeof value === 'string' ? value : '');
+    const checkoutId = text(body?.checkoutId);
+    const requestId = text(body?.requestId);
+    const vendorToken = text(body?.vendorToken);
+    if (!isUUID(checkoutId) || !/^\d{1,32}$/.test(requestId) || !vendorToken) {
+      this.logger.warn(
+        `[SHOP] purchase-completed refused: invalid checkoutId, requestId or vendorToken`
+      );
+      throw new BadRequestException('checkoutId, requestId and vendorToken are required');
     }
     return this.productsService.handlePurchaseCompleted(
       productId,
-      body.userId,
-      body.amountCents,
-      body.paymentIntentId,
+      checkoutId,
+      requestId,
       vendorToken
     );
   }

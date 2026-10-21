@@ -108,19 +108,30 @@ export type CancelRequestOutcome = 'cancelled' | 'already-settled';
  * payer (final: Lydia sends no callback and shows its own error page), `6` cancelled or expired (a
  * cancel and an expiry both leave it). `unknown` is any other code: NEVER paid and NEVER settled -
  * a caller that meets it records no payment and releases nothing.
+ * `not-found` is answered ONLY to a lookup by `orderRef`: the provider holds no request carrying it
+ * (Lydia's error 2, "Requete introuvable", measured on an unknown order_ref 2026-10-15) - an attempt
+ * whose request/do never reached it. A lookup by uuid never answers it.
  */
 export type CheckoutRequestStateKind =
   | 'open'
   | 'paid'
   | 'declined'
   | 'cancelled-or-expired'
-  | 'unknown';
+  | 'unknown'
+  | 'not-found';
 
 /** A request's classified state; `raw` is the provider's own code, for the log only. */
 export interface CheckoutRequestState {
   state: CheckoutRequestStateKind;
   raw: string;
 }
+
+/**
+ * Which request a state read names: the `request_uuid` the issuing call answered, or - for an
+ * attempt whose issuing call never came back with one - the `order_ref` it was sent with, which
+ * Lydia's `request/state` also finds (measured on the sandbox 2026-10-15, payments.md).
+ */
+export type CheckoutRequestLookup = { requestUuid: string } | { orderRef: string };
 
 /** Collect balance snapshot for a connected account (single currency). */
 export interface ConnectBalanceSummary {
@@ -150,9 +161,9 @@ export interface PaymentProvider {
   createCheckoutSession(params: CreateCheckoutSessionParams): Promise<CheckoutSessionResult>;
   /** Makes a request no longer payable. `requestId` is `CheckoutSessionResult.requestId`. */
   cancelCheckoutRequest(requestId: string, connectAccountId: string): Promise<CancelRequestOutcome>;
-  /** Reads a request's state; `sessionId` is `CheckoutSessionResult.id` (Lydia's `request_uuid`). */
+  /** Reads a request's state, by `CheckoutSessionResult.id` (Lydia's `request_uuid`) or its order_ref. */
   getCheckoutRequestState(
-    sessionId: string,
+    lookup: CheckoutRequestLookup,
     connectAccountId: string
   ): Promise<CheckoutRequestState>;
 }

@@ -95,6 +95,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // -- Rows that belong to other people too, or are accounting records: anonymised -------------
   'purchase_records.userId': { action: 'anonymise' },
   'webhook_deliveries.userId': { action: 'anonymise' },
+  // A boutique checkout attempt (migration 101) is the record of a request issued for money: it
+  // stays, per row, like a partnership code - `product_checkouts_one_open` is a partial UNIQUE
+  // (productId, userId), so two erased buyers' open attempts would collide on a constant.
+  'product_checkouts.userId': { action: 'anonymise' },
   'submissions.userId': { action: 'anonymise' },
   'submissions.email': { action: 'anonymise', via: 'userId' },
   'submissions.answers': { action: 'anonymise', via: 'userId' },
@@ -483,6 +487,11 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'webhook_deliveries',
     sql: `UPDATE webhook_deliveries SET "userId" = $2 WHERE "userId" = $1`,
+  },
+  // Unique per row, for the partial unique index named above.
+  {
+    label: 'product_checkouts',
+    sql: `UPDATE product_checkouts SET "userId" = '[deleted]:' || id::text WHERE "userId" = $1`,
   },
   // The answers go, the row stays: it is a seat the form counted and, when paid, a payment record.
   {
