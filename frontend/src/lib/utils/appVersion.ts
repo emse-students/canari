@@ -52,11 +52,27 @@ export type CallsMode = 'off' | 'audio' | 'audio_video';
  */
 export const CALLS_MODES: readonly CallsMode[] = ['off', 'audio', 'audio_video'];
 
+/**
+ * The server's kill switch for lives (`platform_config.lives_mode`, published by `/api/version`):
+ * `off` - every live route answers 404; `on` - lives answer where the estate's `LIVE_ENABLED` deploy
+ * lock is on too. The server refuses on every live request; the client reads it only to HIDE the
+ * live surfaces that would be refused.
+ */
+export type LivesMode = 'off' | 'on';
+
+/**
+ * Every value of {@link LivesMode}. SIX COPIES of these two strings exist (the SQL CHECK, core's
+ * entity, social-service's and media-service's readers, this, the admin page through this) and
+ * `livesModesAgree.test.ts` fails the day one of them drifts.
+ */
+export const LIVES_MODES: readonly LivesMode[] = ['off', 'on'];
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
   callsMode: CallsMode;
+  livesMode: LivesMode;
 };
 
 export type AppVersionCheckResult = {
@@ -69,6 +85,8 @@ export type AppVersionCheckResult = {
   maintenance: PlatformMaintenanceInfo;
   /** What the server lets calls do; `off` until a server has said otherwise. */
   callsMode: CallsMode;
+  /** Whether the server lets lives answer; `off` until a server has said otherwise. */
+  livesMode: LivesMode;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -93,6 +111,15 @@ function normalizeCallsMode(raw: unknown): CallsMode {
   return CALLS_MODES.find((known) => known === mode) ?? 'off';
 }
 
+/**
+ * The lives mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`, for the reason
+ * {@link normalizeCallsMode} gives: a kill switch that cannot be read fails closed.
+ */
+function normalizeLivesMode(raw: unknown): LivesMode {
+  const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
+  return LIVES_MODES.find((known) => known === mode) ?? 'off';
+}
+
 /** Parses `/api/version` JSON into a normalized {@link ServerVersionInfo}. */
 export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null {
   if (!data || typeof data !== 'object') return null;
@@ -101,6 +128,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     minClientVersion?: unknown;
     maintenance?: unknown;
     calls?: unknown;
+    lives?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -110,6 +138,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     minClientVersion: minRaw || '0.0.0',
     maintenance: normalizeMaintenance(obj.maintenance),
     callsMode: normalizeCallsMode(obj.calls),
+    livesMode: normalizeLivesMode(obj.lives),
   };
 }
 
@@ -124,12 +153,14 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
   calls: { mode: CallsMode };
+  lives: { mode: LivesMode };
 } {
   return {
     version: info.version,
     minClientVersion: info.minClientVersion,
     maintenance: info.maintenance,
     calls: { mode: info.callsMode },
+    lives: { mode: info.livesMode },
   };
 }
 /**
@@ -293,6 +324,7 @@ export function buildAppVersionCheckResult(
     belowMinVersion,
     maintenance,
     callsMode: serverInfo?.callsMode ?? 'off',
+    livesMode: serverInfo?.livesMode ?? 'off',
   };
 }
 

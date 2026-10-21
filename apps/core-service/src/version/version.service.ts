@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PlatformService } from '../platform/platform.service';
 import { deployedVersion } from '../platform/deployed-version';
 import { deployBuild } from '../platform/deploy-build';
-import type { CallsMode } from '../platform/entities/platform-config.entity';
+import type { CallsMode, LivesMode } from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
   version: string;
@@ -28,6 +28,14 @@ export type AppVersionResponse = {
   calls: {
     mode: CallsMode;
   };
+  /**
+   * The server's kill switch for lives (`platform_config.lives_mode`). Clients hide the live card,
+   * the viewer and the composer's Live chip while it is `off`; the refusal itself is
+   * social-service's and media-service's, on every live request.
+   */
+  lives: {
+    mode: LivesMode;
+  };
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -48,6 +56,7 @@ export class VersionService {
         message: platform.maintenanceMessage,
       },
       calls: { mode: platform.callsMode },
+      lives: { mode: platform.livesMode },
     };
   }
 }

@@ -65,7 +65,8 @@
   import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
   import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
-  import { LIVE_ENABLED } from '$lib/features';
+  import { livesAvailable } from '$lib/utils/livesAvailability';
+  import { serverLivesMode } from '$lib/stores/appVersionCheck.svelte';
 
   /**
    * Full-featured post creation form. Supports:
@@ -159,7 +160,8 @@
   const isAssociationSelected = $derived(!!selectedAssociationId && !isAnonymousSelected);
 
   /**
-   * The broadcaster's screen is open (WP-L5, `LIVE_ENABLED` builds only). A live goes out under the
+   * The broadcaster's screen is open (WP-L5; the chip is offered only where `livesAvailable` says so -
+   * a `LIVE_ENABLED` build AND the server's lives kill switch on). A live goes out under the
    * identity chosen above - the member, or an association they may post as - and never anonymously,
    * so the chip is not offered while "anonymous" is chosen, nor while the chosen association is not
    * in the list read (a restored draft's): the live would otherwise go out under the wrong name.
@@ -784,7 +786,9 @@
       onToggleForm={() => (includeForm = !includeForm)}
       bind:scheduledAt
       status={draftSaved ? m.post_create_draft_saved_label() : ''}
-      onLive={LIVE_ENABLED && !isAnonymousSelected && (!isAssociationSelected || liveAssociation)
+      onLive={livesAvailable(serverLivesMode()) &&
+      !isAnonymousSelected &&
+      (!isAssociationSelected || liveAssociation)
         ? () => (liveOpen = true)
         : undefined}
       reel={reelAllowed

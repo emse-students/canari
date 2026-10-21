@@ -18,6 +18,7 @@ describe('VersionService', () => {
       maintenanceEnabled: false,
       maintenanceMessage: null,
       callsMode: 'audio',
+      livesMode: 'on',
     }),
   } as unknown as PlatformService;
 
@@ -31,6 +32,12 @@ describe('VersionService', () => {
     const out = await service.getVersion();
 
     expect(out.calls).toEqual({ mode: 'audio' });
+  });
+
+  it('publishes the lives kill switch, so a client hides the live surfaces the server would refuse', async () => {
+    const out = await service.getVersion();
+
+    expect(out.lives).toEqual({ mode: 'on' });
   });
 
   it('reports no build when the environment was not given one', async () => {

@@ -368,6 +368,22 @@ by the same `deployEnvironment() === 'development'` test as `CALLS_ENABLED`. A p
 `/api/lives` nothing and draws nothing; the server answers `404` there anyway. The
 chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); moderation (WP-L8) is merged.
 
+### The server's kill switch hides the live surfaces (2026-10-21)
+
+The build switch is not enough once it ships: a store binary cannot be recalled. So every live
+surface - the feed card, the viewer, the composer's Live chip - is drawn only when
+`livesAvailable(serverLivesMode())` holds (`utils/livesAvailability.ts`): `LIVE_ENABLED` AND the
+server's runtime kill switch `platform_config.lives_mode` set to `on`, as `/api/version` last
+published it (`lives: { mode }`, parsed by `parseServerVersionInfo`; absent or unknown reads `off`).
+It is reactive on the version check, so an admin closing lives takes the card and an open viewer away
+at the next refresh (focus, reconnect, mount). An open BROADCAST screen is not torn down by it: its
+next segment meets the server's `404`, classified `disabled` by `lib/live/api.ts` (what that screen
+then shows on a flip was not read on a phone). The server refuses on
+every request whatever the client draws ([lives](../../services/lives.md#the-two-switches-live_enabled-and-lives_mode));
+the admin control is `/admin/platform`, built like the calls one (a save sends only the fields that
+changed, and is refused when nothing loaded). `livesModesAgree.test.ts` holds the six spellings of
+the two values together.
+
 | File | What it holds |
 | --- | --- |
 | `lib/live/livePlayer.ts` | The MSE player and its state machine; everything outside it (API, seal, media source, timer) injected, so it is tested with fake MSE objects and a manual clock |
@@ -463,7 +479,8 @@ release. **Not built: chat and reactions (WP-L6), moderation (WP-L8).**
 | `lib/live/liveBroadcast.svelte.ts` | The state machine: `preview -> starting -> live <-> away -> ending -> ended`, every dependency injected. |
 | `components/live/LiveOverlay.svelte`, `LiveBroadcaster.svelte` | The full-screen layer (portal, `coversScreen`, one history entry, the edge swipe) and the broadcast screen. The viewer's identity chip is `LiveIdentity`, a different component. |
 
-**The entry.** The post composer's chip row carries "En direct" when `LIVE_ENABLED` is on. The live
+**The entry.** The post composer's chip row carries "En direct" when `livesAvailable(serverLivesMode())`
+holds - `LIVE_ENABLED` AND the server's runtime kill switch on ([below](#the-servers-kill-switch-hides-the-live-surfaces-2026-10-21)). The live
 goes out under the identity chosen in the composer: the member, or an association they may post as
 (`associationId`; the server checks `POST_AS_ASSO`). Never anonymous: the chip is not drawn while
 "anonymous" is chosen, nor while the chosen association is missing from the list read.

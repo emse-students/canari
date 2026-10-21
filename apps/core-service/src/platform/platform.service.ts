@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { PlatformConfig, type CallsMode } from './entities/platform-config.entity';
+import { PlatformConfig, type CallsMode, type LivesMode } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
@@ -13,6 +13,7 @@ export type PlatformConfigPublic = {
   minClientVersion: string;
   paymentProvider: PaymentProviderId;
   callsMode: CallsMode;
+  livesMode: LivesMode;
 };
 
 const DEFAULT_ROW: PlatformConfig = {
@@ -22,6 +23,7 @@ const DEFAULT_ROW: PlatformConfig = {
   minClientVersion: '0.0.0',
   paymentProvider: 'disabled',
   callsMode: 'off',
+  livesMode: 'off',
 };
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */
@@ -56,8 +58,8 @@ export class PlatformService implements OnModuleInit {
 
   /**
    * Applies a partial update from a global admin and returns the new config. `actor` is the
-   * administrator's user id: the two switches that can shut every client out (the min-version raise
-   * and the calls kill switch) name who moved them, shortened to 8 characters like the other audit
+   * administrator's user id: the switches that can shut every client out (the min-version raise
+   * and the calls and lives kill switches) name who moved them, shortened to 8 characters like the other audit
    * lines - enough to find the account, not a full id copied into every log line.
    */
   async updateConfig(dto: UpdatePlatformConfigDto, actor: string): Promise<PlatformConfigPublic> {
@@ -125,9 +127,17 @@ export class PlatformService implements OnModuleInit {
       }
       row.callsMode = dto.callsMode;
     }
+    if (dto.livesMode !== undefined) {
+      // Same reason as the calls switch: every live on the estate turns on it, so who opened or
+      // closed lives, and when, is a warn line rather than a debug one.
+      if (dto.livesMode !== row.livesMode) {
+        this.logger.warn(`livesMode ${row.livesMode} -> ${dto.livesMode} by=${by}`);
+      }
+      row.livesMode = dto.livesMode;
+    }
 
     this.logger.debug(
-      `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion} paymentProvider=${row.paymentProvider} callsMode=${row.callsMode}`
+      `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion} paymentProvider=${row.paymentProvider} callsMode=${row.callsMode} livesMode=${row.livesMode}`
     );
     const saved = await this.repo.save(row);
     return toPublic(saved);
@@ -146,5 +156,6 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     minClientVersion: row.minClientVersion,
     paymentProvider: row.paymentProvider,
     callsMode: row.callsMode,
+    livesMode: row.livesMode,
   };
 }

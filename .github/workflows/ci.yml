@@ -637,6 +637,16 @@ jobs:
           SOCIAL_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- account-erasure.integration
 
+      # MIGRATION 015 (the lives kill switch) AGAINST POSTGRESQL: lands `off` on an existing row,
+      # replays as a no-op, and its CHECK refuses a value no service reads. The spec builds its own
+      # `platform_config` in a throwaway schema, so the boot's database is all it needs.
+      - name: Lives kill switch migration against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- lives-mode-migration.integration
+
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
   # =================================================================================================

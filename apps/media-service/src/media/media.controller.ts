@@ -86,6 +86,7 @@ import {
   type LivePurgeResult,
 } from './live-segments.service';
 import { assertInternalSecret } from './internal-secret.util';
+import { fetchLivesMode } from './lives-mode';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
 const POLICY_MAX_MEDIA_MB = 100;
@@ -144,10 +145,26 @@ export class MediaController {
     private readonly liveSegments: LiveSegmentsService
   ) {}
 
-  /** 404 on every live route while `LIVE_ENABLED` is off - what a route that does not exist answers. */
+  /**
+   * THE DEPLOY LOCK: 404 on every live route while `LIVE_ENABLED` is off - what a route that does
+   * not exist answers. Asked first, before anything costs a hop.
+   */
   private assertLiveEnabled(): void {
     if (!isLiveEnabled()) {
       this.logger.debug('[LIVE] a live route was called while LIVE_ENABLED is off - 404');
+      throw new NotFoundException();
+    }
+  }
+
+  /**
+   * THE RUNTIME KILL SWITCH: 404 while `platform_config.lives_mode` is not `on`, asked of
+   * social-service on every call ({@link fetchLivesMode}, which fails closed). Each route asks it
+   * AFTER its own cheap refusals (the secret, the canonical path), so a caller that would be refused
+   * anyway never makes this service reach social-service.
+   */
+  private async assertLivesModeOn(): Promise<void> {
+    if ((await fetchLivesMode(this.logger)) !== 'on') {
+      this.logger.debug('[LIVE] a live route was called while lives_mode is off - 404');
       throw new NotFoundException();
     }
   }
@@ -824,6 +841,7 @@ export class MediaController {
   ): Promise<{ ok: true }> {
     this.assertLiveEnabled();
     assertInternalSecret(internalSecret);
+    await this.assertLivesModeOn();
     const data = requireUploadedFile(file).buffer;
     if (data.length === 0 || data.length > LIVE_SEGMENT_MAX_BYTES) {
       throw new PayloadTooLargeException(`a live segment is 1 to ${LIVE_SEGMENT_MAX_BYTES} bytes`);
@@ -1013,6 +1031,7 @@ export class MediaController {
       );
       throw new NotFoundException('Live segment not found');
     }
+    await this.assertLivesModeOn();
     const { stream, size } = await this.liveSegments.read(liveId, name);
     this.logger.debug(`[LIVE] segment ${liveId}/${name} served to the edge cache (${size} B)`);
     res.setHeader('Content-Type', 'application/octet-stream');

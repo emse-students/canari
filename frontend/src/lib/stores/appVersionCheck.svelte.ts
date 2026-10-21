@@ -6,6 +6,7 @@ import {
   serverVersionInfoToWire,
   type AppVersionCheckResult,
   type CallsMode,
+  type LivesMode,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 
@@ -71,6 +72,16 @@ export function isAppUpdateAvailable(): boolean {
  */
 export function serverCallsMode(): CallsMode {
   return lastCheck?.callsMode ?? 'off';
+}
+
+/**
+ * The server's kill switch for lives as the last `/api/version` answer gave it, `off` before any
+ * answer. Reactive like {@link serverCallsMode}, so the live card and the composer's Live chip hide
+ * on the refresh that closes lives. Read through `utils/livesAvailability.ts`, which joins it to
+ * the build switch.
+ */
+export function serverLivesMode(): LivesMode {
+  return lastCheck?.livesMode ?? 'off';
 }
 
 /** True when the client is below the server-enforced minimum version. */

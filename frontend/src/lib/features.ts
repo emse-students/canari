@@ -109,7 +109,9 @@ export const CALLS_VIDEO_ENABLED = deployEnvironment() === 'development';
  * for `dev.canari-emse.fr` carries `VITE_DEPLOY_ENVIRONMENT=development`, a production build never
  * does, so a production binary asks `/api/lives` nothing and draws nothing. The server answers every
  * `/api/lives` route `404` on production anyway (its own `LIVE_ENABLED`, docs/wiki/services/lives.md)
- * - two locks, one per side. It is off there because **any member may broadcast** (decision D3) and
+ * - two locks, one per side - and the server's RUNTIME kill switch (`platform_config.lives_mode`,
+ * published by `/api/version`) closes lives without a release: read this constant through
+ * `livesAvailable` (`utils/livesAvailability.ts`), never alone, for any surface. It is off there because **any member may broadcast** (decision D3) and
  * moderation - report a live, the staff cut, block (WP-L8) - is not built: a live nobody can cut is
  * not shipped.
  *
