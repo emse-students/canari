@@ -609,7 +609,8 @@ jobs:
   # A RED RUN IS THE REPORT, like `alerts` and unlike `cargo-unreachable`: a fork one release behind
   # is a rebase owed, not the normal state of a tree, and the `::error` title names it. A crates.io
   # that does not answer exits 75 under its own title - nothing was compared, which is neither a
-  # finding nor a pass. It rides the Monday cron: upstream plugin releases are weeks apart.
+  # finding nor a pass. `gh run list` shows both as a failed run; the annotation title in the run
+  # summary is what separates them. It rides the Monday cron: upstream plugin releases are weeks apart.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   vendored-upstream:
     name: Upstream releases past a vendored fork

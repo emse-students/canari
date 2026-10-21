@@ -1463,6 +1463,12 @@ ignored on purpose: upstream has a `3.0.0-alpha` line, and a fork of a stable ow
 | 1 | the reporter is broken: an allowlist entry the manifest no longer patches, a pin that does not name the fork's version (the patch would silently not apply), a 404, any unexpected status, a response with no usable version | `Stale vendored-fork allowlist entry`, `Vendored fork and its pin disagree`, `Vendored-fork watch is broken` |
 | 75 | crates.io did not answer after curl's own bounded retries (transport, 408, 429, 5xx); a finding in the same run wins | `crates.io unreachable - not a finding` |
 
+**Exits 1 and 75 look the same in `gh run list`** (both are an ordinary failed run): the
+annotation TITLE in the run summary is what tells a finding from an unreachable registry, without
+opening the log. The response body is written with `-o` to a file, never captured from stdout: with
+`--retry`, curl prints a failed attempt's body to stdout ahead of the successful one, so a 503 then
+a 200 read from stdout would be a false "broken reporter".
+
 **A red run is the report, like `alerts` and unlike `cargo-unreachable`**: a fork behind upstream is
 a rebase owed, not the normal state of a tree. `tests/vendored-upstream-report.test.sh` (in `make
 test-ci-scripts`) runs it against a fake `curl` and fixture trees - the control case is a newer

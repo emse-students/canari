@@ -20,8 +20,9 @@
 # watch over nothing. The other `[patch.crates-io]` entries are not on it because the backlog row
 # that asked for this named one crate; adding one is adding a line.
 #
-# HOW IT REPORTS, by exit code, because a reader of `gh run list` must tell the three apart without
-# opening a log:
+# HOW IT REPORTS. `gh run list` shows 1 and 75 alike - both are an ordinary failed run - so what
+# tells them apart is the `::error` annotation TITLE, legible in the run summary without opening the
+# log. The exit code is the same distinction for a caller or a test:
 #   0   every watched fork is on upstream's latest stable release.
 #   1   a FINDING (upstream released past the fork, or yanked what the fork was taken from), or this
 #       reporter is broken (a stale allowlist entry, a pin and a fork that disagree, a response whose
@@ -50,6 +51,13 @@ readonly USER_AGENT='canari-ci vendored-upstream-report (https://github.com/emse
 
 findings=0
 unreachable=0
+
+# The response BODY goes to a file, never to stdout: with `--retry`, curl re-sends a failed
+# attempt's body to stdout before the successful one's, while `-w` prints only the final status, so
+# a 503 then a 200 captured from stdout reads as junk-then-JSON and fails jq - a false "broken
+# reporter". `-o` truncates the file before each retry, so it holds exactly the final answer.
+BODY_FILE="$(mktemp)"
+trap 'rm -f "$BODY_FILE"' EXIT
 
 # report <title> <message> - one finding or one broken premise. Never exits: every crate is judged.
 report() {
@@ -125,16 +133,15 @@ while IFS= read -r crate; do
   # --- 2. what upstream has released ---------------------------------------------------------------
   # Transient failures (transport, 408/429/5xx) are re-attempted a bounded number of times by curl
   # itself; a 404 is an answer and is not.
-  if ! out="$("$CURL" -sS --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
-    -A "$USER_AGENT" -H 'Accept: application/json' -w '\n%{http_code}' \
-    "$CRATES_IO_API/$crate" 2>&1)"; then
-    printf '%s\n' "$out" | tail -3
+  # curl's own error line (`-sS`) goes to stderr, straight into the job log; stdout is the status.
+  if ! status="$("$CURL" -sS --max-time 30 --retry 3 --retry-delay 5 --retry-all-errors \
+    -A "$USER_AGENT" -H 'Accept: application/json' -o "$BODY_FILE" -w '%{http_code}' \
+    "$CRATES_IO_API/$crate")"; then
     echo "crates.io did not answer for $crate (transport failure after retries) - nothing was compared."
     unreachable=$((unreachable + 1))
     continue
   fi
-  status="$(printf '%s\n' "$out" | tail -n1)"
-  body="$(printf '%s\n' "$out" | sed '$d')"
+  body="$(cat "$BODY_FILE")"
   case "$status" in
     200) ;;
     404)

@@ -43,16 +43,32 @@ command -v jq >/dev/null 2>&1 || {
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# The fake curl. FAKE_EXIT non-zero is a transport failure; otherwise it prints the body and, as
-# `-w '\n%{http_code}'` would, the status on its own last line.
+# The fake curl, modelling what real curl does with `--retry`. FAKE_EXIT non-zero is a transport
+# failure. FAKE_PRE is the body of an earlier attempt that failed and was retried: real curl writes
+# it to STDOUT ahead of the final body, but truncates an `-o` file before the retry, so the file
+# holds only the final answer. `-w` is printed once, with the FINAL status.
 cat >"$WORK/curl" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$FAKE_LOG"
+out='' fmt=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    -w) fmt="$2"; shift ;;
+  esac
+  shift
+done
 if [ "${FAKE_EXIT:-0}" -ne 0 ]; then
   echo "curl: (6) Could not resolve host: crates.io" >&2
   exit "$FAKE_EXIT"
 fi
-printf '%s\n%s' "$FAKE_BODY" "$FAKE_STATUS"
+if [ -n "$out" ]; then
+  printf '%s' "$FAKE_BODY" >"$out"
+else
+  printf '%s%s' "${FAKE_PRE:-}" "$FAKE_BODY"
+fi
+fmt="${fmt//\\n/$'\n'}"
+printf '%s' "${fmt//%\{http_code\}/$FAKE_STATUS}"
 EOF
 chmod +x "$WORK/curl"
 export FAKE_LOG="$WORK/curl.log"
@@ -124,6 +140,25 @@ expect 'a 503 is unavailability, not an answer: 75' 75 'not a finding'
 
 run "$OK_TREE" 429 ''
 expect 'a 429 is unavailability, not an answer: 75' 75 'not a finding'
+
+printf '\na retried attempt leaves no trace in the answer that is read\n'
+JUNK='<html>503 Service Unavailable</html>'
+GOOD="$(crate_json 2.5.0 2.5.0)"
+: >"$FAKE_LOG"
+OUT="$(REPO_ROOT="$OK_TREE" CURL="$WORK/curl" FAKE_STATUS=200 FAKE_BODY="$GOOD" FAKE_PRE="$JUNK" \
+  bash "$REPORT" 2>&1)"
+CODE=$?
+expect 'a 503 retried into a 200 is read as the 200 alone: a pass' 0 'ok:'
+
+# CONTROL: the same curl answer, captured the way the first version did (body and `-w` status on
+# stdout), is junk-then-JSON - jq refuses it, which was a false "broken reporter" red.
+old="$(FAKE_LOG=/dev/null FAKE_STATUS=200 FAKE_BODY="$GOOD" FAKE_PRE="$JUNK" \
+  "$WORK/curl" -sS --retry 3 -w '\n%{http_code}' "https://crates.io/api/v1/crates/x")"
+if printf '%s\n' "$old" | sed '$d' | jq -r '.crate.max_stable_version' >/dev/null 2>&1; then
+  fail 'CONTROL: stdout capture of a retried request parsed - the fake no longer models curl, so the case above proves nothing'
+else
+  pass 'CONTROL: the old stdout capture of that same answer fails to parse'
+fi
 
 printf '\nan answer that is not a version is a broken reporter, never a pass\n'
 run "$OK_TREE" 404 '{"errors":[{"detail":"crate not found"}]}'
