@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 
 /**
  * Encryption at rest of a THIRD PARTY's secret that this server must read back itself (today: an
- * association's Lydia Business private token, migration 092). Not end-to-end - the server holds the
+ * association's Lydia Business private token, migration 100). Not end-to-end - the server holds the
  * key, by necessity, since it verifies callbacks with the plaintext - but a database dump, a backup
  * or the dev copy of production's rows carries ciphertext only.
  *

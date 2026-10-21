@@ -491,7 +491,7 @@ callback verified at all.
 
 **Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
-`associations."lydiaBusinessKeyCiphertext"` (migration 092): AES-256-GCM (`common/secret-box.ts`)
+`associations."lydiaBusinessKeyCiphertext"` (migration 100): AES-256-GCM (`common/secret-box.ts`)
 under a key derived by HKDF from `LYDIA_KEY_ENCRYPTION_SECRET`, with `<associationId>:<vendorToken>` as
 additional data, so a ciphertext copied to another row, or kept across a re-onboarding to another
 Business, does not open. **Write-only:** `GET` on the same path answers `{ set }` and nothing else, the

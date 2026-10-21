@@ -96,10 +96,10 @@ apply_copy_strips() {
   "$sql" "UPDATE associations SET \"lydiaDashboardUrl\" = NULL WHERE \"lydiaDashboardUrl\" IS NOT NULL;" "$database"
   "$sql" "UPDATE purchase_records SET \"stripePaymentIntentId\" = NULL WHERE \"stripePaymentIntentId\" IS NOT NULL;" "$database"
   "$sql" "UPDATE submissions SET \"stripeSessionId\" = NULL WHERE \"stripeSessionId\" IS NOT NULL;" "$database"
-  # The ENCRYPTED Lydia Business key (migration 092). Ciphertext under production's secret, which
+  # The ENCRYPTED Lydia Business key (migration 100). Ciphertext under production's secret, which
   # neither dev nor a laptop holds (`env-from-prod.sh` regenerates it), so it could not open there -
   # stripped anyway, because "unreadable today" is a property of a secret that may be shared tomorrow.
-  # Guarded on the column EXISTING: a dump taken before production ran 092 has none to clear, and
+  # Guarded on the column EXISTING: a dump taken before production ran 100 has none to clear, and
   # an UPDATE naming it would stop the whole copy.
   "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'associations' AND column_name = 'lydiaBusinessKeyCiphertext') THEN UPDATE associations SET \"lydiaBusinessKeyCiphertext\" = NULL WHERE \"lydiaBusinessKeyCiphertext\" IS NOT NULL; END IF; END \$\$;" "$database"
   printf '%s   payment identifiers cleared: 9 columns across users, associations, purchase_records, submissions\n' "$prefix"
