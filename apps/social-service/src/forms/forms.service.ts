@@ -19,6 +19,7 @@ import {
   PREVIOUS_PAYMENT_OPEN,
   ALREADY_ANSWERED,
   answerHoldingWhere,
+  pickShownAnswer,
   SETTLED_PAYMENT_STATUSES,
   CONFIRMABLE_PAYMENT_STATUSES,
   LYDIA_REQUEST_UUID_RE,
@@ -898,10 +899,15 @@ export class FormsService {
     // "answered" is exactly what the server refuses a second answer for - `paid_over_capacity`
     // included, which used to show an active pay button the server then answered 409. A checkout
     // abandoned past the hold is no longer an answer, so the person may answer again.
-    const submission = await this.submissionRepo.findOne({
-      where: answerHoldingWhere(formId, { userId }),
-      order: { createdAt: 'DESC' },
-    });
+    // EVERY such row is read, as the guard reads them, and the one shown is the most decided
+    // (`pickShownAnswer`): a legacy older `paid` behind a newer live `pending` showed "pending",
+    // and the page offered a retry the server then refused with ALREADY_ANSWERED.
+    const submission = pickShownAnswer(
+      await this.submissionRepo.find({
+        where: answerHoldingWhere(formId, { userId }),
+        order: { createdAt: 'DESC' },
+      })
+    );
     return {
       hasSubmitted: !!submission,
       paymentStatus: submission?.paymentStatus,

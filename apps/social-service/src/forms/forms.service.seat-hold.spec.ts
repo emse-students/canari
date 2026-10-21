@@ -145,6 +145,15 @@ describe('FormsService - the seat a pending payment holds', () => {
         async ({ where }: { where: Record<string, unknown>[] }) =>
           rows.filter((r) => matches(r, where)).length
       ),
+      find: jest.fn(
+        async ({ where, order }: { where: Record<string, unknown>[]; order?: object }) => {
+          expect(order).toEqual({ createdAt: 'DESC' });
+          return rows
+            .filter((r) => matches(r, where))
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+            .map((r) => ({ ...r }));
+        }
+      ),
       update: jest.fn(async (id: string, values: Partial<Row>) => {
         Object.assign(byId(id), values);
       }),
@@ -1056,7 +1065,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     });
 
     // P1-b (2026-10-21): a submit after a PAID answer issued a new request/do, and a second paid
-    // purchase was recorded for one answer. Control: with the ALREADY_ANSWERED guard removed from
+    // purchase was recorded for one answer. Control: with BOTH ALREADY_ANSWERED checks removed from
     // `submit`, these fail on the request issued and the second row written.
     it.each([['paid'], ['paid_over_capacity'], ['free'], ['pending_cash']])(
       'refuses a second submit once a %s answer exists, issuing NO request',
@@ -1164,6 +1173,50 @@ describe('FormsService - the seat a pending payment holds', () => {
         });
       }
     );
+
+    // The guard UNDER THE LOCK is the authoritative one: two submits of the same person in parallel
+    // both pass the early guard (neither row exists yet) and queue on the form lock. A FREE form
+    // has no live pending row for the second to trip on, so only the lock-held check stops it from
+    // inserting a second answer. Control: with that check removed, two `free` rows are written.
+    it('refuses the second of two simultaneous answers by the same person, under the lock', async () => {
+      const { service, rows } = makeStore({ maxSubmissions: null, rows: [] });
+      const results = await Promise.allSettled([retry(service), retry(service)]);
+      expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+      const refusal = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      expect((refusal.reason as ConflictException).getResponse()).toMatchObject({
+        code: ALREADY_ANSWERED,
+      });
+      expect(rows.map((r) => r.paymentStatus)).toEqual(['free']);
+    });
+
+    // Review of #2215: a legacy OLDER paid row behind a NEWER live pending one. The page took the
+    // newest and showed "pending", offering a retry the guard refuses with ALREADY_ANSWERED.
+    // Control: with the newest row picked again, both orders show `pending`.
+    it.each([['paid'], ['paid_over_capacity'], ['free']])(
+      'shows an older %s answer over a newer live pending row, in either insertion order',
+      async (status) => {
+        const settled = row({ id: 'old', paymentStatus: status, createdAt: ago(3_600_000) });
+        const live = mine({ createdAt: ago(60_000) });
+        for (const rows of [
+          [settled, live],
+          [live, settled],
+        ]) {
+          const { service } = makeStore({ maxSubmissions: null, basePrice: 1500, rows });
+          await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
+            hasSubmitted: true,
+            paymentStatus: status,
+          });
+        }
+      }
+    );
+
+    it('shows the live pending row when it is the only answer', async () => {
+      const { service } = makeStore({ maxSubmissions: null, basePrice: 1500, rows: [mine()] });
+      await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
+        hasSubmitted: true,
+        paymentStatus: 'pending',
+      });
+    });
 
     // The page reads the same predicate as the guard: a paid-over-capacity answer is answered.
     it('shows a paid-over-capacity answer as answered, as the guard refuses it', async () => {

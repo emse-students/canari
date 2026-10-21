@@ -144,6 +144,23 @@ export function answerHoldingWhere(
   ];
 }
 
+/**
+ * The one answer the form page shows among a person's answer rows (`answerHoldingWhere`, newest
+ * first): money landed (`SETTLED_PAYMENT_STATUSES`) first, then any other decided status (`free`,
+ * `pending_cash`), and an online `pending` last - it is the only one a retry may replace, so
+ * showing it over a paid row offers a retry the server refuses. Newest first within each rank.
+ */
+export function pickShownAnswer<T extends { paymentStatus: string }>(
+  newestFirst: readonly T[]
+): T | undefined {
+  const rank = (row: T) =>
+    SETTLED_PAYMENT_STATUSES.has(row.paymentStatus) ? 0 : row.paymentStatus === 'pending' ? 2 : 1;
+  return newestFirst.reduce<T | undefined>(
+    (best, row) => (best === undefined || rank(row) < rank(best) ? row : best),
+    undefined
+  );
+}
+
 /** An online `pending` submission still younger than the hold: the one branch with a clock in it. */
 export function livePendingWhere(
   formId: string,
