@@ -26,6 +26,13 @@ export interface MlsStatePersister {
   persistNow(): void;
   /** Marks state dirty in RAM (no disk write until an encrypted checkpoint). */
   scheduleDeferred(): void;
+  /**
+   * Records a frame the pipeline read WITHOUT going through the conversation path (a key-group
+   * frame, a frame refused for its sender): it spent a ratchet generation. Touches only the
+   * measurement switch's counters - no dirty flag, no write - so it changes nothing while the switch
+   * is off. `structural` is a commit: it makes the next drain checkpoint, never be skipped.
+   */
+  noteReceivedFrame(structural: boolean): void;
   /** Flushes encrypted checkpoint immediately if dirty. */
   flush(): Promise<void>;
   /** Alias for {@link flush} — encrypted checkpoint for backgrounding / logout. */
@@ -61,6 +68,8 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
   let urgentSinceCheckpoint = false;
   /** Application frames decrypted since the last checkpoint started (ratchet generations unsaved). */
   let framesSinceCheckpoint = 0;
+  /** The running checkpoint was covering an urgent change (a commit): its failure is still owed. */
+  let inFlightUrgent = false;
 
   async function runSaveEncrypted(): Promise<void> {
     await yieldToMainThread();
@@ -89,6 +98,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     const framesAtStart = framesSinceCheckpoint;
     urgentSinceCheckpoint = false;
     framesSinceCheckpoint = 0;
+    inFlightUrgent = urgentAtStart;
     inFlightEncrypted = runSaveEncrypted()
       .catch((e) => {
         urgentSinceCheckpoint = urgentSinceCheckpoint || urgentAtStart;
@@ -102,6 +112,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
       })
       .finally(() => {
         inFlightEncrypted = null;
+        inFlightUrgent = false;
       });
     return inFlightEncrypted;
   }
@@ -145,6 +156,11 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     framesSinceCheckpoint += 1;
   }
 
+  function noteReceivedFrame(structural: boolean): void {
+    if (structural) urgentSinceCheckpoint = true;
+    else framesSinceCheckpoint += 1;
+  }
+
   function persistNow(): void {
     dirtyEncrypted = true;
     urgentSinceCheckpoint = true;
@@ -161,6 +177,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
   return {
     persistNow,
     scheduleDeferred,
+    noteReceivedFrame,
     flush: flushEncryptedInternal,
     flushEncrypted: flushEncryptedInternal,
     onBulkIngestStart() {
@@ -197,6 +214,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
       if (
         receiveSkipBudget > 0 &&
         !urgentSinceCheckpoint &&
+        !(inFlightEncrypted && inFlightUrgent) &&
         framesSinceCheckpoint < receiveSkipBudget
       ) {
         // Live receive-only drain with fewer unsaved frames than the budget: the state stays dirty

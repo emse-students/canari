@@ -4,6 +4,10 @@ vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
 import { BaseMlsService } from './BaseMlsService';
+import {
+  registerMlsStatePersister,
+  unregisterMlsStatePersister,
+} from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
 import {
   describeKeyGroupFrameLosses,
@@ -1142,5 +1146,39 @@ describe('a key group this device was evicted from', () => {
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith('g-1', 'evicted');
     quiet.forEach((q) => q.mockRestore());
+  });
+});
+
+describe('a key-group frame tells the persister what it spent', () => {
+  function withPersisterSpy() {
+    const noteReceivedFrame = vi.fn();
+    registerMlsStatePersister({ noteReceivedFrame } as any);
+    return noteReceivedFrame;
+  }
+
+  afterEach(() => unregisterMlsStatePersister());
+
+  function registered(overrides: Record<string, unknown> = {}) {
+    const ctx = makeCtx(overrides);
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+    return ctx;
+  }
+
+  it('a commit is STRUCTURAL, so the drain that carried it can never skip its checkpoint', async () => {
+    const note = withPersisterSpy();
+    const ctx = registered({ processIncomingMessage: vi.fn().mockResolvedValue(null) });
+
+    await route(ctx, 'g-1', 'peer', new Uint8Array([1]));
+
+    expect(note).toHaveBeenCalledWith(true);
+  });
+
+  it('a seed or application frame spends a generation and is counted as one', async () => {
+    const note = withPersisterSpy();
+    const ctx = registered();
+
+    await route(ctx, 'g-1', 'peer', new Uint8Array([1]));
+
+    expect(note).toHaveBeenCalledWith(false);
   });
 });

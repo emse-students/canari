@@ -399,3 +399,69 @@ describe('createMlsStatePersister - receive-skip measurement switch', () => {
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('createMlsStatePersister - frames read outside the conversation path', () => {
+  const live = { bufferUi: true, showOverlay: false };
+
+  function make(budget: number, persistImpl?: () => Promise<void>) {
+    const persistCheckpoint = vi.fn(persistImpl ?? (() => Promise.resolve()));
+    const persister = createMlsStatePersister({
+      mlsService: { persistCheckpoint } as any,
+      receiveSkipBudget: budget,
+    });
+    return { persistCheckpoint, persister };
+  }
+
+  it('a structural note (a key-group commit) makes the drain checkpoint instead of skip', async () => {
+    const { persistCheckpoint, persister } = make(10);
+    persister.onBulkIngestStart();
+    persister.noteReceivedFrame(true);
+    await persister.onBulkIngestEnd(live);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('counted notes spend the budget: a drain of key-group seeds cannot skip for ever', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { persistCheckpoint, persister } = make(3);
+    persister.onBulkIngestStart();
+    for (let i = 0; i < 3; i++) persister.noteReceivedFrame(false);
+    await persister.onBulkIngestEnd(live);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('notes change nothing while the switch is OFF: no write, no dirty flag', async () => {
+    const { persistCheckpoint, persister } = make(0);
+    persister.noteReceivedFrame(true);
+    persister.noteReceivedFrame(false);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+    await persister.flush();
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('ON does not skip while an URGENT checkpoint is in flight, so its failure is retried', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let rejectWrite: (e: Error) => void = () => {};
+    let calls = 0;
+    const { persistCheckpoint, persister } = make(10, () => {
+      calls += 1;
+      return calls === 1
+        ? new Promise<void>((_, reject) => {
+            rejectWrite = reject;
+          })
+        : Promise.resolve();
+    });
+    persister.persistNow();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+    // A receive-only drain ends while the urgent write is still running.
+    persister.onBulkIngestStart();
+    persister.scheduleDeferred();
+    await persister.onBulkIngestEnd(live);
+    rejectWrite(new Error('disk'));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(persistCheckpoint).toHaveBeenCalledTimes(2);
+  });
+});

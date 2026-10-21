@@ -99,7 +99,14 @@ today's behaviour, pinned by a test), read by `receiveCheckpointSkipBudget`
 - The budget counts application FRAMES (ratchet generations, one `scheduleDeferred` each), not
   drains: a catch-up drain of hundreds of frames reaches it and checkpoints at once. The cap (500)
   stays under `maximum_forward_distance` (2000).
-- A failed write restores the urgency it was covering, so the retry is not skipped.
+- A failed write restores the urgency it was covering, so the retry is not skipped, and no skip is
+  decided while an urgent checkpoint is still in flight.
+- Frames read outside the conversation path report themselves (`noteReceivedFrame`): a key-group
+  commit is structural (never skipped), a key-group seed or a frame refused for its sender spends a
+  counted generation, and a partial gap replay (`applied > 0`, not healed) asks for a checkpoint.
+- **The real worst case** is K-1 skipped frames plus the size of the drain that reaches the budget
+  (that drain checkpoints, but a kill during it loses it): with the cap of 500 that stays under
+  `maximum_forward_distance` (2000) while a drain stays under ~1500 frames.
 - It logs at warn on every skip. An explicit `flush` (background, logout, send) writes as before.
 - **To use it on the Mi 9T:** `VITE_DEPLOY_ENVIRONMENT=development` must be set before
   `bun a1apk.mjs --debug` (the bench build does not set it, and a store tester WebView is not

@@ -2,6 +2,7 @@ vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
   saveMlsStateEncrypted: vi.fn().mockResolvedValue(undefined),
   purgeLegacyPlainMlsState: vi.fn().mockResolvedValue(undefined),
+  fromBase64: vi.fn(() => new Uint8Array([1])),
 }));
 
 vi.mock('$lib/proto/codec', () => ({
@@ -54,6 +55,7 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 
 import { setupMessageHandler } from './setupMessageHandler';
 import { resetUnackedFrames } from './unackedFrames';
+import { activeMlsStatePersister } from '../mlsStatePersisterRegistry';
 import { m } from '$lib/paraglide/messages';
 import * as codec from '$lib/proto/codec';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
@@ -1425,5 +1427,43 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(mls.fetchCommitsSince).not.toHaveBeenCalled();
     expect(mls.forgetGroup).toHaveBeenCalledWith(gid, 0);
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything());
+  });
+
+  it('asks for a checkpoint when a replay applied commits without closing the gap', async () => {
+    const gid = 'c5555555-5555-4555-8555-555555555555';
+    const deps = baseDeps({
+      conversations: createTestConversations([
+        [gid, emptyConversation(gid, { lifecycle: 'active' })],
+      ]),
+    });
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([gid]);
+    mls.getEpoch = vi.fn().mockReturnValue(7);
+    // The live frame fails with an epoch gap; the replayed commit then applies, but the epoch the
+    // stub reports never reaches the server's, so the gap is NOT healed (applied=1, healed=false).
+    mls.processIncomingMessage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Process error: epoch gap [msg_epoch=13, group_epoch=7]'))
+      .mockResolvedValue(null);
+    mls.fetchCommitsSince = vi.fn().mockResolvedValue({
+      commits: [{ baseEpoch: 7, proto: 'AQ==' }],
+      activeEpoch: 20,
+      belowFloor: false,
+    });
+    setupMessageHandler(deps as any);
+    const persistNow = vi.spyOn(activeMlsStatePersister()!, 'persistNow');
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+
+    await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
+
+    expect(mls.processIncomingMessage).toHaveBeenCalledTimes(2);
+    expect(persistNow).toHaveBeenCalled();
   });
 });

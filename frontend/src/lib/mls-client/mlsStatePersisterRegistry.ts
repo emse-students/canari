@@ -67,6 +67,16 @@ export function scheduleOutboundMlsPersist(): void {
   activePersister?.persistNow();
 }
 
+/**
+ * Tells the persister a frame was read outside the conversation path (a key-group frame, one refused
+ * for its sender), so the measurement switch counts the generation it spent - or, for a commit
+ * (`structural`), never skips the checkpoint that follows. A no-op outside a session, and it writes
+ * nothing: see {@link MlsStatePersister.noteReceivedFrame}.
+ */
+export function noteInboundMlsFrame(structural: boolean): void {
+  activePersister?.noteReceivedFrame(structural);
+}
+
 /** Flushes the encrypted MLS checkpoint if a persister is registered (logout / background). */
 export async function flushActiveMlsStateEncrypted(): Promise<void> {
   await activePersister?.flushEncrypted();

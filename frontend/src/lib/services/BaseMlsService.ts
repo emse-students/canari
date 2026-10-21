@@ -36,6 +36,7 @@ import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
   persistMlsStructuralCheckpoint,
   scheduleOutboundMlsPersist,
+  noteInboundMlsFrame,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import {
   MAX_BURN_GENERATIONS,
@@ -3982,9 +3983,16 @@ export abstract class BaseMlsService implements IMlsService {
       });
     } catch (e) {
       // REFUSED FOR ITS SENDER, BUT DECRYPTED: the generation is spent all the same (WP-G2-1b).
-      if (e instanceof SenderMismatchError) noteFrameConsumed(this.userId, groupId, ciphertext);
+      if (e instanceof SenderMismatchError) {
+        noteFrameConsumed(this.userId, groupId, ciphertext);
+        noteInboundMlsFrame(false);
+      }
       throw e;
     }
+    // A key-group commit (null plaintext) is structural, and a seed or application frame spends a
+    // generation: neither goes through the conversation path, so the persister is told here or a
+    // live drain of them would look receive-only and empty to the measurement switch.
+    noteInboundMlsFrame(plaintext === null);
     // A DISTRIBUTION FRAME SPENDS A GENERATION LIKE ANY OTHER, so it is recorded like any other.
     // This group's frames are not what a conversation replay walks, so the mark is cheap insurance
     // rather than a known fix - and the direction it can be wrong in is the safe one: a recorded
