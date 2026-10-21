@@ -135,8 +135,11 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
 Steps 2-4 are done; step 1 is not: #1911's first stable is `v1.2.9` and the floor reads `1.2.7`. It
 ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
-**What flips it:** `minClientVersion` at `1.2.9` or more on BOTH estates (the user's gesture), then a
-pull request setting the constant to `true`.
+**The exact precondition to set it to `true` (user, 2026-10-22):** `minClientVersion` at or above the
+version that CARRIES #2228 (not merely `1.2.9`: that build also declares the `form-responses` host and
+knows the type), on BOTH estates, once BOTH Play AND the App Store serve that version. The switch stays
+ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
+pins it, run by someone else.
 
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 

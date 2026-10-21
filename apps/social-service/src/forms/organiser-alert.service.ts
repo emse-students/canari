@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { PostNotificationsService } from '../posts/post-notifications.service';
+import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { PushService } from '../push/push.service';
 import { formPaidOverCapacityContent } from '../push/push-content';
 import { FORM_RESPONSES_TARGET } from '../push/push-target';
@@ -16,9 +16,10 @@ import type { Form } from './entities/form.entity';
  * change can take back (legacy-compatibility.md, "a NEW notification type"). #1911's first stable is
  * `v1.2.9`; `minClientVersion` reads `1.2.7` on both estates since 2026-10-17 (backlog.md).
  *
- * WHAT FLIPS IT: `minClientVersion` raised to `1.2.9` or more in `/admin/platform` on BOTH estates
- * (production and dev each hold their own row) - the user's own gesture, once both stores serve it -
- * THEN a pull request setting this to `true`. A runtime read of the floor was not taken: the floor
+ * WHAT FLIPS IT (user, 2026-10-22): `minClientVersion` at or above the version that CARRIES #2228
+ * (not merely `1.2.9`: that build also declares the `form-responses` host), on BOTH estates
+ * (production and dev each hold their own row), once BOTH Play AND the App Store serve it - THEN a
+ * follow-up pull request setting this to `true` and changing the spec that pins it. A runtime read of the floor was not taken: the floor
  * lives in core-service's `platform_config`, and this service reads it nowhere else.
  *
  * While it is off a payment over capacity still lands, is still logged at WARN by `markPaid`, and
@@ -31,7 +32,6 @@ export const FORM_PAID_OVER_CAPACITY_TYPE = 'form_paid_over_capacity';
 
 /** Who the row names as its actor: nobody acted on the organiser, a payment provider answered. */
 const SYSTEM_ACTOR_ID = 'system';
-const SYSTEM_ACTOR_NAME = 'Canari';
 
 /**
  * TELLS A FORM'S MANAGERS THAT A PAYMENT LANDED ON IT WHILE IT WAS FULL - a refund they owe.
@@ -44,7 +44,8 @@ const SYSTEM_ACTOR_NAME = 'Canari';
  * WHO: the form's owner, and every member of its association whose OWN bitmask holds
  * `MANAGE_FORMS` (`listFlagHolders`, the member tier of `mayAct`: the same bit `callerHasFlag`
  * tests). The two tiers `mayAct` adds above it are left out on purpose: a global administrator as
- * such (decided 2026-10-15), and the BDE super-admin of the association's space - the tap opens
+ * such (decided 2026-10-15), and the BDE super-admin of the association's space (decided by the
+ * user on 2026-10-22, minimisation: a notice must lead to a page its recipient can open) - the tap opens
  * `/forms`, whose list is the reader's own forms and those of associations where they hold
  * `MANAGE_FORMS` themselves (`FormsService.list`), so a super-admin would be told about a form that
  * list does not show them. Filtering the member tier through `mayAct` again would be a no-op.

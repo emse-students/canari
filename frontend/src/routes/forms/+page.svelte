@@ -4,6 +4,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { page } from '$app/state';
   import { FORM_RESPONSES_PARAM } from '$lib/forms/responsesLink';
+  import { Log } from '$lib/utils/Log';
   import { showToast } from '$lib/stores/toast.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
@@ -124,7 +125,8 @@
    * A LINK NAMING ONE FORM'S RESPONSES (`responsesLink.ts`) - the organiser alert for a payment
    * over capacity, from the bell or a push tap - opens that accordion once the list has loaded, and
    * brings it into view. A form the list does not hold (deleted, or not this reader's to manage) is
-   * said in the log rather than guessed at: the list stays as it is.
+   * said in the log (`Log.i`, so it reaches the in-app log a device reading sees) rather than
+   * guessed at: the list stays as it is.
    */
   $effect(() => {
     const wanted = page.url.searchParams.get(FORM_RESPONSES_PARAM);
@@ -135,7 +137,7 @@
 
   async function openResponsesFromLink(formId: string) {
     if (!forms.some((f) => f.id === formId)) {
-      console.warn(`[forms] responses link names form ${formId}, which this list does not hold`);
+      Log.i('forms.responsesLink', `form ${formId} is not on this list - nothing opened`);
       return;
     }
     if (!expandedForms[formId]) await toggleResponses(formId);
