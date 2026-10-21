@@ -581,7 +581,10 @@ was recreated, not rebased):
   the previous call's keys - which this notice would have blamed on the app's version. Every await
   of `startCall`/`acceptCall` is now followed by `assertSetupLive` (a sequence bumped at each setup
   and each cleanup): a late microphone is stopped, late keys are zeroed and never posted, and no
-  socket or ring follows (`CallSetupAbandonedError`, no toast).
+  socket or ring follows (`CallSetupAbandonedError`, no toast). The ended summary counts as over
+  too: ICE connecting inside it no longer turns `ended` back into `incall` (which skipped `cleanup`
+  and left the microphone open), the signalling socket checks the same sequence before it opens, and
+  `cleanup` settles a pending worker-key wait so its 3 s timer never reaches the next call.
 - **The key log is a hash**: `media keys derived from MLS (role= send_fp= recv_fp=, sha256)`, the
   first 4 bytes of each key's SHA-256 (`keyFingerprint`), never key bytes. A build older than
   2026-10-21 printed key bytes: never paste its `fp=` line.

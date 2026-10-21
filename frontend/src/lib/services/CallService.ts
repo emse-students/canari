@@ -288,6 +288,8 @@ export class CallService {
    * `cleanup`, so a setup step resuming after its call ended can tell (`assertSetupLive`).
    */
   private callSetupSeq = 0;
+  /** Settles the pending `ensureWorkerKeyReady` wait, if any (`cleanup` calls it). */
+  private abandonWorkerKeyWait: (() => void) | null = null;
   /** The previous reading's byte totals on the CURRENT peer connection, so the next states a rate. */
   private lastSnapshot: MediaSnapshot | null = null;
   /**
@@ -714,7 +716,7 @@ export class CallService {
       this.installBackgroundHandler();
       await this.setupEncryption(groupId, roomId, 'caller', seq);
       // The caller joins first, so the relay makes it the initiator when the callee arrives.
-      await this.connectSignalling(roomId);
+      await this.connectSignalling(roomId, seq);
       // Before the ring: a call that ended while the socket joined must ring nobody.
       this.assertSetupLive(seq, 'after the join');
       // The ring OPENS the server's answer window, and it goes BEFORE the invite: no callee can
@@ -830,7 +832,7 @@ export class CallService {
       await this.setupMedia(useVideo, seq);
       this.installBackgroundHandler();
       await this.setupEncryption(groupId, callId, 'callee', seq);
-      await this.connectSignalling(callId);
+      await this.connectSignalling(callId, seq);
       this.assertSetupLive(seq, 'after the join');
       this.syncCallPresence(true);
     } catch (e) {
@@ -1012,6 +1014,8 @@ export class CallService {
       this.signaledWs.close();
       this.signaledWs = null;
     }
+    // A key wait still pending belongs to this call: settled now, never by its timer in the next.
+    this.abandonWorkerKeyWait?.();
     if (this.encryptionWorker) {
       const worker = this.encryptionWorker;
       this.encryptionWorker = null;
@@ -1324,6 +1328,7 @@ export class CallService {
    */
   private async connectSignalling(
     roomId: string,
+    seq: number,
     joinToken = this.currentRoomToken,
     attemptTimeoutMs?: number
   ) {
@@ -1348,11 +1353,10 @@ export class CallService {
     } catch {
       appendLog('[Call] signalling WS: no in-memory token, relying on canari_ws_token cookie');
     }
-    // The call may have ended during that await (a resume racing a hangup): opening a socket now
-    // would seat a device in a call that is already over.
-    if (this.currentCallId !== roomId) {
-      throw new Error(`call ${roomId} ended before its signalling socket opened`);
-    }
+    // The call may have ended during that await (a hangup, a resume racing one, or the ended
+    // summary - where the room id still matches): opening a socket now would seat a device in a
+    // call that is already over.
+    this.assertSetupLive(seq, 'before the signalling socket');
 
     const wsUrl = `${wsBase}/api/call${tokenParam}`;
     appendLog(
@@ -1677,11 +1681,20 @@ export class CallService {
     if (this.currentCallId !== roomId || !this.signallingLost) return;
     this.resumeInFlight = true;
     let retry = false;
+    // The live call's sequence: a cleanup during the resume makes it stale (`assertSetupLive`).
+    const seq = this.callSetupSeq;
     try {
-      await this.connectSignalling(roomId, this.resumeToken, CALL_SIGNALLING_RESUME_TIMEOUT_MS);
+      await this.connectSignalling(
+        roomId,
+        seq,
+        this.resumeToken,
+        CALL_SIGNALLING_RESUME_TIMEOUT_MS
+      );
       appendLog(`[Call] signalling resumed on attempt ${this.resumeAttempts}`);
       this.resumeAttempts = 0;
     } catch (e) {
+      // The call ended during the resume: nothing to retry, nothing to end.
+      if (e instanceof CallSetupAbandonedError) return;
       if (e instanceof CallSignallingRefusedError) {
         appendLog(`[Call] signalling resume refused (${e.reason}) - the call is over`);
         this.endCall(false);
@@ -2146,7 +2159,15 @@ export class CallService {
       const state = pc.connectionState;
       appendLog(`[Call] connectionState=${state}`);
       if (state === 'connected') {
-        if (get(this.callState) !== 'idle') this.callState.set('incall');
+        // Only a RINGING call becomes `incall` here, as in `handleRemoteTrack`: ICE that connects
+        // during the 1.5 s summary must not turn `ended` back into a call - the summary's timer would
+        // then skip `cleanup`, leaving the microphone open under an overlay that says "in call".
+        const callState = get(this.callState);
+        if (callState === 'ended' || callState === 'idle') {
+          appendLog(`[Call] connected after the call ended (state=${callState}) - not reopened`);
+          return;
+        }
+        if (callState === 'calling' || callState === 'incoming') this.callState.set('incall');
         if (get(this.connectedAt) === null) this.connectedAt.set(Date.now());
         void pc
           .getStats()
@@ -2854,35 +2875,49 @@ export class CallService {
     this.callKeys = null;
   }
 
-  /** Pushes this call's two media keys into the encryption worker and waits until applied. */
+  /**
+   * Pushes this call's two media keys into the encryption worker and waits until applied. A
+   * `cleanup` during the wait SETTLES it (`abandonWorkerKeyWait`): its timer is cleared, so it can
+   * never fire into the NEXT call, and the wait rejects with `CallSetupAbandonedError`.
+   */
   private ensureWorkerKeyReady(): Promise<void> {
     if (!this.callKeys) return Promise.resolve();
     if (this.workerKeyReady) return this.workerKeyReady;
 
     const worker = this.getOrCreateEncryptionWorker();
-    this.workerKeyReady = new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => {
+    const ready: Promise<void> = new Promise<void>((resolve, reject) => {
+      /** Ends this wait: its timer, its listener, and its memo - only if the memo is still its own. */
+      const settle = (forget: boolean) => {
+        window.clearTimeout(timeout);
         worker.removeEventListener('message', onReady);
-        this.workerKeyReady = null;
+        if (forget && this.workerKeyReady === ready) this.workerKeyReady = null;
+        if (this.abandonWorkerKeyWait === abandon) this.abandonWorkerKeyWait = null;
+      };
+      const timeout = window.setTimeout(() => {
+        settle(true);
         reject(new Error('encryption worker key timeout'));
       }, 3_000);
+      const abandon = () => {
+        settle(true);
+        appendLog('[Call] the call ended while the worker took its keys - the wait is settled');
+        reject(new CallSetupAbandonedError('waiting for the worker to take the keys'));
+      };
       const onReady = (event: MessageEvent<{ type: string; detail?: string }>) => {
         if (event.data?.type === 'keyReady') {
-          window.clearTimeout(timeout);
-          worker.removeEventListener('message', onReady);
+          settle(false);
           // Only if this is still the call's worker: a call ended meanwhile cleared it.
           if (this.encryptionWorker === worker) this.workerKeyApplied = true;
           resolve();
         } else if (event.data?.type === 'keyError') {
-          window.clearTimeout(timeout);
-          worker.removeEventListener('message', onReady);
-          this.workerKeyReady = null;
+          settle(true);
           reject(new Error(event.data.detail ?? 'worker key import failed'));
         }
       };
+      this.abandonWorkerKeyWait = abandon;
       worker.addEventListener('message', onReady);
       const keys = this.callKeys;
       if (!keys) {
+        settle(true);
         reject(new Error('no call keys'));
         return;
       }
@@ -2891,7 +2926,8 @@ export class CallService {
       const receive = keys.receive.slice().buffer;
       worker.postMessage({ type: 'setKeys', send, receive }, [send, receive]);
     });
-    return this.workerKeyReady;
+    this.workerKeyReady = ready;
+    return ready;
   }
 
   /**

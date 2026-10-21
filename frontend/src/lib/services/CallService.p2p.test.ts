@@ -101,6 +101,8 @@ const workerAnswers = {
   last: null as { onmessage: ((e: MessageEvent) => void) | null } | null,
   /** The keys the service handed the last worker (`setKeys`). */
   keys: null as { send: ArrayBuffer; receive: ArrayBuffer } | null,
+  /** When set, the worker answers `setKeys` only once it settles: a key import still running. */
+  keysHold: null as Promise<void> | null,
 };
 
 /** The E2E worker: answers `setKeys` with `keyReady` and `report` with counters, as the real one does. */
@@ -151,9 +153,10 @@ vi.mock('../workers/encryption.worker?worker', () => ({
       }
       if (msg.type !== 'setKeys') return;
       workerAnswers.keys = { send: msg.send!, receive: msg.receive! };
+      const hold = workerAnswers.keysHold ?? Promise.resolve();
       // A TASK, as a real worker's answer is (another thread posts it): an `addTrack` whose
       // transform waited for it would be one task late, which Chromium short-circuits.
-      void flushMacrotask().then(() => {
+      void hold.then(flushMacrotask).then(() => {
         const e = { data: { type: 'keyReady' } } as MessageEvent;
         this.onmessage?.(e);
         // A copy: the service removes its listener from inside the callback.
@@ -521,6 +524,7 @@ beforeEach(() => {
   workerAnswers.video = { sender: 0, receiver: 0 };
   workerAnswers.reads = [];
   workerAnswers.keys = null;
+  workerAnswers.keysHold = null;
   order.length = 0;
   FakeSocket.instances = [];
   FakePeerConnection.instances = [];
@@ -3092,6 +3096,124 @@ describe('the call keys (port of #2013, 2026-10-21)', () => {
     );
   });
 
+  /** The next microphone prompt waits for `release()` (or fails with `refuse(e)`). */
+  function holdNextMicrophone() {
+    let release!: () => void;
+    let refuse!: (e: Error) => void;
+    const gate = new Promise<void>((resolve, reject) => {
+      release = resolve;
+      refuse = reject;
+    });
+    const md = navigator.mediaDevices as unknown as {
+      getUserMedia: (c: MediaStreamConstraints) => Promise<ReturnType<typeof fakeMicStream>>;
+    };
+    const real = md.getUserMedia;
+    const got: ReturnType<typeof fakeMicStream>[] = [];
+    md.getUserMedia = async (c) => {
+      md.getUserMedia = real;
+      await gate;
+      const stream = await real(c);
+      got.push(stream);
+      return stream;
+    };
+    return { release, refuse, got };
+  }
+
+  /** An incoming call, ringing on this device. */
+  async function ringing(service: CallService) {
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+  }
+
+  it('acceptCall: a hangup during the ended SUMMARY (same sequence, state ended) abandons the setup', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const mic = holdNextMicrophone();
+    const service = new CallService(fakeMls);
+    await ringing(service);
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    service.endCall();
+    expect(get(service.callState)).toBe('ended');
+    // The prompt is answered INSIDE the 1.5 s summary: cleanup has not run yet.
+    mic.release();
+    await accepted;
+    await settle();
+    expect(mic.got[0].getTracks()).toHaveLength(1);
+    for (const t of mic.got[0].getTracks() as unknown as ReturnType<typeof fakeTrack>[]) {
+      expect(t.stop).toHaveBeenCalledTimes(1);
+    }
+    expect(workerAnswers.keys).toBeNull();
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(showToast).not.toHaveBeenCalled();
+    expect(await logLines()).toContain(
+      '[Call] the call ended during its setup (after the microphone prompt, state=ended) - setup abandoned'
+    );
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(get(service.callState)).toBe('idle');
+  });
+
+  it('acceptCall: a step that FAILS after its call ended is logged, not shown as a call failure', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const mic = holdNextMicrophone();
+    const service = new CallService(fakeMls);
+    await ringing(service);
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    mic.refuse(new Error('NotAllowedError'));
+    await accepted;
+    await settle();
+    expect(showToast).not.toHaveBeenCalled();
+    expect(await logLines()).toContain(
+      '[Call] a setup step failed after its call ended: Error: NotAllowedError - not reported'
+    );
+  });
+
+  it('a key wait the cleanup interrupts is settled, and its timer never touches the NEXT call', async () => {
+    let release!: () => void;
+    workerAnswers.keysHold = new Promise<void>((r) => (release = r));
+    const service = new CallService(fakeMls);
+    const first = service.startCall('group-1', false);
+    await settle();
+    expect(workerAnswers.keys).not.toBeNull();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    await first;
+    expect(await logLines()).toContain(
+      '[Call] the call ended while the worker took its keys - the wait is settled'
+    );
+
+    // Call 2, keyed at once; then the first wait's 3 s would have passed.
+    workerAnswers.keysHold = null;
+    workerAnswers.keys = null;
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    expect(byte(workerAnswers.keys!.send)).toBe(CALLER);
+    await vi.advanceTimersByTimeAsync(3_000);
+    release();
+    await settle();
+    const lines = await logLines();
+    expect(lines.some((l) => l.includes('encryption worker key timeout'))).toBe(false);
+    // Call 2's transforms still find their worker keyed.
+    expect(get(service.callState)).not.toBe('idle');
+    expect(lines.some((l) => l.includes('the worker holds no call key'))).toBe(false);
+  });
+
   it("hands every transform its track's kind, authenticated by the worker in each frame", async () => {
     const service = new CallService(fakeMls);
     const ws = await callerJoined(service);
@@ -3250,6 +3372,20 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
     const [end] = await reports('end');
     // No `previous` from the dead peer connection: no rate at all, never a negative or a bogus one.
     expect(end).toContain('out_kbps=- in_kbps=-');
+  });
+
+  it('ICE connecting during the 1.5 s summary does not reopen the call: cleanup runs, the mic stops', async () => {
+    const { service, pc } = await liveCall();
+    const mic = get(service.localStreamStore)!.getTracks() as unknown as ReturnType<
+      typeof fakeTrack
+    >[];
+    service.endCall();
+    expect(get(service.callState)).toBe('ended');
+    pc.setConnection('connected');
+    expect(get(service.callState)).toBe('ended');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(get(service.callState)).toBe('idle');
+    for (const t of mic) expect(t.stop).toHaveBeenCalled();
   });
 
   it('zeroes the call keys at the end of the call', async () => {
