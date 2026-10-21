@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
-import { SocialApiError } from './api';
+import { amountBoundsOf, SocialApiError, socialRefusal } from './api';
 import { providerRefusalMessage } from './paymentRefusal';
 import { formatAmount } from '$lib/forms/fillAnswers';
 import { setLocale } from '$lib/paraglide/runtime';
@@ -61,6 +61,28 @@ describe('providerRefusalMessage', () => {
       maxCents: null,
     });
     expect(providerRefusalMessage(err)).toBe(m.shop_payment_amount_min({ min: formatAmount(100) }));
+  });
+
+  // The cash-grant and shop paths build their error in `socialRefusal`: the bounds survive it.
+  it('reads the bounds of a refused response built by socialRefusal (shop, cash grant)', async () => {
+    const res = new Response(
+      JSON.stringify({ code: 'AMOUNT_OUT_OF_RANGE', message: 'x', minCents: 100, maxCents: 5000 }),
+      { status: 400, headers: { 'content-type': 'application/json' } }
+    );
+    expect(providerRefusalMessage(await socialRefusal(res))).toBe(
+      m.shop_payment_amount_range({ min: formatAmount(100), max: formatAmount(5000) })
+    );
+  });
+
+  it('amountBoundsOf keeps only whole-cent bounds', () => {
+    expect(amountBoundsOf({ minCents: 50, maxCents: null })).toEqual({
+      minCents: 50,
+      maxCents: null,
+    });
+    expect(amountBoundsOf({ minCents: 50.5, maxCents: 100 })).toBeNull();
+    expect(amountBoundsOf({ minCents: 50, maxCents: '100' })).toBeNull();
+    expect(amountBoundsOf({ minCents: 50 })).toBeNull();
+    expect(amountBoundsOf(null)).toBeNull();
   });
 
   it('CONTROL: the range code with no bounds falls through to the generic line', () => {

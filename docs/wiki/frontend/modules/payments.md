@@ -195,7 +195,11 @@ package - `LYDIA_MIN/MAX_AMOUNT_CENTS` (core) and `PROVIDER_MIN/MAX_AMOUNT_CENTS
 `core-payment-error.ts`) - and both apps' specs assert them against
 `libs/contracts/payment-amount-range.json`, so they cannot drift. Every frontend refusal builder
 reads the bounds through `amountBoundsOf` (`associations/api.ts`), and `providerRefusalMessage`
-words them in the reader's locale (`formatAmount`), never echoing the server's English. In homologation the payer page offers a card form and, at its end, buttons to
+words them in the reader's locale (`formatAmount`), never echoing the server's English. A shop
+product's free amount (`customAmountCents`) and a manager's cash grant go through ONE bounds check
+(`assertWithinCustomBounds`, `products.service.ts`); the checkout body is typed inline and so never
+validated by the pipe, which is why `wholeCentsOf` refuses anything but a non-negative safe integer
+at the controller (`AMOUNT_INVALID`) - `5000.5` used to be charged rounded and recorded as sent. In homologation the payer page offers a card form and, at its end, buttons to
 choose the final status - a real card is refused at the 3-D Secure step, so never type one there.
 
 ## Where Lydia sends the payer back (2026-10-05)

@@ -1,5 +1,6 @@
 import { BadGatewayException, BadRequestException, HttpException } from '@nestjs/common';
 import { describeHttpError } from './http-error-log';
+import { sanitizeLog } from './log.utils';
 
 /** Mirrors core-service's `PAYMENT_PROVIDER_REFUSED` (`lydia-payment-provider.ts`): the body `code` of a refusal. */
 export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
@@ -27,6 +28,28 @@ export function amountOutOfRange(
   message: string
 ): BadRequestException {
   return new BadRequestException({ code: AMOUNT_OUT_OF_RANGE, message, minCents, maxCents });
+}
+
+/** The body `code` of a refusal because a client-sent amount is not a whole number of cents. */
+export const AMOUNT_INVALID = 'AMOUNT_INVALID';
+
+/**
+ * Reads a client-sent amount in cents at the request boundary: `undefined` stays `undefined` (no
+ * amount sent), anything else must be a non-negative safe integer or the request is refused with a
+ * typed `AMOUNT_INVALID` 400, logged. WHY: a body typed inline is never validated, so `5000.5`
+ * passed every bound and was charged ROUNDED (`toFixed(2)`) while the sale was recorded as sent,
+ * and a non-numeric string compares as NaN, which no `<` / `>` bound check ever refuses.
+ */
+export function wholeCentsOf(raw: unknown, logger: WarnLogger, what: string): number | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0) return raw;
+  logger.warn(
+    `[${what}] amount refused: not a whole non-negative number of cents (type=${typeof raw} value=${sanitizeLog(String(raw).slice(0, 32))})`
+  );
+  throw new BadRequestException({
+    code: AMOUNT_INVALID,
+    message: 'The amount must be a whole, non-negative number of cents',
+  });
 }
 
 /** Minimal logger surface, so a service passes its own `Logger` and the log carries ITS context. */

@@ -566,6 +566,60 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       ...overrides,
     } as Partial<AssociationProduct>);
 
+  describe('a cash grant on a free-amount product', () => {
+    const bounded = () =>
+      product({
+        type: 'other',
+        amountCents: null,
+        allowCustomAmount: true,
+        customAmountMinCents: 100,
+        customAmountMaxCents: 5000,
+      });
+
+    it('refuses an amount past the bounds with the typed code, both bounds, and a log line', async () => {
+      const { service, productRepo, purchaseRecordService } = makeService();
+      productRepo.findOne.mockResolvedValue(bounded());
+      productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
+      const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const err = await service
+        .grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1', amountCents: 6000 })
+        .catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'AMOUNT_OUT_OF_RANGE',
+        minCents: 100,
+        maxCents: 5000,
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cash grant amount refused'));
+      expect(purchaseRecordService.create).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: records an amount inside the bounds', async () => {
+      const { service, productRepo, purchaseRecordService } = makeService();
+      productRepo.findOne.mockResolvedValue(bounded());
+      productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
+      purchaseRecordService.create.mockResolvedValue({
+        id: 'rec1',
+        userId: 'user1',
+        source: 'product',
+        productId: 'prod1',
+        formId: null,
+        productName: 'Sweat',
+        amountCents: 3000,
+        paymentMethod: 'cash',
+        paidAt: new Date('2026-08-28T12:00:00Z'),
+      });
+
+      await service.grantProductPurchase('asso1', 'prod1', 'admin1', {
+        userId: 'user1',
+        amountCents: 3000,
+      });
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentMethod: 'cash', amountCents: 3000 })
+      );
+    });
+  });
+
   describe('a cash grant may not be recorded against a Cercle top-up', () => {
     it('refuses the grant, before touching the buyer or the books', async () => {
       const { service, productRepo, purchaseRecordService } = makeService();

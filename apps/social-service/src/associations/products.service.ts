@@ -976,6 +976,28 @@ export class ProductsService {
   }
 
   /**
+   * Refuses an amount outside a free-amount product's own bounds with the typed
+   * `AMOUNT_OUT_OF_RANGE` (both bounds, `null` max = unbounded), logged at the decision. ONE check
+   * for both ways an amount reaches such a product: the buyer's checkout and the manager's cash grant.
+   */
+  private assertWithinCustomBounds(
+    product: AssociationProduct,
+    associationId: string,
+    amountCents: number,
+    what: 'custom amount' | 'cash grant amount'
+  ): void {
+    const min = product.customAmountMinCents ?? 0;
+    const max = product.customAmountMaxCents ?? null;
+    if (amountCents >= min && (max === null || amountCents <= max)) return;
+    const allowed = `${min}-${max ?? 'unbounded'}`;
+    this.logger.warn(
+      `[SHOP] ${what} refused: product=${product.id.slice(0, 8)} association=${associationId.slice(0, 8)} ` +
+        `amount=${amountCents} allowed=${allowed} cents`
+    );
+    throw amountOutOfRange(min, max, `The ${what} must be between ${allowed} cents`);
+  }
+
+  /**
    * Loads product/association, validates purchase rules, and resolves the amount in cents.
    */
   private async resolvePurchase(
@@ -1044,19 +1066,7 @@ export class ProductsService {
         amountCents = product.amountCents;
       }
     } else if (product.allowCustomAmount && customAmountCents !== undefined) {
-      const min = product.customAmountMinCents ?? 0;
-      const max = product.customAmountMaxCents ?? Infinity;
-      if (customAmountCents < min || customAmountCents > max) {
-        this.logger.warn(
-          `[SHOP] custom amount refused: product=${product.id.slice(0, 8)} association=${associationId.slice(0, 8)} ` +
-            `amount=${customAmountCents} allowed=${min}-${Number.isFinite(max) ? max : 'unbounded'} cents`
-        );
-        throw amountOutOfRange(
-          min,
-          Number.isFinite(max) ? max : null,
-          `Custom amount must be between ${min} and ${Number.isFinite(max) ? max : 'unbounded'} cents`
-        );
-      }
+      this.assertWithinCustomBounds(product, associationId, customAmountCents, 'custom amount');
       amountCents = customAmountCents;
     } else {
       throw new BadRequestException('No amount provided for this product');
@@ -1417,11 +1427,7 @@ export class ProductsService {
     }
 
     if (product.allowCustomAmount && product.customAmountMinCents != null) {
-      const min = product.customAmountMinCents;
-      const max = product.customAmountMaxCents ?? Infinity;
-      if (amountCents < min || amountCents > max) {
-        throw new BadRequestException(`amountCents must be between ${min} and ${max}`);
-      }
+      this.assertWithinCustomBounds(product, associationId, amountCents, 'cash grant amount');
     }
 
     this.logger.log(
