@@ -155,7 +155,7 @@ describe('"load all" on a card that has written comments (through the real ledge
 
   async function loadAll(target: HTMLElement) {
     const button = [...target.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === m.post_load_all_comments_label()
+      (b) => b.textContent?.trim() === m.post_comment_load_older_label()
     )!;
     button.click();
     await flushMacrotask();
@@ -170,9 +170,10 @@ describe('"load all" on a card that has written comments (through the real ledge
   it('a read issued AFTER a comment write adopts every row and their count', async () => {
     const answer = serveRead();
     const target = mountCard(
+      // The server counts more than the 25 rows held: that is what offers "view older comments".
       row(
         Array.from({ length: 25 }, (_, i) => comment(i)),
-        25
+        30
       )
     );
     publishPostComments('p1', { kind: 'upsert', comment: comment(40) }, elsewhere);
@@ -189,38 +190,44 @@ describe('"load all" on a card that has written comments (through the real ledge
   it('a deletion answered while the read is out keeps the count WITH the rows', async () => {
     const answer = serveRead();
     const target = mountCard(
+      // The feed row carries 25 of the 30 the server holds, which is what offers "view older comments".
       row(
         Array.from({ length: 25 }, (_, i) => comment(i)),
-        25
+        30
       )
     );
 
     await loadAll(target);
     publishPostComments('p1', { kind: 'remove', ids: ['c3'], count: 1 }, elsewhere);
     flushSync();
-    answer(Array.from({ length: 25 }, (_, i) => comment(i)));
+    answer(Array.from({ length: 30 }, (_, i) => comment(i)));
+    // The write answered while the read was out wins over it: the held rows stay, and the count
+    // moved by exactly what the write moved the rows.
     await settleRead();
 
     expect(rows(target)).toBe(24);
-    expect(shownCount(target)).toContain('24');
+    expect(shownCount(target)).toContain('29');
   });
 
   it('an addition answered while the read is out keeps the count WITH the rows', async () => {
     const answer = serveRead();
     const target = mountCard(
+      // The feed row carries 25 of the 30 the server holds, which is what offers "view older comments".
       row(
         Array.from({ length: 25 }, (_, i) => comment(i)),
-        25
+        30
       )
     );
 
     await loadAll(target);
     publishPostComments('p1', { kind: 'upsert', comment: comment(40) }, elsewhere);
     flushSync();
-    answer(Array.from({ length: 25 }, (_, i) => comment(i)));
+    answer(Array.from({ length: 30 }, (_, i) => comment(i)));
+    // The write answered while the read was out wins over it: the held rows stay, and the count
+    // moved by exactly what the write moved the rows.
     await settleRead();
 
     expect(rows(target)).toBe(26);
-    expect(shownCount(target)).toContain('26');
+    expect(shownCount(target)).toContain('31');
   });
 });

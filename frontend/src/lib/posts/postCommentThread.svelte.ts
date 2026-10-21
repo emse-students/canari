@@ -32,6 +32,11 @@ import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
 import { publishFailureMessage } from '$lib/posts/publishFailure';
 import { withCommentCountDelta, type CommentChange } from '$lib/posts/commentChange';
 import { PostListeners } from '$lib/posts/postListeners';
+import {
+  PERSONAL_COMMENT_IDENTITY,
+  commentIdentityFields,
+  type CommentIdentity,
+} from '$lib/posts/postIdentity';
 import { Log } from '$lib/utils/Log';
 import { m } from '$lib/paraglide/messages';
 
@@ -115,12 +120,17 @@ export class PostCommentThread {
    * listed in `pending`, and `clear` empties the caller's box at that moment. A mute already known
    * refuses before anything moves ('refused', the box keeps the text); a failure afterwards removes
    * ONLY the row this write added ('failed', the caller puts the text back).
+   *
+   * `identity` is who the comment is written as. The row is drawn as THAT identity at once - an
+   * anonymous comment never flashes the writer's name, an association's carries its card - and the
+   * request carries the same choice, so the row and the answer cannot disagree about whose it is.
    */
   async add(
     text: string,
     parentId: string | undefined,
     media: PostMediaRef | undefined,
-    clear: () => void
+    clear: () => void,
+    identity: CommentIdentity = PERSONAL_COMMENT_IDENTITY
   ): Promise<CommentOutcome> {
     const userId = this.host.userId().trim();
     if ((!text && !media) || !userId) return 'refused';
@@ -133,7 +143,10 @@ export class PostCommentThread {
     const pendingId = `pending-${crypto.randomUUID()}`;
     const row: PostComment = {
       id: pendingId,
-      userId,
+      // The account is withheld from an anonymous or association row, as the server withholds it.
+      ...(identity.kind === 'personal' ? { userId } : {}),
+      ...(identity.kind === 'anonymous' ? { anonymous: true } : {}),
+      ...(identity.kind === 'association' ? { association: { ...identity.association } } : {}),
       text,
       parentId: parentId ?? null,
       likes: [],
@@ -152,7 +165,12 @@ export class PostCommentThread {
     this.host.begin();
     try {
       await assertNotMuted();
-      const result = await addComment(this.host.read().id, { text, parentId, media });
+      const result = await addComment(this.host.read().id, {
+        text,
+        parentId,
+        media,
+        ...commentIdentityFields(identity),
+      });
       this.host.write(withComment(this.host.read(), pendingId, result.comment));
       this.announce({ kind: 'upsert', comment: result.comment });
       return 'sent';

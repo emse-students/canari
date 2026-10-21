@@ -39,6 +39,9 @@ vi.mock('$lib/posts/api', async (importOriginal) => ({
   editComment: vi.fn(),
   deleteComment: vi.fn(),
 }));
+// A delete asks first; the test answers yes.
+vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn().mockResolvedValue(true) }));
+
 vi.mock('$lib/utils/apiFetch', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/apiFetch')>()),
   apiFetch: vi.fn(),
@@ -354,7 +357,7 @@ function comment(i: number, extra: Partial<PostComment> = {}): PostComment {
 }
 
 it('an edited comment is not put back by a row read before the edit answered', async () => {
-  const mine = comment(1, { userId: 'alice', text: 'old words' });
+  const mine = comment(1, { userId: 'alice', text: 'old words', canEdit: true, canDelete: true });
   const { target, props } = mountCard(row({ comments: [mine] }), true);
   const getIssuedAt = nextPostSequence();
   vi.mocked(editComment).mockResolvedValue({ comment: { ...mine, text: 'new words' } } as never);
@@ -382,7 +385,7 @@ it('an edited comment is not put back by a row read before the edit answered', a
 });
 
 it('a deleted comment is not brought back by a row read before the delete answered', async () => {
-  const mine = comment(1, { userId: 'alice', text: 'gone words' });
+  const mine = comment(1, { userId: 'alice', text: 'gone words', canEdit: true, canDelete: true });
   const { target, props } = mountCard(row({ comments: [mine] }), true);
   const getIssuedAt = nextPostSequence();
   vi.mocked(deleteComment).mockResolvedValue({ ok: true } as never);
@@ -432,7 +435,8 @@ it('a failed comment takes back only its own row, never a heart still being sent
 
 it('an expanded thread is held over a feed row, then read again', async () => {
   const first = Array.from({ length: 20 }, (_, i) => comment(i + 1));
-  const { target, props } = mountCard(row({ comments: first }), true);
+  // The server counts two more than the twenty a feed row carries: that is what offers the button.
+  const { target, props } = mountCard(row({ comments: first, commentCount: 22 }), true);
   const stampedPost = (comments: PostComment[]) => {
     const r = row({ comments });
     stampServed(r, nextPostSequence());
@@ -440,7 +444,7 @@ it('an expanded thread is held over a feed row, then read again', async () => {
   };
   vi.mocked(getPost).mockResolvedValueOnce(stampedPost([...first, comment(21), comment(22)]));
   const button = [...target.querySelectorAll('button')].find(
-    (b) => b.textContent?.trim() === m.post_load_all_comments_label()
+    (b) => b.textContent?.trim() === m.post_comment_load_older_label()
   ) as HTMLButtonElement;
   button.click();
   await settle();
