@@ -4129,6 +4129,16 @@
       }
     }
   ],
+  "live_viewer_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} spectateur",
+        "countPlural=other": "{count} spectateurs"
+      }
+    }
+  ],
   "live_end_button": "Terminer",
   "live_end_confirm": "Terminer le live ? Il disparaît pour tous les spectateurs.",
   "live_end_confirm_button": "Terminer le live",

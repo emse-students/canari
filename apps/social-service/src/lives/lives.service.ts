@@ -96,6 +96,13 @@ export interface LiveManifest {
   lastSegmentAt: Date | null;
   serverNow: Date;
   segments: LiveManifestSegment[];
+  /**
+   * HOW MANY ACCOUNTS WATCH THIS LIVE - the seats it holds on the host's cap, the caller's own
+   * included, the broadcaster never (it takes none). A COUNT ONLY: no response of this API names a
+   * viewer, to anybody (lives.md, "The viewer count"). Exact, by the owner's decision of 2026-10-21.
+   * `null` only on the broadcaster's poll when the count did not answer ({@link LiveSeats.watching}).
+   */
+  viewers: number | null;
 }
 
 /** The answer to an ingest, and to its idempotent repeat. */
@@ -417,7 +424,7 @@ export class LivesService implements OnModuleDestroy {
    */
   async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifest> {
     const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
-    await this.takeSeat(row, viewerId);
+    const viewers = await this.takeSeat(row, viewerId);
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
     const segments: LiveManifestSegment[] = await this.db.query(
       `SELECT s."index", s.name, s.bytes
@@ -433,6 +440,7 @@ export class LivesService implements OnModuleDestroy {
       lastSegmentAt: row.lastSegmentAt,
       serverNow: row.serverNow,
       segments,
+      viewers,
     };
   }
 
@@ -1407,10 +1415,13 @@ export class LivesService implements OnModuleDestroy {
    * takes or renews a seat, 503 `LIVE_FULL` past the host's cap. Taken AFTER the watch check, so a
    * removed, blocked or ended answer is never masked as "full". The broadcaster takes none: its
    * reads cost the uplink nothing a viewer's would.
+   *
+   * Answers THE VIEWER COUNT from the same state (lives.md, "The viewer count") - no second tracker:
+   * a viewer's from the take itself, the broadcaster's from a read-only count of the same set.
    */
-  private async takeSeat(row: LiveRow, viewerId: string): Promise<void> {
-    if (row.broadcasterId === viewerId) return;
-    await this.seats.take(row.id, viewerId);
+  private async takeSeat(row: LiveRow, viewerId: string): Promise<number | null> {
+    if (row.broadcasterId === viewerId) return this.seats.watching(row.id);
+    return this.seats.take(row.id, viewerId);
   }
 
   /**

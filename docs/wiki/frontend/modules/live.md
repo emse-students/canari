@@ -209,8 +209,9 @@ because the manifest is per-viewer by design (the segment names are the capabili
 ### The viewer count is a signal, not a gate
 
 The seat sorted set (`live:seats`, one Lua script a poll) already knows who is watching within the
-30 s lease. Uncapped, the grant stops refusing and the set only COUNTS: `ZCARD` per live, shown to the
-broadcaster and, rounded, to viewers (**a decision**: whether viewers see a count at all). It stays
+30 s lease. Uncapped, the grant stops refusing and the set only COUNTS: `ZCARD` per live (one set per
+live then, since the count walks the shared set today), shown to the broadcaster and to viewers -
+**decided 2026-10-21: viewers see it, EXACT, not rounded** ([the viewer count](#the-viewer-count-2026-10-21)). It stays
 the removal point (a removed viewer's seat is freed and its key refused) and the load figure the
 bitrate choice of D2 reads. A seat renewed every poll is N Redis scripts a second: renew once per
 lease interval, as the gate-on-a-lease change above does. `LIVE_FULL`, its screen and
@@ -552,8 +553,8 @@ longer mentions moderation); a cut read on return from the background (`fetchLiv
 `LIVE_ALREADY_OPEN` (a previous screen killed) is not resumed: the member is told it closes within the
 minute.
 
-**What the server does not give, so the client does not show it:** a viewer count (no field in
-`LiveView` or the manifest). The reason of a `410` is in the body (`endReason`) since WP-L8, and the
+**What the server does not give, so the client does not show it:** who watches - only how many
+([the viewer count](#the-viewer-count-2026-10-21), since 2026-10-21). The reason of a `410` is in the body (`endReason`) since WP-L8, and the
 two ends that are not the hour or the broadcaster's own (`dropped`, `erased`) still share the
 generic sentence.
 
@@ -756,3 +757,28 @@ Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#dec
 - **Report a chat line.** `LiveChatPanel` takes an optional `report(line)` and draws a `Flag` on every numbered line that is not the reader's own; `LiveChatReportDialog` opens the posts' `ReportReasonDialog` on the `critical` layer and calls `createLiveChatReport` (`lib/moderation/api.ts`): `POST /api/moderation/reports { contentType: 'live_chat', contentId: <messageId>, liveId, reason, message: <plaintext> }`. Outcomes by type: `409 ALREADY_REPORTED`, `404 LIVE_NOT_FOUND`, anything else keeps the dialog open. The body shape is the contract agreed with the server half (#2172, below). Tests: `LiveChatReportDialog.svelte.test.ts`, the flag in `LiveChatPanel.svelte.test.ts`.
 
 **Contract with server PR #2172 (2026-10-21).** The reported line has NO client-side length check (the server takes up to 900 UTF-8 bytes; the composer's 300 characters bind only what one writes). Typed outcomes: `409 ALREADY_REPORTED` and `404 LIVE_NOT_FOUND` close the dialog; `400 LIVE_CHAT_REPORT_MISMATCH`, `400 LIVE_CHAT_REPORT_MESSAGE_INVALID` (over 900 bytes) and `503 LIVE_REPORT_SIGNING_UNAVAILABLE` keep it open with their own sentence. The strike ladder's refusals of a start, `LIVE_BROADCAST_SUSPENDED` (with `suspendedUntil`) and `LIVE_BROADCAST_WITHDRAWN`, are LiveRefusalKinds `suspended` / `withdrawn` with a sentence on the pre-live screen, and the notice types `live_suspended` / `live_withdrawn` are known, inert rows like `live_cut`. The standing screen and its buttons are a later PR.
+
+## The viewer count (2026-10-21)
+
+**The owner decided (2026-10-21): viewers see HOW MANY watch a live, like Instagram, and so does the
+broadcaster - a count, never a name or a list, to anybody.** The server side (what a viewer is, why
+the number is EXACT and not rounded, what happens when Redis does not answer) is
+[lives](../../services/lives.md#the-viewer-count-2026-10-21), the only copy. Dev builds only, behind
+`LIVE_ENABLED`, like the rest of the live.
+
+- **No new request.** The manifest carries `viewers` (`number | null`). The viewer's `LivePlayer`
+  hands it to `onViewers` at the same two places it reads the clock (the join and each poll); the
+  broadcaster's `LiveBroadcasterChatPoller` (its one loop, `chat=1`) hands it to its `onViewers`
+  argument. `liveViewerCount` (`lib/live/liveViewerCount.ts`) is the one reader: a non-negative
+  integer, or `null` - absent (a server older than the field) silently, anything else malformed with
+  a `warn`.
+- **`LiveViewerCount.svelte`**: an `Eye` and the number in a `cn-scrim` pill, in the viewer's top bar
+  after the time on air (not on a final screen) and under the broadcaster's ON AIR badge. `null`
+  draws nothing, never a placeholder. The number is `aria-hidden`; a screen reader reads
+  `live_viewer_count` (`"{count} spectateur(s)"` / `"{count} viewer(s)"`, Paraglide plural forms:
+  French singular for 0 and 1, English for 1 only) and is not told every change (`aria-live="off"`,
+  which also mutes it inside the broadcaster's `role="status"` row).
+- **Tests**: `liveViewerCount.test.ts` (the reader, both languages' plurals), `livePlayer.test.ts`
+  and `liveChat.test.ts` (the count from each manifest, no extra fetch), `LiveViewer.svelte.test.ts`
+  and `LiveBroadcaster.svelte.test.ts` (drawn, updated, hidden on `null` and on the end screen).
+- **Owed on hardware**: one look on both phones at the pill next to the badge (check Y's run).

@@ -49,6 +49,7 @@ function chatManifest(messages: LiveChatBlock['messages']): LiveManifest {
     lastSegmentAt: null,
     serverNow: '2026-10-19T10:00:00.000Z',
     segments: [],
+    viewers: 3,
     chat: { messages, messagesCursor: messages.length, reactions: [], reactionsCursor: 0 },
   };
 }
@@ -411,6 +412,19 @@ describe('LiveOverlay', () => {
     await settle();
     expect(liveApi.hideLiveMessage).toHaveBeenCalledWith(LIVE_ID, 'm-1');
     expect(q('[data-live-chat-line="m-1"]')).toBeNull();
+  });
+
+  it('on air the broadcaster sees HOW MANY watch, from its chat poll - a number and no name', async () => {
+    vi.mocked(liveApi.fetchLiveManifest).mockResolvedValue({ ...chatManifest([]), viewers: 4 });
+    screen();
+    await settle();
+    expect(q('[data-live-viewer-count]')).toBeNull();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    await vi.waitFor(() =>
+      expect(q('[data-live-viewer-count]')?.getAttribute('data-live-viewer-count')).toBe('4')
+    );
+    expect(q('[data-live-viewer-count]')?.textContent).toContain(m.live_viewer_count({ count: 4 }));
   });
 
   it("the chat's 410 with endReason 'cut' shows the broadcaster's cut screen", async () => {

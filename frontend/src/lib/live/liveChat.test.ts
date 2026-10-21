@@ -345,12 +345,13 @@ describe("the broadcaster's chat loop", () => {
   let manifests: (LiveManifest | Error)[];
   const fetchManifest = vi.fn();
 
-  const manifest = (chat: LiveChatBlock): LiveManifest => ({
+  const manifest = (chat: LiveChatBlock, viewers: number | null = 0): LiveManifest => ({
     liveId: LIVE,
     nextIndex: 0,
     lastSegmentAt: null,
     serverNow: '2026-10-19T10:00:00.000Z',
     segments: [],
+    viewers,
     chat,
   });
 
@@ -413,6 +414,31 @@ describe("the broadcaster's chat loop", () => {
     expect((ended.mock.calls[0][0] as LiveRefusalError).status).toBe(410);
     expect(timers).toHaveLength(0);
     warn.mockRestore();
+    poller.stop();
+  });
+
+  it("hands the broadcaster each poll's viewer count, a number or nothing, from the same request", async () => {
+    const counts: (number | null)[] = [];
+    const poller = new LiveBroadcasterChatPoller(
+      LIVE,
+      session(),
+      {
+        fetchManifest,
+        schedule: (fn, ms) => {
+          timers.push({ fn, ms });
+          return () => {};
+        },
+      },
+      undefined,
+      (count) => counts.push(count)
+    );
+    manifests.push(manifest(block([], 0), 3), manifest(block([], 0), null));
+    poller.start();
+    await vi.waitFor(() => expect(timers).toHaveLength(1));
+    await runTimer();
+    expect(counts).toEqual([3, null]);
+    // One request a tick: the count costs no fetch of its own.
+    expect(fetchManifest).toHaveBeenCalledTimes(2);
     poller.stop();
   });
 });

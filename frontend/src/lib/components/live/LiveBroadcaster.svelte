@@ -42,6 +42,7 @@
   } from '$lib/live/liveBroadcast.svelte';
   import { batteryWarrantsWarning, openLiveCamera, readBatteryLevel } from '$lib/live/liveDevice';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
+  import LiveViewerCount from './LiveViewerCount.svelte';
 
   interface Props {
     /** Broadcast AS this association (`POST_AS_ASSO` there), or null for the member. */
@@ -68,6 +69,8 @@
   let batteryLevel = $state<number | null>(null);
   /** Re-read every second on air, only to redraw the elapsed time. */
   let elapsedMs = $state(0);
+  /** How many watch, from the chat loop's poll - a number, never who (null: nothing to show). */
+  let viewers = $state<number | null>(null);
   let ticker: ReturnType<typeof setInterval> | null = null;
   let frameReady = $state(false);
   let video = $state<HTMLVideoElement | null>(null);
@@ -261,6 +264,7 @@
               class="font-semibold tabular-nums">{clock(elapsedMs)}</span
             >
           </span>
+          <LiveViewerCount count={viewers} />
         {/if}
         {#if onAir && broadcast.health === 'retrying'}
           <span
@@ -452,6 +456,7 @@
           liveId={broadcast.liveId}
           keyHex={broadcast.chatKey}
           onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
+          onViewers={(count) => (viewers = count)}
         />
       {/key}
     </div>

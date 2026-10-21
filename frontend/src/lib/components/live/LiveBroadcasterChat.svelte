@@ -6,8 +6,8 @@
    *
    * Mounted by the broadcaster screen (`LiveBroadcaster.svelte`) while on air, with the live's id
    * and key. Every verdict that the live is over - the loop's, or one answering the broadcaster's own
-   * write - goes to `onEnded`, which hands it to the broadcast machine. It fills the positioned box
-   * it is placed in.
+   * write - goes to `onEnded`, which hands it to the broadcast machine. The viewer count rides the
+   * same loop and goes to `onViewers`. It fills the positioned box it is placed in.
    */
   import { onMount } from 'svelte';
   import LiveChatPanel from './LiveChatPanel.svelte';
@@ -29,6 +29,8 @@
     keyHex: string;
     /** Told when the server says the live is over, with its verdict (`endReason` in the body). */
     onEnded?: (verdict: LiveRefusalError) => void;
+    /** Told the live's viewer count at each poll of this loop (`null`: none to show). */
+    onViewers?: (count: number | null) => void;
     /** Replace the outside world - for tests. */
     chatDeps?: Partial<LiveChatDeps>;
     pollerDeps?: Partial<LiveBroadcasterChatPollerDeps>;
@@ -39,6 +41,7 @@
     liveId,
     keyHex,
     onEnded,
+    onViewers,
     chatDeps,
     pollerDeps,
     fetchLimits = fetchLiveLimits,
@@ -75,10 +78,16 @@
         console.warn(`[LIVE_CHAT] the live limits could not be read (${String(e)})`);
       }
     );
-    const poller = new LiveBroadcasterChatPoller(liveId, s, pollerDeps, (verdict) => {
-      ended = true;
-      onEnded?.(verdict);
-    });
+    const poller = new LiveBroadcasterChatPoller(
+      liveId,
+      s,
+      pollerDeps,
+      (verdict) => {
+        ended = true;
+        onEnded?.(verdict);
+      },
+      (count) => onViewers?.(count)
+    );
     poller.start();
     return () => {
       poller.stop();
