@@ -705,6 +705,48 @@ not an oversight, and it rests on three facts:
   the second - and the discharge condition is precisely what could not be met the last time this
   area carried a durable registry.
 
+### A new member receives nothing from before their arrival (decided by the user, 2026-10-21)
+
+**The decision**, for private GROUP conversations, as on WhatsApp and Signal: a member added to a
+group reads only what was sent after they arrived. **It reverses what the code does, which nobody had
+decided.** `sendFullHistoryBundle`, pushed by the adding device from `processPendingInvitations` and
+`handleWelcomeRequest`, sends that device's whole local store to the invitee, up to the 5-year
+window. The section below calls this *"the existing new-member policy"*, but no decision record
+exists for it. On 2026-10-21, 6 of the 15 live group conversations had admitted 24 members more than
+10 minutes after their creation (read-only count on production). Communities keep their own recorded
+decision (`shared`), and 1:1 conversations have no add path.
+
+**One rule covers both decisions.** A device may receive a message only if its server time falls
+inside one of its USER's membership intervals (`dm_group_membership_intervals`, one row per stretch of
+membership, not per message or per epoch). A newcomer has one interval starting at arrival. A member
+removed and re-added has two, and the gap between them is the 2026-10-14 rule. A new device of a
+continuous member is covered by an interval reaching back to that member's own arrival, so it still
+restores everything.
+
+**Why it cannot be added to today's filter.** That filter withholds the UNION of every member's
+gaps, because a bundle is an MLS broadcast every member ingests (next section). Treating "before
+first arrival" as a gap in that union would withhold everything older than the newest member's
+arrival, from everybody, and so break the restore of every new device. The work package therefore
+changes the delivery first:
+
+1. **Address each history bundle to the device that asked** (`recipientDevices`, which
+   `postApplicationMessage` already carries), on all three answer paths (`sendFullHistoryBundle`,
+   `sendHistoryBundleForIds`, `sendHistoryRangeBundle`).
+2. **Filter on the RECIPIENT's intervals**, with the span before its first arrival counted as
+   excluded. This needs a new field from chat-delivery: an older client reading the existing
+   `exclusions` field would put the new span into its union and over-withhold.
+3. **Receiver hygiene:** `dropOwnExcludedMessages` also drops what precedes its own first arrival,
+   which covers bundles still broadcast by older answerers.
+4. **Replies quoting a pre-arrival message** follow the same rule the module already applies to an
+   absence.
+
+**What it does not close.** An older client keeps pushing its whole store at invitation until
+`minClientVersion` is a release that does not. The server cannot refuse such a frame, because it
+cannot read it. Addressing is a ROUTING control: MLS encrypts for the whole group, so a malicious
+server could still hand an addressed bundle to another member. That is the trust the server already
+holds when it admits devices. What a newcomer has already received cannot be taken back.
+Tracked in [backlog](../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not).
+
 ### A Remove holds against a later re-add - the answering peer withholds the window (decided by the user, 2026-10-14)
 
 **The decision** (user, 2026-10-14), for private GROUP conversations: a member removed and added
