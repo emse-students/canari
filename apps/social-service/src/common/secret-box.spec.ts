@@ -32,10 +32,13 @@ describe('secret-box', () => {
     const sealed = sealSecret('p', 'asso-1:vendor', 'k');
     expect(() => openSecret('p', 'asso-2:vendor', sealed)).toThrow(SecretBoxOpenError);
     expect(() => openSecret('q', 'asso-1:vendor', sealed)).toThrow(SecretBoxOpenError);
-    const last = sealed.slice(-1) === 'A' ? 'B' : 'A';
-    expect(() => openSecret('p', 'asso-1:vendor', sealed.slice(0, -1) + last)).toThrow(
-      SecretBoxOpenError
-    );
+    // A tampered BYTE, not a tampered character: the payload's last base64url character carries
+    // padding bits the decoder ignores, so swapping it changed no byte about one run in sixteen
+    // (any of A-D swapped for A or B) and the "tampered" box opened.
+    const raw = Buffer.from(sealed.slice('v1.'.length), 'base64url');
+    raw[raw.length - 1] ^= 0x01;
+    const tampered = 'v1.' + raw.toString('base64url');
+    expect(() => openSecret('p', 'asso-1:vendor', tampered)).toThrow(SecretBoxOpenError);
     process.env[SECRET_BOX_ENV] = 'another-throwaway-secret-0123456789abcdef';
     expect(() => openSecret('p', 'asso-1:vendor', sealed)).toThrow(SecretBoxOpenError);
     expect(() => openSecret('p', 'c', 'garbage')).toThrow(SecretBoxOpenError);
