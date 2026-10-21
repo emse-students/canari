@@ -334,6 +334,46 @@ export function readAddressedDevices(body: SendMessageBody): Set<string> | null 
   return keys;
 }
 
+/**
+ * The fields a CLIENT may set on `POST /mls/send` - an allowlist, not a denylist.
+ *
+ * Everything else on {@link SendMessageBody} is set by this service's own callers (the commit
+ * fan-out, the background Welcome), which call {@link MessagingService.sendMessage} directly and never
+ * cross this route. `recipientDevices` is here because {@link readAddressedDevices} validates it.
+ */
+const CLIENT_SEND_FIELDS: ReadonlySet<string> = new Set([
+  'proto',
+  'groupId',
+  'senderId',
+  'senderDeviceId',
+  'silent',
+  'durable',
+  'recipientDevices',
+  // The retired content path (`LEGACY_CONTENT_PATH`), which accuses on every use.
+  'content',
+  'type',
+]);
+
+/**
+ * Refuses a client send that sets a field only an internal caller may set.
+ *
+ * Who receives a frame, and whether it is a handshake, is decided here: the recipient set from the
+ * membership table and a commit by {@link MessagingService.validateCommit}. A client field that
+ * narrowed the set or marked a frame as a commit would let a sender choose both. Refused with the
+ * field names, never silently dropped: a caller sending one is a caller that must be found.
+ */
+export function assertClientSendFields(body: unknown): void {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new BadRequestException('the send body must be an object');
+  }
+  const refused = Object.keys(body).filter((field) => !CLIENT_SEND_FIELDS.has(field));
+  if (refused.length > 0) {
+    throw new BadRequestException(
+      `field(s) not accepted on a client send: ${refused.slice(0, 8).join(', ')}`
+    );
+  }
+}
+
 export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
   /**
    * Member keys (`userId:deviceId`) this requester has already heard from, and does not want elected

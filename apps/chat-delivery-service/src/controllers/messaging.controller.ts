@@ -15,7 +15,12 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import { MessagingService, SendMessageBody, AckMessagesBody } from '../services/messaging.service';
+import {
+  MessagingService,
+  SendMessageBody,
+  AckMessagesBody,
+  assertClientSendFields,
+} from '../services/messaging.service';
 import { sanitizeEpoch, sanitizeLogValue } from '../utils/sanitize';
 
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
@@ -28,6 +33,15 @@ export class MessagingController {
   @UseGuards(HeaderAuthGuard)
   @Post('mls/send')
   async sendMessage(@Body() body: SendMessageBody, @Headers('x-user-id') authUserId?: string) {
+    try {
+      assertClientSendFields(body);
+    } catch (e) {
+      this.logger.warn(
+        `[SEND] REJECT client_fields user=${sanitizeLogValue(authUserId ?? 'none')} ` +
+          `device=${sanitizeLogValue(String(body?.senderDeviceId ?? 'unknown'))}: ${String(e)}`
+      );
+      throw e;
+    }
     return this.messagingService.sendMessage(body, authUserId);
   }
 
