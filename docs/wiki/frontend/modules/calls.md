@@ -95,10 +95,10 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
 | B1 | The scope of the native ring | **decided** (Q1): not in the first release | B2' |
 | B2 | The native ring: WP-C5 (Android: names from the phone's local copy, out of the `call_ring` payload; `canUseFullScreenIntent`; decision 7 natively) and WP-C6 (iOS: no PushKit token was ever registered; every VoIP push must report a CallKit call; the answer with MLS behind the PIN). **Also to gate in the SAME commit as the native-ring switches**: both rings still ANNOUNCE a video call for a `hasVideo` invite (Android `CanariFirebaseMessagingService.kt` `setIsVideo` / `notif_incoming_video_call`, iOS `canari_push.mm` CallKit `update.hasVideo`) - on an audio-only build they must announce audio | **later - not the first release** | its own chantier, with video or after |
 | B2' | **Two facts instead of one**: `CALLS_COMPILED` for in-app calls and background continuation (`audio`, the microphone foreground service, the microphone purpose strings), a second constant for the native ring (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`), each set asserted by `callsCompiled.test.ts`. **And the iOS FCM ALERT**: no iPhone has a `voipToken`, so `CallsService.ringViaFcm` would send EVERY iPhone callee a visible alert titled with the caller's name in clear (against decision 6), opening an app that may not answer in time - removed, or decided. That branch IS reachable in the first release (unlike the native ring), and its body says "Appel entrant" whatever `hasVideo` is - if kept, it must never announce video | **owed** | a draft |
-| B3 | **The review of #1997, crypto half**: one key per direction + AAD on every frame, the key-mismatch toast (F5) | **draft #2013** predates #2158 and #2166; its PORT onto `main` is in progress (another agent) | the port, adversarially reviewed; CALL-L1 rows 1-4 re-read on it |
-| B4 | **The `fp=` log line printed 4 bytes of the call key** | **built in #2171**: a SHA-256 fingerprint (`utils/callKeys.ts`) | done |
-| B5 | **F4 - say who sees what**: each party learns the other's IP; Cloudflare TURN relays some calls (IPs, time, volume, never audio). Into `compliance/register-of-processing.md` and `/legal/privacy`, together | **draft #2013** carries both texts; presented to the owner later (Q5) | the owner's yes on the wording, merged BEFORE the flip ships |
-| B6 | **A call report** (`[CALL_REPORT]`, WP-C2): without it a failing production call is found by hand, and B7 cannot tell relayed from direct | **draft #2011**, being ported (another agent) | the port; one reading from a phone's exported log |
+| B3 | **The review of #1997, crypto half**: one key per direction + AAD on every frame, the key-mismatch toast (F5) | **built (#2176)**: #2013 ported onto `main` (per-direction keys, AAD on every frame, the mismatch notice), adversarially reviewed | CALL-L1 rows 1-4 re-read on it |
+| B4 | **The `fp=` log line printed 4 bytes of the call key** | **built (#2176)**: a SHA-256 fingerprint per direction (`send_fp`/`recv_fp`, `utils/callKeys.ts`), first in #2171 | done |
+| B5 | **F4 - say who sees what**: each party learns the other's IP; Cloudflare TURN relays some calls (IPs, time, volume, never audio). Into `compliance/register-of-processing.md` and `/legal/privacy`, together | register rows C21 + TURN processor in #2176, marked owed review; the `/legal/privacy` paragraphs HELD in a separate draft pull request for the owner (Q5) | the owner's yes on the wording, merged BEFORE the flip ships |
+| B6 | **A call report** (`[CALL_REPORT]`, WP-C2): without it a failing production call is found by hand, and B7 cannot tell relayed from direct | **built (#2176)**: #2011 ported onto `main` | one reading from a phone's exported log |
 | B7 | **The TURN budget counts every call as relayed at 3000 kbps per device** (`accumulateTurnUsage`): 950 GB is ~700 device-hours, ~350 call-hours a month, after which `ice-servers` answers 503 to EVERY call. Only `relayed=yes` costs in P2P, and CALL-PATH-LINE (P3) showed `relayed=` can be wrong | **being built** (another agent); the production variable stays alone (Q6) | relayed calls only, at what they cost |
 | B8 | **Background, Android (WP-C-BG-A)** | **built** (#2162, in `1.3.1-alpha.5`), pre-releases only; Play FGS declaration FILLED by the owner 2026-10-21; **twelve readings owed** on the Mi 9T ([below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)) | the readings; at the flip the declaration moves into `src/main/AndroidManifest.xml` |
 | B9 | **Background, iPhone (WP-C-BG-I)**: the `audio` mode, pre-release only today | **built** (#2164, in `1.3.1-alpha.5`); the failure was read before the fix; **after-fix reading owed** (CALL-L1 row 12); the app-wide side effect ACCEPTED (Q4) | row 12 `PASS` |
@@ -268,7 +268,9 @@ Then, on each side:
    each party can learn the other's public IP.
 5. On `connected` the client logs `[Call] selected path pair=<local>/<proto>-><remote>/<proto>
    relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the only place
-   that says whether a call was billed.
+   that says whether a call was billed. From then on a `[CALL_REPORT]` line every 10 s and one at
+   the end carries the same pair plus rates, loss, audio levels and the E2E worker's frame counts
+   ([calls-revival-plan section 6](calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence)).
 6. `PeerLeft` (the other party hung up, its away seat expired, or this device was replaced by a
    sibling) ends the call; a second `PeerReady` (the other party's device was replaced) rebuilds the
    peer connection, while `PeerReady { resumed: true }` keeps it - see
@@ -541,23 +543,61 @@ ring and shows the missed-call line, the server logs `withheld from 1 member(s)`
 "allowed", it rings; a DM at `none` with no choice made does not ring; the control read once on the
 Mi 9T and on the iPhone.
 
-**OWED BEFORE `CALLS_COMPILED` FLIPS** (the review of #1997, 2026-10-17; none of it blocks a dev-only
-build, all of it blocks production):
+**WHAT THE REVIEW OF #1997 SAID WAS OWED BEFORE `CALLS_COMPILED` FLIPS** (2026-10-17). Built in
+draft #2013 on 2026-10-18, PORTED onto `main` on 2026-10-21 (it predated #2158 and #2166, so it
+was recreated, not rebased):
 
-- **F4 - say who sees what.** `iceTransportPolicy: 'all'` lets each party learn the other's public
-  IP, and Cloudflare (TURN) becomes a recipient of call metadata and relayed media. Both belong in
-  `docs/wiki/compliance/register-of-processing.md` and on `/legal/privacy` before production calls.
-- **F5 - a key both ends AGREE on, or a failure the user SEES.** Each side derives its key alone
-  (`exportSecret(groupId, 'mls-webrtc-media', callId)`); two devices at different MLS epochs derive
-  different keys and the call "connects" in silence. Owed: an epoch/fingerprint agreement over the
-  signalling channel, or at least a visible "decrypt failing" toast driven by the worker's
-  `decryptError` count.
-- **One key, both directions, no AAD.** The same AES-GCM key encrypts both parties' frames and the
-  frame header is not bound as additional data; a per-direction key (or the sender's leaf index in
-  the IV/AAD) closes the nonce-collision and reflection questions.
-- ~~**The `fp=` log line prints the first 4 BYTES OF THE KEY**~~ - FIXED 2026-10-21: the line is
-  `fp=<first 4 bytes of SHA-256(key)>, sha256` (`utils/callKeys.ts` `keyFingerprint`, pinned by
-  `callKeys.test.ts`). A build older than that still prints key bytes: never paste its line.
+- **One key per direction, every frame bound to its kind** (`utils/callKeys.ts`,
+  `utils/callFrameAad.ts`, `workers/encryption.worker.ts`). Each direction's key is
+  `exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>|<sender role>', 32)`; the role is
+  `caller` on the device that rang (`startCall`) and `callee` on the one that answered
+  (`acceptCall`), never the relay's `initiator`, which a resume or a replaced device can change.
+  The caller sends with `caller` and decrypts with `callee`, the callee the reverse; the worker
+  imports the send key for `encrypt` ONLY and the receive key for `decrypt` ONLY, and refuses a pair
+  of EQUAL keys. Every frame's AES-GCM additional data is `canari-call-v2|<audio|video>` followed by
+  the bytes it keeps in clear (none for audio, the VP8 payload header for video - the #2166 binding,
+  kept). **The kind is handed to the worker by the page**, in each `RTCRtpScriptTransform`'s options
+  (`{ side, kind, epoch }`, the track's own `kind`): the worker no longer reads it off the frame's
+  class NAME, and a transform carrying no kind forwards nothing and says so. So: the two directions
+  never share a `(key, nonce)` space; a reflected frame fails; an audio frame offered to the video
+  receiver fails; another call's frames fail (the call id is in the export). Pinned by
+  `encryption.worker.test.ts` (two KNOWN-ANSWER vectors computed with `node:crypto`, one audio, one
+  VP8 interframe; reflection; wrong kind; equal keys) and `callKeys.test.ts`. **Not covered: replay
+  WITHIN one direction and kind** - no sequence number is bound, so a frame replayed on the media
+  path decrypts again; DTLS-SRTP's own replay window below the transform is what stands there.
+- **F5 - a mismatch the user SEES.** Each receiver transform counts its decrypt FAILURES while it has
+  decrypted nothing; at `DECRYPT_MISMATCH_FAILURES` (100, about two seconds of audio) the worker
+  posts `undecryptable` once. A matching key opens the very first frame, so a working call never
+  reaches the count: it is a proof, not a timer. The page (`CallService.onUndecryptable`) reads it
+  against THIS peer connection's evidence: no receiver decrypted anything (`e2eReceiverSeen`) -> an
+  `ERROR E2E key mismatch` line and the `call_e2e_key_mismatch` notice, once per call; another
+  receiver decrypts -> the keys agree and this receiver is broken another way, an ERROR line and no
+  notice; a stale epoch (a replaced device's dead peer connection) -> ignored. A replaced device is
+  judged on its own frames. A key AGREEMENT over signalling is still not built (the relay carries a
+  closed set of frames); two exported logs settle it: one side's `send_fp` must equal the other's
+  `recv_fp`. The call is not ended by it: the user is told, and hangs up. **A setup never outlives
+  its call** (review of #2176): a hangup during the microphone prompt used to let `startCall` resume
+  after `cleanup`, key a worker whose memo outlived the call, and leave the NEXT call silent under
+  the previous call's keys - which this notice would have blamed on the app's version. Every await
+  of `startCall`/`acceptCall` is now followed by `assertSetupLive` (a sequence bumped at each setup
+  and each cleanup): a late microphone is stopped, late keys are zeroed and never posted, and no
+  socket or ring follows (`CallSetupAbandonedError`, no toast). The ended summary counts as over
+  too: ICE connecting inside it no longer turns `ended` back into `incall` (which skipped `cleanup`
+  and left the microphone open), the signalling socket checks the same sequence before it opens, and
+  `cleanup` settles a pending worker-key wait so its 3 s timer never reaches the next call.
+- **The key log is a hash**: `media keys derived from MLS (role= send_fp= recv_fp=, sha256)`, the
+  first 4 bytes of each key's SHA-256 (`keyFingerprint`), never key bytes. A build older than
+  2026-10-21 printed key bytes: never paste its `fp=` line.
+- **F4 - who sees what**: row C21 and a Cloudflare Realtime TURN processor row in
+  [register-of-processing](../../compliance/register-of-processing.md), marked owed review. The
+  matching `/legal/privacy` paragraphs (sections 2, 3 and 4, the wording of #2013) are HELD in a
+  separate draft pull request: **owed the owner's yes (Q5) before calls ship**, since merging them
+  would publish a policy for a feature not yet in production.
+- **The call report** (WP-C2, #2011 ported the same day): [revival plan section 6](calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence).
+
+**Wire**: `mls-webrtc-media-v2` and the AAD are INCOMPATIBLE with every build before them - audio
+was sent with no AAD under one key until then. Both ends need this build; calls run on dev builds
+only, so no shim exists ([legacy-compatibility](../../legacy-compatibility.md#nothing-to-remove---a-call-media-frame-is-v2-only-2026-10-21)).
 
 ## The switches agree, and a silent frame stays unread
 
@@ -1033,7 +1073,8 @@ experiment rows of the rig (below) settle it on Chrome 155:
   `header || IV(12) || AES-GCM(rest)`, the header bound as **additional data** - altered on the way,
   the frame does not decrypt (counted in `decryptFailuresBy.video`). It reveals key-or-delta, the
   partition size and the picture size, never a pixel - the layout of WebRTC's own e2ee sample.
-  **Audio is byte-for-byte unchanged** (no prefix, no AAD), so lot 1 clients interoperate.
+  Audio had no prefix and no AAD until 2026-10-21; since then EVERY frame's additional data starts
+  with `canari-call-v2|<kind>` and each direction has its own key ([above](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
 - **Every video transceiver is held to VP8 (+RTX)** by `setCodecPreferences` - the camera's, and the
   one the peer's offer created (in `ontrack`), so whichever side offers, the answer can only be VP8.
   WebKit lists H.264 FIRST; nothing here relies on the order.

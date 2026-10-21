@@ -1612,7 +1612,8 @@ run on a phone ([2026-10-18 bench](device-readings-calls-live-2026-10-18.md): `B
 **The log.** A store build is not inspectable: Settings > A propos > "Enregistrer le journal" saves
 the in-app log after each call. **Never paste the `[Call] encryption key derived from MLS (fp=...)`
 line of a build older than 2026-10-21 into this public repository** - it printed key bytes. From
-then on the line reads `fp=<hex>, sha256`, a hash of the key, safe to quote ([calls](frontend/modules/calls.md)).
+then on the line reads `media keys derived from MLS (role= send_fp= recv_fp=, sha256)`, a hash of
+each direction's key, safe to quote ([calls](frontend/modules/calls.md)).
 
 **Steps:**
 
@@ -1643,8 +1644,11 @@ network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the b
 - `[Call] startCall refused - RTCRtpScriptTransform unavailable` (or `acceptCall refused ...`): that
   WebView has no E2E transform - a finding about the engine, P1 for lot 1, never a reason to degrade.
 - `[Call] WARN remote audio still muted after 5s`, or `[Call] E2E decrypt failed`: media arrives
-  but cannot be heard or decrypted - the per-side key derivation (F5 on
-  [calls](frontend/modules/calls.md)); note both phones' MLS state.
+  but cannot be heard or decrypted; note both phones' MLS state.
+- `[Call] ERROR E2E key mismatch` and the "ne peut pas être déchiffré" notice (builds carrying the 2026-10-21 port
+  of #2013): no receiver decrypted anything after 100 failures - compare one phone's `send_fp` with
+  the other's `recv_fp` (`media keys derived from MLS` line); unequal means the two devices derived
+  different keys (different MLS epochs, or one build older than the v2 wire) ([calls](frontend/modules/calls.md)).
 - `[Call] signalling refused: <reason>`: the relay refused the room (`room-full`, `group-mismatch`,
   `token-refused`; `call-over` on a resume means the seat expired or the other party hung up).
 - `[Call] terminal failure: ... the relay gave no resume token`: the call-service on that estate
@@ -1652,8 +1656,8 @@ network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the b
 - `[Call] connectionState=failed` with no `selected path`: no candidate pair, not even TURN - read
   `iceConnectionState` and the network.
 
-**`[CALL_REPORT]` IS NOT IN ANY BUILD YET**: it is #2011, an open draft. Once a pre-release carries it,
-each device logs one line per call every 10 s and once at the end
+**`[CALL_REPORT]` reaches a build with the first pre-release carrying the 2026-10-21 port of #2011**
+(check the release notes; no build before it has the line). From then on each device logs one line per call every 10 s and once at the end
 (`[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms= engine= ice= pair= relayed= ...
 e2e=on enc_frames= dec_frames= dec_fail=`); record `setup_ms`, `relayed`, `rtt_ms`, `loss_in_pct` and
 `dec_fail` per direction, which is the plan's exit criterion
