@@ -59,9 +59,13 @@ export class LiveChatReportedLine {
   @Column({ type: 'varchar', length: 64 })
   sealedSha256: string;
 
-  /** The line's plaintext, as the reporter handed it over and the server checked it. */
-  @Column({ type: 'text' })
-  text: string;
+  /**
+   * The line's plaintext as the reporter handed it over and the server checked it, as its UTF-8
+   * BYTES: a PostgreSQL `text` cannot hold U+0000, which a sealed line may carry. The signature is
+   * over the decoded string, unchanged.
+   */
+  @Column({ type: 'bytea' })
+  text: Buffer;
 
   @Column({ type: 'timestamptz' })
   messageCreatedAt: Date;

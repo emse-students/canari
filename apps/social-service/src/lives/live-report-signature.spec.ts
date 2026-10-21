@@ -119,9 +119,15 @@ describe('the reported-line signature', () => {
       author: 'key-rotated',
       reporter: 'key-rotated',
     });
+  });
+
+  it('reads every verdict as unverifiable when this estate has no key to check with', () => {
+    const stored = signReportedLine(withKey('k'.repeat(32)), content, accounts);
     delete process.env.LIVE_REPORT_SIGNING_KEY;
-    expect(verifyReportedLine(signingKey(), stored, content, accounts, ERASED).content).toBe(
-      'key-rotated'
-    );
+    expect(verifyReportedLine(signingKey(), stored, content, accounts, ERASED)).toEqual({
+      content: 'unverifiable',
+      author: 'unverifiable',
+      reporter: 'unverifiable',
+    });
   });
 });

@@ -20,7 +20,13 @@
  * `key-rotated` - the text is still shown, their proof is gone. Rotate when no `live_chat` report
  * is pending, or accept that. Nothing here is a fallback: with no key, a line is not kept at all,
  * and the report is refused 503 `LIVE_REPORT_SIGNING_UNAVAILABLE` (`signingKey` returns null,
- * logged at error by the caller).
+ * logged at error by the caller); a line READ while no key is configured is `unverifiable`.
+ *
+ * WHAT THESE VERDICTS CANNOT TELL APART, stated (delta review of #2172): `key-rotated` only means
+ * "the stored keyId is not the current key's" - a row whose keyId was itself rewritten reads the
+ * same, and a list of retired ids would not close it (a writer can copy a genuinely retired id).
+ * So `key-rotated` and `unverifiable` are PROOF ABSENT, to be weighed as `altered` is, never as a
+ * lesser doubt. And an id rewritten TO the tombstone reads `erased`, exactly as a real erasure does.
  */
 import { createHmac, timingSafeEqual } from 'crypto';
 
@@ -48,12 +54,18 @@ export interface ReportedLineAccounts {
   reporterId: string;
 }
 
+/**
+ * Why a signature cannot vouch for a line: signed under another key id, or no key configured on
+ * this estate to check it with. Both are PROOF ABSENT, weighed as `altered` is.
+ */
+export type ReportedLineUnproven = 'key-rotated' | 'unverifiable';
+
 /** One account signature's verdict. */
-export type ReportedAccountIntegrity = 'verified' | 'altered' | 'erased' | 'key-rotated';
+export type ReportedAccountIntegrity = 'verified' | 'altered' | 'erased' | ReportedLineUnproven;
 
 /** What a moderator is told about a kept line's integrity. */
 export interface ReportedLineIntegrity {
-  content: 'verified' | 'altered' | 'key-rotated';
+  content: 'verified' | 'altered' | ReportedLineUnproven;
   author: ReportedAccountIntegrity;
   reporter: ReportedAccountIntegrity;
 }
@@ -130,7 +142,7 @@ function accountVerdict(
   ok: boolean,
   id: string,
   erasedAccount: string
-): Exclude<ReportedAccountIntegrity, 'key-rotated'> {
+): Exclude<ReportedAccountIntegrity, ReportedLineUnproven> {
   if (ok) return 'verified';
   return id === erasedAccount ? 'erased' : 'altered';
 }
@@ -138,7 +150,8 @@ function accountVerdict(
 /**
  * Checks a kept line against its signatures. `erasedAccount` is the tombstone an erasure writes:
  * an account id equal to it whose own signature fails reads `erased`, never `altered`; the other
- * account must still verify on its own.
+ * account must still verify on its own. No key (`key` null): every verdict is `unverifiable` - the
+ * caller logs that at error, since the estate is then misconfigured.
  */
 export function verifyReportedLine(
   key: { key: Buffer; keyId: string } | null,
@@ -147,7 +160,10 @@ export function verifyReportedLine(
   accounts: ReportedLineAccounts,
   erasedAccount: string
 ): ReportedLineIntegrity {
-  if (!key || key.keyId !== stored.keyId) {
+  if (!key) {
+    return { content: 'unverifiable', author: 'unverifiable', reporter: 'unverifiable' };
+  }
+  if (key.keyId !== stored.keyId) {
     return { content: 'key-rotated', author: 'key-rotated', reporter: 'key-rotated' };
   }
   return {

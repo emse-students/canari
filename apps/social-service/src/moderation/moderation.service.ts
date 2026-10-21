@@ -186,7 +186,7 @@ export class ModerationService {
     });
     if (existing) {
       this.logger.log(
-        `Duplicate report refused: reporter=${sanitizeLog(data.reporterId)} content=${sanitizeLog(data.contentId)} existingStatus=${existing.status}`
+        `Duplicate report refused: reporter=${short(data.reporterId)} content=${sanitizeLog(data.contentId)} existingStatus=${existing.status}`
       );
       throw new ConflictException({
         code: 'ALREADY_REPORTED',
@@ -206,7 +206,7 @@ export class ModerationService {
     } catch (e) {
       if (isDuplicateReport(e)) {
         this.logger.log(
-          `Duplicate report refused by the index: reporter=${sanitizeLog(data.reporterId)} content=${sanitizeLog(data.contentId)}`
+          `Duplicate report refused by the index: reporter=${short(data.reporterId)} content=${sanitizeLog(data.contentId)}`
         );
         throw new ConflictException({
           code: 'ALREADY_REPORTED',
@@ -382,7 +382,7 @@ export class ModerationService {
           line.authorId,
           line.clientId,
           content.sealedSha256,
-          text,
+          Buffer.from(text, 'utf8'),
           line.createdAt,
           keptAt,
           signed.keyId,
@@ -515,14 +515,20 @@ export class ModerationService {
       );
     const reporterOf = new Map(reports.map((r) => [r.id, r.reporterId]));
     const key = signingKey();
+    if (!key && rows.length > 0) {
+      this.logger.error(
+        `[REPORT] ${rows.length} kept chat line(s) shown UNVERIFIABLE: LIVE_REPORT_SIGNING_KEY is unset or too short`
+      );
+    }
     for (const k of rows) {
+      const text = k.text.toString('utf8');
       out.set(k.reportId, {
         liveId: k.liveId,
         messageId: k.messageId,
         seq: k.seq,
         authorId: k.authorId,
         authorName: k.authorName,
-        text: k.text,
+        text,
         messageCreatedAt: k.messageCreatedAt,
         keptAt: k.keptAt,
         keptUntil: new Date(k.keptAt.getTime() + LIVE_CHAT_REPORT_MAX_KEEP_MS),
@@ -538,7 +544,7 @@ export class ModerationService {
             sealedSha256: k.sealedSha256,
             messageCreatedAt: k.messageCreatedAt,
             keptAt: k.keptAt,
-            text: k.text,
+            text,
           },
           { reportId: k.reportId, authorId: k.authorId, reporterId: reporterOf.get(k.reportId)! },
           DELETED_ACCOUNT

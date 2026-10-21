@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS live_chat_reported_lines (
   "authorId" varchar(255) NOT NULL,
   "clientId" uuid NOT NULL,
   "sealedSha256" varchar(64) NOT NULL,
-  text text NOT NULL,
+  -- The line's UTF-8 BYTES, not `text`: a PostgreSQL text value cannot hold U+0000, which a sealed
+  -- line may carry, so a line with a NUL would otherwise be unreportable (review of #2172).
+  text bytea NOT NULL,
   "messageCreatedAt" timestamptz NOT NULL,
   "keptAt" timestamptz NOT NULL DEFAULT now(),
   "keyId" varchar(16) NOT NULL,

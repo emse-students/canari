@@ -26,7 +26,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
-import { HttpStatus, ServiceUnavailableException } from '@nestjs/common';
+import { HttpStatus, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveChatService } from './live-chat.service';
@@ -2451,8 +2451,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         liveId,
         message,
       });
-    const kept = () =>
-      q(`SELECT "reportId"::text, "authorId", text, seq FROM live_chat_reported_lines`);
+    /** The kept lines, their UTF-8 bytes decoded (the column is bytea: a NUL fits). */
+    const kept = async () =>
+      (
+        (await q(
+          `SELECT "reportId"::text, "authorId", text, seq FROM live_chat_reported_lines`
+        )) as { reportId: string; authorId: string; text: Buffer; seq: number }[]
+      ).map((k) => ({ ...k, text: k.text.toString('utf8') }));
 
     beforeEach(() => {
       process.env.LIVE_REPORT_SIGNING_KEY = SIGNING_KEY;
@@ -2502,7 +2507,53 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
       });
     });
 
-    it('RACE: the same line reported twice at once is ONE report - the unique index answers ALREADY_REPORTED', async () => {
+    it('a line carrying U+0000 is reportable: kept as bytes, shown and verified as the same string', async () => {
+      const live = await start();
+      const withNul = 'avant\u0000apres';
+      const line = await say(BOB, live.id, withNul);
+      await expect(reportLine(CAROL, line.id, withNul)).resolves.toMatchObject({
+        contentType: 'live_chat',
+      });
+      expect((await kept())[0].text).toBe(withNul);
+      const [row] = await reports().listAllReports();
+      expect(row.liveChat).toMatchObject({
+        text: withNul,
+        integrity: { content: 'verified', author: 'verified', reporter: 'verified' },
+      });
+    });
+
+    it('THE INDEX ITSELF refuses a repeat the dedup read did not see, as ALREADY_REPORTED', async () => {
+      // The dedup read is made blind, so only `content_reports_reporter_content_uniq` stands
+      // between the two saves - what two requests racing past the read meet.
+      const repo = ds.getRepository(ContentReport);
+      const blind = Object.create(repo) as Repository<ContentReport>;
+      blind.findOne = async () => null;
+      const service = new ModerationService(blind, {} as Repository<UserModeration>);
+      const logged = jest.spyOn(Logger.prototype, 'log');
+      try {
+        const live = await start();
+        const report = () =>
+          service.createReport({
+            reporterId: CAROL,
+            contentType: 'live',
+            contentId: live.id,
+            reason: 'spam',
+          });
+        await report();
+        expect(await refusal(report())).toEqual({
+          status: HttpStatus.CONFLICT,
+          code: 'ALREADY_REPORTED',
+        });
+        expect(logged.mock.calls.some(([m]) => String(m).includes('refused by the index'))).toBe(
+          true
+        );
+        expect(await q(`SELECT 1 FROM content_reports`)).toHaveLength(1);
+      } finally {
+        logged.mockRestore();
+      }
+    });
+
+    it('RACE: the same line reported twice at once is ONE report, the other ALREADY_REPORTED', async () => {
       const live = await start();
       const line = await say(BOB, live.id, 'texte');
       const both = await Promise.allSettled([
@@ -2650,7 +2701,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
       expect((await integrity())?.content).toBe('altered');
       await q(`UPDATE live_chat_reported_lines SET "keptAt" = "keptAt" - interval '30 days'`);
       expect((await integrity())?.content).toBe('verified');
-      await q(`UPDATE live_chat_reported_lines SET text = 'autre chose'`);
+      await q(`UPDATE live_chat_reported_lines SET text = convert_to('autre chose', 'UTF8')`);
       expect(await integrity()).toEqual({
         content: 'altered',
         author: 'verified',

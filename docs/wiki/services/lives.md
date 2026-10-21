@@ -566,7 +566,9 @@ details?, message: <the plaintext line> }`, in ONE transaction:
    dedup's read meet the unique index `content_reports_reporter_content_uniq` (migration 099,
    partial: the erased tombstone is left out, so two erased reporters never collide), mapped to the
    same `409`;
-5. the kept line, `live_chat_reported_lines`: the text, the live, the message id, its `seq`, its
+5. the kept line, `live_chat_reported_lines`: the text (as its UTF-8 BYTES, a `bytea`: a PostgreSQL
+   `text` cannot hold U+0000, which a sealed line may carry, and a NUL must not make a line
+   unreportable; the signature is over the decoded string), the live, the message id, its `seq`, its
    author, its `clientId`, its time, `keptAt` (read from the database clock in the same transaction,
    to the millisecond) and the SHA-256 of the sealed bytes - **not the ciphertext and not the key** -
    signed by three HMAC-SHA256 (`live-report-signature.ts`) under `LIVE_REPORT_SIGNING_KEY`: one over
@@ -585,7 +587,15 @@ estates).
 integrity: { content, author, reporter } }`. `content` is `verified`, `altered` (the row changed in
 the database) or `key-rotated` (signed under another key: still readable, its proof is not);
 `author` and `reporter` add `erased` - ONLY when that id is the erased tombstone, so an id rewritten
-to another account reads `altered` even when the other account was erased (review of #2172). A signature proves the SERVER recorded that text
+to another account reads `altered` even when the other account was erased (review of #2172). Every
+verdict reads `unverifiable` while the estate has no signing key (logged at `error`).
+
+**What the verdicts cannot tell apart, stated.** `key-rotated` means only "the stored `keyId` is not
+the current key's": a row whose `keyId` was itself rewritten reads the same, and a list of retired
+ids would not close it, since a writer can copy a genuinely retired id. So **`key-rotated` and
+`unverifiable` are PROOF ABSENT and must be shown to a moderator with the weight of `altered`**,
+never as a lesser doubt. And an account id rewritten TO the tombstone reads `erased`, exactly as a
+real erasure does. A signature proves the SERVER recorded that text
 after checking it against the sealed line; it is not a signature by the author.
 
 **How long**: until the report is handled (`status` no longer `pending`), and **never more than 90
@@ -646,7 +656,8 @@ What is left:
 - **The ladder's screens** (WP-L8b): the `live_suspended` and `live_withdrawn` bell rows, the two
   start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) and the
   pre-live screen reading `GET /api/lives/standing`; in `/admin/moderation`, the standing on a live
-  report and the withdraw / lift buttons, and the `live_chat` row with its integrity.
+  report and the withdraw / lift buttons, and the `live_chat` row with its integrity - `altered`,
+  `key-rotated` and `unverifiable` shown with ONE weight, "not proven" ([why](#a-reported-chat-line-wp-l8b)).
 
 ## Decisions of 2026-10-20: moderation, reactions, the audience
 
