@@ -252,7 +252,7 @@ which stores nothing; same method as [section 9.2 of the upload design](../servi
 
 **Why the override exists, and why this is safe to narrow.** `ad405e190` (2026-04-05) installed it when the
 Tauri origins were not yet in the services' CORS allowlists. They all are now (`TAURI_WEBVIEW_ORIGINS`, three
-spellings, asserted by name in each `cors-origins.spec.ts`), and every credentialed call already goes native
+spellings, asserted by name in chat-delivery's `cors-origins.spec.ts`, which proves the four byte-identical copies), and every credentialed call already goes native
 (`shouldUseNativeFetch`), so the WebView's `fetch` already talks to every service from `tauri.localhost` in
 production. Checked from the Android origin against dev: an `Authorization`-bearing POST with a `FormData`,
 `Blob` or `Uint8Array` body, so a real preflight, answers 401 readably on `/api/media/upload`,

@@ -9,9 +9,10 @@ import {
 /**
  * ONE CONTRACT, READ FROM DISK RATHER THAN RESTATED.
  *
- * This spec is BYTE-IDENTICAL in chat-delivery-service and social-service, beside the file it
- * guards, and declared as such: a copied module needs a copied test beside it, or one service
- * asserts the behaviour and the other only inherits the file.
+ * The module is BYTE-IDENTICAL in chat-delivery-service and social-service (declared in
+ * `.github/scripts/lib/declared-duplicates.mjs`), so this ONE spec proves both copies: the gate
+ * pins the social-service file to these bytes, and a second identical spec beside it asserted
+ * nothing more (deleted 2026-10-21, docs/wiki/test-suite-reform.md section 7.2).
  *
  * The contract itself is shared with a THIRD implementation the duplicate detector cannot reach -
  * the frontend's `formatProfileDisplayName`, which is legitimately different code answering the
