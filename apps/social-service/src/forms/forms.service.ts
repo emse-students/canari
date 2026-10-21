@@ -20,10 +20,13 @@ import {
   SETTLED_PAYMENT_STATUSES,
   CONFIRMABLE_PAYMENT_STATUSES,
   LYDIA_REQUEST_UUID_RE,
+  SETTLED_REFUSED_REQUEST_STATES,
   livePendingWhere,
   lockFormSeats,
   overCapacityFirst,
   seatHoldingWhere,
+  toRequestState,
+  type RequestState,
 } from './seat-hold';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
@@ -834,6 +837,8 @@ export class FormsService {
   ): Promise<{
     hasSubmitted: boolean;
     paymentStatus?: string;
+    /** The id of the caller's own seat-holding row, when there is one. */
+    submissionId?: string;
     formFull: boolean;
     pricing: PricingView | null;
     /** Questions this submitter cannot see because of a PROFILE criterion, answers aside. */
@@ -896,6 +901,9 @@ export class FormsService {
     return {
       hasSubmitted: !!submission,
       paymentStatus: submission?.paymentStatus,
+      // The caller's OWN row: a `pending` one is what the page asks `confirm-payment` about, so a
+      // payment the payer declined on Lydia's page (no callback, no way back) releases it there.
+      submissionId: submission?.id,
       formFull,
       pricing,
       hiddenItemIds,
@@ -1302,7 +1310,8 @@ export class FormsService {
    *
    * - Lydia's cancel answers error 2 (`already-settled`) for a request already processed - measured
    *   on cancelled and expired ones, and very probably the same for a PAID one. So error 2 is never
-   *   read as "nobody paid": `request/state` (by the uuid) tells paid (1) from closed (6).
+   *   read as "nobody paid": `request/state` (by the uuid) tells `paid` from `declined` and
+   *   `cancelled-or-expired`, both of which free the row; `open` and `unknown` refuse.
    * - A row naming NO request is one whose request is being issued right now (`submit` clears the
    *   ids in its transaction and writes the new ones once the provider answers; a failed issue
    *   releases the row, `releaseUnissuedRow`). Issuing another would leave two payable requests.
@@ -1338,16 +1347,13 @@ export class FormsService {
         }
       }
       if (!sessionId) throw new Error('no request_uuid to read the state by');
-      const { data } = await axios.post(
-        coreUrl('payments/request-state'),
-        { sessionId, connectAccountId },
-        internalCoreRequestConfig()
-      );
-      if (data?.state === 'closed') {
-        this.logger.log(`[Forms] submission ${row.id}: request ${sessionId} already closed`);
+      const { state, raw } = await this.readRequestState(sessionId, connectAccountId);
+      if (SETTLED_REFUSED_REQUEST_STATES.has(state)) {
+        // Declined by the payer, or cancelled / expired: nothing is payable, a new request may go.
+        this.logger.log(`[Forms] submission ${row.id}: request ${sessionId} already ${state}`);
         return 'free';
       }
-      if (data?.state === 'paid') {
+      if (state === 'paid') {
         // The person paid the request they are now retrying: the answer is paid, and a second
         // request would charge them twice. Recorded as the callback would record it.
         this.logger.log(
@@ -1356,10 +1362,36 @@ export class FormsService {
         await this.markPaid(row.id, requestId ?? sessionId);
         return 'paid';
       }
-      throw new Error(`request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`);
+      throw new Error(`request ${sessionId} is ${state} (code ${raw})`);
     } catch (err: unknown) {
       throw this.previousPaymentOpen(row.id, err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * Reads a request's state through core-service `payments/request-state` (uuid + the Business's
+   * vendor token), typed at the boundary (`toRequestState`): the callers decide on the type and
+   * never on core's raw code, which is only carried for their log. A failed call throws.
+   */
+  private async readRequestState(
+    sessionId: string,
+    connectAccountId: string
+  ): Promise<{ state: RequestState; raw: string }> {
+    const { data } = await axios.post(
+      coreUrl('payments/request-state'),
+      { sessionId, connectAccountId },
+      internalCoreRequestConfig()
+    );
+    const state = toRequestState(data?.state);
+    const raw = typeof data?.raw === 'string' ? data.raw : '';
+    // core already WARNs an unknown provider code; this one is a WIRE mismatch (an older core
+    // answering `closed` mid-deploy, a missing field), which nothing else would report.
+    if (state === 'unknown' && data?.state !== 'unknown') {
+      this.logger.warn(
+        `[Forms] request ${sessionId}: core answered a state this service does not know (${JSON.stringify(data?.state ?? null)}, code ${raw}) - treated as neither paid nor settled`
+      );
+    }
+    return { state, raw };
   }
 
   /** The typed refusal of `settleOpenRequest`, logged at WARN with its reason. */
@@ -1410,6 +1442,11 @@ export class FormsService {
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
+    return this.submitterAnswer(submission);
+  }
+
+  /** What a submitter is answered about a row already read (`toSubmitterView`, plus the currency). */
+  private async submitterAnswer(submission: Submission) {
     const form = await this.formRepo.findOne({ where: { id: submission.formId } });
     const { id, formId, totalPaid, paymentStatus } = toSubmitterView(submission);
     return { id, formId, totalPaid, currency: form?.currency ?? 'eur', paymentStatus };
@@ -1626,14 +1663,20 @@ export class FormsService {
    * Here nothing comes from the client but the submission id the caller is allowed to read: the
    * request is the row's own uuid and the answer is Lydia's, read server to server.
    *
-   * Anything short of `paid` leaves the row as it is (the callback, the next read or the expiry
-   * job decides), and a failed read is logged at WARN and answered with the row unchanged: this
-   * is a read the payer repeats, never the path that releases or charges anything.
+   * `declined` (the payer refused: Lydia sends no callback for it) and `cancelled-or-expired`
+   * RELEASE a `pending` row (`releaseSettledRefusedRow`): nothing is payable any more, and the
+   * payer would otherwise read "pending" with no way to retry until the hold ends. `open` and
+   * `unknown` leave the row as it is (the callback, the next read or the expiry job decides), and
+   * a failed read is logged at WARN and answered with the row unchanged. Nothing here charges.
+   *
+   * Answers the submission plus `requestState`, the typed state read on this call (absent when
+   * none was), so the page can say "declined, you can try again" from a fact.
    */
   async confirmPayment(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     const sessionId = this.lydiaRequestToRead(submission, 'confirmPayment');
+    let requestState: RequestState | undefined;
     if (sessionId) {
       const form = await this.formRepo.findOne({ where: { id: submission.formId } });
       const connectAccountId = form?.associationId
@@ -1644,10 +1687,62 @@ export class FormsService {
           `[Forms] confirmPayment ${submissionId}: the form has no payment account to read request ${sessionId} with`
         );
       } else {
-        await this.settleFromProvider(submissionId, sessionId, connectAccountId, 'confirmPayment');
+        const outcome = await this.settleFromProvider(
+          submissionId,
+          sessionId,
+          connectAccountId,
+          'confirmPayment'
+        );
+        if (outcome !== 'stale' && outcome !== 'unreadable') {
+          requestState = outcome;
+          if (SETTLED_REFUSED_REQUEST_STATES.has(outcome)) {
+            // Declined by the payer (Lydia sends NO callback for it) or cancelled / expired: the
+            // request can never be paid, so the answer stops waiting on it NOW and the payer may
+            // retry, instead of reading "pending" until the hold ends. Only while the row still
+            // names THIS request: a retry that replaced it is waiting on another one.
+            await this.releaseSettledRefusedRow(submissionId, sessionId, outcome);
+          }
+        }
       }
     }
-    return this.getSubmissionById(submissionId);
+    // `requestState` only when it was read on THIS call AND is still about the row's request: the
+    // page decides "declined, try again" from it. A retry that replaced the request between the
+    // read and now (another tab, the success page polling while the payer retries) makes the state
+    // read a stale one - answering it would offer a retry that cancels the request being paid.
+    // The row is read ONCE here, and both the check and the answer come from that read.
+    const current = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!current) throw new NotFoundException('Submission not found');
+    if (requestState !== undefined && current.stripeSessionId !== sessionId) {
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: request ${sessionId} read ${requestState}, but the row now names another request - state not answered`
+      );
+      requestState = undefined;
+    }
+    return { ...(await this.submitterAnswer(current)), requestState };
+  }
+
+  /**
+   * Moves a `pending` row whose request the provider reports declined or cancelled / expired to
+   * `cancelled`, under the row lock and only while the row still names that request (`sessionId`).
+   * A row that already left `pending` (expired by the job, cancelled by a callback) is left as is.
+   */
+  private async releaseSettledRefusedRow(
+    submissionId: string,
+    sessionId: string,
+    state: RequestState
+  ): Promise<void> {
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
+      named: (s) => s.stripeSessionId === sessionId,
+    });
+    if (typeof outcome === 'object') {
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${state} at the provider - answer released, the payer may retry`
+      );
+    } else {
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${state}, row left as is (${outcome})`
+      );
+    }
   }
 
   /**
@@ -1747,23 +1842,20 @@ export class FormsService {
   /**
    * Reads the row's own request at the provider and records it if paid (`markPaid` under the row
    * lock, re-checking the row still names `sessionId`). The ONE settle both confirmations share -
-   * the payer's return and the verified callback. Answers the state read, `stale` when a retry
-   * replaced the request meanwhile, or `unreadable` when the read failed (WARN: the payer repeats
-   * it, the callback is retried by Lydia or the expiry job decides).
+   * the payer's return and the verified callback. Answers the typed state read (`toRequestState`,
+   * via `readRequestState`), `stale` when a retry replaced the request meanwhile, or `unreadable`
+   * when the read failed (WARN: the payer repeats it, the callback is retried by Lydia or the expiry
+   * job decides). What a `declined` or `cancelled-or-expired` state releases is the caller's call.
    */
   private async settleFromProvider(
     submissionId: string,
     sessionId: string,
     connectAccountId: string,
     by: string
-  ): Promise<string> {
+  ): Promise<RequestState | 'stale' | 'unreadable'> {
     try {
-      const { data } = await axios.post(
-        coreUrl('payments/request-state'),
-        { sessionId, connectAccountId },
-        internalCoreRequestConfig()
-      );
-      if (data?.state === 'paid') {
+      const { state, raw } = await this.readRequestState(sessionId, connectAccountId);
+      if (state === 'paid') {
         this.logger.log(
           `[Forms] ${by} ${submissionId}: request ${sessionId} is PAID at the provider - recorded`
         );
@@ -1771,9 +1863,9 @@ export class FormsService {
         return ok ? 'paid' : 'stale';
       }
       this.logger.debug(
-        `[Forms] ${by} ${submissionId}: request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`
+        `[Forms] ${by} ${submissionId}: request ${sessionId} is ${state} (code ${raw})`
       );
-      return String(data?.state ?? 'unknown');
+      return state;
     } catch (err: unknown) {
       this.logger.warn(
         `[Forms] ${by} ${submissionId}: could not read request ${sessionId}: ${
@@ -1788,7 +1880,8 @@ export class FormsService {
    * A Lydia cancel/expire callback, VERIFIED by core-service with the Business key of `vendorToken`,
    * used as a TRIGGER and nothing more - the same rule as `confirmPaymentFromCallback`: the row's
    * OWN request is read at Lydia with that Business (`settleFromProvider`), and only a request Lydia
-   * says is `closed` (state 6, which a cancel and an expiry both leave) releases the seat. A request
+   * says is `cancelled-or-expired` (state 6, which a cancel and an expiry both leave) or `declined`
+   * (state 5) releases the seat (`SETTLED_REFUSED_REQUEST_STATES`). A request
    * Lydia reads `paid` is recorded paid instead; `open`, an unmeasured state or a failed read leaves
    * the row as it is (the expiry job, or Lydia's retry of the callback, decides). So a callback
    * signed by a Business key its payout manager typed cannot cancel a seat Lydia still holds.
@@ -1843,22 +1936,24 @@ export class FormsService {
       vendorToken,
       'cancel callback'
     );
-    if (state !== 'closed') {
+    const settledRefused =
+      state !== 'stale' && state !== 'unreadable' && SETTLED_REFUSED_REQUEST_STATES.has(state);
+    if (!settledRefused) {
       if (state !== 'paid' && state !== 'stale') {
         this.logger.warn(
           `[Forms] cancel callback for submission ${submissionId}: request ${sessionId} reads ` +
-            `${state} at Lydia, not closed - the seat is kept`
+            `${state} at Lydia, neither declined nor cancelled / expired - the seat is kept`
         );
       }
       return { ok: state !== 'unreadable', outcome: state };
     }
-    // Under the row lock, the row must still name the very request that was read closed.
+    // Under the row lock, the row must still name the very request that was read settled-refused.
     const { ok } = await this.applyPendingCancel(
       submissionId,
       'the provider',
       (row) => named(row) && row.stripeSessionId === sessionId
     );
-    return { ok, outcome: 'closed' };
+    return { ok, outcome: state };
   }
 
   /** Moves a `pending` row to `cancelled` (see `moveLockedSubmission`) and logs the outcome. */

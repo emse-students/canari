@@ -17,6 +17,7 @@
     type PricingView,
     getSubmission,
     cancelPendingSubmission,
+    confirmSubmissionPayment,
     type Form,
     type FormItem,
     type AnswerDimensionView,
@@ -26,8 +27,10 @@
   import {
     getCalendarEventLinkedToForm,
     getAssociation,
+    SocialApiError,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
+  import { isRetryableVerdict, paymentReturnVerdict } from '$lib/forms/paymentReturn';
   import { useFormReminder } from '$lib/posts/useFormReminder.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
@@ -77,6 +80,11 @@
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
   let paymentPending = $state(false);
+  /**
+   * Set when the request a pending answer waited on is dead (declined by the payer, or cancelled /
+   * expired): the server released the answer, and the pay button is the retry.
+   */
+  let paymentRetry = $state<'declined' | 'ended' | null>(null);
   let formFull = $state(false);
   /**
    * This submitter's slice of the pricing grid, from the server. Null when the form has one price.
@@ -243,6 +251,9 @@
       hiddenItemIds = hidden ?? [];
       maySubmit = allowed ?? true;
       paymentPending = hasSubmitted && paymentStatus === 'pending';
+      if (paymentPending && submission.submissionId) {
+        void settlePendingPayment(submission.submissionId);
+      }
 
       if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
         void reminder.load();
@@ -439,6 +450,36 @@
 
   /** The FILE questions whose file is still travelling: the answer is not sent while any is. */
   const uploadingFiles = new SvelteSet<string>();
+
+  /**
+   * A pending answer is asked about ONCE on load: a payer who declined on Lydia's page gets no
+   * callback and no link back, so this read is what releases the answer (the server reads the
+   * request and releases it when it is declined, cancelled or expired). Before it, the page said
+   * "pending" with no button for up to 30 minutes.
+   */
+  async function settlePendingPayment(submissionId: string) {
+    try {
+      const sub = await confirmSubmissionPayment(submissionId);
+      const verdict = paymentReturnVerdict(sub.paymentStatus, sub.requestState);
+      Log.d('FormView', `pending answer read: ${sub.paymentStatus} -> ${verdict}`);
+      if (verdict === 'confirmed') {
+        paymentPending = false;
+      } else if (isRetryableVerdict(verdict)) {
+        paymentRetry = verdict === 'declined' ? 'declined' : 'ended';
+        paymentPending = false;
+        submitted = false;
+        // The released answer gave its seat back: "full" was counted with it.
+        formFull = (await checkSubmission(sub.formId)).formFull;
+      }
+    } catch (err) {
+      if (err instanceof SocialApiError && err.status === 429) {
+        // The per-answer limit on asking Lydia: an answer, the page keeps saying "pending".
+        Log.d('FormView', 'pending answer read throttled, left pending');
+        return;
+      }
+      console.warn('[FormView] could not read the pending answer:', err);
+    }
+  }
 
   async function handleSubmit(payerEmail?: string) {
     if (!form || submitting) return;
@@ -905,6 +946,12 @@
     {#if paymentPending}
       <p class="text-amber-warn mt-2 text-center text-sm font-medium">
         {m.form_view_payment_pending_note()}
+      </p>
+    {:else if paymentRetry && !submitted}
+      <p class="text-amber-warn mt-2 text-center text-sm font-medium" role="status">
+        {paymentRetry === 'declined'
+          ? m.form_view_payment_declined_note()
+          : m.form_view_payment_ended_note()}
       </p>
     {:else if formFull && !submitted}
       <p class="text-text-muted mt-2 text-center text-sm font-medium">

@@ -246,10 +246,15 @@ describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
   it.each([
     ['1', 'paid'],
     [1, 'paid'],
-    ['6', 'closed'],
+    ['6', 'cancelled-or-expired'],
     ['0', 'open'],
-    ['5', 'other'],
-    [undefined, 'other'],
+    // Measured on dev 2026-10-21: a payer's decline. It used to read `other`, which kept the
+    // answer `pending` with no retry for up to 30 minutes.
+    ['5', 'declined'],
+    [5, 'declined'],
+    ['7', 'unknown'],
+    ['constructor', 'unknown'],
+    [undefined, 'unknown'],
   ])('reads state %p as %s, never guessing an unmeasured code', async (raw, state) => {
     mockedAxios.post.mockResolvedValue({ data: { state: raw } });
     await expect(

@@ -256,18 +256,15 @@ signatures redacted). One request, `request_id 12115506`, created with `order_re
   this call, and the answer is read server to server over TLS from Lydia's own host, which is
   what makes it trustworthy here - not the signature.
 
-**Not measured, and why: state 1 (paid) and state 5 (refused by the payer).** `1 = paid` is
-**Lydia's documentation, NOT a measurement**, and `confirm-payment`, the settle of a retry and the
-cancel all act on it. **A real sandbox payment, read back with `request/state`, is owed before
-any STABLE ships this.** Both are reached
-only by acting as the PAYER on Lydia's payer page (the homologation page's final-status buttons),
-which is a human at the Lydia form, so they were not driven here. The code reads `1` as paid
-from Lydia's documentation and reports `5`, like any code not measured, as `other`: a retry or a
-cancel that meets it refuses with `PREVIOUS_PAYMENT_OPEN` until the hold ends, and `confirm-payment`
-leaves the row as it is. Still owed, by a person on the homologation payer page, then one
-`request/state` each: pay a request (expect `1`, and read whether the confirm callback arrives),
-refuse one (expect `5`, and whether `request/cancel` then answers error 2), and what
-`request/cancel` answers on the PAID one. Request `12115506` was left open on the sandbox; it
+**State 1 (paid) and state 5 (declined by the payer) were measured on dev, sandbox, on
+2026-10-21**: `1` is a paid request, `5` a payer's decline, which sends NO callback and ends on
+Lydia's own error page with no link back. `LYDIA_REQUEST_STATES` classifies 0 / 1 / 5 / 6 as `open`
+/ `paid` / `declined` / `cancelled-or-expired`, and any other code as `unknown` (never paid, never
+settled). A `declined` request is final: a retry settles it and issues a new one, and
+`confirm-payment` releases the answer so the payer can retry
+([forms](forms.md#a-declined-payment-releases-the-answer-2026-10-21)). Before that it read as an
+unmeasured `other`, and a retry refused with `PREVIOUS_PAYMENT_OPEN` until the hold ended. Still not measured here: what `request/cancel` answers on a PAID or a
+DECLINED request (the state read after an error 2 is what makes either harmless). Request `12115506` was left open on the sandbox; it
 expires on its own (`expire_time 3600`).
 
 ## Which onboarding flag a screen reads (2026-10-03)
@@ -414,8 +411,8 @@ private token does NOT verify Lydia's callback** - consistent with the CSM's "si
 Business's token", though a wrong field set in `verifyRequestCallback` would fail the same way; the
 field names were not logged, since that log line fires only when fields are missing.
 
-**Not produced, so unmeasured:** the state of a PAID request (`1` expected) and of a payer decline
-(`5` expected), and what `request/cancel` answers on a paid request. A test card (`4111...`) is
+**Not produced that day** (since measured, 2026-10-21: `1` paid, `5` declined, see above): the
+state of a PAID request and of a payer decline. A test card (`4111...`) is
 refused before any status choice ("ne permet pas l'usage du code de securite 3DSecure",
 `/collect/payment-error?code=4`) and the request stays `state 0`; no Lydia sandbox test card is
 documented here, and none was guessed further.
@@ -475,7 +472,7 @@ request id decides a status. A confirm naming a request the row no longer holds 
 payment nothing would record). The internal `mark-paid` route is gone. **A cancel or expire callback is
 a trigger by the same rule (2026-10-18):** core posts `{ requestId, vendorToken }` to `cancel-pending`,
 which acts only on the row's current request AND only if `vendorToken` is its payee, and then reads
-that request at Lydia (`settleFromProvider` again): `closed` (state 6) releases the seat, under the row
+that request at Lydia (`settleFromProvider` again): `cancelled-or-expired` (state 6) or `declined` (5) releases the seat, under the row
 lock and only while the row still names the request read; `paid` records the payment instead; `open`,
 an unmeasured state or a failed read keeps the seat (`unreadable` becomes core's retryable 503). So a
 cancel signed with a key the payout manager typed cannot release a seat Lydia still holds open.

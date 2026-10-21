@@ -262,7 +262,15 @@ describe('FormsService - the seat a pending payment holds', () => {
       calls: [] as { route: string; body: any; rowIdsThen: unknown[] }[],
       cancelAnswer: 'cancelled' as 'cancelled' | 'already-settled' | Error,
       /** What `request-state` answers once a cancel said `already-settled` (Lydia's error 2). */
-      stateAnswer: 'closed' as 'closed' | 'paid' | 'open' | 'other' | Error,
+      stateAnswer: 'cancelled-or-expired' as
+        | 'cancelled-or-expired'
+        | 'paid'
+        | 'open'
+        | 'declined'
+        | 'unknown'
+        /** What an OLDER core answered for 6, before the state was typed: a wire mismatch. */
+        | 'closed'
+        | Error,
       /** Runs inside the state read, as a concurrent retry replacing the row's request may. */
       duringState: null as null | (() => void),
       /** Runs inside the cancel call, as Lydia's own cancel callback for the old request may. */
@@ -284,9 +292,15 @@ describe('FormsService - the seat a pending payment holds', () => {
       if (route === 'request-state') {
         core.duringState?.();
         if (core.stateAnswer instanceof Error) throw core.stateAnswer;
-        // core-service maps every code it has not measured (5, refused by the payer, among them)
-        // to `other` and passes the raw code along.
-        const raw = { paid: '1', closed: '6', open: '0', other: '5' }[core.stateAnswer];
+        // core-service classifies Lydia's code (`CheckoutRequestStateKind`) and passes it along.
+        const raw = {
+          paid: '1',
+          'cancelled-or-expired': '6',
+          open: '0',
+          declined: '5',
+          unknown: '9',
+          closed: '6',
+        }[core.stateAnswer];
         return { data: { ok: true, state: core.stateAnswer, raw } };
       }
       expect(route).toBe('create-checkout-session');
@@ -757,30 +771,34 @@ describe('FormsService - the seat a pending payment holds', () => {
     const OTHER_UUID = 'ffeeddccbbaa99887766554433221100';
 
     // The status check and the write are one locked step: a cancel never overwrites a payment.
-    it('cancels a pending row Lydia reads closed, and leaves a paid one alone', async () => {
-      const { service, rows } = makeStore({
-        maxSubmissions: 1,
-        rows: [
-          row({
-            id: 'p',
-            paymentStatus: 'pending',
-            paymentRequestId: '1',
-            stripeSessionId: LYDIA_UUID,
-          }),
-          row({
-            id: 'q',
-            paymentStatus: 'paid',
-            paymentRequestId: '2',
-            stripeSessionId: OTHER_UUID,
-          }),
-        ],
-      });
-      await expect(
-        service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor')
-      ).resolves.toEqual({ ok: true, outcome: 'closed' });
-      await service.cancelPendingSubmission('q', { requestId: '2' }, 'vendor');
-      expect(rows.map((r) => r.paymentStatus)).toEqual(['cancelled', 'paid']);
-    });
+    it.each(['cancelled-or-expired', 'declined'] as const)(
+      'cancels a pending row Lydia reads %s, and leaves a paid one alone',
+      async (state) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: 1,
+          rows: [
+            row({
+              id: 'p',
+              paymentStatus: 'pending',
+              paymentRequestId: '1',
+              stripeSessionId: LYDIA_UUID,
+            }),
+            row({
+              id: 'q',
+              paymentStatus: 'paid',
+              paymentRequestId: '2',
+              stripeSessionId: OTHER_UUID,
+            }),
+          ],
+        });
+        core.stateAnswer = state;
+        await expect(
+          service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor')
+        ).resolves.toEqual({ ok: true, outcome: state });
+        await service.cancelPendingSubmission('q', { requestId: '2' }, 'vendor');
+        expect(rows.map((r) => r.paymentStatus)).toEqual(['cancelled', 'paid']);
+      }
+    );
 
     // Fails without the comparison: after a retry, the cancel of the OLD request would cancel the
     // answer whose NEW request the payer is paying right now.
@@ -815,9 +833,11 @@ describe('FormsService - the seat a pending payment holds', () => {
     // request Lydia still holds open must not release the seat. Fails if `cancel-pending` cancels
     // on the callback's word.
     it.each([
-      ['still open', 'open'],
-      ['in an unmeasured state', 'other'],
-    ] as const)('keeps the seat of a request Lydia reads %s', async (_label, state) => {
+      ['still open', 'open', 'open'],
+      ['in an unmeasured state', 'unknown', 'unknown'],
+      // An older core's `closed` mid-deploy is a word this service does not know: never a release.
+      ['with a word this service does not know', 'closed', 'unknown'],
+    ] as const)('keeps the seat of a request Lydia reads %s', async (_label, state, outcome) => {
       const { service, rows, core } = makeStore({
         maxSubmissions: 1,
         rows: [row({ id: 'p', paymentRequestId: '1', stripeSessionId: LYDIA_UUID })],
@@ -825,7 +845,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       core.stateAnswer = state;
       await expect(
         service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor')
-      ).resolves.toEqual({ ok: true, outcome: state });
+      ).resolves.toEqual({ ok: true, outcome });
       expect(rows[0].paymentStatus).toBe('pending');
       // It read the ROW's own request, with the verified Business.
       expect(core.calls.map((c) => [c.route, c.body])).toEqual([
@@ -978,6 +998,13 @@ describe('FormsService - the seat a pending payment holds', () => {
         'the state read failed',
         { cancelAnswer: 'already-settled', stateAnswer: new Error('timeout') },
       ],
+      // A code core has not measured is never read as settled, nor as paid.
+      ['the state is unknown', { cancelAnswer: 'already-settled', stateAnswer: 'unknown' }],
+      // An older core's `closed` during a deploy: a word this service no longer knows is refused.
+      [
+        'core answers a word it does not know',
+        { cancelAnswer: 'already-settled', stateAnswer: 'closed' },
+      ],
     ] as const)('refuses the retry with PREVIOUS_PAYMENT_OPEN when %s', async (_label, answers) => {
       const { service, rows, core } = makeStore({
         maxSubmissions: 1,
@@ -994,6 +1021,30 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(core.calls.map((c) => c.route)).not.toContain('create-checkout-session');
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentRequestId: '555' });
+    });
+
+    // P1-a (2026-10-21): a payer who DECLINED on Lydia's page (state 5) retries. It used to read as
+    // an unmeasured `other` and answer 409 PREVIOUS_PAYMENT_OPEN for up to 30 minutes. Control:
+    // with `declined` left out of SETTLED_REFUSED_REQUEST_STATES this test fails on the 409.
+    it('settles a DECLINED old request and issues the new one on a retry', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [mine()],
+      });
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'declined';
+      await expect(retry(service)).resolves.toMatchObject({
+        checkoutUrl: 'https://lydia.example/pay/1',
+      });
+      expect(core.calls.map((c) => c.route)).toEqual([
+        'cancel-request',
+        'request-state',
+        'create-checkout-session',
+      ]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ paymentStatus: 'pending', stripeSessionId: 'uuid-1' });
     });
 
     // A row naming no request is one whose request is being issued right now: a second request
@@ -1017,7 +1068,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         maxSubmissions: 1,
         basePrice: 1500,
         provider: 'lydia',
-        // A real request uuid: the cancel callback reads it at Lydia (closed) before it cancels.
+        // A real request uuid: the cancel callback reads it at Lydia (expired) before it cancels.
         rows: [mine({ stripeSessionId: LYDIA_UUID })],
       });
       core.duringCancel = () =>
@@ -1189,9 +1240,10 @@ describe('FormsService - the seat a pending payment holds', () => {
 
     it.each([
       ['still open', 'open'],
-      ['closed', 'closed'],
-      // A code nothing here has measured - 5, refused by the payer, is one - is never read as paid.
-      ['in an unmeasured state (5)', 'other'],
+      // A code core has not measured is never read as paid, nor as settled.
+      ['in an unknown state', 'unknown'],
+      // An older core's word for 6, mid-deploy: unknown here, so nothing is released.
+      ['answered with a word this service does not know', 'closed'],
     ] as const)('leaves the row pending when the request is %s', async (_label, state) => {
       const { service, rows, core } = makeStore({
         maxSubmissions: 1,
@@ -1201,9 +1253,67 @@ describe('FormsService - the seat a pending payment holds', () => {
       core.stateAnswer = state;
       await expect(service.confirmPayment('mine')).resolves.toMatchObject({
         paymentStatus: 'pending',
+        requestState: state === 'open' ? 'open' : 'unknown',
       });
       expect(rows[0].paymentStatus).toBe('pending');
     });
+
+    // P1-a (2026-10-21): a decline sends NO callback and ends on Lydia's own page, so the payer's
+    // next read is the only thing that can release the answer. It used to stay `pending` (no retry)
+    // until the hold ended. Control: with `releaseSettledRefusedRow` not called, the status
+    // assertion fails on `pending` (the unfixed behaviour).
+    it.each([['declined'], ['cancelled-or-expired']] as const)(
+      'releases the answer when the request is %s, and a retry then issues a new request',
+      async (state) => {
+        const { service, rows, core, userTagService } = makeStore({
+          maxSubmissions: 1,
+          basePrice: 1500,
+          provider: 'lydia',
+          rows: [mine()],
+        });
+        core.stateAnswer = state;
+        await expect(service.confirmPayment('mine')).resolves.toMatchObject({
+          id: 'mine',
+          paymentStatus: 'cancelled',
+          requestState: state,
+        });
+        expect(rows[0].paymentStatus).toBe('cancelled');
+        expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+        // The released row holds no seat and is not reused: the retry writes a new answer and
+        // issues ONE request, with no cancel of the dead one.
+        core.calls.length = 0;
+        await expect(
+          service.submit('f1', { userId: 'u1', answers: {} } as any)
+        ).resolves.toMatchObject({
+          checkoutUrl: 'https://lydia.example/pay/1',
+        });
+        expect(core.calls.map((c) => c.route)).toEqual(['create-checkout-session']);
+        expect(rows.filter((r) => r.paymentStatus === 'pending')).toHaveLength(1);
+      }
+    );
+
+    // Review of #2210: the stale state must not be ANSWERED either - "declined, try again" while
+    // the newer request is payable would offer a retry that cancels it. Control: answering the
+    // state read unconditionally fails the `requestState` assertion.
+    it.each([['declined'], ['cancelled-or-expired'], ['open']] as const)(
+      'releases nothing and answers no state when a retry replaced the %s request meanwhile',
+      async (state) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: 1,
+          provider: 'lydia',
+          rows: [mine()],
+        });
+        core.stateAnswer = state;
+        core.duringState = () => {
+          rows[0].stripeSessionId = UUID_NEW;
+          rows[0].paymentRequestId = '777';
+        };
+        const answer = await service.confirmPayment('mine');
+        expect(rows[0]).toMatchObject({ paymentStatus: 'pending', stripeSessionId: UUID_NEW });
+        expect(answer.paymentStatus).toBe('pending');
+        expect(answer.requestState).toBeUndefined();
+      }
+    );
 
     it('answers the row unchanged, at WARN, when the provider cannot be read', async () => {
       const { service, rows, core } = makeStore({
@@ -1440,8 +1550,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     // anyway: decided from the row, once, and over capacity when the seat went meanwhile.
     it('a payment after its own expiry is decided from the row, once', async () => {
       const r = makeRoutes({}, 1, [row({ id: 'other', paymentStatus: 'pending', userId: 'u2' })]);
-      // Lydia reads the request closed when the expiry callback lands, paid once the money did.
-      r.core.stateAnswer = 'closed';
+      // Lydia reads the request expired when the expiry callback lands, paid once the money did.
+      r.core.stateAnswer = 'cancelled-or-expired';
       await r.cancelPending({ requestId: '1001' });
       r.core.stateAnswer = 'paid';
       r.rows[1].paymentStatus = 'paid';
