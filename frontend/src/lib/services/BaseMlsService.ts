@@ -2397,7 +2397,15 @@ export abstract class BaseMlsService implements IMlsService {
           );
           throw e;
         }
-        const abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
+        let abandoned: string;
+        try {
+          abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
+        } catch (refused) {
+          // The caller of this round logs and carries on (`syncConnectionAfterWsOpen`), so ending
+          // the document is HERE or nowhere: the client in memory is the fresh, unrecorded one.
+          if (refused instanceof MlsStateWriteRefusedError) this.endDocumentAfterRefusedRotation();
+          throw refused;
+        }
         console.warn(
           `[MLS] Device ${sanitizeForLog(abandoned)} was revoked - re-enrolled as ${sanitizeForLog(
             this.deviceId
@@ -2618,16 +2626,21 @@ export abstract class BaseMlsService implements IMlsService {
    * version guard refuses it, which means another document - another tab of this account - wrote the
    * stored state after this one loaded. The id in `localStorage`, the send ledger and the server's
    * device row are shared with that document, so they move only once the fresh state is on disk. On
-   * a refusal the in-memory ids go back to the old one (what the store and `localStorage` still
-   * name), the old device is NOT deleted - the other document may be serving it - and the refusal
-   * propagates: init fails rather than run a session on an identity nothing durable records, and a
-   * revocation's key package round fails and rotates again on its next round.
+   * a refusal NONE of them moves - the old device is not deleted, the other document may be serving
+   * it - and the refusal propagates typed.
+   *
+   * WHAT IS LEFT IN MEMORY IS NOT RESTORED, IT IS ENDED. The old client is gone (the fresh load
+   * replaced it), so rolling the ids back would leave a fresh, groupless client under the old id - a
+   * session that publishes nothing, rotates again on every round, and once its counter passes the
+   * other document's writes the fresh state next to the old id. The ids stay the fresh ones, which at
+   * least agree with the client, and each caller ends what holds them: init fails and the login
+   * releases its client (`savedStateFailure`), and the revocation path reloads the document
+   * ({@link endDocumentAfterRefusedRotation}) so it starts again from what the disk now holds.
    *
    * @returns the id that was abandoned, for the caller to log.
    */
   protected async rotateDeviceIdentity(deviceKeyB64: string, reason: string): Promise<string> {
     const oldDeviceId = this.deviceId;
-    const oldStateWasExpected = this.stateWasExpected;
     console.warn(`[MLS] Rotating device identity (${reason}), abandoning ${oldDeviceId}`);
     this.deviceId = this.generateDeviceId(this.userId);
     this.delivery.deviceId = this.deviceId;
@@ -2640,11 +2653,8 @@ export abstract class BaseMlsService implements IMlsService {
     } catch (e) {
       if (!(e instanceof MlsStateWriteRefusedError)) throw e;
       console.error(
-        `[MLS] Device identity rotation ABORTED: another document wrote this account's state (${e.outcome}), so ${this.deviceId} is on no disk - keeping ${oldDeviceId} and its server row`
+        `[MLS] Device identity rotation ABORTED: another document wrote this account's state (${e.outcome}), so ${this.deviceId} is on no disk - ${oldDeviceId} stays the stored id and keeps its server row, and this document must end`
       );
-      this.deviceId = oldDeviceId;
-      this.delivery.deviceId = oldDeviceId;
-      this.stateWasExpected = oldStateWasExpected;
       throw e;
     }
     localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
@@ -2659,6 +2669,18 @@ export abstract class BaseMlsService implements IMlsService {
       console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
     );
     return oldDeviceId;
+  }
+
+  /**
+   * Ends this document after a rotation whose checkpoint another document refused
+   * ({@link rotateDeviceIdentity}): a reload is the one thing that provably replaces the live client
+   * with the state as the disk now holds it - the same answer the tab-leader promotion gives
+   * (`useChatSession`). Only web refuses a checkpoint, so only web reaches it. Overridable so a test
+   * can observe it.
+   */
+  protected endDocumentAfterRefusedRotation(): void {
+    if (typeof window === 'undefined') return;
+    window.location.reload();
   }
 
   /**

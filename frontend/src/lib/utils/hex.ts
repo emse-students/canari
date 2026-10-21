@@ -105,7 +105,10 @@ let _lastAcceptedWriter = '(nothing yet this session)';
  * be this document's own blob: another writer reaching the same number is refused as a collision
  * and never stored. And this document's versions are tagged at capture from one monotonic counter,
  * so its later version holds every change its earlier capture held. An untagged write (restore,
- * migration) stores bytes without moving the version, so it clears the record.
+ * migration) stores bytes without moving the version, so THIS document's clears the record.
+ * ANOTHER document's cannot, and is not seen: its restore leaves this record true-looking, and an
+ * older flight here then reads `superseded` over bytes it does not hold - a named residual
+ * (docs/wiki/protocols/mls-desync-prevention.md), closed only when every write carries a version.
  */
 const _ownStoredVersion = new Map<string, number>();
 

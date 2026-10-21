@@ -25,6 +25,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     loadStateWithKey: vi.fn().mockResolvedValue(undefined),
     persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     deleteDevice: vi.fn().mockResolvedValue(undefined),
+    endDocumentAfterRefusedRotation: vi.fn(),
     // Real rotation: the assertions below are about what it does.
     rotateDeviceIdentity: BaseMlsService.prototype['rotateDeviceIdentity'],
     ...keyPackageWaitFields(),
@@ -70,9 +71,14 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
     expect(impl).toHaveBeenCalledTimes(2);
   });
 
-  it('fails the round, identity untouched, when the re-enrolment checkpoint is REFUSED', async () => {
-    // Another document wrote this account's state, so the fresh identity is on no disk: nothing
-    // shared may name it yet. The next round meets the revocation again and rotates again.
+  /**
+   * THE ROUND'S CALLER LOGS AND CARRIES ON (`syncConnectionAfterWsOpen`), so a refused re-enrolment
+   * that only rolled the ids back left the session RUNNING on a fresh, groupless client under the
+   * revoked id: every later round rotated again, and once this tab's counter passed the other's the
+   * fresh state was written next to the old stored id - the churn the rotation exists to prevent.
+   * The document is ended instead, and nothing shared names the fresh identity.
+   */
+  it('ENDS the document, nothing shared moved, when the re-enrolment checkpoint is REFUSED', async () => {
     const impl = vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked'));
     const ctx = makeCtx({
       generateKeyPackageImpl: impl,
@@ -82,11 +88,23 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
 
     await expect(generateKeyPackage(ctx)).rejects.toBeInstanceOf(MlsStateWriteRefusedError);
     error.mockRestore();
-    expect(ctx.deviceId).toBe('d-revoked');
-    expect(ctx.delivery.deviceId).toBe('d-revoked');
+    expect(ctx.endDocumentAfterRefusedRotation).toHaveBeenCalledTimes(1);
+    // The ids in memory agree with the client in memory until the reload replaces both.
+    expect(ctx.deviceId).toBe('d-fresh');
     expect(localStorage.getItem('mls_device_id_u')).toBeNull();
     expect(ctx.deleteDevice).not.toHaveBeenCalled();
     expect(impl).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not end the document for a rotation that failed for any other reason', async () => {
+    const impl = vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked'));
+    const ctx = makeCtx({
+      generateKeyPackageImpl: impl,
+      persistCheckpoint: vi.fn().mockRejectedValue(new Error('quota exceeded')),
+    });
+
+    await expect(generateKeyPackage(ctx)).rejects.toThrow('quota exceeded');
+    expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
   });
 
   it('leaves any other failure alone, identity untouched', async () => {

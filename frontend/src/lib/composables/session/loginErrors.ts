@@ -76,6 +76,13 @@ export type LoginErrorCode =
    * there to refuse it. Only an online sign-in (a new account, once the erasure completed) lifts it.
    */
   | 'account_deleted'
+  /**
+   * This device's identity had to be rotated, and the fresh state could not be recorded: ANOTHER
+   * TAB of this account wrote the stored state after this login loaded it (the version guard's
+   * refusal). Nothing durable was moved - not the stored id, not the server's device row - so the
+   * remedy is closing the other tab, never a PIN or a reset.
+   */
+  | 'state_written_by_another_tab'
   /** Anything else (network, server, unexpected). */
   | 'other';
 

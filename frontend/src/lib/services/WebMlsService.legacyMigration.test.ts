@@ -55,6 +55,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     generateDeviceId: vi.fn().mockReturnValue('web-u-fresh'),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([7])),
     deleteDevice: vi.fn().mockResolvedValue(undefined),
+    endDocumentAfterRefusedRotation: vi.fn(),
     // Real implementations, not mocks: the fresh-start assertions below (new id persisted, old
     // device deleted) are assertions ABOUT the rotation, so stubbing it would test nothing.
     rotateDeviceIdentity: WebMlsService.prototype['rotateDeviceIdentity'],
@@ -155,7 +156,8 @@ describe('WebMlsService._initImpl legacy migration', () => {
     expect(failure).toBeInstanceOf(MlsStateWriteRefusedError);
     expect(said.some((s) => s.includes('rotation ABORTED'))).toBe(true);
     expect(localStorage.getItem('mls_device_id_u')).toBe('web-u-new');
-    expect(ctx.deviceId).toBe('web-u-new');
+    // Init fails, so the login releases this client; the reload is the revocation path's alone.
+    expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
     expect(ctx.deleteDevice).not.toHaveBeenCalled();
   });
 

@@ -576,7 +576,7 @@ both tabs share.
 
 **The guard now tells its own document from another one.** `hex.ts` records the version this
 document last wrote, per account, once the transaction commits. An untagged write (a restore or a
-migration) clears the record. An older write then has two outcomes:
+migration) made BY THIS DOCUMENT clears the record. An older write then has two outcomes:
 
 - **`superseded`**: the stored version is this document's own. Its counter is per document and
   monotonic, so that later capture holds everything the refused one did. This is the ordinary case
@@ -592,6 +592,15 @@ The own-document record was chosen over routing the direct callers through the p
 record is one fact, kept where the decision is made. Re-routing would touch four call sites, and the
 fifth one written later would reopen the hole.
 
+**What it does not see: an untagged write from ANOTHER document.** A backup restore
+(`settings/actions.ts`) or a legacy migration in another tab replaces the blob without a version, so
+the stored version stays this document's last one and nothing tells this document its record is
+false. An older flight of this document that lands afterwards comes back `superseded` and declares
+its send ledger durable, while the disk holds the restore. It needs a restore in a second tab of the
+same account, during this tab's in-flight checkpoint. It is left open, rare and named: the cure is
+for every write to carry a version (the restore included), which is the version guard's own
+follow-up, not this fix's.
+
 **One line per refusal.** The guard's line names the refused version, the stored one, and what this
 document last wrote. `writeCheckpoint` rejects typed (`MlsStateWriteRefusedError`) and says nothing
 more, and the persister no longer repeats a typed refusal. A caller whose consequence is its own
@@ -600,13 +609,27 @@ still says so: `externalJoin`'s fork accusation, and the rotation's abort.
 **The rotation persists first** (`BaseMlsService.rotateDeviceIdentity`). The fresh identity is
 loaded and checkpointed before anything shared moves: the id in `localStorage`, the send ledger and
 the old device's server row. On a refusal, another document wrote this account's state after this
-one loaded. The in-memory ids return to the old one, the old device is not deleted (the other
-document may be serving it), and the refusal propagates. Init fails rather than run a session on an
-identity no disk records, and a revoked device's key package round fails and rotates again on its
-next round.
+one loaded. Nothing shared moves, the old device is not deleted (the other document may be serving
+it), and the refusal propagates.
+
+**What is left in memory is ENDED, never rolled back.** The fresh client is already loaded, so
+restoring only the ids would run a groupless client under the revoked id. The round's caller logs
+and carries on, so every later round would rotate again, and once this tab's counter passed the
+other's the fresh state would be written next to the old stored id. So the ids stay the fresh ones,
+agreeing with the client, and each caller ends the holder:
+
+- **init** throws; the login maps it to a typed `LoginFailure` (`state_written_by_another_tab`,
+  "close the other tabs") and releases its client;
+- **the revocation round** reloads the document (`endDocumentAfterRefusedRotation`), the same proof
+  the tab promotion relies on: a reload is what provably re-reads the disk.
+
+One window is left: a checkpoint scheduled before the reload unloads the page could still write the
+fresh state. It needs this tab's counter to pass the other tab's within that window; the other tab
+just wrote, so it is ahead.
 
 Pinned by `hex.mlsVersion.test.ts` (superseded versus stale, untagged writes), `WebMlsService.changeDeviceKey.test.ts`
 ("WebMlsService.writeCheckpoint"), `mlsStatePersister.test.ts` (a refused checkpoint adds no line),
 `BaseMlsService.externalJoin.test.ts` (no fork accusation for an own-document stale write, one for a
 foreign one), `BaseMlsService.deviceRevoked.test.ts` and `WebMlsService.legacyMigration.test.ts`
-(the refused rotation). Each was mutation-checked.
+(the refused rotation ends the document on the revocation path, and only for a refusal),
+`savedStateFailure.test.ts` (the typed login failure). Each was mutation-checked.
