@@ -1040,6 +1040,54 @@ describe('the E2E worker report (2026-10-19)', () => {
     expect(get(service.callState)).toBe('incall');
   });
 
+  describe("an audio-only build judges the peer's HIDDEN video like any other (B0 of the calls plan)", () => {
+    // The fakes say what the worker counts; whether WebKit and Chromium FEED a receiver transform
+    // whose track has no sink is a phone reading (calls.md, B0; device-verification CALL-L1 row 13).
+    beforeEach(() => {
+      features.CALLS_VIDEO_ENABLED = false;
+    });
+    afterEach(() => {
+      features.CALLS_VIDEO_ENABLED = true;
+    });
+
+    it('frames through the receiver transform: conclusive, the call goes on, nothing is shown', async () => {
+      const { service, pc, lines } = await connectedCall();
+      pc.outboundPackets = 250;
+      pc.inboundPackets = 251;
+      await vi.advanceTimersByTimeAsync(5_000);
+      pc.remoteOfferAdds('video');
+      workerAnswers.video = { sender: 0, receiver: 30 };
+      pc.videoInboundPackets = 400;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(lines()).toContain(
+        '[Call] E2E path check (after a new video m-line): no media around the transform (packets sent audio=250 video=0 received audio=251 video=400)'
+      );
+      expect(get(service.callState)).toBe('incall');
+      const shown = get(service.remoteStream)?.getTracks() ?? [];
+      expect(shown.some((t) => (t as MediaStreamTrack).kind === 'video')).toBe(false);
+    });
+
+    it('packets and never a frame: still ENDED as media around the transform, hidden or not', async () => {
+      const { service, pc, lines } = await connectedCall();
+      pc.outboundPackets = 250;
+      pc.inboundPackets = 251;
+      await vi.advanceTimersByTimeAsync(5_000);
+      pc.remoteOfferAdds('video');
+      pc.videoInboundPackets = 120;
+      await vi.advanceTimersByTimeAsync(5_000);
+      pc.videoInboundPackets = 240;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(
+        lines().some(
+          (l) =>
+            l.startsWith('[Call] ERROR E2E path check') &&
+            l.includes('AROUND the transform on receiver:video')
+        )
+      ).toBe(true);
+      expect(get(service.callState)).not.toBe('incall');
+    });
+  });
+
   it('re-checks a camera whose negotiation outlasted the check, and catches its bypass then (review S1)', async () => {
     const { service, pc, lines } = await connectedCall();
     pc.outboundPackets = 250;

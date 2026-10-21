@@ -1869,8 +1869,13 @@ export class CallService {
     // (or a later build) sends one. The m-line is answered `recvonly` - this side never adds a
     // camera - and its transforms are attached above, so its frames are decrypted and the E2E path
     // check keeps judging it: left bare, its packets would end the call as media AROUND the
-    // transform. It is not turned `inactive`: that is a renegotiation the polite side cannot open,
-    // and it would buy only the peer's own uplink. The track never reaches the UI.
+    // transform. The track never reaches the UI.
+    // `inactive` WOULD be possible (after the first remote description either side may
+    // renegotiate, and set here it would even shape this side's answer) and would save the peer's
+    // video bandwidth and CPU. It is not taken: how the E2E path check treats a negotiated m-line
+    // that carries nothing is unmeasured on a phone (it may withdraw the E2E claim of a healthy
+    // audio call), and the case comes only from a modified client until video ships - when the
+    // floor rises past this build or the `inactive` route is built (docs/wiki/frontend/modules/calls.md, B0).
     if (track.kind === 'video' && !CALLS_VIDEO_ENABLED) {
       appendLog(
         '[Call] the peer sends video - this build is audio only, it is received and not shown'
