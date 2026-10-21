@@ -65,77 +65,164 @@ object IncomingShare {
         }.start()
     }
 
+    /** Set once the inbox has been swept in this process (`sweepOrphansOnce`). */
+    private var sweptThisProcess = false
+
     /**
-     * One capture at a time: two shares arriving together would otherwise sweep each other's copies
-     * and race on the pending file. The newer one simply waits and then replaces the older.
+     * One capture at a time: two shares arriving together would otherwise race on the pending file
+     * and on which older share each replaces. The newer one simply waits and then replaces the older.
+     *
+     * NOTHING OLDER IS DELETED UNTIL THIS SHARE IS HANDED OVER. A capture that throws, or that keeps
+     * nothing, leaves whatever came before exactly as it was - a share the page already holds keeps
+     * its files, and a staging in progress is never cut.
      */
     @Synchronized
     private fun runCapture(context: Context, text: String, uris: List<Uri>, intentType: String?): Boolean {
-        sweepInbox(context)
         val shareId = UUID.randomUUID().toString()
         val dir = File(inboxDir(context), shareId).also { it.mkdirs() }
-        val heldGrants = context.contentResolver.persistedUriPermissions.map { it.uri.toString() }
-        val files = JSONArray()
-        var refused = 0
-        var kept = 0L
-        for ((index, uri) in uris.withIndex()) {
-            if (index >= ShareRules.MAX_FILES) {
-                Log.w(TAG, "stream $index refused: past ${ShareRules.MAX_FILES} files")
-                refused++
-                continue
+        try {
+            val heldGrants = context.contentResolver.persistedUriPermissions.map { it.uri.toString() }
+            val files = JSONArray()
+            var refused = 0
+            var kept = 0L
+            for ((index, uri) in uris.withIndex()) {
+                if (index >= ShareRules.MAX_FILES) {
+                    Log.w(TAG, "stream $index refused: past ${ShareRules.MAX_FILES} files")
+                    refused++
+                    continue
+                }
+                val ceiling = ShareRules.nextFileCeiling(kept)
+                val copied = if (ceiling <= 0) {
+                    Log.w(TAG, "stream $index refused: the share already holds ${ShareRules.MAX_TOTAL_BYTES / 1024 / 1024} MB")
+                    null
+                } else {
+                    copyStream(context, uri, dir, index, intentType, ceiling, heldGrants)
+                }
+                if (copied == null) {
+                    refused++
+                } else {
+                    kept += copied.second
+                    files.put(copied.first)
+                }
             }
-            val ceiling = ShareRules.nextFileCeiling(kept)
-            val copied = if (ceiling <= 0) {
-                Log.w(TAG, "stream $index refused: the share already holds ${ShareRules.MAX_TOTAL_BYTES / 1024 / 1024} MB")
-                null
-            } else {
-                copyStream(context, uri, dir, index, intentType, ceiling, heldGrants)
+            if (text.isEmpty() && files.length() == 0) {
+                deleteDir(dir, "share $shareId kept nothing")
+                return reportRefusals(context, refused)
             }
-            if (copied == null) {
-                refused++
-            } else {
-                kept += copied.second
-                files.put(copied.first)
+            val payload = JSONObject()
+                .put("id", shareId)
+                .put("text", text)
+                .put("files", files)
+                .put("refused", refused)
+            // CLAIMED, NOT PEEKED AT: the older manifest is renamed away first, so the page cannot drain
+            // it between this capture reading its id and deleting its copies.
+            val replaced = claimPending(context)
+            if (!writePending(context, payload)) {
+                deleteDir(dir, "share $shareId not handed over")
+                if (replaced != null) writePending(context, replaced)
+                return false
             }
+            // Handed over: the older share nobody drained is now unreachable, and only now is it gone.
+            replaced?.optString("id")?.takeIf { it.isNotEmpty() }?.let { id ->
+                Log.i(TAG, "an undrained share was replaced by a newer one")
+                deleteDir(File(inboxDir(context), id), "replaced share $id")
+            }
+            Log.i(TAG, "share $shareId ready: ${files.length()} file(s), $kept bytes, $refused refused")
+            return true
+        } catch (e: Exception) {
+            deleteDir(dir, "share $shareId failed")
+            throw e
         }
-        val payload = JSONObject()
-            .put("id", shareId)
-            .put("text", text)
-            .put("files", files)
-            .put("refused", refused)
-        // WRITTEN WHOLE OR NOT AT ALL: the page may drain at any moment (a return to the foreground),
-        // and a reader catching a half-written file would drop the share as corrupt. A rename within
-        // one directory is atomic.
-        val dataDir = MlsContextLoader.tauriDataDir(context)
-        val staging = File(dataDir, "$PENDING_FILE.tmp")
+    }
+
+    /**
+     * A share that kept nothing still has refusals the member must hear about. They are added to the
+     * share still waiting, if there is one - which stays as it was - or handed over alone.
+     */
+    private fun reportRefusals(context: Context, refused: Int): Boolean {
+        if (refused == 0) return false
+        val waiting = claimPending(context)
+        val payload = waiting?.put("refused", waiting.optInt("refused", 0) + refused)
+            ?: JSONObject().put("id", UUID.randomUUID().toString()).put("text", "")
+                .put("files", JSONArray()).put("refused", refused)
+        Log.w(TAG, "a share kept nothing: $refused refusal(s) reported")
+        return writePending(context, payload)
+    }
+
+    private fun pendingFile(context: Context) = File(MlsContextLoader.tauriDataDir(context), PENDING_FILE)
+
+    /**
+     * Takes the manifest still waiting to be drained, if any: renamed out of the page's reach first -
+     * the drain claims it the same way (`commands/handoff.rs`), so exactly one of the two gets it -
+     * then read and deleted. Null when none was waiting, or it was unreadable (said).
+     */
+    private fun claimPending(context: Context): JSONObject? {
+        val claimed = File(MlsContextLoader.tauriDataDir(context), "$PENDING_FILE.replacing")
+        if (!pendingFile(context).renameTo(claimed)) return null
+        return try {
+            JSONObject(claimed.readText())
+        } catch (e: Exception) {
+            Log.w(TAG, "the waiting share manifest is unreadable: ${e.message}")
+            null
+        } finally {
+            if (!claimed.delete()) Log.w(TAG, "the claimed manifest ${claimed.name} was not deleted")
+        }
+    }
+
+    /** The id of the manifest waiting to be drained, read without claiming it. */
+    private fun pendingShareId(context: Context): String? = try {
+        val file = pendingFile(context)
+        if (file.exists()) JSONObject(file.readText()).optString("id").takeIf { it.isNotEmpty() } else null
+    } catch (e: Exception) {
+        Log.w(TAG, "the waiting share manifest is unreadable: ${e.message}")
+        null
+    }
+
+    /**
+     * WRITTEN WHOLE OR NOT AT ALL: the page may drain at any moment (a return to the foreground), and
+     * a reader catching a half-written file would drop the share as corrupt. A rename within one
+     * directory is atomic, and replaces the manifest it lands on.
+     */
+    private fun writePending(context: Context, payload: JSONObject): Boolean {
+        val target = pendingFile(context)
+        val staging = File(target.parentFile, "$PENDING_FILE.tmp")
         staging.writeText(payload.toString())
-        if (!staging.renameTo(File(dataDir, PENDING_FILE))) {
-            staging.delete()
-            dir.deleteRecursively()
-            Log.e(TAG, "share $shareId not handed over: the pending file could not be renamed into place")
-            return false
-        }
-        Log.i(TAG, "share $shareId ready: ${files.length()} file(s), $kept bytes, $refused refused")
-        return true
+        if (staging.renameTo(target)) return true
+        Log.e(TAG, "the pending share file could not be renamed into place")
+        if (!staging.delete()) Log.w(TAG, "the staged manifest ${staging.name} was not deleted")
+        return false
     }
 
     private fun inboxDir(context: Context) = File(context.cacheDir, INBOX_DIR)
 
-    /**
-     * Empties the inbox before a new share is copied into it. A newer share REPLACES whatever came
-     * before - undrained (its pending file goes too), drained but never staged (cancelled, or its
-     * conversation never opened), or left behind by a corrupt manifest or a failed read - so nothing
-     * in the inbox survives the next share, and nothing outside it is ever deleted from here.
-     */
-    private fun sweepInbox(context: Context) {
-        val pending = File(MlsContextLoader.tauriDataDir(context), PENDING_FILE)
-        if (pending.exists()) {
-            Log.i(TAG, "an undrained share was replaced by a newer one")
-            pending.delete()
+    private fun deleteDir(dir: File, why: String) {
+        if (dir.deleteRecursively()) {
+            Log.d(TAG, "$why: ${dir.name} deleted")
+        } else {
+            Log.w(TAG, "$why: ${dir.name} was not entirely deleted")
         }
-        val leftovers = inboxDir(context).listFiles().orEmpty()
-        if (leftovers.isNotEmpty()) Log.d(TAG, "sweeping ${leftovers.size} earlier share(s) from the inbox")
-        for (entry in leftovers) entry.deleteRecursively()
+    }
+
+    /**
+     * Deletes every copy in the inbox that the waiting manifest does not name - once per process,
+     * from the first `onCreate`, before any capture.
+     *
+     * Then, and only then, nobody can be using them: no page is alive yet to stage a share or hold
+     * one, so a copy the waiting manifest does not name belongs to a share that died with the last
+     * process (drained but never staged, cancelled before its copies were deleted). While the
+     * process lives, each copy is deleted by whoever ends its share - the page reading it
+     * (`take_picked_file`), the page dropping it (`discard_picked_file`), or the capture that
+     * replaces an undrained one.
+     */
+    @Synchronized
+    fun sweepOrphansOnce(context: Context) {
+        if (sweptThisProcess) return
+        sweptThisProcess = true
+        val keep = pendingShareId(context)
+        val orphans = inboxDir(context).listFiles().orEmpty().filter { it.name != keep }
+        if (orphans.isEmpty()) return
+        Log.i(TAG, "sweeping ${orphans.size} share(s) left by an earlier process")
+        for (entry in orphans) deleteDir(entry, "orphan share")
     }
 
     private fun sharedText(intent: Intent): String {
@@ -227,7 +314,10 @@ object IncomingShare {
                 }
             }
             Log.d(TAG, "stream $index copied: $mime, $total bytes")
-            Pair(JSONObject().put("path", target.absolutePath).put("name", name).put("mime", mime), total)
+            Pair(
+                JSONObject().put("path", target.absolutePath).put("name", name).put("mime", mime).put("size", total),
+                total,
+            )
         } catch (e: Exception) {
             target.delete()
             Log.w(TAG, "stream $index refused: ${e.message}")

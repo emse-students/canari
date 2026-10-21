@@ -1,7 +1,7 @@
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 
-import { drainNativeShare, parseSharedManifest, readSharedFiles } from './incomingShareDrain';
+import { drainNativeShare, parseSharedManifest, stageSharedFiles } from './incomingShareDrain';
 import { incomingShare } from '$lib/stores/incomingShare.svelte';
 
 /**
@@ -15,13 +15,13 @@ describe('parseSharedManifest', () => {
       JSON.stringify({
         id: 'x',
         text: 'hi',
-        files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png' }],
+        files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
         refused: 2,
       })
     );
     expect(parsed).toEqual({
       text: 'hi',
-      files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png' }],
+      files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
       refused: 2,
     });
   });
@@ -29,7 +29,13 @@ describe('parseSharedManifest', () => {
   it('keeps only well-formed file entries', () => {
     const parsed = parseSharedManifest(
       JSON.stringify({
-        files: [{ path: '/c/a' }, null, 'x', { path: '/c/b', name: 'b', mime: 'text/plain' }],
+        files: [
+          { path: '/c/a' },
+          null,
+          'x',
+          { path: '/c/n', name: 'n', mime: 'text/plain' },
+          { path: '/c/b', name: 'b', mime: 'text/plain', size: 0 },
+        ],
       })
     );
     expect(parsed?.files.map((f) => f.name)).toEqual(['b']);
@@ -61,7 +67,7 @@ describe('drainNativeShare', () => {
       if (cmd === 'read_and_clear_pending_share') {
         return JSON.stringify({
           text: 'look',
-          files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png' }],
+          files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
           refused: 1,
         });
       }
@@ -70,7 +76,7 @@ describe('drainNativeShare', () => {
     expect(await drainNativeShare()).toEqual({ lost: 1 });
     expect(incomingShare.pending).toEqual({
       text: 'look',
-      files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png' }],
+      files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
     });
     expect(invoke.mock.calls.filter(([cmd]) => cmd === 'take_picked_file')).toEqual([]);
   });
@@ -82,22 +88,79 @@ describe('drainNativeShare', () => {
   });
 });
 
-describe('readSharedFiles', () => {
+describe('stageSharedFiles', () => {
   beforeEach(() => invoke.mockReset());
 
-  it('reads each copy through take_picked_file and counts the ones lost', async () => {
-    // Only `take_picked_file` is answered: the logger reaches `invoke` too, and refusing its
+  const MB = 1024 * 1024;
+  const limits = { maxPlaintextBytes: 50 * MB };
+
+  it('reads and stages one copy at a time, and counts the ones lost', async () => {
+    const order: string[] = [];
+    // Only the share's commands are answered: the logger reaches `invoke` too, and refusing its
     // command would fail the test on a rejection nothing under test owns.
     invoke.mockImplementation(async (cmd: string, args?: { path: string }) => {
       if (cmd !== 'take_picked_file') return undefined;
-      if (args?.path === '/c/0_a.png') return new ArrayBuffer(3);
-      throw new Error('path outside the picker directories');
+      order.push(`read ${args?.path}`);
+      if (args?.path === '/c/1_b.pdf') throw new Error('path outside the picker directories');
+      return new ArrayBuffer(3);
     });
-    const { files, lost } = await readSharedFiles([
-      { path: '/c/0_a.png', name: 'a.png', mime: 'image/png' },
-      { path: '/c/1_b.pdf', name: 'b.pdf', mime: 'application/pdf' },
+    const result = await stageSharedFiles(
+      [
+        { path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 },
+        { path: '/c/1_b.pdf', name: 'b.pdf', mime: 'application/pdf', size: 3 },
+        { path: '/c/2_c.png', name: 'c.png', mime: 'image/png', size: 3 },
+      ],
+      limits,
+      async (file) => {
+        order.push(`stage ${file.name} ${file.type} ${file.size}`);
+      }
+    );
+    expect(result).toEqual({ staged: 2, lost: 1, tooLarge: [] });
+    // Each copy is staged before the next is read: the WebView holds one share file at a time.
+    expect(order).toEqual([
+      'read /c/0_a.png',
+      'stage a.png image/png 3',
+      'read /c/1_b.pdf',
+      'read /c/2_c.png',
+      'stage c.png image/png 3',
     ]);
-    expect(lost).toBe(1);
-    expect(files.map((f) => [f.name, f.type, f.size])).toEqual([['a.png', 'image/png', 3]]);
+  });
+
+  it('holds a non-video to the COMPOSER ceiling and deletes it unread; a video goes to the encoder', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'take_picked_file' ? new ArrayBuffer(1) : undefined
+    );
+    const pdf = { path: '/c/0_big.pdf', name: 'big.pdf', mime: 'application/pdf', size: 150 * MB };
+    const video = { path: '/c/1_v.mp4', name: 'v.mp4', mime: 'video/mp4', size: 150 * MB };
+    const staged: string[] = [];
+    const result = await stageSharedFiles([pdf, video], limits, async (file) => {
+      staged.push(file.name);
+    });
+    expect(result.tooLarge).toEqual([pdf]);
+    expect(staged).toEqual(['v.mp4']);
+    const calls = invoke.mock.calls.filter(([cmd]) => cmd !== 'plugin:log|log');
+    expect(calls).toContainEqual(['discard_picked_file', { path: '/c/0_big.pdf' }]);
+    expect(calls).not.toContainEqual(['take_picked_file', { path: '/c/0_big.pdf' }]);
+  });
+
+  it('applies exactly the predicate the composer applies to a picked file', async () => {
+    // The boundary is the server's plaintext ceiling: at it a copy is read, one byte over it is not.
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'take_picked_file' ? new ArrayBuffer(1) : undefined
+    );
+    const at = { path: '/c/0_at', name: 'at', mime: 'application/pdf', size: 50 * MB };
+    const over = { path: '/c/1_over', name: 'over', mime: 'application/pdf', size: 50 * MB + 1 };
+    const result = await stageSharedFiles([at, over], limits, async () => {});
+    expect(result.staged).toBe(1);
+    expect(result.tooLarge).toEqual([over]);
+  });
+
+  it('refuses nothing when the ceiling could not be asked - the server decides', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'take_picked_file' ? new ArrayBuffer(1) : undefined
+    );
+    const big = { path: '/c/0_big.pdf', name: 'big.pdf', mime: 'application/pdf', size: 500 * MB };
+    const result = await stageSharedFiles([big], null, async () => {});
+    expect(result).toEqual({ staged: 1, lost: 0, tooLarge: [] });
   });
 });

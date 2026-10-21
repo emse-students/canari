@@ -1,3 +1,8 @@
+const discardSharedFiles = vi.fn(async () => {});
+vi.mock('$lib/mobile/sharedInbox', () => ({
+  discardSharedFiles: (...args: unknown[]) => discardSharedFiles(...(args as [])),
+}));
+
 import { incomingShare } from './incomingShare.svelte';
 
 /**
@@ -9,10 +14,36 @@ const file = (name: string) => ({
   path: `/cache/shared_inbox/x/0_${name}`,
   name,
   mime: 'image/png',
+  size: 3,
 });
 
 describe('incomingShare', () => {
-  beforeEach(() => incomingShare.cancel());
+  beforeEach(() => {
+    incomingShare.cancel();
+    discardSharedFiles.mockClear();
+  });
+
+  it('deletes the copies of a share the member dismisses, and of one a newer share replaces', () => {
+    incomingShare.offer({ text: '', files: [file('a.png')] });
+    incomingShare.offer({ text: '', files: [file('b.png')] });
+    expect(discardSharedFiles).toHaveBeenCalledWith(
+      ['/cache/shared_inbox/x/0_a.png'],
+      'replaced by a newer share'
+    );
+    incomingShare.cancel();
+    expect(discardSharedFiles).toHaveBeenLastCalledWith(
+      ['/cache/shared_inbox/x/0_b.png'],
+      'cancelled by the member'
+    );
+  });
+
+  it('deletes nothing of a share that was TAKEN - the chat page reads those copies', () => {
+    incomingShare.offer({ text: '', files: [file('a.png')] });
+    incomingShare.chooseTarget('group-1');
+    incomingShare.takeFor('group-1');
+    incomingShare.cancel();
+    expect(discardSharedFiles).not.toHaveBeenCalled();
+  });
 
   it('refuses an empty share', () => {
     expect(incomingShare.offer({ text: '   ', files: [] })).toBe(false);

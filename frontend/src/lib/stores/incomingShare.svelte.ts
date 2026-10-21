@@ -13,18 +13,23 @@
  *    the chat page takes the share with `takeFor` the moment that conversation is the one displayed.
  *
  * Memory only. A share that has not been taken when the app dies is lost with the page - the
- * member shares again - and a share never outlives the page that was shown it.
+ * member shares again - and a share never outlives the page that was shown it. A share DROPPED here
+ * (replaced, or cancelled) has its copies deleted at once (`discardSharedFiles`); one lost with the
+ * page is swept at the next process start (`IncomingShare.sweepOrphansOnce`).
  */
 import { appendLog } from '$lib/utils/sessionLog';
+import { discardSharedFiles } from '$lib/mobile/sharedInbox';
 
 /**
  * One shared file, still ON DISK where the native layer copied it. It is read only when the share
- * is staged in a conversation (`readSharedFiles`), never before a destination is picked.
+ * is staged in a conversation (`stageSharedFiles`), never before a destination is picked.
  */
 export interface SharedFileEntry {
   path: string;
   name: string;
   mime: string;
+  /** Its size in bytes, so a copy over the upload ceiling is refused without being read. */
+  size: number;
 }
 
 /** What was shared: text (a link is text) and files, both possibly empty but never both. */
@@ -55,7 +60,13 @@ export const incomingShare = {
       appendLog('[SHARE] an empty share was not offered');
       return false;
     }
-    if (pending) appendLog('[SHARE] a share not yet taken was replaced by a newer one');
+    if (pending) {
+      appendLog('[SHARE] a share not yet taken was replaced by a newer one');
+      void discardSharedFiles(
+        pending.files.map((f) => f.path),
+        'replaced by a newer share'
+      );
+    }
     appendLog(`[SHARE] offered: ${text.length} chars, ${payload.files.length} file(s)`);
     pending = { text, files: payload.files };
     target = null;
@@ -91,10 +102,14 @@ export const incomingShare = {
     );
     target = null;
   },
-  /** The member dismissed the picker: the share is dropped. */
+  /** The member dismissed the picker: the share is dropped, and its copies deleted unread. */
   cancel(): void {
     if (!pending) return;
     appendLog('[SHARE] cancelled by the member');
+    void discardSharedFiles(
+      pending.files.map((f) => f.path),
+      'cancelled by the member'
+    );
     pending = null;
     target = null;
   },

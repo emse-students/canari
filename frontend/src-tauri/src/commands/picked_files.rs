@@ -70,6 +70,22 @@ fn picker_roots<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
 /// The directory under the app cache that `IncomingShare.kt` copies shared streams into.
 const SHARED_INBOX: &str = "shared_inbox";
 
+/// The canonical form of `path` when it lies under a picker directory; an error (logged) otherwise.
+fn allowed_path<R: Runtime>(app: &AppHandle<R>, path: &str) -> Result<PathBuf, String> {
+    let requested = picked_path(path)?;
+    let canonical = requested
+        .canonicalize()
+        .map_err(|e| format!("picked file unreadable: {e}"))?;
+    if !is_inside_any(&canonical, &picker_roots(app)) {
+        log::error!(
+            "[PickedFiles] refused a path outside the picker directories: {}",
+            canonical.display()
+        );
+        return Err("path outside the picker directories".to_string());
+    }
+    Ok(canonical)
+}
+
 /// Reads the picker's copy at `path`, deletes it, and returns its bytes as a raw IPC body.
 ///
 /// Refuses (and touches nothing) when the canonical path is outside the picker directories.
@@ -80,18 +96,7 @@ pub(crate) async fn take_picked_file<R: Runtime>(
     app: AppHandle<R>,
     path: String,
 ) -> Result<tauri::ipc::Response, String> {
-    let requested = picked_path(&path)?;
-    let canonical = requested
-        .canonicalize()
-        .map_err(|e| format!("picked file unreadable: {e}"))?;
-    let roots = picker_roots(&app);
-    if !is_inside_any(&canonical, &roots) {
-        log::error!(
-            "[PickedFiles] refused a path outside the picker directories: {}",
-            canonical.display()
-        );
-        return Err("path outside the picker directories".to_string());
-    }
+    let canonical = allowed_path(&app, &path)?;
     let bytes = std::fs::read(&canonical).map_err(|e| format!("picked file unreadable: {e}"))?;
     log::debug!(
         "[PickedFiles] read {} bytes from {}",
@@ -105,6 +110,20 @@ pub(crate) async fn take_picked_file<R: Runtime>(
         );
     }
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Deletes the picker's copy at `path` UNREAD: the page will not stage it (the member dropped the
+/// share, a newer one replaced it, or it is over the upload ceiling) and must not leave it on disk.
+/// The same allowlist as `take_picked_file`, so it can delete nothing that command could not.
+#[tauri::command]
+pub(crate) async fn discard_picked_file<R: Runtime>(
+    app: AppHandle<R>,
+    path: String,
+) -> Result<(), String> {
+    let canonical = allowed_path(&app, &path)?;
+    std::fs::remove_file(&canonical).map_err(|e| format!("picked file not deleted: {e}"))?;
+    log::debug!("[PickedFiles] discarded {}", canonical.display());
+    Ok(())
 }
 
 #[cfg(test)]

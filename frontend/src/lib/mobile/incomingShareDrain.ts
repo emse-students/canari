@@ -6,11 +6,14 @@
  * manifest; `read_and_clear_pending_share` hands that manifest over exactly once. THE COPIES STAY ON
  * DISK until the member has picked a destination and that conversation is displayed: the drain runs
  * at mount, before the PIN, and reading a share's files there would hold them in the WebView for as
- * long as the member takes to unlock and choose. Only `readSharedFiles` reads them, each through
- * `take_picked_file`, which also deletes the copy. See `docs/wiki/frontend/sharing.md`.
+ * long as the member takes to unlock and choose. Only `stageSharedFiles` reads them, ONE AT A TIME,
+ * each through `take_picked_file`, which also deletes the copy - and a copy the composer would refuse
+ * is deleted unread. See `docs/wiki/frontend/sharing.md`.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { Log } from '$lib/utils/Log';
+import { refusedBeforePreparation } from '$lib/media';
+import { discardSharedFiles } from '$lib/mobile/sharedInbox';
 import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.svelte';
 
 /** The native manifest, validated. */
@@ -41,7 +44,9 @@ export function parseSharedManifest(raw: string): SharedManifest | null {
           f !== null &&
           typeof (f as SharedFileEntry).path === 'string' &&
           typeof (f as SharedFileEntry).name === 'string' &&
-          typeof (f as SharedFileEntry).mime === 'string'
+          typeof (f as SharedFileEntry).mime === 'string' &&
+          typeof (f as SharedFileEntry).size === 'number' &&
+          (f as SharedFileEntry).size >= 0
       )
     : [];
   return {
@@ -78,24 +83,54 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
   return { lost: manifest.refused };
 }
 
+/** What staging a share's files came to. */
+export interface SharedStagingResult {
+  staged: number;
+  /** Copies that could not be read (a newer share replaced them, the OS purged the cache). */
+  lost: number;
+  /** Copies over the upload ceiling, deleted unread - the composer would have refused them. */
+  tooLarge: SharedFileEntry[];
+}
+
 /**
- * Reads a staged share's files into `File`s, each copy deleted as it is read. A copy that cannot be
- * read (a newer share swept it, the OS purged the cache) is counted in `lost`, never thrown.
+ * Stages a share's files in the composer ONE AT A TIME: each copy is read (and deleted) by
+ * `take_picked_file`, handed to `stage`, and only then is the next one read - so the WebView holds
+ * one shared file's raw bytes at a time, not the whole share. A copy the composer would refuse
+ * (`refusedBeforePreparation`, against the server's `limits`) is deleted UNREAD rather than read
+ * whole and refused afterwards. Nothing here throws: a copy that cannot be read is counted in `lost`.
  */
-export async function readSharedFiles(
-  entries: SharedFileEntry[]
-): Promise<{ files: File[]; lost: number }> {
-  const files: File[] = [];
-  let lost = 0;
+export async function stageSharedFiles(
+  entries: SharedFileEntry[],
+  limits: { maxPlaintextBytes: number } | null,
+  stage: (file: File) => Promise<void>
+): Promise<SharedStagingResult> {
+  const result: SharedStagingResult = { staged: 0, lost: 0, tooLarge: [] };
   for (const entry of entries) {
+    if (refusedBeforePreparation({ type: entry.mime, size: entry.size }, limits)) {
+      result.tooLarge.push(entry);
+      await discardSharedFiles([entry.path], 'over the upload ceiling');
+      continue;
+    }
+    let file: File;
     try {
       const bytes = await invoke<ArrayBuffer>('take_picked_file', { path: entry.path });
-      files.push(new File([bytes], entry.name, { type: entry.mime, lastModified: Date.now() }));
+      file = new File([bytes], entry.name, { type: entry.mime, lastModified: Date.now() });
     } catch (error) {
-      lost++;
+      result.lost++;
       console.error(`[SHARE] a shared file could not be read: ${String(error)}`);
+      continue;
+    }
+    try {
+      await stage(file);
+      result.staged++;
+    } catch (error) {
+      result.lost++;
+      console.error(`[SHARE] a shared file was read but not staged: ${String(error)}`);
     }
   }
-  Log.d('IncomingShare', `read ${files.length} file(s), ${lost} lost`);
-  return { files, lost };
+  Log.d(
+    'IncomingShare',
+    `staged ${result.staged} file(s), ${result.lost} lost, ${result.tooLarge.length} over the ceiling`
+  );
+  return result;
 }

@@ -31,8 +31,9 @@ builds on the IN half later and is not started.
      sender would make us copy our own private file back to ourselves (a confused deputy);
    - a URI under a grant Canari HOLDS (`persistedUriPermissions`): a document the member gave to
      Canari, not to the sender;
-   - an unreadable stream, more than 10 files, a file over 200 MB, or a share past 300 MB in all.
-     The page reads each kept file whole when it stages it, so these bound what the WebView holds.
+   - an unreadable stream, more than 10 files, a file over 200 MB, or a share past 300 MB in all -
+     bounds on DISK. The upload ceiling is the SERVER's number, which only the page can ask, so the
+     page applies it (step 6).
    Names are reduced to their last segment and a conservative character set
    (`share/SharedFileName.kt`). `onCreate` skips a relaunch (`savedInstanceState`,
    `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) so a share is never offered twice.
@@ -40,10 +41,18 @@ builds on the IN half later and is not started.
    gets the intent before the page exists and a value pushed into a page that then navigates is
    lost. It is written to a `.tmp` and renamed into place, so a drain on a return to the foreground
    never reads half of it. `read_and_clear_pending_share` (`commands/handoff.rs`, the same helper as
-   the CallKit answer's `pending_call_accept.json`) hands it over exactly once. **Each capture first
-   empties the inbox**: a newer share replaces whatever came before (undrained, drained but never
-   staged, or left behind by a corrupt manifest or a failed read), and nothing outside the inbox is
-   ever deleted from there.
+   the CallKit answer's `pending_call_accept.json`) hands it over exactly once: it **claims the file
+   by renaming it before reading it**, so a newer manifest renamed into place meanwhile waits for
+   the next drain instead of being deleted unread. A capture replacing an undrained share claims
+   the older manifest the same way, so each manifest has exactly one taker.
+   **Nothing older is deleted until a new share is handed over**: a capture that throws or keeps
+   nothing leaves the share before it intact (refusals of an all-refused share are added to the
+   waiting manifest, or handed over alone). Then each copy is deleted by whoever ends its share -
+   the chat page reading it (`take_picked_file`), the page dropping it unread on cancel, on a
+   replacement or over the ceiling (`discard_picked_file`, the same allowlist), or the capture that
+   replaces an undrained share. What a dead page leaves is swept **once per process, at the first
+   `onCreate`** - when no page exists to be staging anything - keeping only what the waiting
+   manifest names (`IncomingShare.sweepOrphansOnce`).
 4. **The page drains** (`IncomingShareHost.svelte`, mounted on every route by
    `ChatBackgroundService`) at mount, on `canari:incoming-share` (the native side announcing a share
    to a live page) and on `canari:foreground`. The listener is registered before the first drain,
@@ -60,8 +69,11 @@ builds on the IN half later and is not started.
    fact that says so.
 6. **The chat page stages it** once that conversation is the one displayed
    (`incomingShare.takeFor`): the text joins the draft (in front of anything already typed), and the
-   files are read NOW (`readSharedFiles`), each through `take_picked_file`, which deletes the copy
-   as it reads it. Its allowlist names the inbox itself and NOT the app cache around it, which also
+   files are read NOW and **one at a time** (`stageSharedFiles`), each through `take_picked_file`,
+   which deletes the copy as it reads it, and staged before the next is read. **A non-video over
+   the composer's ceiling is deleted unread**: the manifest carries each copy's size, and the share
+   applies the composer's own predicate (`refusedBeforePreparation`, `media.ts`) against the
+   server's `uploadLimits()`; a video goes to the encoder, which is its ceiling. Its allowlist names the inbox itself and NOT the app cache around it, which also
    holds the WebView's files and the gallery's decrypted staging; on Android its other roots are the
    EXTERNAL cache and the process temp directory, so the two names are pinned equal by a test. The
    files then go through `handleFilesSelected` - the same size ceiling, compression and video
@@ -76,6 +88,11 @@ builds on the IN half later and is not started.
 - **A share belongs to the device holder, not to an account**: it is memory only on the page side,
   and a sign-out does not drop it (a session that expired at cold start would otherwise lose the
   share the member just made).
+
+- **The confused-deputy check is narrow, and that is accepted (Master review, 2026-10-21).** It
+  refuses our own authorities and the grants Canari holds; a sender holding `READ_MEDIA_*` can
+  still name a `content://media/...` URI the member never picked. The bytes only reach a composer
+  the member sends by hand, in a conversation they chose, so the residual is low.
 
 ## Owed
 

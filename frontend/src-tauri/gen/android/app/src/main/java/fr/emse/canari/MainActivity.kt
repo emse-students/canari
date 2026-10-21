@@ -95,6 +95,8 @@ class MainActivity : TauriActivity() {
             }
         super.onCreate(savedInstanceState)
         applyKeyboardInsets()
+        // Before any capture, and once per process: no page is alive yet, so nothing is staging.
+        IncomingShare.sweepOrphansOnce(this)
         // A relaunch after a configuration change, or from the recents list, re-delivers the intent
         // that STARTED the task: taking it again would offer the same share twice.
         val fromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0

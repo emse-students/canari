@@ -47,7 +47,7 @@ use crate::commands::mls::{
     trailer_welcome,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
-use crate::commands::picked_files::take_picked_file;
+use crate::commands::picked_files::{discard_picked_file, take_picked_file};
 use crate::commands::push::{
     ack_fcm_cache, check_push_secret_health, delete_user_push_files, forget_graine_channel,
     forget_graine_sessions, get_fcm_token, get_push_diagnostic, get_voip_token, load_push_context,
@@ -1134,6 +1134,7 @@ pub fn run() {
             actualiser_cle_keystore_avec_devicekey,
             flush_webview_cookies,
             take_picked_file,
+            discard_picked_file,
             notifier_message_natif,
             store_avatar_mirror,
             store_display_names,

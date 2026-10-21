@@ -9,9 +9,13 @@ object ShareRules {
     const val MAX_FILES = 10
 
     /**
-     * Per-file ceiling. Above the server's own, because a video is re-encoded on the phone before
-     * upload, so its shared size is not its sent size; bounded, because the page reads each kept
-     * file WHOLE into memory when it stages it, exactly as a picked file is read.
+     * Per-file ceiling ON DISK. Above the server's own, because a video is re-encoded on the phone
+     * before upload, so its shared size is not its sent size; bounded, because the page reads a kept
+     * video WHOLE into memory when it stages it, exactly as a picked one is read.
+     *
+     * Every other type is held to the composer's own ceiling - the SERVER's number, asked at run
+     * time, which this side cannot know - by the page, BEFORE it reads the copy: the manifest
+     * carries each copy's size, and `readSharedFiles` deletes one over that ceiling unread.
      */
     const val MAX_FILE_BYTES = 200L * 1024 * 1024
 

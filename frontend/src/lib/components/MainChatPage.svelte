@@ -67,8 +67,9 @@
   } from '$lib/stores/globalChatSingleton.svelte';
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
-  import { incomingShare } from '$lib/stores/incomingShare.svelte';
-  import { readSharedFiles } from '$lib/mobile/incomingShareDrain';
+  import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.svelte';
+  import { stageSharedFiles } from '$lib/mobile/incomingShareDrain';
+  import { MediaService } from '$lib/media';
   import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
@@ -1152,13 +1153,34 @@
       );
       if (share.text) messageText = restoreFailedDraft(messageText, share.text);
       if (share.files.length === 0) return;
-      // The copies are read HERE, once a destination is on screen, and not when the share arrived.
-      void readSharedFiles(share.files).then(({ files, lost }) => {
-        if (lost > 0) showToast(m.share_items_lost({ count: lost }), 'error');
-        if (files.length > 0) handleFilesSelected(files);
-      });
+      // The copies are read HERE, once a destination is on screen, and not when the share arrived -
+      // one at a time, each staged before the next is read, under the composer's own ceiling.
+      void stageShare(share.files);
     });
   });
+
+  /**
+   * Stages a share's files in the open conversation, one at a time, and says what did not make it:
+   * a copy over the upload ceiling (deleted unread, told as the composer tells a picked one) and a
+   * copy that could not be read.
+   */
+  async function stageShare(files: SharedFileEntry[]) {
+    const limits = await new MediaService().uploadLimits();
+    const { lost, tooLarge } = await stageSharedFiles(files, limits, (file) =>
+      messaging.handleFilesSelected([file], msgCtx())
+    );
+    if (lost > 0) showToast(m.share_items_lost({ count: lost }), 'error');
+    if (tooLarge.length > 0 && limits) {
+      showToast(
+        m.chat_media_too_large({
+          size: (tooLarge[0].size / 1024 / 1024).toFixed(1),
+          limit: Math.round(limits.maxBytes / 1024 / 1024),
+        }),
+        'error'
+      );
+      log(`[SHARE] ${tooLarge.length} shared file(s) over the upload ceiling, deleted unread`);
+    }
+  }
 
   /** Opens the forward picker for a given message. */
   function handleForward(message: ChatMessage) {
