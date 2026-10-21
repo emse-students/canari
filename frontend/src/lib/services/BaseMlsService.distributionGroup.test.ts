@@ -1224,4 +1224,33 @@ describe('a key-group frame refused for its sender still spends a counted genera
 
     expect(persistNow).toHaveBeenCalled();
   });
+
+  it('a key-group replay that applied commits AND caught up asks for ONE checkpoint, not two', async () => {
+    const persistNow = vi.fn();
+    registerMlsStatePersister({ persistNow } as any);
+    let epoch = 5;
+    const ctx = makeCtx({
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      getEpoch: vi.fn(() => epoch),
+      processIncomingMessage: vi.fn(async () => {
+        epoch += 1;
+        return null;
+      }),
+      fetchCommitsSince: vi.fn(async () => ({
+        commits: [{ baseEpoch: 5, proto: 'AA==' }],
+        activeEpoch: 6,
+        belowFloor: false,
+      })),
+      isGroupActive: vi.fn().mockResolvedValue(true),
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const verdict = await (
+      proto as unknown as { catchUpDistributionGroup(g: string, t: number): Promise<string> }
+    ).catchUpDistributionGroup.call(ctx, 'g-1', 6);
+
+    expect(verdict).toBe('caught-up');
+    expect(persistNow).toHaveBeenCalledTimes(1);
+  });
 });

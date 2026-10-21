@@ -3621,7 +3621,9 @@ export abstract class BaseMlsService implements IMlsService {
       if (!(await this.isGroupActive(groupId))) {
         verdict = 'evicted';
       } else if (this.getEpoch(groupId) >= (this.distributionGapTarget.get(groupId) ?? target)) {
-        scheduleOutboundMlsPersist();
+        // Already asked above when commits applied; a second call after the `await` there would
+        // split the microtask merge and queue a SECOND full checkpoint.
+        if (replay.applied === 0) scheduleOutboundMlsPersist();
         verdict = 'caught-up';
       } else if (replay.belowFloor || replay.gapAt !== undefined) {
         verdict = 'replay-exhausted';
