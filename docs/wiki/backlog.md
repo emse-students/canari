@@ -32,10 +32,12 @@ half, the shipped half is a pointer, never a retelling.
 The adding device pushes its whole local store to the invitee (`sendFullHistoryBundle`, up to 5
 years), which no decision ever chose. 6 of 15 live group conversations had admitted 24 later members by
 2026-10-21. Decided by the user: a newcomer reads nothing from before their arrival (WhatsApp, Signal),
-and the remove-then-re-add rule of 2026-10-14 stays. Owed, in order: history bundles addressed to the
-asking device; the filter on the recipient's own membership intervals, with a new chat-delivery field;
-receiver hygiene on the pre-arrival span; the same rule for quoting replies; then a `minClientVersion`
-that stops older clients pushing. Design and limits:
+and the remove-then-re-add rule of 2026-10-14 stays. **Step C is BUILT (draft PR):** the inviter's
+push withholds the invitee's span, the receiver drops its own, group conversations only (the 1:1
+arrivals are not arrivals). **Residual of C, verbatim: a newcomer can still read pre-arrival messages
+from broadcast answers meant for others' new devices until A lands.** Owed, in order: step A's design
+page and its review, then A; then a `minClientVersion` carrying C once both stores serve it. Design and
+limits:
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
 
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)

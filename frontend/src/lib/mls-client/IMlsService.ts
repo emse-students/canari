@@ -1131,6 +1131,12 @@ export interface IMlsService {
    */
   getGroupExclusions(groupId: string): Promise<GroupExclusions>;
   /**
+   * What each current member of `groupId` may never be handed: their gaps and, in a group
+   * conversation, everything before their first arrival. Read per person, never as a union. Same
+   * request and same failures as {@link getGroupExclusions}.
+   */
+  getGroupWithheld(groupId: string): Promise<GroupExclusions>;
+  /**
    * The user-level rosters of many groups in one read (`POST /api/mls/group-rosters`). Never throws:
    * a group it did not answer is absent from both sets, and nothing is decided for it.
    */

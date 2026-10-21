@@ -150,8 +150,9 @@ export type ExclusionWindow = { from: number; until: number | null };
  *
  * A window is the stretch between the END of one interval and the START of the next - and, when the
  * latest interval is closed, from its end onwards. **The time before the FIRST interval is never a
- * window**: a person who arrived late keeps whatever the existing history policy hands a new member,
- * which this change does not touch. A person with one open interval has no window at all, and that
+ * window HERE**: that span is a group-conversation rule, added by {@link withheldWindows}, and this
+ * function also feeds the server's own stream filter and the legacy `exclusions` field, whose
+ * readers take a union. A person with one open interval has no window at all, and that
  * is also what a brand-new device of a continuous member sees - intervals are per USER, never per
  * device, so a wipe or a new phone opens nothing.
  *
@@ -171,6 +172,46 @@ export function exclusionWindows(
     windows.push({ from: left.getTime(), until: next ? next.joinedAt.getTime() : null });
   }
   return windows;
+}
+
+/**
+ * Everything a person may NOT be handed from a group's history: the gaps of {@link exclusionWindows}
+ * and, in a GROUP conversation, everything before their first arrival (user, 2026-10-21: a new member
+ * reads nothing from before they were added, as on WhatsApp and Signal).
+ *
+ * **Not in a 1:1.** Nobody is ever added to one, and its recorded arrivals are not arrivals: on
+ * production 2026-10-21, 51 of 472 1:1 members had a first interval starting more than 10 minutes
+ * after the conversation was created. Applying the span there would take a member's own past away
+ * from their next device.
+ *
+ * **The first arrival is the EARLIER of the first interval and the person's first device row in the
+ * group.** A device row is written when a commit admits that device to the tree, so it can never
+ * predate the moment the person could read. Intervals alone are not enough: on production
+ * 2026-10-21, 4 of the 24 members who joined a group conversation late held a device row up to 268
+ * hours before their recorded first interval - a re-add from before migration 030 recorded no
+ * interval for the stretch before it, and their next device would have lost it.
+ *
+ * A person with neither - nothing admitted, nothing enrolled - is withheld everything.
+ *
+ * Pure, so the arithmetic is tested without a database.
+ *
+ * @param intervals one person's intervals in one group, in any order.
+ * @param beforeFirstArrival true for a group conversation, false for a 1:1.
+ * @param firstDeviceAt when the person's earliest device row in the group was written, or `null`.
+ */
+export function withheldWindows(
+  intervals: ReadonlyArray<{ joinedAt: Date; leftAt: Date | null }>,
+  beforeFirstArrival: boolean,
+  firstDeviceAt: Date | null
+): ExclusionWindow[] {
+  const gaps = exclusionWindows(intervals);
+  if (!beforeFirstArrival) return gaps;
+  const arrivals = [
+    ...intervals.map((i) => i.joinedAt.getTime()),
+    ...(firstDeviceAt ? [firstDeviceAt.getTime()] : []),
+  ];
+  if (arrivals.length === 0) return [{ from: 0, until: null }];
+  return [{ from: 0, until: Math.min(...arrivals) }, ...gaps];
 }
 
 /**

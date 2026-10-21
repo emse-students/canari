@@ -28,14 +28,20 @@ describe('MembersController - membership intervals and the exclusions read', () 
   let txDeletes: Array<{ entity: unknown; where: unknown }>;
   let txUpdates: Array<{ entity: unknown; where: Record<string, unknown> }>;
   let intervalFind: jest.Mock;
-  let deviceRows: Array<{ userId: string; deviceId: string }>;
+  let deviceRows: Array<{ userId: string; deviceId: string; createdAt?: Date }>;
   let order: string[];
   let failTx: boolean;
   let redis: { smembers: jest.Mock; srem: jest.Mock; hset: jest.Mock };
+  let group: {
+    isGroup: boolean;
+    distributionWorkspaceId?: string | null;
+    distributionChannelId?: string | null;
+  } | null;
 
   const T = (iso: string) => new Date(iso);
 
   beforeEach(async () => {
+    group = { isGroup: true, distributionWorkspaceId: null, distributionChannelId: null };
     members = [
       { userId: 'alice', joinedAt: T('2026-10-01T00:00:00Z') },
       { userId: 'bob', joinedAt: T('2026-10-05T00:00:00Z') },
@@ -150,7 +156,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
           },
         },
         { provide: getRepositoryToken(UserDismissedGroup), useValue: {} },
-        { provide: getRepositoryToken(Group), useValue: {} },
+        { provide: getRepositoryToken(Group), useValue: { findOne: jest.fn(async () => group) } },
         { provide: getRepositoryToken(KeyPackage), useValue: {} },
         {
           provide: getRepositoryToken(DeviceGroupMembership),
@@ -165,14 +171,24 @@ describe('MembersController - membership intervals and the exclusions read', () 
               deviceRows = deviceRows.filter((d) => d.userId !== userId);
               return { affected: 2 };
             }),
-            // The exclusions read: DISTINCT users holding a device row, whatever its status.
+            // The exclusions read: each user holding a device row, whatever its status, with the
+            // earliest row's time.
             createQueryBuilder: () => {
               const qb = {
                 select: () => qb,
-                distinct: () => qb,
+                addSelect: () => qb,
                 where: () => qb,
+                groupBy: () => qb,
                 getRawMany: async () =>
-                  [...new Set(deviceRows.map((d) => d.userId))].map((userId) => ({ userId })),
+                  [...new Set(deviceRows.map((d) => d.userId))].map((userId) => {
+                    const times = deviceRows
+                      .filter((d) => d.userId === userId && d.createdAt)
+                      .map((d) => (d.createdAt as Date).getTime());
+                    return {
+                      userId,
+                      firstDeviceAt: times.length > 0 ? new Date(Math.min(...times)) : null,
+                    };
+                  }),
               };
               return qb;
             },
@@ -199,14 +215,49 @@ describe('MembersController - membership intervals and the exclusions read', () 
   it('answers a current member with the gaps of EVERY current member that has one', async () => {
     const got = await controller.getGroupExclusions('g-1', 'alice');
 
-    // bob's gap, and nobody else: alice never left, carol arrived late (no window before a first
-    // arrival - a late joiner keeps the existing policy).
+    // bob's gap, and nobody else: alice never left, and carol's late arrival is not a GAP - the span
+    // before it is in `withheld`, which the legacy field does not carry.
     expect(got.exclusions).toEqual({
       bob: [
         { from: T('2026-10-03T00:00:00Z').getTime(), until: T('2026-10-05T00:00:00Z').getTime() },
       ],
     });
     expect(intervalFind).toHaveBeenCalledWith(GroupMembershipInterval, expect.anything());
+  });
+
+  it('withholds, in a GROUP conversation, everything before each person arrived, then their gaps', async () => {
+    const got = await controller.getGroupExclusions('g-1', 'alice');
+
+    expect(got.withheld).toEqual({
+      alice: [{ from: 0, until: T('2026-10-01T00:00:00Z').getTime() }],
+      bob: [
+        { from: 0, until: T('2026-10-01T00:00:00Z').getTime() },
+        { from: T('2026-10-03T00:00:00Z').getTime(), until: T('2026-10-05T00:00:00Z').getTime() },
+      ],
+      // carol arrived on the 7th: nothing before it is hers (user, 2026-10-21).
+      carol: [{ from: 0, until: T('2026-10-07T00:00:00Z').getTime() }],
+    });
+    // The legacy field keeps its meaning for clients that still take a union.
+    expect(Object.keys(got.exclusions)).toEqual(['bob']);
+  });
+
+  it("takes a person's EARLIER device row as their arrival when the interval was recorded late", async () => {
+    // carol's device entered the tree on the 2nd; her interval only says the 7th (a pre-030 re-add).
+    deviceRows = deviceRows.map((d) =>
+      d.userId === 'carol' ? { ...d, createdAt: T('2026-10-02T00:00:00Z') } : d
+    );
+    const got = await controller.getGroupExclusions('g-1', 'alice');
+    expect(got.withheld.carol).toEqual([{ from: 0, until: T('2026-10-02T00:00:00Z').getTime() }]);
+  });
+
+  it('withholds the gaps only in a 1:1, and in a key group', async () => {
+    group = { isGroup: false };
+    expect((await controller.getGroupExclusions('g-1', 'alice')).withheld).toEqual(
+      (await controller.getGroupExclusions('g-1', 'alice')).exclusions
+    );
+    group = { isGroup: true, distributionWorkspaceId: 'ws-1' };
+    const keyGroup = await controller.getGroupExclusions('g-1', 'alice');
+    expect(keyGroup.withheld).toEqual(keyGroup.exclusions);
   });
 
   it('heals a member with no open interval ONCE - the window before it is answered, and the ERROR is not repeated', async () => {

@@ -21,7 +21,15 @@
  * by its sender-stamped `timestamp` against every window WIDENED by {@link UNDATED_SKEW_MARGIN_MS} on
  * both sides: held back inside, released outside. One with no usable timestamp at all is held back.
  * When no current member has a window nothing is filtered, and every answer is exactly what it was
- * before this module - a new member and a new device of a continuous member included.
+ * before this module - a new device of a continuous member included.
+ *
+ * **A NEW MEMBER OF A GROUP CONVERSATION READS NOTHING FROM BEFORE THEIR ARRIVAL (user, 2026-10-21).**
+ * That span cannot join the union above - it would withhold everything older than the newest member,
+ * from everyone - so it is applied for ONE person at a time, where that person is known: the
+ * INVITEE of the push an inviter sends (`invitee` below; every other member is entitled to a
+ * superset, so the broadcast stays safe), and this device's own user on receipt. What it leaves open
+ * until answers are addressed: a newcomer can still read pre-arrival messages from broadcast answers
+ * meant for others' new devices.
  *
  * Design and what it does not cover: docs/wiki/protocols/history-reconciliation.md.
  */
@@ -86,6 +94,12 @@ type EntitlementDeps = {
   log: (msg: string) => void;
 };
 
+/** What a read of one person's own windows needs - the receiver, and the push to an invitee. */
+type WithheldDeps = {
+  mlsService: Pick<IMlsService, 'getGroupWithheld'>;
+  log: (msg: string) => void;
+};
+
 /** The server's windows for `groupId`, or `null` (logged) when they cannot be read. */
 async function readExclusions(
   groupId: string,
@@ -102,23 +116,51 @@ async function readExclusions(
   }
 }
 
+/** The server's per-person withheld windows for `groupId`, or `null` (logged) when they cannot be read. */
+async function readWithheld(
+  groupId: string,
+  { mlsService, log }: WithheldDeps,
+  consequence: string
+): Promise<GroupExclusions | null> {
+  try {
+    return await mlsService.getGroupWithheld(groupId);
+  } catch (e) {
+    log(
+      `[HISTORY_ENTITLEMENT] Cannot read the exclusion windows of ${groupId.slice(0, 8)}… - ${consequence}: ${String(e).slice(0, 120)}`
+    );
+    return null;
+  }
+}
+
 /**
  * The part of `messages` a history answer in `groupId` may carry, or `null` when that cannot be
  * established - the server's windows could not be read, and the caller then carries NO message.
  *
  * Every history sender passes its selection through here (`sendBundleChunks`), so no answer path can
  * forget it.
+ *
+ * @param invitee the user the answer is PUSHED to when it is the inviter's push to a member being
+ *   added: their own withheld windows - the span before their arrival included - join the union.
+ *   Absent for an answer to a request, which reaches every member and has no one person to filter for.
  */
 export async function entitledHistorySelection<M extends PlaceableMessage>(
   groupId: string,
   messages: readonly M[],
-  deps: EntitlementDeps
+  deps: EntitlementDeps & { mlsService: Pick<IMlsService, 'getGroupWithheld'> },
+  invitee?: string
 ): Promise<M[] | null> {
   if (messages.length === 0) return [];
-  const exclusions = await readExclusions(groupId, deps, 'sending no message');
-  if (exclusions === null) return null;
+  // Both read at once: one request behind them (`readGroupWindows`), and the two are one answer.
+  const [exclusions, withheld] = await Promise.all([
+    readExclusions(groupId, deps, 'sending no message'),
+    invitee === undefined
+      ? Promise.resolve(new Map() as GroupExclusions)
+      : readWithheld(groupId, deps, 'sending no message'),
+  ]);
+  if (exclusions === null || withheld === null) return null;
 
-  const windows = allWindows(exclusions);
+  const inviteeWindows = invitee === undefined ? [] : (withheld.get(invitee.toLowerCase()) ?? []);
+  const windows = [...allWindows(exclusions), ...inviteeWindows];
   if (windows.length === 0) return [...messages];
 
   const held: Record<WithholdReason, number> = {
@@ -132,16 +174,18 @@ export async function entitledHistorySelection<M extends PlaceableMessage>(
     return reason === null;
   });
   deps.log(
-    `[HISTORY_ENTITLEMENT] ${groupId.slice(0, 8)}… - ${exclusions.size} member(s) with an exclusion window: withheld ${held.window} sent while a member was out, ${held['undated-near-window']} undated within ${UNDATED_SKEW_MARGIN_MS / 60_000} min of one, ${held.undatable} undatable; kept ${kept.length}`
+    `[HISTORY_ENTITLEMENT] ${groupId.slice(0, 8)}… - ${exclusions.size} member(s) with an exclusion window${invitee === undefined ? '' : `, invitee ${invitee.slice(0, 8)} with ${inviteeWindows.length}`}: withheld ${held.window} sent while a member was out or before the invitee arrived, ${held['undated-near-window']} undated within ${UNDATED_SKEW_MARGIN_MS / 60_000} min of one, ${held.undatable} undatable; kept ${kept.length}`
   );
   return kept;
 }
 
 /**
- * Receiver hygiene: the messages of an arriving bundle that fall inside OUR OWN windows, by the same
- * rule a sender applies ({@link withholdReason}), dropped before they are stored. NOT a control - the
- * answering peer is - but a well-behaved client does not keep what the decision says it never
- * receives. Each drop is logged by id.
+ * Receiver hygiene: the messages of an arriving bundle that fall inside OUR OWN withheld windows -
+ * our gaps and, in a group conversation, everything before we arrived - by the same rule a sender
+ * applies ({@link withholdReason}), dropped before they are stored. NOT a control - the answering
+ * peer is - but a well-behaved client does not keep what the decision says it never receives, and
+ * this is what keeps an honest newcomer from storing a broadcast answer meant for another member's
+ * new device. Each drop is logged by id.
  *
  * Returns `null` when our windows cannot be read; the caller then ingests no message of this frame
  * and says so (the comparison runs again on the next connection).
@@ -150,19 +194,19 @@ export async function dropOwnExcludedMessages<M extends PlaceableMessage & { id:
   groupId: string,
   selfUserId: string,
   messages: readonly M[],
-  deps: EntitlementDeps
+  deps: WithheldDeps
 ): Promise<M[] | null> {
   if (messages.length === 0) return [];
-  const exclusions = await readExclusions(groupId, deps, 'ingesting none of these messages');
-  if (exclusions === null) return null;
-  const own = exclusions.get(selfUserId.toLowerCase()) ?? [];
+  const withheld = await readWithheld(groupId, deps, 'ingesting none of these messages');
+  if (withheld === null) return null;
+  const own = withheld.get(selfUserId.toLowerCase()) ?? [];
   if (own.length === 0) return [...messages];
 
   return messages.filter((m) => {
     const reason = withholdReason(m, own);
     if (reason === null) return true;
     deps.log(
-      `[HISTORY_ENTITLEMENT] Dropped ${m.id.slice(0, 8)} in ${groupId.slice(0, 8)}… (${reason}) - we were out of the group when it was sent`
+      `[HISTORY_ENTITLEMENT] Dropped ${m.id.slice(0, 8)} in ${groupId.slice(0, 8)}… (${reason}) - sent before we arrived or while we were out`
     );
     return false;
   });

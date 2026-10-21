@@ -39,6 +39,7 @@ import {
   exclusionWindows,
   openMissingIntervals,
   partingKey,
+  withheldWindows,
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
@@ -784,13 +785,23 @@ export class MembersController {
    *
    * No line per answer: the decision this route feeds is made, and logged, by the client
    * (`[HISTORY_ENTITLEMENT]`). Only a refusal and a repair are events here.
+   *
+   * **TWO FIELDS, AND ONLY `withheld` IS READ BY A CURRENT CLIENT** (user, 2026-10-21: a new member of
+   * a group conversation reads nothing from before their arrival). `withheld` adds that span to each
+   * person's gaps ({@link withheldWindows}), and the client now addresses each history answer to the
+   * asking device and filters it on THAT person's windows. `exclusions` keeps its old meaning for
+   * clients that still broadcast an answer and filter it on the union: the new span in a union would
+   * withhold everything older than the newest member, from everyone.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/exclusions')
   async getGroupExclusions(
     @Param('groupId') groupId: string,
     @Headers('x-user-id') headerUserId?: string
-  ): Promise<{ exclusions: Record<string, ExclusionWindow[]> }> {
+  ): Promise<{
+    exclusions: Record<string, ExclusionWindow[]>;
+    withheld: Record<string, ExclusionWindow[]>;
+  }> {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     const members = await this.groupMemberRepo.find({
@@ -819,13 +830,19 @@ export class MembersController {
     // DISTINCT users, not device rows: the answerer re-reads this route once per bundle CHUNK, and
     // what it costs is three indexed reads on `groupId` - the same order as the chunk's own send,
     // which inserts one queued row per recipient device.
+    //
+    // The earliest row per person is also the evidence `withheldWindows` reads for their arrival.
     const admittedRows = await this.deviceGroupRepo
       .createQueryBuilder('d')
       .select('d.userId', 'userId')
-      .distinct(true)
+      .addSelect('MIN(d.createdAt)', 'firstDeviceAt')
       .where('d.groupId = :groupId', { groupId: safeGroupId })
-      .getRawMany<{ userId: string }>();
+      .groupBy('d.userId')
+      .getRawMany<{ userId: string; firstDeviceAt: Date | string | null }>();
     const counted = new Set([...memberIds, ...admittedRows.map((r) => r.userId)]);
+    const firstDeviceAt = new Map(
+      admittedRows.map((r) => [r.userId, r.firstDeviceAt ? new Date(r.firstDeviceAt) : null])
+    );
 
     const readByUser = async () => {
       const rows = await this.dataSource.manager.find(GroupMembershipInterval, {
@@ -859,11 +876,24 @@ export class MembersController {
       byUser = await readByUser();
     }
 
+    // A group conversation withholds what precedes a person's arrival; a 1:1 does not (see
+    // `withheldWindows`). A key group never reaches this route's consumers, and is read as a 1:1.
+    const group = await this.groupRepo.findOne({
+      where: { id: safeGroupId },
+      select: { isGroup: true, distributionWorkspaceId: true, distributionChannelId: true },
+    });
+    const beforeFirstArrival =
+      group?.isGroup === true && !group.distributionWorkspaceId && !group.distributionChannelId;
+
     const exclusions: Record<string, ExclusionWindow[]> = {};
+    const withheld: Record<string, ExclusionWindow[]> = {};
     for (const userId of counted) {
-      const windows = exclusionWindows(byUser.get(userId) ?? []);
+      const own = byUser.get(userId) ?? [];
+      const windows = exclusionWindows(own);
       if (windows.length > 0) exclusions[userId] = windows;
+      const held = withheldWindows(own, beforeFirstArrival, firstDeviceAt.get(userId) ?? null);
+      if (held.length > 0) withheld[userId] = held;
     }
-    return { exclusions };
+    return { exclusions, withheld };
   }
 }

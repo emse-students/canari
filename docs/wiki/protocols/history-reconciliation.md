@@ -723,29 +723,54 @@ removed and re-added has two, and the gap between them is the 2026-10-14 rule. A
 continuous member is covered by an interval reaching back to that member's own arrival, so it still
 restores everything.
 
-**Why it cannot be added to today's filter.** That filter withholds the UNION of every member's
-gaps, because a bundle is an MLS broadcast every member ingests (next section). Treating "before
+**Why it cannot be added to the union.** The filter of the next section withholds the UNION of
+every member's gaps, because a bundle is an MLS broadcast every member ingests. Treating "before
 first arrival" as a gap in that union would withhold everything older than the newest member's
-arrival, from everybody, and so break the restore of every new device. The work package therefore
-changes the delivery first:
+arrival, from everybody, and so break the restore of every new device. The span is therefore applied
+for ONE person, only where that person is known. Two steps, in this order (Master's verdict,
+2026-10-22):
 
-1. **Address each history bundle to the device that asked** (`recipientDevices`, which
-   `postApplicationMessage` already carries), on all three answer paths (`sendFullHistoryBundle`,
-   `sendHistoryBundleForIds`, `sendHistoryRangeBundle`).
-2. **Filter on the RECIPIENT's intervals**, with the span before its first arrival counted as
-   excluded. This needs a new field from chat-delivery: an older client reading the existing
-   `exclusions` field would put the new span into its union and over-withhold.
-3. **Receiver hygiene:** `dropOwnExcludedMessages` also drops what precedes its own first arrival,
-   which covers bundles still broadcast by older answerers.
-4. **Replies quoting a pre-arrival message** follow the same rule the module already applies to an
-   absence.
+**Step C - BUILT: the inviter's push withholds the INVITEE's span.**
 
-**What it does not close.** An older client keeps pushing its whole store at invitation until
-`minClientVersion` is a release that does not. The server cannot refuse such a frame, because it
-cannot read it. Addressing is a ROUTING control: MLS encrypts for the whole group, so a malicious
-server could still hand an addressed bundle to another member. That is the trust the server already
-holds when it admits devices. What a newcomer has already received cannot be taken back.
-Tracked in [backlog](../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not).
+- chat-delivery's exclusions route answers a second field, `withheld`
+  (`withheldWindows`, `utils/group-membership.ts`): each person's gaps plus everything before their
+  first arrival. `exclusions` keeps its old meaning for clients that still take a union.
+- **Group conversations only, never a 1:1.** Nobody is added to a 1:1, and its recorded arrivals are
+  not arrivals: on production 2026-10-21, 51 of 472 1:1 members had a first interval starting more
+  than 10 minutes after the conversation was created. Applying the span there would take a member's
+  own past away from their next device. Key groups are read as 1:1s; nothing here reaches them.
+- **The first arrival is the earlier of the first interval and the person's first device row in the
+  group.** A device row is written when a commit admits that device, so it cannot predate the moment
+  the person could read. Measured on the control population, the 6 live group conversations with a
+  late joiner (2026-10-21, read-only): the 105 founding members' first intervals all match their
+  first device rows, but 4 of the 24 late joiners held a device row up to 268 hours before their
+  first interval (a re-add before migration `030` recorded nothing for the stretch before it). Their
+  next device would have lost those 268 hours without the device row.
+- `sendFullHistoryBundle` passes the invitee (`userIdOfLeaf(to)`) to `entitledHistorySelection`,
+  whose filter becomes the union of gaps plus that one person's withheld windows. This is safe as a
+  broadcast because every other member is entitled to a superset of what the invitee is. For a new
+  device of a continuous member, the span ends at that member's own arrival, so the restore is
+  untouched (`groupActions.historyEntitlement.test.ts`).
+- Receiver hygiene: `dropOwnExcludedMessages` reads this device's own `withheld` windows, so an honest
+  newcomer drops what precedes its arrival from any bundle it overhears.
+
+**The residual of C, stated as the verdict asked:** a newcomer can still read pre-arrival messages
+from broadcast answers meant for others' new devices until A lands. Answers to a request (the diff
+`sendHistoryBundleForIds` and the scrollback `sendHistoryRangeBundle`) still filter on the union of
+gaps only, since they are broadcasts with no one person to filter for. An honest client drops what it
+overhears. A modified one keeps it.
+
+**Step A - DESIGN FIRST, reviewed before any code: answers addressed to the asking device.** The
+design is owed as its own page. It covers the equivocation threat of lifting the `recipientDevices`
+allowlist (`messaging.service.ts`, which accepts it on a key group only), the server marking
+addressed rows, the receiver refusing an addressed frame that is not a history control (at error),
+the split-view residual through bundle contents, and why sealing to an ephemeral X25519 key was not
+chosen.
+
+**What neither closes.** An older client keeps pushing its whole store at invitation until
+`minClientVersion` is a release carrying C, and that floor moves only once both stores serve the
+reader. The server cannot refuse such a frame, because it cannot read it. What a newcomer has already
+received cannot be taken back. Tracked in [backlog](../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not).
 
 ### A Remove holds against a later re-add - the answering peer withholds the window (decided by the user, 2026-10-14)
 
@@ -769,7 +794,8 @@ unchanged. The migration backfills every current member with an open interval fr
 `joinedAt`. The rows go with the group (`GROUP_OWNED_TABLES`) and with the account.
 `GET /api/mls/groups/:groupId/exclusions` answers `{ exclusions: { userId: [{ from, until }] } }`:
 the gaps between each CURRENT member's intervals, `until: null` while still out. **The time before
-a first arrival is never a gap**, so a late joiner keeps exactly the existing new-member policy, and
+a first arrival is never a gap** - that span is the `withheld` field of the section above, read per
+person and never in this union - and
 intervals are per USER, so a new device or a wiped one opens nothing. Only a current member may read
 it - no admin bypass, no unidentified caller.
 

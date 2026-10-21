@@ -23,7 +23,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
   return {
     mlsService: {
       getDeviceId: () => MY_DEVICE,
-      getGroupExclusions: vi.fn().mockResolvedValue(new Map()),
+      getGroupWithheld: vi.fn().mockResolvedValue(new Map()),
     },
     storage: null,
     userId: ME,
@@ -146,7 +146,7 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
     return makeCtx({
       mlsService: {
         getDeviceId: () => MY_DEVICE,
-        getGroupExclusions: vi.fn().mockResolvedValue(windows),
+        getGroupWithheld: vi.fn().mockResolvedValue(windows),
       },
     });
   }
@@ -163,6 +163,19 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Dropped during'));
   });
 
+  it('a newcomer drops what was sent before it arrived - a broadcast answer meant for another device', async () => {
+    // Our withheld span (user, 2026-10-21): everything before we were added to the group.
+    const ctx = ctxWithWindows(new Map([[ME, [{ from: 0, until: 10_000 }]]]));
+
+    await handleSystemEvent('history_bundle', { messages: [before, during, after] }, ctx as any);
+
+    const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
+      (m) => m.messageId
+    );
+    expect(added).toEqual(['during', 'after']);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Dropped before'));
+  });
+
   it("another member's window is not ours to apply - the answering peer enforces that", async () => {
     const ctx = ctxWithWindows(new Map([['someone-else', [{ from: OUT_FROM, until: BACK_AT }]]]));
 
@@ -175,7 +188,7 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
     const ctx = makeCtx({
       mlsService: {
         getDeviceId: () => MY_DEVICE,
-        getGroupExclusions: vi.fn().mockRejectedValue(new Error('503')),
+        getGroupWithheld: vi.fn().mockRejectedValue(new Error('503')),
       },
     });
 

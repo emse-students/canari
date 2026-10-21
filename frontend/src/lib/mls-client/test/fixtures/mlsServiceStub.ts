@@ -104,6 +104,7 @@ export function createMlsServiceStub(
     getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     getGroupExclusions: vi.fn().mockResolvedValue(new Map()),
+    getGroupWithheld: vi.fn().mockResolvedValue(new Map()),
     getGroupRosters: vi.fn().mockResolvedValue({ rosters: new Map(), refused: new Set() }),
     getUserGroups: vi.fn().mockResolvedValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),

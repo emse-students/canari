@@ -1697,7 +1697,27 @@ export class MlsDeliveryApi {
    * network path), any other status an {@link ApiRefusalError} carrying it; a transport failure is
    * whatever `f` raised, untouched.
    */
-  getGroupExclusions(groupId: string): Promise<GroupExclusions> {
+  async getGroupExclusions(groupId: string): Promise<GroupExclusions> {
+    return (await this.readGroupWindows(groupId)).exclusions;
+  }
+
+  /**
+   * What each CURRENT member of `groupId` may never be handed: their gaps AND, in a group
+   * conversation, everything before their first arrival (user, 2026-10-21) - the route's `withheld`
+   * field, keyed like {@link getGroupExclusions}. A 1:1 answers the gaps only, decided by the server.
+   *
+   * Read for ONE person at a time - the invitee of a history push, or this device's own user - never
+   * as a union: the span before the newest member's arrival would then withhold everything older
+   * from everyone. Same request as {@link getGroupExclusions}, so asking both at once costs one read.
+   */
+  async getGroupWithheld(groupId: string): Promise<GroupExclusions> {
+    return (await this.readGroupWindows(groupId)).withheld;
+  }
+
+  /** The one read behind {@link getGroupExclusions} and {@link getGroupWithheld}, failures classified at the throw. */
+  private readGroupWindows(
+    groupId: string
+  ): Promise<{ exclusions: GroupExclusions; withheld: GroupExclusions }> {
     return this.joinInFlight(`exclusions:${groupId}`, async () => {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/exclusions`, {
         headers: await this.auth(),
@@ -1714,8 +1734,11 @@ export class MlsDeliveryApi {
           `getGroupExclusions refused with ${res.status} for group ${groupId}`
         );
       }
-      const body = (await res.json()) as { exclusions?: unknown };
-      return parseGroupExclusions(body?.exclusions);
+      const body = (await res.json()) as { exclusions?: unknown; withheld?: unknown };
+      return {
+        exclusions: parseGroupExclusions(body?.exclusions),
+        withheld: parseGroupExclusions(body?.withheld),
+      };
     });
   }
 

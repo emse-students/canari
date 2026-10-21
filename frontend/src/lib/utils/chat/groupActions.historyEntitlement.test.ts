@@ -239,6 +239,95 @@ describe('a Remove holds against a later re-add - every history sender withholds
   });
 });
 
+/**
+ * A NEW MEMBER OF A GROUP CONVERSATION READS NOTHING FROM BEFORE THEIR ARRIVAL (user, 2026-10-21).
+ *
+ * Carol joined the group at T_CAROL; Alice was there from the start. The inviter's push to Carol
+ * withholds her span, and a push to Alice's NEW device in that same group withholds nothing of
+ * Alice's past - the control population is the 6 production group conversations with a late joiner,
+ * whose founding members' arrivals all precede every message (read-only count, 2026-10-21).
+ */
+describe('the inviter push withholds the span before the INVITEE arrived', () => {
+  const T_ALICE = 1_600_000_000_000;
+  /** After DURING (T_OUT + 50 s), before AT_READD (T_BACK). */
+  const T_CAROL = 1_700_000_160_000;
+  const CAROL_DEVICE = 'user-c2:device-c';
+  const ALICE_NEW_DEVICE = 'user-a:device-new';
+
+  function lateJoinerGroup() {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.getGroupExclusions).mockResolvedValue(new Map());
+    vi.mocked(mlsService.getGroupWithheld).mockResolvedValue(
+      new Map([
+        ['user-a', [{ from: 0, until: T_ALICE }]],
+        ['user-c2', [{ from: 0, until: T_CAROL }]],
+      ])
+    );
+    return mlsService;
+  }
+
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  it('a newcomer is pushed only what was sent from their arrival on', async () => {
+    const mlsService = lateJoinerGroup();
+
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith(STORE),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+      to: CAROL_DEVICE,
+    });
+
+    // T_CAROL falls between DURING and AT_READD: the span ends exclusive, so `at-readd` goes.
+    expect(sentIds(mlsService)).toEqual(['at-readd', 'after']);
+  });
+
+  it("a founding member's NEW device in a late-joiner group still restores everything", async () => {
+    const mlsService = lateJoinerGroup();
+
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith(STORE),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+      to: ALICE_NEW_DEVICE,
+    });
+
+    expect(sentIds(mlsService)).toEqual(STORE.map((m) => m.id));
+  });
+
+  it('an answer to a REQUEST does not read the per-person span - the residual until answers are addressed', async () => {
+    const mlsService = lateJoinerGroup();
+
+    await sendHistoryBundleForIds(
+      GROUP,
+      STORE.map((m) => m.id),
+      { storage: storageWith(STORE), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: ALICE_NEW_DEVICE, since: 0 }
+    );
+
+    expect(sentIds(mlsService)).toEqual(STORE.map((m) => m.id));
+    expect(mlsService.getGroupWithheld).not.toHaveBeenCalled();
+  });
+
+  it('an unreadable withheld set carries no message to the invitee', async () => {
+    const mlsService = lateJoinerGroup();
+    vi.mocked(mlsService.getGroupWithheld).mockRejectedValue(new Error('503'));
+
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith(STORE),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+      to: CAROL_DEVICE,
+    });
+
+    expect(sentIds(mlsService)).toEqual([]);
+  });
+});
+
 describe('a long answer reads the windows again for every chunk', () => {
   it('a member re-added mid-answer is withheld from the chunks sealed after it', async () => {
     const mlsService = createMlsServiceStub();
