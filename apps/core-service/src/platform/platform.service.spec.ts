@@ -3,6 +3,10 @@ import { PlatformService } from './platform.service';
 import type { PlatformConfig } from './entities/platform-config.entity';
 import type { Repository } from 'typeorm';
 import { deployedVersion } from './deployed-version';
+import axios from 'axios';
+
+jest.mock('axios');
+const mockedAxios = axios as unknown as { post: jest.Mock };
 
 // The bound reads the build's OWN version off disk, which a unit test has no business depending on.
 jest.mock('./deployed-version', () => ({ deployedVersion: jest.fn() }));
@@ -15,6 +19,8 @@ describe('PlatformService', () => {
   let repo: jest.Mocked<Pick<Repository<PlatformConfig>, 'findOne' | 'findOneOrFail' | 'save'>>;
 
   beforeEach(() => {
+    mockedAxios.post.mockReset();
+    mockedAxios.post.mockResolvedValue({ data: { released: 0, failed: 0 } });
     repo = {
       findOne: jest.fn(),
       findOneOrFail: jest.fn(),
@@ -132,6 +138,59 @@ describe('PlatformService', () => {
     const result = await service.updateConfig({ minClientVersion: '9.9.9' }, ADMIN);
 
     expect(result.minClientVersion).toBe('9.9.9');
+  });
+
+  describe('turning payments on releases the withheld products', () => {
+    const rowWith = (provider: 'lydia' | 'disabled') => {
+      const existing: PlatformConfig = {
+        id: 1,
+        maintenanceEnabled: false,
+        maintenanceMessage: null,
+        minClientVersion: '0.13.0',
+        paymentProvider: provider,
+        callsMode: 'off',
+      };
+      repo.findOne.mockResolvedValue(existing);
+      repo.findOneOrFail.mockResolvedValue(existing);
+      repo.save.mockImplementation(async (row) => row as PlatformConfig);
+    };
+
+    it('asks social-service to release once the provider is saved as active', async () => {
+      rowWith('disabled');
+      await service.updateConfig({ paymentProvider: 'lydia' }, ADMIN);
+      expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+      expect(mockedAxios.post.mock.calls[0][0]).toMatch(/internal\/payments\/provider-activated$/);
+      // The release reads the provider back from core, so it must come after the save.
+      expect((repo.save as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+        mockedAxios.post.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('CONTROL: switching to disabled, or not touching the provider, releases nothing', async () => {
+      rowWith('lydia');
+      await service.updateConfig({ paymentProvider: 'disabled' }, ADMIN);
+      await service.updateConfig({ maintenanceEnabled: true }, ADMIN);
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a failed release instead of reporting success, and a repeat is allowed', async () => {
+      rowWith('disabled');
+      mockedAxios.post.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+      await expect(service.updateConfig({ paymentProvider: 'lydia' }, ADMIN)).rejects.toThrow(
+        /could not all be released/
+      );
+      // The provider IS saved; the same request again calls the idempotent release again.
+      await service.updateConfig({ paymentProvider: 'lydia' }, ADMIN);
+      expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+    });
+
+    it('surfaces a partial sweep (failed > 0)', async () => {
+      rowWith('disabled');
+      mockedAxios.post.mockResolvedValueOnce({ data: { released: 1, failed: 1 } });
+      await expect(service.updateConfig({ paymentProvider: 'lydia' }, ADMIN)).rejects.toThrow(
+        /could not all be released/
+      );
+    });
   });
 
   it('updateConfig switches paymentProvider and leaves other fields untouched', async () => {

@@ -1,10 +1,22 @@
-import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import axios from 'axios';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PlatformConfig, type CallsMode, type LivesMode } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
+import { describeHttpError } from '../common/http-error-log';
+import {
+  internalSocialRequestConfig,
+  providerActivatedUrl,
+} from '../payment/social-internal-client';
 import type { PaymentProviderId } from '../payment/payment-provider.interface';
 
 export type PlatformConfigPublic = {
@@ -140,7 +152,47 @@ export class PlatformService implements OnModuleInit {
       `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion} paymentProvider=${row.paymentProvider} callsMode=${row.callsMode} livesMode=${row.livesMode}`
     );
     const saved = await this.repo.save(row);
+    if (dto.paymentProvider !== undefined) {
+      if (dto.paymentProvider === 'disabled') {
+        this.logger.warn(`paymentProvider -> disabled by=${by}`);
+      } else {
+        this.logger.warn(`paymentProvider -> ${dto.paymentProvider} by=${by}`);
+        // EVERY PATCH THAT SETS AN ACTIVE PROVIDER ASKS, NOT ONLY A CHANGE: the release is idempotent,
+        // and an admin whose first call failed below must be able to repeat it.
+        await this.releaseWithheldProducts();
+      }
+    }
     return toPublic(saved);
+  }
+
+  /**
+   * Tells social-service payments are on, so the boutique products withheld while they were
+   * disabled go on sale (an event at the point the state changes, not a timer). Runs AFTER the save,
+   * because social-service re-reads the provider from `payments/provider`. A failure is surfaced to
+   * the administrator rather than swallowed: the provider IS switched, the release is what is
+   * missing, and repeating the PATCH is safe.
+   */
+  private async releaseWithheldProducts(): Promise<void> {
+    try {
+      const { data } = await axios.post<{ released: number; failed: number }>(
+        providerActivatedUrl(),
+        undefined,
+        internalSocialRequestConfig()
+      );
+      this.logger.log(
+        `provider activated: social-service released=${data.released} failed=${data.failed}`
+      );
+      if (data.failed > 0) {
+        throw new Error(`${data.failed} association(s) could not be released`);
+      }
+    } catch (err: unknown) {
+      this.logger.error(
+        `provider activated but the withheld products were NOT all released: ${describeHttpError(err)}`
+      );
+      throw new BadGatewayException(
+        'Payment provider switched, but withheld products could not all be released; repeat the request.'
+      );
+    }
   }
 
   /** True when maintenance is on and the caller is not a global admin. */

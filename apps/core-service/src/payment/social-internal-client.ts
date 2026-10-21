@@ -59,3 +59,8 @@ export function internalPaymentAccountUrl(associationId: string): string {
 export function internalLydiaCallbackKeyUrl(): string {
   return socialUrl('internal/associations/lydia-callback-key');
 }
+
+/** Internal route releasing the products withheld while payments were disabled (provider switched on). */
+export function providerActivatedUrl(): string {
+  return socialUrl('internal/payments/provider-activated');
+}

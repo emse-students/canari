@@ -351,6 +351,45 @@ export class ProductsService {
   }
 
   /**
+   * The release for EVERY association holding a withheld product, run when the platform's payment
+   * provider stops being `disabled`.
+   *
+   * Before this, the only trigger was an association's own onboarding completing, so a platform
+   * that turned payments on later left every product withheld in the meantime off sale forever
+   * (dev end-to-end test, 2026-10-21). The allowlist is still `activationWithheld`; readiness is
+   * still resolved per association (own account or delegate's), so an association that is not ready
+   * keeps its products withheld. Idempotent: a second run finds the flag already cleared.
+   *
+   * One failing association must not stop the others, and the failures are COUNTED and returned
+   * so the caller can refuse to report success for a sweep that missed some.
+   */
+  async releaseWithheldForAllAssociations(): Promise<{ released: number; failed: number }> {
+    const rows = await this.productRepo
+      .createQueryBuilder('p')
+      .select('DISTINCT p.associationId', 'associationId')
+      .where('p.activationWithheld = true')
+      .getRawMany<{ associationId: string }>();
+    this.logger.log(
+      `[SHOP] provider activated: ${rows.length} association(s) hold withheld products`
+    );
+    let released = 0;
+    let failed = 0;
+    for (const { associationId } of rows) {
+      try {
+        released += await this.releaseWithheldProducts(associationId);
+      } catch (e) {
+        failed += 1;
+        this.logger.error(
+          `[SHOP] release FAILED for association=${associationId.slice(0, 8)} on provider activation: ` +
+            `${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+    this.logger.log(`[SHOP] provider activation sweep done: released=${released} failed=${failed}`);
+    return { released, failed };
+  }
+
+  /**
    * The same release for an association AND every club whose payments it serves.
    *
    * A parent finishing its onboarding makes its approved delegating children ready too, and their
