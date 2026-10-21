@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { GALLERY_COMMAND_NAMES, GALLERY_PLUGIN, galleryCommand } from './galleryCommands';
 
 /**
- * Cross-language contract guard, the same shape as `customTabsCommands.test.ts`: a
+ * Cross-language contract guard, the same shape as `nativePluginCommands.test.ts`: a
  * `plugin:<name>|<command>` string compiles while resolving to nothing at runtime if either side
  * drifts, so these tests read the Rust sources and the app's capability file.
  */
