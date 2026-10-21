@@ -69,7 +69,7 @@ import {
   whenSalonSendable,
 } from '$lib/utils/graine/salonSendGate';
 import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
-import { MediaService } from '$lib/media';
+import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
 import {
   applyEditToBody,
@@ -1667,7 +1667,7 @@ export function useMessaging() {
         if (prepared) readyFiles.push(prepared);
         continue;
       }
-      if (limits !== null && file.size > limits.maxPlaintextBytes) {
+      if (limits !== null && refusedBeforePreparation(file, limits)) {
         const size = (file.size / 1024 / 1024).toFixed(1);
         // TOLD the configured ceiling, COMPARED against it minus the AES-GCM tag - see
         // `uploadLimits`. Announcing the compared number would say "49 Mo" of a 50 MB server.

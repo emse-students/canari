@@ -33,6 +33,7 @@ use crate::state::{AppState, PendingDb};
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
+use crate::commands::handoff::read_and_clear_pending_share;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
     creer_groupe, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
@@ -46,6 +47,7 @@ use crate::commands::mls::{
     trailer_welcome,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
+use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
     ack_fcm_cache, check_push_secret_health, delete_user_push_files, forget_graine_channel,
@@ -1125,6 +1127,7 @@ pub fn run() {
             read_outbox_mirror,
             read_and_clear_outbox_sent,
             read_and_clear_pending_call_accept,
+            read_and_clear_pending_share,
             get_voip_token,
             store_graine_seed,
             forget_graine_channel,
@@ -1132,6 +1135,7 @@ pub fn run() {
             actualiser_cle_keystore_avec_devicekey,
             flush_webview_cookies,
             take_picked_file,
+            discard_picked_file,
             notifier_message_natif,
             store_avatar_mirror,
             store_display_names,

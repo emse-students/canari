@@ -1019,27 +1019,11 @@ pub(crate) fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
 /// Returns null when there is no pending accept.
 #[tauri::command]
 pub(crate) fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Option<String> {
-    let data_dir = match app.path().app_data_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            log::warn!("[CALL_ACCEPT] app_data_dir() failed: {e}");
-            return None;
-        }
-    };
-    let path = data_dir.join("pending_call_accept.json");
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(e) => {
-            log::warn!("[CALL_ACCEPT] read failed: {e}");
-            return None;
-        }
-    };
-    if let Err(e) = std::fs::remove_file(&path) {
-        log::warn!("[CALL_ACCEPT] delete failed: {e}");
-    }
-    log::info!("[CALL_ACCEPT] pending CallKit accept found");
-    Some(content)
+    crate::commands::handoff::read_and_clear_app_data_file(
+        &app,
+        "pending_call_accept.json",
+        "CALL_ACCEPT",
+    )
 }
 
 /// Writes the session context to `{app_data_dir}/push_context.json` so the native background

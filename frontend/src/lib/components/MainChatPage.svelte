@@ -67,6 +67,10 @@
   } from '$lib/stores/globalChatSingleton.svelte';
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
+  import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.svelte';
+  import { stageSharedFiles } from '$lib/mobile/incomingShareDrain';
+  import { MediaService } from '$lib/media';
+  import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
@@ -1128,6 +1132,59 @@
       handleFilesSelected([new File([bytes], name, { type: mime })]);
     } catch (e) {
       appendLog(`[keyboard-media] failed to handle committed content - ${e}`);
+    }
+  }
+
+  // ─── A share from another app lands in the composer of the conversation it was sent to ────────
+  // `IncomingShareHost` asked where it goes and landed on that conversation; once it is the one on
+  // screen, its text joins the draft and its files are read from disk into the pending queue -
+  // through the same preparation as a picked file (size ceiling, compression, video re-encode). The member sends it with Send:
+  // a share is never sent on its own.
+  $effect(() => {
+    const target = incomingShare.target;
+    const selected = convs.selectedContact;
+    if (!target || !selected) return;
+    if (resolveConversationKey(convs.conversations, target) !== selected) return;
+    untrack(() => {
+      const share = incomingShare.takeFor(target);
+      if (!share) return;
+      log(
+        `[SHARE] staged in ${selected.slice(0, 16)}: ${share.text.length} chars, ${share.files.length} file(s)`
+      );
+      if (share.text) messageText = restoreFailedDraft(messageText, share.text);
+      if (share.files.length === 0) return;
+      // The copies are read HERE, once a destination is on screen, and not when the share arrived -
+      // one at a time, each staged before the next is read, under the composer's own ceiling.
+      const files = share.files;
+      const destination = selected;
+      whenSessionUp(
+        `a share of ${files.length} file(s)`,
+        () => void stageShare(files, destination)
+      );
+    });
+  });
+
+  /**
+   * Stages a share's files in the open conversation, one at a time, and says what did not make it:
+   * a copy over the upload ceiling (deleted unread, told as the composer tells a picked one) and a
+   * copy that could not be read. Every file goes to `destination`, the conversation the share was
+   * taken by, whichever one is on screen when its turn comes (`stageSharedFiles`).
+   */
+  async function stageShare(files: SharedFileEntry[], destination: string) {
+    const limits = await new MediaService().uploadLimits();
+    const { lost, tooLarge } = await stageSharedFiles(files, destination, limits, (file, to) =>
+      messaging.handleFilesSelected([file], { ...msgCtx(), selectedContact: to })
+    );
+    if (lost > 0) showToast(m.share_items_lost({ count: lost }), 'error');
+    if (tooLarge.length > 0 && limits) {
+      showToast(
+        m.chat_media_too_large({
+          size: (tooLarge[0].size / 1024 / 1024).toFixed(1),
+          limit: Math.round(limits.maxBytes / 1024 / 1024),
+        }),
+        'error'
+      );
+      log(`[SHARE] ${tooLarge.length} shared file(s) over the upload ceiling, deleted unread`);
     }
   }
 
