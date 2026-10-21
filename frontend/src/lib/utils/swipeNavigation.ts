@@ -50,7 +50,18 @@ const SWIPE_MIN_TRAVEL_PX = 56;
 const SWIPE_TRAVEL_FRACTION = 0.25;
 const SWIPE_FLICK_PX_PER_MS = 0.5;
 const HORIZONTAL_DOMINANCE_RATIO = 1.5;
-const GESTURE_LOCK_PX = 12;
+
+/**
+ * THE LOCK MUST SIT UNDER THE ENGINE'S TOUCH SLOP, OR THE ENGINE DECIDES FIRST (Mi 9T, 2026-10-21).
+ *
+ * Chrome dispatches no `touchmove` inside its slop (Android's 8 dp, which is 8 CSS px in a WebView),
+ * and the first move it does dispatch is the one that decides who owns the touch: left unclaimed,
+ * Chrome starts its own gesture and every later move arrives `cancelable=false`. At 12 px a slow
+ * thumb's first move (9-11 px) was still `pending`, nothing claimed it, and `claimTouchMove` then
+ * stood the swipe down - the camera swipe that "sometimes did nothing" (design-reference). At 8 the
+ * first delivered move always locks a direction, so a horizontal one is claimed in time.
+ */
+export const GESTURE_LOCK_PX = 8;
 
 export type SwipeNavDirection = 'prev' | 'next';
 
