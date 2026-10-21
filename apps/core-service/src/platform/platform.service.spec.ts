@@ -1,5 +1,5 @@
-import { Logger } from '@nestjs/common';
-import { PlatformService } from './platform.service';
+import { BadGatewayException, BadRequestException, Logger } from '@nestjs/common';
+import { PlatformService, PLATFORM_ERROR_CODES } from './platform.service';
 import type { PlatformConfig } from './entities/platform-config.entity';
 import type { Repository } from 'typeorm';
 import { deployedVersion } from './deployed-version';
@@ -173,22 +173,85 @@ describe('PlatformService', () => {
       expect(mockedAxios.post).not.toHaveBeenCalled();
     });
 
-    it('surfaces a failed release instead of reporting success, and a repeat is allowed', async () => {
+    it('bounds the call to social-service with a timeout', async () => {
       rowWith('disabled');
-      mockedAxios.post.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
-      await expect(service.updateConfig({ paymentProvider: 'lydia' }, ADMIN)).rejects.toThrow(
-        /could not all be released/
-      );
-      // The provider IS saved; the same request again calls the idempotent release again.
       await service.updateConfig({ paymentProvider: 'lydia' }, ADMIN);
-      expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+      expect(mockedAxios.post.mock.calls[0][2]).toEqual(
+        expect.objectContaining({ timeout: 15_000 })
+      );
     });
 
-    it('surfaces a partial sweep (failed > 0)', async () => {
+    /** The 502 body, read the way Nest serialises it. */
+    async function refusalOf(p: Promise<unknown>): Promise<Record<string, unknown>> {
+      const err = await p.then(
+        () => {
+          throw new Error('expected a refusal');
+        },
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(BadGatewayException);
+      return (err as BadGatewayException).getResponse() as Record<string, unknown>;
+    }
+
+    it('answers a failed release with the TYPED code and the saved config, not a generic failure', async () => {
+      rowWith('disabled');
+      mockedAxios.post.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+      const body = await refusalOf(service.updateConfig({ paymentProvider: 'lydia' }, ADMIN));
+      expect(body.code).toBe(PLATFORM_ERROR_CODES.WITHHELD_RELEASE_INCOMPLETE);
+      // The provider IS saved, and the body says so.
+      expect((body.config as { paymentProvider: string }).paymentProvider).toBe('lydia');
+    });
+
+    it('surfaces a partial sweep (failed > 0) with the same code', async () => {
       rowWith('disabled');
       mockedAxios.post.mockResolvedValueOnce({ data: { released: 1, failed: 1 } });
-      await expect(service.updateConfig({ paymentProvider: 'lydia' }, ADMIN)).rejects.toThrow(
-        /could not all be released/
+      const body = await refusalOf(service.updateConfig({ paymentProvider: 'lydia' }, ADMIN));
+      expect(body.code).toBe(PLATFORM_ERROR_CODES.WITHHELD_RELEASE_INCOMPLETE);
+    });
+  });
+
+  describe('the explicit release action (the retry that does not depend on the form diff)', () => {
+    const rowWith = (provider: 'lydia' | 'disabled') => {
+      const existing: PlatformConfig = {
+        id: 1,
+        maintenanceEnabled: false,
+        maintenanceMessage: null,
+        minClientVersion: '0.13.0',
+        paymentProvider: provider,
+        callsMode: 'off',
+      };
+      repo.findOne.mockResolvedValue(existing);
+      repo.findOneOrFail.mockResolvedValue(existing);
+    };
+
+    it('runs the sweep when a provider is active, and answers its counts', async () => {
+      rowWith('lydia');
+      mockedAxios.post.mockResolvedValueOnce({ data: { released: 4, failed: 0 } });
+      await expect(service.releaseWithheldProducts(ADMIN)).resolves.toEqual({
+        released: 4,
+        failed: 0,
+      });
+      expect(mockedAxios.post.mock.calls[0][0]).toMatch(/internal\/payments\/provider-activated$/);
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: refuses with PAYMENTS_DISABLED and calls nothing while payments are off', async () => {
+      rowWith('disabled');
+      const err = await service.releaseWithheldProducts(ADMIN).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(((err as BadRequestException).getResponse() as { code: string }).code).toBe(
+        PLATFORM_ERROR_CODES.PAYMENTS_DISABLED
+      );
+      expect(mockedAxios.post).not.toHaveBeenCalled();
+    });
+
+    it('answers WITHHELD_RELEASE_INCOMPLETE when the sweep misses some again', async () => {
+      rowWith('lydia');
+      mockedAxios.post.mockResolvedValueOnce({ data: { released: 0, failed: 2 } });
+      const err = await service.releaseWithheldProducts(ADMIN).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadGatewayException);
+      expect(((err as BadGatewayException).getResponse() as { code: string }).code).toBe(
+        PLATFORM_ERROR_CODES.WITHHELD_RELEASE_INCOMPLETE
       );
     });
   });

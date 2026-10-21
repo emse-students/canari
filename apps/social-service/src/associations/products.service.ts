@@ -326,7 +326,12 @@ export class ProductsService {
   async releaseWithheldProducts(associationId: string): Promise<number> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
+    return this.releaseWithheldFor(asso);
+  }
 
+  /** The release itself, for an association already loaded (see `releaseWithheldProducts`). */
+  private async releaseWithheldFor(asso: Association): Promise<number> {
+    const associationId = asso.id;
     const paymentTarget = await this.resolvePaymentTargetFor(asso);
     if (!paymentTarget.ready) {
       this.logger.debug(
@@ -362,6 +367,12 @@ export class ProductsService {
    *
    * One failing association must not stop the others, and the failures are COUNTED and returned
    * so the caller can refuse to report success for a sweep that missed some.
+   *
+   * A withheld product whose association row is GONE is skipped, never counted as a failure:
+   * `association_products` has no foreign key to `associations` and deleting an association leaves
+   * its products behind, while migration 057 flagged every inactive row of that era. Counting such
+   * an orphan as failed would make every activation answer 502 forever for a product nobody can
+   * ever sell. The skip is logged (ids only) so the orphan stays visible.
    */
   async releaseWithheldForAllAssociations(): Promise<{ released: number; failed: number }> {
     const rows = await this.productRepo
@@ -369,18 +380,29 @@ export class ProductsService {
       .select('DISTINCT p.associationId', 'associationId')
       .where('p.activationWithheld = true')
       .getRawMany<{ associationId: string }>();
+    const ids = rows.map((r) => r.associationId);
+    const associations = ids.length > 0 ? await this.assoRepo.find({ where: { id: In(ids) } }) : [];
+    const found = new Set(associations.map((a) => a.id));
+    const orphans = ids.filter((id) => !found.has(id));
     this.logger.log(
-      `[SHOP] provider activated: ${rows.length} association(s) hold withheld products`
+      `[SHOP] provider activated: ${ids.length} association(s) hold withheld products ` +
+        `(${associations.length} exist, ${orphans.length} orphaned)`
     );
+    if (orphans.length > 0) {
+      this.logger.warn(
+        `[SHOP] provider activation SKIPS withheld products whose association no longer exists: ` +
+          `association=${orphans.map((id) => id.slice(0, 8)).join(',')}`
+      );
+    }
     let released = 0;
     let failed = 0;
-    for (const { associationId } of rows) {
+    for (const asso of associations) {
       try {
-        released += await this.releaseWithheldProducts(associationId);
+        released += await this.releaseWithheldFor(asso);
       } catch (e) {
         failed += 1;
         this.logger.error(
-          `[SHOP] release FAILED for association=${associationId.slice(0, 8)} on provider activation: ` +
+          `[SHOP] release FAILED for association=${asso.id.slice(0, 8)} on provider activation: ` +
             `${e instanceof Error ? e.message : String(e)}`
         );
       }
@@ -905,6 +927,7 @@ export class ProductsService {
       this.logger.log(
         `[COTISATION] creating canonical membership product for association=${asso.id.slice(0, 8)} tag=${tagName}`
       );
+      const ready = (await this.resolvePaymentTargetFor(asso)).ready;
       const product = this.productRepo.create({
         associationId: asso.id,
         name: 'Cotisation',
@@ -913,8 +936,16 @@ export class ProductsService {
         grantedTagName: tagName,
         tagExpiresAt: expiresAt,
         // Active once payments can be taken - own account or an approved parent's (delegation).
-        isActive: (await this.resolvePaymentTargetFor(asso)).ready,
+        isActive: ready,
+        // The cotisation is always WANTED on sale, so when payments are not ready it is withheld
+        // exactly like `create` withholds a product, and the same releases put it on sale.
+        activationWithheld: !ready,
       });
+      if (!ready) {
+        this.logger.log(
+          `[COTISATION] canonical product created WITHHELD for association=${asso.id.slice(0, 8)}: payments not ready`
+        );
+      }
       return this.productRepo.save(product);
     }
 

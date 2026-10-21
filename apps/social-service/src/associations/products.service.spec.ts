@@ -308,9 +308,25 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           type: 'membership',
           grantedTagName: 'cotisant:bde',
           tagExpiresAt: null,
+          // CONTROL: payments are ready, so nothing is withheld.
+          isActive: true,
+          activationWithheld: false,
         })
       );
       expect(created).toBeDefined();
+    });
+
+    it('creates the canonical membership product WITHHELD when payments are not ready, so a release puts it on sale', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.find.mockResolvedValue([]);
+
+      await service.provisionCotisationProduct(
+        asso({ lydiaOnboardingComplete: false, lydiaAccountId: null })
+      );
+
+      expect(productRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'membership', isActive: false, activationWithheld: true })
+      );
     });
 
     it('re-syncs the tag on an existing canonical product without touching its name/price', async () => {
@@ -1507,7 +1523,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       it('releases the withheld products of every association that is now ready', async () => {
         const { service, assoRepo, productRepo } = makeService();
         productRepo.__setWithheld(['a1', 'a2']);
-        assoRepo.findOne.mockResolvedValue(asso());
+        assoRepo.find.mockResolvedValue([asso({ id: 'a1' }), asso({ id: 'a2' })] as any);
         productRepo.update.mockResolvedValue({ affected: 1 });
 
         expect(await service.releaseWithheldForAllAssociations()).toEqual({
@@ -1537,7 +1553,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       it('keeps the products of an association that is still not ready withheld', async () => {
         const { service, assoRepo, productRepo } = makeService();
         productRepo.__setWithheld(['a1']);
-        assoRepo.findOne.mockResolvedValue(notReady());
+        assoRepo.find.mockResolvedValue([{ ...notReady(), id: 'a1' }] as any);
 
         expect(await service.releaseWithheldForAllAssociations()).toEqual({
           released: 0,
@@ -1549,15 +1565,34 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       it('counts a failing association and still releases the others', async () => {
         const { service, assoRepo, productRepo } = makeService();
         productRepo.__setWithheld(['a1', 'a2']);
-        assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
-          id === 'a1' ? Promise.resolve(null) : Promise.resolve(asso())
-        );
-        productRepo.update.mockResolvedValue({ affected: 3 });
+        assoRepo.find.mockResolvedValue([asso({ id: 'a1' }), asso({ id: 'a2' })] as any);
+        productRepo.update.mockImplementation(((where: { associationId: string }) =>
+          where.associationId === 'a1'
+            ? Promise.reject(new Error('db down'))
+            : Promise.resolve({ affected: 3 })) as any);
 
         expect(await service.releaseWithheldForAllAssociations()).toEqual({
           released: 3,
           failed: 1,
         });
+      });
+
+      it('SKIPS a withheld product whose association was deleted, so an orphan never fails the sweep', async () => {
+        const { service, assoRepo, productRepo } = makeService();
+        // `gone` has withheld products left behind by a deleted association (no FK); `a2` exists.
+        productRepo.__setWithheld(['gone', 'a2']);
+        assoRepo.find.mockResolvedValue([asso({ id: 'a2' })] as any);
+        productRepo.update.mockResolvedValue({ affected: 1 });
+
+        expect(await service.releaseWithheldForAllAssociations()).toEqual({
+          released: 1,
+          failed: 0,
+        });
+        expect(productRepo.update).toHaveBeenCalledTimes(1);
+        expect(productRepo.update).toHaveBeenCalledWith(
+          { associationId: 'a2', activationWithheld: true },
+          { isActive: true, activationWithheld: false }
+        );
       });
     });
 
