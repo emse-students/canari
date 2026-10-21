@@ -693,3 +693,68 @@ its toast, and its reset by a published round), `refusedRotationReloads.test.ts`
 `signOutEndsLiveSession.test.ts` (the session's end clears the count),
 `ToastContainer.svelte.test.ts` (a pinned toast has no close button), `savedStateFailure.test.ts` (the typed login
 failure), `loginErrors.test.ts` (narrated, not accused). Each was mutation-checked.
+
+### A history replay's markers wait for the checkpoint that holds it (2026-10-21)
+
+A history replay returns a commit thunk (`MlsReplayCommit`, `utils/chat/history.ts`) that writes
+its Redis stream cursor, seen-ciphertext set and retry counters. It must run only once the ratchet
+advance the replay made is on disk: a cursor ahead of the state skips, on the next cold replay,
+frames the restored state never applied - the `wrong-epoch` / epoch-gap class, and the direction
+`commitPendingHistoryMarks` calls unsurvivable.
+
+**Until 2026-10-21 it ran after `endBulkIngest` resolved, and four comments said that was after the
+flush. It was not.** `BaseMlsService.endBulkIngest` awaits every observer, but the persister's
+`onBulkIngestEnd` STARTS the checkpoint and returns (durability must not gate delivery, section 8),
+and a window closing inside another one - a replay inside a live drain - returns at depth > 0 with
+no checkpoint at all. So the markers led the state by one checkpoint (~100 ms web, seconds on a big
+native state) on every shipped build. Found by reading, never measured in the field.
+
+**Now `withMlsBulkIngest` (`mls-client/mlsBulkIngest.ts`) owns the ordering.** It takes the commit
+as an argument and:
+
+1. marks the state dirty AFTER `fn` resolved (the replay's session has committed its ratchet) and
+   BEFORE the window closes, so the outermost close's own checkpoint is the one that covers it - no
+   second write;
+2. closes the window, returns `fn`'s value at once - the caller draws its page without waiting
+   for the disk;
+3. chains `persister.flushEncrypted()` and runs the commit when it resolves. By the contract of the
+   subsection above, that promise resolves only once a checkpoint that started after the mark has
+   landed: the dirty flag is cleared only by starting a checkpoint, and a failed one raises it again.
+   Nested inside a drain, the flush starts its own checkpoint.
+
+**What "landed" means, exactly.** The commit runs only when `fn` returned something to commit, the
+mark came after it, the flush resolved, AND that checkpoint's state is on disk: on web, `written`, or
+`superseded` by this document's own later capture, while `stale` and `collision` reject typed (the
+subsection above, "A web checkpoint resolves only when its state is on disk"). A typed refusal adds
+no line here: the guard has said it once.
+
+**A failed checkpoint rejects the flush and the commit never runs**: the markers stay behind the
+state, the survivable direction (a re-walk of frames already seen). No persister registered is a
+defect upstream (the pipeline registers before the restore can replay) and is logged as an error,
+markers withheld. No clock anywhere: termination is the checkpoint promise, which settles.
+
+**What it costs, stated.** One extra checkpoint per replay that closes inside a live drain, because
+that close starts none; a replay that fetched nothing returns `undefined` and owes none. And the
+markers land LATER than they did: the restore's commits run once the phase's checkpoint lands,
+after `restore` has returned, so a conversation opened meanwhile probes the OLD cursor and re-walks
+from it. That re-walk is idempotent - the frames it meets again are in the in-memory seen set.
+
+**The thunk no longer writes the seen set.** That set is the LIVE one live delivery shares, so the
+thunk's write also wrote every mark live delivery made while the covering checkpoint was sealing:
+a live commit's fingerprint durable before the checkpoint holding its epoch, and a kill there made
+the cold replay skip that commit, move the cursor past it, and fail every later frame `wrong-epoch`
+into a forced re-Welcome. The walk's own marks need no such write: each is registered pending
+before the helper marks the state dirty, so the covering checkpoint's `commitPendingHistoryMarks`
+snapshot holds every one. The thunk keeps the cursor and the retry counters.
+
+Rejected: awaiting the checkpoint in the persister's `onBulkIngestEnd` for persist-only windows.
+`endBulkIngest` swallows observer failures, so a failed checkpoint could not reach the caller
+without changing that seam, the nested close would still start nothing, and the selected
+conversation's page would be drawn only after the disk answered (8 s on a cold web client). Also
+rejected: the persister running registered thunks after a later checkpoint - the same proof with
+more state to own (registration, logout, two replays of one group).
+
+Pinned by `mlsBulkIngest.test.ts` (the real persister as observer: before the checkpoint lands, a
+failed checkpoint, a version-guard refusal, a close inside a live drain, a checkpoint already
+running, nothing to commit; and no persister) and `history.checkpointBoundMarks.test.ts` ("a LIVE
+mark made while the covering checkpoint seals is not made durable by the thunk").

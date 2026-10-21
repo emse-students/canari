@@ -572,25 +572,28 @@ export function useConversations() {
       }
 
       // Fetch from network → decrypt → save to DB (no direct UI update).
-      // The replay runs in a bulk-ingest window so an encrypted checkpoint flushes on close;
-      // its progress markers are committed only afterwards (never ahead of persisted state).
+      // The replay runs in a bulk-ingest window; its progress markers are committed by the helper
+      // once a checkpoint that started after the replay LANDED, and never when that checkpoint
+      // fails. The page below is drawn without waiting for the disk.
       try {
-        const commit = await withMlsBulkIngest(ctx.ensureMls(), () =>
-          replayConversationHistory({
-            mlsService: ctx.ensureMls(),
-            id,
-            contactName,
-            userId: ctx.userId,
-            deviceKey: () => ctx.deviceKeyB64,
-            storage: ctx.storage,
-            getConversation: (name) => conversations.get(name),
-            setConversation: (name, next) => conversations.set(name, next),
-            saveConversation: (name) => saveConversation(name, ctx),
-            messageReactions: ctx.messageReactions,
-            log: ctx.log,
-          })
+        await withMlsBulkIngest(
+          ctx.ensureMls(),
+          () =>
+            replayConversationHistory({
+              mlsService: ctx.ensureMls(),
+              id,
+              contactName,
+              userId: ctx.userId,
+              deviceKey: () => ctx.deviceKeyB64,
+              storage: ctx.storage,
+              getConversation: (name) => conversations.get(name),
+              setConversation: (name, next) => conversations.set(name, next),
+              saveConversation: (name) => saveConversation(name, ctx),
+              messageReactions: ctx.messageReactions,
+              log: ctx.log,
+            }),
+          (commit) => commit()
         );
-        commit?.();
         // Reload from DB so display reflects the latest saved state
         await renderStoredPage(contactName, id, ctx, undefined, drawnFirst);
       } catch (e) {
