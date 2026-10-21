@@ -16,7 +16,10 @@
   import type { ReportReason } from '$lib/moderation/reasons';
   import type { LiveChatLine } from '$lib/live/liveChat';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
+
+  const TAG = 'LIVE_CHAT_REPORT';
 
   interface Props {
     liveId: string;
@@ -29,67 +32,46 @@
 
   let submitting = $state(false);
 
+  /**
+   * What each typed refusal does: the sentence, and whether the dialog closes. A refusal the person
+   * can read and act on keeps the dialog open; one that settles the question closes it.
+   */
+  function outcomeOf(err: unknown): { text: string; close: boolean } {
+    if (err instanceof ModerationApiError) {
+      // Uniform on the server (a hidden line, a block, an invisible live, an unknown message).
+      if (err.isAlreadyReported) return { text: m.live_chat_report_already(), close: true };
+      if (err.isLiveNotFound) return { text: m.live_chat_report_gone(), close: true };
+      if (err.isLiveChatReportMismatch)
+        return { text: m.live_chat_report_mismatch(), close: false };
+      // Over the server's 900 UTF-8 bytes. The client sets no bound of its own: a line another
+      // client sent can exceed the composer's 300 characters and is still reportable.
+      if (err.isLiveChatReportInvalid) return { text: m.live_chat_report_too_long(), close: false };
+      // 503: the server cannot sign, so the evidence cannot be kept and nothing is filed.
+      if (err.isLiveReportSigningUnavailable) {
+        return { text: m.live_chat_report_unavailable(), close: false };
+      }
+    }
+    return { text: m.live_chat_report_failed(), close: false };
+  }
+
   async function submit(reason: ReportReason) {
     if (!line || line.id === null) return;
     submitting = true;
-    console.debug(`[LIVE] chat report: filing ${reason} on message ${line.id} of ${liveId}`);
+    Log.i(TAG, `filing ${reason} on message ${line.id} of ${liveId}`);
     try {
-      await createLiveChatReport({
-        liveId,
-        messageId: line.id,
-        reason,
-        message: line.text,
-      });
-      console.debug(`[LIVE] chat report: filed on message ${line.id}`);
+      await createLiveChatReport({ liveId, messageId: line.id, reason, message: line.text });
+      Log.i(TAG, `filed on message ${line.id}`);
       showToast(m.live_chat_report_done(), 'info');
+      onClose();
     } catch (err) {
-      if (err instanceof ModerationApiError && err.isAlreadyReported) {
-        console.debug(`[LIVE] chat report: message ${line.id} was already reported`);
-        showToast(m.live_chat_report_already(), 'info');
-      } else if (err instanceof ModerationApiError && err.isLiveNotFound) {
-        console.warn(`[LIVE] chat report: ${liveId} is gone (404 LIVE_NOT_FOUND)`);
-        showToast(m.live_chat_report_gone(), 'info');
-      } else if (err instanceof ModerationApiError && err.code === 'LIVE_CHAT_REPORT_MISMATCH') {
-        // The server compared the plaintext with the encrypted line it holds and they differ.
-        console.warn(`[LIVE] chat report: message ${line.id} refused (LIVE_CHAT_REPORT_MISMATCH)`);
-        showToast(m.live_chat_report_mismatch(), 'error');
-        // The dialog stays open: the person can read why, and close it or retry.
-        submitting = false;
-        return;
-      } else if (
-        err instanceof ModerationApiError &&
-        err.code === 'LIVE_CHAT_REPORT_MESSAGE_INVALID'
-      ) {
-        // Over the server's 900 UTF-8 bytes. The client sets no bound of its own: a line another client sent can exceed the composer's 300 characters and is still reportable.
-        console.warn(
-          `[LIVE] chat report: message ${line.id} refused (LIVE_CHAT_REPORT_MESSAGE_INVALID)`
-        );
-        showToast(m.live_chat_report_too_long(), 'error');
-        // The dialog stays open: the person can read why, and close it or retry.
-        submitting = false;
-        return;
-      } else if (
-        err instanceof ModerationApiError &&
-        err.code === 'LIVE_REPORT_SIGNING_UNAVAILABLE'
-      ) {
-        // 503: the server cannot sign right now - the evidence cannot be kept, so it is not filed.
-        console.error(
-          `[LIVE] chat report: message ${line.id} refused (LIVE_REPORT_SIGNING_UNAVAILABLE)`
-        );
-        showToast(m.live_chat_report_unavailable(), 'error');
-        // The dialog stays open: the person can read why, and close it or retry.
-        submitting = false;
-        return;
-      } else {
-        console.error(`[LIVE] chat report: message ${line.id} failed`, err);
-        showToast(m.live_chat_report_failed(), 'error');
-        // The dialog stays open: the person can send it again.
-        submitting = false;
-        return;
-      }
+      const { text, close } = outcomeOf(err);
+      const code = err instanceof ModerationApiError ? (err.code ?? err.status) : String(err);
+      Log.i(TAG, `message ${line.id} refused (${code}), dialog ${close ? 'closes' : 'stays open'}`);
+      showToast(text, close ? 'info' : 'error');
+      if (close) onClose();
+    } finally {
+      submitting = false;
     }
-    submitting = false;
-    onClose();
   }
 </script>
 

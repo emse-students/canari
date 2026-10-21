@@ -26,6 +26,21 @@ export class ModerationApiError extends Error {
     return this.code === 'ALREADY_REPORTED';
   }
 
+  /** `400 LIVE_CHAT_REPORT_MISMATCH`: the handed-over text is not the line the server holds. */
+  get isLiveChatReportMismatch(): boolean {
+    return this.code === 'LIVE_CHAT_REPORT_MISMATCH';
+  }
+
+  /** `400 LIVE_CHAT_REPORT_MESSAGE_INVALID`: the handed-over text is over the server's 900 bytes. */
+  get isLiveChatReportInvalid(): boolean {
+    return this.code === 'LIVE_CHAT_REPORT_MESSAGE_INVALID';
+  }
+
+  /** `503 LIVE_REPORT_SIGNING_UNAVAILABLE`: the server cannot sign the evidence right now. */
+  get isLiveReportSigningUnavailable(): boolean {
+    return this.code === 'LIVE_REPORT_SIGNING_UNAVAILABLE';
+  }
+
   /** True when the reported live is gone or was never visible to the reporter (`404 LIVE_NOT_FOUND`). */
   get isLiveNotFound(): boolean {
     return this.code === 'LIVE_NOT_FOUND';

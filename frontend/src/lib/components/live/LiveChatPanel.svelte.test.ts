@@ -201,9 +201,26 @@ describe('LiveChatPanel report flag', () => {
     });
     const flags = target.querySelectorAll<HTMLButtonElement>('[data-live-chat-report]');
     expect(flags).toHaveLength(1);
-    expect(flags[0].getAttribute('aria-label')).toBe(m.live_chat_report());
+    expect(flags[0].getAttribute('aria-label')).toBe(m.live_chat_report({ name: 'Bob' }));
     flags[0].click();
     expect(report).toHaveBeenCalledExactlyOnceWith(theirs);
+  });
+
+  it('draws no flag on a failed line of the reader', () => {
+    const { target } = render({
+      lines: [
+        line({
+          id: null,
+          clientId: 'c-9',
+          mine: true,
+          authorId: ME,
+          status: 'failed',
+          failure: 'network',
+        }),
+      ],
+      report: vi.fn(),
+    });
+    expect(target.querySelector('[data-live-chat-report]')).toBeNull();
   });
 
   it('draws no flag where reporting is not offered', () => {

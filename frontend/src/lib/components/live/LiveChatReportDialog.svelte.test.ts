@@ -133,6 +133,7 @@ describe('LiveChatReportDialog', () => {
       await fileReport();
       expect(h.showToast).toHaveBeenCalledWith(text, 'error');
       expect(onClose).not.toHaveBeenCalled();
+      expect(dialog()).not.toBeNull();
       unmount(mounted.pop()!);
       document.body.innerHTML = '';
     }

@@ -183,8 +183,8 @@
             <button
               type="button"
               class="ui-icon-button shrink-0 rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white"
-              aria-label={m.live_chat_report()}
-              title={m.live_chat_report()}
+              aria-label={m.live_chat_report({ name: nameOf(line) })}
+              title={m.live_chat_report({ name: nameOf(line) })}
               onclick={() => report(line)}
               data-live-chat-report
             >
@@ -196,8 +196,8 @@
             <button
               type="button"
               class="ui-icon-button shrink-0 rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white"
-              aria-label={m.live_chat_hide()}
-              title={m.live_chat_hide()}
+              aria-label={m.live_chat_hide({ name: nameOf(line) })}
+              title={m.live_chat_hide({ name: nameOf(line) })}
               onclick={() => hide(id)}
               data-live-chat-hide
             >
