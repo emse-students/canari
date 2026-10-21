@@ -18,6 +18,9 @@
    * is the ONLY thing read from the URL: every status shown comes from the server, which reads the
    * answer's own request at Lydia. A URL that says "paid" says nothing here. The receipt stays in the
    * address bar on purpose - it is the link the guest comes back to while the payment confirms.
+   * So the page sends NO Referer (`no-referrer` below): its own requests - the confirmation call, an
+   * asset, the retry link - would otherwise carry the whole URL, receipt included, into the access
+   * log's referer field, which the request-line redaction (`Dockerfile.frontend`) does not cover.
    *
    * It shares the member return page's poll (`pollPaymentReturn`) and its verdicts, and words them
    * for a guest: no e-mail is promised, and the organiser is reached with the reference.
@@ -84,6 +87,10 @@
     }
   });
 </script>
+
+<svelte:head>
+  <meta name="referrer" content="no-referrer" />
+</svelte:head>
 
 <PageContainer width="reading">
   <div class="flex min-h-[70vh] items-center justify-center">

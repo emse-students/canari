@@ -31,6 +31,7 @@ const mounted: (() => void)[] = [];
 afterEach(() => {
   mounted.splice(0).forEach((f) => f());
   document.body.innerHTML = '';
+  document.head.innerHTML = '';
   answer.confirm.mockReset();
   vi.restoreAllMocks();
 });
@@ -80,6 +81,21 @@ describe('the guest receipt page', () => {
     expect(text()).toContain(m.form_success_declined_heading());
     expect(text()).not.toContain(m.form_success_confirmed_heading());
     expect(document.querySelector('a')?.getAttribute('href')).toBe('/f/f1');
+  });
+
+  it('sends no Referer, so its own requests never carry the receipt into a log', async () => {
+    answer.confirm.mockResolvedValue({
+      reference: '1A2B-3C4D',
+      formId: 'f1',
+      totalPaid: 1200,
+      currency: 'eur',
+      paymentStatus: 'paid',
+    });
+    await render(`?receipt=${RECEIPT}`);
+    const policies = [...document.head.querySelectorAll('meta[name="referrer"]')].map((meta) =>
+      meta.getAttribute('content')
+    );
+    expect(policies).toEqual(['no-referrer']);
   });
 
   it('asks nothing without a receipt, and says the link is not valid', async () => {

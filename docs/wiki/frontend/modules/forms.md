@@ -502,9 +502,20 @@ sent the answer.
 - **The reference** ("1A2B-3C4D") is the id's first eight hex digits (`guestReference`). It grants
   nothing; the organiser's responses table files a paying guest under it (`toManagerView`'s
   `reference`), so the guest quotes it and the organiser finds the row. No e-mail is sent (PP2).
-- **Known cost**: the receipt sits in the return URL, so it reaches the browser history and the
-  front proxy's access log for the page itself (not for the API call). It proves only "this
-  payment", and every read of it goes to Lydia for the truth.
+- **The receipt stays in the URL, ON PURPOSE**: it is the link the guest reopens while the payment
+  confirms (PP2), so the page does not strip it (`history.replaceState` would leave a guest who
+  closes the tab with nothing). What it would leak is cut where it is cheap (2026-10-22):
+  - the front nginx's access log drops the receipt route's query (`/f/<id>/receipt?query-redacted`,
+    the `$logged_request_uri` map in `Dockerfile.frontend`, asserted by
+    `access-log-redaction.test.mjs` and run against a real nginx);
+  - the page sends no Referer (`<meta name="referrer" content="no-referrer">`), so its own
+    requests - the confirm call, the assets, the retry link - do not carry the URL into that log's
+    referer field.
+- **Residual risk, stated**: the receipt stays in the guest's browser history, in Lydia's copy of
+  the return URL, and in any proxy in front of this container that logs full URLs (outside this
+  repository's control). It does not expire. What bounds it: it only READS one answer's reference,
+  amount and status, and asks Lydia about that answer's own request (throttled per receipt); it
+  cannot pay, cancel, edit or reveal the answers, the payer or the submission id.
 
 Both return pages share one poll (`lib/forms/paymentReturnPoll.ts`). Each attack above is an
 integration test on a real Postgres (`guest-payment.integration.spec.ts`), with its mutation control
