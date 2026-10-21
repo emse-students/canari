@@ -7,6 +7,7 @@ const COMMANDS: &[&str] = &[
     "open_app_settings",
     "share_text",
     "share_staged",
+    "discard_shared_out",
 ];
 
 fn main() {

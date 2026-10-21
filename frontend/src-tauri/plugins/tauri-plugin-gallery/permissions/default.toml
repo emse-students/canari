@@ -7,4 +7,5 @@ permissions = [
   "allow-open-app-settings",
   "allow-share-text",
   "allow-share-staged",
+  "allow-discard-shared-out",
 ]

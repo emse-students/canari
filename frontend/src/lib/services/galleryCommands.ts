@@ -19,6 +19,7 @@ export const GALLERY_COMMAND_NAMES = {
   openAppSettings: 'open_app_settings',
   shareText: 'share_text',
   shareStaged: 'share_staged',
+  discardSharedOut: 'discard_shared_out',
 } as const;
 
 /** Fully-qualified `invoke()` identifier for a gallery command. */

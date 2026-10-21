@@ -11,7 +11,7 @@
 //! The same staging serves the system SHARE sheet: `share_staged` moves a staged file into the
 //! cache's `share_out/` directory and opens the sheet on it (Android `ACTION_SEND` through the app's
 //! FileProvider, iOS `UIActivityViewController`), and `share_text` opens it on a text. See
-//! `docs/wiki/frontend/sharing.md`.
+//! `docs/wiki/frontend/share-out.md`.
 #[cfg(mobile)]
 use tauri::Manager;
 use tauri::{
@@ -53,7 +53,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::discard_video,
             commands::open_app_settings,
             commands::share_text,
-            commands::share_staged
+            commands::share_staged,
+            commands::discard_shared_out
         ])
         .setup(|_app, _api| {
             commands::sweep_staged(_app);

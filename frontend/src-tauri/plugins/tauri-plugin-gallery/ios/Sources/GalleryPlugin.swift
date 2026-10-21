@@ -73,7 +73,14 @@ class GalleryPlugin: Plugin {
     DispatchQueue.main.async {
       guard let presenter = self.manager.viewController else {
         NSLog("[GalleryPlugin] share: no view controller to present from")
-        invoke.reject("share: no view controller")
+        invoke.reject("share: no view controller", code: "noPresenter")
+        return
+      }
+      // UIKit refuses to present over a controller that is already presenting, and then never calls
+      // the completion: the promise would hang. Refused at once instead, with a code saying why.
+      if presenter.presentedViewController != nil {
+        NSLog("[GalleryPlugin] share: another sheet is already presented")
+        invoke.reject("share: another sheet is already presented", code: "busy")
         return
       }
       let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)

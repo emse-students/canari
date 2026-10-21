@@ -166,21 +166,33 @@ fn valid_mime(mime: &str) -> bool {
 
 /// Deletes whatever the last share left in `share_out/`. A file shared out cannot be deleted when
 /// the sheet closes - the receiving app may still be reading it, on its own schedule - so it stays
-/// until the next share or the next launch, and nothing else ever accumulates there.
+/// until the next share, the next sign-out or the next launch, and nothing else ever accumulates
+/// there. The names are NOT logged: they are the member's attachment names.
 fn empty_share_out(dir: &std::path::Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         log::debug!("[gallery] share_out: nothing to empty");
         return;
     };
+    let (mut removed, mut kept) = (0u32, 0u32);
     for entry in entries.flatten() {
         match std::fs::remove_file(entry.path()) {
-            Ok(()) => log::debug!("[gallery] share_out: removed {:?}", entry.file_name()),
-            Err(e) => log::warn!(
-                "[gallery] share_out: {:?} was not removed: {e}",
-                entry.file_name()
-            ),
+            Ok(()) => removed += 1,
+            Err(e) => {
+                kept += 1;
+                log::warn!("[gallery] share_out: a file was not removed: {e}");
+            }
         }
     }
+    log::debug!("[gallery] share_out: {removed} removed, {kept} left");
+}
+
+/// Empties `share_out/` at sign-out: the decrypted file the last share left must not outlive the
+/// session it was decrypted in. The next share and the next launch empty it too.
+#[command]
+pub(crate) async fn discard_shared_out<R: Runtime>(app: AppHandle<R>) -> crate::Result<()> {
+    log::debug!("[gallery] discard_shared_out");
+    empty_share_out(&app.path().app_cache_dir()?.join(SHARE_OUT_DIR));
+    Ok(())
 }
 
 /// Opens the system share sheet on a text (a message, a link).
@@ -230,7 +242,9 @@ pub(crate) async fn share_staged<R: Runtime>(
         remove_staged(&staged);
         return Err(e.into());
     }
-    log::debug!("[gallery] share_staged {session} as {name} ({mime})");
+    // The name is the member's attachment name: the size and the type say enough.
+    let size = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+    log::debug!("[gallery] share_staged {session}: {size} bytes, {mime}");
     #[cfg(mobile)]
     {
         app.gallery()

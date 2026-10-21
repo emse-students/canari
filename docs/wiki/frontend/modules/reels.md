@@ -738,7 +738,7 @@ name a plain file name; anything that looks like a path is a typed refusal (`Bad
 arguments and the capability are pinned on both sides by `services/galleryCommands.test.ts`, which
 reads the Rust sources.
 
-**The same staging serves the system SHARE sheet** (lot S3, `sharing/shareOut.ts`): `share_staged`
+**The same staging serves the system SHARE sheet** (lot S3, [share-out](../share-out.md)): `share_staged`
 moves a staged file into the cache's `share_out/` - emptied first, one file shared out at a time,
 and swept at start-up with the `gallery-*` files - which is the ONE cache directory the app's
 FileProvider exposes (`res/xml/file_paths.xml`), then opens the sheet on it (Android `ACTION_SEND`

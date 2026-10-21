@@ -7,8 +7,9 @@
  * chunks exactly as a reel is for the gallery (`stageBlob`, same reason: Android IPC is JSON), then
  * moved into the cache's `share_out/` - the one directory the app's FileProvider exposes - and the
  * sheet is opened on it. That copy is the only plaintext that leaves the WebView, and it stays until
- * the next share or the next launch, because the receiving app reads it on its own schedule.
- * See `docs/wiki/frontend/sharing.md`.
+ * the next share, the next sign-out or the next launch, because the receiving app reads it on its
+ * own schedule.
+ * See `docs/wiki/frontend/share-out.md`.
  */
 import { invoke } from '@tauri-apps/api/core';
 import type { MediaRef } from '$lib/media';
@@ -66,7 +67,8 @@ function plainMime(mime: string): string {
 export async function shareBlobOut(blob: Blob, name: string, mime: string): Promise<void> {
   if (!canShareOut()) throw new GalleryError('unavailable', 'share: not a phone build');
   const session = crypto.randomUUID();
-  console.debug(`[share-out] ${name}, ${blob.size} bytes, session ${session}`);
+  // Not the name: it is the member's attachment name.
+  console.debug(`[share-out] a file, ${blob.size} bytes, ${mime}, session ${session}`);
   try {
     await stageBlob(session, blob);
     // `share_staged` moves or removes the staged copy on every path it reaches.

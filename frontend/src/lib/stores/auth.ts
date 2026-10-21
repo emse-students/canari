@@ -31,6 +31,7 @@ import {
   OIDC_MOBILE_REDIRECT_URI,
 } from '$lib/mobile/appSiteAssociation';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { discardSharedOut } from '$lib/sharing/shareOutCleanup';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
@@ -1150,6 +1151,8 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   clearPersistedPendingAcks();
   // And a PIN salt asked for a keypad this session will never submit.
   forgetPinSaltAhead('signed out', alog);
+  // And the decrypted file the last share out of Canari left in the cache (phone apps).
+  void discardSharedOut('signed out');
   if (!options.revokeServerSession) {
     alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
     return;

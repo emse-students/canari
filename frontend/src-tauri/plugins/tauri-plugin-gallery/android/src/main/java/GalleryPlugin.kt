@@ -173,7 +173,8 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.reject("shareFile: the file is not shareable")
             return
         }
-        Log.d(TAG, "shareFile: ${args.mime} as $uri")
+        // Not the URI: it ends with the member's attachment name.
+        Log.d(TAG, "shareFile: ${args.mime}")
         val send = Intent(Intent.ACTION_SEND)
             .setType(args.mime)
             .putExtra(Intent.EXTRA_STREAM, uri)
