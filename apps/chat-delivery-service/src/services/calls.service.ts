@@ -6,6 +6,8 @@ import {
   Inject,
   BadRequestException,
   GoneException,
+  type OnModuleDestroy,
+  type OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -22,7 +24,17 @@ import { resolveUserDisplayName } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
-import { TurnMeterUnavailableError, TurnUsageMeter } from './turn-usage-meter.service';
+import {
+  METER_TIMEOUT_MS,
+  TurnMeterUnavailableError,
+  TurnUsageMeter,
+} from './turn-usage-meter.service';
+
+/** How often the TURN meter report runs while calls are open: hourly, like the service's others. */
+const TURN_METER_REPORT_MS = 60 * 60 * 1000;
+
+/** Delay of the first report after boot, so a redeploy (more often than hourly) still reports. */
+const TURN_METER_FIRST_REPORT_MS = 60_000;
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -139,8 +151,16 @@ interface RingPlan {
 }
 
 @Injectable()
-export class CallsService {
+export class CallsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CallsService.name);
+  private turnMeterReportInterval: ReturnType<typeof setInterval> | null = null;
+  private turnMeterFirstReport: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The Cloudflare credentials request in progress. ONE request however many call setups arrive
+   * while it runs: the credentials are the account's, not a member's, and a burst of `ice-servers`
+   * must not be a burst of requests to Cloudflare's API.
+   */
+  private credentialsInflight: Promise<{ iceServers: IceServerConfig[] }> | null = null;
 
   constructor(
     @InjectRepository(GroupMember)
@@ -151,6 +171,62 @@ export class CallsService {
     private readonly apnsVoip: ApnsVoipService,
     private readonly turnMeter: TurnUsageMeter
   ) {}
+
+  /**
+   * THE TURN METER HAS A REPORT, not only per-call error lines. A missing, revoked or mis-scoped
+   * analytics token withholds TURN from EVERY call, indefinitely, and the per-call lines appear
+   * only when someone calls - so the state is said once an hour, by the same family of hourly
+   * reports as the rest of this service (see AppController), and at ERROR when calls are open and
+   * the relay is withheld. While calls are `off` it asks nothing and says nothing: the meter is
+   * then nobody's concern, and an hourly error about it would be noise.
+   *
+   * The reading is also what STORES each closed day's total (`TurnUsageMeter`), so a day is kept
+   * even when nobody needed a relay that day.
+   */
+  onModuleInit(): void {
+    this.turnMeterFirstReport = setTimeout(() => {
+      void this.reportTurnMeter().catch((e) =>
+        this.logger.error('[CRON] reportTurnMeter failed', e)
+      );
+    }, TURN_METER_FIRST_REPORT_MS);
+    this.turnMeterReportInterval = setInterval(() => {
+      void this.reportTurnMeter().catch((e) =>
+        this.logger.error('[CRON] reportTurnMeter failed', e)
+      );
+    }, TURN_METER_REPORT_MS);
+  }
+
+  onModuleDestroy(): void {
+    if (this.turnMeterFirstReport) clearTimeout(this.turnMeterFirstReport);
+    if (this.turnMeterReportInterval) clearInterval(this.turnMeterReportInterval);
+  }
+
+  /** One line on the TURN meter's state. Public so the spec can run one report. */
+  async reportTurnMeter(now: Date = new Date()): Promise<void> {
+    const mode = await readCallsMode(this.groupMemberRepo.manager, this.logger);
+    if (mode === 'off') {
+      this.logger.debug('[TURN-METER] calls are off - the meter is not read');
+      return;
+    }
+    const budgetGb = this.turnBudgetGb();
+    let usedBytes: number;
+    try {
+      usedBytes = await this.turnMeter.monthEgressBytes(now);
+    } catch (e) {
+      if (!(e instanceof TurnMeterUnavailableError)) throw e;
+      this.logger.error(
+        `[TURN-METER] calls are open (calls_mode=${mode}) and the meter is UNAVAILABLE: ${e.reason} - TURN is withheld from every call until it reads`
+      );
+      return;
+    }
+    const usedGb = usedBytes / 1e9;
+    const line = `[TURN-METER] ${now.toISOString().slice(0, 7)} (UTC calendar month): ${usedGb.toFixed(2)}/${budgetGb} GB metered egress (${((usedGb / budgetGb) * 100).toFixed(1)}%)`;
+    if (usedBytes >= budgetGb * 1e9) {
+      this.logger.error(`${line} - BUDGET REACHED, TURN is withheld from every call`);
+    } else {
+      this.logger.log(`${line} - TURN available`);
+    }
+  }
 
   /**
    * THE SERVER'S KILL SWITCH, asked on every request that STARTS or JOINS a call (B12): `initiate`,
@@ -427,7 +503,10 @@ export class CallsService {
       return { iceServers: STUN_ONLY, turn: { status: 'unavailable', code: withheld } };
     }
 
-    const { iceServers } = await this.fetchCloudflareIceServers(turnKeyId, cloudflareToken);
+    this.credentialsInflight ??= this.fetchCloudflareIceServers(turnKeyId, cloudflareToken).finally(
+      () => (this.credentialsInflight = null)
+    );
+    const { iceServers } = await this.credentialsInflight;
     return { iceServers, turn: { status: 'available' } };
   }
 
@@ -541,24 +620,35 @@ export class CallsService {
 
     this.logger.debug(`[ICE] Requesting Cloudflare TURN credentials (ttl=${ttl})`);
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ ttl }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
+    let data: { iceServers?: IceServerConfig[] };
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ttl }),
+        // Bounded like the meter's: a Cloudflare that never answers must not hold every call
+        // setup open. The signal covers the body read as well.
+        signal: AbortSignal.timeout(METER_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        this.logger.error(
+          `[ICE] Cloudflare TURN API error status=${response.status} body=${body.slice(0, 200)}`
+        );
+        throw new ServiceUnavailableException('Failed to generate TURN credentials');
+      }
+      data = (await response.json()) as { iceServers?: IceServerConfig[] };
+    } catch (e) {
+      if (e instanceof ServiceUnavailableException) throw e;
+      const timedOut = e instanceof Error && e.name === 'TimeoutError';
       this.logger.error(
-        `[ICE] Cloudflare TURN API error status=${response.status} body=${body.slice(0, 200)}`
+        `[ICE] Cloudflare TURN API ${timedOut ? `gave no answer within ${METER_TIMEOUT_MS} ms` : `unreachable: ${String(e)}`}`
       );
       throw new ServiceUnavailableException('Failed to generate TURN credentials');
     }
-
-    const data = (await response.json()) as { iceServers?: IceServerConfig[] };
     const iceServers = this.filterIceServers(data.iceServers ?? []);
 
     if (iceServers.length === 0) {

@@ -218,6 +218,41 @@ describe('CallsService', () => {
       );
     });
 
+    it('asks Cloudflare for credentials once for concurrent setups, bounded by a timeout', async () => {
+      let answer: (r: Response) => void = () => {};
+      const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation((_u, init) => {
+        expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+        return new Promise<Response>((resolve) => (answer = resolve));
+      });
+
+      const both = Promise.all([
+        service.getIceServers('user-1', 'group-1', 'call-1'),
+        service.getIceServers('user-1', 'group-1', 'call-1'),
+      ]);
+      await new Promise((r) => setImmediate(r));
+      answer(
+        new Response(JSON.stringify({ iceServers: [{ urls: ['turn:turn.example:3478'] }] }), {
+          status: 200,
+        })
+      );
+
+      const [a, b] = await both;
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(a).toEqual(b);
+    });
+
+    it('answers 503, logged, when Cloudflare gives no credentials in time', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      const timeout = new Error('The operation was aborted due to timeout');
+      timeout.name = 'TimeoutError';
+      jest.spyOn(global, 'fetch').mockRejectedValue(timeout);
+
+      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
+        ServiceUnavailableException
+      );
+      expect(captured(error)).toContain('gave no answer within 5000 ms');
+    });
+
     it('no longer estimates usage when a call ends - a presence clear writes no counter', async () => {
       redisStore.set(
         'call:user_active:user-1',
@@ -227,6 +262,63 @@ describe('CallsService', () => {
       await service.reportCallPresence('user-1', 'device-a', { active: false });
 
       expect([...redisStore.keys()].filter((k) => k.startsWith('turn:'))).toEqual([]);
+    });
+  });
+
+  /**
+   * B7's report: a token that is missing or refused withholds TURN from every call, so the meter's
+   * state is said hourly - at ERROR when calls are open and TURN is withheld, and not at all while
+   * calls are off.
+   */
+  describe('the hourly TURN meter report', () => {
+    let error: jest.SpyInstance;
+    let log: jest.SpyInstance;
+    const now = new Date('2026-10-21T12:00:00Z');
+    beforeEach(() => {
+      process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB = '10';
+      error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+    });
+    afterEach(() => jest.restoreAllMocks());
+
+    it('reads nothing and says nothing while calls are off', async () => {
+      callsMode = 'off';
+
+      await service.reportTurnMeter(now);
+
+      expect(turnMeter.monthEgressBytes).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+    });
+
+    it('says the month s reading against the budget when TURN is available', async () => {
+      turnMeter.monthEgressBytes.mockResolvedValue(2.5e9);
+
+      await service.reportTurnMeter(now);
+
+      expect(captured(log)).toContain(
+        '[TURN-METER] 2026-10 (UTC calendar month): 2.50/10 GB metered egress (25.0%) - TURN available'
+      );
+      expect(error).not.toHaveBeenCalled();
+    });
+
+    it('accuses a meter that cannot be read while calls are open', async () => {
+      turnMeter.monthEgressBytes.mockRejectedValue(new TurnMeterUnavailableError('HTTP 403'));
+
+      await service.reportTurnMeter(now);
+
+      expect(captured(error)).toContain(
+        '[TURN-METER] calls are open (calls_mode=audio_video) and the meter is UNAVAILABLE: HTTP 403'
+      );
+    });
+
+    it('accuses a spent budget', async () => {
+      turnMeter.monthEgressBytes.mockResolvedValue(10e9);
+
+      await service.reportTurnMeter(now);
+
+      expect(captured(error)).toContain('BUDGET REACHED, TURN is withheld from every call');
     });
   });
 

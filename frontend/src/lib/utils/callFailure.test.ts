@@ -5,6 +5,7 @@ import {
   CallE2eSetupError,
   CallE2eUnsupportedError,
   CallInitiateError,
+  CallRelayWithheldError,
   describeCallFailure,
 } from './callFailure';
 
@@ -153,4 +154,11 @@ describe('describeCallFailure', () => {
     expect(describeCallFailure(error)).toBe(m.call_e2e_setup_failed());
     expect(describeCallFailure(error)).not.toBe(m.call_connection_lost());
   });
+
+  it.each(['TURN_BUDGET_REACHED', 'TURN_METER_UNAVAILABLE'])(
+    'reads a never-connected call whose relay was withheld (%s) as its own sentence',
+    (code) => {
+      expect(describeCallFailure(new CallRelayWithheldError(code))).toBe(m.call_relay_withheld());
+    }
+  );
 });

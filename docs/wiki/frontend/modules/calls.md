@@ -356,7 +356,9 @@ anything: production's switch defaults to `off`, and `CALLS_COMPILED` is untouch
   actor (`callsMode off -> audio by=<first 8 of the admin's id>`, from `x-user-id` like the
   announcement routes). The page sends ONLY the fields changed since it loaded (or since its last
   save's answer): a form left open while another admin closed calls used to PATCH every field back
-  as loaded and silently re-open them. The three values are spelled in five places (the CHECK,
+  as loaded and silently re-open them. With no snapshot (the load failed) the save is REFUSED
+  (`admin_platform_save_needs_load`): sent whole, it would write the form's placeholders, calls
+  `off` and a floor of `0.0.0`, over the server. The three values are spelled in five places (the CHECK,
   core's entity, chat-delivery's reader, `utils/appVersion.ts` `CALLS_MODES`, the admin page through
   it), and `utils/callsModesAgree.test.ts` fails the day one drifts. The plan's `testers` value was not built: pre-release builds talk to
   the dev estate, whose OWN row is its own switch.
@@ -402,12 +404,17 @@ any malice; a client that lies under-counts with no bound.
 
 **What it reads instead** (`services/turn-usage-meter.service.ts`): Cloudflare's GraphQL analytics,
 dataset `callsTurnUsageAdaptiveGroups`, `sum { egressBytes }` for the WHOLE ACCOUNT from the first of
-the UTC month to today. Egress is what Cloudflare bills and its free allowance is per account, so
+the UTC month to today. **The budget's period is the UTC CALENDAR month**, which is not guaranteed
+to be Cloudflare's billing cycle: the cap is ours, and a cycle that straddles two calendar months
+can see up to two budgets' worth. Egress is what Cloudflare bills and its free allowance is per account, so
 another key on the account spends the same allowance. Direct calls put nothing on the meter by
 construction; no client says anything. Configuration: `CLOUDFLARE_ACCOUNT_ID` (32 hex) and
 `CLOUDFLARE_TURN_ANALYTICS_TOKEN` (a token with Account Analytics read), `env-manifest.tsv` `warn`
 on both estates. One reading is reused for 60 s (`turn:metered:<YYYY-MM>`): a member hammering
-`ice-servers` must not spend the GraphQL quota.
+`ice-servers` must not spend the GraphQL quota, and concurrent setups share ONE reading in flight
+(single flight). Every request to Cloudflare - the meter's and the credentials' - carries
+`AbortSignal.timeout(5000)`: past it the meter is unavailable (typed) and the credentials call a
+logged 503, so a Cloudflare that never answers cannot hold call setups open.
 
 **The query, and the documents it is read from.** The filter is `date_geq` / `date_leq` (whole UTC
 days, `YYYY-MM-DD`), not `datetimeMinute`: the month is whole days and the dataset's own example
@@ -415,10 +422,20 @@ filters on `date` ([TURN analytics](https://developers.cloudflare.com/realtime/t
 The window a query may span is NOT assumed: the meter first asks
 `settings { callsTurnUsageAdaptiveGroups { enabled maxDuration notOlderThan } }`
 ([settings node](https://developers.cloudflare.com/analytics/graphql-api/features/discovery/settings/)),
-cached an hour (`turn:metered:settings`), and `monthDateChunks` splits the month into whole-day
-ranges no wider than `maxDuration`, asked as aliased sub-queries (`c0`, `c1`, ...) in ONE request and
-summed. A `maxDuration` under a day, or a `notOlderThan` that does not reach the first of the month,
-is refused as unreadable rather than summed short - an under-count is a budget that never trips.
+cached an hour (`turn:metered:settings`, logged when read), and `dateChunks` splits the days it
+must ask into whole-day ranges no wider than `maxDuration`, asked as aliased sub-queries (`c0`,
+`c1`, ...) in ONE request, each grouped by `dimensions { date }`.
+
+**Closed days are DURABLE, so retention does not bound the month.** A day's total is written to the
+Redis hash `turn:metered:days:<YYYY-MM>` once it has settled (its day ended at least an hour ago,
+the analytics lag's margin), and never asked again; a reading asks only for the days not stored yet
+plus the open ones (yesterday until it settles, and today). The hourly report below reads the meter
+while calls are open, so every day is stored within ~an hour of settling even when nobody needed a
+relay. A `maxDuration` under a day, or a day NEVER stored that is older than `notOlderThan`, is
+refused as unreadable rather than summed short - an under-count is a budget that never trips. That
+second case is only reachable on the first deployment mid-month or after a lost Redis, and only if
+the dataset keeps less than the days already gone; the dataset's limits are logged on each read, so
+the first dev deploy shows whether it can happen at all.
 
 **A meter that cannot be read withholds TURN, never the call** - a typed degradation, not a
 fallback. Unconfigured, unreachable, an HTTP or GraphQL error, no visible account, a dataset not
@@ -429,16 +446,32 @@ client logs `[Call] ERROR: TURN relay withheld by the server (<CODE>) - direct p
 SHAPE: a 503 failed EVERY call, including the ones between two reachable peers that cost nothing,
 because a third-party analytics API had a bad minute; minting credentials without a reading would
 spend the money the budget exists to cap. STUN only does neither, and a call it cannot connect (both
-peers behind NAT) fails at ICE with the error line above explaining it. A failure is remembered 30 s
+peers behind NAT) fails at ICE with the error line above explaining it, and the toast says it in
+its own sentence (`CallRelayWithheldError` -> `call_relay_withheld`), not "connection lost". A failure is remembered 30 s
 (`turn:metered:unavailable`): an outage costs one API call and one error line per 30 s, not one per
 call setup. TURN NOT CONFIGURED AT ALL (`CLOUDFLARE_CALLS_API_TOKEN` / key id unset) is still a 503:
 that is a deployment defect, not a transient reading.
 
+**The meter has a report** (`CallsService.reportTurnMeter`, hourly and once a minute after boot, in
+the service's family of hourly reports): `[TURN-METER] <YYYY-MM> (UTC calendar month): x/y GB
+metered egress (z%)` at `log`, at ERROR when the budget is reached or the meter is unavailable while
+calls are open, and NOTHING while `calls_mode` is `off` (nobody's concern then, so an hourly error
+would be noise). WHY A REPORT AND NOT A FAILED DEPLOY: a missing token is one case of three - a
+revoked or mis-scoped token is invisible to a deploy, and a `required` key would block every
+production deploy while calls are off there. The report sees all three, once an hour, while it
+matters.
+
 The limits, named: credentials already issued stay valid for `CLOUDFLARE_TURN_TTL_SECONDS` (2 h), so
 the overshoot past the budget is what the credentials outstanding at that moment relay, plus the
-meter's lag (minutes). **Unverified until the analytics token exists:** the query against the live
-API (read from the two documents above, 2026-10-21) - the first dev deploy with the two secrets
-answers it, and a refusal names itself in the `[ICE]` error line.
+meter's lag (minutes).
+
+**Measured against the live API (2026-10-21, the production token):** the endpoint is
+`https://api.cloudflare.com/client/v4/graphql` (the bare `/graphql` answers 10404 "No route"), and
+the `settings` query answers `enabled=true`, `maxDuration=2764800`, `notOlderThan=2764800` (32 days).
+So a whole calendar month (31 days at most) is one chunk, and a day never stored is always still
+within retention - the refusal above cannot trip on this account today. **Still unexercised:** the
+per-date usage query itself (`dimensions { date }`, `orderBy: [date_ASC]`); the first dev deploy
+carrying this answers it, and a refusal names itself in the `[ICE]` error line.
 
 ## A network blip does not end the call (CALL-WIFI, 2026-10-19)
 

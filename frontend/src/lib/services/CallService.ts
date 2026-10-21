@@ -24,6 +24,7 @@ import {
   CallSetupAbandonedError,
   CallE2eUnsupportedError,
   CallInitiateError,
+  CallRelayWithheldError,
   CallSignallingRefusedError,
   describeCallFailure,
 } from '$lib/utils/callFailure';
@@ -251,6 +252,12 @@ export class CallService {
   private signaledWs: WebSocket | null = null;
   /** ICE servers fetched for this call before ringing, so a missing TURN key fails the call early. */
   private iceServers: RTCIceServer[] | null = null;
+  /**
+   * The server's code when it withheld the TURN relay for this call (`ice-servers` answered STUN
+   * only, B7), else null. Kept so a call that then NEVER connects says why - see
+   * {@link neverConnectedCause}.
+   */
+  private turnWithheldCode: string | null = null;
   /**
    * Perfect negotiation (W3C WebRTC section 10.5). `polite` is the side that yields on an offer
    * collision - the callee, as the server's `PeerReady { initiator: false }` says.
@@ -927,6 +934,15 @@ export class CallService {
     this.endCall(false);
   }
 
+  /**
+   * Why a call that NEVER connected failed, when this side knows more than "connection lost": the
+   * server withheld the relay, so only a direct path could have worked. Undefined otherwise - the
+   * generic sentence then stands, which is the truth for a call whose relay was offered.
+   */
+  private neverConnectedCause(): CallRelayWithheldError | undefined {
+    return this.turnWithheldCode ? new CallRelayWithheldError(this.turnWithheldCode) : undefined;
+  }
+
   /** Publishes Redis-backed call presence so sibling devices can detect an active call. */
   private syncCallPresence(active: boolean): void {
     const deviceId = this.mlsService.getDeviceId();
@@ -986,6 +1002,7 @@ export class CallService {
     this.mergedRemoteStream = null;
     this.pendingRemoteIceCandidates = [];
     this.iceServers = null;
+    this.turnWithheldCode = null;
     this.polite = false;
     this.makingOffer = false;
     this.ignoreOffer = false;
@@ -1206,7 +1223,9 @@ export class CallService {
     // is spent or its meter cannot be read: a call between two reachable peers needs no relay, so
     // refusing it would fail calls that cost nothing. Said loudly - a call that then cannot connect
     // will be the one behind a NAT, and this line is what explains it.
+    this.turnWithheldCode = null;
     if (data.turn?.status === 'unavailable') {
+      this.turnWithheldCode = data.turn.code ?? 'no code';
       appendLog(
         `[Call] ERROR: TURN relay withheld by the server (${data.turn.code ?? 'no code'}) - direct path only`
       );
@@ -2214,7 +2233,7 @@ export class CallService {
           this.maybeRestartIce('connectionState=failed');
           this.updateReconnecting();
         } else {
-          this.failCall('connectionState=failed');
+          this.failCall('connectionState=failed', this.neverConnectedCause());
         }
       }
     };
@@ -2243,7 +2262,7 @@ export class CallService {
             '[Call] WARN no TURN relay candidate was gathered and no direct pair worked (Cloudflare TURN unreachable or misconfigured)'
           );
         }
-        this.failCall('iceConnectionState=failed');
+        this.failCall('iceConnectionState=failed', this.neverConnectedCause());
         return;
       } else if (iceState === 'disconnected' || iceState === 'failed') {
         // A path that had connected and was lost - a network change, a blip. Restart, not end.

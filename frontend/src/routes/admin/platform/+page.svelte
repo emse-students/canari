@@ -183,8 +183,12 @@
     callsMode = data.callsMode;
   }
 
-  /** The fields this admin changed since the snapshot - and nothing they merely left as loaded. */
-  function changedFields(): Partial<PlatformConfig> {
+  /**
+   * The fields this admin changed since the snapshot - and nothing they merely left as loaded.
+   * Only called with a snapshot: without one, every field would count as changed and a save after
+   * a failed load would write the form's placeholders (calls `off`, floor `0.0.0`) over the server.
+   */
+  function changedFields(snapshot: PlatformConfig): Partial<PlatformConfig> {
     const form: PlatformConfig = {
       maintenanceEnabled,
       maintenanceMessage: maintenanceMessage.trim() || null,
@@ -192,8 +196,6 @@
       paymentProvider,
       callsMode,
     };
-    if (!loaded) return form;
-    const snapshot = loaded;
     return Object.fromEntries(
       (Object.keys(form) as (keyof PlatformConfig)[])
         .filter((key) => form[key] !== snapshot[key])
@@ -218,6 +220,13 @@
   }
 
   async function saveConfig() {
+    const snapshot = loaded;
+    if (!snapshot) {
+      // NOTHING WAS LOADED, SO NOTHING CAN BE DIFFED: refused rather than sent whole.
+      Log.d('admin.platform.saveConfig refused: no config was loaded to compare against');
+      error = m.admin_platform_save_needs_load();
+      return;
+    }
     saving = true;
     error = null;
     savedMessage = '';
@@ -225,7 +234,7 @@
       const res = await apiFetch(`${coreUrl()}/api/users/admin/platform`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(changedFields()),
+        body: JSON.stringify(changedFields(snapshot)),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');

@@ -1924,6 +1924,29 @@ describe('a call whose TURN relay the server withheld', () => {
     }
   );
 
+  it.each([
+    [
+      'withheld',
+      { status: 'unavailable', code: 'TURN_BUDGET_REACHED' },
+      () => m.call_relay_withheld(),
+    ],
+    ['available', { status: 'available' }, () => m.call_connection_lost()],
+  ])('a call that never connects with the relay %s says so', async (_n, turn, sentence) => {
+    server.iceTurn = turn;
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+
+    FakePeerConnection.instances[0].setIce('failed');
+    await settle();
+
+    expect(showToast).toHaveBeenCalledWith(sentence(), 'error');
+    expect(get(service.callState)).not.toBe('incall');
+  });
+
   it('logs nothing of the kind when the relay is available', async () => {
     const { appendLog } = await import('$lib/utils/sessionLog');
     vi.mocked(appendLog).mockClear();

@@ -133,6 +133,20 @@ export class CallE2eSetupError extends Error {
 }
 
 /**
+ * The call never connected AND the server had withheld its TURN relay (`ice-servers` answered
+ * `turn: { status: 'unavailable', code }`: the month's relay budget is spent, or its meter cannot
+ * be read). The two facts together are the explanation: a direct path was the only one left, and
+ * there was none. `code` is the server's (`TURN_BUDGET_REACHED`, `TURN_METER_UNAVAILABLE`), kept
+ * for the log; the reader gets one sentence for both, since neither is theirs to fix.
+ */
+export class CallRelayWithheldError extends Error {
+  constructor(public readonly code: string) {
+    super(`no direct path, and the server withheld the TURN relay (${code})`);
+    this.name = 'CallRelayWithheldError';
+  }
+}
+
+/**
  * THE SENTENCE A FAILED CALL SETUP READS AS, chosen from the status and nothing else.
  *
  * 404 is answered BEFORE `describeApiRefusal`, and that is the one deliberate departure: the
@@ -152,6 +166,7 @@ export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
   if (error instanceof CallE2eBypassedError) return m.call_e2e_bypassed();
   if (error instanceof CallE2eSetupError) return m.call_e2e_setup_failed();
+  if (error instanceof CallRelayWithheldError) return m.call_relay_withheld();
   // A block, on either side: neutral, as every block refusal is - never who blocked whom.
   if (refusalCode(error) === USER_BLOCKED_CODE) return m.call_unavailable();
   // The kill switch, at whichever step it answered: said as such, never as a failure to retry.
