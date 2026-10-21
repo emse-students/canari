@@ -38,6 +38,15 @@ const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 export const LYDIA_CALL_TIMEOUT_MS = 60_000;
 
 /**
+ * The HTTP 4xx a call to Lydia may answer WITHOUT having refused it: 408 (request timeout), 409
+ * (conflict), 425 (too early), 429 (too many requests). After any of them a request/do may still
+ * have created a request, so they are a LOST call (the attempt stays open and is read by its
+ * order_ref), never the refusal that releases it - releasing one that was then paid would be a
+ * second charge refunded by hand.
+ */
+export const LYDIA_HTTP_NOT_A_REFUSAL: ReadonlySet<number> = new Set([408, 409, 425, 429]);
+
+/**
  * Lydia's payable range per request, confirmed by Lydia 2026-10-04: 0,50 EUR to 1000 EUR. Shared
  * with social-service's mirror through `libs/contracts/payment-amount-range.json`, whose specs on
  * both sides fail the day the two disagree.
@@ -151,9 +160,16 @@ export class LydiaPaymentProvider implements PaymentProvider {
       });
     } catch (err: unknown) {
       // An HTTP 4xx IS an answer: Lydia read the call and refused it, so nothing was created and
-      // the caller may release what it holds - the same typed refusal as an `error` code.
+      // the caller may release what it holds - the same typed refusal as an `error` code. Except
+      // the 4xx that do NOT say "refused" (`LYDIA_HTTP_NOT_A_REFUSAL`): a timeout, a rate limit, a
+      // conflict or "too early" may come back after the request was created, so they stay LOST.
       const httpStatus = (err as { response?: { status?: unknown } } | null)?.response?.status;
-      if (typeof httpStatus === 'number' && httpStatus >= 400 && httpStatus < 500) {
+      if (
+        typeof httpStatus === 'number' &&
+        httpStatus >= 400 &&
+        httpStatus < 500 &&
+        !LYDIA_HTTP_NOT_A_REFUSAL.has(httpStatus)
+      ) {
         this.logger.warn(`${path} refused by Lydia: HTTP ${httpStatus}`);
         throw new BadRequestException({
           code: PAYMENT_PROVIDER_REFUSED,
@@ -162,13 +178,17 @@ export class LydiaPaymentProvider implements PaymentProvider {
           message: `Lydia refused the call (HTTP ${httpStatus})`,
         });
       }
-      // Not an answer (a timeout, a reset, a 5xx): rethrown, so the caller sees a 5xx and treats
-      // the call as LOST (a request/do may still have created a request at Lydia), never as a
-      // refusal.
+      // Not an answer (a timeout, a reset, a 5xx, a 4xx that does not say refused): rethrown, so
+      // the caller sees a 5xx and treats the call as LOST (a request/do may still have created a
+      // request at Lydia), never as a refusal.
       const timedOut = (err as { code?: unknown } | null)?.code === 'ECONNABORTED';
       this.logger.error(
-        `${path} got no answer from Lydia: ${
-          timedOut ? `no response within ${LYDIA_CALL_TIMEOUT_MS / 1000} s` : String(err)
+        `${path} got no usable answer from Lydia: ${
+          timedOut
+            ? `no response within ${LYDIA_CALL_TIMEOUT_MS / 1000} s`
+            : typeof httpStatus === 'number'
+              ? `HTTP ${httpStatus}, which does not say the call was refused - treated as lost`
+              : String(err)
         }`
       );
       throw err;

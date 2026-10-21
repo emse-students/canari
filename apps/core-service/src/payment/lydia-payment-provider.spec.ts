@@ -60,35 +60,43 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
       idempotencyKey: 'product:a:b',
     });
 
-  it('answers an HTTP 4xx from Lydia as a typed REFUSAL, which releases the attempt', async () => {
-    mockedAxios.post.mockRejectedValue(
-      Object.assign(new Error('Request failed with status code 422'), {
-        response: { status: 422, data: {} },
-      })
-    );
-    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    // The control: before, this came back as the raw axios error - a 5xx that left the attempt
-    // open until its expiry although Lydia had answered that nothing was created.
-    const refusal = await anAttempt().catch((e: unknown) => e);
-    expect(refusal).toBeInstanceOf(BadRequestException);
-    expect((refusal as BadRequestException).getResponse()).toMatchObject({
-      code: PAYMENT_PROVIDER_REFUSED,
-      providerCode: 'http-422',
+  const httpFailure = (status: number) =>
+    Object.assign(new Error(`Request failed with status code ${status}`), {
+      response: { status, data: {} },
     });
-    warn.mockRestore();
-  });
 
-  it('CONTROL: an HTTP 5xx from Lydia stays a lost call, never a refusal', async () => {
-    mockedAxios.post.mockRejectedValue(
-      Object.assign(new Error('Request failed with status code 502'), {
-        response: { status: 502, data: {} },
-      })
-    );
-    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const lost = await anAttempt().catch((e: unknown) => e);
-    expect(lost).not.toBeInstanceOf(BadRequestException);
-    error.mockRestore();
-  });
+  it.each([400, 403, 404, 422])(
+    'answers an HTTP %i from Lydia as a typed REFUSAL, which releases the attempt',
+    async (status) => {
+      mockedAxios.post.mockRejectedValue(httpFailure(status));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      // The control: before, this came back as the raw axios error - a 5xx that left the attempt
+      // open until its expiry although Lydia had answered that nothing was created.
+      const refusal = await anAttempt().catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(BadRequestException);
+      expect((refusal as BadRequestException).getResponse()).toMatchObject({
+        code: PAYMENT_PROVIDER_REFUSED,
+        providerCode: `http-${status}`,
+      });
+      warn.mockRestore();
+    }
+  );
+
+  /**
+   * A 4xx that does not say "refused": Lydia may have created the request all the same, and an
+   * attempt released on it and then paid is recorded "closed but PAID" - a charge refunded by hand.
+   */
+  it.each([408, 409, 425, 429, 502])(
+    'keeps an HTTP %i from Lydia a LOST call, never the refusal that releases the attempt',
+    async (status) => {
+      mockedAxios.post.mockRejectedValue(httpFailure(status));
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const lost = await anAttempt().catch((e: unknown) => e);
+      expect(lost).not.toBeInstanceOf(BadRequestException);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(`HTTP ${status}`));
+      error.mockRestore();
+    }
+  );
 
   it('posts request/do as form-urlencoded with the summed amount and target vendor_token', async () => {
     mockedAxios.post.mockResolvedValue({

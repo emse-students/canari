@@ -590,7 +590,9 @@ order_ref.
    unique index `product_checkouts_one_open` (a double click) and is answered `CHECKOUT_IN_PROGRESS`.
 4. **The request is issued.** A 4xx from core is an ANSWER (nothing was issued) and releases the row
    `cancelled` - an HTTP 4xx from Lydia itself included, which core answers as the same typed
-   `PAYMENT_PROVIDER_REFUSED` 400 as an `error` code. A LOST call - a timeout, a 5xx, a 2xx without the ids - leaves it `open` with no ids,
+   `PAYMENT_PROVIDER_REFUSED` 400 as an `error` code. Except 408, 409, 425 and 429
+   (`LYDIA_HTTP_NOT_A_REFUSAL`): after those Lydia may have created the request, so they stay a LOST
+   call - releasing an attempt that is then paid would be a second charge. A LOST call - a timeout, a 5xx, a 2xx without the ids - leaves it `open` with no ids,
    logged at ERROR. Core bounds its own call to Lydia at 60 s (`LYDIA_CALL_TIMEOUT_MS`, under the
    120 s social waits), so core always answers - a 5xx - before social gives up on it;
    Lydia may hold the request all the same, so it is read by its order_ref at the
