@@ -187,8 +187,15 @@ link. `layerLadder.test.ts` now treats `data-keyboard-aware-overlay` as what it 
 layer - and fails one that is not portalled or carries no named rung.
 
 Lydia confirmed on 2026-10-04 that a request must be between **0,50 EUR and 1000 EUR**;
-`LydiaPaymentProvider.createCheckoutSession` refuses anything outside it with a message instead of
-letting Lydia answer. In homologation the payer page offers a card form and, at its end, buttons to
+`LydiaPaymentProvider.createCheckoutSession` refuses anything outside it instead of letting Lydia
+answer. The refusal is TYPED: `code: AMOUNT_OUT_OF_RANGE` with `minCents` / `maxCents`, the same
+shape a shop product's own free-amount bounds answer, and social-service refuses a form total outside
+the range before calling core, with the same answer. The range lives in two constants that share no
+package - `LYDIA_MIN/MAX_AMOUNT_CENTS` (core) and `PROVIDER_MIN/MAX_AMOUNT_CENTS` (social,
+`core-payment-error.ts`) - and both apps' specs assert them against
+`libs/contracts/payment-amount-range.json`, so they cannot drift. Every frontend refusal builder
+reads the bounds through `amountBoundsOf` (`associations/api.ts`), and `providerRefusalMessage`
+words them in the reader's locale (`formatAmount`), never echoing the server's English. In homologation the payer page offers a card form and, at its end, buttons to
 choose the final status - a real card is refused at the 3-D Secure step, so never type one there.
 
 ## Where Lydia sends the payer back (2026-10-05)

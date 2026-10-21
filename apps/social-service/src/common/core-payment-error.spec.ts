@@ -1,6 +1,13 @@
 import { BadGatewayException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AxiosError, AxiosHeaders } from 'axios';
-import { mapCorePaymentError, PAYMENT_PROVIDER_REFUSED } from './core-payment-error';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  mapCorePaymentError,
+  PAYMENT_PROVIDER_REFUSED,
+  PROVIDER_MAX_AMOUNT_CENTS,
+  PROVIDER_MIN_AMOUNT_CENTS,
+} from './core-payment-error';
 
 function coreAnswer(status: number, data: unknown): AxiosError {
   const config = {
@@ -100,5 +107,18 @@ describe('mapCorePaymentError', () => {
   it('passes an exception this service already chose through untouched', () => {
     const own = new ForbiddenException('payments not ready');
     expect(mapCorePaymentError(own, logger(), 'FORM')).toBe(own);
+  });
+});
+
+describe('the provider range mirrored from core-service', () => {
+  it('equals the shared contract core-service asserts too, so the two apps cannot disagree', () => {
+    const contract = JSON.parse(
+      readFileSync(
+        join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'payment-amount-range.json'),
+        'utf8'
+      )
+    ) as { minCents: number; maxCents: number };
+    expect(PROVIDER_MIN_AMOUNT_CENTS).toBe(contract.minCents);
+    expect(PROVIDER_MAX_AMOUNT_CENTS).toBe(contract.maxCents);
   });
 });

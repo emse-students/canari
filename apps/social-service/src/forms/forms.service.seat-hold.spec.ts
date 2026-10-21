@@ -416,6 +416,50 @@ describe('FormsService - the seat a pending payment holds', () => {
         ['new1', 'cancelled'],
       ]);
     });
+
+    // A total outside the provider range is the SAME typed refusal core would answer (code +
+    // bounds, which the payer's page words), refused before core, logged, and releasing the seat.
+    it.each([49, 100_001])(
+      'refuses a %i-cent total typed with the bounds, calls no core, and releases the row',
+      async (cents) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: 1,
+          basePrice: cents,
+          provider: 'lydia',
+          rows: [],
+        });
+        const warn = jest
+          .spyOn((service as any).logger, 'warn')
+          .mockImplementation(() => undefined);
+        const err = await service
+          .submit('f1', { userId: 'u1', answers: {} } as any)
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          code: 'AMOUNT_OUT_OF_RANGE',
+          minCents: 50,
+          maxCents: 100_000,
+        });
+        expect(core.calls).toHaveLength(0);
+        expect(rows.map((r) => [r.id, r.paymentStatus])).toEqual([['new1', 'cancelled']]);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(`total=${cents} cents`));
+      }
+    );
+
+    it.each([50, 100_000])(
+      'CONTROL: a %i-cent total, on a bound, issues its request',
+      async (cents) => {
+        const { service, core } = makeStore({
+          maxSubmissions: 1,
+          basePrice: cents,
+          provider: 'lydia',
+          rows: [],
+        });
+        const result = await service.submit('f1', { userId: 'u1', answers: {} } as any);
+        expect(result).toMatchObject({ checkoutUrl: 'https://lydia.example/pay/1' });
+        expect(core.calls.map((c) => c.route)).toEqual(['create-checkout-session']);
+      }
+    );
   });
 
   describe('the expiry job', () => {

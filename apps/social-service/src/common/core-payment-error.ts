@@ -11,6 +11,15 @@ export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
  */
 export const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
 
+/**
+ * The payable range of one checkout, in cents: core-service's `LYDIA_MIN_AMOUNT_CENTS` /
+ * `LYDIA_MAX_AMOUNT_CENTS`, mirrored here because the two apps share no TS package. The ONE
+ * social-side copy - a form total outside it is refused before core is called. Both apps' specs
+ * assert their constants against `libs/contracts/payment-amount-range.json`, so they cannot drift.
+ */
+export const PROVIDER_MIN_AMOUNT_CENTS = 50;
+export const PROVIDER_MAX_AMOUNT_CENTS = 100_000;
+
 /** The typed 400 for an amount outside `[minCents, maxCents]` (`null` max = no upper bound). */
 export function amountOutOfRange(
   minCents: number,

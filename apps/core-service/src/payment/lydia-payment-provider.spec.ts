@@ -1,6 +1,13 @@
 import axios from 'axios';
 import { BadRequestException, Logger } from '@nestjs/common';
-import { LydiaPaymentProvider, PAYMENT_PROVIDER_REFUSED } from './lydia-payment-provider';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  LYDIA_MAX_AMOUNT_CENTS,
+  LYDIA_MIN_AMOUNT_CENTS,
+  LydiaPaymentProvider,
+  PAYMENT_PROVIDER_REFUSED,
+} from './lydia-payment-provider';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -169,7 +176,20 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
       code: 'AMOUNT_OUT_OF_RANGE',
       minCents: 50,
       maxCents: 100_000,
+      // The sentence is formatted from the constants, never a hardcoded copy of them.
+      message: 'Lydia accepts payments from 0.50 to 1000.00 EUR (got 0.49)',
     });
+  });
+
+  it('holds the range the shared contract names, so social-service cannot drift from it', () => {
+    const contract = JSON.parse(
+      readFileSync(
+        join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'payment-amount-range.json'),
+        'utf8'
+      )
+    ) as { minCents: number; maxCents: number };
+    expect(LYDIA_MIN_AMOUNT_CENTS).toBe(contract.minCents);
+    expect(LYDIA_MAX_AMOUNT_CENTS).toBe(contract.maxCents);
   });
 
   it('accepts both bounds of the range', async () => {

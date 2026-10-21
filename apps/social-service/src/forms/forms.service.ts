@@ -73,7 +73,12 @@ import {
 } from './visibility';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
-import { mapCorePaymentError } from '../common/core-payment-error';
+import {
+  amountOutOfRange,
+  mapCorePaymentError,
+  PROVIDER_MAX_AMOUNT_CENTS,
+  PROVIDER_MIN_AMOUNT_CENTS,
+} from '../common/core-payment-error';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
@@ -1176,11 +1181,24 @@ export class FormsService {
       return { submissionId: savedSubmission.id, cashPayment: true };
     }
 
-    // 50-cent floor, inherited from the card processor Canari used before Lydia; Lydia's own minimum is unmeasured
-    const MIN_PAYMENT_CENTS = 50;
-    if (totalCents > 0 && totalCents < MIN_PAYMENT_CENTS) {
-      throw new BadRequestException(
-        `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is below the minimum of 0.50 ${currency.toUpperCase()}. Adjust the form price.`
+    // The provider's payable range, refused here rather than by core: the SAME typed answer (code +
+    // bounds) the payer's page words in their language, one call sooner. Like a core refusal, no
+    // request is issued, so the row is released and stops holding a seat for it.
+    if (
+      totalCents > 0 &&
+      (totalCents < PROVIDER_MIN_AMOUNT_CENTS || totalCents > PROVIDER_MAX_AMOUNT_CENTS)
+    ) {
+      this.logger.warn(
+        `[Forms] Paid submission ${savedSubmission.id} refused: total=${totalCents} cents outside ` +
+          `${PROVIDER_MIN_AMOUNT_CENTS}-${PROVIDER_MAX_AMOUNT_CENTS} form=${id.slice(0, 8)}`
+      );
+      await this.releaseUnissuedRow(savedSubmission.id);
+      throw amountOutOfRange(
+        PROVIDER_MIN_AMOUNT_CENTS,
+        PROVIDER_MAX_AMOUNT_CENTS,
+        `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is outside the ` +
+          `payable range ${(PROVIDER_MIN_AMOUNT_CENTS / 100).toFixed(2)}-` +
+          `${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}. Adjust the form price.`
       );
     }
 

@@ -1,6 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from '$lib/associations/api';
-import { formatPriceCents } from '$lib/utils/canariLinkPreviewFormat';
+import { formatAmount } from '$lib/forms/fillAnswers';
 
 /** The body `code` social-service sets when the payment provider itself declined a payment. */
 export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
@@ -23,10 +23,11 @@ export function providerRefusalMessage(err: unknown): string | null {
   }
   if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
     const { minCents, maxCents } = err.amountBounds;
-    const min = formatPriceCents(minCents);
+    // In the reader's locale: `formatPriceCents` is pinned to fr-FR, so English read '0,50 EUR'.
+    const min = formatAmount(minCents);
     return maxCents === null
       ? m.shop_payment_amount_min({ min })
-      : m.shop_payment_amount_range({ min, max: formatPriceCents(maxCents) });
+      : m.shop_payment_amount_range({ min, max: formatAmount(maxCents) });
   }
   return null;
 }

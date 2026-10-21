@@ -132,7 +132,8 @@ import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { fetchUpload } from '$lib/media';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
-import { SocialApiError } from '$lib/associations/api';
+import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
+import { Log } from '$lib/utils/Log';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 
 /**
@@ -149,10 +150,13 @@ import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 async function refusal(res: Response, fallback: string): Promise<SocialApiError> {
   const body = await res.json().catch(() => ({}));
   const message = Array.isArray(body.message) ? body.message.join(' ') : body.message;
+  const code = typeof body.code === 'string' ? body.code : null;
+  Log.i('FORMS', `${fallback}: refused status=${res.status} code=${code ?? 'none'}`);
   return new SocialApiError(
     message || `${fallback} (${res.status})`,
-    typeof body.code === 'string' ? body.code : null,
-    res.status
+    code,
+    res.status,
+    amountBoundsOf(body)
   );
 }
 
@@ -556,16 +560,9 @@ export async function submitForm(
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    // Typed, so a payment-provider refusal (`code`) is worded by the one shared function rather
-    // than shown as the bare reason; every other refusal still reads as its message.
-    throw new SocialApiError(
-      err.message || 'Submission failed',
-      typeof err.code === 'string' ? err.code : null,
-      res.status
-    );
-  }
+  // Through the one builder, so a payment refusal (`code`, and the amount bounds) is worded by
+  // `providerRefusalMessage` in the reader's language rather than shown as the server's prose.
+  if (!res.ok) throw await refusal(res, 'Submission failed');
   return res.json();
 }
 

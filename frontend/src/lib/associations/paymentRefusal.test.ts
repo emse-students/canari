@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from './api';
 import { providerRefusalMessage } from './paymentRefusal';
-import { formatPriceCents } from '$lib/utils/canariLinkPreviewFormat';
+import { formatAmount } from '$lib/forms/fillAnswers';
+import { setLocale } from '$lib/paraglide/runtime';
 
 describe('providerRefusalMessage', () => {
   it('prefixes the provider reason with the sentence that says who refused', () => {
@@ -27,8 +28,31 @@ describe('providerRefusalMessage', () => {
       maxCents: 100000,
     });
     expect(providerRefusalMessage(err)).toBe(
-      m.shop_payment_amount_range({ min: formatPriceCents(50), max: formatPriceCents(100000) })
+      m.shop_payment_amount_range({ min: formatAmount(50), max: formatAmount(100000) })
     );
+  });
+
+  describe('the bounds read in the reader locale', () => {
+    afterEach(() => setLocale('fr', { reload: false }));
+    const err = () =>
+      new SocialApiError('Lydia accepts ...', 'AMOUNT_OUT_OF_RANGE', 400, {
+        minCents: 50,
+        maxCents: 100000,
+      });
+
+    it('English reads an English amount, not the French one', () => {
+      setLocale('en', { reload: false });
+      const text = providerRefusalMessage(err()) ?? '';
+      expect(text).toContain('€0.50');
+      expect(text).toContain('€1,000.00');
+      expect(text).not.toContain('0,50');
+    });
+
+    it('CONTROL: French reads the French amount', () => {
+      setLocale('fr', { reload: false });
+      const text = (providerRefusalMessage(err()) ?? '').replace(/\s/g, ' ');
+      expect(text).toContain('0,50 €');
+    });
   });
 
   it('words an unbounded maximum as a minimum only', () => {
@@ -36,9 +60,7 @@ describe('providerRefusalMessage', () => {
       minCents: 100,
       maxCents: null,
     });
-    expect(providerRefusalMessage(err)).toBe(
-      m.shop_payment_amount_min({ min: formatPriceCents(100) })
-    );
+    expect(providerRefusalMessage(err)).toBe(m.shop_payment_amount_min({ min: formatAmount(100) }));
   });
 
   it('CONTROL: the range code with no bounds falls through to the generic line', () => {

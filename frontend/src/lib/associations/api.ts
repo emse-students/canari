@@ -414,11 +414,32 @@ export class SocialApiError extends ApiRefusalError {
      * The allowed amount range an `AMOUNT_OUT_OF_RANGE` refusal carries, in cents (`maxCents` null
      * = no upper bound). Typed numbers so the UI words the range itself instead of echoing prose.
      */
-    readonly amountBounds: { minCents: number; maxCents: number | null } | null = null
+    readonly amountBounds: AmountBounds | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';
   }
+}
+
+/** The allowed range of an `AMOUNT_OUT_OF_RANGE` refusal, in cents (`maxCents` null = unbounded). */
+export interface AmountBounds {
+  minCents: number;
+  maxCents: number | null;
+}
+
+/**
+ * Reads the allowed range an amount refusal carries beside its `code`, from an already-parsed body.
+ * THE ONE READER: every helper that builds a {@link SocialApiError} from a refusal (`socialRefusal`
+ * here, the forms and bookings ones) passes its body through this, so no surface loses the bounds
+ * and falls back to the server's English sentence. `null` when the body carries no integer range.
+ */
+export function amountBoundsOf(body: unknown): AmountBounds | null {
+  if (!body || typeof body !== 'object') return null;
+  const { minCents, maxCents } = body as Record<string, unknown>;
+  if (typeof minCents !== 'number' || !Number.isInteger(minCents)) return null;
+  if (maxCents === null) return { minCents, maxCents: null };
+  if (typeof maxCents !== 'number' || !Number.isInteger(maxCents)) return null;
+  return { minCents, maxCents };
 }
 
 /**
@@ -432,7 +453,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   const raw = await res.text().catch(() => '');
   let message = raw || res.statusText;
   let code: string | null = null;
-  let amountBounds: { minCents: number; maxCents: number | null } | null = null;
+  let amountBounds: AmountBounds | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -453,12 +474,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
       code = (parsed as Record<string, string>).code;
     }
     // An amount refusal carries its allowed range beside the code, as numbers.
-    if (parsed && typeof parsed === 'object') {
-      const { minCents, maxCents } = parsed as Record<string, unknown>;
-      if (typeof minCents === 'number' && (typeof maxCents === 'number' || maxCents === null)) {
-        amountBounds = { minCents, maxCents };
-      }
-    }
+    amountBounds = amountBoundsOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
