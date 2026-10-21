@@ -507,9 +507,12 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
 
 /**
  * Makes a replay's durable progress markers (Redis stream cursor + seen ciphertext hashes)
- * persistent. The caller MUST run this only AFTER the encrypted MLS checkpoint has flushed,
- * so durable progress can never move ahead of the durable ratchet state (otherwise a crash
- * would skip messages whose ratchet advance was lost, forcing a costly re-add).
+ * persistent. It MUST run only AFTER an encrypted MLS checkpoint that started after the replay
+ * has LANDED, so durable progress can never move ahead of the durable ratchet state (otherwise a
+ * crash would skip messages whose ratchet advance was lost, forcing a costly re-add). Closing the
+ * bulk-ingest window does NOT give that - the persister starts its checkpoint there without
+ * awaiting it - so the thunk is handed to {@link withMlsBulkIngest}, which runs it once that
+ * checkpoint resolved and never when it failed.
  */
 export type MlsReplayCommit = () => void;
 
@@ -519,8 +522,8 @@ export type MlsReplayCommit = () => void;
  *
  * Decryption advances the MLS ratchet but this function does NOT persist progress markers
  * itself. It returns a {@link MlsReplayCommit} thunk (or `undefined` if there is nothing to
- * commit / on failure); the caller runs the thunk after the bulk-ingest window has flushed
- * the encrypted checkpoint. Wrap calls in {@link withMlsBulkIngest} to drive that flush.
+ * commit / on failure); the caller hands the thunk to {@link withMlsBulkIngest}, which runs it
+ * once a checkpoint covering the replay has landed.
  */
 /**
  * Decides whether a history replay run should flag a group as forked-behind (stale epoch gap).
@@ -1359,8 +1362,8 @@ export async function replayConversationHistory(params: {
 
     if (!fetchedAnyPage) return undefined;
 
-    // Durable progress is committed by the caller AFTER the encrypted checkpoint flush,
-    // so the stream cursor / seen hashes never run ahead of the persisted ratchet state.
+    // Durable progress is committed by `withMlsBulkIngest` once a checkpoint covering this walk
+    // LANDED, so the stream cursor / seen hashes never run ahead of the persisted ratchet state.
     return () => {
       if (latestStreamId) saveLastStreamId(userId, id, latestStreamId);
       if (seenUpdated) saveSeenCipherHashes(userId, id, seenCipherHashes);
