@@ -1856,3 +1856,17 @@ the line it writes is an error and must be explained when it appears.
 tie-breaker, so two posts sharing a `publishedAt` may swap across an `OFFSET` page boundary. The next
 page's merge (`loadMorePosts`) already drops an id it holds, so this can skip a post, never duplicate
 one.
+
+## Comment sheet rework (2026-10-21)
+
+Plan: a full-screen sheet from the comment icon, the composer pinned above the keyboard, replies folded, a draft per post, and posting as an association or anonymously. It ships in four pull requests; **this section records what is on `main`**.
+
+**PR 1 - server paging and the client data layer (done).**
+
+- `COMMENT_MAX_LENGTH = 2000` on `AddCommentDto.text` and `EditCommentDto.text` (`comment-page.ts` server side, `posts/api.ts` client side - a refused text is a 400).
+- `editComment` writes `editedAt` (ISO, inside the comments JSONB, no migration); `PostComment.editedAt` carries it.
+- `GET /api/posts/:postId/comments?cursor=<position>&limit=20&order=recent|oldest` serves WHOLE THREADS (`pageComments`): a head and all its descendants, never a split thread. The cursor is the array position of the last head returned, exclusive (`recent` walks down, `oldest` up). It is named `cursor`, not the plan's `before`, because one name has to serve both orders. Visibility is `assertVisible`'s and blocked accounts are dropped (a blocked head drops its thread). The "liked" order is applied by the client on what it has loaded.
+- `commentCount` already counted replies and `PostCard` already read it through `commentCountOf` - the plan's "Charger tout hidden" item was stale.
+- `postCommentDraft.ts`: one draft per account AND post, keyed like `postComposerDraft`.
+
+**Open (PR 2-4):** comment identity (association / anonymous), the components, the sheet.
