@@ -220,6 +220,13 @@ which is what the cap below is for.
 
 ## The viewer cap (WP-L4)
 
+**THE OWNER'S STANDING WISH (2026-10-20, restated 2026-10-21): NO VISIBLE AUDIENCE CEILING FOR A
+LIVE - "the technique must follow".** The cap of 24 below is a TEMPORARY TECHNICAL BOUND (the host's
+uplink, as measured), never a product rule. The "live complet" screen is not a product feature: it
+exists only until the cap goes ([the plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)),
+and nothing may be built on it or around it (no waiting list, no "full" badge, no messaging that
+treats a ceiling as intended). Lifting the cap is a separate design.
+
 L8 asked for no cap; the plan's answer was "a cap set by the host's uplink, to be MEASURED". The
 measurement exists ([realtime-media-feasibility](../infrastructure/realtime-media-feasibility.md)
 section 4 and 2a: ~90-107 Mb/s out of production on 443, two separate hours, one outside client),
@@ -246,7 +253,8 @@ all, and nobody has measured that path.
   the cap. The check and the write cannot interleave across instances (a rolling deploy runs two),
   and the clock is Redis's own (`TIME`), so no instance's clock is compared with another's. Proven
   against a real Redis: 40 simultaneous takes at a cap of 5 grant exactly 5
-  (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`).
+  (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`, run in CI by `test-social-integration`
+  since 2026-10-21 - [cicd](../cicd.md)).
 - The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
   "full"; the broadcaster takes none.
 - **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
@@ -321,9 +329,8 @@ the first public live** (not a change: a question).
 ## The viewer count (2026-10-21)
 
 **The owner's decision (2026-10-21): the viewers of a live see HOW MANY watch it, like Instagram,
-and so does its broadcaster.** That the number is EXACT is not part of that answer - it is the
-implementer's choice ([below](#exact-not-rounded---the-implementers-choice-owed-the-owners-confirmation)),
-owed the owner's explicit confirmation. Before it, nobody saw a number and the broadcaster had no list
+and so does its broadcaster.** The number is EXACT, not rounded - confirmed by the owner
+2026-10-21 ([below](#exact-not-rounded---confirmed-by-the-owner-2026-10-21)). Before it, nobody saw a number and the broadcaster had no list
 either: no route answers viewer ids (the broadcaster learns an account id only from a chat line's
 author, which is how a removal names one). That stays true - **a COUNT, never an identity and never a
 list, to anybody: the broadcaster, a viewer, staff.**
@@ -365,19 +372,17 @@ a display number must not take down: `watching` answers `null`, logged as an `er
 ... the viewer count did not answer`), and the screen shows no number. Every viewer's poll is failing
 on the same outage at that moment, so the line is not alone.
 
-### Exact, not rounded - the implementer's choice, owed the owner's confirmation
+### Exact, not rounded - confirmed by the owner 2026-10-21
 
-**The owner answered one question - viewers see the count. Exactness is the implementer's reading
-of "like Instagram", NOT an owner decision, and it is owed the owner's explicit confirmation**
-(asked 2026-10-21). The plan had proposed a rounded count for
-viewers. With at most 24 seats an exact small number can tell someone who already suspects it that a
+**EXACT, CONFIRMED BY THE OWNER 2026-10-21.** The implementer proposed it from the "like Instagram"
+reference, and the owner accepted it on being asked. The reasoning, kept so it is not re-opened: the
+plan had proposed a rounded count for viewers. With at most 24 seats an exact small number can tell someone who already suspects it that a
 particular person just arrived (the count went from 3 to 4 when a friend said "I'm opening it"). Rounding
 was weighed and refused: at this size any bucket wide enough to hide one arrival (say 1-5, 6-10)
 makes the number useless as "how many are here", and it only moves the tell to the bucket's edge. The
 count carries no identity, the chat already shows its writers' names to the same audience, and an
 arrival is otherwise invisible. So "like Instagram" was taken literally: the exact number, to the
-broadcaster and the viewers alike, with no asymmetry between them. If the owner wants rounding, it is
-one function on the client (`liveViewerCount`) or the server (the manifest's `viewers`).
+broadcaster and the viewers alike, with no asymmetry between them.
 
 ## The key (Q4): served like a post CEK, removal enforced by the server
 

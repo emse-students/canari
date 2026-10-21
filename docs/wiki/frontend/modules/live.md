@@ -143,7 +143,10 @@ Three shapes, compared honestly.
 
 ## Uncapped audience - the plan (2026-10-20)
 
-The user, 2026-10-20: *"Je ne veux pas de plafond."* Nothing here is built and no infrastructure is
+The user, 2026-10-20: *"Je ne veux pas de plafond."* **Restated 2026-10-21 as a STANDING WISH: no
+visible audience ceiling for a live, "the technique must follow".** The cap of 24 is a TEMPORARY
+technical bound, and the "live complet" screen is NOT a product feature - nothing is to be built on
+it or around it, and it goes with the cap. Nothing here is built and no infrastructure is
 touched; this is the work an uncapped audience needs, in the order it should be measured. **What the
 cap protects.** The cap of 24 ([the viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)) exists because every
 viewer's copy of every segment leaves the school host's uplink (~90 Mb/s measured, 3 Mb/s a viewer) from
@@ -211,9 +214,8 @@ because the manifest is per-viewer by design (the segment names are the capabili
 The seat sorted set (`live:seats`, one Lua script a poll) already knows who is watching within the
 30 s lease. Uncapped, the grant stops refusing and the set only COUNTS: `ZCARD` per live (one set per
 live then, since the count walks the shared set today), shown to the broadcaster and to viewers -
-**the owner decided 2026-10-21 that viewers see it; that it is EXACT, not rounded, is the
-implementer's choice from the "like Instagram" reference, owed the owner's explicit confirmation**
-([the viewer count](#the-viewer-count-2026-10-21)). It stays
+**the owner decided 2026-10-21 that viewers see it, EXACT and not rounded (confirmed by the owner
+2026-10-21)** ([the viewer count](#the-viewer-count-2026-10-21)). It stays
 the removal point (a removed viewer's seat is freed and its key refused) and the load figure the
 bitrate choice of D2 reads. A seat renewed every poll is N Redis scripts a second: renew once per
 lease interval, as the gate-on-a-lease change above does. `LIVE_FULL`, its screen and
@@ -763,9 +765,8 @@ Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#dec
 ## The viewer count (2026-10-21)
 
 **The owner decided (2026-10-21): viewers see HOW MANY watch a live, like Instagram, and so does the
-broadcaster - a count, never a name or a list, to anybody.** That the number is EXACT, not rounded,
-is the implementer's choice from the "like Instagram" reference, **owed the owner's explicit
-confirmation**. The server side (what a viewer is, blocked accounts counted, the reasoning on
+broadcaster - a count, never a name or a list, to anybody.** The number is **EXACT, not rounded -
+confirmed by the owner 2026-10-21**. The server side (what a viewer is, blocked accounts counted, the reasoning on
 exactness, what happens when Redis does not answer) is
 [lives](../../services/lives.md#the-viewer-count-2026-10-21), the only copy. Dev builds only, behind
 `LIVE_ENABLED`, like the rest of the live.

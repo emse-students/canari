@@ -100,8 +100,7 @@ export interface LiveManifest {
    * HOW MANY ACCOUNTS WATCH THIS LIVE - the seats it holds on the host's cap, the caller's own
    * included, the broadcaster never (it takes none). A COUNT ONLY: no response of this API names a
    * viewer, to anybody (lives.md, "The viewer count"). The owner decided viewers see the count
-   * (2026-10-21); that it is EXACT is the implementer's choice from the "like Instagram" reference,
-   * owed the owner's explicit confirmation. `null` only on the broadcaster's poll when the count did not answer ({@link LiveSeats.watching}).
+   * (2026-10-21), EXACT and not rounded - confirmed by the owner 2026-10-21. `null` only on the broadcaster's poll when the count did not answer ({@link LiveSeats.watching}).
    */
   viewers: number | null;
 }
