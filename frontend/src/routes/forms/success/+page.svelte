@@ -62,7 +62,7 @@
       }
       if (verdict === 'declined' || verdict === 'ended') {
         // The request is dead and the server released the answer: the payer may try again.
-        console.info(`[forms/success] request , the answer is released for a retry`);
+        console.info(`[forms/success] request ${verdict}, the answer is released for a retry`);
         status = verdict;
         return;
       }

@@ -23,8 +23,10 @@ export type PaymentRequestState = 'open' | 'paid' | 'declined' | 'cancelled-or-e
  *
  * A request the provider reports `declined` (the payer refused) or `cancelled-or-expired` can never
  * be paid: the server released the answer, and the payer may try again (`declined` / `ended`).
- * Only a state READ on this call says so - a bare `cancelled` status names no cause. Anything else
- * that is not paid is final.
+ * Only a state READ on this call says so - a bare `cancelled` status names no cause - and never
+ * while the row is still `pending`: a pending row waits on a request that is not the dead one
+ * (a retry replaced it), and offering a retry there would cancel the request being paid. Anything
+ * else that is not paid is final.
  */
 export function paymentReturnVerdict(
   paymentStatus: string,
@@ -32,9 +34,10 @@ export function paymentReturnVerdict(
 ): PaymentReturnVerdict {
   if (paymentStatus === 'paid' || paymentStatus === 'free') return 'confirmed';
   if (paymentStatus === 'paid_over_capacity') return 'overCapacity';
+  if (paymentStatus === 'pending') return 'wait';
   if (requestState === 'declined') return 'declined';
   if (requestState === 'cancelled-or-expired') return 'ended';
-  if (paymentStatus === 'pending' || paymentStatus === 'expired') return 'wait';
+  if (paymentStatus === 'expired') return 'wait';
   return 'failed';
 }
 

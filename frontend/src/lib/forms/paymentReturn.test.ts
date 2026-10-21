@@ -38,6 +38,10 @@ describe('paymentReturnVerdict', () => {
     ['expired', 'cancelled-or-expired', 'ended'],
     ['pending', 'open', 'wait'],
     ['pending', 'unknown', 'wait'],
+    // Review of #2210: a still-pending row waits on ANOTHER request than the dead one read (a
+    // retry replaced it): never "try again", which would cancel the request being paid.
+    ['pending', 'declined', 'wait'],
+    ['pending', 'cancelled-or-expired', 'wait'],
     // A payment always wins over a stale state read.
     ['paid', 'declined', 'confirmed'],
     ['paid_over_capacity', 'cancelled-or-expired', 'overCapacity'],

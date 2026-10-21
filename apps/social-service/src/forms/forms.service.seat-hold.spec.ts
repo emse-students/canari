@@ -1235,20 +1235,28 @@ describe('FormsService - the seat a pending payment holds', () => {
       }
     );
 
-    it('releases nothing when a retry replaced the declined request meanwhile', async () => {
-      const { service, rows, core } = makeStore({
-        maxSubmissions: 1,
-        provider: 'lydia',
-        rows: [mine()],
-      });
-      core.stateAnswer = 'declined';
-      core.duringState = () => {
-        rows[0].stripeSessionId = UUID_NEW;
-        rows[0].paymentRequestId = '777';
-      };
-      await service.confirmPayment('mine');
-      expect(rows[0]).toMatchObject({ paymentStatus: 'pending', stripeSessionId: UUID_NEW });
-    });
+    // Review of #2210: the stale state must not be ANSWERED either - "declined, try again" while
+    // the newer request is payable would offer a retry that cancels it. Control: answering the
+    // state read unconditionally fails the `requestState` assertion.
+    it.each([['declined'], ['cancelled-or-expired'], ['open']] as const)(
+      'releases nothing and answers no state when a retry replaced the %s request meanwhile',
+      async (state) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: 1,
+          provider: 'lydia',
+          rows: [mine()],
+        });
+        core.stateAnswer = state;
+        core.duringState = () => {
+          rows[0].stripeSessionId = UUID_NEW;
+          rows[0].paymentRequestId = '777';
+        };
+        const answer = await service.confirmPayment('mine');
+        expect(rows[0]).toMatchObject({ paymentStatus: 'pending', stripeSessionId: UUID_NEW });
+        expect(answer.paymentStatus).toBe('pending');
+        expect(answer.requestState).toBeUndefined();
+      }
+    );
 
     it('answers the row unchanged, at WARN, when the provider cannot be read', async () => {
       const { service, rows, core } = makeStore({

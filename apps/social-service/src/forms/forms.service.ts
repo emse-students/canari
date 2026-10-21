@@ -1686,8 +1686,19 @@ export class FormsService {
         }
       }
     }
-    // `requestState` only when it was read on THIS call: the page decides "declined, try again"
-    // from it, never from a status it would have to guess the cause of.
+    // `requestState` only when it was read on THIS call AND is still about the row's request: the
+    // page decides "declined, try again" from it. A retry that replaced the request between the
+    // read and now (another tab, the success page polling while the payer retries) makes the state
+    // read a stale one - answering it would offer a retry that cancels the request being paid.
+    if (requestState !== undefined) {
+      const current = await this.submissionRepo.findOne({ where: { id: submissionId } });
+      if (current?.stripeSessionId !== sessionId) {
+        this.logger.log(
+          `[Forms] confirmPayment ${submissionId}: request ${sessionId} read ${requestState}, but the row now names another request - state not answered`
+        );
+        requestState = undefined;
+      }
+    }
     return { ...(await this.getSubmissionById(submissionId)), requestState };
   }
 
