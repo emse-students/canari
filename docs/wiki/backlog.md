@@ -181,10 +181,6 @@ Seen at 04:36, 04:45, 04:55 and 06:12 on a phone left idle. Not investigated: wh
 
 A product's `customAmountMinCents` / `customAmountMaxCents` can be saved outside 0.50-1000 EUR (`libs/contracts/payment-amount-range.json`), so a buyer is refused by the provider range at checkout for an amount the product itself allows. Owed: the product editor names the range when a bound crosses it ([payments](frontend/modules/payments.md)).
 
-## P2 - A history replay's thunk writes live seen marks ahead of their checkpoint (2026-10-21)
-
-Since the replay's commit waits for the checkpoint that covers the walk ([mls-desync-prevention](protocols/mls-desync-prevention.md#a-history-replays-markers-wait-for-the-checkpoint-that-holds-it-2026-10-21)), the remaining lead is the thunk's seen-set write: it writes the LIVE shared set, so a frame marked by live delivery while that checkpoint sealed is made durable before its own checkpoint. The checkpoint already commits the replay's marks, so the write looks redundant; removing it changes the pinned no-checkpoint case of `history.checkpointBoundMarks.test.ts`. Found by reading, not measured.
-
 ## P3 - Dev bench notes: a dev push cannot be read, and a PIN reset through the rig purges the iPhone (2026-10-21)
 
 - **Dev sends no FCM**: `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` does not exist, so `push_text.rs` / `proto_fields.rs` behaviour and the banner on a locked phone cannot be read on dev. A dev push reading needs that secret: the owner line "set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret" in [owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).

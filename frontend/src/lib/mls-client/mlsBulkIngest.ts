@@ -19,17 +19,28 @@ import { activeMlsStatePersister } from './mlsStatePersisterRegistry';
  *
  * ## What makes the ordering a proof
  *
- * The state is marked dirty AFTER `fn` resolved - so after the replay's session committed its
- * ratchet - and BEFORE the window closes; `flushEncrypted` then resolves only once a checkpoint that
- * started after that mark is on disk (its contract: a mark is cleared only by starting a checkpoint,
- * and a checkpoint that fails raises it again). At the outermost close that is the very checkpoint
- * the close starts, so the mark costs no extra write; inside a live drain it is one of its own.
- * A checkpoint that FAILS rejects `flushEncrypted`, and the commit then never runs: the markers stay
- * behind the state, which is the survivable direction.
+ * The commit runs when, and only when, ALL of these hold:
+ *
+ * 1. `fn` resolved with something to commit (not `undefined`), so the replay's session has
+ *    committed its ratchet to the live client;
+ * 2. the state was marked dirty after that and BEFORE the window closed;
+ * 3. `flushEncrypted` resolved - which, by its contract, happens only once a checkpoint that
+ *    STARTED after that mark has resolved (a mark is cleared only by starting a checkpoint, and a
+ *    checkpoint that fails raises it again);
+ * 4. that checkpoint resolving means its blob was WRITTEN: on web `writeCheckpoint` rejects when the
+ *    version guard drops the write (`stale` or `collision`), on native the save throws or lands.
+ *
+ * At the outermost close the covering checkpoint is the one the close itself starts, so the mark
+ * costs no extra write. Inside a live drain the close starts nothing, so the flush starts one of its
+ * own: ONE EXTRA CHECKPOINT PER REPLAY NESTED IN A DRAIN, the price of the ordering, and skipped when
+ * `fn` returned nothing to commit. A checkpoint that FAILS rejects the flush, and the commit then
+ * never runs: the markers stay behind the state, which is the survivable direction.
  *
  * The commit is CHAINED, never awaited here: the caller's tail (drawing the replayed page) does not
  * wait for the disk, exactly as live delivery does not. Commits of successive windows run in
- * checkpoint order, because each waits on the persister's next checkpoint.
+ * checkpoint order, because each waits on the persister's next checkpoint. Until it runs, a reader
+ * of the stored cursor - the conversation-open probe - sees the OLD one and re-walks from it, which
+ * is idempotent: the frames it meets again are in the in-memory seen set.
  *
  * The window is closed BY ITS HANDLE: a queue drain may open its own window while `fn` runs and
  * close it first, and a close that ended "the innermost" window ended the wrong one.
@@ -37,8 +48,8 @@ import { activeMlsStatePersister } from './mlsStatePersisterRegistry';
  * Note: it intentionally does not enable UI bulk-buffering (that buffer is not depth-counted
  * and would clobber a concurrent queue-drain); only persistence deferral is engaged.
  *
- * @param commitWhenDurable writes the progress markers `fn` returned; runs at most once, and only
- *   after a checkpoint covering `fn` landed
+ * @param commitWhenDurable writes the progress markers `fn` returned; runs at most once, never for
+ *   an `undefined` value, and only after a checkpoint covering `fn` landed
  * @returns `fn`'s value, as soon as the window is closed
  * @see docs/wiki/protocols/mls-desync-prevention.md - "A history replay's markers wait for the
  *   checkpoint that holds it"
@@ -46,7 +57,7 @@ import { activeMlsStatePersister } from './mlsStatePersisterRegistry';
 export async function withMlsBulkIngest<T>(
   mlsService: Pick<IMlsService, 'beginBulkIngest' | 'endBulkIngest'>,
   fn: () => Promise<T>,
-  commitWhenDurable: (value: T) => void
+  commitWhenDurable: (value: Exclude<T, undefined>) => void
 ): Promise<T> {
   // The persister of THIS session, taken before the window opens: it is the observer this window's
   // close reaches, and a sign-out that replaces the registered one must not redirect the barrier.
@@ -55,12 +66,15 @@ export async function withMlsBulkIngest<T>(
   let value: T;
   try {
     value = await fn();
-    // Before the close, so the outermost close's own checkpoint is the one that covers `fn`.
-    persister?.scheduleDeferred();
+    // Before the close, so the outermost close's own checkpoint is the one that covers `fn`. Not
+    // at all when there is nothing to commit: nested in a drain, the mark would cost a checkpoint.
+    if (value !== undefined) persister?.scheduleDeferred();
   } finally {
     await mlsService.endBulkIngest(handle);
   }
-  void commitOnceCheckpointed(persister, () => commitWhenDurable(value));
+  if (value === undefined) return value;
+  const toCommit = value as Exclude<T, undefined>;
+  void commitOnceCheckpointed(persister, () => commitWhenDurable(toCommit));
   return value;
 }
 

@@ -135,11 +135,11 @@ function saveLastStreamId(userId: string, groupId: string, streamId: string): vo
  * ONE set per (user, group), shared by the archive replay and by live delivery.
  *
  * The sharing is a CORRECTNESS requirement, not a saved parse. The replay loads this set when it
- * starts, mutates it for the whole walk, and writes it back once at the end. A live mark that went
- * straight to localStorage would therefore be erased by that final write - made from a copy taken
- * before the mark existed - and the false loss it exists to prevent would return at the next
- * reload, unchanged. Two writers and one durable slot is last-write-wins; the only fix is that
- * there be one object.
+ * starts and mutates it for the whole walk, and every checkpoint writes it back
+ * ({@link commitPendingHistoryMarks}). A live mark held in a separate copy would be erased by
+ * that write - made from a set taken before the mark existed - and the false loss it exists to
+ * prevent would return at the next reload, unchanged. Two writers and one durable slot is
+ * last-write-wins; the only fix is that there be one object.
  */
 const seenCache = new Map<string, Set<string>>();
 
@@ -378,8 +378,10 @@ export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarks
  * ## What binds them now
  *
  * The marks belong to whatever writes the checkpoint. `BaseMlsService.persistCheckpoint` calls this
- * after its write lands, so every checkpoint carries the marks accumulated up to it, and the final
- * thunk stays as the case where no checkpoint fired at all.
+ * after its write lands, so every checkpoint carries the marks accumulated up to it. Since
+ * 2026-10-21 it is the ONLY writer of the set: the walk's thunk runs only after a checkpoint that
+ * covers the walk (`withMlsBulkIngest`), so there is no "no checkpoint fired" case left for it, and
+ * its write of the live set made live marks durable ahead of their own checkpoint.
  *
  * ## The window that REMAINS, stated rather than papered over
  *
@@ -397,15 +399,14 @@ export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarks
  * page decrypted while the seal ran is marked in a set whose ratchet advance the file does not hold,
  * and declaring it here would be the unsurvivable direction above. A group marked again since the
  * snapshot is written as the snapshot had it - merged with what the ledger already holds durably,
- * never over it - and STAYS pending, so the next checkpoint, or the walk's own thunk, carries the
- * rest.
+ * never over it - and STAYS pending, so the next checkpoint carries the rest.
  *
  * @param snapshot taken by {@link snapshotPendingHistoryMarks} before the checkpoint's write
  */
 export function commitPendingHistoryMarks(snapshot: PendingHistoryMarksSnapshot): void {
   for (const group of snapshot.groups) {
     const entry = pendingCheckpointMarks.get(group.key);
-    // Gone: a later checkpoint or the thunk has written a newer set already, so this one is stale.
+    // Gone: a later checkpoint has written a newer set already, so this one is stale.
     if (!entry) continue;
     if (entry.seq === group.seq) {
       const set = seenCache.get(group.key);
@@ -425,8 +426,8 @@ export function commitPendingHistoryMarks(snapshot: PendingHistoryMarksSnapshot)
  * `marks` plus whatever the ledger already holds DURABLY, so writing an older snapshot can never
  * take back a mark another writer has already made durable.
  *
- * Another writer can land between a snapshot and its commit - the replay's own thunk writes the
- * whole shared set, and a second checkpoint can finish before an earlier one commits - so the
+ * Another writer can land between a snapshot and its commit - a second checkpoint can finish
+ * before an earlier one commits - so the
  * stored ledger can hold marks the snapshot predates. Writing the snapshot verbatim would drop
  * them - a frame this device read, re-accused as lost on the next walk. The extras go LAST so the bound keeps them as the newest entries; they were already durable,
  * so carrying them over makes nothing durable that was not.
@@ -506,8 +507,8 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
 }
 
 /**
- * Makes a replay's durable progress markers (Redis stream cursor + seen ciphertext hashes)
- * persistent. It MUST run only AFTER an encrypted MLS checkpoint that started after the replay
+ * Makes a replay's durable progress markers (Redis stream cursor + retry counters) persistent -
+ * the seen-ciphertext marks are written by the checkpoint itself ({@link commitPendingHistoryMarks}). It MUST run only AFTER an encrypted MLS checkpoint that started after the replay
  * has LANDED, so durable progress can never move ahead of the durable ratchet state (otherwise a
  * crash would skip messages whose ratchet advance was lost, forcing a costly re-add). Closing the
  * bulk-ingest window does NOT give that - the persister starts its checkpoint there without
@@ -659,9 +660,9 @@ export async function replayConversationHistory(params: {
     };
 
     const seenCipherHashes = loadSeenCipherHashes(userId, id);
-    let seenUpdated = false;
     /**
-     * Mark the shared set as changed, and tell the checkpoint it owes these marks a write.
+     * Tell the checkpoint it owes the shared set's new marks a write - the ONLY writer of the walk's
+     * marks since 2026-10-21 (the thunk below no longer writes the set).
      *
      * ONE GESTURE RATHER THAN TWO AT EIGHT CALL SITES, because "remember to register it too" is
      * precisely the obligation that produced the defect this whole seam is about - see
@@ -669,7 +670,6 @@ export async function replayConversationHistory(params: {
      * site whose marks wait for the end of the walk again, which is the behaviour being replaced.
      */
     const markSeenUpdated = (): void => {
-      seenUpdated = true;
       noteMarksPending(userId, id);
     };
 
@@ -1198,8 +1198,9 @@ export async function replayConversationHistory(params: {
         }
       }
 
-      // Cursor + seen hashes are NOT persisted per page here: they are deferred to the
-      // returned commit thunk so they only become durable after the encrypted checkpoint.
+      // Cursor + seen hashes are NOT persisted per page here: the cursor is deferred to the
+      // returned commit thunk and the seen hashes to the checkpoint itself, so both become durable
+      // only after the encrypted checkpoint holding their ratchet advance.
       if (!hasMore) break;
       fetchCursor = pageLastId!;
     }
@@ -1363,10 +1364,16 @@ export async function replayConversationHistory(params: {
     if (!fetchedAnyPage) return undefined;
 
     // Durable progress is committed by `withMlsBulkIngest` once a checkpoint covering this walk
-    // LANDED, so the stream cursor / seen hashes never run ahead of the persisted ratchet state.
+    // LANDED, so the stream cursor never runs ahead of the persisted ratchet state.
+    //
+    // NOT THE SEEN SET (2026-10-21). That set is the LIVE one shared with live delivery, so writing
+    // it here also wrote every mark live delivery added while the covering checkpoint was sealing -
+    // a live commit's fingerprint durable before the checkpoint holding its epoch, and a cold replay
+    // then SKIPS that commit. The walk's own marks need no write here: each was registered pending
+    // (`markSeenUpdated`) before the helper marked the state dirty, so the covering checkpoint's
+    // `commitPendingHistoryMarks` snapshot holds every one of them.
     return () => {
       if (latestStreamId) saveLastStreamId(userId, id, latestStreamId);
-      if (seenUpdated) saveSeenCipherHashes(userId, id, seenCipherHashes);
       if (retryUpdated) saveRetryCipherCounts(userId, id, retryCounts);
     };
   } catch (err) {

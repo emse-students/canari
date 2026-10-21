@@ -722,10 +722,35 @@ as an argument and:
    landed: the dirty flag is cleared only by starting a checkpoint, and a failed one raises it again.
    Nested inside a drain, the flush starts its own checkpoint.
 
+**What "landed" means, exactly.** The commit runs only when `fn` returned something to commit, the
+mark came after it, the flush resolved, AND that checkpoint's blob was written. The last condition
+did not hold on web until the same change: `WebMlsService.writeCheckpoint` ignored the version
+guard's outcome, so a `collision` (another tab's blob is the stored one) or a `stale` resolved as a
+checkpoint, and every waiter - this commit, `commitPendingHistoryMarks`, the send ledger,
+`externalJoin` - declared durable a state the store did not hold, while the markers landed in the
+`localStorage` both tabs share. It now throws `MlsStateWriteRefusedError` for both. `stale` is
+refused too because it is harmless only when the newer stored blob is this document's own later
+export, and the guard keeps no document identity to tell that from another tab's; a false refusal
+costs one more checkpoint (the persister re-raises the dirty flag) and a withheld marker.
+
 **A failed checkpoint rejects the flush and the commit never runs**: the markers stay behind the
 state, the survivable direction (a re-walk of frames already seen). No persister registered is a
 defect upstream (the pipeline registers before the restore can replay) and is logged as an error,
 markers withheld. No clock anywhere: termination is the checkpoint promise, which settles.
+
+**What it costs, stated.** One extra checkpoint per replay that closes inside a live drain, because
+that close starts none; a replay that fetched nothing returns `undefined` and owes none. And the
+markers land LATER than they did: the restore's commits run once the phase's checkpoint lands,
+after `restore` has returned, so a conversation opened meanwhile probes the OLD cursor and re-walks
+from it. That re-walk is idempotent - the frames it meets again are in the in-memory seen set.
+
+**The thunk no longer writes the seen set.** That set is the LIVE one live delivery shares, so the
+thunk's write also wrote every mark live delivery made while the covering checkpoint was sealing:
+a live commit's fingerprint durable before the checkpoint holding its epoch, and a kill there made
+the cold replay skip that commit, move the cursor past it, and fail every later frame `wrong-epoch`
+into a forced re-Welcome. The walk's own marks need no such write: each is registered pending
+before the helper marks the state dirty, so the covering checkpoint's `commitPendingHistoryMarks`
+snapshot holds every one. The thunk keeps the cursor and the retry counters.
 
 Rejected: awaiting the checkpoint in the persister's `onBulkIngestEnd` for persist-only windows.
 `endBulkIngest` swallows observer failures, so a failed checkpoint could not reach the caller
@@ -734,13 +759,8 @@ conversation's page would be drawn only after the disk answered (8 s on a cold w
 rejected: the persister running registered thunks after a later checkpoint - the same proof with
 more state to own (registration, logout, two replays of one group).
 
-**What is left, stated:** the thunk writes the LIVE shared seen set, so a frame delivered live and
-marked while the covering checkpoint was sealing is written by the thunk before ITS checkpoint. The
-checkpoint already commits the replay's own marks (`commitPendingHistoryMarks`), which makes the
-thunk's seen-set write redundant on this path; removing it is a separate change because
-`history.checkpointBoundMarks.test.ts` pins the thunk as the no-checkpoint case
-([backlog](../backlog.md#p2---a-history-replays-thunk-writes-live-seen-marks-ahead-of-their-checkpoint-2026-10-21)).
-
-Pinned by `mlsBulkIngest.test.ts`: the four cases of "with the real persister observing the window"
-(before the checkpoint lands, a failed checkpoint, a close inside a live drain, a checkpoint already
-running) and the no-persister case all fail on the previous shape.
+Pinned by `mlsBulkIngest.test.ts` (the real persister as observer: before the checkpoint lands, a
+failed checkpoint, a close inside a live drain, a checkpoint already running, nothing to commit;
+and no persister), `history.checkpointBoundMarks.test.ts` ("a LIVE mark made while the covering
+checkpoint seals is not made durable by the thunk") and `WebMlsService.changeDeviceKey.test.ts`
+("WebMlsService.writeCheckpoint").

@@ -592,7 +592,7 @@ export function useConversations() {
               messageReactions: ctx.messageReactions,
               log: ctx.log,
             }),
-          (commit) => commit?.()
+          (commit) => commit()
         );
         // Reload from DB so display reflects the latest saved state
         await renderStoredPage(contactName, id, ctx, undefined, drawnFirst);

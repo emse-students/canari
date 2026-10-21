@@ -193,6 +193,21 @@ describe('withMlsBulkIngest', () => {
       await r.land();
     });
 
+    it('owes NO checkpoint, nested in a drain, when fn returned nothing to commit', async () => {
+      // The barrier's own checkpoint is the cost of the ordering - one per replay nested in a live
+      // drain - and a replay that fetched nothing has no marker to order.
+      const r = rig();
+      const commit = vi.fn();
+      const drain = r.svc.beginBulkIngest();
+
+      await withMlsBulkIngest(r.svc, async () => undefined, commit);
+      await flushMacrotask();
+
+      expect(r.persistCheckpoint).not.toHaveBeenCalled();
+      expect(commit).not.toHaveBeenCalled();
+      await r.svc.endBulkIngest(drain);
+    });
+
     it('waits for the NEXT checkpoint when one that exported before the replay is still running', async () => {
       const r = rig();
       const commit = vi.fn();

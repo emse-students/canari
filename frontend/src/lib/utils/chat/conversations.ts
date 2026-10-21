@@ -1150,9 +1150,11 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           ctx.log(`[WARN] Conversation load failed ${meta.id}: ${String(e)}`);
         }
       }
+      // Nothing to commit is said as `undefined`, so the helper owes no checkpoint for it.
+      return pendingCommits.length > 0 ? pendingCommits : undefined;
     },
-    () => {
-      for (const commit of pendingCommits) commit();
+    (commits) => {
+      for (const commit of commits) commit();
     }
   );
 }
