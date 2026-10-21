@@ -490,10 +490,12 @@ event with answers nobody pays. `submit` refuses a visitor's FOURTH waiting answ
   one within its hold (`livePendingWhere`), a cash one not validated. A paid, cancelled or expired
   answer frees its place at once, with no job.
 - **The visitor is its address** (`clientAddress`, the `X-Real-IP` nginx sets - the throttle's own
-  key, one function for both), and the key is never the address: an HMAC-SHA256 under
-  `INTERNAL_SECRET` of the form id and the address (keyed, because a plain hash of 32 bits is
-  reversed by trying them all; per form, so two forms' rows cannot be joined). No secret, no key:
-  `submit` throws rather than store an unkeyed hash.
+  key, one function for both), and the key is never the address: an HMAC-SHA256 of the form id and
+  the address (keyed, because a plain hash of 32 bits is reversed by trying them all; per form, so
+  two forms' rows cannot be joined). Its HMAC key is DEDICATED: HKDF-SHA256 of `INTERNAL_SECRET`
+  under the label `canari:guest-visitor-key:v1` (`guestVisitorHmacKey`), never the raw secret, which
+  authenticates calls between services. No secret, no key: `submit` throws rather than store an
+  unkeyed hash.
 - **Kept only while it counts**: `forgetSettledGuestVisitors`, in the 5-minute expiry tick (its own
   `try`), clears the key of every answer no longer waiting. Register row C8 and the privacy policy
   say so.
@@ -502,8 +504,14 @@ event with answers nobody pays. `submit` refuses a visitor's FOURTH waiting answ
   `public-forms.controller.spec.ts`).
 - **Known cost**: guests behind ONE address (an event hall's network) share the ceiling - three
   can wait to pay at once, the fourth waits a moment or pays later. Not measured ("to evaluate" in
-  PP5). A filled honeypot answers `{ ok: true }`, which on a PAID form a bot can tell from a real
-  reply (no payer page): the honeypot catches form-fillers, it does not deceive them.
+  PP5).
+- **Known cost, kept on purpose**: a filled honeypot answers `{ ok: true }`, which on a PAID form a
+  bot can tell from a real reply (no payer page): the honeypot catches form-fillers, it does not
+  deceive them. Making the two identical was weighed and refused (2026-10-22): a real online reply
+  carries Lydia's payer page, which exists only once a payment request was created AT LYDIA - for a
+  bot, to an e-mail it typed, which would make the honeypot a relay of Lydia's e-mails - and a forged
+  URL is found out by fetching it. A bot that compares replies also reads past a hidden field, so
+  the ceiling and the throttle, not the honeypot, are what bound it.
 
 ### The guest's return from Lydia: a receipt, not an id (WP-P2) - A SECURITY SURFACE
 

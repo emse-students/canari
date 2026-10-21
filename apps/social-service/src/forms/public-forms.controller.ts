@@ -56,8 +56,9 @@ export class PublicFormsController {
     @Body() dto: GuestSubmitFormDto,
     @Req() req: Request
   ) {
-    // A filled honeypot is answered exactly like a real answer, so the bot learns nothing, and
-    // logged, so a rise in them is seen rather than guessed.
+    // A filled honeypot is answered like a FREE answer, stored nowhere, and logged, so a rise in
+    // them is seen rather than guessed. On a paid form a bot can tell it from a real reply (no payer
+    // page): an identical one would need a real Lydia request for the bot (forms.md, WP-P3).
     if (dto.website) {
       this.logger.warn(`[FORMS] guest answer dropped by the honeypot form=${id.slice(0, 8)}`);
       return { ok: true };

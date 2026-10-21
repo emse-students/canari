@@ -41,7 +41,9 @@ describe('PublicFormsController', () => {
   // Throttled per visitor (WP-P3): the paid answer is the same route, so the guard and the limit
   // are read off the route itself. Control (2026-10-22): `@UseGuards` removed -> this test failed.
   it('keeps the submit route - the paid path - behind the per-visitor throttle', () => {
-    const handler = PublicFormsController.prototype.submit;
+    // The method itself, read as metadata and never called: no `this` is involved.
+    const handler = Object.getOwnPropertyDescriptor(PublicFormsController.prototype, 'submit')
+      ?.value as object;
     expect(Reflect.getMetadata('__guards__', handler)).toEqual([ClientIpThrottlerGuard]);
     expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler)).toBe(30);
     expect(Reflect.getMetadata('THROTTLER:TTLdefault', handler)).toBe(60_000);
