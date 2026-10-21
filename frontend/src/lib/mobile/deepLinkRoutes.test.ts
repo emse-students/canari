@@ -18,6 +18,8 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://live/l1')).toBe('/posts');
     // WP-L8b: a cut live, a suspension, a withdrawal - their row on the notifications list.
     expect(route('fr.emse.canari://notifications')).toBe('/notifications');
+    // The organiser alert: one form's responses, on the forms list.
+    expect(route('fr.emse.canari://form-responses/f1')).toBe('/forms?responses=f1');
   });
 
   it('keeps the comment a comment push names, and only that parameter', () => {
@@ -46,11 +48,15 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://republication-requests')).toBe(
       notificationHref({ type: 'repost_personal_requested', postId: 'p1' })
     );
+    expect(route('fr.emse.canari://form-responses/f1')).toBe(
+      notificationHref({ type: 'form_paid_over_capacity', postId: 'f1' })
+    );
   });
 
   it('refuses a page host with no id, and hosts it does not own', () => {
     expect(route('fr.emse.canari://post')).toBeNull();
     expect(route('fr.emse.canari://form/')).toBeNull();
+    expect(route('fr.emse.canari://form-responses/')).toBeNull();
     expect(route('fr.emse.canari://chat/g1')).toBeNull();
     expect(route('fr.emse.canari://callback?code=1&state=2')).toBeNull();
     expect(route('https://canari.emse.fr/posts/p1')).toBeNull();
@@ -58,6 +64,9 @@ describe('appRouteForDeepLink', () => {
 
   it('keeps an id inside one path segment', () => {
     expect(route('fr.emse.canari://post/a%2F..%2Fb')).toBe('/posts/a%2F..%2Fb');
+    expect(route('fr.emse.canari://form-responses/a%2F..%2Fb%3Fx%3D1')).toBe(
+      '/forms?responses=a%2F..%2Fb%3Fx%3D1'
+    );
   });
 });
 

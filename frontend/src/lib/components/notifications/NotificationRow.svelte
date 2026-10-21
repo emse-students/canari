@@ -16,6 +16,7 @@
     CalendarPlus,
     Bell,
     VideoOff,
+    TriangleAlert,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -228,21 +229,23 @@
           ? 'bg-blue-500 text-white'
           : notif.type === 'form_reminder'
             ? 'bg-purple-500 text-white'
-            : notif.type === 'event_rejected'
-              ? 'bg-red-500 text-white'
-              : notif.type === 'event_pending'
-                ? 'bg-amber-500 text-cn-ink'
-                : isEventNotif || isCoorganiseNotif
-                  ? 'bg-sky-600 text-white'
-                  : isPostNotif || isRepostNotif || isPersonalRepostNotif
-                    ? 'bg-indigo-500 text-white'
-                    : notif.type === 'profile_correction_refused'
-                      ? 'bg-red-500 text-white'
-                      : isUnknownNotif
-                        ? 'bg-gray-500 text-white'
-                        : isLiveModerationNotif
-                          ? 'bg-red-500 text-white'
-                          : 'bg-green-600 text-white'
+            : notif.type === 'form_paid_over_capacity'
+              ? 'bg-amber-500 text-cn-ink'
+              : notif.type === 'event_rejected'
+                ? 'bg-red-500 text-white'
+                : notif.type === 'event_pending'
+                  ? 'bg-amber-500 text-cn-ink'
+                  : isEventNotif || isCoorganiseNotif
+                    ? 'bg-sky-600 text-white'
+                    : isPostNotif || isRepostNotif || isPersonalRepostNotif
+                      ? 'bg-indigo-500 text-white'
+                      : notif.type === 'profile_correction_refused'
+                        ? 'bg-red-500 text-white'
+                        : isUnknownNotif
+                          ? 'bg-gray-500 text-white'
+                          : isLiveModerationNotif
+                            ? 'bg-red-500 text-white'
+                            : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -295,6 +298,8 @@
         <CornerDownLeft size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_reminder'}
         <Clock size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'form_paid_over_capacity'}
+        <TriangleAlert size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_proposed'}
         <CalendarClock size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_validated'}
@@ -357,6 +362,11 @@
         {m.notif_reply_text()}
       {:else if notif.type === 'form_reminder'}
         <EmojiText text={bodyText} />
+      {:else if notif.type === 'form_paid_over_capacity'}
+        <!-- A payment landed on a full form: the sentence is built here, in the reader's locale,
+             from the type and the form's title - the only data the server stores on the row. -->
+        {m.notif_form_paid_over_capacity_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isLiveModerationNotif}
         {#if liveModerationReason}&#8212; {liveModerationReason}{/if}
       {:else if isEventNotif}

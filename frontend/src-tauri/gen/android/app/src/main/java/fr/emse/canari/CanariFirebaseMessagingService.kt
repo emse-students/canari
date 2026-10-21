@@ -4489,6 +4489,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_form_open_title),
                 res.getString(R.string.notif_form_open_body)
             )
+            // A payment landed on a full form, to the form's managers: `arg` is the form's title,
+            // the only data the server sends (no payer, no amount on a lock screen).
+            "form_paid_over_capacity" -> Pair(
+                res.getString(R.string.notif_form_paid_over_capacity_title),
+                res.getString(R.string.notif_form_paid_over_capacity_body, arg)
+            )
             // The agenda's five. `arg` is the event's title for all of them; only `event_proposed`
             // also uses the actor, because it is the only one where WHO acted is the useful half.
             "event_proposed" -> Pair(

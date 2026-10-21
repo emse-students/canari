@@ -131,6 +131,12 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 3. Add the type to `KNOWN_NOTIFICATION_TYPES` and the `notificationHref` switch (`notificationTarget.ts`), and give `NotificationRow` its glyph, colour and Paraglide sentence; the tests walk every known type through both.
 4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
 **Removal condition:** none; this is a floor requirement, not a shim.
+**Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
+payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
+Steps 2-4 are done; step 1 is not: #1911's first stable is `v1.2.9` and the floor reads `1.2.7`. It
+ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
+**What flips it:** `minClientVersion` at `1.2.9` or more on BOTH estates (the user's gesture), then a
+pull request setting the constant to `true`.
 
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 

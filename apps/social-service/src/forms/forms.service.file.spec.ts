@@ -69,7 +69,9 @@ describe('FormsService - the file question', () => {
       {} as any,
       pricingFacts,
       { count: jest.fn(() => Promise.resolve(0)) } as any,
-      formFiles
+      formFiles,
+      // FormOrganiserAlertService: switched off, as it ships.
+      { enabled: () => false } as any
     );
     return { service, saved, formFiles, manager };
   }

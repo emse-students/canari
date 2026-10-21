@@ -105,6 +105,8 @@
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>
     <string name="notif_form_open_body">Le formulaire est disponible - dépêchez-vous, les places sont limitées !</string>
+    <string name="notif_form_paid_over_capacity_title">Paiement sur un formulaire complet</string>
+    <string name="notif_form_paid_over_capacity_body">« %1$s » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.</string>
     <!-- The agenda's five pairs, added 2026-09-09 with the notifications themselves. `proposed`
          is the only one naming an actor, because it is the only one where WHO acted is the useful
          half: the other four are always "the BDE".

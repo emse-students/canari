@@ -47,9 +47,10 @@ describe('FormsService - the seat a pending payment holds', () => {
     paymentSettledBy?: string | null;
     cotisationGrantedAt?: Date | null;
     purchaseRecordedAt?: Date | null;
+    organiserNotifiedAt?: Date | null;
     answers?: Record<string, unknown>;
   };
-  type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt';
+  type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
 
   function makeStore(opts: {
     maxSubmissions: number | null;
@@ -58,6 +59,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     allowMultipleSubmissions?: boolean;
     /** `lydia` reaches the fake core below; `disabled` stops a paid submit after its transaction. */
     provider?: 'lydia' | 'disabled';
+    /** The organiser alert switched on (it ships off: `FORM_ORGANISER_ALERT_ENABLED`). */
+    organiserAlert?: boolean;
   }) {
     let now = T0;
     const rows: Row[] = opts.rows.map((row) => ({ ...row }));
@@ -107,6 +110,14 @@ describe('FormsService - the seat a pending payment holds', () => {
 
     const locks = new Map<string, Promise<void>>();
     const purchaseRecordService = { create: jest.fn(() => Promise.resolve()) };
+    // The alert service's own behaviour (who, what) is its spec's and the integration spec's; here
+    // it is the AT MOST ONCE around it, so `tell` yields like a round trip and records its form.
+    const organiserAlert = {
+      enabled: jest.fn(() => opts.organiserAlert ?? false),
+      tell: jest.fn(async (_form: { id: string; title: string | null; ownerId: string }) => {
+        await roundTrip();
+      }),
+    };
     const userTagService = { grantCotisant: jest.fn(() => Promise.resolve({})) };
 
     /** The two UPDATE shapes the service builds: the expiry job and a fulfilment claim. */
@@ -342,13 +353,15 @@ describe('FormsService - the seat a pending payment holds', () => {
       pricingFacts,
       {} as any,
       // FormFilesService: these forms ask for no file, so nothing here reaches it.
-      {} as any
+      {} as any,
+      organiserAlert as any
     );
     return {
       service,
       rows,
       userTagService,
       purchaseRecordService,
+      organiserAlert,
       core,
       transitions,
       advance: (ms: number) => (now = new Date(now.getTime() + ms)),
@@ -369,6 +382,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     createdAt: ago(10 * HOLD_MS),
     cotisationGrantedAt: null,
     purchaseRecordedAt: null,
+    organiserNotifiedAt: null,
     ...over,
   });
 
@@ -612,6 +626,93 @@ describe('FormsService - the seat a pending payment holds', () => {
       await Promise.all([service.markPaid('a'), service.markPaid('b')]);
       const statuses = rows.slice(0, 2).map((r) => r.paymentStatus);
       expect(statuses.sort()).toEqual(['paid', 'paid_over_capacity']);
+    });
+  });
+
+  /**
+   * THE ORGANISER ALERT (migration 102): a payment that landed on a FULL form tells the form's
+   * managers AT MOST ONCE, from the row's `organiserNotifiedAt` - never a clock, and nothing claimed
+   * while the alert is switched off.
+   */
+  describe('the organiser alert for a payment over capacity', () => {
+    const full = () => [
+      row({ id: 'late', paymentStatus: 'expired', paymentRequestedAt: ago(2 * HOLD_MS) }),
+      row({ id: 'other', userId: 'u2', paymentStatus: 'paid' }),
+    ];
+
+    it('tells nobody and claims nothing while it is switched off, as it ships', async () => {
+      const { service, rows, organiserAlert } = makeStore({ maxSubmissions: 1, rows: full() });
+      await service.markPaid('late', 'req-1');
+      expect(rows[0].paymentStatus).toBe('paid_over_capacity');
+      expect(organiserAlert.tell).not.toHaveBeenCalled();
+      expect(rows[0].organiserNotifiedAt).toBeNull();
+    });
+
+    it('tells the managers once, naming the form, and marks the row', async () => {
+      const { service, rows, organiserAlert } = makeStore({
+        maxSubmissions: 1,
+        rows: full(),
+        organiserAlert: true,
+      });
+      await service.markPaid('late', 'req-1');
+      expect(organiserAlert.tell).toHaveBeenCalledTimes(1);
+      expect(organiserAlert.tell).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'f1', title: 'Gala' })
+      );
+      expect(rows[0].organiserNotifiedAt).toBeTruthy();
+    });
+
+    it('tells nobody again on a replay, one after the other or at once', async () => {
+      const { service, organiserAlert } = makeStore({
+        maxSubmissions: 1,
+        rows: full(),
+        organiserAlert: true,
+      });
+      await service.markPaid('late', 'req-1');
+      await service.markPaid('late', 'req-1');
+      await Promise.all([service.markPaid('late', 'req-1'), service.markPaid('late', 'req-1')]);
+      expect(organiserAlert.tell).toHaveBeenCalledTimes(1);
+    });
+
+    it('tells once when the callback and the return settle the same row at once', async () => {
+      const { service, organiserAlert } = makeStore({
+        maxSubmissions: 1,
+        rows: full(),
+        organiserAlert: true,
+      });
+      await Promise.all([service.markPaid('late', 'req-1'), service.markPaid('late', 'req-1')]);
+      expect(organiserAlert.tell).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases the claim when the notice could not be written, and the next replay tells', async () => {
+      const { service, rows, organiserAlert } = makeStore({
+        maxSubmissions: 1,
+        rows: full(),
+        organiserAlert: true,
+      });
+      organiserAlert.tell.mockRejectedValueOnce(new Error('insert failed'));
+      const error = jest.spyOn((service as any).logger, 'error');
+      await service.markPaid('late', 'req-1');
+      expect(rows[0].organiserNotifiedAt).toBeNull();
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('released for the next replay'),
+        expect.any(Error)
+      );
+      await service.markPaid('late', 'req-1');
+      expect(organiserAlert.tell).toHaveBeenCalledTimes(2);
+      expect(rows[0].organiserNotifiedAt).toBeTruthy();
+    });
+
+    it('tells nobody about a payment that took a seat', async () => {
+      const { service, rows, organiserAlert } = makeStore({
+        maxSubmissions: 2,
+        rows: full(),
+        organiserAlert: true,
+      });
+      await service.markPaid('late', 'req-1');
+      expect(rows[0].paymentStatus).toBe('paid');
+      expect(organiserAlert.tell).not.toHaveBeenCalled();
+      expect(rows[0].organiserNotifiedAt).toBeNull();
     });
   });
 

@@ -98,6 +98,13 @@ export class Submission {
   @Column({ type: 'timestamptz', nullable: true })
   purchaseRecordedAt: Date | null;
 
+  /**
+   * Set once the form's managers were told this payment landed `paid_over_capacity` (migration
+   * 102), same rule: claimed before the notification is written, released if writing it failed.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  organiserNotifiedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 
