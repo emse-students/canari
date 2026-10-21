@@ -566,6 +566,7 @@
   "call_pip_label": "Lecteur flottant (Picture-in-Picture)",
   "call_open_pip_label": "Ouvrir la vidéo dans un lecteur flottant",
   "call_connection_lost": "Appel interrompu : connexion perdue.",
+  "call_relay_disabled": "Appel impossible : aucune connexion directe, et ce serveur n'utilise pas de relais d'appel.",
   "call_relay_withheld": "Appel impossible : aucune connexion directe, et le relais d'appel du serveur est indisponible pour le moment.",
   "call_reconnecting": "Reconnexion...",
   "call_minimize_label": "Réduire l'appel",

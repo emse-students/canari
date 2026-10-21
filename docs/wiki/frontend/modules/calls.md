@@ -525,10 +525,17 @@ any malice; a client that lies under-counts with no bound.
 **The budget itself** (`readTurnBudget`, `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB`, an optional GitHub
 secret on each estate, `silent` in `env-manifest.tsv`): UNSET or empty is the default, 950 GB. An
 explicit `0` is the owner's decision of 2026-10-21 - **calls stay open but are STUN only, never
-relayed**: `ice-servers` answers `TURN_BUDGET_REACHED` without asking the meter, logged per call at
-`log` (a decision, not a fault), and the hourly report says so at `log`. Anything but a whole number
-is read as 0 - the closed direction, no spend on a value nobody can read - and logged at ERROR per
-call and per report. It used to answer 950 for every value that was not a positive integer, `0`
+relayed**: `ice-servers` answers STUN only with its own code, `TURN_DISABLED` - never
+`TURN_BUDGET_REACHED`, which would read as a spent month - without asking the meter, and BEFORE the
+TURN secrets are checked, so an estate at 0 needs none and never answers 503. Logged per call at
+`log` (a decision, not a fault); the client logs it at info and a call that cannot connect says
+`call_relay_disabled` ("this server does not use a call relay"), not the "unavailable right now" of
+an outage. Anything but a whole number (digits AND a safe integer: 400 digits are refused) is read
+as 0 with the same code, the closed direction, and logged at ERROR per call and per report - and
+`render-env.sh` refuses to deploy it at all (`whole_number`). What 0 cannot do: credentials issued
+before the switch keep relaying until `CLOUDFLARE_TURN_TTL_SECONDS` (2 h) runs out. Dev and
+production are ONE Cloudflare account and one free allowance; each estate's budget is its own value
+(`DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` on dev), and the meter each reads is the account's. It used to answer 950 for every value that was not a positive integer, `0`
 included, so "never relay" could not be written at all.
 
 **What it reads instead** (`services/turn-usage-meter.service.ts`): Cloudflare's GraphQL analytics,

@@ -47,7 +47,11 @@ export type TurnBudget =
 export function readTurnBudget(raw: string | undefined): TurnBudget {
   const value = raw?.trim() ?? '';
   if (value === '') return { gb: DEFAULT_TURN_BUDGET_GB, source: 'default' };
-  if (/^\d+$/.test(value)) return { gb: Number(value), source: 'configured' };
+  // Digits AND a safe integer: 400 digits pass the pattern and read as Infinity, a budget no
+  // reading can reach.
+  if (/^\d+$/.test(value) && Number.isSafeInteger(Number(value))) {
+    return { gb: Number(value), source: 'configured' };
+  }
   return { gb: 0, source: 'invalid', raw: value };
 }
 
@@ -70,7 +74,14 @@ export interface IceServerConfig {
  * - `TURN_BUDGET_REACHED`: the month's metered relay egress reached the budget.
  * - `TURN_METER_UNAVAILABLE`: the meter could not be read, so no budget stands behind a credential.
  */
-export type TurnUnavailableCode = 'TURN_BUDGET_REACHED' | 'TURN_METER_UNAVAILABLE';
+/**
+ * Why TURN was withheld. `TURN_DISABLED` is CONFIGURATION (a budget of 0, or a value read as 0),
+ * never a passing state: the client must not word it as "unavailable right now".
+ */
+export type TurnUnavailableCode =
+  | 'TURN_BUDGET_REACHED'
+  | 'TURN_METER_UNAVAILABLE'
+  | 'TURN_DISABLED';
 
 /** Response shape for `GET /api/calls/ice-servers`. */
 export interface IceServersResponse {
@@ -508,6 +519,13 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException('Not a member of this group');
     }
 
+    // TURN OFF BY CONFIGURATION is decided BEFORE TURN's own configuration is checked: an estate set
+    // to a budget of 0 needs no TURN secrets, and must answer STUN only rather than 503.
+    const disabled = this.turnDisabled(callId);
+    if (disabled) {
+      return { iceServers: STUN_ONLY, turn: { status: 'unavailable', code: disabled } };
+    }
+
     const cloudflareToken = process.env.CLOUDFLARE_CALLS_API_TOKEN?.trim();
     const turnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID?.trim();
 
@@ -538,23 +556,32 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Why TURN must be withheld for this call, or null when a credential may be minted. */
-  private async turnWithheld(callId: string): Promise<TurnUnavailableCode | null> {
+  /**
+   * `TURN_DISABLED` when the budget turns TURN off by configuration (0, or a value read as 0), else
+   * null. The meter is not asked: nothing it could say would change the answer.
+   */
+  private turnDisabled(callId: string): 'TURN_DISABLED' | null {
     const budget = this.turnBudget();
     if (budget.source === 'invalid') {
+      // A configuration nobody can read IS a fault: at error, every call, until someone fixes it.
       this.logger.error(
-        `[ICE] call=${callId} TURN withheld (TURN_BUDGET_REACHED): CLOUDFLARE_TURN_MONTHLY_BUDGET_GB="${budget.raw}" is not a whole number of GB - read as 0, STUN only`
+        `[ICE] call=${callId} TURN withheld (TURN_DISABLED): CLOUDFLARE_TURN_MONTHLY_BUDGET_GB="${budget.raw}" is not a whole number of GB - read as 0, STUN only`
       );
-      return 'TURN_BUDGET_REACHED';
+      return 'TURN_DISABLED';
     }
     if (budget.gb === 0) {
       // A DECISION, NOT A FAULT: the owner set the budget to 0 to keep calls STUN only. Said per call
-      // at `log` (the call's own trail), never at error, and the meter is not asked - nothing it
-      // could say would change the answer.
+      // at `log` (the call's own trail), never at error.
       this.logger.log(
-        `[ICE] call=${callId} TURN withheld (TURN_BUDGET_REACHED): the budget is 0 GB - STUN only by configuration`
+        `[ICE] call=${callId} TURN withheld (TURN_DISABLED): the budget is 0 GB - STUN only by configuration`
       );
-      return 'TURN_BUDGET_REACHED';
+      return 'TURN_DISABLED';
     }
+    return null;
+  }
+
+  private async turnWithheld(callId: string): Promise<TurnUnavailableCode | null> {
+    const budget = this.turnBudget();
     let usedBytes: number;
     try {
       usedBytes = await this.turnMeter.monthEgressBytes();

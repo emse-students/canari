@@ -1924,12 +1924,29 @@ describe('a call whose TURN relay the server withheld', () => {
     }
   );
 
+  it('logs TURN off by configuration at info, never as an ERROR', async () => {
+    server.iceTurn = { status: 'unavailable', code: 'TURN_DISABLED' };
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+
+    await callerJoined(service);
+
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(lines).toContain(
+      '[Call] TURN relay disabled by the server (TURN_DISABLED) - direct path only'
+    );
+    expect(lines.some((l) => l.includes('ERROR') && l.includes('TURN'))).toBe(false);
+    service.endCall();
+  });
+
   it.each([
     [
       'withheld',
       { status: 'unavailable', code: 'TURN_BUDGET_REACHED' },
       () => m.call_relay_withheld(),
     ],
+    ['disabled', { status: 'unavailable', code: 'TURN_DISABLED' }, () => m.call_relay_disabled()],
     ['available', { status: 'available' }, () => m.call_connection_lost()],
   ])('a call that never connects with the relay %s says so', async (_n, turn, sentence) => {
     server.iceTurn = turn;

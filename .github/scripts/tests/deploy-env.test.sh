@@ -496,6 +496,28 @@ else
   fail "production refused a short AGENDA_SIGNING_KEY without naming it"
 fi
 
+# A TURN budget that is not a whole number is read as 0 by chat-delivery - TURN off on every call,
+# silently as far as the deploy is concerned. It must fail the render, naming the key; 0 must pass.
+out="$TMP/prod-budget.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env) CLOUDFLARE_TURN_MONTHLY_BUDGET_GB=1.5e3 >"$TMP/prod-budget.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with a TURN budget that is not a whole number"
+elif grep -q 'CLOUDFLARE_TURN_MONTHLY_BUDGET_GB is set for the prod environment but is not a whole number' "$TMP/prod-budget.log"; then
+  pass "a TURN budget that is not a whole number fails the production render, naming the key"
+else
+  fail "production refused a bad TURN budget without naming it"
+fi
+
+out="$TMP/prod-budget-zero.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env) CLOUDFLARE_TURN_MONTHLY_BUDGET_GB=0 >/dev/null
+if [ -f "$out" ] && grep -q '^CLOUDFLARE_TURN_MONTHLY_BUDGET_GB=0$' "$out"; then
+  pass "a TURN budget of 0 renders: calls STUN only is a decision, not an error"
+else
+  fail "a TURN budget of 0 did not render as 0"
+fi
+
 out="$TMP/dev-build.env"
 # shellcheck disable=SC2046
 render dev "$out" $(dev_env) >/dev/null
