@@ -251,6 +251,8 @@ services:
       # Account Analytics token. Unset: ice-servers answers STUN only (TURN_METER_UNAVAILABLE) - no relay without a budget.
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
       CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
+      # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
+      CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
       # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
       # fails open: unset means no check, never a blocked link.
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}

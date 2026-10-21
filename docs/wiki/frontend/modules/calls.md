@@ -522,6 +522,15 @@ the month would have been refused.
 claim the server cannot verify, and CALL-PATH-LINE showed the client's line can be wrong without
 any malice; a client that lies under-counts with no bound.
 
+**The budget itself** (`readTurnBudget`, `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB`, an optional GitHub
+secret on each estate, `silent` in `env-manifest.tsv`): UNSET or empty is the default, 950 GB. An
+explicit `0` is the owner's decision of 2026-10-21 - **calls stay open but are STUN only, never
+relayed**: `ice-servers` answers `TURN_BUDGET_REACHED` without asking the meter, logged per call at
+`log` (a decision, not a fault), and the hourly report says so at `log`. Anything but a whole number
+is read as 0 - the closed direction, no spend on a value nobody can read - and logged at ERROR per
+call and per report. It used to answer 950 for every value that was not a positive integer, `0`
+included, so "never relay" could not be written at all.
+
 **What it reads instead** (`services/turn-usage-meter.service.ts`): Cloudflare's GraphQL analytics,
 dataset `callsTurnUsageAdaptiveGroups`, `sum { egressBytes }` for the WHOLE ACCOUNT from the first of
 the UTC month to today. **The budget's period is the UTC CALENDAR month**, which is not guaranteed
