@@ -254,7 +254,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
-| **answer the six closed questions of the audio-only calls enablement** (Q1 the native ring in or out of the first stable, Q2 the server kill switch and its migration, Q3 `minClientVersion`, Q4 background playback on the iPhone, Q5 the privacy wording of #2013, Q6 the TURN estimate's audio rate) | 6 decisions | [calls](frontend/modules/calls.md#what-the-owner-decides-closed-questions) |
+| **review the calls privacy wording (#2013's `/legal/privacy` and register texts: each party sees the other's IP, Cloudflare relays some calls) before calls ship** - presented to you later, decided 2026-10-21 | 1 review | [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21) (B5) |
 | **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
@@ -1079,9 +1079,9 @@ relay-path call, two peers, audio and video, TURN as production configures it, t
 
 **The owner decided on 2026-10-21: the first production calls are AUDIO 1:1 ONLY, kept alive in the
 background on both phones; video later.** The fifteen blockers (B0-B14) with their evidence, the
-order, the one flip commit, the production preflight, the store answers and six closed questions
-for the owner are on [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21),
-the only copy. Built 2026-10-21: B0 (video no longer follows `CALLS_COMPILED`) and B4 (the `fp=`
+order, the one flip commit, the production preflight, the store answers and the owner's answers
+of 2026-10-21 (no native ring in the first release; a server kill switch before the flip) are on [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21),
+the only copy. Built 2026-10-21: B0 (no video in production: the flag no longer follows `CALLS_COMPILED`, and `CallService` refuses every camera open and never shows a peer's video) and B4 (the `fp=`
 line is a SHA-256 fingerprint). Of the review's four items below, F4, F5 and the per-direction key +
 AAD are in draft #2013, which must be PORTED onto `main` (it predates #2158 and #2166).
 

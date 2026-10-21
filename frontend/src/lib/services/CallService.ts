@@ -29,7 +29,7 @@ import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
-import { CALLS_ENABLED } from '$lib/features';
+import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import {
@@ -552,7 +552,14 @@ export class CallService {
       this.currentGroupId = groupId;
       this.incomingCallerId = senderNorm;
       // Video only when the invite ASKS for it: an invite that says nothing never opens a camera.
-      this.incomingHasVideo = callMsg.hasVideo === true;
+      // And only on a build that carries video: an audio-only build (production, 2026-10-21) rings
+      // a video invite as an AUDIO call - accepting it never opens the camera.
+      this.incomingHasVideo = CALLS_VIDEO_ENABLED && callMsg.hasVideo === true;
+      if (callMsg.hasVideo === true && !CALLS_VIDEO_ENABLED) {
+        appendLog(
+          `[Call] invite ${callMsg.callId} asks for video - this build is audio only, it rings as audio`
+        );
+      }
       this.callState.set('incoming');
       this.armRingTimer(callMsg.callId, ringTimeoutMs, 'incoming');
 
@@ -639,6 +646,12 @@ export class CallService {
     }
 
     this.currentGroupId = groupId;
+    // An audio-only build never places a video call, whatever its caller asked: the default of
+    // `video` is `true`, so this is the boundary that holds it, not the buttons.
+    if (video && !CALLS_VIDEO_ENABLED) {
+      appendLog('[Call] startCall asked for video - this build is audio only, calling as audio');
+      video = false;
+    }
 
     try {
       this.callState.set('calling');
@@ -712,7 +725,8 @@ export class CallService {
     this.currentCallId = callId;
     // Answered: the server's deadline, not this timer, now decides (a late token is a 410).
     this.clearRingTimer();
-    const useVideo = video ?? this.incomingHasVideo;
+    // `incomingHasVideo` is already false on an audio-only build; an explicit `video` is held too.
+    const useVideo = CALLS_VIDEO_ENABLED && (video ?? this.incomingHasVideo);
 
     try {
       if (!canUseRtpScriptTransform()) {
@@ -1851,6 +1865,20 @@ export class CallService {
     // A new m-line is media the 5 s check of the first connect may not have seen: check it again.
     if (newMline && this.pc) this.scheduleE2ePathCheck(this.pc, `after a new ${track.kind} m-line`);
 
+    // AN AUDIO-ONLY BUILD RECEIVES A PEER'S VIDEO AND SHOWS NOTHING OF IT. Only a modified client
+    // (or a later build) sends one. The m-line is answered `recvonly` - this side never adds a
+    // camera - and its transforms are attached above, so its frames are decrypted and the E2E path
+    // check keeps judging it: left bare, its packets would end the call as media AROUND the
+    // transform. It is not turned `inactive`: that is a renegotiation the polite side cannot open,
+    // and it would buy only the peer's own uplink. The track never reaches the UI.
+    if (track.kind === 'video' && !CALLS_VIDEO_ENABLED) {
+      appendLog(
+        '[Call] the peer sends video - this build is audio only, it is received and not shown'
+      );
+      track.onunmute = () => this.recheckE2eOnMediaStart('after the remote video unmuted');
+      return;
+    }
+
     if (!this.mergedRemoteStream) {
       this.mergedRemoteStream = new MediaStream();
     }
@@ -2907,6 +2935,12 @@ export class CallService {
    * connection exists - into the local stream, which `initPeerConnection` adds.
    */
   private async cameraOn(): Promise<void> {
+    // THE choke point of every camera open (a video call's setup, the camera button): an
+    // audio-only build never opens one, whatever path asked.
+    if (!CALLS_VIDEO_ENABLED) {
+      appendLog('[Call] camera refused - this build is audio only');
+      return;
+    }
     if (!this.callUp() || !this.beginCameraOp('on', 'on')) return;
     const call = this.cameraCallToken();
     try {

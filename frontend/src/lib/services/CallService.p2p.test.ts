@@ -25,7 +25,9 @@ import { flushMacrotask } from '../../test/flush';
  * docs/wiki/frontend/modules/calls.md.
  */
 
-vi.mock('$lib/features', () => ({ CALLS_ENABLED: true }));
+/** Mutable: the audio-only describe turns video off; every other test runs a build that has it. */
+const features = vi.hoisted(() => ({ CALLS_ENABLED: true, CALLS_VIDEO_ENABLED: true }));
+vi.mock('$lib/features', () => features);
 vi.mock('$lib/users/blocks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/users/blocks')>()),
   isBlockedWith: vi.fn(async () => false),
@@ -2811,5 +2813,97 @@ describe('a microphone the system took', () => {
     const sentBefore = ws.sent.length;
     mic.systemGivesBack();
     expect(ws.sent.length).toBe(sentBefore);
+  });
+});
+
+/**
+ * THE FIRST PRODUCTION CALLS ARE AUDIO ONLY (owner, 2026-10-21), and hiding the video button is not
+ * what holds that: an invite with `hasVideo: true` - from a modified client, or later from a build
+ * with video - reaches an audio-only build too, and accepting it used to open the camera with no
+ * control on screen to close it. Every camera open is refused at the service.
+ */
+describe('an audio-only build (CALLS_VIDEO_ENABLED off)', () => {
+  beforeEach(() => {
+    features.CALLS_VIDEO_ENABLED = false;
+  });
+  afterEach(() => {
+    features.CALLS_VIDEO_ENABLED = true;
+  });
+
+  const videoAsked = () =>
+    vi
+      .mocked(navigator.mediaDevices.getUserMedia)
+      .mock.calls.filter(([c]) => !!(c as MediaStreamConstraints).video);
+
+  it('accepts a VIDEO invite as an audio call and never asks for a camera', async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: true,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+    expect(service.incomingHasVideo).toBe(false);
+
+    // Even an explicit `video: true` from a caller of the API.
+    const accepted = service.acceptCall('group-1', 'room-1', true);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled();
+    expect(videoAsked()).toHaveLength(0);
+    expect(cameras).toHaveLength(0);
+  });
+
+  it('places an audio call when asked for video, and the invite says no video', async () => {
+    const service = new CallService(fakeMls);
+    const started = service.startCall('group-1', true);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await started;
+
+    expect(videoAsked()).toHaveLength(0);
+    const { apiFetch } = await import('$lib/utils/apiFetch');
+    const ring = vi
+      .mocked(apiFetch)
+      .mock.calls.find(([url]) => String(url).includes('/calls/ring'));
+    expect(JSON.parse(String((ring![1] as RequestInit).body)).hasVideo).toBe(false);
+  });
+
+  it('never opens the camera from the call screen', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+
+    await service.toggleVideo();
+    expect(videoAsked()).toHaveLength(0);
+    expect(FakePeerConnection.instances[0].senders.filter((x) => x.track)).toHaveLength(1);
+  });
+
+  it("receives the peer's video under its transforms and never shows it", async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    const pc = FakePeerConnection.instances[0];
+
+    const created = pc.remoteOfferAdds('video');
+    // Decrypted, so the E2E path check still judges this m-line rather than ending the call.
+    expect((created.receiver.transform as FakeTransform).options.side).toBe('receiver');
+    const shown = get(service.remoteStream)?.getTracks() ?? [];
+    expect(shown.some((t) => (t as MediaStreamTrack).kind === 'video')).toBe(false);
   });
 });
