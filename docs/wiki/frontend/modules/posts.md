@@ -1469,6 +1469,14 @@ card is part of the owed reading. Adding `manipulation` to the card would inters
 `pan-y pinch-zoom` and change nothing, so the #1223 tab-swipe rules are untouched: a double tap has no
 travel, so it never engages the tab swipe, the reel viewer's swipe or the reply swipe.
 
+**What it logs (2026-10-21).** One `[doubleTapLike]` line per decision and none per move or per
+scroll: `press ended (<pointerType>)` for a press that stayed a tap, `click (detail N, <kind>)` for
+each click, `sequence ended: <why>` when a sequence under way ends, `double tap` on the like. A WebView
+nobody can inspect (TestFlight) thus shows whether the presses, the clicks, or neither reached the
+card. It was added after DT-IOS: a native XCUITest double tap never liked on the iPhone 12 while real
+W3C two-tap sequences did, so the detector was NOT changed - a pointer-driven detector waits for a
+finger that reproduces two presses with no click after them.
+
 **Pinned:** `doubleTapLike.test.ts` (window, slop, a third tap, a control's taps, a control between
 two taps, no pointer, a second finger, a drag, a press inside the slop, a selection, a held media
 tap opened once / spent on a double / dropped by a drag / not replayed once removed / dropped on
