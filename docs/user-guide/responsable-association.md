@@ -139,6 +139,11 @@ Dans l'onglet **Formulaires** :
     ne s'est pas presente.
 - Exportez les reponses en **fichier Excel** (.xlsx) via le bouton **"Exporter"**.
 
+### Formulaire public (personnes sans compte)
+
+Un formulaire peut etre rempli, et paye, par des personnes sans compte Canari depuis un
+simple lien : voir [Formulaires publics](formulaires-publics.md).
+
 ### Rappels automatiques
 
 Le systeme envoie automatiquement une notification push aux utilisateurs qui ont "suivi" le
