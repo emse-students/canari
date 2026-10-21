@@ -1719,6 +1719,22 @@ export class MessagingService {
         });
       }
       this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'COMMIT');
+      // AND THE DEVICE IS THE CALLER'S: the commit activates `senderId:deviceId`, so a device
+      // registered to anyone else is refused. The static KeyPackage row is the registry.
+      const registered = await this.keyPackageRepo.findOne({
+        where: { deviceId },
+        select: { userId: true, deviceId: true },
+      });
+      if (!registered || registered.userId.toLowerCase() !== body.senderId.toLowerCase()) {
+        this.logger.warn(
+          `[COMMIT][${traceId}] REJECT device_not_owned group=${groupId} device=${deviceId} ` +
+            `sender=${sanitizeLogValue(body.senderId)} registered=${registered ? 'other' : 'none'}`
+        );
+        throw new ForbiddenException({
+          error: 'device_not_owned',
+          message: 'this device is not registered to the committer',
+        });
+      }
     }
     const baseEpoch =
       typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)

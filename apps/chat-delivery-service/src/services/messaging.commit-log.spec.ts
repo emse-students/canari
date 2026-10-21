@@ -95,7 +95,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   // so the promotion tests keep testing promotion; the refusal tests set them explicitly.
   const keyPackageRepo = {
     find: jest.fn(),
-    findOne: jest.fn().mockResolvedValue({ id: 'kp-1' }),
+    findOne: jest.fn().mockResolvedValue({ id: 'kp-1', userId: 'user-1', deviceId: 'device-1' }),
     save: jest.fn(),
     delete: jest.fn(),
     create: jest.fn(),
@@ -143,7 +143,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     // Default: the committer is already an active member, so the promotion path stays inert
     // unless a test explicitly makes the row absent.
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
-    keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1' });
+    keyPackageRepo.findOne.mockResolvedValue({
+      id: 'kp-1',
+      userId: 'user-1',
+      deviceId: 'device-1',
+    });
     revokedDeviceRepo.findOne.mockResolvedValue(null);
     txGroupInfoRepo.findOne.mockResolvedValue(null);
     txGroupInfoRepo.createQueryBuilder.mockImplementation((): unknown => ({
@@ -628,6 +632,26 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       await expect(commit({}, 'user-2')).rejects.toBeInstanceOf(ForbiddenException);
       expect(transaction).not.toHaveBeenCalled();
       expect(sent).not.toHaveBeenCalled();
+    });
+
+    it("refuses a commit naming someone else's device, before the epoch moves", async () => {
+      keyPackageRepo.findOne.mockResolvedValue({ userId: 'user-2', deviceId: 'device-1' });
+      const sent = fanOut();
+
+      await expect(commit({}, 'user-1')).rejects.toMatchObject({
+        response: { error: 'device_not_owned' },
+      });
+      expect(transaction).not.toHaveBeenCalled();
+      expect(sent).not.toHaveBeenCalled();
+    });
+
+    it('refuses a commit from a device registered to nobody', async () => {
+      keyPackageRepo.findOne.mockResolvedValue(null);
+
+      await expect(commit({}, 'user-1')).rejects.toMatchObject({
+        response: { error: 'device_not_owned' },
+      });
+      expect(transaction).not.toHaveBeenCalled();
     });
 
     it('refuses a client commit that names no sender', async () => {
