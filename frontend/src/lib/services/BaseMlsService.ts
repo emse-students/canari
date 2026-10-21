@@ -107,7 +107,7 @@ import {
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { getToken } from '$lib/stores/auth';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
-import { fromBase64, toBase64 } from '$lib/utils/hex';
+import { fromBase64, MlsStateWriteRefusedError, toBase64 } from '$lib/utils/hex';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
@@ -2614,23 +2614,44 @@ export abstract class BaseMlsService implements IMlsService {
    * Leaving a new id in localStorage next to the old blob is what made the churn self-sustaining -
    * every launch mismatched again and minted yet another device.
    *
+   * PERSIST FIRST, THEN THE DURABLE SIDE EFFECTS (2026-10-21). A web checkpoint now REJECTS when the
+   * version guard refuses it, which means another document - another tab of this account - wrote the
+   * stored state after this one loaded. The id in `localStorage`, the send ledger and the server's
+   * device row are shared with that document, so they move only once the fresh state is on disk. On
+   * a refusal the in-memory ids go back to the old one (what the store and `localStorage` still
+   * name), the old device is NOT deleted - the other document may be serving it - and the refusal
+   * propagates: init fails rather than run a session on an identity nothing durable records, and a
+   * revocation's key package round fails and rotates again on its next round.
+   *
    * @returns the id that was abandoned, for the caller to log.
    */
   protected async rotateDeviceIdentity(deviceKeyB64: string, reason: string): Promise<string> {
     const oldDeviceId = this.deviceId;
+    const oldStateWasExpected = this.stateWasExpected;
     console.warn(`[MLS] Rotating device identity (${reason}), abandoning ${oldDeviceId}`);
     this.deviceId = this.generateDeviceId(this.userId);
-    localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
     this.delivery.deviceId = this.deviceId;
     // A brand new identity has never held a state, and the load below deliberately passes none.
     // Left true, the abandonment of a device would report itself as a loss.
     this.stateWasExpected = false;
-    // The counters describe the ratchets of the device being abandoned, whose state is about to be
-    // discarded for a fresh one starting at generation zero. Carried over, they would burn against
-    // sends that, from the peers' side, this device has never made.
-    resetSendRatchetLedger(this.userId);
     await this.loadStateWithKey(deviceKeyB64, undefined);
-    await this.persistCheckpoint();
+    try {
+      await this.persistCheckpoint();
+    } catch (e) {
+      if (!(e instanceof MlsStateWriteRefusedError)) throw e;
+      console.error(
+        `[MLS] Device identity rotation ABORTED: another document wrote this account's state (${e.outcome}), so ${this.deviceId} is on no disk - keeping ${oldDeviceId} and its server row`
+      );
+      this.deviceId = oldDeviceId;
+      this.delivery.deviceId = oldDeviceId;
+      this.stateWasExpected = oldStateWasExpected;
+      throw e;
+    }
+    localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
+    // The counters describe the ratchets of the device being abandoned, whose state was discarded
+    // for a fresh one starting at generation zero. Carried over, they would burn against sends
+    // that, from the peers' side, this device has never made.
+    resetSendRatchetLedger(this.userId);
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
     // our fresh state no longer holds (NoMatchingKeyPackage). Best-effort: a revoked id is already
     // gone server-side, and a mismatch must not block on the network.

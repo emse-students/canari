@@ -6,6 +6,7 @@ import {
   persistMlsStructuralCheckpoint,
 } from './mlsStatePersisterRegistry';
 import { flushMacrotask } from '../../test/flush';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 
 vi.mock('$lib/utils/scheduling/yieldToMainThread', () => ({
   yieldToMainThread: vi.fn().mockResolvedValue(undefined),
@@ -246,6 +247,27 @@ describe('createMlsStatePersister', () => {
     await expect(persister.flush()).rejects.toThrow('disk full');
     await persister.flush();
 
+    expect(persistCheckpoint).toHaveBeenCalledTimes(2);
+  });
+
+  it('a checkpoint REFUSED by the version guard rejects typed, stays dirty, and adds no line', async () => {
+    // The guard has said it in the one line that names both versions; the persister repeating it
+    // was the second of four lines per refusal.
+    const log = vi.fn();
+    const persistCheckpoint = vi
+      .fn()
+      .mockRejectedValueOnce(new MlsStateWriteRefusedError('collision'))
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValue(undefined);
+    const persister = createMlsStatePersister({ mlsService: { persistCheckpoint } as any, log });
+
+    persister.scheduleDeferred();
+    await expect(persister.flush()).rejects.toBeInstanceOf(MlsStateWriteRefusedError);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('checkpoint failed'));
+
+    // Still dirty, so the next flush writes it; a failure of another kind is still reported.
+    await expect(persister.flush()).rejects.toThrow('disk full');
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('checkpoint failed'));
     expect(persistCheckpoint).toHaveBeenCalledTimes(2);
   });
 

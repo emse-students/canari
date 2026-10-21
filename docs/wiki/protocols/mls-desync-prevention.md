@@ -565,3 +565,48 @@ MLS lock nor anything a flusher holds (`awaitRustMutations` waits only for `oubl
 
 Pinned by `mlsStatePersister.test.ts` ("a flush asked while a checkpoint is running", "a checkpoint
 that FAILED leaves the state dirty"), both failing on the previous shape.
+
+### A web checkpoint resolves only when its state is on disk (2026-10-21)
+
+`WebMlsService.writeCheckpoint` used to resolve on every outcome of the version guard
+(`saveMlsStateEncrypted`, `utils/hex.ts`). So when the guard dropped the write, every waiter of
+`persistCheckpoint` still declared that state durable: the send ledger, the history marks,
+`externalJoin`. When the stored blob is another tab's, those markers land in the `localStorage`
+both tabs share.
+
+**The guard now tells its own document from another one.** `hex.ts` records the version this
+document last wrote, per account, once the transaction commits. An untagged write (a restore or a
+migration) clears the record. An older write then has two outcomes:
+
+- **`superseded`**: the stored version is this document's own. Its counter is per document and
+  monotonic, so that later capture holds everything the refused one did. This is the ordinary case
+  when a direct `persistCheckpoint` (watchdog, burn, rotation, registry fallback) lands before a
+  slower persister flight. It is silent, and a checkpoint resolves on it.
+- **`stale`**: the stored version is another document's. This is a refusal.
+
+`collision` (two documents reached the same version) stays a refusal, now at `warn` because it fails
+a checkpoint. A device key change still requires `written`: a newer blob of this document may still
+be sealed under the old key.
+
+The own-document record was chosen over routing the direct callers through the persister. The
+record is one fact, kept where the decision is made. Re-routing would touch four call sites, and the
+fifth one written later would reopen the hole.
+
+**One line per refusal.** The guard's line names the refused version, the stored one, and what this
+document last wrote. `writeCheckpoint` rejects typed (`MlsStateWriteRefusedError`) and says nothing
+more, and the persister no longer repeats a typed refusal. A caller whose consequence is its own
+still says so: `externalJoin`'s fork accusation, and the rotation's abort.
+
+**The rotation persists first** (`BaseMlsService.rotateDeviceIdentity`). The fresh identity is
+loaded and checkpointed before anything shared moves: the id in `localStorage`, the send ledger and
+the old device's server row. On a refusal, another document wrote this account's state after this
+one loaded. The in-memory ids return to the old one, the old device is not deleted (the other
+document may be serving it), and the refusal propagates. Init fails rather than run a session on an
+identity no disk records, and a revoked device's key package round fails and rotates again on its
+next round.
+
+Pinned by `hex.mlsVersion.test.ts` (superseded versus stale, untagged writes), `WebMlsService.changeDeviceKey.test.ts`
+("WebMlsService.writeCheckpoint"), `mlsStatePersister.test.ts` (a refused checkpoint adds no line),
+`BaseMlsService.externalJoin.test.ts` (no fork accusation for an own-document stale write, one for a
+foreign one), `BaseMlsService.deviceRevoked.test.ts` and `WebMlsService.legacyMigration.test.ts`
+(the refused rotation). Each was mutation-checked.

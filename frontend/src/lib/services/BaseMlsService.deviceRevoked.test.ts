@@ -6,6 +6,7 @@ vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 import { BaseMlsService } from './BaseMlsService';
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
 import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 
 /**
  * Guards the recovery from a server-side revocation.
@@ -67,6 +68,25 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
 
     await expect(generateKeyPackage(ctx)).rejects.toBeInstanceOf(DeviceRevokedError);
     expect(impl).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails the round, identity untouched, when the re-enrolment checkpoint is REFUSED', async () => {
+    // Another document wrote this account's state, so the fresh identity is on no disk: nothing
+    // shared may name it yet. The next round meets the revocation again and rotates again.
+    const impl = vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked'));
+    const ctx = makeCtx({
+      generateKeyPackageImpl: impl,
+      persistCheckpoint: vi.fn().mockRejectedValue(new MlsStateWriteRefusedError('collision')),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(generateKeyPackage(ctx)).rejects.toBeInstanceOf(MlsStateWriteRefusedError);
+    error.mockRestore();
+    expect(ctx.deviceId).toBe('d-revoked');
+    expect(ctx.delivery.deviceId).toBe('d-revoked');
+    expect(localStorage.getItem('mls_device_id_u')).toBeNull();
+    expect(ctx.deleteDevice).not.toHaveBeenCalled();
+    expect(impl).toHaveBeenCalledTimes(1);
   });
 
   it('leaves any other failure alone, identity untouched', async () => {

@@ -939,9 +939,20 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
-  /** Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over. */
+  /**
+   * Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over.
+   *
+   * A CHECKPOINT THAT RESOLVES MEANS THIS STATE IS ON DISK (2026-10-21). It used to resolve on any
+   * outcome of the version guard, so every waiter - the send ledger, the history marks,
+   * `externalJoin` - declared durable a state the store did not hold. It resolves on `written`, and
+   * on `superseded` (this document's own later capture is stored, a superset of this one), and
+   * rejects typed on `stale` and `collision`, where the stored blob is another document's. Silent:
+   * the guard has already said it in one line.
+   */
   protected async writeCheckpoint(deviceKeyB64: string): Promise<void> {
-    await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
+    const outcome = await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
+    if (outcome === 'stale' || outcome === 'collision')
+      throw new MlsStateWriteRefusedError(outcome);
   }
 
   /** WASM client wrapper - burns `count` send generations, discarding every frame it produces. */

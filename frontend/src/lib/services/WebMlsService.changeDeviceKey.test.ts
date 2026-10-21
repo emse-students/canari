@@ -32,13 +32,54 @@ describe('WebMlsService.changeDeviceKeyImpl', () => {
     await expect(changeDeviceKeyImpl('k')).resolves.toBeUndefined();
   });
 
-  it.each(['stale', 'collision'] as const)(
+  // `superseded` too: the re-seal must land ITSELF, and a newer blob of this document may still be
+  // sealed under the old key.
+  it.each(['superseded', 'stale', 'collision'] as const)(
     'FAILS, typed, when the version guard drops the write (%s)',
     async (outcome) => {
       saveMlsState.mockResolvedValueOnce(outcome);
       const failure = await changeDeviceKeyImpl('k').catch((e: unknown) => e);
       expect(failure).toBeInstanceOf(MlsStateWriteRefusedError);
       expect((failure as MlsStateWriteRefusedError).outcome).toBe(outcome);
+    }
+  );
+});
+
+/**
+ * A CHECKPOINT THAT RESOLVES IS A CHECKPOINT ON DISK. Every waiter of `persistCheckpoint` - the send
+ * ledger, the history marks, `externalJoin` - reads a resolution as "this state is durable"; a write
+ * the guard dropped used to resolve all the same.
+ */
+describe('WebMlsService.writeCheckpoint', () => {
+  function writeCheckpoint(): Promise<void> {
+    const ctx = { userId: 'u1', saveState: vi.fn().mockResolvedValue(new Uint8Array([7])) };
+    return (
+      WebMlsService.prototype['writeCheckpoint'] as (this: unknown, k: string) => Promise<void>
+    ).call(ctx, 'k');
+  }
+
+  it.each(['written', 'superseded'] as const)(
+    'resolves, silently, when the state is on disk (%s)',
+    async (outcome) => {
+      saveMlsState.mockResolvedValueOnce(outcome);
+      const warn = vi.spyOn(console, 'warn');
+      await expect(writeCheckpoint()).resolves.toBeUndefined();
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    }
+  );
+
+  it.each(['stale', 'collision'] as const)(
+    "REJECTS, typed and silently, when the stored blob is another document's (%s)",
+    async (outcome) => {
+      saveMlsState.mockResolvedValueOnce(outcome);
+      const warn = vi.spyOn(console, 'warn');
+      const failure = await writeCheckpoint().catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(MlsStateWriteRefusedError);
+      expect((failure as MlsStateWriteRefusedError).outcome).toBe(outcome);
+      // The guard said it, once; this layer only carries the type.
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
     }
   );
 });
