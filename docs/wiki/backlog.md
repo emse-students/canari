@@ -1727,6 +1727,10 @@ Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come 
 8. **Contact.** This conversation only; no push notification.
 9. **Incoming share (Android)** is erased at sign-out and at account switch. This REVERSES the earlier documented decision, which kept it. **iOS share lot S4 is left aside** until an App ID and a provisioning profile exist.
 10. **The local estate was stopped.**
+11. **Privacy texts for calls (#2183) and lives (#2199).** The lead may publish them as drafted, together with the production activation, AFTER an opus review covering GDPR, minors and recording.
+12. **Lives on R2 (#2211), decisions O-1 to O-7.** The lead decides following the recommendations in that pull request and records EACH decision here with the measurement that justifies it. No visible viewer cap; the technique follows.
+13. **Store questionnaires and pieces** (App Store privacy answers and the review video for lives, #2196; Play data safety, calls B14, #2188). The lead submits only what accompanies a stable it cut, and NEVER changes a data declaration without the user.
+14. **Production incident during the window.** The lead may cut a kill switch, restart a container, or redeploy the previous stable. Nothing destructive: no data deletion, no reverse migration, and no admin bypass without writing to the user first in the conversation.
 
 ## P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167
 
