@@ -1,4 +1,4 @@
-import type { IMlsService } from './IMlsService';
+import type { BulkIngestPhase, IMlsService } from './IMlsService';
 import { recordMlsSaveStateMs } from './catchupBenchmark';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 
@@ -8,10 +8,11 @@ export interface MlsStatePersisterConfig {
   log?: (msg: string) => void;
   /**
    * MEASUREMENT SWITCH, DEFAULT 0 = OFF, and off is exactly the behaviour this file always had.
-   * When positive, a drain that only RECEIVED application frames (nothing called `persistNow`
-   * since the last checkpoint) leaves its checkpoint to the next trigger that already exists - a
-   * send, a commit, `flush` on background or logout - for up to this many drains in a row, then
-   * checkpoints anyway. A COUNT, never a clock. See `receiveCheckpointSkipBudget`.
+   * When positive, a LIVE drain that only RECEIVED application frames (no `persistNow` and no
+   * history-replay window since the last checkpoint) leaves its checkpoint to the next trigger that
+   * already exists - a send, a commit, `flush` on background or logout - while fewer than this many
+   * application FRAMES (ratchet generations, not drains) are unsaved, then checkpoints. A COUNT,
+   * never a clock. See `receiveCheckpointSkipBudget`.
    */
   receiveSkipBudget?: number;
 }
@@ -31,8 +32,11 @@ export interface MlsStatePersister {
   flushEncrypted(): Promise<void>;
   /** Called when bulk message ingest starts - defers disk writes until ingest ends. */
   onBulkIngestStart(): void;
-  /** Called when bulk ingest ends - encrypted flush if state changed during ingest. */
-  onBulkIngestEnd(): Promise<void>;
+  /**
+   * Called when bulk ingest ends - encrypted flush if state changed during ingest. `phase` is the
+   * window's own phase; only a live drain (`bufferUi`) may ever be skipped by the measurement switch.
+   */
+  onBulkIngestEnd(phase?: BulkIngestPhase): Promise<void>;
 }
 
 /**
@@ -55,8 +59,8 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
   let bulkIngestDepth = 0;
   /** A commit, a Welcome or a structural change asked for durability since the last checkpoint. */
   let urgentSinceCheckpoint = false;
-  /** Receive-only drains whose checkpoint was skipped since the last checkpoint. */
-  let skippedReceiveDrains = 0;
+  /** Application frames decrypted since the last checkpoint started (ratchet generations unsaved). */
+  let framesSinceCheckpoint = 0;
 
   async function runSaveEncrypted(): Promise<void> {
     await yieldToMainThread();
@@ -79,10 +83,16 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
   function startFlight(): Promise<void> {
     if (!dirtyEncrypted) return Promise.resolve();
     dirtyEncrypted = false;
+    // Reset now, restored below if the write fails: what changes DURING the write belongs to the
+    // next checkpoint, but what this one was meant to cover is still owed after a failure.
+    const urgentAtStart = urgentSinceCheckpoint;
+    const framesAtStart = framesSinceCheckpoint;
     urgentSinceCheckpoint = false;
-    skippedReceiveDrains = 0;
+    framesSinceCheckpoint = 0;
     inFlightEncrypted = runSaveEncrypted()
       .catch((e) => {
+        urgentSinceCheckpoint = urgentSinceCheckpoint || urgentAtStart;
+        framesSinceCheckpoint += framesAtStart;
         // A FAILED WRITE LEAVES THE STATE AHEAD OF THE DISK, so it is dirty again: the next trigger
         // must write it. Clearing the flag at the start and never raising it again left a state that
         // no later `flush` would ever write until something else marked it.
@@ -132,6 +142,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
 
   function scheduleDeferred(): void {
     dirtyEncrypted = true;
+    framesSinceCheckpoint += 1;
   }
 
   function persistNow(): void {
@@ -176,20 +187,24 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
      * recover by replaying from the server. The outbound half, which cannot be recovered that way,
      * is checkpointed on the send path instead (`BaseMlsService.sendMessage`).
      */
-    async onBulkIngestEnd() {
+    async onBulkIngestEnd(phase?: BulkIngestPhase) {
+      // A WINDOW THAT IS NOT A LIVE DRAIN (a history replay, a restore) saves a stream cursor and
+      // seen hashes of its own once it closes, which must never get ahead of the MLS state: it
+      // makes the outermost close checkpoint, even when it closes inside a live drain.
+      if (receiveSkipBudget > 0 && phase?.bufferUi !== true) urgentSinceCheckpoint = true;
       bulkIngestDepth = Math.max(0, bulkIngestDepth - 1);
       if (bulkIngestDepth > 0) return;
       if (
         receiveSkipBudget > 0 &&
         !urgentSinceCheckpoint &&
-        skippedReceiveDrains < receiveSkipBudget
+        framesSinceCheckpoint < receiveSkipBudget
       ) {
-        // Receive-only drain inside the budget: the state stays dirty in memory and the next
-        // trigger (a send, a commit, `flush` on background or logout) writes it.
-        skippedReceiveDrains += 1;
+        // Live receive-only drain with fewer unsaved frames than the budget: the state stays dirty
+        // in memory and the next trigger (a send, a commit, `flush` on background or logout)
+        // writes it. One drain of hundreds of frames reaches the budget and checkpoints here.
         dirtyEncrypted = true;
         console.warn(
-          `[MLS] MEASUREMENT SWITCH ON: checkpoint skipped after a receive-only drain (${skippedReceiveDrains}/${receiveSkipBudget})`
+          `[MLS] MEASUREMENT SWITCH ON: checkpoint skipped after a live receive-only drain (${framesSinceCheckpoint}/${receiveSkipBudget} frames unsaved)`
         );
         return;
       }
