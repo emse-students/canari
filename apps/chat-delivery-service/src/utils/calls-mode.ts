@@ -1,3 +1,4 @@
+import type { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 
 /**
@@ -15,24 +16,33 @@ import type { EntityManager } from 'typeorm';
  */
 export type CallsMode = 'off' | 'audio' | 'audio_video';
 
-const CALLS_MODES: readonly string[] = ['off', 'audio', 'audio_video'];
+/** The three values, the same list as the column's CHECK (asserted across every copy). */
+export const CALLS_MODES: readonly CallsMode[] = ['off', 'audio', 'audio_video'];
 
 /**
  * The mode as the database holds it RIGHT NOW. Read on every call request, never cached: a kill
  * must hold from the next request, not from the next cache expiry.
  *
  * Absent row: `off`, which is the column's default - core creates the row at boot, so an absent row
- * is a database core-service has not started against yet, and nothing may call on it. A value
+ * is a database core-service has not started against yet, and nothing may call on it. Logged at
+ * ERROR, apart from a real `off`: a closed switch is a decision, a missing row is a defect. A value
  * outside the three is a defect (the CHECK constraint forbids it) and THROWS: a switch that cannot
  * be read is not read as open. A failed query throws too, and the request answers 500 - the call
  * does not start, which is the safe direction for a kill switch.
  */
-export async function readCallsMode(manager: EntityManager): Promise<CallsMode> {
+export async function readCallsMode(manager: EntityManager, logger: Logger): Promise<CallsMode> {
   const rows: { calls_mode?: unknown }[] = await manager.query(
     `SELECT calls_mode FROM platform_config WHERE id = 1 LIMIT 1`
   );
-  if (rows.length === 0) return 'off';
+  if (rows.length === 0) {
+    logger.error(
+      '[call] platform_config row 1 is MISSING - calls read as off (has core-service booted against this database?)'
+    );
+    return 'off';
+  }
   const value = rows[0]?.calls_mode;
-  if (typeof value === 'string' && CALLS_MODES.includes(value)) return value as CallsMode;
+  if (typeof value === 'string' && (CALLS_MODES as readonly string[]).includes(value)) {
+    return value as CallsMode;
+  }
   throw new Error(`platform_config.calls_mode holds an unknown value: ${String(value)}`);
 }

@@ -136,18 +136,30 @@ describe('admin/platform minClientVersion', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it('sends the calls kill switch back as loaded: an unrelated save never reopens or closes calls', async () => {
+  // A STALE FORM MUST NOT UNDO ANOTHER ADMIN. The save used to PATCH every field as it was loaded,
+  // so a page left open while someone else closed calls re-opened them on an unrelated save.
+  it('sends only what changed: an unrelated save never names the calls kill switch', async () => {
     route(
       () => new Response(JSON.stringify({ ...CONFIG, minClientVersion: '1.2.8' }), { status: 200 })
     );
     await render();
     await submitWith('1.2.8');
 
-    const body = JSON.parse((patchCalls()[0][1] as { body: string }).body) as {
-      callsMode: string;
-    };
-    expect(body.callsMode).toBe('audio');
+    const body = JSON.parse((patchCalls()[0][1] as { body: string }).body) as unknown;
+    expect(body).toEqual({ minClientVersion: '1.2.8' });
     expect(document.body.textContent).toContain(m.admin_platform_calls_mode_label());
+  });
+
+  it('diffs the next save against the server answer, not the first load', async () => {
+    route(
+      () => new Response(JSON.stringify({ ...CONFIG, minClientVersion: '1.2.8' }), { status: 200 })
+    );
+    await render();
+    await submitWith('1.2.8');
+    await submitWith('1.2.8');
+
+    expect(patchCalls()).toHaveLength(2);
+    expect(JSON.parse((patchCalls()[1][1] as { body: string }).body)).toEqual({});
   });
 
   it('sends a non-admin away before any request is made', async () => {

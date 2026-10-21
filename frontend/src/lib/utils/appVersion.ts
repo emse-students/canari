@@ -45,6 +45,13 @@ export type PlatformMaintenanceInfo = {
  */
 export type CallsMode = 'off' | 'audio' | 'audio_video';
 
+/**
+ * Every value of {@link CallsMode}, for the admin picker and the agreement test. FIVE COPIES of these
+ * three strings exist (the SQL CHECK, core's entity, chat-delivery's reader, this, the admin page
+ * through this) and `callsModesAgree.test.ts` fails the day one of them drifts.
+ */
+export const CALLS_MODES: readonly CallsMode[] = ['off', 'audio', 'audio_video'];
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;
@@ -83,7 +90,7 @@ function normalizeMaintenance(raw: unknown): PlatformMaintenanceInfo {
  */
 function normalizeCallsMode(raw: unknown): CallsMode {
   const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
-  return mode === 'audio' || mode === 'audio_video' ? mode : 'off';
+  return CALLS_MODES.find((known) => known === mode) ?? 'off';
 }
 
 /** Parses `/api/version` JSON into a normalized {@link ServerVersionInfo}. */
@@ -103,6 +110,26 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     minClientVersion: minRaw || '0.0.0',
     maintenance: normalizeMaintenance(obj.maintenance),
     callsMode: normalizeCallsMode(obj.calls),
+  };
+}
+
+/**
+ * The `/api/version` body a {@link ServerVersionInfo} came from - its inverse, so a cached copy is
+ * stored in the SAME shape it is read back with. Storing the parsed shape instead (`callsMode` at
+ * the top) and re-parsing it with {@link parseServerVersionInfo} (which reads `calls.mode`) read
+ * every cached mode back as `off`.
+ */
+export function serverVersionInfoToWire(info: ServerVersionInfo): {
+  version: string;
+  minClientVersion: string;
+  maintenance: PlatformMaintenanceInfo;
+  calls: { mode: CallsMode };
+} {
+  return {
+    version: info.version,
+    minClientVersion: info.minClientVersion,
+    maintenance: info.maintenance,
+    calls: { mode: info.callsMode },
   };
 }
 /**

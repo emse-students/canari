@@ -721,7 +721,9 @@
               speakerDisabled
             )}
           {/if}
-          {#if callVideoAvailable(serverCallsMode())}
+          <!-- The switch gates turning the camera ON, never OFF: the mode can drop to audio mid-call,
+               and a control that vanished then would leave a running camera nobody can stop. -->
+          {#if callVideoAvailable(serverCallsMode()) || !call.isVideoOff}
             {#snippet videoIcon()}
               {#if call.isVideoOff}<VideoOff size={26} />{:else}<Video size={26} />{/if}
             {/snippet}

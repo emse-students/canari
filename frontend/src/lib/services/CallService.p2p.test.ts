@@ -59,6 +59,8 @@ const server = {
   ringTimeoutMs: 60_000,
   initiateStatus: 200,
   iceStatus: 200,
+  /** The `turn` field of the ICE answer: `available` unless a test withholds the relay (B7). */
+  iceTurn: { status: 'available' } as { status: string; code?: string },
   ringStatus: 200,
   roomTokenStatus: 200,
   /** When set, the ring request waits for it: a test can act while the ring is in flight. */
@@ -80,7 +82,8 @@ vi.mock('$lib/utils/apiFetch', () => ({
       );
     if (url.includes('/api/calls/room-token'))
       return json({ roomToken: 'rt-2' }, server.roomTokenStatus);
-    if (url.includes('/api/calls/ice-servers')) return json({ iceServers: ICE }, server.iceStatus);
+    if (url.includes('/api/calls/ice-servers'))
+      return json({ iceServers: ICE, turn: server.iceTurn }, server.iceStatus);
     if (url.includes('/api/calls/ring-end')) return json({});
     if (url.includes('/api/calls/ring')) return json({ rang: 1 }, server.ringStatus);
     return json({});
@@ -516,6 +519,7 @@ beforeEach(() => {
   server.ringTimeoutMs = 60_000;
   server.initiateStatus = 200;
   server.iceStatus = 200;
+  server.iceTurn = { status: 'available' };
   server.ringStatus = 200;
   server.roomTokenStatus = 200;
   server.ringHold = null;
@@ -1894,6 +1898,43 @@ describe('a refused answer', () => {
     // The one MLS frame is the hangup; the answered frame never left.
     expect(order.filter((o) => o === 'mls')).toHaveLength(1);
     expect(order).not.toContain('api:/api/calls/ice-servers');
+  });
+});
+
+/**
+ * B7: a spent relay budget or an unreadable meter withholds TURN, never the call. The server answers
+ * STUN only, typed; the client goes on with the direct path and says so at error.
+ */
+describe('a call whose TURN relay the server withheld', () => {
+  it.each(['TURN_BUDGET_REACHED', 'TURN_METER_UNAVAILABLE'])(
+    'still starts on the direct path, and logs %s at error',
+    async (code) => {
+      server.iceTurn = { status: 'unavailable', code };
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      vi.mocked(appendLog).mockClear();
+      const service = new CallService(fakeMls);
+
+      await callerJoined(service);
+
+      expect(order).toContain('api:/api/calls/ring');
+      expect(vi.mocked(appendLog).mock.calls.map(([l]) => String(l))).toContain(
+        `[Call] ERROR: TURN relay withheld by the server (${code}) - direct path only`
+      );
+      service.endCall();
+    }
+  );
+
+  it('logs nothing of the kind when the relay is available', async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+
+    await callerJoined(service);
+
+    expect(
+      vi.mocked(appendLog).mock.calls.some(([l]) => String(l).includes('TURN relay withheld'))
+    ).toBe(false);
+    service.endCall();
   });
 });
 

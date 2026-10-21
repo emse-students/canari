@@ -22,7 +22,7 @@ import { resolveUserDisplayName } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
-import { TurnUsageMeter } from './turn-usage-meter.service';
+import { TurnMeterUnavailableError, TurnUsageMeter } from './turn-usage-meter.service';
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -31,10 +31,26 @@ export interface IceServerConfig {
   credential?: string;
 }
 
+/**
+ * Why `ice-servers` withheld TURN. Typed, and carried in a 200: a direct call needs no relay, so
+ * neither reason refuses the call - each only removes the relay leg.
+ * - `TURN_BUDGET_REACHED`: the month's metered relay egress reached the budget.
+ * - `TURN_METER_UNAVAILABLE`: the meter could not be read, so no budget stands behind a credential.
+ */
+export type TurnUnavailableCode = 'TURN_BUDGET_REACHED' | 'TURN_METER_UNAVAILABLE';
+
 /** Response shape for `GET /api/calls/ice-servers`. */
 export interface IceServersResponse {
   iceServers: IceServerConfig[];
+  /** Whether `iceServers` carries a relay; when not, the typed reason. */
+  turn: { status: 'available' } | { status: 'unavailable'; code: TurnUnavailableCode };
 }
+
+/**
+ * Cloudflare's public STUN server: free, no credential, nothing relayed. What `ice-servers` answers
+ * when TURN is withheld, so a call between two reachable devices still finds its direct path.
+ */
+const STUN_ONLY: IceServerConfig[] = [{ urls: 'stun:stun.cloudflare.com:3478' }];
 
 /** Response shape for `POST /api/calls/initiate`. */
 export interface InitiateCallResponse {
@@ -113,10 +129,6 @@ function callAnswerByKey(roomId: string): string {
   return `call:room:${roomId}:answer_by`;
 }
 
-/**
- * Mints short-lived TURN credentials via Cloudflare Calls.
- * Returns HTTP 503 when Cloudflare credentials are not configured.
- */
 /** What `prepareRing` hands the background fan-out. */
 interface RingPlan {
   callerId: string;
@@ -154,7 +166,7 @@ export class CallsService {
    * @param wantsVideo True only for a ring that asks for video - the one request that names it.
    */
   private async assertCallsOpen(scope: string, userId: string, wantsVideo = false): Promise<void> {
-    const mode = await readCallsMode(this.groupMemberRepo.manager);
+    const mode = await readCallsMode(this.groupMemberRepo.manager, this.logger);
     if (mode === 'off') {
       this.logger.log(`[call] ${scope} REFUSED user=${userId}: calls are closed (calls_mode=off)`);
       throw new ForbiddenException({
@@ -371,7 +383,9 @@ export class CallsService {
 
   /**
    * Returns ICE server configuration for an authenticated group member.
-   * Requires a valid `callId` so credentials are scoped per call session.
+   * Requires a valid `callId` so credentials are scoped per call session. 503 when TURN is not
+   * configured at all (a deployment defect); STUN only with a typed `turn.code` when the budget is
+   * spent or its meter unreadable, so a call that needs no relay still connects.
    */
   async getIceServers(
     userId: string,
@@ -400,22 +414,41 @@ export class CallsService {
       throw new ServiceUnavailableException('WebRTC TURN is not configured on this server');
     }
 
-    // Refuse new TURN credentials once the month's METERED relay egress reaches the budget, so the
-    // account never runs past Cloudflare's free allowance into overage. Only relayed bytes are on the
-    // meter: a direct (host or server-reflexive) call costs nothing and counts nothing
-    // (`TurnUsageMeter`, B7).
-    const budgetBytes = this.turnBudgetGb() * 1e9;
-    const usedBytes = await this.turnMeter.monthEgressBytes();
-    if (usedBytes >= budgetBytes) {
-      this.logger.error(
-        `[ICE] Monthly TURN budget reached (${(usedBytes / 1e9).toFixed(1)}/${this.turnBudgetGb()} GB metered egress) - refusing credentials`
-      );
-      throw new ServiceUnavailableException(
-        'Monthly call quota reached on this server. Try again next month.'
-      );
+    // No TURN credential is minted once the month's METERED relay egress reaches the budget, or
+    // while the meter cannot be read: no relay without a budget behind it (`TurnUsageMeter`, B7).
+    //
+    // A TYPED DEGRADATION BY DESIGN, NOT A FALLBACK. Withholding TURN is the decision the budget
+    // exists to make; refusing the whole request instead would also refuse every DIRECT call, which
+    // costs nothing and was never what the budget protects. So the answer is STUN only plus the
+    // typed reason (`turn.code`), logged at ERROR per call - the relay leg is gone and every call
+    // that needed it will fail to connect, which someone must read.
+    const withheld = await this.turnWithheld(callId);
+    if (withheld) {
+      return { iceServers: STUN_ONLY, turn: { status: 'unavailable', code: withheld } };
     }
 
-    return this.fetchCloudflareIceServers(turnKeyId, cloudflareToken);
+    const { iceServers } = await this.fetchCloudflareIceServers(turnKeyId, cloudflareToken);
+    return { iceServers, turn: { status: 'available' } };
+  }
+
+  /** Why TURN must be withheld for this call, or null when a credential may be minted. */
+  private async turnWithheld(callId: string): Promise<TurnUnavailableCode | null> {
+    let usedBytes: number;
+    try {
+      usedBytes = await this.turnMeter.monthEgressBytes();
+    } catch (e) {
+      if (!(e instanceof TurnMeterUnavailableError)) throw e;
+      this.logger.error(
+        `[ICE] call=${callId} TURN withheld (TURN_METER_UNAVAILABLE): ${e.reason} - STUN only, a call that needs a relay will not connect`
+      );
+      return 'TURN_METER_UNAVAILABLE';
+    }
+    const budgetBytes = this.turnBudgetGb() * 1e9;
+    if (usedBytes < budgetBytes) return null;
+    this.logger.error(
+      `[ICE] call=${callId} TURN withheld (TURN_BUDGET_REACHED): ${(usedBytes / 1e9).toFixed(1)}/${this.turnBudgetGb()} GB metered egress this month - STUN only`
+    );
+    return 'TURN_BUDGET_REACHED';
   }
 
   /**
@@ -502,7 +535,7 @@ export class CallsService {
   private async fetchCloudflareIceServers(
     turnKeyId: string,
     apiToken: string
-  ): Promise<IceServersResponse> {
+  ): Promise<{ iceServers: IceServerConfig[] }> {
     const ttl = parseInt(process.env.CLOUDFLARE_TURN_TTL_SECONDS || '7200', 10);
     const url = `https://rtc.live.cloudflare.com/v1/turn/keys/${turnKeyId}/credentials/generate-ice-servers`;
 

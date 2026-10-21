@@ -54,8 +54,14 @@ export class PlatformService implements OnModuleInit {
     return toPublic(row);
   }
 
-  /** Applies a partial update from a global admin and returns the new config. */
-  async updateConfig(dto: UpdatePlatformConfigDto): Promise<PlatformConfigPublic> {
+  /**
+   * Applies a partial update from a global admin and returns the new config. `actor` is the
+   * administrator's user id: the two switches that can shut every client out (the min-version raise
+   * and the calls kill switch) name who moved them, shortened to 8 characters like the other audit
+   * lines - enough to find the account, not a full id copied into every log line.
+   */
+  async updateConfig(dto: UpdatePlatformConfigDto, actor: string): Promise<PlatformConfigPublic> {
+    const by = actor.slice(0, 8);
     await this.ensureDefaults();
     const row = await this.repo.findOneOrFail({ where: { id: 1 } });
 
@@ -102,7 +108,7 @@ export class PlatformService implements OnModuleInit {
       // to be found afterwards.
       if (wanted !== row.minClientVersion) {
         this.logger.warn(
-          `minClientVersion ${row.minClientVersion} -> ${wanted} (deployed ${deployed ?? 'unknown'})`
+          `minClientVersion ${row.minClientVersion} -> ${wanted} (deployed ${deployed ?? 'unknown'}) by=${by}`
         );
       }
       row.minClientVersion = wanted;
@@ -115,7 +121,7 @@ export class PlatformService implements OnModuleInit {
       // call on the estate turns on it, and "who closed calls, when" must be in the log without
       // debug logging having been on.
       if (dto.callsMode !== row.callsMode) {
-        this.logger.warn(`callsMode ${row.callsMode} -> ${dto.callsMode}`);
+        this.logger.warn(`callsMode ${row.callsMode} -> ${dto.callsMode} by=${by}`);
       }
       row.callsMode = dto.callsMode;
     }

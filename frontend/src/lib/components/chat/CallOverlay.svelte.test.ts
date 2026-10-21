@@ -22,9 +22,32 @@ vi.mock('$lib/features', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/features')>()),
   CALLS_VIDEO_ENABLED: true,
 }));
-// ...and the server's kill switch open to video (B12): `audio` hides the camera, tested below.
-const callsMode = vi.hoisted(() => ({ value: 'audio_video' as 'off' | 'audio' | 'audio_video' }));
-vi.mock('$lib/stores/appVersionCheck.svelte', () => ({ serverCallsMode: () => callsMode.value }));
+// ...and the server's kill switch open to video (B12): `audio` hides the camera, tested below. It is
+// REACTIVE like the real store (`set` re-renders what read it), so a flip mid-call can be tested.
+const callsMode = vi.hoisted(() => {
+  const state = {
+    value: 'audio_video' as 'off' | 'audio' | 'audio_video',
+    notify: () => {},
+    set(mode: 'off' | 'audio' | 'audio_video') {
+      state.value = mode;
+      state.notify();
+    },
+  };
+  return state;
+});
+vi.mock('$lib/stores/appVersionCheck.svelte', async () => {
+  const { createSubscriber } = await import('svelte/reactivity');
+  const subscribe = createSubscriber((update) => {
+    callsMode.notify = update;
+    return () => (callsMode.notify = () => {});
+  });
+  return {
+    serverCallsMode: () => {
+      subscribe();
+      return callsMode.value;
+    },
+  };
+});
 const logs = vi.hoisted(() => [] as string[]);
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: (l: string) => logs.push(l) }));
 
@@ -411,6 +434,35 @@ describe('a video call (lot 2)', () => {
       expect(document.querySelector('[data-testid="call-camera"]')).toBeNull();
     } finally {
       callsMode.value = 'audio_video';
+    }
+  });
+
+  // THE SWITCH GATES TURNING THE CAMERA ON, NEVER OFF. The mode moves mid-call when an admin closes
+  // video; hiding the control then would leave a running camera with nothing on screen to stop it.
+  it('keeps the camera control while the camera runs when the mode drops to audio mid-call', async () => {
+    const service = fakeService('incall');
+    const camera = () => document.querySelector<HTMLButtonElement>('[data-testid="call-camera"]');
+    try {
+      await render(service);
+      cameraOn(service);
+      expect(camera()).not.toBeNull();
+
+      callsMode.set('audio');
+      flushSync();
+      expect(camera()).not.toBeNull();
+      camera()!.click();
+      expect(service.toggleVideo).toHaveBeenCalledTimes(1);
+
+      service.isVideoOff.set(true);
+      flushSync();
+      expect(camera()).toBeNull();
+
+      // The flip itself re-renders (the mock is as reactive as the store), so the pass above is real.
+      callsMode.set('audio_video');
+      flushSync();
+      expect(camera()).not.toBeNull();
+    } finally {
+      callsMode.set('audio_video');
     }
   });
 });

@@ -3,6 +3,7 @@ import {
   fetchServerAppVersionReliable,
   isMaintenanceBlockingUser,
   parseServerVersionInfo,
+  serverVersionInfoToWire,
   type AppVersionCheckResult,
   type CallsMode,
 } from '$lib/utils/appVersion';
@@ -27,7 +28,11 @@ function loadCachedServerInfo(): ReturnType<typeof parseServerVersionInfo> {
 function saveCachedServerInfo(info: NonNullable<ReturnType<typeof parseServerVersionInfo>>): void {
   if (typeof sessionStorage === 'undefined') return;
   try {
-    sessionStorage.setItem(CACHED_SERVER_VERSION_KEY, JSON.stringify(info));
+    // The WIRE shape, the one `loadCachedServerInfo` parses: see `serverVersionInfoToWire`.
+    sessionStorage.setItem(
+      CACHED_SERVER_VERSION_KEY,
+      JSON.stringify(serverVersionInfoToWire(info))
+    );
   } catch {
     /* quota / private mode */
   }

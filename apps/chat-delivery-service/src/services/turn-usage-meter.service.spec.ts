@@ -1,23 +1,24 @@
 /// <reference types="jest" />
 
-import { Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import type Redis from 'ioredis';
-import { TurnUsageMeter } from './turn-usage-meter.service';
+import {
+  monthDateChunks,
+  TurnMeterUnavailableError,
+  TurnUsageMeter,
+} from './turn-usage-meter.service';
 
 const ACCOUNT = '0123456789abcdef0123456789abcdef';
+const DAY = 86_400;
 
-/** A GraphQL answer carrying one aggregate group, as Cloudflare returns it with no dimensions. */
-const answer = (egressBytes: unknown, groups = 1) =>
+/** The `settings` answer: the dataset's limits for this token. */
+const settingsAnswer = (maxDuration = 31 * DAY, notOlderThan = 93 * DAY, enabled = true) =>
   new Response(
     JSON.stringify({
       data: {
         viewer: {
           accounts: [
-            {
-              callsTurnUsageAdaptiveGroups: Array.from({ length: groups }, () => ({
-                sum: { egressBytes },
-              })),
-            },
+            { settings: { callsTurnUsageAdaptiveGroups: { enabled, maxDuration, notOlderThan } } },
           ],
         },
       },
@@ -25,6 +26,66 @@ const answer = (egressBytes: unknown, groups = 1) =>
     }),
     { status: 200 }
   );
+
+/** The usage answer: one aliased group list per chunk (`c0`, `c1`, ...). */
+const usageAnswer = (...perChunk: unknown[]) =>
+  new Response(
+    JSON.stringify({
+      data: {
+        viewer: {
+          accounts: [
+            Object.fromEntries(
+              perChunk.map((egress, i) => [
+                `c${i}`,
+                egress === null ? [] : [{ sum: { egressBytes: egress } }],
+              ])
+            ),
+          ],
+        },
+      },
+      errors: null,
+    }),
+    { status: 200 }
+  );
+
+const queryOf = (call: unknown[]): string =>
+  (JSON.parse(String((call[1] as RequestInit).body)) as { query: string }).query;
+
+describe('monthDateChunks (the window, clamped to the dataset limits)', () => {
+  const now = new Date('2026-10-21T12:00:00Z');
+
+  it('asks the whole month in one range when the dataset allows a month', () => {
+    expect(monthDateChunks(now, { maxDuration: 31 * DAY, notOlderThan: 93 * DAY })).toEqual([
+      { from: '2026-10-01', to: '2026-10-21' },
+    ]);
+  });
+
+  it('splits the month into whole-day ranges no wider than maxDuration, dropping no day', () => {
+    expect(monthDateChunks(now, { maxDuration: 7 * DAY + 5, notOlderThan: 93 * DAY })).toEqual([
+      { from: '2026-10-01', to: '2026-10-07' },
+      { from: '2026-10-08', to: '2026-10-14' },
+      { from: '2026-10-15', to: '2026-10-21' },
+    ]);
+  });
+
+  it('reads the first of the month alone on the first of the month', () => {
+    expect(
+      monthDateChunks(new Date('2026-11-01T00:10:00Z'), { maxDuration: DAY, notOlderThan: DAY })
+    ).toEqual([{ from: '2026-11-01', to: '2026-11-01' }]);
+  });
+
+  it('refuses a window under one day - a date filter cannot ask less', () => {
+    expect(() => monthDateChunks(now, { maxDuration: 3600, notOlderThan: 93 * DAY })).toThrow(
+      TurnMeterUnavailableError
+    );
+  });
+
+  it('refuses a retention that does not reach the first of the month - a part would under-count', () => {
+    expect(() => monthDateChunks(now, { maxDuration: 31 * DAY, notOlderThan: 7 * DAY })).toThrow(
+      /less than the/
+    );
+  });
+});
 
 describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
   const store = new Map<string, string>();
@@ -37,6 +98,7 @@ describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
   };
   let meter: TurnUsageMeter;
   let fetchSpy: jest.SpyInstance;
+  let error: jest.SpyInstance;
   const now = new Date('2026-10-21T12:00:00Z');
 
   beforeEach(() => {
@@ -46,7 +108,7 @@ describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
     process.env.CLOUDFLARE_TURN_ANALYTICS_TOKEN = 'analytics-token';
     meter = new TurnUsageMeter(redis as unknown as Redis);
     fetchSpy = jest.spyOn(global, 'fetch');
-    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
     jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
   });
   afterEach(() => {
@@ -55,48 +117,59 @@ describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
     jest.restoreAllMocks();
   });
 
-  it('reads the month s egress, account-wide, from the first of the month to today', async () => {
-    fetchSpy.mockResolvedValue(answer(123_456_789));
+  it('reads the limits, then the month s egress account-wide with the date filter', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(settingsAnswer())
+      .mockResolvedValueOnce(usageAnswer(123_456_789));
 
     await expect(meter.monthEgressBytes(now)).resolves.toBe(123_456_789);
 
-    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('https://api.cloudflare.com/client/v4/graphql');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer analytics-token');
-    const { query } = JSON.parse(String(init.body)) as { query: string };
-    expect(query).toContain('callsTurnUsageAdaptiveGroups');
-    expect(query).toContain(`accountTag: "${ACCOUNT}"`);
-    expect(query).toContain('date_geq: "2026-10-01"');
-    expect(query).toContain('date_leq: "2026-10-21"');
-    expect(query).toContain('egressBytes');
+    const [settingsCall, usageCall] = fetchSpy.mock.calls;
+    expect(settingsCall[0]).toBe('https://api.cloudflare.com/client/v4/graphql');
+    expect((settingsCall[1] as RequestInit).headers).toMatchObject({
+      Authorization: 'Bearer analytics-token',
+    });
+    expect(queryOf(settingsCall)).toContain(
+      'settings { callsTurnUsageAdaptiveGroups { enabled maxDuration notOlderThan } }'
+    );
+    const usage = queryOf(usageCall);
+    expect(usage).toContain(`accountTag: "${ACCOUNT}"`);
+    expect(usage).toContain(
+      'c0: callsTurnUsageAdaptiveGroups(limit: 1, filter: { date_geq: "2026-10-01", date_leq: "2026-10-21" })'
+    );
+    expect(usage).toContain('egressBytes');
     // Account-wide: the free allowance is the account's, so no key narrows the sum.
-    expect(query).not.toContain('keyId');
+    expect(usage).not.toContain('keyId');
   });
 
-  it('reuses one reading for a minute, so a member hammering ice-servers cannot spend the quota', async () => {
-    fetchSpy.mockResolvedValue(answer(42));
+  it('sums the sub-queries when the dataset window is narrower than the month', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(settingsAnswer(7 * DAY))
+      .mockResolvedValueOnce(usageAnswer(100, null, 23));
+
+    await expect(meter.monthEgressBytes(now)).resolves.toBe(123);
+    expect(queryOf(fetchSpy.mock.calls[1])).toContain('c2: callsTurnUsageAdaptiveGroups');
+  });
+
+  it('reuses a reading for a minute and the limits for an hour', async () => {
+    fetchSpy.mockResolvedValueOnce(settingsAnswer()).mockResolvedValueOnce(usageAnswer(42));
 
     await meter.monthEgressBytes(now);
     await meter.monthEgressBytes(now);
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(redis.set).toHaveBeenCalledWith('turn:metered:2026-10', '42', 'EX', 60);
-  });
-
-  it('reads a month with no TURN traffic (no group at all) as zero', async () => {
-    fetchSpy.mockResolvedValue(answer(0, 0));
-
-    await expect(meter.monthEgressBytes(now)).resolves.toBe(0);
+    expect(redis.set).toHaveBeenCalledWith('turn:metered:settings', expect.any(String), 'EX', 3600);
   });
 
   it.each([
     ['no account id', () => delete process.env.CLOUDFLARE_ACCOUNT_ID],
     ['an account id that is not 32 hex', () => (process.env.CLOUDFLARE_ACCOUNT_ID = 'x" } }')],
     ['no token', () => delete process.env.CLOUDFLARE_TURN_ANALYTICS_TOKEN],
-  ])('refuses with a 503 and asks nothing when configured with %s', async (_n, unset) => {
+  ])('is unavailable, asking nothing, when configured with %s', async (_n, unset) => {
     unset();
 
-    await expect(meter.monthEgressBytes(now)).rejects.toThrow(ServiceUnavailableException);
+    await expect(meter.monthEgressBytes(now)).rejects.toThrow(TurnMeterUnavailableError);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -119,11 +192,34 @@ describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
           new Response(JSON.stringify({ data: { viewer: { accounts: [] } } }), { status: 200 })
         ),
     ],
-    ['a sum that is not a number', () => Promise.resolve(answer('lots'))],
-  ])('refuses with a 503 on %s, and caches nothing', async (_n, respond) => {
+    ['a dataset not enabled', () => Promise.resolve(settingsAnswer(31 * DAY, 93 * DAY, false))],
+  ])('is unavailable on %s, typed, logged once, and caches no number', async (_n, respond) => {
     fetchSpy.mockImplementation(respond);
 
-    await expect(meter.monthEgressBytes(now)).rejects.toThrow(ServiceUnavailableException);
-    expect(redis.set).not.toHaveBeenCalled();
+    await expect(meter.monthEgressBytes(now)).rejects.toThrow(TurnMeterUnavailableError);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(store.has('turn:metered:2026-10')).toBe(false);
+  });
+
+  it('is unavailable on a sum that is not a number', async () => {
+    fetchSpy.mockResolvedValueOnce(settingsAnswer()).mockResolvedValueOnce(usageAnswer('lots'));
+
+    await expect(meter.monthEgressBytes(now)).rejects.toThrow(/a non-number/);
+  });
+
+  it('remembers a failure for 30 s: an outage is not one more API call and error per call setup', async () => {
+    fetchSpy.mockResolvedValue(new Response('denied', { status: 403 }));
+
+    await expect(meter.monthEgressBytes(now)).rejects.toThrow(TurnMeterUnavailableError);
+    await expect(meter.monthEgressBytes(now)).rejects.toThrow(/failed less than 30s ago: HTTP 403/);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(redis.set).toHaveBeenCalledWith(
+      'turn:metered:unavailable',
+      expect.stringContaining('HTTP 403'),
+      'EX',
+      30
+    );
   });
 });

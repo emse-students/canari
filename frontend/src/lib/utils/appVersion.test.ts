@@ -23,6 +23,7 @@ import {
   isMobileTauriRuntime,
   parseServerVersionInfo,
   releaseTag,
+  serverVersionInfoToWire,
 } from './appVersion';
 
 describe('compareSemver', () => {
@@ -94,6 +95,23 @@ describe('parseServerVersionInfo', () => {
   ])('reads calls as CLOSED when the field is %s - a kill switch fails closed', (_n, calls) => {
     expect(parseServerVersionInfo({ version: '1.2.3', calls })?.callsMode).toBe('off');
   });
+
+  // THE SESSION CACHE STORES WHAT IT PARSES BACK. It used to store the parsed shape (`callsMode` at
+  // the top) and re-parse it as a wire body (`calls.mode`), so every cached mode came back `off`.
+  it.each(['off', 'audio', 'audio_video'] as const)(
+    'survives the cache round trip with calls %s',
+    (mode) => {
+      const info = parseServerVersionInfo({
+        version: '1.2.3',
+        minClientVersion: '1.0.0',
+        maintenance: { enabled: true, message: 'Pause' },
+        calls: { mode },
+      });
+      expect(info).not.toBeNull();
+      const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+      expect(parseServerVersionInfo(cached)).toEqual(info);
+    }
+  );
 });
 
 describe('getClientAppVersion', () => {

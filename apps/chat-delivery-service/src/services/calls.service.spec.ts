@@ -11,7 +11,7 @@ import {
 import { getApps } from 'firebase-admin/app';
 import { CALL_RING_TIMEOUT_SEC, CallsService } from './calls.service';
 import { ApnsVoipService } from './apns-voip.service';
-import { TurnUsageMeter } from './turn-usage-meter.service';
+import { TurnMeterUnavailableError, TurnUsageMeter } from './turn-usage-meter.service';
 import { GroupMember } from '../entities/group-member.entity';
 import { PushToken } from '../entities/push-token.entity';
 
@@ -165,16 +165,18 @@ describe('CallsService', () => {
     });
     afterEach(() => jest.restoreAllMocks());
 
-    it('refuses TURN credentials once the metered egress reaches the budget', async () => {
-      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    it('withholds TURN once the metered egress reaches the budget, and still answers for a direct call', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
       turnMeter.monthEgressBytes.mockResolvedValue(10e9);
       const fetchSpy = jest.spyOn(global, 'fetch');
 
-      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
-        ServiceUnavailableException
-      );
-      // Refused BEFORE asking Cloudflare for a credential.
+      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).resolves.toEqual({
+        iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }],
+        turn: { status: 'unavailable', code: 'TURN_BUDGET_REACHED' },
+      });
+      // No credential asked of Cloudflare.
       expect(fetchSpy).not.toHaveBeenCalled();
+      expect(captured(error)).toContain('call=call-1 TURN withheld (TURN_BUDGET_REACHED)');
     });
 
     it('mints credentials below the budget, however long the calls of the month lasted', async () => {
@@ -190,20 +192,30 @@ describe('CallsService', () => {
 
       await expect(service.getIceServers('user-1', 'group-1', 'call-1')).resolves.toEqual({
         iceServers: [{ urls: 'turn:turn.example:3478?transport=udp' }],
+        turn: { status: 'available' },
       });
       expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('mints nothing when the meter cannot be read - no credential without a budget', async () => {
-      turnMeter.monthEgressBytes.mockRejectedValue(
-        new ServiceUnavailableException('The call relay budget cannot be read on this server')
-      );
+    it('mints no TURN when the meter cannot be read, typed, and a direct call still gets STUN', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      turnMeter.monthEgressBytes.mockRejectedValue(new TurnMeterUnavailableError('HTTP 403'));
       const fetchSpy = jest.spyOn(global, 'fetch');
 
-      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
-        ServiceUnavailableException
-      );
+      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).resolves.toEqual({
+        iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }],
+        turn: { status: 'unavailable', code: 'TURN_METER_UNAVAILABLE' },
+      });
       expect(fetchSpy).not.toHaveBeenCalled();
+      expect(captured(error)).toContain('TURN withheld (TURN_METER_UNAVAILABLE): HTTP 403');
+    });
+
+    it('does not swallow an error that is not the meter s', async () => {
+      turnMeter.monthEgressBytes.mockRejectedValue(new Error('redis down'));
+
+      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
+        'redis down'
+      );
     });
 
     it('no longer estimates usage when a call ends - a presence clear writes no counter', async () => {
@@ -257,10 +269,20 @@ describe('CallsService', () => {
       expect(fcmSend).not.toHaveBeenCalled();
     });
 
-    it('reads a missing row as off - a database core has not set up never calls', async () => {
+    it('reads a missing row as off, and accuses it at error - unlike a real off', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
       callsMode = undefined;
 
       await expect(service.initiateCall('caller', 'group-1')).rejects.toThrow(ForbiddenException);
+      expect(captured(error)).toContain('platform_config row 1 is MISSING');
+    });
+
+    it('logs a real off as a refusal, never as a defect', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      callsMode = 'off';
+
+      await expect(service.initiateCall('caller', 'group-1')).rejects.toThrow(ForbiddenException);
+      expect(error).not.toHaveBeenCalled();
     });
 
     it('refuses rather than guesses when the column holds a value nobody understands', async () => {

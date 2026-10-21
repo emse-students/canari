@@ -7,6 +7,8 @@ import { deployedVersion } from './deployed-version';
 // The bound reads the build's OWN version off disk, which a unit test has no business depending on.
 jest.mock('./deployed-version', () => ({ deployedVersion: jest.fn() }));
 const mockDeployed = deployedVersion as jest.MockedFunction<typeof deployedVersion>;
+/** The acting administrator: a uuid whose first 8 characters are what the audit lines print. */
+const ADMIN = 'aaaaaaaa-1111-4111-8111-111111111111';
 
 describe('PlatformService', () => {
   let service: PlatformService;
@@ -93,7 +95,7 @@ describe('PlatformService', () => {
     mockDeployed.mockReturnValue('0.14.1');
 
     // One keystroke from `0.14.1`, well-formed, and satisfiable by no client that exists.
-    await expect(service.updateConfig({ minClientVersion: '1.14.1' })).rejects.toThrow(
+    await expect(service.updateConfig({ minClientVersion: '1.14.1' }, ADMIN)).rejects.toThrow(
       /above this server's own version 0\.14\.1/
     );
     expect(repo.save).not.toHaveBeenCalled();
@@ -103,7 +105,7 @@ describe('PlatformService', () => {
     rowWithMin('0.14.0');
     mockDeployed.mockReturnValue('0.14.1');
 
-    const result = await service.updateConfig({ minClientVersion: '0.14.1' });
+    const result = await service.updateConfig({ minClientVersion: '0.14.1' }, ADMIN);
 
     expect(result.minClientVersion).toBe('0.14.1');
   });
@@ -114,7 +116,7 @@ describe('PlatformService', () => {
     // read would be a read failure masquerading as a policy.
     mockDeployed.mockReturnValue(null);
 
-    const result = await service.updateConfig({ minClientVersion: '9.9.9' });
+    const result = await service.updateConfig({ minClientVersion: '9.9.9' }, ADMIN);
 
     expect(result.minClientVersion).toBe('9.9.9');
   });
@@ -132,7 +134,7 @@ describe('PlatformService', () => {
     repo.findOneOrFail.mockResolvedValue(existing);
     repo.save.mockImplementation(async (row) => row as PlatformConfig);
 
-    const result = await service.updateConfig({ paymentProvider: 'lydia' });
+    const result = await service.updateConfig({ paymentProvider: 'lydia' }, ADMIN);
 
     expect(result.paymentProvider).toBe('lydia');
     expect(result.minClientVersion).toBe('0.13.0');
@@ -151,7 +153,7 @@ describe('PlatformService', () => {
     repo.findOneOrFail.mockResolvedValue(existing);
     repo.save.mockImplementation(async (row) => row as PlatformConfig);
 
-    const result = await service.updateConfig({ paymentProvider: 'disabled' });
+    const result = await service.updateConfig({ paymentProvider: 'disabled' }, ADMIN);
 
     expect(result.paymentProvider).toBe('disabled');
     expect(result.minClientVersion).toBe('0.13.0');
@@ -161,12 +163,14 @@ describe('PlatformService', () => {
     const existing = rowWithMin('0.13.0');
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 
-    const result = await service.updateConfig({ callsMode: 'audio' });
+    const result = await service.updateConfig({ callsMode: 'audio' }, ADMIN);
 
     expect(result.callsMode).toBe('audio');
     expect(result.minClientVersion).toBe('0.13.0');
     expect(result.paymentProvider).toBe(existing.paymentProvider);
-    expect(warn.mock.calls.map((c) => String(c[0]))).toContain('callsMode off -> audio');
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'callsMode off -> audio by=aaaaaaaa'
+    );
     warn.mockRestore();
   });
 
@@ -174,7 +178,7 @@ describe('PlatformService', () => {
     const existing = rowWithMin('0.13.0');
     existing.callsMode = 'audio_video';
 
-    const result = await service.updateConfig({ maintenanceEnabled: true });
+    const result = await service.updateConfig({ maintenanceEnabled: true }, ADMIN);
 
     expect(result.callsMode).toBe('audio_video');
   });

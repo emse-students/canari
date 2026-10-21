@@ -1187,8 +1187,8 @@ export class CallService {
         /* ignore */
       }
       appendLog(`[Call] ICE servers HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
-      // Typed like the other setup steps: the kill switch (`CALLS_DISABLED`) and the spent relay
-      // budget (503) are answers the reader is told as such, read from the code and the status.
+      // Typed like the other setup steps: the kill switch (`CALLS_DISABLED`) is an answer the reader
+      // is told as such, read from the code. A spent relay budget is NOT a refusal: see below.
       throw new CallInitiateError(
         'ice-servers',
         res.status,
@@ -1197,8 +1197,20 @@ export class CallService {
       );
     }
 
-    const data = (await res.json()) as { iceServers?: IceServerConfig[] };
+    const data = (await res.json()) as {
+      iceServers?: IceServerConfig[];
+      turn?: { status?: string; code?: string };
+    };
     const servers = data.iceServers ?? [];
+    // TURN WITHHELD, CALL STILL ON (B7). The server answers STUN only when the month's relay budget
+    // is spent or its meter cannot be read: a call between two reachable peers needs no relay, so
+    // refusing it would fail calls that cost nothing. Said loudly - a call that then cannot connect
+    // will be the one behind a NAT, and this line is what explains it.
+    if (data.turn?.status === 'unavailable') {
+      appendLog(
+        `[Call] ERROR: TURN relay withheld by the server (${data.turn.code ?? 'no code'}) - direct path only`
+      );
+    }
 
     if (servers.length === 0) {
       appendLog('[Call] ICE servers: empty response');

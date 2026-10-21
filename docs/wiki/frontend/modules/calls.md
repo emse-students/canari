@@ -352,12 +352,18 @@ anything: production's switch defaults to `off`, and `CALLS_COMPILED` is untouch
 
 - **Where it lives.** One column on core-service's singleton row (`014_platform_config_calls_mode.sql`,
   a CHECK constraint holds the three values), set by a global admin at `/admin/platform` through the
-  existing `PATCH /api/users/admin/platform` (`callsMode`). A change is logged at `warn`
-  (`callsMode off -> audio`). The plan's `testers` value was not built: pre-release builds talk to
+  existing `PATCH /api/users/admin/platform` (`callsMode`). A change is logged at `warn` with its
+  actor (`callsMode off -> audio by=<first 8 of the admin's id>`, from `x-user-id` like the
+  announcement routes). The page sends ONLY the fields changed since it loaded (or since its last
+  save's answer): a form left open while another admin closed calls used to PATCH every field back
+  as loaded and silently re-open them. The three values are spelled in five places (the CHECK,
+  core's entity, chat-delivery's reader, `utils/appVersion.ts` `CALLS_MODES`, the admin page through
+  it), and `utils/callsModesAgree.test.ts` fails the day one drifts. The plan's `testers` value was not built: pre-release builds talk to
   the dev estate, whose OWN row is its own switch.
 - **Who enforces it.** chat-delivery-service reads the row with plain SQL on EVERY call request that
   starts or joins a call (`utils/calls-mode.ts`, `CallsService.assertCallsOpen`), never cached, so a
-  kill holds from the next request. A missing row reads as `off`; a value outside the three THROWS
+  kill holds from the next request. A missing row reads as `off` AND logs at error (`platform_config row 1 is MISSING`), so a
+  lost row is not mistaken for an admin's `off`; a value outside the three THROWS
   (a switch that cannot be read is not read as open). `ring-end` and `presence` are never gated: they
   stop or record a call.
 - **What it cannot do.** A call already connected is peer to peer and never touches the server
@@ -369,7 +375,11 @@ anything: production's switch defaults to `off`, and `CALLS_COMPILED` is untouch
   (`stores/appVersionCheck.svelte.ts`) reads it, `off` until an answer came - absent or unknown
   reads as `off`, the closed direction. `utils/callsAvailability.ts` joins it to the build switches:
   the audio button needs `CALLS_ENABLED` and a mode other than `off`; the video button and the
-  in-call camera control need `CALLS_VIDEO_ENABLED` and `audio_video`. A refusal at any setup step
+  in-call camera control need `CALLS_VIDEO_ENABLED` and `audio_video` - to turn the camera ON: the
+  control stays while the camera runs, so a mode dropped to `audio` mid-call never leaves a camera
+  nothing on screen can stop. The session cache of `/api/version` stores the WIRE shape
+  (`serverVersionInfoToWire`), the one it parses back; it stored the parsed shape and read every
+  cached mode back as `off`. A refusal at any setup step
   carries its code (`CallInitiateError`, now also for `ring` and `ice-servers`) and
   `describeCallFailure` words it (`call_calls_disabled`, `call_video_disabled`) - the call ends as a
   refused setup, with no missed-call line when it failed before the invite.
@@ -397,15 +407,38 @@ another key on the account spends the same allowance. Direct calls put nothing o
 construction; no client says anything. Configuration: `CLOUDFLARE_ACCOUNT_ID` (32 hex) and
 `CLOUDFLARE_TURN_ANALYTICS_TOKEN` (a token with Account Analytics read), `env-manifest.tsv` `warn`
 on both estates. One reading is reused for 60 s (`turn:metered:<YYYY-MM>`): a member hammering
-`ice-servers` must not spend the GraphQL quota, whose exhaustion would refuse every call.
+`ice-servers` must not spend the GraphQL quota.
 
-**No fallback.** Unconfigured, unreachable, a GraphQL error, no visible account or a non-number:
-503 and NO credential is minted - the estimator is deleted, not kept behind it. The limits, named:
-credentials already issued stay valid for `CLOUDFLARE_TURN_TTL_SECONDS` (2 h), so the overshoot past
-the budget is what the credentials outstanding at that moment relay, plus the meter's lag (minutes).
-**Unverified:** the query shape against the live API (read from Cloudflare's docs, 2026-10-21) and
-whether a calendar month is within the dataset's query window - the first dev deploy with the two
-secrets answers both; a refusal names itself in the `[ICE]` error line.
+**The query, and the documents it is read from.** The filter is `date_geq` / `date_leq` (whole UTC
+days, `YYYY-MM-DD`), not `datetimeMinute`: the month is whole days and the dataset's own example
+filters on `date` ([TURN analytics](https://developers.cloudflare.com/realtime/turn/analytics/)).
+The window a query may span is NOT assumed: the meter first asks
+`settings { callsTurnUsageAdaptiveGroups { enabled maxDuration notOlderThan } }`
+([settings node](https://developers.cloudflare.com/analytics/graphql-api/features/discovery/settings/)),
+cached an hour (`turn:metered:settings`), and `monthDateChunks` splits the month into whole-day
+ranges no wider than `maxDuration`, asked as aliased sub-queries (`c0`, `c1`, ...) in ONE request and
+summed. A `maxDuration` under a day, or a `notOlderThan` that does not reach the first of the month,
+is refused as unreadable rather than summed short - an under-count is a budget that never trips.
+
+**A meter that cannot be read withholds TURN, never the call** - a typed degradation, not a
+fallback. Unconfigured, unreachable, an HTTP or GraphQL error, no visible account, a dataset not
+enabled, a non-number: `ice-servers` answers 200 with STUN only (`stun:stun.cloudflare.com:3478`) and
+`turn: { status: 'unavailable', code: 'TURN_METER_UNAVAILABLE' }`; a spent budget answers the same
+with `TURN_BUDGET_REACHED`. Both log at ERROR (`[ICE] call=<id> TURN withheld (<CODE>)`), and the
+client logs `[Call] ERROR: TURN relay withheld by the server (<CODE>) - direct path only`. WHY THIS
+SHAPE: a 503 failed EVERY call, including the ones between two reachable peers that cost nothing,
+because a third-party analytics API had a bad minute; minting credentials without a reading would
+spend the money the budget exists to cap. STUN only does neither, and a call it cannot connect (both
+peers behind NAT) fails at ICE with the error line above explaining it. A failure is remembered 30 s
+(`turn:metered:unavailable`): an outage costs one API call and one error line per 30 s, not one per
+call setup. TURN NOT CONFIGURED AT ALL (`CLOUDFLARE_CALLS_API_TOKEN` / key id unset) is still a 503:
+that is a deployment defect, not a transient reading.
+
+The limits, named: credentials already issued stay valid for `CLOUDFLARE_TURN_TTL_SECONDS` (2 h), so
+the overshoot past the budget is what the credentials outstanding at that moment relay, plus the
+meter's lag (minutes). **Unverified until the analytics token exists:** the query against the live
+API (read from the two documents above, 2026-10-21) - the first dev deploy with the two secrets
+answers it, and a refusal names itself in the `[ICE]` error line.
 
 ## A network blip does not end the call (CALL-WIFI, 2026-10-19)
 
@@ -1692,7 +1725,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 |---|---|---|
 | POST | `/api/calls/initiate` | 403 `CALLS_DISABLED` when the [kill switch](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) is `off` (as are `room-token`, `ring` and `ice-servers`). Verify membership, bind the new room ID to the group (Redis `call:room:<id>`), return a room token + room ID + `ringTimeoutMs`. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET` (`room_id`, `sub`, `group_id`), valid 5 minutes |
 | GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window |
-| GET | `/api/calls/ice-servers` | Get ICE server configuration (Cloudflare TURN); 503 once Cloudflare's metered egress for the month reaches the budget, or when the meter cannot be read |
+| GET | `/api/calls/ice-servers` | Get ICE server configuration (Cloudflare TURN). STUN only with a typed `turn: { status: 'unavailable', code }` (`TURN_BUDGET_REACHED`, `TURN_METER_UNAVAILABLE`) once Cloudflare's metered egress for the month reaches the budget, or when the meter cannot be read |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
 | POST | `/api/calls/ring` | 403 `CALLS_VIDEO_DISABLED` for a video ring when the mode is `audio`. Fan out incoming-call ring to the group members whose [call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18) allows it |
