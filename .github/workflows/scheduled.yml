@@ -41,7 +41,8 @@ on:
     # Daily, and TWO jobs read this one. Did the last stable release actually reach both stores? And
     # does a Dependabot cargo pull request need its committed lockfiles completed?
     - cron: '0 9 * * *'
-    # Mondays. Ask what the cargo directories Dependabot cannot reach are behind on. The dev copy
+    # Mondays, and TWO jobs read this one. Ask what the cargo directories Dependabot cannot reach
+    # are behind on, and whether upstream released past a vendored fork. The dev copy
     # from production read this slot too until 2026-10-16; its successor, `dev-reset`, has no clock.
     # Adding a job here means editing this line too: a schedule serves whichever `if:` names it, and
     # a comment naming one hides the rest.
@@ -52,7 +53,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, backups, log-retention, analysis, alerts, caches, ghcr-cleanup, dev-reset, stores, cargo-unreachable, cargo-lock-refresh]
+        options: [all, hosts, backups, log-retention, analysis, alerts, caches, ghcr-cleanup, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh]
       dry_run:
         description: 'dev-reset only: report what would happen and change nothing'
         type: boolean
@@ -594,6 +595,37 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: bash .github/scripts/cargo-blocked-update-report.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # A VENDORED FORK IS A DEPENDENCY NOTHING ELSE WATCHES
+  #
+  # `frontend/src-tauri` replaces `tauri-plugin-websocket` with a local copy (`[patch.crates-io]`,
+  # pinned `=2.5.0`). Dependabot does not reach `src-tauri`, `cargo-unreachable` above asks `cargo
+  # update`, which cannot move an `=` pin, and `cargo audit` was never shown to match a PATH
+  # package - so an upstream fix, security included, would reach nobody. This compares the fork's
+  # version with crates.io's latest STABLE release, for an allowlist of crates the script asserts
+  # against the tree.
+  #
+  # A RED RUN IS THE REPORT, like `alerts` and unlike `cargo-unreachable`: a fork one release behind
+  # is a rebase owed, not the normal state of a tree, and the `::error` title names it. A crates.io
+  # that does not answer exits 75 under its own title - nothing was compared, which is neither a
+  # finding nor a pass. It rides the Monday cron: upstream plugin releases are weeks apart.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  vendored-upstream:
+    name: Upstream releases past a vendored fork
+    if: >
+      github.event.schedule == '0 4 * * 1' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "vendored-upstream"]'), inputs.job))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare each vendored fork with crates.io
+        run: bash .github/scripts/vendored-upstream-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # A DEPENDABOT CARGO BUMP THAT IS INCOMPLETE BY CONSTRUCTION, COMPLETED (WP-RUST-LOCK-AUTOMERGE)
