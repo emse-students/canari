@@ -1,8 +1,11 @@
 /**
  * THE SERVER'S SIGNATURE ON A KEPT CHAT LINE (WP-L8b): what was recorded verifies, a row altered in
- * the database does not, an erasure reads `erased` without costing the content its proof, a rotated
- * key reads `key-rotated`, and no key means no signer at all (the caller refuses, never signs blank).
+ * the database does not (its `keptAt` included), an erasure reads `erased` for the ONE id it
+ * rewrote while the other account and the content keep their proof, an id rewritten to another
+ * account is `altered` even beside an erasure, a rotated key reads `key-rotated`, and no key means
+ * no signer at all (the caller refuses, never signs blank).
  */
+import { createHash } from 'crypto';
 import {
   LIVE_REPORT_SIGNING_KEY_MIN_LENGTH,
   signReportedLine,
@@ -19,6 +22,7 @@ const content = {
   clientId: '44444444-4444-4444-8444-444444444444',
   sealedSha256: 'f'.repeat(64),
   messageCreatedAt: new Date('2026-10-21T10:00:00.123Z'),
+  keptAt: new Date('2026-10-21T10:05:00.456Z'),
   text: 'une ligne signalée',
 };
 const accounts = {
@@ -26,6 +30,7 @@ const accounts = {
   authorId: 'a'.repeat(64),
   reporterId: 'b'.repeat(64),
 };
+const ALL_VERIFIED = { content: 'verified', author: 'verified', reporter: 'verified' };
 
 describe('the reported-line signature', () => {
   const before = process.env.LIVE_REPORT_SIGNING_KEY;
@@ -45,49 +50,74 @@ describe('the reported-line signature', () => {
     expect(signingKey()).toBeNull();
   });
 
+  it('names the key by an HMAC under it, never by a plain hash of the key', () => {
+    const raw = 'k'.repeat(32);
+    const { keyId } = withKey(raw);
+    expect(keyId).toMatch(/^[0-9a-f]{16}$/);
+    expect(keyId).not.toBe(createHash('sha256').update(raw).digest('hex').slice(0, 16));
+    expect(withKey('n'.repeat(32)).keyId).not.toBe(keyId);
+  });
+
   it('verifies what it signed', () => {
     const key = withKey('k'.repeat(32));
     const stored = signReportedLine(key, content, accounts);
-    expect(stored.keyId).toMatch(/^[0-9a-f]{16}$/);
-    expect(verifyReportedLine(key, stored, content, accounts, ERASED)).toEqual({
-      content: 'verified',
-      accounts: 'verified',
-    });
+    expect(verifyReportedLine(key, stored, content, accounts, ERASED)).toEqual(ALL_VERIFIED);
   });
 
-  it('reads an altered text, sequence or author as altered', () => {
+  it('reads an altered text, sequence or keptAt as altered content', () => {
     const key = withKey('k'.repeat(32));
     const stored = signReportedLine(key, content, accounts);
-    expect(
-      verifyReportedLine(key, stored, { ...content, text: 'autre chose' }, accounts, ERASED).content
-    ).toBe('altered');
-    expect(verifyReportedLine(key, stored, { ...content, seq: 8 }, accounts, ERASED).content).toBe(
-      'altered'
-    );
+    for (const changed of [
+      { ...content, text: 'autre chose' },
+      { ...content, seq: 8 },
+      { ...content, keptAt: new Date('2026-12-01T00:00:00.000Z') },
+    ]) {
+      expect(verifyReportedLine(key, stored, changed, accounts, ERASED).content).toBe('altered');
+    }
+  });
+
+  it('reads an author or a reporter rewritten to another account as altered, alone', () => {
+    const key = withKey('k'.repeat(32));
+    const stored = signReportedLine(key, content, accounts);
     expect(
       verifyReportedLine(key, stored, content, { ...accounts, authorId: 'c'.repeat(64) }, ERASED)
-    ).toEqual({ content: 'verified', accounts: 'altered' });
+    ).toEqual({ ...ALL_VERIFIED, author: 'altered' });
+    expect(
+      verifyReportedLine(key, stored, content, { ...accounts, reporterId: 'c'.repeat(64) }, ERASED)
+    ).toEqual({ ...ALL_VERIFIED, reporter: 'altered' });
   });
 
-  it("reads the author's or the reporter's erasure as erased, the content still verified", () => {
+  it("reads the author's or the reporter's erasure as erased for THAT id only", () => {
     const key = withKey('k'.repeat(32));
     const stored = signReportedLine(key, content, accounts);
-    for (const erased of [
-      { ...accounts, authorId: ERASED },
-      { ...accounts, reporterId: ERASED },
-    ]) {
-      expect(verifyReportedLine(key, stored, content, erased, ERASED)).toEqual({
-        content: 'verified',
-        accounts: 'erased',
-      });
-    }
+    expect(
+      verifyReportedLine(key, stored, content, { ...accounts, authorId: ERASED }, ERASED)
+    ).toEqual({ ...ALL_VERIFIED, author: 'erased' });
+    expect(
+      verifyReportedLine(key, stored, content, { ...accounts, reporterId: ERASED }, ERASED)
+    ).toEqual({ ...ALL_VERIFIED, reporter: 'erased' });
+  });
+
+  it('never hides a re-attribution behind the other id being erased', () => {
+    const key = withKey('k'.repeat(32));
+    const stored = signReportedLine(key, content, accounts);
+    expect(
+      verifyReportedLine(
+        key,
+        stored,
+        content,
+        { ...accounts, reporterId: ERASED, authorId: 'c'.repeat(64) },
+        ERASED
+      )
+    ).toEqual({ content: 'verified', author: 'altered', reporter: 'erased' });
   });
 
   it('reads a line signed under a previous key as key-rotated', () => {
     const stored = signReportedLine(withKey('k'.repeat(32)), content, accounts);
     expect(verifyReportedLine(withKey('n'.repeat(32)), stored, content, accounts, ERASED)).toEqual({
       content: 'key-rotated',
-      accounts: 'key-rotated',
+      author: 'key-rotated',
+      reporter: 'key-rotated',
     });
     delete process.env.LIVE_REPORT_SIGNING_KEY;
     expect(verifyReportedLine(signingKey(), stored, content, accounts, ERASED).content).toBe(

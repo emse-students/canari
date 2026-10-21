@@ -19,11 +19,12 @@ import { ContentReport } from '../../moderation/entities/content-report.entity';
  *   `content_reports` cascades: a deleted report takes its line.
  * - Kept until the report is handled, and never past `LIVE_CHAT_REPORT_MAX_KEEP_MS` from `keptAt`
  *   - both erased by the live sweep, one rule on durable state.
- * - `signature` (the content) and `accountsSignature` (report, author and reporter) are HMAC-SHA256
- *   under the key `keyId` names (`live-report-signature.ts`), so a row altered in the database is
- *   told apart from what the server recorded.
+ * - `signature` (the content, `keptAt` included), `authorSignature` and `reporterSignature` (the
+ *   report with one account each) are HMAC-SHA256 under the key `keyId` names
+ *   (`live-report-signature.ts`), so a row altered in the database is told apart from what the
+ *   server recorded.
  * - The AUTHOR's erasure anonymises `authorId` and leaves the line until handled or the bound
- *   (owner, 2026-10-20); the accounts signature then reads `erased`.
+ *   (owner, 2026-10-20); the author signature alone then reads `erased`.
  */
 @Entity('live_chat_reported_lines')
 @Index('live_chat_reported_lines_kept_at_idx', ['keptAt'])
@@ -65,6 +66,7 @@ export class LiveChatReportedLine {
   @Column({ type: 'timestamptz' })
   messageCreatedAt: Date;
 
+  /** Written by the report's transaction (the database clock, to the millisecond) and signed. */
   @CreateDateColumn({ type: 'timestamptz' })
   keptAt: Date;
 
@@ -75,5 +77,8 @@ export class LiveChatReportedLine {
   signature: string;
 
   @Column({ type: 'varchar', length: 64 })
-  accountsSignature: string;
+  authorSignature: string;
+
+  @Column({ type: 'varchar', length: 64 })
+  reporterSignature: string;
 }

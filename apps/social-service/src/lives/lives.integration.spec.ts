@@ -2321,6 +2321,46 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
       await expect(start()).resolves.toBeDefined();
     });
 
+    it('RACE: a withdrawal against an erasure in flight never leaves a row behind it', async () => {
+      await threeAbuses(CAROL);
+      const erasure = ds.createQueryRunner();
+      await erasure.connect();
+      await erasure.startTransaction();
+      try {
+        await runErasureStatements(
+          {
+            write: async (sql, params) =>
+              ((await erasure.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) =>
+              (await erasure.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          CAROL
+        );
+        // The erasure has deleted CAROL's cuts and her (absent) withdrawal, uncommitted. The
+        // withdrawal must WAIT on those cuts rather than count them and write a row the erasure's
+        // DELETE has already passed.
+        const withdrawal = lives.withdraw(MOD, CAROL, { reason: 'spam' }).then(
+          () => 'withdrawn',
+          (e: unknown) => (e as { getResponse: () => { code: string } }).getResponse().code
+        );
+        // A proof, not a delay: wait until PostgreSQL reports a backend waiting on a lock.
+        for (;;) {
+          const [{ n }] = await q(
+            `SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock' AND datname = current_database()`
+          );
+          if (n > 0) break;
+        }
+        await erasure.commitTransaction();
+        expect(await withdrawal).toBe('LIVE_WITHDRAWAL_NOT_DUE');
+      } finally {
+        if (erasure.isTransactionActive) await erasure.rollbackTransaction();
+        await erasure.release();
+      }
+      expect(await q(`SELECT 1 FROM live_broadcast_withdrawals`)).toEqual([]);
+    });
+
     it('refuses a withdrawal naming the erased tombstone or with no reason code', async () => {
       expect((await refusal(lives.withdraw(MOD, DELETED_ACCOUNT, { reason: 'spam' }))).code).toBe(
         'LIVE_ACCOUNT_INVALID'
@@ -2452,13 +2492,53 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
           authorId: BOB,
           authorName: 'Bob',
           text: 'une insulte 🐤',
-          integrity: { content: 'verified', accounts: 'verified' },
+          integrity: { content: 'verified', author: 'verified', reporter: 'verified' },
         },
       });
       // Once per reporter per line, whatever the first became.
       expect(await refusal(reportLine(CAROL, line.id, 'une insulte 🐤'))).toEqual({
         status: HttpStatus.CONFLICT,
         code: 'ALREADY_REPORTED',
+      });
+    });
+
+    it('RACE: the same line reported twice at once is ONE report - the unique index answers ALREADY_REPORTED', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      const both = await Promise.allSettled([
+        reportLine(CAROL, line.id, 'texte'),
+        reportLine(CAROL, line.id, 'texte'),
+      ]);
+      expect(both.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const [lost] = both.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      expect(await refusal(Promise.reject(lost.reason))).toEqual({
+        status: HttpStatus.CONFLICT,
+        code: 'ALREADY_REPORTED',
+      });
+      expect(await kept()).toHaveLength(1);
+    });
+
+    it('two ERASED reporters of one thing do not collide on the unique index', async () => {
+      const live = await start();
+      const line = await say(BOB, live.id, 'texte');
+      await reportLine(CAROL, line.id, 'texte');
+      await reportLine(DAVE, line.id, 'texte');
+      await q(`UPDATE content_reports SET "reporterId" = $1`, [DELETED_ACCOUNT]);
+      expect(await q(`SELECT 1 FROM content_reports`)).toHaveLength(2);
+    });
+
+    it("a LONG line - past the composer's 300 characters, within what the server stores - is reportable", async () => {
+      const live = await start();
+      const long = 'é'.repeat(400) + 'x'.repeat(100);
+      const line = await say(BOB, live.id, long);
+      await expect(reportLine(CAROL, line.id, long)).resolves.toMatchObject({
+        contentType: 'live_chat',
+      });
+      expect((await kept())[0].text).toBe(long);
+      // Past what any stored line can hold, the hand-over itself is refused, before anything is read.
+      expect(await refusal(reportLine(DAVE, line.id, 'x'.repeat(901)))).toEqual({
+        status: HttpStatus.BAD_REQUEST,
+        code: 'LIVE_CHAT_REPORT_MESSAGE_INVALID',
       });
     });
 
@@ -2559,17 +2639,36 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
       const live = await start();
       const line = await say(BOB, live.id, 'texte');
       await reportLine(CAROL, line.id, 'texte');
-      await q(`UPDATE live_chat_reported_lines SET text = 'autre chose'`);
-      expect((await reports().listAllReports())[0].liveChat?.integrity).toEqual({
-        content: 'altered',
-        accounts: 'verified',
+      const integrity = async () => (await reports().listAllReports())[0].liveChat?.integrity;
+      expect(await integrity()).toEqual({
+        content: 'verified',
+        author: 'verified',
+        reporter: 'verified',
       });
+      // keptAt is signed: moving it (and so the 90-day bound) reads altered.
+      await q(`UPDATE live_chat_reported_lines SET "keptAt" = "keptAt" + interval '30 days'`);
+      expect((await integrity())?.content).toBe('altered');
+      await q(`UPDATE live_chat_reported_lines SET "keptAt" = "keptAt" - interval '30 days'`);
+      expect((await integrity())?.content).toBe('verified');
+      await q(`UPDATE live_chat_reported_lines SET text = 'autre chose'`);
+      expect(await integrity()).toEqual({
+        content: 'altered',
+        author: 'verified',
+        reporter: 'verified',
+      });
+      // The reporter erased and the author re-attributed: the erasure does not hide the rewrite.
+      await q(`UPDATE content_reports SET "reporterId" = $1`, [DELETED_ACCOUNT]);
       await q(`UPDATE live_chat_reported_lines SET "authorId" = $1`, [DAVE]);
-      expect((await reports().listAllReports())[0].liveChat?.integrity.accounts).toBe('altered');
+      expect(await integrity()).toEqual({
+        content: 'altered',
+        author: 'altered',
+        reporter: 'erased',
+      });
       process.env.LIVE_REPORT_SIGNING_KEY = 'r'.repeat(40);
-      expect((await reports().listAllReports())[0].liveChat?.integrity).toEqual({
+      expect(await integrity()).toEqual({
         content: 'key-rotated',
-        accounts: 'key-rotated',
+        author: 'key-rotated',
+        reporter: 'key-rotated',
       });
     });
 
@@ -2597,7 +2696,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
       ]);
       expect((await reports().listAllReports())[0].liveChat?.integrity).toEqual({
         content: 'verified',
-        accounts: 'erased',
+        author: 'erased',
+        reporter: 'verified',
       });
     });
   });

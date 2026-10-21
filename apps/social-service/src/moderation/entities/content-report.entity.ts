@@ -1,7 +1,15 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
 
-/** A content report submitted by a user flagging a post, a comment, or a person. */
+/**
+ * A content report submitted by a user flagging a post, a comment, or a person. ONE per reporter
+ * per thing, held by a partial unique index (migration 099) that leaves out the erasure's
+ * tombstone, so two erased reporters of one thing do not collide.
+ */
 @Entity('content_reports')
+@Index('content_reports_reporter_content_uniq', ['reporterId', 'contentId'], {
+  unique: true,
+  where: `"reporterId" <> '[deleted]'`,
+})
 export class ContentReport {
   @PrimaryGeneratedColumn('uuid')
   id: string;

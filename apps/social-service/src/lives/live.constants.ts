@@ -219,6 +219,15 @@ export const LIVE_CHAT_SEAL_OVERHEAD_BYTES = 12 + 16;
 export const LIVE_CHAT_SEALED_MAX_BYTES =
   LIVE_CHAT_SEAL_OVERHEAD_BYTES + 3 * LIVE_CHAT_MESSAGE_MAX_CHARS;
 
+/**
+ * THE LONGEST TEXT A CHAT-LINE REPORT MAY HAND OVER, in UTF-8 bytes (WP-L8b): whatever the largest
+ * sealed line the server STORES can hold, so every line a viewer can see is reportable - not the
+ * client composer's 300 characters, which an older or another client need not have applied
+ * (review of #2172). A UTF-16 unit is at least one UTF-8 byte, so it bounds the units too.
+ */
+export const LIVE_CHAT_REPORT_TEXT_MAX_BYTES =
+  LIVE_CHAT_SEALED_MAX_BYTES - LIVE_CHAT_SEAL_OVERHEAD_BYTES;
+
 /** The smallest: the overhead and one byte of text - an empty message is not a message. */
 export const LIVE_CHAT_SEALED_MIN_BYTES = LIVE_CHAT_SEAL_OVERHEAD_BYTES + 1;
 

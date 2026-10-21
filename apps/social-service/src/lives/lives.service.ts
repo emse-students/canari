@@ -57,6 +57,7 @@ import {
   type LiveStrikeConsequence,
 } from './live-strikes';
 import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
+import { short } from './live-log';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -196,7 +197,6 @@ const LIVE_COLUMNS = `id, "broadcasterId", "associationId", "liveKey", "startedA
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Short form of an account id for a log line. */
-const short = (id: string) => id.slice(0, 8);
 
 /**
  * The live row, its key, its removed viewers and its segments (WP-L2, WP-L3;
@@ -1174,6 +1174,11 @@ export class LivesService implements OnModuleDestroy {
     const target = parseAccountId(userId);
     const result = await this.db.transaction(async (tx) => {
       await lockStanding(tx, target);
+      // The cuts the withdrawal rests on, held FOR SHARE: an account erasure deletes them BEFORE it
+      // deletes the withdrawal rows, so it either waits for this commit (and its later DELETE then
+      // sees the row written here) or has deleted them first (and the count below, a new
+      // statement, reads them gone and refuses). Never a withdrawal row left behind an erasure.
+      await tx.query(`SELECT 1 FROM live_cuts WHERE "broadcasterId" = $1 FOR SHARE`, [target]);
       const standing = await standingOf(tx, target);
       const existing: { reason: LiveCutReason; withdrawnAt: Date }[] = await tx.query(
         `SELECT reason, "withdrawnAt" FROM live_broadcast_withdrawals WHERE "userId" = $1`,

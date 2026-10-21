@@ -539,7 +539,9 @@ rolling 90 days). No automatic cut: every rung starts from a person's cut. Code:
 - **Per-account start limits** are the ones that existed: 6 starts in a rolling hour and one open
   live (above). The ladder adds the suspension and the withdrawal; nothing else was asked.
 - **Erasure**: the account's cuts and its withdrawal row are deleted; a withdrawal it DECIDED as a
-  moderator is anonymised (the decision stays).
+  moderator is anonymised (the decision stays). A withdrawal holds the account's cuts `FOR SHARE`
+  before counting them, so an erasure in flight (which deletes the cuts before the withdrawal rows)
+  either waits for it or is waited for and leaves it nothing to count: no row outlives an erasure.
 
 ### A reported chat line (WP-L8b)
 
@@ -560,23 +562,30 @@ details?, message: <the plaintext line> }`, in ONE transaction:
    **`400 LIVE_CHAT_REPORT_MISMATCH`** if they differ (a `warn`). So a kept line is what the author
    sealed, not what the reporter typed;
 4. the `content_reports` row (the posts' ONE store and dedup, `409 ALREADY_REPORTED`;
-   `reportedUserId` = the author READ FROM THE ROW);
+   `reportedUserId` = the author READ FROM THE ROW). Two concurrent reports that both pass the
+   dedup's read meet the unique index `content_reports_reporter_content_uniq` (migration 099,
+   partial: the erased tombstone is left out, so two erased reporters never collide), mapped to the
+   same `409`;
 5. the kept line, `live_chat_reported_lines`: the text, the live, the message id, its `seq`, its
-   author, its `clientId`, its time, and the SHA-256 of the sealed bytes - **not the ciphertext and
-   not the key** - signed by two HMAC-SHA256 (`live-report-signature.ts`) under
-   `LIVE_REPORT_SIGNING_KEY`: one over the content, one over the accounts (report, author,
-   reporter).
+   author, its `clientId`, its time, `keptAt` (read from the database clock in the same transaction,
+   to the millisecond) and the SHA-256 of the sealed bytes - **not the ciphertext and not the key** -
+   signed by three HMAC-SHA256 (`live-report-signature.ts`) under `LIVE_REPORT_SIGNING_KEY`: one over
+   the content (`keptAt` included, since the 90-day bound counts from it), one over the report and
+   the AUTHOR, one over the report and the REPORTER. The key is named by `keyId`, an HMAC of a fixed
+   label under the key (never a plain hash of it).
 
-Other answers: `400 LIVE_CHAT_REPORT_MESSAGE_INVALID` (`message` absent, empty or over 300
-characters), the DTO's `400` on a malformed `liveId`, **`503 LIVE_REPORT_SIGNING_UNAVAILABLE`** when
+Other answers: `400 LIVE_CHAT_REPORT_MESSAGE_INVALID` (`message` absent, empty, or over **900 UTF-8
+bytes** - `LIVE_CHAT_REPORT_TEXT_MAX_BYTES`, what the largest STORED sealed line holds, so every line
+a viewer can see is reportable; the composer's 300 characters bind the sender's client, not this), the DTO's `400` on a malformed `liveId`, **`503 LIVE_REPORT_SIGNING_UNAVAILABLE`** when
 the key is not configured (an `error`, nothing kept - the env manifest makes it REQUIRED in both
 estates).
 
 **What staff see**: the queue's `live_chat` report carries `contentPreview` = the kept text and
 `liveChat: { liveId, messageId, seq, authorId, authorName, text, messageCreatedAt, keptAt, keptUntil,
-integrity: { content, accounts } }`. `content` is `verified`, `altered` (the row changed in the
-database) or `key-rotated` (signed under another key: still readable, its proof is not); `accounts`
-adds `erased` (the author's account is gone). A signature proves the SERVER recorded that text
+integrity: { content, author, reporter } }`. `content` is `verified`, `altered` (the row changed in
+the database) or `key-rotated` (signed under another key: still readable, its proof is not);
+`author` and `reporter` add `erased` - ONLY when that id is the erased tombstone, so an id rewritten
+to another account reads `altered` even when the other account was erased (review of #2172). A signature proves the SERVER recorded that text
 after checking it against the sealed line; it is not a signature by the author.
 
 **How long**: until the report is handled (`status` no longer `pending`), and **never more than 90
@@ -588,7 +597,7 @@ hides a line automatically.
 **The AUTHOR's erasure** anonymises `authorId` on the kept line and leaves it until handled or the
 90 days (the user, 2026-10-20): the report stays judgeable. The REPORTER's erasure anonymises the
 report's `reporterId` (the posts' rule for `content_reports`) and the line stays the same way; in
-both cases the accounts signature reads `erased`. Register row C20 states it.
+both cases that account's signature alone reads `erased`. Register row C20 states it.
 
 ### The first-live rules (L11)
 

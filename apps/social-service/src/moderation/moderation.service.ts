@@ -10,7 +10,7 @@ import { createHash } from 'crypto';
 import { isBlockedBetween } from '../common/user-blocks';
 import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import type { LiveChatReportedLine } from '../lives/entities/live-chat-reported-line.entity';
 import { openLiveChatLine } from '../lives/live-chat-seal';
@@ -21,7 +21,11 @@ import {
   verifyReportedLine,
 } from '../lives/live-report-signature';
 import { standingsOf, type LiveStanding } from '../lives/live-strikes';
-import { LIVE_CHAT_MESSAGE_MAX_CHARS, LIVE_CHAT_REPORT_MAX_KEEP_MS } from '../lives/live.constants';
+import { short } from '../lives/live-log';
+import {
+  LIVE_CHAT_REPORT_MAX_KEEP_MS,
+  LIVE_CHAT_REPORT_TEXT_MAX_BYTES,
+} from '../lives/live.constants';
 import { ContentReport } from './entities/content-report.entity';
 import { UserModeration } from './entities/user-moderation.entity';
 import { sanitizeLog } from '../common/log.utils';
@@ -42,6 +46,16 @@ export interface CreateReportData {
   liveId?: string;
   /** `live_chat` only: the line's plaintext as the reporter's client opened it. */
   message?: string;
+}
+
+/** The unique index that holds one report per reporter per thing (migration 099). */
+const REPORT_UNIQUE_INDEX = 'content_reports_reporter_content_uniq';
+
+/** A save refused by {@link REPORT_UNIQUE_INDEX}: a concurrent duplicate, classified at the throw. */
+function isDuplicateReport(e: unknown): boolean {
+  if (!(e instanceof QueryFailedError)) return false;
+  const err = e.driverError as { code?: string; constraint?: string };
+  return err.code === '23505' && err.constraint === REPORT_UNIQUE_INDEX;
 }
 
 /** A uuid, any case. */
@@ -157,6 +171,8 @@ export class ModerationService {
    * Files one report, ONCE per reporter per subject whatever became of an earlier one (409
    * `ALREADY_REPORTED`, the dedup every content type shares). `repo` is the report store, or its
    * view inside the caller's transaction (a chat line's report and its kept line commit together).
+   * The read answers the ordinary repeat; the unique index `content_reports_reporter_content_uniq`
+   * (migration 099) answers two requests that both passed it, mapped to the same 409.
    */
   private async insertReport(
     repo: Repository<ContentReport>,
@@ -185,7 +201,20 @@ export class ModerationService {
       details: data.details ?? null,
       reportedUserId: data.reportedUserId ?? null,
     });
-    return repo.save(report);
+    try {
+      return await repo.save(report);
+    } catch (e) {
+      if (isDuplicateReport(e)) {
+        this.logger.log(
+          `Duplicate report refused by the index: reporter=${sanitizeLog(data.reporterId)} content=${sanitizeLog(data.contentId)}`
+        );
+        throw new ConflictException({
+          code: 'ALREADY_REPORTED',
+          message: 'You have already reported this content',
+        });
+      }
+      throw e;
+    }
   }
 
   /**
@@ -259,7 +288,7 @@ export class ModerationService {
     if (
       typeof text !== 'string' ||
       text.length === 0 ||
-      text.length > LIVE_CHAT_MESSAGE_MAX_CHARS
+      Buffer.byteLength(text, 'utf8') > LIVE_CHAT_REPORT_TEXT_MAX_BYTES
     ) {
       throw new BadRequestException({ code: 'LIVE_CHAT_REPORT_MESSAGE_INVALID' });
     }
@@ -318,6 +347,12 @@ export class ModerationService {
         contentId: messageId,
         reportedUserId: line.authorId,
       });
+      // `keptAt` is SIGNED, so it is read before the insert rather than defaulted by it: the
+      // database clock, to the millisecond a JavaScript Date carries, so what is signed is what is
+      // stored and read back.
+      const [{ keptAt }]: { keptAt: Date }[] = await tx.query(
+        `SELECT date_trunc('milliseconds', now()) AS "keptAt"`
+      );
       const content = {
         reportId: report.id,
         liveId,
@@ -326,6 +361,7 @@ export class ModerationService {
         clientId: line.clientId,
         sealedSha256: createHash('sha256').update(line.sealed).digest('hex'),
         messageCreatedAt: line.createdAt,
+        keptAt,
         text,
       };
       const signed = signReportedLine(key, content, {
@@ -335,8 +371,9 @@ export class ModerationService {
       });
       await tx.query(
         `INSERT INTO live_chat_reported_lines ("reportId", "liveId", "messageId", seq, "authorId",
-           "clientId", "sealedSha256", text, "messageCreatedAt", "keyId", signature, "accountsSignature")
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+           "clientId", "sealedSha256", text, "messageCreatedAt", "keptAt", "keyId", signature,
+           "authorSignature", "reporterSignature")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [
           report.id,
           liveId,
@@ -347,16 +384,18 @@ export class ModerationService {
           content.sealedSha256,
           text,
           line.createdAt,
+          keptAt,
           signed.keyId,
           signed.signature,
-          signed.accountsSignature,
+          signed.authorSignature,
+          signed.reporterSignature,
         ]
       );
       return report;
     });
     this.logger.log(
-      `[REPORT] chat line ${messageId} reported by ${sanitizeLog(data.reporterId)} ` +
-        `reason=${sanitizeLog(data.reason)}: kept for staff (report ${saved.id})`
+      `[REPORT] chat line ${short(messageId)} reported by ${short(data.reporterId)} ` +
+        `reason=${sanitizeLog(data.reason)}: kept for staff (report ${short(saved.id)})`
     );
     return saved;
   }
@@ -467,7 +506,8 @@ export class ModerationService {
       await this.reportRepo.manager.query(
         `SELECT k."reportId"::text, k."liveId"::text, k."messageId"::text, k.seq, k."authorId",
                 k."clientId"::text, k."sealedSha256", k.text, k."messageCreatedAt", k."keptAt",
-                k."keyId", k.signature, k."accountsSignature", u."displayName" AS "authorName"
+                k."keyId", k.signature, k."authorSignature", k."reporterSignature",
+                u."displayName" AS "authorName"
            FROM live_chat_reported_lines k
            LEFT JOIN users u ON u.id = k."authorId"
           WHERE k."reportId" = ANY($1::uuid[])`,
@@ -497,6 +537,7 @@ export class ModerationService {
             clientId: k.clientId,
             sealedSha256: k.sealedSha256,
             messageCreatedAt: k.messageCreatedAt,
+            keptAt: k.keptAt,
             text: k.text,
           },
           { reportId: k.reportId, authorId: k.authorId, reporterId: reporterOf.get(k.reportId)! },

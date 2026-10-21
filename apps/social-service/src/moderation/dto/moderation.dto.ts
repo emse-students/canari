@@ -1,5 +1,5 @@
 import { IsIn, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
-import { LIVE_CHAT_MESSAGE_MAX_CHARS } from '../../lives/live.constants';
+import { LIVE_CHAT_REPORT_TEXT_MAX_BYTES } from '../../lives/live.constants';
 
 /** DTO for reporting a piece of content. */
 export class CreateReportDto {
@@ -28,11 +28,13 @@ export class CreateReportDto {
 
   /**
    * `live_chat` only: the line's PLAINTEXT as the reporter's client opened it. The server checks it
-   * against the sealed line (`LIVE_CHAT_REPORT_MISMATCH` otherwise) and keeps it for staff.
+   * against the sealed line (`LIVE_CHAT_REPORT_MISMATCH` otherwise) and keeps it for staff. Bounded
+   * by what a stored sealed line can hold (the service checks the UTF-8 bytes; a UTF-16 unit is at
+   * least one byte, so this bound on units never refuses a line the service would take).
    */
   @IsString()
   @IsOptional()
-  @MaxLength(LIVE_CHAT_MESSAGE_MAX_CHARS)
+  @MaxLength(LIVE_CHAT_REPORT_TEXT_MAX_BYTES)
   message?: string;
 
   /** The user ID of the content's author (sent by the client, optional). Used to enable quick moderation actions. */

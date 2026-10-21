@@ -220,6 +220,12 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // A REPORTED chat line stays until its report is handled or the 90-day bound, even once its
   // author erased their account (owner, 2026-10-20): the author's id goes, the words stay for staff.
   'live_chat_reported_lines.authorId': { action: 'anonymise' },
+  'live_chat_reported_lines.authorSignature': NO_ACCOUNT(
+    'an HMAC over the report id and the author id, never an id itself; it reads erased once anonymised'
+  ),
+  'live_chat_reported_lines.reporterSignature': NO_ACCOUNT(
+    'an HMAC over the report id and the reporter id, never an id itself; it reads erased once anonymised'
+  ),
   'live_reaction_bursts.counts': NO_ACCOUNT(
     'a reaction kind to tap count map (like, fire, ...), never an id'
   ),
