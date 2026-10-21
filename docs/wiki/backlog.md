@@ -277,6 +277,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
+| **fill the Play Console "Foreground service permissions" declaration for `FOREGROUND_SERVICE_MICROPHONE`** (App content; in-app 1:1 calls, a description and a video of the call kept while the app is backgrounded). EXPECT the first pre-release carrying WP-C-BG-A to be refused at the `internal` upload until this form is filled - Play may refuse a bundle declaring an undeclared foreground-service permission on any track; not verified on this console. The GitHub release APK is built either way. Filled BEFORE that pre-release, the refusal never happens. Pre-release builds declare it, stables do not (`android.yml` checks) | 1 console form + a video | [calls](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) |
+| **decide whether the feed's LEFT edge gets a gesture exclusion rect** (a swipe to the camera started in the left 30 CSS px is Android's Back: the previous page, or the app closes), like the right edge over a conversation - or nothing | 1 decision | [the tab swipe P2](#p2---the-tab-swipe-is-lost-on-a-slow-start-the-12-px-lock-sits-past-chromes-8-dp-slop-mi-9t-2026-10-21) |
 | **review the calls privacy wording (#2013's `/legal/privacy` and register texts: each party sees the other's IP, Cloudflare relays some calls) before calls ship** - presented to you later, decided 2026-10-21 | 1 review | [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21) (B5) |
 | **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
 | **decide the camera swipe's cause B: a swipe starting in Android's left edge (30 CSS px) is a system Back - add a gesture exclusion rect on the feed's left edge, as was done for the conversations' right edge?** (investigation: PR #2177) | 1 decision | [the right-edge entry](#android-back-gesture-zone-on-the-right-edge-own-bubbles---decided-by-the-user-2026-10-14-draft-pr-in-progress) |
@@ -513,6 +515,24 @@ The client half is built (neutral inert row, no link, one warn per type, unknown
 **Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (today `1.2.7`) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
 
 Draft PR with server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
+
+## P2 - The tab swipe is lost on a slow start: the 12 px lock sits past Chrome's 8 dp slop (Mi 9T, 2026-10-21)
+
+The owner's "the swipe to the camera does not work every time" is two deterministic classes, the
+whole matrix and its evidence in [design-reference](frontend/design-reference.md#the-swipe-to-the-camera-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-21).
+**A (every tab, not only the camera):** when the first `touchmove` Chrome delivers is under
+`GESTURE_LOCK_PX` (12), nothing claims it, Chrome takes the sequence and every later move is
+`cancelable=false`, so `claimTouchMove` stands the swipe down - 8 of 8 such cells. **Reproduction,
+deterministic (4 of 4 each way):** on the Mi 9T on the feed, `input motionevent DOWN 300 1300`,
+`MOVE 325 1300` (the first delivered move, 10 CSS px), then `MOVE` every 30 px to 620, `UP`: stays
+on the feed. The same path with its first `MOVE` at 332 (13 CSS px) opens the camera. (`input
+swipe` is NOT deterministic here: its first move lands anywhere from 10 to 24 px by injection
+timing.) **The fix** moves the lock to 8 px, under the slop; simulated on the phone, the failing path
+then opened the camera 4 of 4, the slow straight cells 12 of 12, and vertical scrolls were unchanged
+(separate draft PR). **B:** a start in Android's left 74 physical px
+is a system Back (8 of 8), the page sees only `touchcancel` - a user decision, owed in the table
+above. Owed after the fix: one real-finger reading of slow swipes on the Mi 9T, and class A read on
+the iPhone, where it is unproven.
 
 ## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, draft PR in progress
 
