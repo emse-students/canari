@@ -1398,7 +1398,7 @@ record - **two things were unknown:** whether an upload to the
 `internal` track (where every pre-release goes, `android.yml`) is refused while the declaration is
 missing, and what the review says of `microphone` for in-app calls. **The first pre-release carrying
 this is where it shows** - if the Play step of `android.yml` is refused, the GitHub release APK is
-still built, and the declaration is a one-off for the user ([backlog](../../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+still built.
 
 **What was BUILT is checked too.** `android.yml` reads the merged manifest of BOTH artifacts after
 the build (the AAB's protobuf manifest through `unzip | grep -a`, its strings are plain UTF-8; the
