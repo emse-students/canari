@@ -23,14 +23,7 @@ import {
 } from '../../../frontend/src/lib/utils/callVideo';
 import {
   CALL_VIDEO_LADDER,
-  CALL_VIDEO_QUALITY_SAMPLE_MS,
-  describeVideoQualityChange,
-  initialVideoQuality,
-  readVideoSendSample,
-  stepVideoQuality,
-  videoEvidence,
-  type VideoQualityState,
-  type VideoSendSample,
+  CallVideoQualityLoop,
 } from '../../../frontend/src/lib/utils/callVideoQuality';
 
 interface Impair {
@@ -116,16 +109,10 @@ const statsLog: unknown[] = [];
 const log: string[] = [];
 let impairCounts = { dropped: 0, passed: 0 };
 /**
- * The camera sender's quality ladder, run as `CallService.sampleVideoQuality` runs it (the same
- * pure steps, the same sample period); `changes` is what it decided, for the result.
+ * The camera sender's quality ladder: the app's own `CallVideoQualityLoop`, the loop `CallService`
+ * runs (sample, step, apply), so the rig measures the app's loop and not a copy of it.
  */
-let ladder: {
-  sender: RTCRtpSender;
-  state: VideoQualityState;
-  prev: VideoSendSample | null;
-  timer: number;
-  changes: { t: number; from: string; to: string }[];
-} | null = null;
+let ladder: CallVideoQualityLoop | null = null;
 
 function note(msg: string) {
   log.push(`${(performance.now() / 1000).toFixed(2)} ${msg}`);
@@ -353,36 +340,16 @@ function startCameraQuality(sender: RTCRtpSender) {
     void applyCallVideoRung(sender, CALL_VIDEO_LADDER[cfg.videoRung], note);
     return;
   }
-  if (ladder) window.clearTimeout(ladder.timer);
-  const state = initialVideoQuality();
-  ladder = { sender, state, prev: null, timer: 0, changes: [] };
-  void applyCallVideoRung(sender, CALL_VIDEO_LADDER[state.rung], note);
-  armLadder();
-}
-
-function armLadder() {
-  if (!ladder) return;
-  ladder.timer = window.setTimeout(() => void sampleLadder(), CALL_VIDEO_QUALITY_SAMPLE_MS);
-}
-
-async function sampleLadder() {
-  const l = ladder;
-  if (!l) return;
-  const sample = l.sender.track ? readVideoSendSample(await pc.getStats()) : null;
-  if (ladder !== l) return;
-  const step = stepVideoQuality(l.state, videoEvidence(l.prev, sample));
-  l.prev = sample;
-  l.state = step.state;
-  if (step.change) {
-    note(describeVideoQualityChange(step.change));
-    l.changes.push({
-      t: Math.round(performance.now()) / 1000,
-      from: CALL_VIDEO_LADDER[step.change.from].name,
-      to: CALL_VIDEO_LADDER[step.change.to].name,
-    });
-    await applyCallVideoRung(l.sender, CALL_VIDEO_LADDER[step.change.to], note);
-  }
-  armLadder();
+  ladder?.stop();
+  ladder = new CallVideoQualityLoop({
+    pc,
+    sender,
+    log: note,
+    onReduced: (reduced) => note(`video send reduced=${reduced}`),
+    setTimer: (fn, ms) => window.setTimeout(fn, ms),
+    clearTimer: (id) => window.clearTimeout(id),
+  });
+  ladder.start();
 }
 
 /** VIDEO: a camera switch - a NEW capture handed to the SAME sender (`replaceTrack`), no negotiation. */
@@ -411,6 +378,7 @@ async function cameraOn() {
   const cam = await navigator.mediaDevices.getUserMedia({ video: callVideoConstraints('user') });
   await t.sender.replaceTrack(cam.getVideoTracks()[0]);
   t.direction = 'sendrecv';
+  ladder?.resume();
   note('camera on (replaceTrack(track), sendrecv)');
   await pc.setLocalDescription();
   return gathered();
@@ -702,11 +670,17 @@ function askWorker(
 async function finish() {
   window.clearInterval(statsTimer);
   const ladderOut = ladder
-    ? { rung: CALL_VIDEO_LADDER[ladder.state.rung].name, changes: ladder.changes }
+    ? {
+        rung: ladder.rung === null ? 'none' : CALL_VIDEO_LADDER[ladder.rung].name,
+        changes: ladder.changes.map((c) => ({
+          from: CALL_VIDEO_LADDER[c.from].name,
+          to: CALL_VIDEO_LADDER[c.to].name,
+        })),
+      }
     : cfg.videoRung !== undefined
       ? { rung: CALL_VIDEO_LADDER[cfg.videoRung].name, changes: [] }
       : null;
-  if (ladder) window.clearTimeout(ladder.timer);
+  ladder?.stop();
   ladder = null;
   await sampleStats();
   const senderParams = pc

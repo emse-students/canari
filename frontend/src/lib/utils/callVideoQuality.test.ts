@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   CALL_VIDEO_LADDER,
+  CALL_VIDEO_RELAY_TOP_RUNG,
   CALL_VIDEO_START_RUNG,
+  CallVideoQualityLoop,
   DOWN_AFTER_BAD,
   MAX_REQUIRED_GOOD,
   MIN_PACKETS_FOR_LOSS,
@@ -16,6 +18,7 @@ import {
   stepVideoQuality,
   videoEvidence,
   type VideoEvidence,
+  type VideoQualityChange,
   type VideoQualityState,
   type VideoSendSample,
 } from './callVideoQuality';
@@ -24,19 +27,21 @@ import { applyCallVideoRung, callVideoConstraints } from './callVideo';
 const report = (entries: Record<string, unknown>[]) =>
   new Map(entries.map((e) => [e.id as string, e])) as unknown as RTCStatsReport;
 
-/** A clean sample of a link that carries everything. */
+/** A clean sample of a direct link that carries everything, the encoder mostly idle. */
 const CLEAN: VideoEvidence = {
   loss: 0,
   rtt: 0.04,
   available: 5_000_000,
   limit: 'none',
   sentBitrate: null,
+  encodeShare: 0.05,
+  relayed: false,
 };
 const LOSSY: VideoEvidence = { ...CLEAN, loss: 0.12, rtt: 0.1 };
 
-/** Steps the ladder through `evs` in order and returns every state and change. */
+/** Steps the ladder through `evs` in order and returns the last state and every change. */
 function run(state: VideoQualityState, evs: (VideoEvidence | null)[]) {
-  const changes = [];
+  const changes: VideoQualityChange[] = [];
   for (const ev of evs) {
     const step = stepVideoQuality(state, ev);
     state = step.state;
@@ -61,12 +66,12 @@ describe('the ladder', () => {
     expect(CALL_VIDEO_LADDER.at(-1)!.needBitrate).toBe(0);
   });
 
-  it('captures the top rung: 1280x720 at 30 fps', () => {
-    expect(callVideoConstraints('user')).toMatchObject({
-      width: { ideal: 1280, max: 1280 },
-      height: { ideal: 720, max: 720 },
-      frameRate: { ideal: 30, max: 30 },
-    });
+  it('asks the camera for 720p at 30 fps as IDEALS - no max a portrait camera could trip on', () => {
+    const c = callVideoConstraints('user');
+    expect(c).toMatchObject({ width: { ideal: 1280 }, height: { ideal: 720 } });
+    expect(c.width).not.toHaveProperty('max');
+    expect(c.height).not.toHaveProperty('max');
+    expect(c.frameRate).toEqual({ ideal: 30, max: 30 });
   });
 });
 
@@ -97,16 +102,30 @@ describe('readVideoSendSample', () => {
           localId: 'ov',
           packetsLost: 4,
           roundTripTime: 0.05,
+          reportsReceived: 12,
+          timestamp: 4900,
         },
         { id: 't', type: 'transport', selectedCandidatePairId: 'p' },
-        { id: 'p', type: 'candidate-pair', availableOutgoingBitrate: 2_000_000 },
+        {
+          id: 'p',
+          type: 'candidate-pair',
+          availableOutgoingBitrate: 2_000_000,
+          currentRoundTripTime: 0.04,
+          localCandidateId: 'lc',
+          remoteCandidateId: 'rc',
+        },
+        { id: 'lc', type: 'local-candidate', candidateType: 'host' },
+        { id: 'rc', type: 'remote-candidate', candidateType: 'srflx' },
       ])
     );
     expect(s).toEqual({
       framesEncoded: 300,
       packetsSent: 900,
       packetsLost: 4,
-      rtt: 0.05,
+      remoteReports: 12,
+      remoteTimestamp: 4900,
+      remoteRtt: 0.05,
+      pairRtt: 0.04,
       availableOutgoingBitrate: 2_000_000,
       qualityLimitationReason: 'none',
       bytesSent: 1_000_000,
@@ -115,10 +134,11 @@ describe('readVideoSendSample', () => {
       frameHeight: 720,
       framesPerSecond: 30,
       timestamp: 5000,
+      relayed: false,
     });
   });
 
-  it('takes the pair marked selected (Gecko) and its RTT when the peer reports none', () => {
+  it('reads a TURN relay on either end of the pair (Gecko marks the pair selected)', () => {
     const s = readVideoSendSample(
       report([
         { id: 'ov', type: 'outbound-rtp', mediaType: 'video', framesEncoded: 1 },
@@ -126,20 +146,20 @@ describe('readVideoSendSample', () => {
           id: 'p',
           type: 'candidate-pair',
           selected: true,
-          currentRoundTripTime: 0.2,
-          availableOutgoingBitrate: 300_000,
+          localCandidateId: 'lc',
+          remoteCandidateId: 'rc',
         },
+        { id: 'lc', type: 'local-candidate', candidateType: 'relay' },
+        { id: 'rc', type: 'remote-candidate', candidateType: 'host' },
       ])
     );
-    expect(s).toMatchObject({
-      rtt: 0.2,
-      availableOutgoingBitrate: 300_000,
-      packetsLost: null,
-      qualityLimitationReason: null,
-    });
+    expect(s).toMatchObject({ relayed: true, packetsLost: null, remoteReports: null });
   });
 
-  it('is null without an outbound video stream', () => {
+  it('says nothing of a relay before a pair is selected, and is null without outbound video', () => {
+    expect(
+      readVideoSendSample(report([{ id: 'ov', type: 'outbound-rtp', kind: 'video' }]))?.relayed
+    ).toBe(null);
     expect(readVideoSendSample(report([{ id: 'oa', type: 'outbound-rtp', kind: 'audio' }]))).toBe(
       null
     );
@@ -150,7 +170,10 @@ const sample = (o: Partial<VideoSendSample>): VideoSendSample => ({
   framesEncoded: 0,
   packetsSent: 0,
   packetsLost: 0,
-  rtt: null,
+  remoteReports: 0,
+  remoteTimestamp: null,
+  remoteRtt: null,
+  pairRtt: null,
   availableOutgoingBitrate: null,
   qualityLimitationReason: null,
   bytesSent: null,
@@ -159,28 +182,34 @@ const sample = (o: Partial<VideoSendSample>): VideoSendSample => ({
   frameHeight: null,
   framesPerSecond: null,
   timestamp: null,
+  relayed: null,
   ...o,
 });
 
 describe('videoEvidence', () => {
-  it('is the loss and the rate sent between two samples, and the latest RTT, estimate and limit', () => {
+  it('reads loss, rate sent and encode load between two samples when the peer report moved', () => {
     const ev = videoEvidence(
       sample({
         framesEncoded: 10,
         packetsSent: 100,
         packetsLost: 2,
+        remoteReports: 3,
         bytesSent: 0,
+        totalEncodeTime: 1,
         timestamp: 1000,
       }),
       sample({
         framesEncoded: 70,
         packetsSent: 300,
         packetsLost: 22,
-        rtt: 0.1,
+        remoteReports: 5,
+        remoteRtt: 0.1,
         availableOutgoingBitrate: 900_000,
         qualityLimitationReason: 'bandwidth',
         bytesSent: 250_000,
+        totalEncodeTime: 1.5,
         timestamp: 3000,
+        relayed: false,
       })
     );
     expect(ev).toEqual({
@@ -189,16 +218,45 @@ describe('videoEvidence', () => {
       available: 900_000,
       limit: 'bandwidth',
       sentBitrate: 1_000_000,
+      encodeShare: 0.25,
+      relayed: false,
     });
   });
 
-  it('gives no sent rate without both byte counts and a forward timestamp', () => {
-    const a = sample({ framesEncoded: 1, bytesSent: 0, timestamp: 1000 });
-    const rate = (b: Partial<VideoSendSample>) =>
-      videoEvidence(a, sample({ framesEncoded: 2, ...b }))?.sentBitrate;
-    expect(rate({ bytesSent: 10, timestamp: 1000 })).toBe(null);
-    expect(rate({ bytesSent: null, timestamp: 2000 })).toBe(null);
-    expect(rate({ bytesSent: 10, timestamp: null })).toBe(null);
+  it('a receiver report that did NOT move gives no loss and no round trip - never 0 % in an outage', () => {
+    const prev = sample({ framesEncoded: 1, packetsSent: 0, packetsLost: 5, remoteReports: 7 });
+    const frozen = sample({
+      framesEncoded: 60,
+      packetsSent: 400,
+      packetsLost: 5,
+      remoteReports: 7,
+      remoteRtt: 0.05,
+      pairRtt: 0.05,
+    });
+    expect(videoEvidence(prev, frozen)).toMatchObject({ loss: null, rtt: null });
+    // An engine that counts no reports: its timestamp says whether the report is new.
+    const p2 = sample({ framesEncoded: 1, remoteReports: null, remoteTimestamp: 900 });
+    const same = sample({
+      framesEncoded: 2,
+      packetsSent: 400,
+      remoteReports: null,
+      remoteTimestamp: 900,
+      remoteRtt: 0.05,
+    });
+    expect(videoEvidence(p2, same)).toMatchObject({ loss: null, rtt: null });
+    expect(videoEvidence(p2, { ...same, remoteTimestamp: 2900 })).toMatchObject({
+      loss: 0,
+      rtt: 0.05,
+    });
+  });
+
+  it('takes the pair round trip only when the peer sends no report at all', () => {
+    const none = { remoteReports: null, remoteTimestamp: null, pairRtt: 0.03 };
+    const ev = videoEvidence(
+      sample({ framesEncoded: 1, ...none }),
+      sample({ framesEncoded: 2, ...none })
+    );
+    expect(ev).toMatchObject({ rtt: 0.03, loss: null });
   });
 
   it('is no evidence without a baseline, or when nothing was encoded since', () => {
@@ -208,22 +266,34 @@ describe('videoEvidence', () => {
     expect(videoEvidence(sample({ framesEncoded: null }), sample({ framesEncoded: 5 }))).toBe(null);
   });
 
-  it('gives no loss over too few packets or without a peer report, and clamps it to [0, 1]', () => {
+  it('gives no loss over too few packets, and clamps it to [0, 1]', () => {
     const few = videoEvidence(
       sample({ framesEncoded: 1, packetsSent: 0 }),
-      sample({ framesEncoded: 2, packetsSent: MIN_PACKETS_FOR_LOSS - 1, packetsLost: 5 })
+      sample({
+        framesEncoded: 2,
+        packetsSent: MIN_PACKETS_FOR_LOSS - 1,
+        packetsLost: 5,
+        remoteReports: 1,
+      })
     );
     expect(few?.loss).toBe(null);
-    const noReport = videoEvidence(
-      sample({ framesEncoded: 1, packetsLost: null }),
-      sample({ framesEncoded: 2, packetsSent: 500, packetsLost: null })
-    );
-    expect(noReport?.loss).toBe(null);
     const backwards = videoEvidence(
       sample({ framesEncoded: 1, packetsSent: 0, packetsLost: 10 }),
-      sample({ framesEncoded: 2, packetsSent: 100, packetsLost: 4 })
+      sample({ framesEncoded: 2, packetsSent: 100, packetsLost: 4, remoteReports: 1 })
     );
     expect(backwards?.loss).toBe(0);
+  });
+
+  it('gives no rate and no encode load without a forward timestamp', () => {
+    const a = sample({ framesEncoded: 1, bytesSent: 0, totalEncodeTime: 0, timestamp: 1000 });
+    const ev = (b: Partial<VideoSendSample>) =>
+      videoEvidence(a, sample({ framesEncoded: 2, ...b }));
+    expect(ev({ bytesSent: 10, totalEncodeTime: 1, timestamp: 1000 })).toMatchObject({
+      sentBitrate: null,
+      encodeShare: null,
+    });
+    expect(ev({ bytesSent: null, timestamp: 2000 })?.sentBitrate).toBe(null);
+    expect(ev({ bytesSent: 10, timestamp: null })?.sentBitrate).toBe(null);
   });
 });
 
@@ -236,23 +306,26 @@ describe('judgeVideoEvidence', () => {
   it.each([
     ['loss', { ...CLEAN, loss: 0.1 }],
     ['round trip', { ...CLEAN, rtt: 0.8 }],
-    ['cpu', { ...CLEAN, limit: 'cpu' }],
+    ['cpu, the encoder busy half the time', { ...CLEAN, limit: 'cpu', encodeShare: 0.5 }],
     ['bandwidth, estimate under the need', { ...CLEAN, limit: 'bandwidth', available: 1_000_000 }],
-    ['bandwidth, no estimate', { ...CLEAN, limit: 'bandwidth', available: null }],
   ])('reads %s as bad, one rung down at least', (_, ev) => {
     const v = judgeVideoEvidence(0, ev as VideoEvidence);
     expect(v.verdict).toBe('bad');
     expect(v.target).toBeGreaterThanOrEqual(1);
   });
 
-  it('never drops on a low estimate alone: a still scene sends little and estimates little', () => {
-    expect(judgeVideoEvidence(0, { ...CLEAN, available: 200_000 }).verdict).toBe('steady');
-  });
-
-  it('does not drop when the encoder says bandwidth but the estimate carries the rung', () => {
-    expect(
-      judgeVideoEvidence(0, { ...CLEAN, limit: 'bandwidth', available: 2_000_000 }).verdict
-    ).toBe('steady');
+  it.each([
+    ['a low estimate alone (a still scene)', { ...CLEAN, available: 200_000 }],
+    ['bandwidth with an UNKNOWN estimate', { ...CLEAN, limit: 'bandwidth', available: null }],
+    [
+      'bandwidth with an estimate that carries the rung',
+      { ...CLEAN, limit: 'bandwidth', available: 2_000_000 },
+    ],
+    ['a lingering cpu state, the encoder idle', { ...CLEAN, limit: 'cpu', encodeShare: 0.1 }],
+    ['cpu with no encode time measured', { ...CLEAN, limit: 'cpu', encodeShare: null }],
+    ['a heavy encode the encoder does not call cpu', { ...CLEAN, encodeShare: 0.9 }],
+  ])('never drops on %s', (_, ev) => {
+    expect(judgeVideoEvidence(0, ev as VideoEvidence).verdict).toBe('steady');
   });
 
   it('drops a bandwidth-starved encoder straight to the rung the estimate carries', () => {
@@ -272,11 +345,13 @@ describe('judgeVideoEvidence', () => {
   });
 
   it.each([
-    ['unknown loss', { ...CLEAN, loss: null }],
+    ['unknown loss (no fresh report)', { ...CLEAN, loss: null }],
+    ['an unknown round trip (no fresh report)', { ...CLEAN, rtt: null }],
     ['loss at the clean bound', { ...CLEAN, loss: 0.03 }],
     ['a round trip at the clean bound', { ...CLEAN, rtt: 0.35 }],
     ['an encoder limited by bandwidth', { ...CLEAN, limit: 'bandwidth' }],
     ['an encoder limited otherwise', { ...CLEAN, limit: 'other' }],
+    ['a cpu state with the encoder still busy', { ...CLEAN, limit: 'cpu', encodeShare: 0.4 }],
     ['an estimate under the rung above', { ...CLEAN, available: 1_000_000 }],
     ['no limit reported and no estimate', { ...CLEAN, limit: null, available: null }],
   ])('does not climb on %s', (_, ev) => {
@@ -297,18 +372,16 @@ describe('judgeVideoEvidence', () => {
     // Measured in the rig after a camera switch: `bandwidth` for the whole call, 2.97 Mb/s estimated.
     const stale = { ...CLEAN, limit: 'bandwidth', available: 2_970_000, sentBitrate: 700_000 };
     expect(judgeVideoEvidence(1, stale).verdict).toBe('good');
-    // No room over what is sent: the link may be what limits it.
     expect(judgeVideoEvidence(1, { ...stale, sentBitrate: 2_500_000 }).verdict).toBe('steady');
-    // Room, but not the rung above's need.
     expect(
       judgeVideoEvidence(1, { ...stale, available: 1_000_000, sentBitrate: 500_000 }).verdict
     ).toBe('steady');
   });
 
-  it('climbs with an unknown RTT, or an unknown limit the estimate answers for', () => {
-    expect(judgeVideoEvidence(1, { ...CLEAN, rtt: null }).verdict).toBe('good');
-    expect(judgeVideoEvidence(1, { ...CLEAN, limit: null }).verdict).toBe('good');
-    expect(judgeVideoEvidence(1, { ...CLEAN, available: null }).verdict).toBe('good');
+  it('climbs past a stale `cpu` only with the encoder mostly idle and room on the link', () => {
+    const idle = { ...CLEAN, limit: 'cpu', encodeShare: 0.1, sentBitrate: 700_000 };
+    expect(judgeVideoEvidence(1, idle).verdict).toBe('good');
+    expect(judgeVideoEvidence(1, { ...idle, encodeShare: null }).verdict).toBe('steady');
   });
 
   it('cannot go below the bottom', () => {
@@ -333,6 +406,11 @@ describe('stepVideoQuality', () => {
     expect(changes).toHaveLength(0);
   });
 
+  it('a frozen receiver report never climbs, however long it stays frozen', () => {
+    const frozen = { ...CLEAN, loss: null, rtt: null };
+    expect(run(initialVideoQuality(), Array(50).fill(frozen)).changes).toHaveLength(0);
+  });
+
   it('drops after DOWN_AFTER_BAD bad samples, not one', () => {
     const one = run(initialVideoQuality(0), [LOSSY]);
     expect(one.changes).toHaveLength(0);
@@ -346,6 +424,19 @@ describe('stepVideoQuality', () => {
       { ...CLEAN, limit: 'bandwidth', available: 190_000 },
     ]);
     expect(changes).toMatchObject([{ from: 0, to: 3, severe: true }]);
+  });
+
+  it('a cpu state that PERSISTS after its drop costs exactly one rung (the lighter rung relieves the encoder)', () => {
+    const overloaded = { ...CLEAN, limit: 'cpu', encodeShare: 0.7 };
+    // After the drop libwebrtc keeps saying `cpu`, but the smaller picture encodes in less time.
+    const lingering = { ...CLEAN, limit: 'cpu', encodeShare: 0.35 };
+    const { state, changes } = run(initialVideoQuality(0), [
+      overloaded,
+      overloaded,
+      ...Array(40).fill(lingering),
+    ]);
+    expect(changes).toMatchObject([{ from: 0, to: 1, direction: 'down' }]);
+    expect(state.rung).toBe(1);
   });
 
   it('a bad sample between two others is not a streak', () => {
@@ -386,7 +477,6 @@ describe('stepVideoQuality', () => {
     ]);
     expect(changes[1]).toMatchObject({ probeFailed: true, nextRequired: UP_AFTER_GOOD * 2 });
     expect(state.required[0]).toBe(UP_AFTER_GOOD * 2);
-    // The next climb needs the doubled count (after the settling sample).
     const again = run(state, [CLEAN, ...Array(UP_AFTER_GOOD * 2 - 1).fill(CLEAN)]);
     expect(again.changes).toHaveLength(0);
     expect(run(again.state, [CLEAN]).changes).toMatchObject([{ direction: 'up', to: 0 }]);
@@ -396,7 +486,7 @@ describe('stepVideoQuality', () => {
     const evs = [
       ...Array(UP_AFTER_GOOD).fill(CLEAN),
       CLEAN, // settling
-      ...Array(PROBE_WATCH).fill({ ...CLEAN }),
+      ...Array(PROBE_WATCH).fill(CLEAN),
       LOSSY,
       LOSSY,
     ];
@@ -416,17 +506,57 @@ describe('stepVideoQuality', () => {
     expect(state.required[0]).toBe(MAX_REQUIRED_GOOD);
   });
 
-  it('says ONCE that the peer sends no loss figure', () => {
+  it('SIMULATION: a link that holds 720p for ~16 s then loses does not cycle every 20 s for the whole call', () => {
+    // The link: 720p is clean for 8 samples after each climb, then two lossy ones; 480p is clean.
+    let state = initialVideoQuality();
+    let atRung = 0;
+    const climbs: number[] = [];
+    for (let t = 0; t < 300; t++) {
+      const ev = state.rung === 0 ? (atRung < 9 ? CLEAN : LOSSY) : CLEAN;
+      const step = stepVideoQuality(state, ev);
+      if (step.change) {
+        if (step.change.direction === 'up') climbs.push(t);
+        atRung = 0;
+      } else {
+        atRung += 1;
+      }
+      state = step.state;
+    }
+    // Ten minutes: a handful of probes, each one further apart than the last.
+    expect(climbs.length).toBeLessThanOrEqual(8);
+    const gaps = climbs.slice(1).map((t, i) => t - climbs[i]);
+    for (let i = 1; i < gaps.length; i++) expect(gaps[i]).toBeGreaterThanOrEqual(gaps[i - 1]);
+    expect(gaps.at(-1)).toBeGreaterThanOrEqual(MAX_REQUIRED_GOOD);
+  });
+
+  it('says ONCE per ladder that the peer sends no fresh loss figure, even after one came back', () => {
     const noLoss = { ...CLEAN, loss: null };
     let state = initialVideoQuality();
     const said: number[] = [];
-    for (let i = 1; i <= NO_LOSS_REPORT_WARN_AFTER * 3; i++) {
-      const step = stepVideoQuality(state, noLoss);
+    const evs = [
+      ...Array(NO_LOSS_REPORT_WARN_AFTER * 2).fill(noLoss),
+      { ...CLEAN, limit: 'other' },
+      ...Array(NO_LOSS_REPORT_WARN_AFTER * 2).fill(noLoss),
+    ];
+    evs.forEach((ev, i) => {
+      const step = stepVideoQuality(state, ev);
       state = step.state;
-      if (step.noLossReport) said.push(i);
-    }
+      if (step.noLossReport) said.push(i + 1);
+    });
     expect(said).toEqual([NO_LOSS_REPORT_WARN_AFTER]);
     expect(state.rung).toBe(CALL_VIDEO_START_RUNG);
+  });
+
+  it('a RELAYED call is brought down to its cap at once and never climbs above it', () => {
+    const relayed = { ...CLEAN, relayed: true };
+    const down = run(initialVideoQuality(0), [relayed]);
+    expect(down.changes).toMatchObject([
+      { from: 0, to: CALL_VIDEO_RELAY_TOP_RUNG, direction: 'down', cause: 'relay' },
+    ]);
+    expect(run(initialVideoQuality(), Array(60).fill(relayed)).changes).toHaveLength(0);
+    // Back on a direct path, the climb is open again.
+    const direct = run(initialVideoQuality(), Array(UP_AFTER_GOOD).fill(CLEAN));
+    expect(direct.state.rung).toBe(0);
   });
 
   it('walks a weakening link down and a recovering one back up', () => {
@@ -450,7 +580,7 @@ describe('the log line', () => {
   it('names the rungs, the streak and the evidence', () => {
     const { changes } = run(initialVideoQuality(0), [LOSSY, LOSSY]);
     expect(describeVideoQualityChange(changes[0])).toBe(
-      'video quality down 720p30 -> 480p30 after 2 bad samples (loss=12% rtt=100ms limit=none avail=5000kbps sent=?)'
+      'video quality down 720p30 -> 480p30 after 2 bad samples (loss=12% rtt=100ms limit=none avail=5000kbps sent=? enc=5%)'
     );
     const failed = run(initialVideoQuality(), [
       ...Array(UP_AFTER_GOOD).fill(CLEAN),
@@ -458,7 +588,11 @@ describe('the log line', () => {
       { ...CLEAN, loss: 0.3 },
     ]).changes[1];
     expect(describeVideoQualityChange(failed)).toBe(
-      `video quality down 720p30 -> 480p30 after a severe sample, the climb into 720p30 failed - the next one needs ${UP_AFTER_GOOD * 2} clean samples (loss=30% rtt=40ms limit=none avail=5000kbps sent=?)`
+      `video quality down 720p30 -> 480p30 after a severe sample, the climb into 720p30 failed - the next one needs ${UP_AFTER_GOOD * 2} clean samples (loss=30% rtt=40ms limit=none avail=5000kbps sent=? enc=5%)`
+    );
+    const relay = run(initialVideoQuality(0), [{ ...CLEAN, relayed: true }]).changes[0];
+    expect(describeVideoQualityChange(relay)).toBe(
+      'video quality down 720p30 -> 480p30 after the call went through a TURN relay (capped) (loss=0% rtt=40ms limit=none avail=5000kbps sent=? enc=5% relayed)'
     );
   });
 
@@ -470,8 +604,10 @@ describe('the log line', () => {
         available: null,
         limit: null,
         sentBitrate: null,
+        encodeShare: null,
+        relayed: null,
       })
-    ).toBe('loss=? rtt=? limit=? avail=? sent=?');
+    ).toBe('loss=? rtt=? limit=? avail=? sent=? enc=?');
   });
 });
 
@@ -502,5 +638,184 @@ describe('applyCallVideoRung', () => {
     expect(log).toHaveBeenCalledWith(
       '[Call] ERROR video sender setParameters(720p30) refused: Error: InvalidModificationError'
     );
+  });
+});
+
+describe('CallVideoQualityLoop', () => {
+  /** The stats of a direct, clean link at sample `n` (cumulative counters, 2 s apart). */
+  function statsAt(n: number, o: { lossPerSample?: number; relay?: boolean } = {}) {
+    return report([
+      {
+        id: 'ov',
+        type: 'outbound-rtp',
+        kind: 'video',
+        framesEncoded: n * 60,
+        packetsSent: n * 400,
+        bytesSent: n * 150_000,
+        totalEncodeTime: n * 0.1,
+        qualityLimitationReason: 'none',
+        timestamp: n * 2000,
+      },
+      {
+        id: 'rv',
+        type: 'remote-inbound-rtp',
+        kind: 'video',
+        localId: 'ov',
+        packetsLost: Math.round(n * 400 * (o.lossPerSample ?? 0)),
+        roundTripTime: 0.05,
+        reportsReceived: n,
+      },
+      { id: 't', type: 'transport', selectedCandidatePairId: 'p' },
+      {
+        id: 'p',
+        type: 'candidate-pair',
+        availableOutgoingBitrate: 5_000_000,
+        localCandidateId: 'lc',
+        remoteCandidateId: 'rc',
+      },
+      { id: 'lc', type: 'local-candidate', candidateType: o.relay ? 'relay' : 'host' },
+      { id: 'rc', type: 'remote-candidate', candidateType: 'host' },
+    ]);
+  }
+
+  /** A loop on a fake sender and a hand-driven timer; `tick()` fires the pending sample. */
+  function harness(opts: { refuse?: 'start' | 'change' } = {}) {
+    let n = 0;
+    let loss = 0;
+    const timers = new Map<number, () => void>();
+    let nextId = 1;
+    const logs: string[] = [];
+    const reduced: boolean[] = [];
+    let params: { encodings: Record<string, unknown>[] } = { encodings: [{}] };
+    let calls = 0;
+    const sender = {
+      track: { kind: 'video' } as unknown,
+      getParameters: () => structuredClone(params),
+      setParameters: vi.fn(async (p: typeof params) => {
+        calls += 1;
+        if (opts.refuse === 'start' || (opts.refuse === 'change' && calls > 1)) {
+          throw new Error('InvalidModificationError');
+        }
+        params = p;
+      }),
+    };
+    const loop = new CallVideoQualityLoop({
+      pc: { getStats: async () => statsAt(n, { lossPerSample: loss }) },
+      sender: sender as unknown as RTCRtpSender,
+      log: (m) => logs.push(m),
+      onReduced: (r) => reduced.push(r),
+      setTimer: (fn) => {
+        timers.set(nextId, fn);
+        return nextId++;
+      },
+      clearTimer: (id) => timers.delete(id),
+    });
+    const settle = async () => {
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    };
+    const tick = async () => {
+      n += 1;
+      const [id, fn] = [...timers.entries()][0] ?? [];
+      if (id === undefined || !fn) return false;
+      timers.delete(id);
+      fn();
+      await settle();
+      return true;
+    };
+    return {
+      loop,
+      sender,
+      logs,
+      reduced,
+      timers,
+      tick,
+      settle,
+      params: () => params.encodings[0],
+      setLoss: (l: number) => (loss = l),
+    };
+  }
+
+  it('starts on 480p, says its degradationPreference, and climbs to 720p on a clean link', async () => {
+    const h = harness();
+    h.loop.start();
+    await h.settle();
+    expect(h.logs[0]).toBe(
+      '[Call] video quality ladder starts on 480p30 (degradationPreference=unset)'
+    );
+    expect(h.params()).toMatchObject({ scaleResolutionDownBy: 1.5, maxBitrate: 1_200_000 });
+    expect(h.reduced).toEqual([false]);
+    for (let i = 0; i < 4; i++) await h.tick();
+    expect(h.loop.rung).toBe(0);
+    expect(h.params()).toMatchObject({ scaleResolutionDownBy: 1, maxBitrate: 2_500_000 });
+    expect(h.loop.changes.map((c) => c.to)).toEqual([0]);
+  });
+
+  it('stops its timer while the camera is off, and resume() samples again from a new baseline', async () => {
+    const h = harness();
+    h.loop.start();
+    await h.settle();
+    await h.tick();
+    h.sender.track = null;
+    await h.tick();
+    expect(h.timers.size).toBe(0);
+    h.sender.track = { kind: 'video' };
+    h.loop.resume();
+    expect(h.timers.size).toBe(1);
+    h.loop.resume();
+    expect(h.timers.size).toBe(1);
+  });
+
+  it('a rung refused at the start: ERROR, "not started", no timer left and nothing said reduced', async () => {
+    const h = harness({ refuse: 'start' });
+    h.loop.start();
+    await h.settle();
+    expect(h.logs).toContain(
+      '[Call] ERROR video quality ladder not started: the sender refused 480p30'
+    );
+    expect(h.loop.running).toBe(false);
+    expect(h.timers.size).toBe(0);
+    expect(h.reduced).toEqual([]);
+  });
+
+  it('a rung refused later stops the loop and leaves the reduced flag as the sender still is', async () => {
+    const h = harness({ refuse: 'change' });
+    h.loop.start();
+    await h.settle();
+    await h.tick();
+    h.setLoss(0.3);
+    await h.tick();
+    expect(h.logs).toContain(
+      '[Call] ERROR video quality ladder stopped: the sender refused a rung'
+    );
+    expect(h.loop.running).toBe(false);
+    expect(h.loop.rung).toBe(1);
+    expect(h.reduced).toEqual([false]);
+    expect(await h.tick()).toBe(false);
+  });
+
+  it('a relayed call never sends above 480p', async () => {
+    const h = harness();
+    const relayed = new CallVideoQualityLoop({
+      pc: { getStats: async () => statsAt(++relayN, { relay: true }) },
+      sender: h.sender as unknown as RTCRtpSender,
+      log: () => {},
+      onReduced: () => {},
+      setTimer: (fn) => {
+        h.timers.set(99, fn);
+        return 99;
+      },
+      clearTimer: () => h.timers.clear(),
+    });
+    let relayN = 0;
+    relayed.start();
+    await h.settle();
+    for (let i = 0; i < 20; i++) {
+      const fn = h.timers.get(99);
+      h.timers.delete(99);
+      fn?.();
+      await h.settle();
+    }
+    expect(relayed.rung).toBe(CALL_VIDEO_RELAY_TOP_RUNG);
+    expect(relayed.changes).toEqual([]);
   });
 });

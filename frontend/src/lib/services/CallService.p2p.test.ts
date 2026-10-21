@@ -1453,8 +1453,10 @@ describe('the E2E worker report (2026-10-19)', () => {
         let frames = 0;
         let sent = 0;
         let lost = 0;
+        let reports = 0;
         return async (o: { loss?: number; limit?: string; available?: number } = {}) => {
           frames += 60;
+          reports += 1;
           sent += 400;
           lost += Math.round(400 * (o.loss ?? 0));
           pc.videoSend = {
@@ -1470,6 +1472,7 @@ describe('the E2E worker report (2026-10-19)', () => {
               localId: 'out-v',
               packetsLost: lost,
               roundTripTime: 0.05,
+              reportsReceived: reports,
             },
             { id: 't', type: 'transport', selectedCandidatePairId: 'p' },
             {
@@ -1501,12 +1504,15 @@ describe('the E2E worker report (2026-10-19)', () => {
           scaleResolutionDownBy: 1.5,
         });
 
+        expect(lines()).toContain(
+          '[Call] video quality ladder starts on 480p30 (degradationPreference=unset)'
+        );
         await sample(); // the baseline
         await sample();
         await sample();
         await sample();
         expect(lines()).toContain(
-          '[Call] video quality up 480p30 -> 720p30 after 3 clean samples (loss=0% rtt=50ms limit=none avail=5000kbps sent=?)'
+          '[Call] video quality up 480p30 -> 720p30 after 3 clean samples (loss=0% rtt=50ms limit=none avail=5000kbps sent=? enc=?)'
         );
         expect(sender.params.encodings[0]).toEqual({
           maxBitrate: 2_500_000,
@@ -1518,7 +1524,7 @@ describe('the E2E worker report (2026-10-19)', () => {
         await sample(); // read across the change, never judged
         await sample({ limit: 'bandwidth', available: 190_000 });
         expect(lines()).toContain(
-          '[Call] video quality down 720p30 -> 360p15 after a severe sample, the climb into 720p30 failed - the next one needs 6 clean samples (loss=0% rtt=50ms limit=bandwidth avail=190kbps sent=?)'
+          '[Call] video quality down 720p30 -> 360p15 after a severe sample, the climb into 720p30 failed - the next one needs 6 clean samples (loss=0% rtt=50ms limit=bandwidth avail=190kbps sent=? enc=?)'
         );
         expect(sender.params.encodings[0]).toEqual({
           maxBitrate: 400_000,
@@ -1541,8 +1547,16 @@ describe('the E2E worker report (2026-10-19)', () => {
         await service.toggleVideo();
         expect(sender.track).toBeNull();
         for (let i = 0; i < 6; i++) await sample({ loss: 0.5 });
-        expect(lines().some((l) => l.includes('video quality'))).toBe(false);
+        expect(lines().some((l) => /video quality (up|down)/.test(l))).toBe(false);
         expect(sender.params.encodings[0]).toMatchObject({ scaleResolutionDownBy: 1.5 });
+        // The camera back on: the ladder samples again, from a new baseline.
+        await service.toggleVideo();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sender.track).not.toBeNull();
+        for (let i = 0; i < 3; i++) await sample({ loss: 0.5 });
+        expect(lines()).toContain(
+          '[Call] video quality down 480p30 -> 360p30 after a severe sample (loss=50% rtt=50ms limit=none avail=5000kbps sent=? enc=?)'
+        );
       });
 
       it('stops, at ERROR, when the engine refuses a rung - never keeps proposing it', async () => {

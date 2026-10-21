@@ -15,12 +15,17 @@ export type CameraFacing = 'user' | 'environment';
  * by the sender (`scaleResolutionDownBy`), so a drop or a climb never reopens the camera.
  * `facingMode` is IDEAL for the first capture (a desktop webcam has no facing) and EXACT for a
  * switch, where getting the same camera back would be a switch that silently did nothing.
+ *
+ * Size is IDEAL only, never `max`: both bench phones deliver the camera PORTRAIT (720x1280), and a
+ * `max` written for landscape may be applied to the rotated dimensions - the engine then refuses
+ * or falls to a smaller preset and the "720p" rung is never 720p (review of #2173). The reel
+ * camera asks the same way. The size actually captured is logged at the camera's opening.
  */
 export function callVideoConstraints(facing: CameraFacing, exact = false): MediaTrackConstraints {
   return {
     facingMode: exact ? { exact: facing } : { ideal: facing },
-    width: { ideal: 1280, max: 1280 },
-    height: { ideal: 720, max: 720 },
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
     frameRate: { ideal: 30, max: 30 },
   };
 }
