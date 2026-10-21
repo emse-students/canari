@@ -1875,6 +1875,15 @@ description when the page declared none. A site with good tags is never made wor
 The YouTube short-circuit stays ahead of all of it: it needs no HTML fetch at all, so it is strictly
 cheaper.
 
+#### What counts as the app: an exact host, never a suffix
+
+`isPublicAppUrl` (`publicAppUrl.ts`) accepts `PUBLIC_APP_HOSTS` plus the host of the origin the build
+advertises (`publicAppOrigin()`, so `dev.canari-emse.fr` is the app on the dev estate only). It used
+to accept every `*.canari-emse.fr` / `*.canari.emse.fr`, so a link to `archives.canari-emse.fr` (a
+separate Omeka site) was treated as the app: `AppLink` replaced its text with a generic label and
+navigated to the same path on the current origin. Sibling subdomains are external and keep their own
+host, text and preview card.
+
 #### Ecosystem sites are named, not spelled out
 
 `frontend/src/lib/utils/ecosystemHosts.ts` maps the four hosts we share users with -
