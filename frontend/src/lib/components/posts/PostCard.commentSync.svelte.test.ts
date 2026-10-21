@@ -1,13 +1,15 @@
 /**
- * A COMMENT WRITTEN IN THE REEL VIEWER'S SHEET REACHES THE CARD AS A CHANGE, AND THE CARD'S COUNT IS
- * THE SERVER'S TOTAL (`posts/commentChange.ts`).
+ * A COMMENT WRITTEN ON ANOTHER SURFACE REACHES THE CARD AS A CHANGE, THE CARD'S COUNT IS THE SERVER'S
+ * TOTAL (`posts/commentChange.ts`), AND OLDER COMMENTS COME PAGE BY PAGE.
  *
- * Pinned: a card holding the whole thread keeps every row when the sheet - whose copy is a feed row
- * of the newest twenty - announces a write (it used to ADOPT the sheet's list and collapse); a
- * removal takes only the named comment; the number on the card is `commentCount`, not the twenty
- * rows a feed row carries.
+ * The thread is read in the card's comment SHEET (a portal on `document.body`), so what is counted
+ * here is read there. Pinned: the card keeps every row it holds when another surface announces a
+ * write (it used to ADOPT that surface's list and collapse); a removal takes only the named
+ * comment; the number on the card is `commentCount`, not the twenty rows a feed row carries; and a
+ * page of older threads is ADDED to the rows held - never replacing one, never bringing back a
+ * comment removed while it was in flight.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import PostCard from './PostCard.svelte';
 import type { PostComment, PostEntity } from '$lib/posts/api';
@@ -15,6 +17,9 @@ import { publishPostComments } from '$lib/posts/postCommentThread.svelte';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { m } from '$lib/paraglide/messages';
 import { flushMacrotask } from '../../../test/flush';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+afterAll(adoptTransitionAnimations());
 
 vi.mock('$lib/utils/apiFetch', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/apiFetch')>()),
@@ -87,7 +92,8 @@ function mountCard(post: PostEntity) {
   return target;
 }
 
-const rows = (target: HTMLElement) => target.querySelectorAll('[id^="comment-"]').length;
+/** The comments the SHEET draws - it is a portal, so they are read from the document. */
+const rows = () => document.body.querySelectorAll('[id^="comment-"]').length;
 /** The number the card's comment button shows. */
 const shownCount = (target: HTMLElement) =>
   [...target.querySelectorAll('span.text-sm.font-medium')].map((s) => s.textContent?.trim());
@@ -104,23 +110,23 @@ it('shows the server total, not the twenty rows a feed row carries', () => {
   expect(shownCount(target)).toContain('57');
 });
 
-it("a comment written in the sheet is ADDED to a card holding the whole thread, never adopted as the sheet's list", () => {
+it("a comment written elsewhere is ADDED to the rows the card holds, never adopted as that surface's list", () => {
   const target = mountCard(
     row(
       Array.from({ length: 25 }, (_, i) => comment(i)),
       25
     )
   );
-  expect(rows(target)).toBe(25);
+  expect(rows()).toBe(25);
 
   publishPostComments('p1', { kind: 'upsert', comment: comment(40) }, elsewhere);
   flushSync();
 
-  expect(rows(target)).toBe(26);
+  expect(rows()).toBe(26);
   expect(shownCount(target)).toContain('26');
 });
 
-it('a removal in the sheet takes only the named comment', () => {
+it('a removal elsewhere takes only the named comment', () => {
   const target = mountCard(
     row(
       Array.from({ length: 25 }, (_, i) => comment(i)),
@@ -131,20 +137,20 @@ it('a removal in the sheet takes only the named comment', () => {
   publishPostComments('p1', { kind: 'remove', ids: ['c3'], count: 1 }, elsewhere);
   flushSync();
 
-  expect(rows(target)).toBe(24);
-  expect(target.querySelector('#comment-c3')).toBeNull();
+  expect(rows()).toBe(24);
+  expect(document.body.querySelector('#comment-c3')).toBeNull();
   expect(shownCount(target)).toContain('24');
 });
 
-describe('"load all" on a card that has written comments (through the real ledger)', () => {
-  /** The read of the post itself (`GET /api/posts/p1`): answered when the test says. */
-  function serveRead(): (rows: PostComment[]) => void {
+describe('older comments, read page by page (through the real ledger)', () => {
+  /** What `GET /api/posts/p1/comments` answers once the test says so. */
+  function servePage(): (rows: PostComment[]) => void {
     let answer!: (rows: PostComment[]) => void;
     const pending = new Promise<PostComment[]>((resolve) => (answer = resolve));
     vi.mocked(apiFetch).mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url.endsWith('/api/posts/p1') && (init?.method ?? 'GET') === 'GET') {
+      if (url.includes('/api/posts/p1/comments') && (init?.method ?? 'GET') === 'GET') {
         const comments = await pending;
-        return new Response(JSON.stringify({ ...row(comments, 0), commentCount: undefined }), {
+        return new Response(JSON.stringify({ comments, nextCursor: null, hasMore: false }), {
           status: 200,
         });
       }
@@ -153,8 +159,14 @@ describe('"load all" on a card that has written comments (through the real ledge
     return answer;
   }
 
-  async function loadAll(target: HTMLElement) {
-    const button = [...target.querySelectorAll('button')].find(
+  /** The 5 older threads the server holds beyond the 25 a feed row carried. */
+  const older = (extra: PostComment[] = []) => [
+    ...Array.from({ length: 5 }, (_, i) => comment(25 + i)),
+    ...extra,
+  ];
+
+  async function loadOlder() {
+    const button = [...document.body.querySelectorAll('button')].find(
       (b) => b.textContent?.trim() === m.post_comment_load_older_label()
     )!;
     button.click();
@@ -162,72 +174,74 @@ describe('"load all" on a card that has written comments (through the real ledge
     flushSync();
   }
 
-  async function settleRead() {
+  async function settlePage() {
     for (let i = 0; i < 4; i++) await flushMacrotask();
     flushSync();
   }
 
-  it('a read issued AFTER a comment write adopts every row and their count', async () => {
-    const answer = serveRead();
-    const target = mountCard(
-      // The server counts more than the 25 rows held: that is what offers "view older comments".
+  /** A feed row of 25 threads, of the 30 the server holds. */
+  const mountWithOlder = () =>
+    mountCard(
       row(
         Array.from({ length: 25 }, (_, i) => comment(i)),
         30
       )
     );
+
+  it('adds the older threads to the rows held, a comment written since included', async () => {
+    const answer = servePage();
+    const target = mountWithOlder();
     publishPostComments('p1', { kind: 'upsert', comment: comment(40) }, elsewhere);
     flushSync();
 
-    await loadAll(target);
-    answer(Array.from({ length: 54 }, (_, i) => comment(i)));
-    await settleRead();
+    await loadOlder();
+    answer(older());
+    await settlePage();
 
-    expect(rows(target)).toBe(54);
-    expect(shownCount(target)).toContain('54');
+    expect(rows()).toBe(31);
+    expect(shownCount(target)).toContain('31');
   });
 
-  it('a deletion answered while the read is out keeps the count WITH the rows', async () => {
-    const answer = serveRead();
-    const target = mountCard(
-      // The feed row carries 25 of the 30 the server holds, which is what offers "view older comments".
-      row(
-        Array.from({ length: 25 }, (_, i) => comment(i)),
-        30
-      )
-    );
+  it('does not undo a deletion answered while the page was out', async () => {
+    const answer = servePage();
+    const target = mountWithOlder();
 
-    await loadAll(target);
+    await loadOlder();
     publishPostComments('p1', { kind: 'remove', ids: ['c3'], count: 1 }, elsewhere);
     flushSync();
-    answer(Array.from({ length: 30 }, (_, i) => comment(i)));
-    // The write answered while the read was out wins over it: the held rows stay, and the count
-    // moved by exactly what the write moved the rows.
-    await settleRead();
+    // The page was read before the deletion answered, so it still carries c3.
+    answer(older([comment(3)]));
+    await settlePage();
 
-    expect(rows(target)).toBe(24);
+    expect(document.body.querySelector('#comment-c3')).toBeNull();
+    expect(rows()).toBe(29);
     expect(shownCount(target)).toContain('29');
   });
 
-  it('an addition answered while the read is out keeps the count WITH the rows', async () => {
-    const answer = serveRead();
-    const target = mountCard(
-      // The feed row carries 25 of the 30 the server holds, which is what offers "view older comments".
-      row(
-        Array.from({ length: 25 }, (_, i) => comment(i)),
-        30
-      )
-    );
+  it('keeps an addition answered while the page was out', async () => {
+    const answer = servePage();
+    const target = mountWithOlder();
 
-    await loadAll(target);
+    await loadOlder();
     publishPostComments('p1', { kind: 'upsert', comment: comment(40) }, elsewhere);
     flushSync();
-    answer(Array.from({ length: 30 }, (_, i) => comment(i)));
-    // The write answered while the read was out wins over it: the held rows stay, and the count
-    // moved by exactly what the write moved the rows.
-    await settleRead();
+    answer(older());
+    await settlePage();
 
-    expect(rows(target)).toBe(26);
+    expect(rows()).toBe(31);
     expect(shownCount(target)).toContain('31');
+  });
+
+  it('hides the button once the server said there is no more', async () => {
+    const answer = servePage();
+    mountWithOlder();
+    await loadOlder();
+    answer(older());
+    await settlePage();
+
+    const stillThere = [...document.body.querySelectorAll('button')].some(
+      (b) => b.textContent?.trim() === m.post_comment_load_older_label()
+    );
+    expect(stillThere).toBe(false);
   });
 });

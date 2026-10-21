@@ -43,13 +43,11 @@ function mountSection(comments: PostComment[], focusCommentId?: string) {
     props: {
       comments,
       topLevelComments: comments.filter((c) => !c.parentId),
-      showComments: true,
       commentText: '',
       submittingComment: false,
       postId: 'p1',
       currentUserId: 'u1',
       focusCommentId,
-      onToggleComments: vi.fn(),
       onCommentTextChange: vi.fn(async () => {}),
       onAddComment: vi.fn(async () => 'sent' as const),
       onLikeComment: vi.fn(),
