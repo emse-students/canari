@@ -111,7 +111,9 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
   it('never halves against a transport failure: nobody answered, so a smaller page cannot help', async () => {
     // The Mi 9T's offline cold start (2026-10-15) walked 250, 125, ... 1 against `Failed to fetch`:
     // eight warn lines and eight requests into the same dead link.
-    const fetchFn = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    const fetchFn = vi
+      .fn()
+      .mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await expect(api(fetchFn).pullPendingMessagesJson()).rejects.toBeInstanceOf(TypeError);

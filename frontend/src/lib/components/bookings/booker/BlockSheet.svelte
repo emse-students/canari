@@ -24,9 +24,9 @@
    * start's. Blocking a free range is immediate (D29); a range a booking took meanwhile is refused
    * by the server (`bookings-inside-block`), which means the grid is stale: it is re-read.
    *
-   * An unknown outcome CLOSES the sheet once the grid is re-read: the server does not refuse a block
-   * over another block, so a second tap could write the same block twice. The grid shows whether
-   * the first one landed.
+   * An unknown outcome CLOSES the sheet once the grid is re-read: the first block may have landed,
+   * and the grid shows it. A second tap would only be refused (`block-overlap`, which also closes
+   * the sheet), so the sheet does not offer it.
    */
   interface Props {
     space: BookerSpace;
@@ -72,7 +72,7 @@
       const code = refusalCode(e);
       if (outcomeUnknown(e)) {
         // Nobody answered, or a 5xx with no code: the block may have been written before the
-        // answer was lost. Re-read, then CLOSE - a retry from this sheet could block twice.
+        // answer was lost. Re-read, then CLOSE: the grid shows whether it landed.
         Log.i('BOOKINGS', `block outcome unknown: ${String(e)}`);
         await onReread();
         showToast(m.bookings_block_outcome_unknown(), 'error');
@@ -80,7 +80,7 @@
         return;
       }
       error = describeBookingRefusal(e, m.bookings_block_action());
-      if (code === 'bookings-inside-block' || code === 'blocked') {
+      if (code === 'bookings-inside-block' || code === 'blocked' || code === 'block-overlap') {
         const ids = e instanceof BookingsApiError ? e.bookingIds : [];
         Log.i(
           'BOOKINGS',

@@ -4,6 +4,7 @@
 mod app_group;
 mod commands;
 mod concurrency;
+mod happy_eyeballs;
 mod keystore_bridge;
 mod state;
 
@@ -31,6 +32,7 @@ use crate::state::{AppState, PendingDb};
 #[cfg(feature = "bench-observables")]
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
+use crate::commands::display_names::store_display_names;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
     creer_groupe, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
@@ -823,7 +825,10 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
-        .plugin(tauri_plugin_websocket::init())
+        // The chat socket's TCP connect races IPv6 and IPv4 (RFC 8305) instead of trying them in
+        // turn (CALL-WS-V6): see `happy_eyeballs.rs` and the patch in `patches/tauri-plugin-websocket`,
+        // whose `Builder::new` REQUIRES the connector (upstream's `init()` is removed).
+        .plugin(tauri_plugin_websocket::Builder::new(happy_eyeballs::tcp_connector()).build())
         .plugin(tauri_plugin_store::Builder::default().build())
         // Publishes the COMPILE-TIME target OS to the WebView (window.__TAURI_OS_PLUGIN_INTERNALS__).
         // The frontend used to read the platform out of navigator.userAgent, which an iPad WKWebView
@@ -1129,6 +1134,7 @@ pub fn run() {
             take_picked_file,
             notifier_message_natif,
             store_avatar_mirror,
+            store_display_names,
             // A BENCH build only - see `commands::bench`. Absent, not refusing, everywhere else.
             #[cfg(feature = "bench-observables")]
             bench_native_store

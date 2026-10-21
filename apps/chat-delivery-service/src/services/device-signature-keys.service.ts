@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { readKeyPackageLeaf } from '../utils/key-package-leaf';
+import { RefusalCode } from '../utils/refusal-codes';
 
 /** Which upload a batch of KeyPackages came from - named in every log line so a refusal is placed. */
 export type KeyPackageSource = 'register-device' | 'prekeys';
@@ -63,7 +64,7 @@ export class DeviceSignatureKeysService {
       // The code is what a client classifies on; both arms share it because both mean "this client
       // minted something no member may add", and neither is retryable.
       throw new BadRequestException({
-        code: 'KEY_PACKAGE_IDENTITY_INVALID',
+        code: RefusalCode.KEY_PACKAGE_IDENTITY_INVALID,
         message: 'Every key package must parse and name the device uploading it',
         unreadable,
         foreignIdentity: foreign,

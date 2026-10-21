@@ -199,3 +199,55 @@ describe('Modal', () => {
     expect(historyOverlayStackDepth()).toBe(0);
   });
 });
+
+describe('Modal - the left-edge swipe is its Back on a phone', () => {
+  /** The minimal touch shape `swipeBack` reads (happy-dom has no TouchEvent constructor). */
+  function touch(target: HTMLElement, type: string, clientX: number) {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    const list = [{ clientX, clientY: 0 }];
+    Object.defineProperty(e, 'touches', { value: list });
+    Object.defineProperty(e, 'changedTouches', { value: list });
+    target.dispatchEvent(e);
+  }
+
+  /** One full edge swipe over the backdrop, the slide-out ending as the browser ends it. */
+  function edgeSwipe(backdrop: HTMLElement) {
+    touch(backdrop, 'touchstart', 4);
+    touch(backdrop, 'touchmove', 120);
+    touch(backdrop, 'touchend', 120);
+    backdrop.dispatchEvent(new Event('transitionend'));
+  }
+
+  beforeEach(() => {
+    // A phone-width layout: the predicate the stack's entries and the swipe share.
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: true,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('closes a dismissible sheet - iOS has no other Back over a portalled layer', () => {
+    const { onClose } = openModal();
+    const backdrop = document.querySelector('[data-keyboard-aware-overlay]') as HTMLElement;
+
+    edgeSwipe(backdrop);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(historyOverlayStackDepth()).toBe(0);
+  });
+
+  it('closes nothing when it is not dismissible - a gate registers no entry to close', () => {
+    const { onClose } = openModal({ dismissible: false });
+    const backdrop = document.querySelector('[data-keyboard-aware-overlay]') as HTMLElement;
+
+    edgeSwipe(backdrop);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});

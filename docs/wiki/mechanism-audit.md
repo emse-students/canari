@@ -10,6 +10,29 @@ broke* - never *this works*. A domain with forty unit tests and no end-to-end ro
 in production in a way every one of those tests passes through; that is exactly what the campaign was
 built to catch, and it is why the two columns are kept apart instead of added together.
 
+## Re-read 2026-10-18 - what gained a watcher since the 2026-08-21 measurement
+
+**Every count in the tables below is the 2026-08-21 one and is kept as history.** Re-run with the
+four commands under "How to re-measure it" on `main` at `2899fd7ea`: 909 frontend test files (was
+205), 319 backend specs (was 69: chat-delivery 89, social 166, core 41, media 23), 181 Rust test
+functions (was 39). Each claim of change below names the mechanism that now honours it; a row not
+listed here was checked and is unchanged.
+
+| Domain (2026-08-21 verdict) | Now | The mechanism that watches it |
+| --- | --- | --- |
+| Forms: "nothing watches this at all" | **22 social-service specs, 15 frontend tests** | `apps/social-service/src/forms/*.spec.ts` (pricing, cotisation, anonymous, archive, seat hold, files, reminder scheduler), `frontend/src/lib/forms/*.test.ts`; the deleted public `mark-paid` is held deleted by `forms.controller.no-mark-paid.spec.ts` (added 2026-10-18) |
+| Moderation: "nothing" | **service spec, controller spec, frontend tests** | `moderation.service.spec.ts`; `moderation.controller.spec.ts` (added 2026-10-18) asserts every admin handler answers 403 to a non-moderator before the service is touched and fails on a handler it does not know; `minesweeper.moderation.spec.ts`, `frontend/src/lib/minesweeper/api.moderation.test.ts` |
+| Admin and platform config: 3 specs | 3 platform specs plus `announcement` specs and `frontend/src/lib/admin/*.test.ts` | the `minClientVersion` ceiling is pinned by three cases in `platform.service.spec.ts`; the screen is pinned by `frontend/src/routes/admin/platform/page.minClientVersion.svelte.test.ts` (added 2026-10-19): a refusal is worded by Paraglide, never the server prose, and claims no success. **The screen has NO ceiling of its own** - it does not know the server version, so it neither blocks a submit above it nor words the typed refusal; any 400 reads "Could not save" |
+| Payments: server-side only | 8 `core-service/src/payment` specs (Lydia signature, order reference, webhook controller, disabled provider) | `payment.service.spec.ts`, `webhook.controller.spec.ts`, `lydia-signature*.spec.ts`; still no end-to-end path |
+| Calls: 0 frontend tests | **13 frontend test files**, `calls.service.spec.ts` in chat-delivery | `CallService.p2p.test.ts`, `callsCompiled.test.ts` and siblings; **the 20 CALL board rows are still all `pending`** |
+| Media: one spec | 23 media-service specs (chunk lifecycle, byte range, reels, erasure) | the "no key material server-side" invariant of finding 5 was re-read: `media.controller.ts` still mentions AES only in a comment |
+| Follows: "nothing" | **two specs** | `association-push-mutes.service.spec.ts`; `follows.service.spec.ts` (added 2026-10-19) pins idempotent follow, a typed not-found on an unknown association or a missing relationship, and follower isolation on unfollow. **The service has no self-follow refusal, no blocks, no counts and no list-visibility rule, and the user-follow half has no HTTP caller** - a product question, so not pinned as intended |
+| Posts, calendar, associations | 20+ posts specs, 9 calendar tests, 160+ social specs | `posts/*.spec.ts`, `frontend/src/lib/calendar/*.test.ts`, `associations/*.spec.ts` |
+
+Still unwatched, by the same method: any end-to-end path for payments or forms. The `/admin/platform`
+screen and `follows.service.ts` were buildable without production access and were closed on
+2026-10-19 (the two rows above).
+
 ## How to re-measure it
 
 Four commands, and they are the whole method. Anything below that is not reproducible from these is
@@ -91,8 +114,8 @@ campaign already knows is the state a defect ships in.
 **3. Admin can lock every client out of the platform, and three specs stand between.**
 `minClientVersion` is set by hand from `/admin/platform`, no deploy touches it, and raising it above
 what the App Store has shipped locks out every iOS user it has not reached. That already happened
-once (v0.14.0, see [legacy-compatibility](legacy-compatibility.md)). The screen that does it has no
-test at any level.
+once (v0.14.0, see [legacy-compatibility](legacy-compatibility.md)). The screen that does it has had a
+component test since 2026-10-19, pinning what the screen owns (see the table), not the ceiling.
 
 **It now has a ceiling, and the ceiling is honest about what it cannot see.** A `minClientVersion`
 above the server's own deployed version is refused - that catches the typo, and nothing more. The

@@ -1,3 +1,13 @@
+/** The `target` naming a person's republication requests page (D38b), and the deep-link host for it. */
+export const REPUBLICATION_REQUESTS_TARGET = 'republication-requests';
+
+/**
+ * The `target` naming the reader's own notifications list, and the deep-link host for it: the tap of
+ * a notice whose subject has no page - a live moderators cut (deleted when it ended), a suspension or
+ * a withdrawal of the right to broadcast (WP-L8b). The row on that list is what says it.
+ */
+export const NOTIFICATIONS_TARGET = 'notifications';
+
 /**
  * WHERE A SOCIAL PUSH GOES WHEN IT IS TAPPED, as a deep link the SERVER writes.
  *
@@ -12,7 +22,7 @@
  * and a post notice opens the post. The hosts are resolved by `appRouteForDeepLink` in the frontend.
  *
  * @param data - The flat push data the caller built (`postId`, `commentId`, `formId`, `action`,
- *   `associationId`, `queueAssociationId`).
+ *   `associationId`, `queueAssociationId`, `liveId`).
  */
 export function socialDeepLink(data: Record<string, string>): string {
   const formId = data.formId;
@@ -29,6 +39,22 @@ export function socialDeepLink(data: Record<string, string>): string {
   // `proposalQueueAssociationId` in the frontend). Without this the push landed on the feed.
   if (data.queueAssociationId) {
     return `fr.emse.canari://proposals/${encodeURIComponent(data.queueAssociationId)}`;
+  }
+  // A live started (WP-L7): the live itself. The app's route for it is WP-L5's viewer, still owed -
+  // until then `appRouteForDeepLink` sends this host to the feed (`/posts`), where the LIVE card is
+  // to be. A build older than that route does not route it: it opens the app, and at most lands on
+  // the notifications list (the hook's unknown-host branch).
+  if (data.liveId) return `fr.emse.canari://live/${encodeURIComponent(data.liveId)}`;
+  // A request to the AUTHOR to republish their personal post (D38b): their own requests page, where
+  // the answer is given. A TYPED target, from a closed set - never a path the payload names.
+  if (data.target === REPUBLICATION_REQUESTS_TARGET) {
+    return `fr.emse.canari://${REPUBLICATION_REQUESTS_TARGET}`;
+  }
+  // A notice with no page of its own (a cut live, a suspension, a withdrawal): the notifications
+  // list, where its row says it. Before `postId`, which such a notice carries as the live's id or
+  // the member's - a `post/<id>` link would open a post that does not exist.
+  if (data.target === NOTIFICATIONS_TARGET) {
+    return `fr.emse.canari://${NOTIFICATIONS_TARGET}`;
   }
   const postId = data.postId;
   if (postId) {

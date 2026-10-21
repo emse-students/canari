@@ -45,7 +45,7 @@
     timeZoneChoices,
     type NumberField,
     type SettingsDraft,
-  } from '$lib/bookings/spaceSettings';
+  } from '$lib/bookings/spaceSettings.svelte';
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { showConfirm } from '$lib/stores/confirm.svelte';

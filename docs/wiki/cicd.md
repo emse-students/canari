@@ -307,6 +307,34 @@ race found: the form reminder now claims its row with a conditional `UPDATE`
   replicas can retry in the overlap. Harmless: Le Cercle inserts with `ON CONFLICT(payment_intent_id)`,
   so no member is credited twice; only a counter update and a `[CERCLE]` line are doubled.
 
+#### The edge is ready when it listens, not when it runs
+
+**Found as a CI flake (2026-10-18), and it was a deploy defect.** `deploy-rolling.test.sh` failed its
+first case, `v1 answers through the edge`, with `curl: (56) Recv failure: Connection reset by peer` in
+**3 of 62** `Test CI Scripts` runs (jobs 117678020679, 117703956520, 117780454771; the other 59 passed
+the same code). The edge had NO healthcheck, so `wait_healthy` returned at `running none` - the
+moment Docker started the process, before nginx had opened port 80 - and `replace_services` handed
+back an "up" estate. On Linux, Docker's port proxy accepts on `127.0.0.1:<port>` before the container
+listens, fails to reach it, and closes with the request unread: a reset.
+
+Evidence, on a Linux `dockerd` 28.5.2 (`docker:dind`, the runners' engine line): a request to a
+started-but-not-listening nginx returns exactly `(56) Connection reset by peer`; `docker run -d`
+followed at once by a request reset **30 times in 30**; with the healthcheck below awaited first,
+**30 answered in 30**. Ruled out: the edge listening but unable to reach `frontend` gives the same
+code, but `frontend` was already healthy and resolvable when the edge started (the plan replaces it
+first), and the test now prints the edge's state and log on that failure, which separates the two.
+
+**The fix is the readiness proof, in production too:** the edge's healthcheck is
+`test -s /var/run/nginx.pid && grep -q ' 00000000:0050 00000000:0000 0A ' /proc/net/tcp` - the pid
+file nginx's master writes after opening its listeners and installing its signal handlers (so the
+deploy's `nginx -s reload` that follows has a master to reach), and the kernel's LISTEN row for `:80`,
+which a stale pid file left by a killed container cannot fake. It proxies nothing: a probe THROUGH the
+relay would open a `frontend` connection every 30 s. `deploy-replace.test.sh` requires prod, dev and
+the fixture to carry the same test. No retry was added to the test: its single POST is the assertion.
+
+**Cost, once:** adding a healthcheck changes the edge's compose definition, so the first deploy
+carrying it RECREATES the edge on each estate - the ~1 s gap of an edge image bump, said above.
+
 #### Every job checks out the SHA `release-kind` resolved, because `main` is a moving reference (2026-09-03)
 
 All five jobs used to check out `ref: main`, and the comment above `CHECKOUT_REF` explained why it
@@ -1256,6 +1284,53 @@ pull request in a repository whose written model is that no approval is required
 _"Je prefere blinder de test et faire les choses automatiquement qu'avoir une review humaine qui
 n'arrive jamais"_). It was deleted on 2026-09-04 with the sweep, for the same reason: a notification
 about a decision nobody makes.
+
+### A Dependabot cargo bump that is incomplete by construction is completed and merged (WP-RUST-LOCK-AUTOMERGE, 2026-10-18)
+
+`frontend/mls-wasm` and `frontend/src-tauri` commit a `Cargo.lock` and consume `frontend/mls-core` (no lock, on purpose) by path. Dependabot's one pull request for an `mls-core/Cargo.toml` bump therefore leaves both locks stale and fails CI's `cargo metadata --locked` step. It was the last dependency update that could not merge unattended; the user decided on 2026-10-18 that a machine completes it and `CI passed` stays the only verdict. The one-workspace remedy (one `Cargo.lock` for `frontend/`) stays the structural fix and is not done.
+
+**Two halves, no new visible workflow** (the four-workflow rule holds; `shape.mjs` is green):
+
+| Half | Where | What it does |
+| --- | --- | --- |
+| Completing | job `cargo-lock-refresh` of `scheduled.yml` (the daily 09:00 UTC slot it shares with `stores`; by hand: dispatch job `cargo-lock-refresh`, not part of `all`) running `.github/scripts/cargo-lock-refresh.sh` | for each open Dependabot cargo pull request `#n` whose commits are all signed Dependabot commits, whose files are all manifests and lockfiles, and which leaves a committed lock stale: builds `deps/lock-refresh/cargo/dependabot-<n>` from `main`, cherry-picks Dependabot's commits (author and trailers kept, committer the App), adds ONE App commit running `cargo update -p <crate> --precise <version>` in each stale lock, pushes and opens a pull request AS THE APP, closes `#n` with a pointer |
+| Arming | a `# canari-only:` region in `arm-auto-merge.yml`'s authorisation step | arms an App-authored pull request only if every check of the allowlist below holds, and DISARMS one that stops holding |
+
+**The arming allowlist, every item read over the API (the job still checks nothing out):**
+
+1. the branch matches `^deps/lock-refresh/cargo/dependabot-<n>$`, and `#n` is a `dependabot[bot]` pull request from a `dependabot/cargo/` branch;
+2. every commit of `#n` has the shape of a Dependabot commit: author login `dependabot[bot]` AND address `49699333+dependabot[bot]@users.noreply.github.com` AND committer `web-flow` AND `verification.verified: true` - the shape of every real one (read off #296 on 2026-10-19). **What that proves, exactly: GitHub created the commit, naming Dependabot - NOT that Dependabot made it.** `web-flow` signs whatever GitHub creates on someone's behalf, and a person with WRITE access can create a commit with any author through the API. The one unforgeable fact is the pull request's author, `dependabot[bot]`, from check 1. **The precondition is that write access is trusted already**: a writer can open and arm a pull request of their own, so the shape check protects the allowlist's meaning against a careless or lookalike commit, not a boundary against a writer. A NAME alone is nothing: `user.name = dependabot[bot]` costs nothing, and a `github-actions[bot]` merge commit is signed by `web-flow` too (#296 carries one);
+3. this pull request is `#n`'s commits CARRIED BY CONTENT - same count, same order, same messages, AND the same patch: every `+`/`-` line of every file of each commit, read per commit (`commits/<sha>`, at most 20 per side), equals the original commit's - plus ONE commit on top, authored and committed by the App's login. **Who committed them is not what is relied on**: an address is not an identity and the App's commits are unsigned, so a commit's identity is never accepted in place of its content (a different App address still arms; a carried commit with the right message and another patch does not). A patch the API will not show is refused;
+4. every file is a `Cargo.toml` or a `Cargo.lock`; the MANIFEST change, compared line for line (the `+`/`-` lines, so another base's context and line numbers do not matter), is the one in Dependabot's pull request; **every `source` key a lockfile GAINS has the crates.io value** (`"registry+https://github.com/rust-lang/crates.io-index"` or `"sparse+https://index.crates.io/"`, compared exactly), so no git or other-registry source arrives through a lock; and **no lockfile moves or adds a crate of the Tauri runtime** (`tauri`, `tauri-*`, `wry`, `tao`: a `name` key added, or a `version` key changed under one). **Every key is matched with ANY spacing, bare or quoted** (`source="..."`, ` source = "..."`, `"source" = ...`, `'name' = '...'`): Cargo writes `key = "value"`, but a check keyed on that spelling is one a hand-written lock walks past (`B31`, `B31b`; the refresh: `A36`, `A36b`, `A37`). `--locked` and the registry checksums hold the rest of a lock to its manifests;
+5. `CI passed`, which GitHub reads, as for everybody - including `dependency-ceiling`, whose `if:` now covers every `deps/lock-refresh/` branch (the author there is the App, so a ceiling that read only `dependabot[bot]` would let exactly this one past). **On those branches the ceiling also re-applies the refresh's own refusals** - a Tauri-runtime crate and a breaking update (`ceiling_is_tauri_runtime_crate`, `ceiling_update_is_breaking`, the same functions the refresh calls) - so the pull request that gets ARMED is bound by them, not only the job that wrote it. On Dependabot's own branch nothing changes: the suite decides.
+
+**An unreadable answer DISARMS.** The App path runs under an `ERR` trap: any API call that fails (including the "is it armed" read inside a refusal) disables auto-merge, logged loudly, and the run goes red. Without it, a `synchronize` run that could not evaluate the new head failed red and left the arming made for the OLD head standing on the new one. A refusal disarms unless the read says plainly "not armed". A list longer than one page is refused rather than paginated, and more than 20 commits on either side is refused before any per-commit read (`B29`).
+
+**The arming is tied to ONE commit.** The evaluation must be of the event's head: the file list is read BEFORE the commit list, and the commit list must end on `github.event.pull_request.head.sha` - otherwise refused, and the run the new head raised decides (`B28`). The App path then arms ITSELF with `gh pr merge --auto --squash --match-head-commit <that sha>` (GraphQL `expectedHeadOid`), so GitHub refuses the arming if the head moved after the reads; it never hands the shared arming step `armable=true`, because that step arms without the binding and lives outside the `canari-only` region (changing it would fork the four repos).
+
+**What the refresh refuses, and how a refusal is seen.** A commit that is not a signed Dependabot commit; a file that is not a manifest or a lockfile; a crate of the Tauri runtime (`tauri`, `tauri-*`, `wry`, `tao`), named by the trailer OR moved by the refresh in any lock (a runtime bump is a native work package owed a device reading); a BREAKING update (`ceiling_update_is_breaking` in `lib/ceiling.sh`: a major, a `0.x` minor, a `0.0.x` patch, or no `update-type` at all, which is how Dependabot writes a requirement update); a dependency `lib/ceiling.sh` has no gate for; a trailer whose name or version is not a crate name and a full semver; a `cargo update` that fails; a lock still failing `cargo metadata --locked` after it; a lock that gains a `source =` other than crates.io; commits that do not cherry-pick onto `main`; a refresh pull request a person closed; a branch of the reserved name that already exists with no pull request of the App's and a tip the App did not write. **The breaking refusal is this path's alone**: the ceiling itself still decides nothing on semver, because a break stops the suite on its own; the unattended second actor is the one that must not write lockfiles for a bump nobody asked for. Each refusal is written ONCE on the pull request (a marker) and listed in ONE issue, _Dependabot cargo updates the lockfile refresh refused_ - found by its exact title, updated each run, closed once nothing is refused. That is the split `cargo-unreachable` already uses: **the issue says there is work; a red run says the mechanism is broken** (an unreadable API, a cargo that cannot answer, a refused push or pull request).
+
+**Idempotence is durable state, not a clock.** The branch name derives from `#n`, so a refresh pull request that exists decides everything (open or merged: close `#n`; closed by a person: refused, nothing reopened). **But the NAME is not ours alone**: anybody can open a pull request from a fork on a branch of that name, and `gh pr list --head` matches by name. So only pull requests from THIS repository (`isCrossRepository == false`) AUTHORED BY THE App (`app/<slug>`) count, the newest by `createdAt` when there are several; any other is ignored and named once in the issue (and the issue then stays open, so it is seen). A run that died after its push and before its pull request leaves a branch the next run overwrites, with `--force-with-lease` on the SHA it just read - **and only when that branch's tip was authored by the App**: a branch of the reserved name with no App pull request and a tip somebody else wrote is refused, never overwritten. A run that died before closing `#n` is finished by the next one. The job has its own concurrency group, so two runs never both read "no pull request yet".
+
+**Never a push onto Dependabot's branch** (refused ten times out of ten, see above): the original is closed with a pointer, and Dependabot then stops proposing that version.
+
+#### The threat model - this mechanism ARMS MERGES
+
+| Who | What they could try | What stops it |
+| --- | --- | --- |
+| A fork contributor | open a pull request on a `deps/lock-refresh/...` branch, to get it ARMED | `arm-auto-merge.yml` only considers branches of THIS repository, and only the App's login (unforgeable: it is the pull request's author as GitHub records it) |
+| A fork contributor | open a pull request NAMED `deps/lock-refresh/cargo/dependabot-<n>`, so the refresh reads it as its own and closes Dependabot's `#n` "superseded by" the attacker's pull request, or (closed) suppresses `#n` for good | the refresh counts only same-repository pull requests authored by the App; the fork's is ignored and named in the issue (`A30`, `A31`) |
+| Anybody with push access | create the reserved branch first, so the refresh force-pushes over it or adopts it | the refresh overwrites a branch with no App pull request only when its tip was authored by the App; otherwise refused and reported (`A33`) |
+| Anybody with push access | push a commit onto an armed refresh pull request | the `synchronize` run re-evaluates the allowlist and DISARMS it - and an API failure during that run disarms too (`B21`, `B22`); a push landing between the reads and the arming is refused by the head binding (`B28`). Such a person can already open and arm a pull request of their own, so this protects the allowlist's meaning, not a boundary |
+| A lookalike commit | author name `dependabot[bot]`, or a signed commit of another bot | the login, the address, the committer and GitHub's signature verdict are all required, by the refresh AND by the arming; and the arming compares the carried commits by PATCH, not by message (`B23`). The shape proves GitHub made the commit, not Dependabot (item 2 above) |
+| A lockfile as a carrier | a git or other-registry `source`, or a moved Tauri-runtime crate, in the App's lock commit | the refresh refuses a non-crates.io source before committing (`A34`, any spelling `A36`, `A36b`); the arming refuses one (`B24`, `B24b`, any spelling `B31`) and refuses a moved or added runtime crate (`B25`, `B25b`, any spelling `B31b`); the ceiling refuses runtime and breaking updates on the refresh branch |
+| A hostile title, branch, body or trailer | shell or option injection | no `${{ }}` of an untrusted string in any `run:`; the branch is matched against an anchored regex before use and the head is fetched as `refs/pull/<n>/head`; pull-request numbers must be digits; crate names must start with a letter and versions be full semver before they reach cargo or a regex; the title is stripped to printable characters and passed as ONE argument; the arming compares strings inside `jq`, never in the shell; nothing is `eval`ed |
+| An upstream crate | a malicious release Dependabot proposes | out of scope here, as for every Dependabot update: `CI passed`, the ceiling, and the fact that a merge does not deploy |
+| The job's credentials | the App token sits in the job while cargo reads Dependabot's manifests | `cargo metadata` and `cargo update` resolve and fetch, they run no build script; the token is minted with `contents: write` and `pull-requests: write` ONLY (`permission-contents` / `permission-pull-requests`, inputs read in the action's own `v3` `action.yml`; the ARMING token is not narrowed, because its minting step is shared by the four repos and arms everybody's pull requests), and the issue is written with `GITHUB_TOKEN` (`issues: write`), so the App needs no Issues permission |
+
+**Tests**, all offline: `tests/cargo-lock-refresh.test.sh` (a real git with a bare remote serving `refs/pull/<n>/head`, a fake `cargo`, and a STATEFUL fake `gh` whose pull requests and issues live in JSON, every `--jq` run by the real jq, commit identities derived from the commits the way GitHub derives them), `tests/arm-auto-merge-app.test.sh` (extracts the YAML's own `run:` text and runs it against API-shaped fixtures), `tests/ceiling.test.sh` (the shared trailer parser and the breaking predicate), and `tests/dependency-ceiling.test.sh` (the runtime and breaking refusals on a refresh branch, and their absence on Dependabot's own). `shape.mjs` cuts the `# canari-only:` region before comparing the four copies of `arm-auto-merge.yml`, so every edit outside it still forks.
+
+**Unmeasured until the first live run:** that the API resolves the App's commits (committer of the cherry-picks, author and committer of the lock commit, address `<app user id>+canari-auto-merge[bot]@users.noreply.github.com`) to the login `canari-auto-merge[bot]`, and that `gh pr list` reports the App's pull requests as `app/canari-auto-merge`. Read, not measured: `gh pr merge --auto --match-head-commit` sends the SHA as `expectedHeadOid` of `enablePullRequestAutoMerge` (gh `v2.88.0`, `pkg/cmd/pr/merge/http.go`, and the GraphQL input exists, both read 2026-10-19); the offline test asserts the flag is passed, not what GitHub does with it. If it does not, the refresh pull request is NOT armed - the safe direction - and the arming log says which check refused it.
 
 ### Every update merges onto `main`, and what protects production is that a merge does not deploy
 

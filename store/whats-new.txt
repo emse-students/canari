@@ -1,3 +1,3 @@
-version: 1.2.9
+version: 1.3.1
 
-L'appareil photo de Canari remplace celui du téléphone, dans les conversations comme pour publier. Le fil d'actualité s'affiche tout de suite, même sans réseau, et l'onglet Communautés réagit plus vite. Le retour du téléphone ferme la feuille d'un message au lieu de quitter la conversation. Changer ou retrouver son code PIN ne fait plus perdre de messages en attente. Le texte suit la taille choisie dans les réglages du téléphone.
+Nouveau : un double-tap aime un post ou un CanaReel ; la caméra du nouveau post filme directement un CanaReel ; une association peut republier le post d'une personne avec son accord ; « Mes institutions » et « Mes listes » ont leur onglet ; la grille des réservations est plus dense et se remplit en glissant. Corrigé : supprimer une association ou un formulaire fonctionne à nouveau, et ouvrir la caméra ne rend plus l'application sombre.

@@ -48,6 +48,8 @@
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
+  import { insideViewerLayer } from '$lib/utils/viewerLayer';
+
   /** Which rung of `app.css`'s ladder this modal sits on. Names, never numbers. */
   type Layer = 'sheet' | 'modal' | 'critical';
 
@@ -103,6 +105,16 @@
   };
 
   /**
+   * Opened from inside a full-screen viewer, a sheet or a modal would sit UNDER it
+   * (`utils/viewerLayer.ts`); it takes the viewer's dialog rung instead. A critical layer already
+   * clears the viewer.
+   */
+  const inViewer = insideViewerLayer();
+  const layerClass = $derived(
+    inViewer && layer !== 'critical' ? 'z-(--z-viewer-dialog)' : LAYER_CLASS[layer]
+  );
+
+  /**
    * THE SYSTEM BACK IS A DISMISSAL TOO, so an open overlay holds a history entry. None of the seven
    * consumers did, so on a phone one Back closed whatever was UNDER the dialog - the conversation
    * under the poll composer, the page under a confirmation - and left the dialog standing
@@ -139,9 +151,7 @@
     <div
       role="presentation"
       use:coversScreen
-      class="fixed inset-0 {LAYER_CLASS[
-        layer
-      ]} flex items-end justify-center p-4 pb-[max(1rem,var(--safe-area-inset-bottom,0px))] sm:items-center {scrim
+      class="fixed inset-0 {layerClass} flex items-end justify-center p-4 pb-[max(1rem,var(--safe-area-inset-bottom,0px))] sm:items-center {scrim
         ? 'bg-black/40'
         : ''}"
       onclick={(e) => e.target === e.currentTarget && onClose()}

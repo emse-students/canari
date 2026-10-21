@@ -291,12 +291,14 @@ class CanariApplication : Application() {
          *  - canari_mentions_v2 : messages that @-mention the user (WP-XP-5: IMPORTANCE_HIGH,
          *                      bypass-DND requested)
          *
-         * A channel's name and description are WRITTEN ONCE, at creation: Android keeps the strings
-         * it was given and re-creating an existing channel changes nothing. A user who switches the
-         * app's language therefore keeps the wording of the day they installed, until the channel is
-         * deleted - which would also discard the sound and importance THEY chose. Naming the channel
-         * in the wrong language is the smaller harm, and it is the reason [context] is threaded here
-         * rather than the strings being read from the system locale.
+         * A channel's name and description are written HERE ONLY WHEN THE CHANNEL IS ABSENT (each
+         * block below checks `getNotificationChannel(id) == null` first). Android itself would accept
+         * a new name and description from a second `createNotificationChannel` on an existing id -
+         * only the importance, sound and vibration are fixed once created (or once the user changed
+         * them) - but this code never makes that call, so a user who switches the app's language
+         * keeps the wording of the day the channel was created. Renaming on a language change is
+         * possible without touching the user's sound or importance, and is not done. [context] is
+         * threaded here so the creation uses the app's language rather than the system locale.
          */
         internal fun ensureChannels(context: Context, manager: NotificationManager) {
             val res = appLocaleContext(context)

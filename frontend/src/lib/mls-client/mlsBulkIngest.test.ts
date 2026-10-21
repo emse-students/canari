@@ -1,4 +1,5 @@
 import { withMlsBulkIngest } from './mlsBulkIngest';
+import { flushMacrotask } from '../../test/flush';
 
 describe('withMlsBulkIngest', () => {
   function makeService() {
@@ -46,7 +47,7 @@ describe('withMlsBulkIngest', () => {
     const svc = makeService();
     let endResolved = false;
     svc.endBulkIngest.mockImplementation(async () => {
-      await new Promise((r) => setTimeout(r, 10));
+      await flushMacrotask();
       endResolved = true;
     });
     await withMlsBulkIngest(svc, async () => undefined);

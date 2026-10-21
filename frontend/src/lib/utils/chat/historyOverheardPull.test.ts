@@ -11,6 +11,7 @@ import {
   liveProofOfAuthor,
   retryPullsOwedTo,
 } from '$lib/mls-client/messagePipeline/setupMessageHandler';
+import { flushMacrotask } from '../../../test/flush';
 
 /**
  * THE ONE RETRY OF AN OVERHEARD-DIGEST PULL. A pull is a transport frame, dropped when the author has
@@ -50,7 +51,7 @@ const handlerDeps = () =>
   }) as any;
 
 /** Lets the `void`-ed chain behind `answerAfterMailboxDrained` run. */
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const settle = () => flushMacrotask();
 
 async function overhear(ids: string[], groupId = GROUP): Promise<void> {
   await pullFromOverheardDigest({

@@ -302,6 +302,8 @@ export class PostInteractionsService {
     if (!comment) throw new NotFoundException('Comment not found');
     if (comment.userId !== userId) throw new UnauthorizedException('Not your comment');
     comment.text = text;
+    // Served as "(modifie)" - the client had no way to tell an edited comment from the original.
+    comment.editedAt = new Date().toISOString();
     post.comments = comments;
     await this.postRepo.save(post);
     return { ok: true, comment };

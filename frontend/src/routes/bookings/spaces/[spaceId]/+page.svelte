@@ -83,6 +83,8 @@
         kind: 'book';
         resource: BookerResource;
         run: SlotUnit[];
+        /** The units a drag over the grid already selected (1 for a tap). */
+        initialCount: number;
         blockRun: SlotUnit[];
         windowNote: boolean;
       }
@@ -244,7 +246,7 @@
    * "block instead" for whoever may. A unit the device's clock puts outside the window still opens,
    * with a note: the server judges the START of the range, on its clock, and its answer is final.
    */
-  function pick(resource: BookerResource, unit: SlotUnit) {
+  function pick(resource: BookerResource, unit: SlotUnit, count = 1) {
     if (!space) return;
     if (unit.state !== 'free') {
       sheet = { kind: 'detail', resource, unit };
@@ -256,6 +258,7 @@
       kind: 'book',
       resource,
       run: freeRunFrom(units, unit, bookingUnitLimit(space)),
+      initialCount: count,
       blockRun: mayBlock ? freeRunFrom(units, unit, BLOCK_LENGTH_CHOICES) : [],
       windowNote: windowRefusal(space, unit.startMs, nowMs) !== null,
     };
@@ -429,6 +432,7 @@
       {space}
       resource={s.resource}
       run={s.run}
+      initialCount={s.initialCount}
       windowNote={s.windowNote}
       onReread={reread}
       onBlockInstead={s.blockRun.length

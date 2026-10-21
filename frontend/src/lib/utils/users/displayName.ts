@@ -13,6 +13,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 // The sentinel is imported rather than restated: that a notice carries this sender id, and that no
 // display name resolves for it, are one fact. This file held a private second copy of it.
 import { SYSTEM_SENDER_ID } from '$lib/utils/chat/messageUtils';
+import { noteDeletedAccount, noteResolvedName } from './nameMirror';
 
 const displayNameCache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string | null>>();
@@ -103,6 +104,17 @@ function shouldSkipRetry(userId: string): boolean {
   return typeof ts === 'number' && Date.now() - ts < FAILURE_BACKOFF_MS;
 }
 
+/** Whether a profile carries any of the three columns {@link formatProfileDisplayName} names from. */
+function profileHasName(profile: {
+  firstName?: string | null;
+  lastName?: string | null;
+  displayName?: string | null;
+}): boolean {
+  return Boolean(
+    profile.firstName?.trim() || profile.lastName?.trim() || profile.displayName?.trim()
+  );
+}
+
 /**
  * The name a person is called, from the three columns that could carry one.
  *
@@ -161,7 +173,11 @@ export function formatProfileDisplayName(profile: {
 export function seedUserDisplayName(userId: string, name: string, firstName?: string | null): void {
   const normalized = normalizeUserId(userId);
   const trimmed = name.trim();
-  if (trimmed) displayNameCache.set(normalized, trimmed);
+  if (trimmed) {
+    displayNameCache.set(normalized, trimmed);
+    // The phone's own copy of names, for a mention banner drawn natively (WP-MENTION-NAME).
+    noteResolvedName(normalized, trimmed);
+  }
   const first = firstName?.trim();
   if (first) firstNameCache.set(normalized, first);
 }
@@ -343,6 +359,9 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       // pins exactly that). The dead `failedAt.set` is gone because a resolved fetch is not a
       // failure, whatever the profile turned out to contain.
       displayNameCache.set(normalized, value);
+      // Mirrored only when the profile carries a name: the unknown-user LABEL is this app's word
+      // for "no name", and a banner would print it as if it were one (WP-MENTION-NAME).
+      if (profileHasName(profile)) noteResolvedName(normalized, value);
       const first = profile.firstName?.trim();
       if (first) firstNameCache.set(normalized, first);
       failedAt.delete(normalized);
@@ -371,6 +390,9 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       // re-fetched its profile once per chip mount, in every check that opened that conversation.
       if (isAbsentUserError(e)) {
         profileAsked.add(normalized);
+        // The server says this account does not exist: no native banner may name it again, seeded
+        // name or not (WP-MENTION-NAME) - the phone's copy drops it, and a banner says "someone".
+        noteDeletedAccount(normalized);
         // A seeded name outranks the label: the 404 here was only a first-name lookup.
         if (cached) return cached;
         const label = isDeletedAccountError(e) ? m.user_deleted_label() : m.user_unknown_label();

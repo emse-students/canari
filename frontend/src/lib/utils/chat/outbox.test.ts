@@ -1,4 +1,5 @@
 import { SvelteMap } from 'svelte/reactivity';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 // Encryption is leader-only (WP-MULTITAB-1), so every flush case here is a leader unless it says
 // otherwise. The cross-tab channel is stubbed too: what matters is which side is asked to act,
@@ -36,7 +37,7 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
 }));
 
 import {
-  createOutbox,
+  createOutbox as createOutboxController,
   buildOutboxProto,
   MAX_CONCURRENT_SENDS,
   MAX_CONCURRENT_UPLOADS,
@@ -49,6 +50,7 @@ import {
   isOutboxEntryQueued,
   registerOutbox,
   unregisterOutbox,
+  type OutboxController,
   type OutboxDeps,
 } from './outbox';
 import {
@@ -97,6 +99,25 @@ import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
+
+/**
+ * EVERY CONTROLLER A CASE CREATES IS DISPOSED WHEN THE CASE ENDS. A controller subscribes to the
+ * process-wide `connectivity.onReconnect` and to `visibilitychange`, so one left alive answers the
+ * NEXT case's `connectivity.reset()` with a flush of its own queue - and the last ones were still
+ * uploading and logging after the file had finished, which vitest reports as an
+ * `EnvironmentTeardownError` ("Closing rpc while onUserConsoleLog was pending") and fails the run
+ * on, intermittently, on `main` as on every branch (2026-10-18). `dispose` is idempotent, so a case
+ * that disposes its own controller mid-test is unaffected.
+ */
+const liveControllers: OutboxController[] = [];
+function createOutbox(deps: OutboxDeps): OutboxController {
+  const controller = createOutboxController(deps);
+  liveControllers.push(controller);
+  return controller;
+}
+afterEach(() => {
+  for (const controller of liveControllers.splice(0)) controller.dispose();
+});
 
 function textEntry(id: string, conversationId: string, sentAt: number): OutboxEntry {
   return {
@@ -1826,31 +1847,22 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
   });
 
   it('exactly three sites outside this module raise a flush, and they are the three named ones', async () => {
-    const { readdirSync, readFileSync } = await import('node:fs');
-    const { join, relative, sep } = await import('node:path');
-    const root = join(process.cwd(), 'src');
+    const { relativeTo, sourceFiles } = await import('../../../test/sourceTree');
     const found: Record<string, number> = {};
-    const walk = (dir: string): void => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, e.name);
-        if (e.isDirectory()) {
-          if (e.name === 'paraglide' || e.name === 'wasm' || e.name === 'proto') continue;
-          walk(full);
-          continue;
-        }
-        if (!/\.(ts|svelte)$/.test(e.name) || /\.(test|spec)\.ts$/.test(e.name)) continue;
-        const rel = relative(root, full).split(sep).join('/');
-        if (rel === 'lib/utils/chat/outbox.ts') continue;
-        // The parentheses matter: bare `flushOutbox` matches the import line too. The second arm
-        // is the other door into the same flush, which a new site would reach for once the first
-        // one started failing here.
-        const calls =
-          readFileSync(full, 'utf8').match(/\bflushOutbox\(\)|getOutbox\(\)[^\n]*\.flush\(\)/g) ??
-          [];
-        if (calls.length) found[rel] = calls.length;
-      }
-    };
-    walk(root);
+    for (const { path, text } of sourceFiles({
+      under: 'src',
+      extensions: ['ts', 'svelte'],
+      tests: 'exclude',
+      skipDirs: ['proto'],
+    })) {
+      const rel = relativeTo(path, 'src');
+      if (rel === 'lib/utils/chat/outbox.ts') continue;
+      // The parentheses matter: bare `flushOutbox` matches the import line too. The second arm
+      // is the other door into the same flush, which a new site would reach for once the first
+      // one started failing here.
+      const calls = text.match(/\bflushOutbox\(\)|getOutbox\(\)[^\n]*\.flush\(\)/g) ?? [];
+      if (calls.length) found[rel] = calls.length;
+    }
 
     // A fourth external trigger is not forbidden; it has to be ARGUED FOR, which is what failing
     // here asks of whoever adds one - name the moment nothing inside the outbox can observe, or
@@ -2463,7 +2475,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
 
   it('shows the next attempt as waiting after a transport failure, restarting from zero', async () => {
     const storage = makeStorage([mediaEntry('w1')]);
-    const uploadMedia = vi.fn().mockRejectedValue(new TypeError('Network request failed'));
+    const uploadMedia = vi.fn().mockRejectedValue(new UploadNetworkError('/x'));
     const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['w1'])]]);
     const outbox = createOutbox(
       makeDeps({
@@ -2524,7 +2536,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
         mlsService: makeMls(),
         storage,
         conversations,
-        uploadMedia: vi.fn().mockRejectedValue(new TypeError('Network request failed')),
+        uploadMedia: vi.fn().mockRejectedValue(new UploadNetworkError('/x')),
         isGroupHealthy: () => true,
       })
     );
@@ -3049,7 +3061,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
     }
 
     it.each([
-      ['a transport failure', () => new TypeError('Failed to fetch')],
+      ['a transport failure', () => new TransportFailureError(new TypeError('Failed to fetch'))],
       ['a 5xx', () => new MediaUploadError(503, 'later')],
       ['an unexpected non-local throw', () => new Error('boom')],
     ])(

@@ -18,9 +18,9 @@ import { PostNotificationsService } from '../posts/post-notifications.service';
 import {
   ProposalsService,
   type AfterCommit,
+  type AssociationProposal,
   type ProposalKindHandler,
 } from '../proposals/proposals.service';
-import type { Proposal } from '../proposals/proposal.entity';
 
 /** The state of one co-organiser of an event, as the event form draws it. */
 export type CoOrganiserStatus = 'accepted' | 'pending' | 'refused';
@@ -278,7 +278,11 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
     return ev.associationId;
   }
 
-  async apply(manager: EntityManager, proposal: Proposal, actorId: string): Promise<AfterCommit> {
+  async apply(
+    manager: EntityManager,
+    proposal: AssociationProposal,
+    actorId: string
+  ): Promise<AfterCommit> {
     const ev = await this.loadEvent(proposal.subjectId, manager);
     if (!ev) {
       // The trigger of 074 removes the proposals of a deleted event, so this is a race lost to a
@@ -296,7 +300,7 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
     return () => Promise.resolve();
   }
 
-  async announce(proposal: Proposal, acceptorIds: string[]): Promise<void> {
+  async announce(proposal: AssociationProposal, acceptorIds: string[]): Promise<void> {
     const [from, ev] = await Promise.all([
       this.loadAssociation(proposal.fromAssociationId),
       this.loadEvent(proposal.subjectId),

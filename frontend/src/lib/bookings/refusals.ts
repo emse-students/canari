@@ -67,6 +67,7 @@ export const BOOKER_REFUSAL_CODES = [
   'withdrawal-delay',
   'bookings-inside-block',
   'block-not-found',
+  'block-overlap',
   'file-question',
   'file-empty',
   'file-too-large',
@@ -183,6 +184,8 @@ function bookerSentenceFor(code: string, count: number): string | null {
       return m.bookings_refusal_inside_block({ count });
     case 'block-not-found':
       return m.bookings_refusal_block_not_found();
+    case 'block-overlap':
+      return m.bookings_refusal_block_overlap();
     default:
       return fileSentenceFor(code);
   }

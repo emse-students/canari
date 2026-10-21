@@ -58,6 +58,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // part of the erasure deletes the blob (class `form-file`, owned by the uploader).
   'form_files.uploaderId': { action: 'delete' },
   'form_files.fileName': { action: 'delete', via: 'uploaderId' },
+  // A republication request addressed to the account (D38b): it is about the account's own post,
+  // which goes with it, so the request goes too.
+  'proposals.toUserId': { action: 'delete' },
   'post_notifications.recipientId': { action: 'delete' },
   'post_notifications.actorId': { action: 'delete' },
   'post_notifications.actorName': { action: 'delete', via: 'actorId' },
@@ -77,6 +80,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // The client ids its DELETED salon messages left (migration 090): what keeps a repeated send from
   // posting a removed message again. An erased account repeats no send, so they go with it.
   'channel_message_client_tombstones.authorId': { action: 'delete' },
+  // The outbox entry of a salon row (migration 093): its mentions are ids of OTHER accounts, but it
+  // lives only until the broadcast and the push are handed off (seconds, or the next boot after a
+  // crash), and it cascades with its message - an erased author's messages are deleted below.
+  'channel_message_fanout.payload': {
+    action: 'kept',
+    reason: 'a transient outbox entry, deleted at hand-off and with its message',
+  },
   'channel_members.userId': {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
@@ -195,6 +205,30 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'lives.broadcasterId': { action: 'anonymise' },
   'live_removed_viewers.viewerId': { action: 'delete' },
   'live_starts.broadcasterId': { action: 'delete' },
+  // A cut is a moderation record ABOUT the broadcaster (WP-L8): it goes with their account. The
+  // moderator who cut is anonymised - the decision stays, the name goes.
+  'live_cuts.broadcasterId': { action: 'delete' },
+  'live_cuts.reviewerId': { action: 'anonymise' },
+  'live_rules_acceptances.userId': { action: 'delete' },
+  // The live chat (WP-L6): the account's messages and reaction taps go; a count map holds no id.
+  'live_chat_messages.authorId': { action: 'delete' },
+  'live_reaction_bursts.userId': { action: 'delete' },
+  // The strike ladder (WP-L8b): a withdrawal is a record ABOUT the account, and goes with it; the
+  // moderator who decided is anonymised, as a cut's.
+  'live_broadcast_withdrawals.userId': { action: 'delete' },
+  'live_broadcast_withdrawals.reviewerId': { action: 'anonymise' },
+  // A REPORTED chat line stays until its report is handled or the 90-day bound, even once its
+  // author erased their account (owner, 2026-10-20): the author's id goes, the words stay for staff.
+  'live_chat_reported_lines.authorId': { action: 'anonymise' },
+  'live_chat_reported_lines.authorSignature': NO_ACCOUNT(
+    'an HMAC over the report id and the author id, never an id itself; it reads erased once anonymised'
+  ),
+  'live_chat_reported_lines.reporterSignature': NO_ACCOUNT(
+    'an HMAC over the report id and the reporter id, never an id itself; it reads erased once anonymised'
+  ),
+  'live_reaction_bursts.counts': NO_ACCOUNT(
+    'a reaction kind to tap count map (like, fire, ...), never an id'
+  ),
 
   // -- Not an account reference, despite the name ----------------------------------------------
   'associations.contactEmail': {
@@ -299,6 +333,17 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  *   because every read of an ended live is a 410.
  * - The account's place on another live's removed-viewer list is deleted.
  * - Its `live_starts` rows (the rolling hour `LIVE_STARTS_PER_HOUR` counts) are deleted.
+ * - The cuts of its lives (`live_cuts`, WP-L8) and its first-live rules acceptance are deleted; a
+ *   cut it made AS A MODERATOR keeps the decision and loses the name.
+ *
+ * LOCK ORDER: `lives` first, then `live_cuts` - the order a staff cut takes them (the live's row
+ * lock, then the cut's insert) - so an erasure racing a cut waits or is waited for, never deadlocks.
+ * - Its live chat messages and reaction bursts, on any live, are deleted (WP-L6, migration 098).
+ * - A withdrawal of its right to broadcast is deleted; one it decided as a moderator is anonymised.
+ * - A REPORTED line it wrote (`live_chat_reported_lines`) is KEPT, its author anonymised: the line
+ *   stays until its report is handled or the 90-day bound (owner, 2026-10-20). AFTER the messages'
+ *   delete: a chat-line report holds the message `FOR SHARE` until it commits, so this statement,
+ *   running after that delete waited, sees the kept line the report wrote.
  *
  * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
  */
@@ -319,15 +364,51 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     label: 'live_starts',
     sql: `DELETE FROM live_starts WHERE "broadcasterId" = $1`,
   },
+  {
+    label: 'live_cuts',
+    sql: `DELETE FROM live_cuts WHERE "broadcasterId" = $1`,
+  },
+  {
+    label: 'live_cuts_reviewer',
+    sql: `UPDATE live_cuts SET "reviewerId" = $2 WHERE "reviewerId" = $1`,
+  },
+  {
+    label: 'live_rules_acceptances',
+    sql: `DELETE FROM live_rules_acceptances WHERE "userId" = $1`,
+  },
+  // AFTER lives_broadcaster: a chat write takes the live's row lock, then writes its row, so the
+  // erasure takes them in the same order and the two wait for each other rather than deadlock.
+  {
+    label: 'live_chat_messages',
+    sql: `DELETE FROM live_chat_messages WHERE "authorId" = $1`,
+  },
+  {
+    label: 'live_reaction_bursts',
+    sql: `DELETE FROM live_reaction_bursts WHERE "userId" = $1`,
+  },
+  {
+    label: 'live_chat_reported_lines_author',
+    sql: `UPDATE live_chat_reported_lines SET "authorId" = $2 WHERE "authorId" = $1`,
+  },
+  {
+    label: 'live_broadcast_withdrawals',
+    sql: `DELETE FROM live_broadcast_withdrawals WHERE "userId" = $1`,
+  },
+  {
+    label: 'live_broadcast_withdrawals_reviewer',
+    sql: `UPDATE live_broadcast_withdrawals SET "reviewerId" = $2 WHERE "reviewerId" = $1`,
+  },
 ];
 
 /**
- * Every statement, in the order they must run inside ONE transaction. Order matters where a row
- * references another (`minesweeper_scores` before `minesweeper_challenges`), and where one statement
- * reads what the next rewrites (an association's posts are anonymised before the account's own posts
- * are deleted, so the DELETE no longer sees them).
+ * The statements that run BEFORE the scrub of other people's posts, in the order they must run inside
+ * ONE transaction. Order matters where a row references another (`minesweeper_scores` before
+ * `minesweeper_challenges`), and where one statement reads what the next rewrites (an association's
+ * posts are anonymised before the account's own posts are deleted, so the DELETE no longer sees
+ * them). NONE OF THEM WRITES A PROPOSAL: those are {@link ERASURE_PROPOSAL_STATEMENTS}, after every
+ * post lock (see `lockPostRow`).
  */
-export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   // Posts published as an association stay: the association's communication, not the member's.
   {
     label: 'posts_association_author',
@@ -470,18 +551,6 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     label: 'channel_workspaces',
     sql: `UPDATE channel_workspaces SET "createdBy" = $2 WHERE "createdBy" = $1`,
   },
-  {
-    label: 'republications',
-    sql: `UPDATE post_republications SET "republishedBy" = $2 WHERE "republishedBy" = $1`,
-  },
-  {
-    label: 'proposals_proposed',
-    sql: `UPDATE proposals SET "proposedBy" = $2 WHERE "proposedBy" = $1`,
-  },
-  {
-    label: 'proposals_decided',
-    sql: `UPDATE proposals SET "decidedBy" = $2 WHERE "decidedBy" = $1`,
-  },
   { label: 'tags_granted', sql: `UPDATE user_tags SET "grantedBy" = $2 WHERE "grantedBy" = $1` },
   {
     label: 'moderation_muted',
@@ -529,6 +598,106 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     label: 'reactions',
     sql: `UPDATE posts SET reactions = reactions - $1 WHERE reactions ? $1`,
   },
+];
+
+/**
+ * The statements that write PROPOSALS (and the republications they produced), run LAST - after the
+ * scrub of other people's posts. Every other writer of a proposal locks the post first and the
+ * proposal second (an acceptance: `ProposalsService.lockInOrder`; a hide; a post delete through its
+ * trigger); an erasure that took a proposal first and then a post the account reacted to deadlocked
+ * against an acceptance holding that post (`40P01`, the erasure aborted).
+ *
+ * A pending person-addressed request the account ASKED (D38b) is voided, not anonymised: its asker
+ * no longer speaks for the association, so it could only ever end in `PROPOSAL_SENDER_GONE`. The
+ * row turns `withdrawn` with `decidedBy` = `'[voided]'` - `PROPOSAL_VOIDED_BY`, a literal here
+ * because a statement binds only `$1` and `$2` (asserted by the spec). Its bell row needs no
+ * statement here: the announce writes it with `actorId` = the asker (`announce`), so the head's
+ * `post_notifications` statement (`"actorId" = $1`) has already deleted it.
+ */
+export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
+  {
+    label: 'proposals_voided',
+    sql: `UPDATE proposals SET status = 'withdrawn', "decidedBy" = '[voided]', "decidedAt" = now()
+           WHERE "proposedBy" = $1 AND kind = 'repost-personal' AND status = 'pending'`,
+  },
+  {
+    label: 'republications',
+    sql: `UPDATE post_republications SET "republishedBy" = $2 WHERE "republishedBy" = $1`,
+  },
+  {
+    label: 'proposals_proposed',
+    sql: `UPDATE proposals SET "proposedBy" = $2 WHERE "proposedBy" = $1`,
+  },
+  {
+    label: 'proposals_decided',
+    sql: `UPDATE proposals SET "decidedBy" = $2 WHERE "decidedBy" = $1`,
+  },
+  // The republication requests addressed to the account (D38b). Its personal posts are deleted by
+  // `posts` and migration 096's trigger takes their requests along; this names the column itself, so
+  // a request whose post outlived that (none can, by the trigger) is still not left addressed to it.
+  { label: 'proposals_to_user', sql: `DELETE FROM proposals WHERE "toUserId" = $1` },
+];
+
+/**
+ * THE ERASURE'S FIRST STATEMENT: every association whose rows it will write, locked in id order.
+ *
+ * An association delete (`AssociationsService.remove`) takes its association `FOR UPDATE` FIRST,
+ * then deletes what hangs off it: its events, its forms, its members, then the row's cascade (role
+ * history, push mutes, proposals, republications, booking spaces and everything under them). The
+ * erasure writes those same rows, and used to reach the association only at
+ * `UPDATE associations SET "createdBy"`. So an erasure holding the account's member row of X, and a
+ * delete of X holding X and its events, waited on each other (`40P01`, reproduced on PostgreSQL 18).
+ * Taking every such association first puts the two in one order: whichever comes second waits
+ * holding nothing. The set is EVERY association one of the erasure's writes reaches through a row
+ * the delete removes - a missing source reopens the cycle for the rows it would have named.
+ * A post's own `associationId` is not a source (no foreign key: the delete never writes a post), but
+ * what hangs off a post or a form the erasure deletes IS: the republications of its personal posts
+ * (`DELETE FROM posts` cascades into them) and its respondent rows of an association's forms.
+ *
+ * `FOR NO KEY UPDATE`: it conflicts with the delete's `FOR UPDATE` (the edge that matters), it is the
+ * lock `UPDATE associations SET "createdBy"` takes later anyway (no upgrade), and it does NOT
+ * conflict with a proposal decision's `KEY SHARE`, so a decision is not serialised behind an
+ * erasure. Ordered by id, so two erasures sharing associations take them in one order too.
+ */
+export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
+  WHERE a.id::text IN (
+    SELECT id::text FROM associations WHERE "createdBy" = $1
+    UNION SELECT "associationId"::text FROM association_members WHERE "userId" = $1
+    UNION SELECT association_id::text FROM association_role_history WHERE user_id = $1
+    UNION SELECT "associationId"::text FROM association_push_mutes WHERE "userId" = $1
+    UNION SELECT "associationId"::text FROM association_calendar_events
+           WHERE "createdBy" = $1 OR "validatedBy" = $1 OR "rejectedBy" = $1
+    UNION SELECT "associationId"::text FROM forms WHERE "ownerId" = $1
+    UNION SELECT f."associationId"::text FROM form_respondents fr
+            JOIN forms f ON f.id = fr."formId" WHERE fr."userId" = $1
+    UNION SELECT "fromAssociationId"::text FROM proposals
+           WHERE "proposedBy" = $1 OR "decidedBy" = $1 OR "toUserId" = $1
+    UNION SELECT "toAssociationId"::text FROM proposals WHERE "proposedBy" = $1 OR "decidedBy" = $1
+    UNION SELECT "associationId"::text FROM post_republications WHERE "republishedBy" = $1
+    UNION SELECT pr."associationId"::text FROM post_republications pr
+            JOIN posts p ON p.id = pr."postId" WHERE p."authorId" = $1
+    UNION SELECT "associationId"::text FROM booking_spaces WHERE "ownerId" = $1
+    UNION SELECT s."associationId"::text FROM booking_resources r
+            JOIN booking_spaces s ON s.id = r."spaceId" WHERE r."linkedUserId" = $1
+    UNION SELECT s."associationId"::text FROM bookings b
+            JOIN booking_resources r ON r.id = b."resourceId" JOIN booking_spaces s ON s.id = r."spaceId"
+           WHERE b."holderId" = $1 OR b."bookedById" = $1 OR b."cancelledById" = $1
+    UNION SELECT s."associationId"::text FROM booking_participants p
+            JOIN bookings b ON b.id = p."bookingId" JOIN booking_resources r ON r.id = b."resourceId"
+            JOIN booking_spaces s ON s.id = r."spaceId" WHERE p."userId" = $1
+    UNION SELECT s."associationId"::text FROM booking_blocks k
+            JOIN booking_resources r ON r.id = k."resourceId" JOIN booking_spaces s ON s.id = r."spaceId"
+           WHERE k."createdById" = $1
+    UNION SELECT s."associationId"::text FROM booking_files f
+            JOIN booking_spaces s ON s.id = f."spaceId" WHERE f."uploaderId" = $1
+  )
+  ORDER BY a.id
+  FOR NO KEY UPDATE OF a`;
+
+/** Every statement, in the order {@link eraseSocialRows} runs them around the scrub. */
+export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+  ...ERASURE_ROW_STATEMENTS,
+  ...ERASURE_PROPOSAL_STATEMENTS,
 ];
 
 /**
@@ -770,9 +939,13 @@ export async function runErasureStatements(
  * the internal route and by the integration spec against a real database.
  */
 export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<SocialErasureResult> {
+  // Before anything else: the associations, in the order an association delete takes them.
+  const locked = await db.read<{ id: string }>(ERASURE_ASSOCIATION_LOCK_SQL, [userId]);
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
 
-  const counts = await runErasureStatements(db, ERASURE_STATEMENTS, userId);
+  const counts = await runErasureStatements(db, ERASURE_ROW_STATEMENTS, userId);
+  // In the log line's `rows=`: how many associations the erasure held while it ran.
+  if (locked.length > 0) counts.associations_locked = locked.length;
 
   // Comments, likes and poll votes need the structure, so the candidates are read and locked.
   let postsScrubbed = 0;
@@ -786,5 +959,7 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
     await db.write(WRITE_SCRUBBED_POST_SQL, params);
     postsScrubbed += 1;
   }
+  // Proposals LAST, after every post lock: the order every acceptance takes (`lockPostRow`).
+  Object.assign(counts, await runErasureStatements(db, ERASURE_PROPOSAL_STATEMENTS, userId));
   return { counts, postsScrubbed, pinsRemoved };
 }

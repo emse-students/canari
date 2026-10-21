@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setTabRinging, setTabUnread, startTabIndicator } from './tabIndicator';
+import { flushMacrotask } from '../../test/flush';
 
 /**
  * THE ONE WRITER OF THE TAB'S TITLE, and the two things that used to make a second one unsafe.
@@ -13,7 +14,7 @@ import { setTabRinging, setTabUnread, startTabIndicator } from './tabIndicator';
  */
 describe('the tab indicator', () => {
   /** Lets the `MutationObserver` deliver; it is a microtask, so one turn is enough. */
-  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const settle = () => flushMacrotask();
 
   beforeEach(() => {
     document.title = 'Canari';

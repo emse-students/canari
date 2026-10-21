@@ -9,6 +9,7 @@ import { vi } from 'vitest';
 import { encryptSegmentedMedia, SEGMENTED_MEDIA_SEGMENT_BYTES } from '$lib/mediaSegmented';
 import type { MediaRef } from '$lib/media';
 import type { MediaSourceConstructor } from './segmentedMediaStream';
+import { flushMacrotask } from '../../test/flush';
 
 vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') }));
 
@@ -278,7 +279,7 @@ describe('openSegmentedStream', () => {
   }
 
   /** Lets every pending fetch, decrypt and append settle. */
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+  const settle = () => flushMacrotask();
 
   /**
    * THE BOUND THE AUDIT FOUND MISSING (2026-10-11): nothing failed if a feed card downloaded a 35 MB

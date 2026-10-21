@@ -130,3 +130,53 @@ describe('installConsoleIdTruncation feeds the in-app log', () => {
     expect(sink.mock.calls[0][1]).toEqual(['[A] user=d82cd226…']);
   });
 });
+
+/**
+ * WP-CONSOLE-PLAINTEXT: the live devtools console must not echo what the stored log withholds. The
+ * redaction runs on what is PRINTED; the sink still gets the unredacted line for its own, stricter pass.
+ */
+describe('installConsoleIdTruncation redacts what it prints', () => {
+  const methods = ['log', 'debug', 'info', 'warn', 'error'] as const;
+  let saved: Record<(typeof methods)[number], (...args: unknown[]) => void>;
+  const printed: unknown[][] = [];
+
+  beforeEach(() => {
+    vi.resetModules();
+    printed.length = 0;
+    saved = {
+      log: console.log,
+      debug: console.debug,
+      info: console.info,
+      warn: console.warn,
+      error: console.error,
+    };
+    for (const m of methods) console[m] = (...a: unknown[]) => void printed.push(a);
+  });
+
+  afterEach(() => {
+    for (const m of methods) console[m] = saved[m];
+  });
+
+  it('prints text and contact as [N chars], leaves the other fields and objects alone', async () => {
+    const { installConsoleIdTruncation } = await import('./logTruncate');
+    const { redactConsoleProse } = await import('./appLogRedact');
+    const sink = vi.fn();
+    installConsoleIdTruncation(sink, redactConsoleProse);
+    const obj = { text: 'kept as an object' };
+
+    console.log('[SEND] contact="jolan" text="rendez-vous ce soir" files=2 mode=ready', obj);
+
+    const [, line, second] = printed[0] as [string, string, unknown];
+    expect(line).toBe('[SEND] contact="[5 chars]" text="[19 chars]" files=2 mode=ready');
+    expect(second).toBe(obj);
+    expect(sink.mock.calls[0][1][0]).toContain('rendez-vous ce soir');
+  });
+
+  it('leaves secrets to the stored log: the console pass is prose only', async () => {
+    const { redactConsoleProse } = await import('./appLogRedact');
+    expect(redactConsoleProse('[AUTH] pin=1234 status=ok')).toBe('[AUTH] pin=1234 status=ok');
+    expect(redactConsoleProse('[X] pin=1 text=hello world, again')).toBe(
+      '[X] pin=1 text=[11 chars]'
+    );
+  });
+});

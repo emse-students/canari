@@ -81,7 +81,7 @@ media rather than permanently unreadable history.
 
 **The MLS-native analogue exists and does not fit.** RFC 9420 §8.5's exporter secret is the
 sanctioned hook, it is exposed in our WASM as `export_secret`, and we already use it -
-`CallService` derives the WebRTC media key with label `mls-webrtc-media`, which is exactly DAVE's
+`CallService` derives the WebRTC media keys with label `mls-webrtc-media-v2` (one per direction), which is exactly DAVE's
 shape. But an exported secret is DERIVED FROM group state: using it requires being in the group, at
 the right epoch, having processed every commit - and a newcomer could never read the past, because
 they were not there at those epochs. It answers a different question.
@@ -1459,7 +1459,7 @@ member excluded from a private salon received, on their own authenticated socket
 | Event | What it carries |
 |---|---|
 | `channel.message.created` | `ciphertext`, `nonce`, `senderSessionId`, `messageIndex` - inline |
-| `channel.typing` | who is writing there, live |
+| `channel.typing` | who is writing there, live (never sent back to the typist) |
 | `channel.pin`, `channel.message.deleted` | what is pinned, what was removed |
 | `channel.poll.vote` | the tally |
 | `channel.updated`, `channel.member.joined` | the salon's NAME, and who was added to it |
@@ -3494,6 +3494,15 @@ not: commits and application frames share one per-group FIFO, and its `control` 
 the native `group_reset`. The frames were LIVE requests (339-469 B) sealed by other members' devices
 3-6 epochs behind, so every up-to-date member found them unreadable, and each loss drives a re-ask.
 The sender side is open in the [backlog](../backlog.md).
+
+**The server names the lagging sender (2026-10-18).** chat-delivery reads every application frame's
+clear epoch (`mlsFrameEpoch`) and, under the same locked group read as the write
+(`enqueueForLiveGroup`), compares it with `activeEpoch`. A frame below `activeEpoch - 2`
+(`isBeyondPastEpochWindow`, the client's `max_past_epochs`) logs `STALE_EPOCH_FRAME group=...
+keyGroup=... frameEpoch=E activeEpoch=A behind=N sender=user:device app=<build> rows=R` at `warn`.
+The build is the sender's KeyPackage `deviceAppVersion`, read by the query the fan-out already
+makes. It is REPORTED, never refused: a `stale_epoch` refusal changes what every shipped client sees
+on a send, and it waits for this line to say which builds lag. Commits and Welcomes are not checked.
 
 ## 24. A history ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, decided 2026-10-18)
 

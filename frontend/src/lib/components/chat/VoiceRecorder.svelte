@@ -420,7 +420,7 @@
       onpointercancel={handlePointerCancel}
       onkeydown={handleKeydown}
       aria-label={m.chat_record_voice_message_label()}
-      title={m.chat_record_voice_message_title()}
+      title={m.chat_record_voice_message_label()}
     >
       <Mic size={20} strokeWidth={2} />
     </button>

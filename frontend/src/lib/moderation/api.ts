@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
+import type { LiveStanding } from '$lib/live/types';
 
 /**
  * A refusal from the moderation API, carrying the machine-readable discriminator the server sent.
@@ -24,6 +25,11 @@ export class ModerationApiError extends Error {
   get isAlreadyReported(): boolean {
     return this.code === 'ALREADY_REPORTED';
   }
+
+  /** True when the reported live is gone or was never visible to the reporter (`404 LIVE_NOT_FOUND`). */
+  get isLiveNotFound(): boolean {
+    return this.code === 'LIVE_NOT_FOUND';
+  }
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -47,12 +53,34 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Where a reported live stands, as `GET /api/moderation/reports` states it. */
+export type ReportedLiveState = 'open' | 'ended' | 'cut' | 'gone';
+
+/**
+ * The live a `contentType: 'live'` report is about (read live from the lives tables, never stored
+ * on the report). `gone`: ended and purged, nothing left to watch or cut. `broadcasterCuts` is how
+ * many times the broadcaster was cut before - the repeat-offender count a moderator weighs.
+ */
+export interface ReportedLive {
+  state: ReportedLiveState;
+  broadcasterId: string | null;
+  broadcasterName: string | null;
+  associationId: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  endReason: string | null;
+  cutReason: string | null;
+  broadcasterCuts: number;
+  /** The broadcaster's place on the strike ladder; null when the live has no known broadcaster. */
+  broadcasterStanding: LiveStanding | null;
+}
+
 /** A content report filed by a user. */
 export interface ContentReport {
   id: string;
   reporterId: string;
   /** `user` reports a person; `contentId` is then the reported account's id. */
-  contentType: 'post' | 'comment' | 'user';
+  contentType: 'post' | 'comment' | 'user' | 'live';
   contentId: string;
   reason: string;
   details: string | null;
@@ -65,6 +93,8 @@ export interface ContentReport {
   contentPreview: string | null;
   /** For comment reports: ID of the parent post, used for navigation. Null otherwise. */
   postId: string | null;
+  /** For live reports: the live's state. Absent on every other type. */
+  live?: ReportedLive | null;
 }
 
 /** A muted user record. */
@@ -78,12 +108,12 @@ export interface MutedUser {
 }
 
 /**
- * Submits a content report for a post, a comment, or a person.
+ * Submits a content report for a post, a comment, a person or a live.
  *
  * Throws {@link ModerationApiError}; `isAlreadyReported` tells a duplicate from a real failure.
  */
 export async function createReport(
-  contentType: 'post' | 'comment' | 'user',
+  contentType: 'post' | 'comment' | 'user' | 'live',
   contentId: string,
   reason: 'spam' | 'harassment' | 'inappropriate' | 'other',
   details?: string,

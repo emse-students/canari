@@ -90,8 +90,37 @@ export interface PostComment {
   parentId?: string | null;
   likes: string[];
   createdAt: string;
+  /** Set by the server when the text was edited; absent on a comment never touched. */
+  editedAt?: string | null;
   /** Encrypted media attached to this comment (GIF, screenshot, etc.). */
   media?: PostMediaRef;
+}
+
+/** The longest comment, in characters. The server copy is `COMMENT_MAX_LENGTH` in `apps/social-service/src/posts/comment-page.ts`. */
+export const COMMENT_MAX_LENGTH = 2000;
+
+/** One page of whole comment threads (a head and all its replies), as `GET /posts/:id/comments` serves it. */
+export interface CommentPage {
+  comments: PostComment[];
+  /** Pass back as `cursor` for the next page; `null` when the page was empty. */
+  nextCursor: number | null;
+  hasMore: boolean;
+}
+
+export interface FetchCommentsOptions {
+  cursor?: number | null;
+  limit?: number;
+  order?: 'recent' | 'oldest';
+}
+
+/** Query string of `fetchComments`; only the options actually given are sent. */
+export function buildCommentsSearchParams(opts: FetchCommentsOptions): string {
+  const params = new URLSearchParams();
+  if (opts.cursor !== undefined && opts.cursor !== null) params.set('cursor', String(opts.cursor));
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+  if (opts.order) params.set('order', opts.order);
+  const q = params.toString();
+  return q ? `?${q}` : '';
 }
 
 /** Display payload for posts published as an association (author identity hidden). */
@@ -109,6 +138,16 @@ export interface PostLinkedCalendarEvent {
   startsAt: string;
   endsAt: string | null;
   associationSlug: string;
+}
+
+/** One request an association of the reader made for a personal post (D38b). */
+export interface PersonalRepublicationRequestState {
+  associationId: string;
+  /** Named on the card: "Demande envoyee au nom de X". */
+  associationName: string;
+  /** The proposal, which the association withdraws while it is `pending`. */
+  proposalId: string;
+  status: 'pending' | 'refused';
 }
 
 export interface PostEntity {
@@ -142,8 +181,19 @@ export interface PostEntity {
   /** The republishers (ids in `republishedBy`) whose republication this reader may withdraw. */
   canUnrepublishAs?: string[];
   /**
+   * "Republier au nom d'une association" (D38b): a personal post its author may be ASKED about, by
+   * an association of the reader's that has not asked yet. The author decides; nothing is shown
+   * before they accept.
+   */
+  canRequestRepublication?: boolean;
+  /**
+   * What the reader's associations already asked for this personal post and still stands: `pending`
+   * (the card says "Demande envoyee") or `refused` (recorded, and it stands).
+   */
+  republicationRequests?: PersonalRepublicationRequestState[];
+  /**
    * The associations that republished this post, oldest first (D38) - the card's "Republie par"
-   * line. Present on association posts only; a personal post is never republished.
+   * line. A personal post carries it too once its author accepted a request (D38b).
    */
   republishedBy?: PostAssociationAuthor[];
   authorDisplayName?: string | null;
@@ -172,6 +222,12 @@ export interface PostEntity {
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
   comments?: PostComment[];
+  /**
+   * The post's comments in all, as the server counted them for this reader (blocked authors left
+   * out). A list row carries only the newest twenty in `comments`, so the number shown is this one
+   * (`posts/commentChange.ts`, `commentCountOf`); absent from a server older than the field.
+   */
+  commentCount?: number | null;
   pinned?: boolean;
   scheduledAt?: string | null;
   createdAt: string;
@@ -203,6 +259,11 @@ export function isReel(post: Pick<PostEntity, 'kind'>): boolean {
  */
 export interface ReelLimits {
   maxDurationMs: number;
+  /**
+   * The longest reel sent in a conversation (60 s, D-size). ABSENT from an older server's answer:
+   * a reader must treat `undefined` as "this server has no chat cap yet", never default a number.
+   */
+  chatMaxDurationMs?: number;
   retentionDays: number;
   warningWindowDays: number;
 }
@@ -247,6 +308,12 @@ export interface ListPostsOptions {
   formation?: string;
   /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
   kind?: PostKind;
+  /**
+   * With `kind: 'reel'`: the posts whose only content is ONE picture come too - the CanaReels list
+   * (`reels/fullScreenPost.ts`). A server older than it drops the unknown parameter and answers
+   * the reels alone.
+   */
+  singlePhotos?: boolean;
 }
 
 export interface ScheduledPost {
@@ -320,6 +387,7 @@ function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
+  if (options.singlePhotos) p.set('singlePhotos', 'true');
   const s = p.toString();
   return s ? `?${s}` : '';
 }
@@ -427,6 +495,14 @@ export async function addComment(
   });
 }
 
+/** One page of a post's comments, as whole threads - see `CommentPage`. */
+export async function fetchComments(
+  postId: string,
+  opts: FetchCommentsOptions = {}
+): Promise<CommentPage> {
+  return request<CommentPage>(`/api/posts/${postId}/comments${buildCommentsSearchParams(opts)}`);
+}
+
 export async function likeComment(
   postId: string,
   commentId: string
@@ -490,6 +566,21 @@ export async function proposeRepublication(
   associationId: string
 ): Promise<unknown> {
   return request(`/api/posts/${postId}/republication-proposals`, {
+    method: 'POST',
+    body: JSON.stringify({ associationId }),
+  });
+}
+
+/**
+ * Asks the AUTHOR of a personal post to let `associationId` carry it (D38b). Nothing is visible
+ * before the author accepts. A refusal carries a typed `code` (`REPOST_PERSONAL_*`), read with
+ * `refusalCode`: 409 for a request that already stands or a cap reached, 403 for a block.
+ */
+export async function requestPersonalRepublication(
+  postId: string,
+  associationId: string
+): Promise<unknown> {
+  return request(`/api/posts/${postId}/republication-requests`, {
     method: 'POST',
     body: JSON.stringify({ associationId }),
   });

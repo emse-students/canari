@@ -48,6 +48,8 @@ export class ModerationController {
       reason: dto.reason,
       details: dto.details,
       reportedUserId: dto.reportedUserId ?? null,
+      liveId: dto.liveId,
+      message: dto.message,
     });
   }
 

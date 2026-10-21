@@ -34,6 +34,7 @@ import { keystoreCommand } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
+import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -69,6 +70,10 @@ type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live
  */
 export class TauriMlsService extends BaseMlsService {
   private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
+  private _pageHideHandler: (() => void) | null = null;
+  /** The `pageshow` listener asking for a new socket when the page SURVIVED its `pagehide`. */
+  private _pageShowHandler: (() => void) | null = null;
   private wsUnlisten: (() => void) | null = null;
   /** Consecutive pings sent without any incoming data frame from the server. */
   private missedHeartbeats = 0;
@@ -276,6 +281,29 @@ export class TauriMlsService extends BaseMlsService {
       };
       document.addEventListener('visibilitychange', this._visibilityHandler);
       window.addEventListener('online', this._onlineHandler);
+      // THE PAGE LEAVING RELEASES ITS NATIVE SOCKET. The plugin's connection and its `addListener`
+      // channel live in RUST and outlive the document: after a WebView reload (a system text-size
+      // change) the old page's channel id kept being answered into the new page,
+      // `[TAURI] Couldn't find callback id N` every ~15 s (Mi 9T, 2026-10-17). The only recurring
+      // Rust-to-JS channel is this socket's, so it is released with the page - the same release
+      // the backgrounding path performs, and the next page opens its own. The cause is REASONED,
+      // not observed: the reading that closes it is the id no longer repeating after a reload.
+      this._pageHideHandler = () => {
+        if (!this.ws) return;
+        console.log('[WS] page leaving - releasing the native socket and its listener channel');
+        this.pauseSocket();
+      };
+      window.addEventListener('pagehide', this._pageHideHandler);
+      // A `pagehide` the page SURVIVES (a bfcache entry restored, a navigation that did not
+      // destroy the document) leaves it with no socket and no visibility edge to notice: the
+      // restore itself is the trigger, so it asks for the reconnect.
+      this._pageShowHandler = () => {
+        if (!this.ws) {
+          console.log('[WS] page shown again with no socket - reconnecting');
+          this.disconnectCallback?.();
+        }
+      };
+      window.addEventListener('pageshow', this._pageShowHandler);
       // THE EDGE THE VISIBILITY API NEVER FIRES ON A PHONE. A backgrounded Android WebView stays
       // `visible` (measured, see `appForeground.ts`), so the handler above cannot see the user
       // coming back; the activity's own foreground event can. Same decision, honest trigger.
@@ -306,17 +334,7 @@ export class TauriMlsService extends BaseMlsService {
       `[WS] Opening connection → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (no token)'}`
     );
 
-    // NativeWebSocket.connect() resolves when the handshake completes, rejects on failure.
-    // Impose the same 15-second timeout as WebMlsService to prevent silent hangs on Android.
-    let resolved = false;
-    const connectPromise = NativeWebSocket.connect(wsUrl);
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => {
-        if (!resolved) reject(new Error('WebSocket connection timeout after 15s'));
-      }, 15_000)
-    );
-    this.ws = await Promise.race([connectPromise, timeoutPromise]);
-    resolved = true;
+    this.ws = await connectNativeSocket(NativeWebSocket.connect(wsUrl), NATIVE_CONNECT_TIMEOUT_MS);
     console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
@@ -490,6 +508,19 @@ export class TauriMlsService extends BaseMlsService {
         // Best-effort - ignore if the socket is already closing
       });
     }
+  }
+
+  /** Removes the page-lifecycle listeners this class registered, then the base teardown. */
+  override destroy(): void {
+    if (this._pageHideHandler) {
+      window.removeEventListener('pagehide', this._pageHideHandler);
+      this._pageHideHandler = null;
+    }
+    if (this._pageShowHandler) {
+      window.removeEventListener('pageshow', this._pageShowHandler);
+      this._pageShowHandler = null;
+    }
+    super.destroy();
   }
 
   /**

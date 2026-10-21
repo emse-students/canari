@@ -49,6 +49,12 @@
 
 ## One header and one creation flow for the three directories (2026-10-07)
 
+**"Mes ..." blocks live in their own tab (user, 2026-10-19).** `MyMembershipsSection.svelte` is the pinned block on top
+of a directory: `/associations` draws only "Mes associations", `/institutions` only "Mes institutions", `/lists` only
+"Mes listes" (one `groupAssociationsForSelect` classifier, the data `listMyAssociations` already returned). Empty blocks
+are not drawn. The directory below still lists every row with the member's own one badged (the pinned-subset pattern the
+Associations tab always had). Test: `routes/associations/mineBlocks.svelte.test.ts`.
+
 Audited on 2026-10-07 after a screenshot of `/associations`: four buttons of two kinds (three links to
 directories, one creation) drawn alike, and **`/institutions` had NO creation button**. What existed
 before: creation was a checkbox on `/associations/new` visible to a global admin; the reach was only
@@ -129,8 +135,10 @@ Three changes, all of them about not repeating what the page already states (use
 The archived and "Membre" notes stay on both kinds, because they answer something the shelf does
 not; the middot separator belongs to the count, so a list prints the note without one.
 `AssociationTile` is shared by five call sites across `/associations` and `/lists`, which is why
-the count is a CONDITION rather than a deletion, and why `associationTileList.test.ts` reads the
-markup - every one of these was valid markup that rendered without complaint.
+the count is a CONDITION rather than a deletion. `AssociationTile.render.svelte.test.ts` MOUNTS the
+tile for each of these (it read the markup's spelling until WP-T5, 2026-10-18,
+[test-suite-reform](../../test-suite-reform.md)) - every one of them was valid markup that
+rendered without complaint.
 
 ### What the detail header says, and the space a compiler kept eating
 
