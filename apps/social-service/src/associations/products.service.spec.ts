@@ -594,6 +594,31 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(purchaseRecordService.create).not.toHaveBeenCalled();
     });
 
+    it('binds a maximum set with no minimum, as the checkout does', async () => {
+      const { service, productRepo, purchaseRecordService } = makeService();
+      productRepo.findOne.mockResolvedValue(
+        product({
+          type: 'other',
+          amountCents: null,
+          allowCustomAmount: true,
+          customAmountMinCents: null,
+          customAmountMaxCents: 5000,
+        })
+      );
+      productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const err = await service
+        .grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1', amountCents: 6000 })
+        .catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'AMOUNT_OUT_OF_RANGE',
+        minCents: 0,
+        maxCents: 5000,
+      });
+      expect(purchaseRecordService.create).not.toHaveBeenCalled();
+    });
+
     it('CONTROL: records an amount inside the bounds', async () => {
       const { service, productRepo, purchaseRecordService } = makeService();
       productRepo.findOne.mockResolvedValue(bounded());

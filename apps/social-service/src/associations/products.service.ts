@@ -1426,7 +1426,9 @@ export class ProductsService {
       throw new BadRequestException('amountCents is required for this product');
     }
 
-    if (product.allowCustomAmount && product.customAmountMinCents != null) {
+    // Whenever the product takes a free amount - as the checkout does - so a max set with no min
+    // still binds the grant.
+    if (product.allowCustomAmount) {
       this.assertWithinCustomBounds(product, associationId, amountCents, 'cash grant amount');
     }
 

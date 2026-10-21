@@ -446,6 +446,19 @@ describe('FormsService - the seat a pending payment holds', () => {
       }
     );
 
+    it('says payments are disabled, not a range, when both are true', async () => {
+      const { service, rows, core } = makeStore({ maxSubmissions: 1, basePrice: 49, rows: [] });
+      const err = await service
+        .submit('f1', { userId: 'u1', answers: {} } as any)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).getResponse()).not.toMatchObject({
+        code: 'AMOUNT_OUT_OF_RANGE',
+      });
+      expect(core.calls).toHaveLength(0);
+      expect(rows.map((r) => [r.id, r.paymentStatus])).toEqual([['new1', 'cancelled']]);
+    });
+
     it.each([50, 100_000])(
       'CONTROL: a %i-cent total, on a bound, issues its request',
       async (cents) => {

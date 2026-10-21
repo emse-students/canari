@@ -177,6 +177,10 @@ On app close Android logged `FORTIFY: pthread_mutex_lock called on a destroyed m
 
 Seen at 04:36, 04:45, 04:55 and 06:12 on a phone left idle. Not investigated: whether the phone's network slept, the server stopped answering, or the ping budget is too tight for Doze.
 
+## P3 - Nothing warns a manager whose free-amount bounds fall outside the payable range (review of #2208, 2026-10-21, not built)
+
+A product's `customAmountMinCents` / `customAmountMaxCents` can be saved outside 0.50-1000 EUR (`libs/contracts/payment-amount-range.json`), so a buyer is refused by the provider range at checkout for an amount the product itself allows. Owed: the product editor names the range when a bound crosses it ([payments](frontend/modules/payments.md)).
+
 ## P3 - Dev bench notes: a dev push cannot be read, and a PIN reset through the rig purges the iPhone (2026-10-21)
 
 - **Dev sends no FCM**: `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` does not exist, so `push_text.rs` / `proto_fields.rs` behaviour and the banner on a locked phone cannot be read on dev. A dev push reading needs that secret: the owner line "set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret" in [owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
