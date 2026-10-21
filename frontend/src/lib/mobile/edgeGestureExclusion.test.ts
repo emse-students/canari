@@ -115,7 +115,7 @@ describe('excludeRightEdgeOver', () => {
 
 describe('wantsFeedLeftEdgeExclusion', () => {
   it('holds on the feed while its swipe to the camera can happen', () => {
-    expect(wantsFeedLeftEdgeExclusion('/posts', true, false)).toBe(true);
+    expect(wantsFeedLeftEdgeExclusion('/posts', true, false, false)).toBe(true);
   });
 
   it('never holds elsewhere, so the left-edge Back keeps working there', () => {
@@ -127,12 +127,17 @@ describe('wantsFeedLeftEdgeExclusion', () => {
       '/calendar',
       '/settings',
     ]) {
-      expect(wantsFeedLeftEdgeExclusion(path, true, false)).toBe(false);
+      expect(wantsFeedLeftEdgeExclusion(path, true, false, false)).toBe(false);
     }
   });
 
   it('stands down when the swipe cannot happen: not armed, or the keyboard up', () => {
-    expect(wantsFeedLeftEdgeExclusion('/posts', false, false)).toBe(false);
-    expect(wantsFeedLeftEdgeExclusion('/posts', true, true)).toBe(false);
+    expect(wantsFeedLeftEdgeExclusion('/posts', false, false, false)).toBe(false);
+    expect(wantsFeedLeftEdgeExclusion('/posts', true, true, false)).toBe(false);
+  });
+
+  it('stands down under a full-screen overlay, whose Back must close it', () => {
+    // A reel viewer, a media viewer, a modal or the composer's camera over the feed.
+    expect(wantsFeedLeftEdgeExclusion('/posts', true, false, true)).toBe(false);
   });
 });

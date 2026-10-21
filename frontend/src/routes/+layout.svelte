@@ -306,10 +306,11 @@
 
   // THE FEED'S LEFT EDGE IS THE CAMERA SWIPE'S, NOT ANDROID'S BACK (Mi 9T, 2026-10-21: a swipe
   // started in the left 30 CSS px was taken as Back, 8 of 8). Declared on the feed alone and only
-  // while its swipe can happen; the cleanup removes it on every route change, keyboard rise or
-  // viewport change, so the left-edge Back is untouched everywhere else. A no-op off Android.
+  // while its swipe can happen; the cleanup removes it on every route change, keyboard rise,
+  // covering overlay or viewport change, so the left-edge Back is untouched everywhere else (and
+  // closes a reel viewer or a modal over the feed). A no-op off Android.
   const feedLeftEdgeExcluded = $derived(
-    wantsFeedLeftEdgeExclusion(pathname, swipeNavArmed, isKeyboardOpen)
+    wantsFeedLeftEdgeExclusion(pathname, swipeNavArmed, isKeyboardOpen, screenCover.covered)
   );
   $effect(() => {
     if (!feedLeftEdgeExcluded || !pageScrollWrap) return;

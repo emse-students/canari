@@ -20,10 +20,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.firebase.messaging.FirebaseMessaging
-import fr.emse.canari.gesture.ExclusionBand
-import fr.emse.canari.gesture.CapAnchor
 import fr.emse.canari.gesture.Edge
-import fr.emse.canari.gesture.edgeExclusion
+import fr.emse.canari.gesture.ExclusionBand
+import fr.emse.canari.gesture.bandsFor
 import java.io.File
 
 class MainActivity : TauriActivity() {
@@ -222,7 +221,7 @@ class MainActivity : TauriActivity() {
     private val bandSpans = mutableMapOf<Edge, Pair<Int, Int>>()
 
     /** What was last handed to the system, so an unchanged layout pass neither re-sets nor logs. */
-    private var appliedBands: Map<Edge, ExclusionBand> = emptyMap()
+    private var appliedBands: List<ExclusionBand> = emptyList()
 
     /**
      * THE PAGE SAYS WHICH SURFACE IS ON SCREEN AND WHERE IT IS; NOTHING NATIVE KNOWS EITHER.
@@ -257,35 +256,27 @@ class MainActivity : TauriActivity() {
     /**
      * Declares (or clears) both edges' exclusions on the WebView. Runs when the page reports and on
      * every layout change of the WebView (rotation, keyboard resize), skipping an unchanged result -
-     * never per frame. `setSystemGestureExclusionRects` is API 29+ (the ViewCompat call is a no-op
-     * below), and the gesture inset reads 0 on 3-button navigation, where there is nothing to
-     * exclude. The whole list is replaced each time, so it never accumulates past Android's cap of
-     * 200 dp per edge; each edge is cut to that cap by `edgeExclusion`, around its own anchor (the
-     * newest bubbles at the bottom of a conversation, the middle of the feed where a thumb starts).
+     * never per frame. `setSystemGestureExclusionRects` is API 29+ (below, the call is skipped
+     * and the log says so), and the gesture inset reads 0 on 3-button navigation, where there is nothing to
+     * exclude. The whole list is replaced each time (`bandsFor` composes both edges), so it never
+     * accumulates past Android's cap of 200 dp per edge, and one edge's report never erases the other.
      */
     private fun applyEdgeExclusions() {
         val webView = liveWebView ?: return
         val insets = ViewCompat.getRootWindowInsets(webView)?.getInsets(WindowInsetsCompat.Type.systemGestures())
-        val density = resources.displayMetrics.density
-        val bands = buildMap {
-            for ((edge, span) in bandSpans) {
-                val inset = if (edge == Edge.LEFT) insets?.left ?: 0 else insets?.right ?: 0
-                val anchor = if (edge == Edge.LEFT) CapAnchor.CENTER else CapAnchor.BOTTOM
-                edgeExclusion(edge, webView.width, webView.height, density, inset, span.first, span.second, anchor)
-                    ?.let { put(edge, it) }
-            }
-        }
-        if (bands == appliedBands) return
-        for (edge in Edge.entries) {
-            if (bands[edge] != appliedBands[edge]) {
-                Log.d("MainActivity", "${edge.name.lowercase()}-edge gesture exclusion: span=${bandSpans[edge]} -> ${bands[edge]}")
-            }
-        }
-        appliedBands = bands
-        ViewCompat.setSystemGestureExclusionRects(
-            webView,
-            bands.values.map { Rect(it.left, it.top, it.right, it.bottom) }
+        val bands = bandsFor(
+            bandSpans, insets?.left ?: 0, insets?.right ?: 0,
+            webView.width, webView.height, resources.displayMetrics.density
         )
+        if (bands == appliedBands) return
+        appliedBands = bands
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // No exclusion API below Android 10, and no gesture navigation to exclude from either.
+            Log.d("MainActivity", "gesture exclusion: spans=$bandSpans -> $bands, API < 29: not applied")
+            return
+        }
+        Log.d("MainActivity", "gesture exclusion: spans=$bandSpans -> $bands")
+        ViewCompat.setSystemGestureExclusionRects(webView, bands.map { Rect(it.left, it.top, it.right, it.bottom) })
     }
 
     /**

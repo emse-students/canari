@@ -3,6 +3,7 @@ package fr.emse.canari
 import fr.emse.canari.gesture.CapAnchor
 import fr.emse.canari.gesture.Edge
 import fr.emse.canari.gesture.ExclusionBand
+import fr.emse.canari.gesture.bandsFor
 import fr.emse.canari.gesture.edgeExclusion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -62,8 +63,7 @@ class EdgeGestureExclusionTest {
         // The 2026-10-21 matrix lost every swipe started at x = 20 and 60 physical px (inside 74).
         val band = left(74, 250, 2100)!!
         assertEquals(0, band.left)
-        assertEquals(96, band.right)
-        for (x in listOf(20, 50, 60)) assertTrue(x < band.right)
+        assertEquals(96, band.right) // x = 20, 50 and 60 are all inside
     }
 
     @Test
@@ -85,5 +85,31 @@ class EdgeGestureExclusionTest {
     fun aWiderGestureSettingWidensTheBand() {
         // The inset is the user's setting, not a constant: a 120 px inset gives a 142 px band.
         assertEquals(142, left(120, 900, 1200)!!.right)
+    }
+
+    private fun both(spans: Map<Edge, Pair<Int, Int>>) = bandsFor(spans, 74, 74, w, h, d)
+
+    @Test
+    fun bothEdgesTravelInOneListLeftThenRight() {
+        // setSystemGestureExclusionRects REPLACES the list: one edge's band must never drop the other.
+        val bands = both(mapOf(Edge.LEFT to Pair(250, 2100), Edge.RIGHT to Pair(200, 2000)))
+        assertEquals(listOf(left(74, 250, 2100)!!, right(74, 200, 2000)!!), bands)
+    }
+
+    @Test
+    fun aLeftSpanLeavesTheRightBandIntactAndTheReverse() {
+        val rightOnly = both(mapOf(Edge.RIGHT to Pair(200, 2000)))
+        val leftOnly = both(mapOf(Edge.LEFT to Pair(250, 2100)))
+        val withLeft = both(mapOf(Edge.LEFT to Pair(250, 2100), Edge.RIGHT to Pair(200, 2000)))
+        assertEquals(rightOnly, withLeft.filter { it.right == w })
+        assertEquals(leftOnly, withLeft.filter { it.left == 0 })
+    }
+
+    @Test
+    fun eachEdgeReadsItsOwnInsetAndAnchor() {
+        // 3-button navigation on the left only: the right band survives alone, still bottom-anchored.
+        val bands = bandsFor(mapOf(Edge.LEFT to Pair(250, 2100), Edge.RIGHT to Pair(100, 2000)), 0, 74, w, h, d)
+        assertEquals(listOf(ExclusionBand(984, 1450, 1080, 2000)), bands)
+        assertTrue(both(emptyMap()).isEmpty())
     }
 }

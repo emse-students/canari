@@ -79,3 +79,31 @@ fun edgeExclusion(
         Edge.RIGHT -> ExclusionBand(left = viewWidthPx - bandWidth, top = bandTop, right = viewWidthPx, bottom = bandBottom)
     }
 }
+
+/**
+ * EVERY BAND THE WEBVIEW MUST CARRY, BOTH EDGES IN ONE LIST (pure, no Android).
+ *
+ * `setSystemGestureExclusionRects` REPLACES the view's whole list, so the bands of both edges must be
+ * handed over together: a call carrying only the feed's LEFT band would erase a conversation's RIGHT
+ * band, and the reverse (#1883 depends on this). Each edge is cut by [edgeExclusion] around its own
+ * anchor - the newest bubbles at the BOTTOM of a conversation, the MIDDLE of the feed where a thumb
+ * starts the swipe to the camera. Ordered LEFT then RIGHT; an edge with no span, or whose band is
+ * empty (0 inset on 3-button navigation, a span outside the view), contributes nothing.
+ *
+ * @param spans the vertical span in view px the page asked to exclude, per edge.
+ */
+fun bandsFor(
+    spans: Map<Edge, Pair<Int, Int>>,
+    leftInsetPx: Int,
+    rightInsetPx: Int,
+    viewWidthPx: Int,
+    viewHeightPx: Int,
+    density: Float,
+): List<ExclusionBand> = Edge.entries.mapNotNull { edge ->
+    val span = spans[edge] ?: return@mapNotNull null
+    val (inset, anchor) = when (edge) {
+        Edge.LEFT -> Pair(leftInsetPx, CapAnchor.CENTER)
+        Edge.RIGHT -> Pair(rightInsetPx, CapAnchor.BOTTOM)
+    }
+    edgeExclusion(edge, viewWidthPx, viewHeightPx, density, inset, span.first, span.second, anchor)
+}

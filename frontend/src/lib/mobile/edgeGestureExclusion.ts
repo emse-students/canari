@@ -112,18 +112,22 @@ const FEED_PATH = '/posts';
  * ONLY THE FEED ITSELF, AND ONLY WHILE ITS SWIPE TO THE CAMERA CAN HAPPEN: the swipe is armed on
  * this layout (`isSwipeNavArmed`), the camera is the feed's `prev` (so a reordering of the swipe
  * places drops the exclusion instead of leaving it on a feed that no longer swipes there), and the
- * keyboard is down (the tab swipe stands down while it is up, and Back is then what closes it).
- * A post page, a conversation, the camera and every other route keep the system Back from the left
- * edge untouched.
+ * keyboard is down (the tab swipe stands down while it is up, and Back is then what closes it), and
+ * nothing covers the screen (`screenCover.covered`: a reel viewer, a full-screen media viewer, a
+ * modal, the composer's camera - each is closed by Back, and the feed's swipe is not reachable
+ * under it). A post page, a conversation, the camera and every other route keep the system Back
+ * from the left edge untouched.
  */
 export function wantsFeedLeftEdgeExclusion(
   pathname: string,
   swipeNavArmed: boolean,
-  keyboardOpen: boolean
+  keyboardOpen: boolean,
+  screenCovered: boolean
 ): boolean {
   return (
     swipeNavArmed &&
     !keyboardOpen &&
+    !screenCovered &&
     pathname === FEED_PATH &&
     swipeNavTargetHref(pathname, 'prev') === CAMERA_PLACE.href
   );
