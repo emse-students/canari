@@ -106,7 +106,9 @@ maybe('a guest who pays, against PostgreSQL (migration 103)', () => {
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
       { build: async () => ({ answers: {} }) } as any,
       ds.getRepository(FormRespondent),
-      {} as any
+      {} as any,
+      // FormOrganiserAlertService: switched off, as it ships.
+      { enabled: () => false } as any
     );
     jest.spyOn(axios, 'post').mockImplementation(async (url: string) => {
       if (url.endsWith('payments/request-state')) {
