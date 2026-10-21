@@ -65,13 +65,6 @@
     begin: () => {},
     end: () => {},
     answered: () => {},
-    holdThread: () => {},
-    adoptThread: (full) =>
-      onChange({
-        ...post,
-        comments: full.comments,
-        commentCount: full.commentCount,
-      }),
     // Said beside the box, where the reader is looking, and not in a toast over the reel.
     fail: (message) => (commentError = message),
   });
@@ -263,18 +256,15 @@
 
     <div class="min-h-0 flex-1">
       <PostComments
-        docked
         postId={post.id}
         sendError={commentError}
         {comments}
         {topLevelComments}
-        showComments
         {commentText}
         submittingComment={thread.submitting}
         pendingCommentIds={thread.pending}
         {currentUserId}
         {authToken}
-        onToggleComments={close}
         onCommentTextChange={async (text) => {
           commentText = text;
           commentError = '';
@@ -284,7 +274,9 @@
         onEditComment={(id, text) => thread.edit(id, text)}
         onDeleteComment={(id) => thread.remove(id)}
         onReport={handleReportComment}
-        onLoadAllComments={() => thread.loadAll()}
+        onLoadOlder={() => thread.loadMore()}
+        hasMoreComments={thread.hasMore}
+        loadingMore={thread.loadingMore}
         totalCommentCount={commentCountOf(post)}
       />
     </div>

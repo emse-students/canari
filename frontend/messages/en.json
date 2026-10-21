@@ -773,6 +773,8 @@
   "post_comment_hide_replies_label": "Hide replies",
   "post_comment_delete_confirm": "Delete this comment? Its replies will be deleted too.",
   "post_comment_length_counter": "{count}/{max}",
+  "post_comment_load_older_error": "Could not load older comments.",
+  "post_comments_sheet_title": "Comments",
   "post_comment_load_older_label": "View older comments",
   "post_comment_as_association_caption": "Comment on behalf of {name}",
   "post_comment_media_error": "Could not attach that media to the comment.",

@@ -805,6 +805,8 @@
   "post_comment_hide_replies_label": "Masquer les réponses",
   "post_comment_delete_confirm": "Supprimer ce commentaire ? Ses réponses seront supprimées aussi.",
   "post_comment_length_counter": "{count}/{max}",
+  "post_comment_load_older_error": "Impossible de charger les commentaires plus anciens.",
+  "post_comments_sheet_title": "Commentaires",
   "post_comment_load_older_label": "Voir les commentaires plus anciens",
   "post_comment_as_association_caption": "Commentaire au nom de {name}",
   "post_comment_media_error": "Impossible de joindre ce média au commentaire.",
