@@ -30,6 +30,7 @@ const EVERY_CODE: LoginErrorCode[] = [
   'keystore_empty',
   'device_revoked',
   'server_unreachable',
+  'state_written_by_another_tab',
   'other',
 ];
 
@@ -77,6 +78,12 @@ describe('isExpectedLoginOutcome', () => {
     expect(isExpectedLoginOutcome('server_unreachable')).toBe(true);
   });
 
+  it('and a rotation refused behind another tab - narrated, because the rotation already accused it', () => {
+    // One event, one `error`: `rotateDeviceIdentity` says which id stayed stored; the login adds why
+    // it stopped, at the level of an outcome rather than a second accusation.
+    expect(isExpectedLoginOutcome('state_written_by_another_tab')).toBe(true);
+  });
+
   it('a revoked device is NOT ordinary - the local state is wiped on that path', () => {
     expect(isExpectedLoginOutcome('device_revoked')).toBe(false);
   });
@@ -94,6 +101,7 @@ describe('isExpectedLoginOutcome', () => {
       'local_state_sealed_under_old_pin',
       'keystore_empty',
       'server_unreachable',
+      'state_written_by_another_tab',
     ]);
   });
 });

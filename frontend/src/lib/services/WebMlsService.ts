@@ -38,6 +38,7 @@ import { getToken } from '$lib/stores/auth';
 import {
   saveMlsState,
   MlsStateWriteRefusedError,
+  type MlsStateWriteLatch,
   toBase64,
   fromBase64,
   tagMlsSnapshot,
@@ -939,9 +940,23 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
-  /** Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over. */
-  protected async writeCheckpoint(deviceKeyB64: string): Promise<void> {
-    await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
+  /**
+   * Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over.
+   *
+   * A CHECKPOINT THAT RESOLVES MEANS THIS STATE IS ON DISK (2026-10-21). It used to resolve on any
+   * outcome of the version guard, so every waiter - the send ledger, the history marks,
+   * `externalJoin` - declared durable a state the store did not hold. It resolves on `written`, and
+   * on `superseded` (this document's own later capture is stored, a superset of this one), and
+   * rejects typed on `stale` and `collision`, where the stored blob is another document's. Silent:
+   * the guard has already said it in one line.
+   *
+   * And on `ended`: the latch is handed to the write and read IN ITS TRANSACTION, after this capture
+   * and its off-thread seal - a refused rotation may have set it while this one was encrypting.
+   */
+  protected async writeCheckpoint(deviceKeyB64: string, latch: MlsStateWriteLatch): Promise<void> {
+    const outcome = await saveMlsState(this.userId, await this.saveState(deviceKeyB64), latch);
+    if (outcome === 'stale' || outcome === 'collision' || outcome === 'ended')
+      throw new MlsStateWriteRefusedError(outcome);
   }
 
   /** WASM client wrapper - burns `count` send generations, discarding every frame it produces. */
@@ -968,14 +983,21 @@ export class WebMlsService extends BaseMlsService {
    * a dropped re-seal leaves the stored state under the OLD key. That is a typed failure
    * ({@link MlsStateWriteRefusedError}), which ends the session into the recovery, never a "done".
    */
-  protected async changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void> {
+  protected async changeDeviceKeyImpl(
+    newDeviceKeyB64: string,
+    latch: MlsStateWriteLatch
+  ): Promise<void> {
     const newState = await this.saveState(newDeviceKeyB64);
-    const outcome = await saveMlsState(this.userId, newState);
+    const outcome = await saveMlsState(this.userId, newState, latch);
     if (outcome !== 'written') {
-      console.error(
-        `[MLS] Device key change: the re-sealed state was NOT written (${outcome}) - the stored ` +
-          'state stays under the old key.'
-      );
+      // An ENDED document was announced ONCE, by the refused rotation's own line; repeating it per
+      // refused write is the noise the latch exists to end.
+      if (outcome !== 'ended') {
+        console.error(
+          `[MLS] Device key change: the re-sealed state was NOT written (${outcome}) - the stored ` +
+            'state stays under the old key.'
+        );
+      }
       throw new MlsStateWriteRefusedError(outcome);
     }
     console.log('[MLS] Device key changed - state re-encrypted and persisted.');

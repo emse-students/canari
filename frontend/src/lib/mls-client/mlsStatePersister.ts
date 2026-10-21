@@ -1,6 +1,7 @@
 import type { BulkIngestPhase, IMlsService } from './IMlsService';
 import { recordMlsSaveStateMs } from './catchupBenchmark';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 
 /** Configuration for coalesced MLS state persistence. */
 export interface MlsStatePersisterConfig {
@@ -113,7 +114,11 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
         // must write it. Clearing the flag at the start and never raising it again left a state that
         // no later `flush` would ever write until something else marked it.
         dirtyEncrypted = true;
-        log?.(`[MLS] Encrypted state checkpoint failed: ${String(e)}`);
+        // A REFUSAL BY THE VERSION GUARD HAS ALREADY BEEN SAID, by the guard, in the one line that
+        // names both versions; repeating it here was the second of four lines per refusal.
+        if (!(e instanceof MlsStateWriteRefusedError)) {
+          log?.(`[MLS] Encrypted state checkpoint failed: ${String(e)}`);
+        }
         throw e;
       })
       .finally(() => {
