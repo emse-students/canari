@@ -1,1 +1,3 @@
-Docs: the user cleared migrations 100 and 101 (Lydia Business key, product checkout attempts) to ride the next stable on 2026-10-22; payments stay off in production. See [payments](../docs/wiki/frontend/modules/payments.md).
+### Changed - docs: migrations 100 and 101 may ride the next stable, payments stay off in production
+
+The user cleared them on 2026-10-22 ([payments](../docs/wiki/frontend/modules/payments.md)).
