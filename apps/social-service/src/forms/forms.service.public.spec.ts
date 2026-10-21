@@ -63,7 +63,9 @@ describe('FormsService - public forms', () => {
       {} as any,
       pricingFacts,
       { count: jest.fn() } as any,
-      {} as any
+      {} as any,
+      // FormOrganiserAlertService: switched off, as it ships.
+      { enabled: () => false } as any
     );
     return { service, manager, saved, formRepo, submissionRepo, pricingFacts };
   }

@@ -26,6 +26,8 @@ const SERVER_HOSTS = [
   'republication-requests',
   // WP-L8b: a cut live, a suspension, a withdrawal - the notifications list, where their row is.
   'notifications',
+  // The organiser alert (a payment landed on a full form): that form's responses.
+  'form-responses',
 ];
 
 /** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */

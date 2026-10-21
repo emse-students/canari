@@ -101,7 +101,9 @@ describe('FormsService pricing, through submit', () => {
       { create: jest.fn() } as any,
       pricingFacts,
       {} as any,
-      {} as any
+      {} as any,
+      // FormOrganiserAlertService: switched off, as it ships.
+      { enabled: () => false } as any
     );
     return { service, pricingFacts, saved };
   }

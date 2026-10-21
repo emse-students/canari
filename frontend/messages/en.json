@@ -2915,6 +2915,7 @@
   "notif_event_updated_text": "updated your event",
   "notif_event_deleted_text": "removed your event",
   "notif_event_pending_text": "changed the dates of your event, which is awaiting approval again:",
+  "notif_form_paid_over_capacity_text": "reports a payment received after the form was full (a refund is owed):",
   "notif_reaction_text": "reacted to your post",
   "notif_mention_text": "mentioned you",
   "notif_reply_text": "replied to your comment",

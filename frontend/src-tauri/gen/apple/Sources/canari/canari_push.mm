@@ -557,6 +557,13 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = CanariLocalized(@"notif.form.open.body");
     return;
   }
+  // A payment landed on a full form, to the form's managers: `arg` is the form's title only.
+  if ([key isEqualToString:@"form_paid_over_capacity"]) {
+    *title = CanariLocalized(@"notif.form.paid_over_capacity.title");
+    *body =
+        [NSString stringWithFormat:CanariLocalized(@"notif.form.paid_over_capacity.body"), arg];
+    return;
+  }
   // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
   if ([key isEqualToString:@"event_proposed"]) {
     *title = CanariLocalized(@"notif.event.proposed.title");

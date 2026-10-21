@@ -86,6 +86,7 @@ import {
   PROVIDER_MIN_AMOUNT_CENTS,
 } from '../common/core-payment-error';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
+import { FormOrganiserAlertService } from './organiser-alert.service';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -136,6 +137,9 @@ export type SubmitOrigin = 'member' | 'guest';
 /** The part of a form item the XLSX export needs: a column header, its key, and how to read an answer. */
 type FormItemLike = AnswerQuestion & { id: string; label: string };
 
+/** The durable flags a landed payment's effects are claimed through (migrations 084 and 102). */
+type FulfilmentFlag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
+
 @Injectable()
 export class FormsService {
   private readonly logger = new Logger(FormsService.name);
@@ -150,7 +154,8 @@ export class FormsService {
     private readonly purchaseRecordService: PurchaseRecordService,
     private readonly pricingFacts: PricingFactsService,
     @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>,
-    private readonly formFiles: FormFilesService
+    private readonly formFiles: FormFilesService,
+    private readonly organiserAlert: FormOrganiserAlertService
   ) {}
 
   /**
@@ -732,7 +737,9 @@ export class FormsService {
 
   /**
    * Runs what a landed payment buys - the cotisation (only when a seat was given) and the purchase
-   * record - each AT MOST ONCE, decided by a durable flag on the row (migration 084).
+   * record - each AT MOST ONCE, decided by a durable flag on the row (migration 084). A payment that
+   * landed `paid_over_capacity` also tells the form's managers, once, on the same rule (migration
+   * 102, `FormOrganiserAlertService`), while that alert is switched on.
    *
    * Both effects run after the payment's own transaction committed, so a crash between the two, or
    * a failed grant, used to be lost for good, and a replay used to run both again. Now each effect
@@ -740,7 +747,7 @@ export class FormsService {
    * if it failed, so the next replay of the same payment retries exactly what is missing. No clock.
    */
   private async fulfilPayment(
-    submission: Pick<Submission, 'id' | 'formId' | 'userId' | 'totalPaid'>,
+    submission: Pick<Submission, 'id' | 'formId' | 'userId' | 'totalPaid' | 'paymentStatus'>,
     seatGiven: boolean,
     how: {
       grantedBy: string;
@@ -753,6 +760,7 @@ export class FormsService {
       select: {
         id: true,
         title: true,
+        ownerId: true,
         grantsCotisation: true,
         cotisationVariantKey: true,
         associationId: true,
@@ -799,13 +807,42 @@ export class FormsService {
         await this.releaseFulfilment(submission.id, 'purchaseRecordedAt');
       }
     }
+    if (submission.paymentStatus === 'paid_over_capacity') {
+      await this.alertOrganisersOnce(submission.id, form);
+    }
+  }
+
+  /**
+   * Tells the form's managers, AT MOST ONCE, that this payment landed on a full form: the flag is
+   * claimed before the notice is written and released if writing it failed, so the next replay of
+   * the same payment retries it. Nothing is claimed while the alert is switched off
+   * (`FORM_ORGANISER_ALERT_ENABLED`), so a row settled then is not marked as told.
+   */
+  private async alertOrganisersOnce(
+    submissionId: string,
+    form: Pick<Form, 'id' | 'title' | 'ownerId' | 'associationId'>
+  ): Promise<void> {
+    if (!this.organiserAlert.enabled()) {
+      this.logger.debug(
+        `[Forms] submission ${submissionId} over capacity: organiser alert switched off - not told`
+      );
+      return;
+    }
+    if (!(await this.claimFulfilment(submissionId, 'organiserNotifiedAt'))) return;
+    try {
+      await this.organiserAlert.tell(form);
+    } catch (e) {
+      this.logger.error(
+        `[Forms] organiser alert for submission ${submissionId} (form ${form.id}) not written - ` +
+          'released for the next replay',
+        e
+      );
+      await this.releaseFulfilment(submissionId, 'organiserNotifiedAt');
+    }
   }
 
   /** Takes a fulfilment flag if nobody has: true for exactly one caller, ever (until released). */
-  private async claimFulfilment(
-    submissionId: string,
-    flag: 'cotisationGrantedAt' | 'purchaseRecordedAt'
-  ): Promise<boolean> {
+  private async claimFulfilment(submissionId: string, flag: FulfilmentFlag): Promise<boolean> {
     const result = await this.submissionRepo
       .createQueryBuilder()
       .update()
@@ -819,10 +856,7 @@ export class FormsService {
   }
 
   /** Gives a claimed flag back after its effect failed, so a replay retries it. */
-  private async releaseFulfilment(
-    submissionId: string,
-    flag: 'cotisationGrantedAt' | 'purchaseRecordedAt'
-  ): Promise<void> {
+  private async releaseFulfilment(submissionId: string, flag: FulfilmentFlag): Promise<void> {
     await this.submissionRepo.update(submissionId, { [flag]: null });
   }
 

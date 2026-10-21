@@ -109,6 +109,12 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "form-responses"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",

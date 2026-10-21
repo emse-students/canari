@@ -193,6 +193,31 @@ describe('NotificationRow sentence', () => {
   });
 });
 
+/**
+ * A PAYMENT LANDED ON A FULL FORM, told to its managers. The row stores the form's TITLE and nothing
+ * else (no payer, no amount); the sentence is built here, never a comment's, and the row opens.
+ */
+describe('NotificationRow for a payment over capacity', () => {
+  const row: PostNotification = {
+    id: 'n-over',
+    type: 'form_paid_over_capacity',
+    postId: 'f1',
+    actorId: 'system',
+    actorName: 'Canari',
+    text: 'Gala de printemps',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('says a refund is owed on that form, never that someone commented', () => {
+    const target = renderRow(row);
+    expect(target.textContent).toContain(m.notif_form_paid_over_capacity_text());
+    expect(target.textContent).toContain('Gala de printemps');
+    expect(target.textContent).not.toContain(m.notif_comment_text());
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
+});
+
 describe('NotificationRow with a type this build does not know', () => {
   const unknown: PostNotification = {
     id: 'n-unk',
@@ -244,6 +269,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'reaction',
   'mention',
   'form_reminder',
+  'form_paid_over_capacity',
   'association_post',
   'followed_post',
   'association_repost',

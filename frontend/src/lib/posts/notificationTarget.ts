@@ -1,4 +1,5 @@
 import type { PostNotification } from './api';
+import { formResponsesRoute } from '$lib/forms/responsesLink';
 
 /**
  * The author's inbox of republication requests (D38b) - where a `repost_personal_requested`
@@ -25,6 +26,10 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
   switch (notif.type) {
     case 'form_reminder':
       return `/forms/${notif.postId}`;
+    // A payment landed on a full form (`postId` is the FORM): its manager is sent to that form's
+    // responses, where the paid-over-capacity answer is, not to the page that answers the form.
+    case 'form_paid_over_capacity':
+      return formResponsesRoute(notif.postId);
     // A calendar manager was told an event is waiting: send them where they can validate it, not to
     // the month view where a pending event is a grey square among thirty.
     case 'event_proposed':
@@ -88,6 +93,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'reaction',
   'mention',
   'form_reminder',
+  'form_paid_over_capacity',
   'association_post',
   'followed_post',
   'association_repost',

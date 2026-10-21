@@ -9,6 +9,14 @@ export const REPUBLICATION_REQUESTS_TARGET = 'republication-requests';
 export const NOTIFICATIONS_TARGET = 'notifications';
 
 /**
+ * The `target` naming ONE FORM'S RESPONSES, and the deep-link host for it: the tap of the organiser
+ * alert (a payment landed on a full form, `form_paid_over_capacity`). The responses are an accordion
+ * on the forms list, not a page, so the app opens `/forms?responses=<formId>` - a form's own
+ * `form/<id>` link opens the page that ANSWERS it, which is not where a refund is decided.
+ */
+export const FORM_RESPONSES_TARGET = 'form-responses';
+
+/**
  * WHERE A SOCIAL PUSH GOES WHEN IT IS TAPPED, as a deep link the SERVER writes.
  *
  * A tap is handled natively and the two platforms used to disagree about what it needed. Android
@@ -26,6 +34,11 @@ export const NOTIFICATIONS_TARGET = 'notifications';
  */
 export function socialDeepLink(data: Record<string, string>): string {
   const formId = data.formId;
+  // Before the plain form link: the organiser alert carries the form too, and must open its
+  // RESPONSES rather than the page that answers it. A typed target, from a closed set.
+  if (formId && data.target === FORM_RESPONSES_TARGET) {
+    return `fr.emse.canari://${FORM_RESPONSES_TARGET}/${encodeURIComponent(formId)}`;
+  }
   if (formId) return `fr.emse.canari://form/${encodeURIComponent(formId)}`;
   // The agenda's six notices carry `action` and the ASSOCIATION, never a post: a pending event has no
   // page of its own, so a proposal goes to the queue where it is acted on and the rest to the agenda.
