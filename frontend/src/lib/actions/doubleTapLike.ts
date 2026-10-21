@@ -37,6 +37,13 @@ import { Log } from '$lib/utils/Log';
  *
  * A MOUSE DOUBLE CLICK DOES NOT SELECT A WORD on a likeable surface: its second `mousedown` is
  * prevented. A drag still selects; only the word-on-double-click is given up there.
+ *
+ * EVERY DECISION LOGS ONE LINE (`[doubleTapLike]`), and nothing logs per move or per scroll: a
+ * WebView nobody can inspect (the iOS TestFlight build) must show on a re-reading whether the PRESSES
+ * reached the surface, whether their CLICKS followed, and why a sequence ended. A press that ended as
+ * a tap logs `press ended`; each click logs `click` with what it was to the surface; a sequence that
+ * was under way and ended logs why. A double tap on a phone that logs two `press ended` and no
+ * `click` is the engine swallowing the clicks (DT-IOS, 2026-10-21 - not reproduced with real taps).
  */
 
 /** Marks a media opener whose tap is held for the double-tap window (see above). */
@@ -90,7 +97,13 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
 
   /** Ends the sequence: a held media tap is dropped, the next tap starts afresh. */
   function reset(reason: string) {
-    if (heldOpener) Log.d('doubleTapLike', `held media tap dropped: ${reason}`);
+    // Only a sequence under way is worth a line: a scroll with nothing pending ends nothing.
+    if (heldOpener || taps.pending()) {
+      Log.d(
+        'doubleTapLike',
+        `sequence ended: ${reason}${heldOpener ? ' (held media tap dropped)' : ''}`
+      );
+    }
     heldOpener = null;
     taps.cancel();
   }
@@ -139,6 +152,7 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
       return;
     }
     const verdict = classify(e.target as Element | null);
+    Log.d('doubleTapLike', `click (detail ${e.detail}, ${verdict.kind})`);
     if (verdict.kind === 'owned') {
       reset('a control took the tap');
       return;
@@ -173,7 +187,10 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
   }
 
   function onPointerUp(e: PointerEvent) {
-    presses.delete(e.pointerId);
+    // A press still listed never travelled nor was cancelled: it ended as a tap, whatever the
+    // engine then does with its click. The line is what tells a swallowed click from a lost press.
+    if (presses.delete(e.pointerId))
+      Log.d('doubleTapLike', `press ended (${e.pointerType || 'pointer'})`);
   }
 
   /** The engine took the press - a scroll or a pan began: that is a drag too. */

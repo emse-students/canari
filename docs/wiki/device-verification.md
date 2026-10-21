@@ -1187,6 +1187,14 @@ photo post, a poll post and a reel, none of them reacted to by the account; the 
 Mi 9T, the in-app log on the iPhone) for the `[doubleTapLike] double tap` and
 `[PostCard.doubleTap]` / `[reel-viewer] double tap` lines.
 
+**When a double tap does NOT like, read what reached the page before suspecting anything** (DT-IOS,
+2026-10-21: a native XCUITest double tap never liked on the iPhone, real W3C two-tap sequences did).
+Each tap of the gesture logs `[doubleTapLike] press ended (touch)` and then `[doubleTapLike] click
+(detail N, surface|opener|owned)`; a sequence under way that ended logs `sequence ended: <why>`.
+Two `press ended` with no `click` after them is the engine's own double-tap recognizer swallowing
+both clicks - the one case worth a detector change, and only once it is seen with a finger. No
+`press ended` at all means the touches never reached the card (another layer took them).
+
 1. **A reel, in the viewer**: open it, double tap the picture. Expect the heart at the finger, one
    `like` line, the controls ending as they started, the video still playing. Double tap again: the
    heart, an `already reacted, heart only` line, no request. Close: the card shows ❤️ as the reader's
