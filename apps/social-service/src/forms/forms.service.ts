@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { IsNull, Repository, type EntityManager } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
@@ -894,10 +894,12 @@ export class FormsService {
       };
     }
 
-    // The same predicate as the seat count: a checkout abandoned past the hold is no longer "an
-    // answer waiting for its payment", so the person may answer again.
+    // The same predicate as `submit`'s one-answer guard (`answerHoldingWhere`): what the page calls
+    // "answered" is exactly what the server refuses a second answer for - `paid_over_capacity`
+    // included, which used to show an active pay button the server then answered 409. A checkout
+    // abandoned past the hold is no longer an answer, so the person may answer again.
     const submission = await this.submissionRepo.findOne({
-      where: seatHoldingWhere(formId, { userId }),
+      where: answerHoldingWhere(formId, { userId }),
       order: { createdAt: 'DESC' },
     });
     return {
@@ -1031,6 +1033,12 @@ export class FormsService {
     // transaction below, after the answer, never before. A request that cannot be settled refuses
     // the retry (`PREVIOUS_PAYMENT_OPEN`) rather than leave two payable requests for one answer.
     const previous = reuses ? await this.submissionRepo.findOne(liveRow()) : null;
+    // ONE ANSWER PER PERSON, checked FIRST, before any side effect: an answer that already counts
+    // refuses here, before the settle below cancels anything at Lydia. Repeated under the lock.
+    const oneAnswer = !form.anonymous && !guest && !form.allowMultipleSubmissions && !!input.userId;
+    if (oneAnswer) {
+      await this.assertNoOtherAnswer(this.submissionRepo.manager, id, input.userId!, previous?.id);
+    }
     if (previous) {
       const settled = await this.settleOpenRequest(previous, form);
       if (settled === 'paid') return { submissionId: previous.id, alreadyPaid: true };
@@ -1076,27 +1084,10 @@ export class FormsService {
           );
         }
       }
-      // ONE ANSWER PER PERSON, read from the table under the form lock: a submit after a PAID
-      // answer used to insert a new row and issue a new request/do - a second charge for one
-      // answer. The row this retry reuses is not "another answer"; a cancelled or expired one
-      // (declined, cancelled, expired request) is no answer at all, so a retry after it goes on.
-      if (!form.anonymous && !guest && !form.allowMultipleSubmissions && input.userId) {
-        const answered = await manager.findOne(Submission, {
-          where: answerHoldingWhere(id, { userId: input.userId }),
-          order: { createdAt: 'DESC' },
-        });
-        if (answered && answered.id !== existingPending?.id) {
-          // Expected (a second tab, a back button, a double tap past the page's own guard), and
-          // refused before anything is issued: INFO, with the row that answers for the person.
-          this.logger.log(
-            `[Forms] submit refused on form ${id}: submission ${answered.id} (${answered.paymentStatus}) already answers for this person - no request issued`
-          );
-          throw new ConflictException({
-            code: ALREADY_ANSWERED,
-            message: 'You have already answered this form.',
-          });
-        }
-      }
+      // The AUTHORITATIVE one-answer check, under the form lock (the one before the settle above
+      // only spares a provider call): the row this retry reuses is excluded by id.
+      if (oneAnswer)
+        await this.assertNoOtherAnswer(manager, id, input.userId!, existingPending?.id);
 
       const holdsSeat =
         !!existingPending &&
@@ -1416,6 +1407,37 @@ export class FormsService {
       );
     }
     return { state, raw };
+  }
+
+  /**
+   * ONE ANSWER PER PERSON on a single-answer form, read from the submissions table (never a client
+   * flag). A submit after a PAID answer used to insert a new row and issue a new request/do - a
+   * second charge for one answer. EVERY row that counts as an answer (`answerHoldingWhere`) is
+   * read, not the newest one: an older paid row hidden behind a newer live pending one must still
+   * refuse. `excludeId` is the live pending row a retry reuses, which is not "another answer"; a
+   * cancelled or expired row (declined, cancelled or expired request) is no answer at all.
+   *
+   * Refused at INFO: a second tab, a back button or a double tap past the page's own guard is
+   * expected, and nothing has been issued yet. A real double charge is accused by `markPaid`.
+   */
+  private async assertNoOtherAnswer(
+    manager: EntityManager,
+    formId: string,
+    userId: string,
+    excludeId: string | undefined
+  ): Promise<void> {
+    const answers = await manager.find(Submission, {
+      where: answerHoldingWhere(formId, { userId }),
+    });
+    const other = answers.find((answer) => answer.id !== excludeId);
+    if (!other) return;
+    this.logger.log(
+      `[Forms] submit refused on form ${formId}: submission ${other.id} (${other.paymentStatus}) already answers for this person - no request issued`
+    );
+    throw new ConflictException({
+      code: ALREADY_ANSWERED,
+      message: 'You have already answered this form.',
+    });
   }
 
   /** The typed refusal of `settleOpenRequest`, logged at WARN with its reason. */

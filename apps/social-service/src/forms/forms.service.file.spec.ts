@@ -45,6 +45,8 @@ describe('FormsService - the file question', () => {
       }),
       count: jest.fn(() => Promise.resolve(0)),
       findOne: jest.fn(() => Promise.resolve(null)),
+      // The one-answer guard reads the person's answers: none yet.
+      find: jest.fn(() => Promise.resolve([])),
     };
     const formRepo: any = {
       findOne: jest.fn(() => Promise.resolve(form)),
@@ -53,7 +55,7 @@ describe('FormsService - the file question', () => {
     };
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
-      manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
+      manager: { find: manager.find, transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
     };
     const pricingFacts: any = { build: jest.fn(() => Promise.resolve({ answers: {} })) };
     const formFiles: any = { attach: jest.fn(() => Promise.resolve()) };

@@ -171,6 +171,9 @@ describe('FormsService - the seat a pending payment holds', () => {
         return builder;
       },
       manager: {
+        find: jest.fn(async (_entity: unknown, { where }: { where: Record<string, unknown>[] }) =>
+          rows.filter((r) => matches(r, where)).map((r) => ({ ...r }))
+        ),
         transaction: jest.fn(async (level: string, run: (manager: unknown) => Promise<unknown>) => {
           // REPEATABLE READ takes its snapshot BEFORE the lock wait, so the count after it would not
           // see the previous holder's commit: the seat lock is only sound in READ COMMITTED.
@@ -194,6 +197,10 @@ describe('FormsService - the seat a pending payment holds', () => {
               expect(entity).toBe(Submission);
               const row = rows.find((r) => matches(r, where));
               return row ? { ...row } : null;
+            },
+            find: async (_entity: unknown, { where }: { where: Record<string, unknown>[] }) => {
+              await roundTrip();
+              return rows.filter((r) => matches(r, where)).map((r) => ({ ...r }));
             },
             count: async (_entity: unknown, { where }: { where: Record<string, unknown>[] }) => {
               await roundTrip();
@@ -1048,8 +1055,6 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0]).toMatchObject({ paymentStatus: 'pending', stripeSessionId: 'uuid-1' });
     });
 
-    // A row naming no request is one whose request is being issued right now: a second request
-    // would be the double charge, so the retry is refused.
     // P1-b (2026-10-21): a submit after a PAID answer issued a new request/do, and a second paid
     // purchase was recorded for one answer. Control: with the ALREADY_ANSWERED guard removed from
     // `submit`, these fail on the request issued and the second row written.
@@ -1130,6 +1135,51 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows).toHaveLength(2);
     });
 
+    // Review of #2215: an OLDER paid answer hidden behind a NEWER live pending row. The guard read
+    // the newest row only, saw the reused one and let a second request out. Order-independent:
+    // both insertion orders, and the refusal comes BEFORE the settle cancels anything at Lydia.
+    it.each([['paid first'], ['pending first']])(
+      'refuses a retry on a live pending row while an older paid answer exists (%s)',
+      async (order) => {
+        const paid = row({
+          id: 'old-paid',
+          paymentStatus: 'paid_over_capacity',
+          createdAt: ago(3_600_000),
+        });
+        const live = mine({ createdAt: ago(60_000) });
+        const { service, rows, core } = makeStore({
+          maxSubmissions: null,
+          basePrice: 1500,
+          provider: 'lydia',
+          rows: order === 'paid first' ? [paid, live] : [live, paid],
+        });
+        const refusal = await retry(service).catch((e: unknown) => e);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({
+          code: ALREADY_ANSWERED,
+        });
+        expect(core.calls).toEqual([]);
+        expect(rows.find((r) => r.id === 'mine')).toMatchObject({
+          paymentStatus: 'pending',
+          stripeSessionId: 'uuid-old',
+        });
+      }
+    );
+
+    // The page reads the same predicate as the guard: a paid-over-capacity answer is answered.
+    it('shows a paid-over-capacity answer as answered, as the guard refuses it', async () => {
+      const { service } = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        rows: [mine({ paymentStatus: 'paid_over_capacity' })],
+      });
+      await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
+        hasSubmitted: true,
+        paymentStatus: 'paid_over_capacity',
+      });
+    });
+
+    // A row naming no request is one whose request is being issued right now: a second request
+    // would be the double charge, so the retry is refused.
     it('refuses a retry while the row request is being issued', async () => {
       const { service, core } = makeStore({
         maxSubmissions: 1,
