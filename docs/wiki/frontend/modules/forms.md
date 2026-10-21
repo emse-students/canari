@@ -940,6 +940,8 @@ Tests: `forms.service.seat-hold.spec.ts` runs the service on an in-memory store 
 
 ## What a client reads of a submission is an allowlist (2026-10-15)
 
+
+**The rotation of the payment-provider and document-vault secrets that were readable before this allowlist is DONE, per the user, 2026-10-22** (relayed by the lead session; the exposure windows stay in the private notes).
 `GET /api/forms/submissions/:id` (the submitter or a manager, read by the payment return pages)
 answered a payment-provider account credential that no client field read. The two submitter reads and the two
 manager lists (`:id/submissions`, `:id/submissions/pending-cash`) also answered the whole row:
