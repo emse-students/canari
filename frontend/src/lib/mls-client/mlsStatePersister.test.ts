@@ -465,3 +465,38 @@ describe('createMlsStatePersister - frames read outside the conversation path', 
     expect(persistCheckpoint).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('persistMlsStructuralCheckpoint and the measurement switch', () => {
+  const live = { bufferUi: true, showOverlay: false };
+
+  afterEach(() => unregisterMlsStatePersister());
+
+  async function run(budget: number) {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    const persistCheckpoint = vi.fn(() => {
+      calls += 1;
+      return calls === 1 ? Promise.reject(new Error('disk')) : Promise.resolve();
+    });
+    const persister = createMlsStatePersister({
+      mlsService: { persistCheckpoint } as any,
+      receiveSkipBudget: budget,
+    });
+    registerMlsStatePersister(persister);
+    await persistMlsStructuralCheckpoint().catch(() => {});
+    // The next live receive-only drain.
+    persister.onBulkIngestStart();
+    persister.scheduleDeferred();
+    await persister.onBulkIngestEnd(live);
+    await new Promise((r) => setTimeout(r, 10));
+    return persistCheckpoint;
+  }
+
+  it('OFF retries a failed structural checkpoint on the next drain', async () => {
+    expect(await run(0)).toHaveBeenCalledTimes(2);
+  });
+
+  it('ON retries it too: a structural write that failed is still owed, so the drain never skips', async () => {
+    expect(await run(10)).toHaveBeenCalledTimes(2);
+  });
+});

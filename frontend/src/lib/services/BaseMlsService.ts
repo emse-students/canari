@@ -3363,9 +3363,11 @@ export abstract class BaseMlsService implements IMlsService {
     let exhausted: string | undefined;
     try {
       const replay = await attemptCommitReplay(this, groupId, this.userId, log);
+      // Applied commits moved the epoch whether or not the gap closed: a partial replay is as
+      // durable-worthy as a healed one.
+      if (replay.healed || replay.applied > 0) scheduleOutboundMlsPersist();
       if (replay.healed) {
         clearEpochGap(groupId);
-        scheduleOutboundMlsPersist();
         return;
       }
       // "Still behind" merges two futures: one where the next frame closes the gap, and one where
@@ -3605,6 +3607,8 @@ export abstract class BaseMlsService implements IMlsService {
     let verdict: DistributionGapVerdict = 'replay-failed';
     try {
       const replay = await attemptCommitReplay(this, groupId, this.userId, log);
+      // Applied commits moved the epoch whatever verdict follows (caught up, evicted, partial).
+      if (replay.applied > 0) scheduleOutboundMlsPersist();
       if (replay.activeEpoch !== undefined) {
         this.distributionGapTarget.set(
           groupId,

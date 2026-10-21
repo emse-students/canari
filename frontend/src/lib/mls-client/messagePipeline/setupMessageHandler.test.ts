@@ -1466,4 +1466,31 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(mls.processIncomingMessage).toHaveBeenCalledTimes(2);
     expect(persistNow).toHaveBeenCalled();
   });
+
+  it('counts a frame refused for its sender as a spent generation for the persister', async () => {
+    const { SenderMismatchError } = await import('$lib/mls-client/verifiedSender');
+    const gid = 'c6666666-6666-4666-8666-666666666666';
+    const deps = baseDeps({
+      conversations: createTestConversations([
+        [gid, emptyConversation(gid, { lifecycle: 'active' })],
+      ]),
+    });
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([gid]);
+    mls.processIncomingMessage = vi.fn().mockRejectedValue(new SenderMismatchError(gid, 'user'));
+    setupMessageHandler(deps as any);
+    const note = vi.spyOn(activeMlsStatePersister()!, 'noteReceivedFrame');
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+
+    expect(await onMsg('mallory', new Uint8Array([1]), gid, false, undefined, false)).toBe(true);
+
+    expect(note).toHaveBeenCalledWith(false);
+  });
 });

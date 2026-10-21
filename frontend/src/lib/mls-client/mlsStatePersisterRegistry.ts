@@ -101,6 +101,8 @@ export async function persistMlsStructuralCheckpoint(
   fallback?: MlsStructuralCheckpointFallback
 ): Promise<boolean> {
   if (activePersister) {
+    // Urgent BEFORE the write, so a failed one is still owed by the next drain (see markStructural).
+    activePersister.markStructural();
     activePersister.scheduleDeferred();
     await activePersister.flushEncrypted();
     return true;

@@ -33,6 +33,12 @@ export interface MlsStatePersister {
    * is off. `structural` is a commit: it makes the next drain checkpoint, never be skipped.
    */
   noteReceivedFrame(structural: boolean): void;
+  /**
+   * Marks the NEXT checkpoint as covering a structural change (a join, a drop, a commit merged by
+   * `persistMlsStructuralCheckpoint`): if it fails, the retry is owed and no receive-only drain may
+   * skip it. Touches only the urgency flag, so it changes nothing while the switch is off.
+   */
+  markStructural(): void;
   /** Flushes encrypted checkpoint immediately if dirty. */
   flush(): Promise<void>;
   /** Alias for {@link flush} — encrypted checkpoint for backgrounding / logout. */
@@ -156,8 +162,12 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     framesSinceCheckpoint += 1;
   }
 
+  function markStructural(): void {
+    urgentSinceCheckpoint = true;
+  }
+
   function noteReceivedFrame(structural: boolean): void {
-    if (structural) urgentSinceCheckpoint = true;
+    if (structural) markStructural();
     else framesSinceCheckpoint += 1;
   }
 
@@ -178,6 +188,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     persistNow,
     scheduleDeferred,
     noteReceivedFrame,
+    markStructural,
     flush: flushEncryptedInternal,
     flushEncrypted: flushEncryptedInternal,
     onBulkIngestStart() {

@@ -1182,3 +1182,46 @@ describe('a key-group frame tells the persister what it spent', () => {
     expect(note).toHaveBeenCalledWith(false);
   });
 });
+
+describe('a key-group frame refused for its sender still spends a counted generation', () => {
+  afterEach(() => unregisterMlsStatePersister());
+
+  it('tells the persister, so a drain of them cannot look empty to the measurement switch', async () => {
+    const { SenderMismatchError } = await import('$lib/mls-client/verifiedSender');
+    const noteReceivedFrame = vi.fn();
+    registerMlsStatePersister({ noteReceivedFrame } as any);
+    const ctx = makeCtx({
+      processIncomingMessage: vi.fn().mockRejectedValue(new SenderMismatchError('g-1', 'user')),
+    });
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await route(ctx, 'g-1', 'mallory', new Uint8Array([7, 7, 7]));
+
+    expect(noteReceivedFrame).toHaveBeenCalledWith(false);
+  });
+
+  it('a partial key-group replay (commits applied, not caught up) asks for a checkpoint', async () => {
+    const persistNow = vi.fn();
+    registerMlsStatePersister({ persistNow } as any);
+    const ctx = makeCtx({
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      getEpoch: vi.fn().mockReturnValue(5),
+      processIncomingMessage: vi.fn().mockResolvedValue(null),
+      fetchCommitsSince: vi.fn(async () => ({
+        commits: [{ baseEpoch: 5, proto: 'AA==' }],
+        activeEpoch: 16,
+        belowFloor: false,
+      })),
+      isGroupActive: vi.fn().mockResolvedValue(true),
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await (
+      proto as unknown as { catchUpDistributionGroup(g: string, t: number): Promise<string> }
+    ).catchUpDistributionGroup.call(ctx, 'g-1', 16);
+
+    expect(persistNow).toHaveBeenCalled();
+  });
+});
