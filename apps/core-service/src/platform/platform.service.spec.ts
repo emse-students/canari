@@ -149,6 +149,7 @@ describe('PlatformService', () => {
         minClientVersion: '0.13.0',
         paymentProvider: provider,
         callsMode: 'off',
+        livesMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -219,6 +220,7 @@ describe('PlatformService', () => {
         minClientVersion: '0.13.0',
         paymentProvider: provider,
         callsMode: 'off',
+        livesMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);

@@ -182,6 +182,21 @@ Seen at 04:36, 04:45, 04:55 and 06:12 on a phone left idle. Not investigated: wh
 - **Dev sends no FCM**: `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` does not exist, so `push_text.rs` / `proto_fields.rs` behaviour and the banner on a locked phone cannot be read on dev. A dev push reading needs that secret: the owner line "set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret" in [owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 - **The rig's W2 Chrome profile is the same account as the iPhone's test account**, so a PIN reset through W2 purges the iPhone's footprint. Check which devices share the account before resetting a PIN.
 
+## P3 - Canonical cotisation products created between migration 057 and #2205 were never withheld, so no release touches them (2026-10-21, no backfill)
+
+From migration 057 (2026-08-31) until #2205, `provisionCotisationProduct` created the canonical cotisation with `isActive = ready` and left `activationWithheld` at its default `false`. One created while payments were not ready is therefore `isActive = false, activationWithheld = false` - the signature of a product an admin took off sale by hand - and neither the onboarding release nor the provider-activated sweep of #2205 will ever put it on sale. No backfill: that signature cannot tell such a row from a deliberate deactivation, and an allowlist built from it would be a guess ([cotisations](cotisations.md)).
+
+**Measured on production 2026-10-21 (read-only): 0 rows** match the canonical signature. One `membership` row created since 057 is inactive and not withheld, under another name, touched 3 s after creation - not distinguishable from a manual tier, so not counted. The query, to re-run if a case is reported:
+
+```sql
+SELECT count(*) FROM association_products
+WHERE type = 'membership' AND name = 'Cotisation'
+  AND "isActive" = false AND "activationWithheld" = false
+  AND "createdAt" >= '2026-08-31';
+```
+
+A row found this way is put on sale by its association's admin from the boutique, a manual `isActive` change and so the right owner of that decision.
+
 ## Idea (owner, 2026-10-21): store videos and screenshots from the bench phones
 
 Reuse the bench phones with screen recording to make demo videos and screenshots for the stores and for communication, from the fictional dev seed (never production). Personal data blurred frame by frame and the result reviewed before delivery; Apple and Google formats. Capture and sizes: [store-listings](store-listings.md#6-capture). Not built.
