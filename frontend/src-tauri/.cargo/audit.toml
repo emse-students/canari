@@ -28,4 +28,11 @@ ignore = [
   # openmls_libcrux_crypto release taking hpke-rs-libcrux 0.8; then delete both entries.
   "RUSTSEC-2026-0330",
   "RUSTSEC-2026-0331",
+  # webpki-roots 0.26.11 (RUSTSEC-2026-0381, 2026-10-19), wants >=1.0.10: the bundled root store trusts
+  # distrusted emSign intermediates. The 1.0.x copy IS bumped (lock updated); this 0.26 copy is pinned by
+  # sqlx-core 0.8.6 (^0.26, its TLS feature, never used: SQLite only) and tokio-tungstenite 0.29 (^0.26,
+  # the websocket plugin, which only dials our own wss host, never an emSign-issued chain). Moving
+  # either is a major bump (sqlx 0.9, tokio-tungstenite 0.30) of tauri-plugin-sql and the patched
+  # websocket plugin, not a lockfile change. Lifted by those bumps; then delete this entry.
+  "RUSTSEC-2026-0381",
 ]
