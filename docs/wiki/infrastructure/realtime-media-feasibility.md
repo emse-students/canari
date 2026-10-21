@@ -311,8 +311,8 @@ pair (or a dev-only TURN key) is a one-off for the user, owed before WP-C0's all
      the other's public IP address; keeping `relay` makes every call go through Cloudflare (still
      no host involvement, still no DSI) at TURN cost and one extra hop.
   3. **E2E is unchanged.** `RTCRtpScriptTransform` sits on the sender and the receiver of the SAME
-     `RTCPeerConnection` whoever is on the other side, and the key is still
-     `exportSecret(groupId, 'mls-webrtc-media', callId, 32)`. P2P is in fact the simpler case: DTLS-SRTP
+     `RTCPeerConnection` whoever is on the other side, and the keys are still
+     MLS exports, one per direction since 2026-10-21 (`exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>|<sender role>', 32)`). P2P is in fact the simpler case: DTLS-SRTP
      already ends at the other phone, and a TURN relay cannot read DTLS either. Every E2E defect the
      revival plan lists (whole-frame encryption under H.264, the asymmetric legacy path) is the same
      in both modes.

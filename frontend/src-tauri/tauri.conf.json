@@ -103,6 +103,12 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "notifications"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",

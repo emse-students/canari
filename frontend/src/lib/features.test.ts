@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -33,15 +36,37 @@ describe('CALLS_ENABLED', () => {
   });
 
   it('leaves the native ring off whatever the build', async () => {
+    // B2' (owner, 2026-10-21): the native ring is its own fact, and the first production calls ship
+    // without it - so it stays off even on the day CALLS_COMPILED flips.
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
     const f = await load();
-    expect(f.CALLS_COMPILED).toBe(false);
+    expect(f.CALLS_NATIVE_RING_COMPILED).toBe(false);
   });
 
-  it('carries video exactly where calls are (lot 2): a dev build, never production', async () => {
+  it('keeps the store binaries without calls until the flip commit', async () => {
+    // The flip rewrites this case, and only this one: CALLS_COMPILED moves alone (calls.md).
+    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
+    expect((await load()).CALLS_COMPILED).toBe(false);
+  });
+
+  it('carries video on a dev build, never production (lot 2)', async () => {
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
     expect((await load()).CALLS_VIDEO_ENABLED).toBe(true);
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
     expect((await load()).CALLS_VIDEO_ENABLED).toBe(false);
+  });
+});
+
+describe('the first production calls are AUDIO ONLY (owner, 2026-10-21)', () => {
+  // The revival commit flips CALLS_COMPILED and nothing else here. Video must not ride along: it is
+  // read from the expression, because CALLS_COMPILED is a constant this suite cannot stub.
+  it('video does not follow CALLS_COMPILED', async () => {
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), 'features.ts'),
+      'utf8'
+    );
+    const expression = source.match(/export const CALLS_VIDEO_ENABLED = ([^;]+);/);
+    expect(expression, 'CALLS_VIDEO_ENABLED was renamed or removed').not.toBeNull();
+    expect(expression![1]).not.toMatch(/CALLS_COMPILED|CALLS_ENABLED/);
   });
 });

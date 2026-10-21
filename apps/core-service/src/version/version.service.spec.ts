@@ -17,6 +17,7 @@ describe('VersionService', () => {
       minClientVersion: '0.14.0',
       maintenanceEnabled: false,
       maintenanceMessage: null,
+      callsMode: 'audio',
     }),
   } as unknown as PlatformService;
 
@@ -24,6 +25,12 @@ describe('VersionService', () => {
 
   afterEach(() => {
     delete process.env.DEPLOY_BUILD;
+  });
+
+  it('publishes the calls kill switch, so a client hides what the server would refuse', async () => {
+    const out = await service.getVersion();
+
+    expect(out.calls).toEqual({ mode: 'audio' });
   });
 
   it('reports no build when the environment was not given one', async () => {

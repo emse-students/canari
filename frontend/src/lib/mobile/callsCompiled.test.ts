@@ -4,26 +4,29 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * THE SIX SWITCHES OF THE CALLS REVIVAL, ASSERTED AGAINST ONE FACT: `CALLS_COMPILED`.
+ * THE CALLS SWITCHES OF THE STORE BINARIES, ASSERTED AGAINST TWO FACTS (since 2026-10-21, B2').
  *
- * Calling as the store binaries carry it is spelled in six places, because three of them run where
- * no webview exists and two are read by a store rather than by code:
+ * The owner decided on 2026-10-21 that the first production calls are audio 1:1 WITHOUT the native
+ * ring, so what used to be one fact is two, each with the switches that follow it:
  *
- * | Switch | File | Read by |
- * |---|---|---|
- * | `CALLS_COMPILED` | `features.ts` | the app - THE fact the four others follow |
- * | `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | the Android push service (`showIncomingCallNotification`) |
- * | `kCanariCallsEnabled` | `canari_push.mm` | the PushKit registry and the CallKit provider, installed at process start |
- * | `voip` | `canari_iOS/Info.plist` `UIBackgroundModes` | iOS (no PushKit token without it) and App Review |
- * | `audio` | `canari_iOS/Info.plist` `UIBackgroundModes` | WKWebView (it mutes a hidden page's microphone without it) and App Review |
- * | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | Android (the locked-screen CallStyle ring) and Play |
+ * | Switch | File | Follows | Read by |
+ * |---|---|---|---|
+ * | `CALLS_COMPILED` | `features.ts` | - | the app: in-app calls and the call kept alive in the background |
+ * | `audio` | `canari_iOS/Info.plist` `UIBackgroundModes` | `CALLS_COMPILED` | WKWebView (it mutes a hidden page's microphone without it) and App Review |
+ * | the microphone purpose string | `Info.plist`, `fr.lproj`, `en.lproj` | `CALLS_COMPILED` | App Review: it must name calls exactly when the binary can place one |
+ * | `CALLS_NATIVE_RING_COMPILED` | `features.ts` | - | the ring of an app that is closed or in the background |
+ * | `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | the ring | the Android push service (`showIncomingCallNotification`) |
+ * | `kCanariCallsEnabled` | `canari_push.mm` | the ring | the PushKit registry and the CallKit provider, installed at process start |
+ * | `voip` | `canari_iOS/Info.plist` `UIBackgroundModes` | the ring | iOS (no PushKit token without it) and App Review |
+ * | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | the ring | Android (the locked-screen CallStyle ring) and Play |
+ *
+ * The Android microphone foreground service follows `CALLS_COMPILED` too, asserted in
+ * `androidCallServiceManifest.test.ts`.
  *
  * Each cuts both ways: declared but unused is a store rejection (App Review refused `voip` under
  * guideline 2.5.4 on 2026-08-31), used but undeclared cannot work (no PushKit token, no full-screen
- * ring). So the assertion is AGREEMENT, never a hard-coded "off": the revival commit flips six
- * values and this file follows it without being edited - and a revival that moved five of six
- * fails here, naming the one it forgot. The microphone purpose string goes with them: App Review
- * reads it, and it must name calls exactly when the binary can place one.
+ * ring). So the assertion is AGREEMENT, never a hard-coded "off": a flip moves its group's values
+ * and this file follows it without being edited - and a flip that forgot one fails here, naming it.
  *
  * Every value is read as TEXT. The native files are not built by this suite, so this proves what is
  * written, not what runs - the revival's hardware rows are what prove the second.
@@ -51,9 +54,15 @@ function captured(src: string, pattern: RegExp, what: string): string {
   return match![1];
 }
 
-/** THE fact. Read as text, as the others are: importing `features.ts` would evaluate its env. */
+/** The two facts. Read as text, as the others are: importing `features.ts` would evaluate its env. */
 const COMPILED =
   captured(features, /export const CALLS_COMPILED = (true|false);/, 'CALLS_COMPILED') === 'true';
+const RING =
+  captured(
+    features,
+    /export const CALLS_NATIVE_RING_COMPILED = (true|false);/,
+    'CALLS_NATIVE_RING_COMPILED'
+  ) === 'true';
 
 /** The <string> entries of the UIBackgroundModes array, without the comments around them. */
 function backgroundModes(): string[] {
@@ -95,16 +104,24 @@ function microphonePurposes(): { where: string; text: string }[] {
   return out;
 }
 
-describe(`the six calls switches agree with CALLS_COMPILED (= ${COMPILED})`, () => {
+describe('the two facts', () => {
+  it('never ring a phone whose binary cannot answer: the native ring implies CALLS_COMPILED', () => {
+    expect(!RING || COMPILED, 'CALLS_NATIVE_RING_COMPILED is on while CALLS_COMPILED is off').toBe(
+      true
+    );
+  });
+});
+
+describe(`the native ring's four switches agree with CALLS_NATIVE_RING_COMPILED (= ${RING})`, () => {
   it('the Kotlin CALLS_ENABLED', () => {
-    // The push service runs when no webview exists and cannot read features.ts. What it mirrors
-    // is the store binaries' calling (CALLS_COMPILED), not the dev builds' in-app calls.
+    // The push service runs when no webview exists and cannot read features.ts. What it gates is
+    // the native ring (`showIncomingCallNotification`), so it mirrors the ring's fact.
     const kotlin = captured(
       pushService,
       /private const val CALLS_ENABLED = (true|false)/,
       'the Kotlin CALLS_ENABLED'
     );
-    expect(kotlin === 'true', 'CanariFirebaseMessagingService.kt CALLS_ENABLED').toBe(COMPILED);
+    expect(kotlin === 'true', 'CanariFirebaseMessagingService.kt CALLS_ENABLED').toBe(RING);
     // A second declaration was once added by hand; Kotlin refuses the file, six minutes later.
     expect(pushService.split('private const val CALLS_ENABLED').length - 1).toBe(1);
   });
@@ -115,25 +132,27 @@ describe(`the six calls switches agree with CALLS_COMPILED (= ${COMPILED})`, () 
       /static const BOOL kCanariCallsEnabled = (YES|NO);/,
       'kCanariCallsEnabled'
     );
-    expect(objc === 'YES', 'canari_push.mm kCanariCallsEnabled').toBe(COMPILED);
+    expect(objc === 'YES', 'canari_push.mm kCanariCallsEnabled').toBe(RING);
   });
 
   it('the voip background mode', () => {
     // Parsed entries, never a substring: the comment that replaced the entry contains the word.
-    expect(backgroundModes().includes('voip'), 'Info.plist UIBackgroundModes voip').toBe(COMPILED);
+    expect(backgroundModes().includes('voip'), 'Info.plist UIBackgroundModes voip').toBe(RING);
   });
 
+  it('the USE_FULL_SCREEN_INTENT permission', () => {
+    const declared = permissionTags().some((t) => t.includes('USE_FULL_SCREEN_INTENT'));
+    expect(declared, 'AndroidManifest.xml USE_FULL_SCREEN_INTENT').toBe(RING);
+  });
+});
+
+describe(`in-app calls and the background follow CALLS_COMPILED (= ${COMPILED})`, () => {
   it('the audio background mode', () => {
     // WP-C-BG-I: without it WKWebView mutes the microphone of a hidden page, so a stable that can
     // call needs it, and one that cannot must not declare it (2.5.4).
     expect(backgroundModes().includes('audio'), 'Info.plist UIBackgroundModes audio').toBe(
       COMPILED
     );
-  });
-
-  it('the USE_FULL_SCREEN_INTENT permission', () => {
-    const declared = permissionTags().some((t) => t.includes('USE_FULL_SCREEN_INTENT'));
-    expect(declared, 'AndroidManifest.xml USE_FULL_SCREEN_INTENT').toBe(COMPILED);
   });
 
   it('the microphone purpose string names calls exactly when calls are compiled', () => {

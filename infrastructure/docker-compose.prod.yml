@@ -240,6 +240,12 @@ services:
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
+      # The TURN budget's meter (B7): Cloudflare's own count of relayed egress, read with an
+      # Account Analytics token. Unset: ice-servers answers STUN only (TURN_METER_UNAVAILABLE) - no relay without a budget.
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
+      # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
+      CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
       TURN_URL: ${TURN_URL:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
@@ -488,6 +494,9 @@ services:
       # Signs the calendar subscription URLs; unset, the signing route answers 503 and every
       # selection feed is refused (fails closed). Rotating it ends every saved subscription URL.
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
+      # Signs a reported live chat line kept for staff (WP-L8b, docs/wiki/services/lives.md);
+      # unset, every chat-line report is refused 503 and nothing is kept.
+      LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
     healthcheck:
       # `/api/health` since 2026-09-24, like the other three services. It probed
       # `/api/channels/health` - a route that belongs to ChannelsController and answers about the

@@ -67,6 +67,12 @@
     <string name="notif_social_coorganise_proposed_body">An event to co-organise</string>
     <string name="notif_social_live_started_title">%1$s is live</string>
     <string name="notif_social_live_started_body">Tap to watch</string>
+    <string name="notif_social_live_cut_title">Your live was stopped</string>
+    <string name="notif_social_live_cut_body">Moderators cut your live. This is a warning.</string>
+    <string name="notif_social_live_suspended_title">Lives suspended</string>
+    <string name="notif_social_live_suspended_body">After another cut by moderators, you cannot start a live for now.</string>
+    <string name="notif_social_live_withdrawn_title">Right to go live withdrawn</string>
+    <string name="notif_social_live_withdrawn_body">Moderators have withdrawn your right to start a live.</string>
     <string name="notif_form_opening_soon_title">Form opening soon</string>
     <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
     <string name="notif_form_open_title">Form now open!</string>

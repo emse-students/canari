@@ -16,6 +16,8 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://admin-agenda')).toBe('/admin/agenda');
     // A live opens the feed until WP-L5's viewer page exists.
     expect(route('fr.emse.canari://live/l1')).toBe('/posts');
+    // WP-L8b: a cut live, a suspension, a withdrawal - their row on the notifications list.
+    expect(route('fr.emse.canari://notifications')).toBe('/notifications');
   });
 
   it('keeps the comment a comment push names, and only that parameter', () => {
