@@ -114,7 +114,8 @@ export function classifyLiveRefusal(
   if (code !== null && RETRY_SEGMENT_CODES.has(code)) return 'retry-segment';
   if (status === 404 && code === null) {
     if (segmentFetch) return 'not-found';
-    // Only OUR gateway's bare 404 is the `LIVE_ENABLED` guard; an edge page says nothing about it.
+    // Only OUR gateway's bare 404 is the live guard (`LIVE_ENABLED` or `lives_mode` off); an edge
+    // page says nothing about it.
     return origin === 'gateway' ? 'disabled' : 'refused';
   }
   // A 5xx nobody named is "no verdict, retry later". A 4xx from the edge (a WAF page, nginx's own

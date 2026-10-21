@@ -15,19 +15,58 @@ Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep, `live
 `live-announcer.ts`, `live-chat.service.ts`, `live-chat.controller.ts`, `live-report-age.scheduler.ts`), migrations `091_lives.sql`,
 `094_live_announced_at.sql`, `097_live_moderation.sql`, `098_live_chat.sql` and
 `099_live_strikes_and_reported_chat_lines.sql`,
-`apps/media-service/src/media/live-segments.service.ts` (the bytes), and the `live_segments` cache in
+`apps/media-service/src/media/live-segments.service.ts` (the bytes), the runtime kill switch
+(`lives-mode.ts` in both services, core-service's `015_platform_config_lives_mode.sql`), and the `live_segments` cache in
 `infrastructure/local/Dockerfile.frontend` (Canari's nginx).
 
-## The switch: `LIVE_ENABLED`
+## The two switches: `LIVE_ENABLED` and `lives_mode`
 
 Every `/api/lives` route and the two media routes that serve or store segments answer **404 unless
-`LIVE_ENABLED` is exactly `true`** - the nginx segment location included, since what it caches is
-media-service's answer (a 404, kept 10 s) (`live-enabled.guard.ts`, `isLiveEnabled` in media-service).
-`render-env.sh` computes it per estate (`compute_live_enabled`): **`true` on dev, `false` on
-production**, asserted on the rendered files by `deploy-env.test.sh`. The local compose defaults it
-to `true`. Three things run whatever it says, on purpose: the live sweep and the media purge and live-list routes, so
-a live started while the switch was on is still ended and deleted after it is turned off.
-What must be true before it turns on in production, and in what order: [live-production](../frontend/modules/live-production.md).
+BOTH switches are open** - the nginx segment location included, since what it caches is
+media-service's answer (a 404, kept 10 s). The answer is the same whichever switch is closed.
+
+**The deploy lock, `LIVE_ENABLED`** (`live-enabled.guard.ts`, `isLiveEnabled` in media-service):
+open only when exactly `true`. `render-env.sh` computes it per estate (`compute_live_enabled`):
+**`true` on dev, `false` on production**, asserted on the rendered files by `deploy-env.test.sh`. The
+local compose defaults it to `true`. Moving it takes a deploy.
+
+**The runtime kill switch, `platform_config.lives_mode`** (owner, 2026-10-21: lives get a switch
+the server holds BEFORE they open in production, exactly like calls - once the client lock is in a
+store binary, closing lives again would otherwise take a stable store release). `off` / `on`,
+core-service migration `015_platform_config_lives_mode.sql`, **default `off` on every row, dev's
+included** (the dev seed writes `on`). A global admin moves it at `/admin/platform`
+(`PATCH /api/users/admin/platform`, `GlobalAdminGuard`, a `warn` line `livesMode off -> on by=<8
+chars>`). Read, never cached, on every request:
+
+- social-service: `LiveEnabledGuard` asks `LIVE_ENABLED` first (a closed estate never reads the
+  database), then `readLivesMode` (`lives/lives-mode.ts`, one primary-key read of `auth_db`'s
+  one-row table, as chat-delivery reads `calls_mode`). Both live controllers sit behind that guard.
+- media-service has no database: each segment route asks social-service's internal
+  `GET /api/internal/lives/mode` (`InternalLivesModeController`, `X-Internal-Secret`; `fetchLivesMode`
+  in `media/lives-mode.ts`) AFTER its own cheap refusals (the secret, the canonical path), so a
+  caller refused anyway never costs the hop. No cache on media-service's side: nginx's
+  `live_segments` cache already makes it one hop per segment per cache miss.
+
+**FAIL CLOSED everywhere.** A missing row reads `off` (logged at `error`); a value outside the two
+throws (500), as does a failed read; an unreachable or refusing relay is a 503 on media-service. A
+switch that cannot be read is never read as open.
+
+**What a flip to `off` does, and its one bound.** From the next request: no live starts, no
+manifest, no key, no chat, no ingest - an on-air broadcaster's next segment is a 404 (its own end
+route too), and the live is ended by the sweep after 60 s without a segment. **A segment nginx ALREADY cached stays servable for up to its two minutes**
+(`proxy_cache_valid 200 2m`) to a caller holding its URL: ciphertext under a key no new viewer can be
+handed, learned only from a manifest that now answers 404. A flip to `on` waits out at most the
+10 s of a cached refusal on a segment URL fetched while closed.
+
+**The client hides what the server would refuse.** `GET /api/version` carries `lives: { mode }`;
+the client's `livesAvailable(serverLivesMode())` (`utils/livesAvailability.ts`) is the build's
+`LIVE_ENABLED` AND `on`, and gates the live card, the viewer and the composer's Live chip
+([live](../frontend/modules/live.md)). Absent or unknown reads `off`.
+
+Three things run whatever either switch says, on purpose: the live sweep and the media purge and
+live-list routes, so a live started while the switches were open is still ended and deleted after
+they close. What must be true before lives open in production, and in what order:
+[live-production](../frontend/modules/live-production.md).
 
 ## The numbers, and where each is the ONE copy
 

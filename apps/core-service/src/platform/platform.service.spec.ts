@@ -30,6 +30,7 @@ describe('PlatformService', () => {
       minClientVersion: '1.0.0',
       paymentProvider: 'lydia' as const,
       callsMode: 'off' as const,
+      livesMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -42,6 +43,7 @@ describe('PlatformService', () => {
       minClientVersion: '0.0.0',
       paymentProvider: 'lydia' as const,
       callsMode: 'off' as const,
+      livesMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -56,6 +58,7 @@ describe('PlatformService', () => {
       minClientVersion: '0.0.0',
       paymentProvider: 'lydia',
       callsMode: 'off',
+      livesMode: 'off',
     });
 
     await service.ensureDefaults();
@@ -74,6 +77,15 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ callsMode: 'off' }));
   });
 
+  it('ensureDefaults creates the row with lives OFF - a fresh estate never opens lives by itself', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ livesMode: 'off' }));
+  });
+
   /** A config row with `minClientVersion` at `min`, wired into the repo mock. */
   const rowWithMin = (min: string): PlatformConfig => {
     const existing: PlatformConfig = {
@@ -83,6 +95,7 @@ describe('PlatformService', () => {
       minClientVersion: min,
       paymentProvider: 'lydia',
       callsMode: 'off',
+      livesMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -129,6 +142,7 @@ describe('PlatformService', () => {
       minClientVersion: '0.13.0',
       paymentProvider: 'lydia',
       callsMode: 'off',
+      livesMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -148,6 +162,7 @@ describe('PlatformService', () => {
       minClientVersion: '0.13.0',
       paymentProvider: 'lydia',
       callsMode: 'off',
+      livesMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -181,5 +196,28 @@ describe('PlatformService', () => {
     const result = await service.updateConfig({ maintenanceEnabled: true }, ADMIN);
 
     expect(result.callsMode).toBe('audio_video');
+  });
+
+  it('updateConfig moves the lives kill switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.callsMode = 'audio';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ livesMode: 'on' }, ADMIN);
+
+    expect(result.livesMode).toBe('on');
+    expect(result.callsMode).toBe('audio');
+    expect(result.minClientVersion).toBe('0.13.0');
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain('livesMode off -> on by=aaaaaaaa');
+    warn.mockRestore();
+  });
+
+  it('updateConfig leaves the lives mode alone when the update does not name it', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.livesMode = 'on';
+
+    const result = await service.updateConfig({ callsMode: 'off' }, ADMIN);
+
+    expect(result.livesMode).toBe('on');
   });
 });

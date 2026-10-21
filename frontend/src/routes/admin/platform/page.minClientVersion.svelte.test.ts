@@ -30,6 +30,7 @@ const CONFIG = {
   minClientVersion: '1.2.7',
   paymentProvider: 'disabled',
   callsMode: 'audio',
+  livesMode: 'on',
 };
 const CEILING_REFUSAL =
   "minClientVersion 9.9.9 is above this server's own version 1.3.0: no client that can satisfy it has been built, so every client would be locked out.";
