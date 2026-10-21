@@ -41,6 +41,7 @@ import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cac
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { pageComments, type CommentOrder } from './comment-page';
+import { CommentIdentityService } from './comment-identity';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
 import {
@@ -189,6 +190,19 @@ export class PostsService {
     private readonly notifications: PostNotificationsService,
     private readonly mediaRetention: PostMediaRetentionService
   ) {}
+
+  private commentIdentityService?: CommentIdentityService;
+
+  /**
+   * Who a comment speaks as and what each reader sees of it. Built from the two dependencies this
+   * service already holds, so the fourteen specs that construct it by hand are not all re-wired.
+   */
+  private get commentIdentity(): CommentIdentityService {
+    return (this.commentIdentityService ??= new CommentIdentityService(
+      this.associationsService,
+      this.postRepo
+    ));
+  }
 
   private listPostsCacheKey(
     feed: string,
@@ -656,6 +670,14 @@ export class PostsService {
       raw.images = raw.media;
     }
     await this.attachRepublishers([raw]);
+    // BEFORE the author is withheld below: `byPostAuthor` is computed from it.
+    if (Array.isArray(raw.comments)) {
+      raw.comments = await this.commentIdentity.serve(raw.comments, raw, {
+        viewerId: viewer.viewerId,
+        isGlobalAdmin: viewer.isGlobalAdmin,
+        isModerator: viewer.isModerator,
+      });
+    }
     Object.assign(raw, this.viewerCapabilities(raw, viewer));
     if (raw.polls !== undefined) raw.polls = servePolls(raw.polls, viewer.viewerId);
     if (!raw.associationId) {
@@ -1049,6 +1071,12 @@ export class PostsService {
     const viewerCtx = await this.viewerContext(rawPosts, viewer?.viewerUserId, isAdmin);
     const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
+    await this.commentIdentity.serveRows(rawPosts, {
+      viewerId: viewer?.viewerUserId,
+      isGlobalAdmin: viewerCtx.isGlobalAdmin,
+      isModerator: viewerCtx.isModerator,
+    });
+
     const result = rawPosts.map((p: any) => {
       let row = p;
       if (!p.associationId && p.authorId) {
@@ -1081,14 +1109,16 @@ export class PostsService {
    * rows in JS after the fact could only correct the window, and would leave the count promising
    * comments the viewer is never going to be shown.
    *
-   * A comment carries no anonymity of its own - every one of them has its author's name on it - so
-   * unlike a post it is filtered on its author with nothing to weigh against it.
+   * A comment IS filtered on its author, EXCEPT an anonymous one or one written as an association:
+   * filtering those on `userId` would make a block a de-anonymisation probe, exactly as it would
+   * for a post (see `blockedAuthorSql`).
    */
   private postSelectBody(blockedParam: number | null): string {
     const visibleComment =
       blockedParam === null
         ? ''
-        : `WHERE COALESCE(elem->>'userId', '') <> ALL($${blockedParam}::text[])`;
+        : `WHERE (COALESCE(elem->>'userId', '') <> ALL($${blockedParam}::text[])
+             OR elem->>'anonymous' = 'true' OR COALESCE(elem->>'associationId', '') <> '')`;
     const commentCount =
       blockedParam === null
         ? `(jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer)`
@@ -1383,6 +1413,12 @@ export class PostsService {
     const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin === true);
     const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
+    await this.commentIdentity.serveRows(rawPosts, {
+      viewerId: viewerUserId,
+      isGlobalAdmin: viewerCtx.isGlobalAdmin,
+      isModerator: viewerCtx.isModerator,
+    });
+
     const result = rawPosts.map((p: any) => {
       let row = p;
       if (!p.associationId && p.authorId) {
@@ -1526,6 +1562,11 @@ export class PostsService {
     if (!post) return null;
     await this.attachRepublishers([post]);
     const viewerCtx = await this.viewerContext([post], viewerId, isGlobalAdmin);
+    await this.commentIdentity.serveRows([post], {
+      viewerId,
+      isGlobalAdmin: viewerCtx.isGlobalAdmin,
+      isModerator: viewerCtx.isModerator,
+    });
     return this.stripBigIntForJson(this.shapeListRow(post, viewerCtx));
   }
 
@@ -1587,7 +1628,8 @@ export class PostsService {
     // the feed queries it is filtered here, exactly and in one place.
     if (blockedIds.length > 0 && Array.isArray(shaped.comments)) {
       shaped.comments = shaped.comments.filter(
-        (c: { userId?: string }) => !blockedIds.includes(c?.userId ?? '')
+        (c: { userId?: string; anonymous?: boolean; association?: unknown }) =>
+          !blockedIds.includes(c?.userId ?? '') || c.anonymous === true || !!c.association
       );
     }
     // Attach author name fields (same source as listPosts - local users table).
@@ -1619,13 +1661,18 @@ export class PostsService {
   async listComments(
     postId: string,
     viewerId: string | undefined,
-    opts: { cursor?: number; limit?: number; order?: CommentOrder }
+    opts: { cursor?: number; limit?: number; order?: CommentOrder; isGlobalAdmin?: boolean }
   ) {
     await this.assertVisible(postId, viewerId, 'READ_OR_REACT');
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
     const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewerId);
     const page = pageComments((post.comments ?? []) as any[], { ...opts, blockedIds });
+    const isGlobalAdmin = opts.isGlobalAdmin === true;
+    page.comments = (await this.commentIdentity.serve(page.comments, post, {
+      viewerId,
+      isGlobalAdmin,
+    })) as any[];
     this.logger.debug(
       `listComments ${postId}: ${page.comments.length} rows, cursor=${String(opts.cursor)} hasMore=${page.hasMore}`
     );

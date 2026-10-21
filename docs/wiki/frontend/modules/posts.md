@@ -1877,4 +1877,15 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 - `commentCount` already counted replies and `PostCard` already read it through `commentCountOf` - the plan's "Charger tout hidden" item was stale.
 - `postCommentDraft.ts`: one draft per account AND post, keyed like `postComposerDraft`.
 
-**Open (PR 2-4):** comment identity (association / anonymous), the components, the sheet.
+**PR 2 - the identity of a comment (server; the client does not offer it yet).**
+
+- `AddCommentDto` gains `associationId` (needs `POST_AS_ASSO`, `canPostAs`, else 403 BEFORE any write) and `anonymous` (any member). Exclusive, the association wins. The real `userId` is ALWAYS stored (mute, report, erasure act on the account); an anonymous or association comment stores NO name.
+- `comment-identity.ts` is the one statement: `commentRights` (who may edit/delete, used to ENFORCE and to SERVE `canEdit`/`canDelete` per reader) and `serveComment` (withholds `userId` from everyone but the writer of an anonymous comment, a content moderator and a platform admin; an association comment's writer is not special; serves `association` card; `byPostAuthor` on a personal post only - the post author has NO privilege of revelation). Fields are only added: an older client keeps working on ordinary comments.
+- Edit/delete: ordinary = writer (delete also a platform admin); anonymous = writer to edit, writer/admin/content moderator to delete; association = any `POST_AS_ASSO` holder or platform admin.
+- Served in every path: feed windows and count (`serveRows`, BEFORE the post's own shaping since `byPostAuthor` reads `authorId`), `getById`, the paged route, and the like/edit/add responses.
+- Notices are masked at the WRITE: anonymous -> actor `''` / "Anonyme", association -> its name. A reply to an association comment notifies every holder (`listFlagHolders`), to an anonymous one the real account.
+- A report on a comment takes `reportedUserId` from the stored comment, never from the client.
+- Account erasure keeps an association comment (writer detached, `userId: ''`).
+- Privacy policy and register of processing say moderation can identify an anonymous author (dated 21/10/2026).
+
+**Open (PR 3-4):** the components (identity picker in the composer, "Anonyme - auteur du post" badge), the sheet. **PR 2 must be merged AND deployed before the client offers the choice**, or an old server would ignore the field and publish under the person's name.

@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="19/10/2026"
+  updated="21/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -103,6 +103,12 @@
           demande (l'association, le membre qui l'a faite, la publication) vous est adressée, et
           rien n'est montré à son public tant que vous n'avez pas accepté. Vous pouvez retirer ce
           relais à tout moment ; la demande est effacée avec la publication ou avec votre compte.
+          Vous pouvez publier ou commenter de façon anonyme, ou au nom d'une association dont vous
+          avez le droit de parler : les autres membres ne voient alors pas votre compte, mais la
+          modération et les administrateurs de la plateforme peuvent l'identifier (pour traiter un
+          signalement, par exemple), et votre compte reste responsable de ce que vous écrivez. Un
+          commentaire écrit au nom d'une association lui appartient : il reste si vous supprimez
+          votre compte, détaché de celui-ci.
         </dd>
       </div>
       <div>

@@ -780,7 +780,12 @@ export function scrubComments(
   if (!Array.isArray(comments)) return { comments, changed: false };
   const all = comments as StoredComment[];
   const byId = new Map(all.map((c) => [c.id, c]));
-  const removed = new Set(all.filter((c) => c.userId === userId).map((c) => c.id));
+  // A comment written AS an association belongs to it, not to its writer (the rule posts follow):
+  // it stays, and only the account is let go of.
+  const asAssociation = (c: StoredComment) => !!c.associationId;
+  const removed = new Set(
+    all.filter((c) => c.userId === userId && !asAssociation(c)).map((c) => c.id)
+  );
   let changed = removed.size > 0;
 
   const survivingParent = (parentId: string | null | undefined): string | null => {
@@ -798,6 +803,10 @@ export function scrubComments(
       let next = c;
       if (Array.isArray(c.likes) && c.likes.includes(userId)) {
         next = { ...next, likes: c.likes.filter((id: string) => id !== userId) };
+        changed = true;
+      }
+      if (c.userId === userId && asAssociation(c)) {
+        next = { ...next, userId: '' };
         changed = true;
       }
       if (c.parentId && removed.has(c.parentId)) {

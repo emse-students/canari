@@ -345,10 +345,14 @@ export class PostsController {
   @Get(':postId/comments')
   listComments(
     @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Query() query: ListCommentsQueryDto
   ) {
-    return this.service.listComments(postId, xUserId, query);
+    return this.service.listComments(postId, xUserId, {
+      ...query,
+      isGlobalAdmin: xGlobalAdmin === 'true',
+    });
   }
 
   /** Adds a comment from the calling user to a post. */
@@ -356,12 +360,25 @@ export class PostsController {
   @HttpPost(':postId/comments')
   async addComment(
     @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Body() body: AddCommentDto
   ) {
+    // The mute is the real account's, whatever the comment will say it is.
     await this.assertNotMuted(xUserId);
     await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
-    return this.interactions.addComment(postId, { ...body, userId: xUserId });
+    const isGlobalAdmin = xGlobalAdmin === 'true';
+    // Speaking for an association is the right posts need, asked BEFORE anything is written: an
+    // older server would have ignored the field and published under the person's own name.
+    if (body.associationId) {
+      const canPost = await this.associationsService.canPostAs(xUserId, body.associationId, {
+        isGlobalAdmin,
+      });
+      if (!canPost) {
+        throw new ForbiddenException('You may not comment in this association name');
+      }
+    }
+    return this.interactions.addComment(postId, { ...body, userId: xUserId }, isGlobalAdmin);
   }
 
   /** Toggles a like from the calling user on a specific comment. */
@@ -369,26 +386,34 @@ export class PostsController {
   @HttpPost(':postId/comments/:commentId/like')
   async likeComment(
     @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string
   ) {
     await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
-    return this.interactions.likeComment(postId, commentId, xUserId);
+    return this.interactions.likeComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
   }
 
-  /** Updates the text of a comment owned by the calling user. */
+  /** Updates the text of a comment the caller may edit (`commentRights`). */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/comments/:commentId')
   editComment(
     @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string,
     @Body() body: EditCommentDto
   ) {
-    return this.interactions.editComment(postId, commentId, xUserId, body.text);
+    return this.interactions.editComment(
+      postId,
+      commentId,
+      xUserId,
+      body.text,
+      xGlobalAdmin === 'true'
+    );
   }
 
-  /** Deletes a comment; the author or a global admin may delete. */
+  /** Deletes a comment the caller may delete (`commentRights`). */
   @UseGuards(NginxAuthGuard)
   @Delete(':postId/comments/:commentId')
   deleteComment(

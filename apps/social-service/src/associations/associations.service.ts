@@ -1439,6 +1439,17 @@ export class AssociationsService {
     return n > 0;
   }
 
+  /** The user ids holding `flag` in the association - who a notice addressed to it must reach. */
+  async listFlagHolders(associationId: string, flag: AssociationPermissionFlag): Promise<string[]> {
+    const rows = await this.memberRepo
+      .createQueryBuilder('m')
+      .select('m.userId', 'userId')
+      .where('m.associationId = :associationId', { associationId })
+      .andWhere('(m.permissions & :flag) <> 0', { flag })
+      .getRawMany<{ userId: string }>();
+    return rows.map((r) => r.userId);
+  }
+
   /** Returns true if the user is an admin (any flag) of at least one association. */
   async isMemberOfAnyAssoc(userId: string): Promise<boolean> {
     const n = await this.memberRepo

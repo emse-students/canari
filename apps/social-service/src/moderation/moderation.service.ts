@@ -142,6 +142,12 @@ export class ModerationService {
         reportedUserId: live.broadcasterId,
       };
     }
+    if (data.contentType === 'comment') {
+      // The writer is read from the stored comment, never taken from the client: an anonymous
+      // comment is served WITHOUT its account, so the reporter cannot name it - and the mute that
+      // follows a report needs it. It is held for moderators and never served to anyone else.
+      data = { ...data, reportedUserId: await this.commentWriterId(data.contentId) };
+    }
     const saved = await this.insertReport(this.reportRepo, data);
 
     // Auto-hide posts that accumulate too many pending reports.
@@ -700,6 +706,18 @@ export class ModerationService {
       mutedReason: record.mutedReason ?? null,
       mutedAt: record.mutedAt ? record.mutedAt.toISOString() : null,
     };
+  }
+
+  /** The real account that wrote a stored comment, or `null` when it is gone or has none (erased). */
+  private async commentWriterId(commentId: string): Promise<string | null> {
+    const rows: { user_id: string | null }[] = await this.reportRepo.manager.query(
+      `SELECT elem->>'userId' AS user_id
+         FROM posts p, jsonb_array_elements(COALESCE(p.comments, '[]'::jsonb)) elem
+        WHERE elem->>'id' = $1
+        LIMIT 1`,
+      [commentId]
+    );
+    return rows[0]?.user_id || null;
   }
 
   /** Locates the parent post of a comment by scanning JSON comment arrays. */

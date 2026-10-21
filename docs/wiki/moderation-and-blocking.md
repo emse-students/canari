@@ -226,8 +226,11 @@ anonymous post in a handful of rounds. The exemption is the feature, not a gap i
 `followed` arm already excludes anonymous posts for the neighbouring reason: **presence in a feed is
 itself an answer about authorship**, which is also why that arm EXCLUDES rather than masks.
 
-A comment carries no anonymity of its own - every one has its author's name on it - so it is
-filtered on its author with nothing to weigh against it.
+An ordinary comment carries its author's name, so it is filtered on its author. **Since 2026-10-21 a
+comment can be anonymous or written as an association, and those two are EXEMPT for the reason a post
+is** - filtering one on `userId` would make a block a probe of who wrote it. The SQL (`postSelectBody`,
+window and count), `getById` and `pageComments` all apply it. The identity rules themselves are in
+[posts](frontend/modules/posts.md#comment-sheet-rework-2026-10-21).
 
 ### Where the hide is applied, and why not in JS
 
