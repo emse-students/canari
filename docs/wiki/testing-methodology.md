@@ -3067,6 +3067,10 @@ had been opened. Each one took under a minute and each refuted a load-bearing cl
 codes and grep the embedded ISO timestamps instead. A client console describes what the client
 believes. It is evidence about the client, and it is never evidence about the peer.
 
+## ONE DRIVER PER BENCH PHONE AT A TIME (BENCH-SHARED-2, 2026-10-21)
+
+Two agents drove the same bench phone at once: one sent CDP swipes and `location.href` recoveries while the other read, a system back finished the activity, and three reloads spoiled the other's logs. **One driver per bench phone at a time, assigned by the lead.** Before a reading, look for other CDP or adb clients of the serial; before believing a reload in a log, check nobody else was driving. The rig owes a device lock ([device-readings-2026-10](device-readings-2026-10.md)); until then the lead's assignment is the lock.
+
 ## Where a result goes
 
 - **PASS** -> one row in the [dashboard](cross-client-testing.md), with the build it ran against.
