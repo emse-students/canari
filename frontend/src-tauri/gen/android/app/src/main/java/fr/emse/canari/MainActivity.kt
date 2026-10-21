@@ -21,7 +21,9 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.firebase.messaging.FirebaseMessaging
 import fr.emse.canari.gesture.ExclusionBand
-import fr.emse.canari.gesture.rightEdgeExclusion
+import fr.emse.canari.gesture.CapAnchor
+import fr.emse.canari.gesture.Edge
+import fr.emse.canari.gesture.edgeExclusion
 import java.io.File
 
 class MainActivity : TauriActivity() {
@@ -181,7 +183,7 @@ class MainActivity : TauriActivity() {
             webView.addJavascriptInterface(CallBridge.JsInterface(applicationContext), "canariCall")
             Log.d("MainActivity", "canariCall bridge registered (the call service is in this build)")
         }
-        webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyRightEdgeExclusion() }
+        webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
     }
 
     /**
@@ -212,63 +214,77 @@ class MainActivity : TauriActivity() {
         }
     }
 
-    /** The message list's vertical span in WebView px, while a conversation is open; null otherwise. */
-    private var rightBandSpan: Pair<Int, Int>? = null
+    /**
+     * The vertical span in WebView px the page asked to exclude, per edge: the message list on the
+     * RIGHT while a conversation is open, the posts feed on the LEFT while it is shown. An absent
+     * edge has no band and keeps the system Back gesture.
+     */
+    private val bandSpans = mutableMapOf<Edge, Pair<Int, Int>>()
 
     /** What was last handed to the system, so an unchanged layout pass neither re-sets nor logs. */
-    private var appliedBand: ExclusionBand? = null
+    private var appliedBands: Map<Edge, ExclusionBand> = emptyMap()
 
     /**
-     * THE PAGE SAYS WHEN A CONVERSATION IS OPEN AND WHERE ITS LIST IS; NOTHING NATIVE KNOWS EITHER.
+     * THE PAGE SAYS WHICH SURFACE IS ON SCREEN AND WHERE IT IS; NOTHING NATIVE KNOWS EITHER.
      *
-     * The exclusion exists for one reason: a reply swipe started on an own bubble inside the right
-     * back-gesture inset is taken by the system and closes the conversation (Mi 9T, 2026-10-14, see
-     * `rightEdgeExclusion`). It is therefore declared ONLY while the message list is mounted, so the
-     * right-edge back swipe keeps working on every other screen. Called from a JavaScript thread.
+     * Each band exists for one swipe the system Back gesture was eating (see `edgeExclusion`): the
+     * RIGHT one for a reply swipe on an own bubble (Mi 9T, 2026-10-14), declared ONLY while the
+     * message list is mounted; the LEFT one for the feed's swipe to the camera (Mi 9T, 2026-10-21),
+     * declared ONLY while the posts feed is shown. Everywhere else both edges keep their back swipe.
+     * Called from a JavaScript thread.
      */
     private inner class GestureBridge {
         @JavascriptInterface
-        fun setRightBand(topPx: Int, bottomPx: Int) {
-            runOnUiThread {
-                rightBandSpan = Pair(topPx, bottomPx)
-                applyRightEdgeExclusion()
-            }
-        }
+        fun setRightBand(topPx: Int, bottomPx: Int) = setBand(Edge.RIGHT, Pair(topPx, bottomPx))
 
         @JavascriptInterface
-        fun clearRightBand() {
+        fun clearRightBand() = setBand(Edge.RIGHT, null)
+
+        @JavascriptInterface
+        fun setLeftBand(topPx: Int, bottomPx: Int) = setBand(Edge.LEFT, Pair(topPx, bottomPx))
+
+        @JavascriptInterface
+        fun clearLeftBand() = setBand(Edge.LEFT, null)
+
+        private fun setBand(edge: Edge, span: Pair<Int, Int>?) {
             runOnUiThread {
-                rightBandSpan = null
-                applyRightEdgeExclusion()
+                if (span == null) bandSpans.remove(edge) else bandSpans[edge] = span
+                applyEdgeExclusions()
             }
         }
     }
 
     /**
-     * Declares (or clears) the right-edge exclusion on the WebView. Runs when the page reports and on
+     * Declares (or clears) both edges' exclusions on the WebView. Runs when the page reports and on
      * every layout change of the WebView (rotation, keyboard resize), skipping an unchanged result -
      * never per frame. `setSystemGestureExclusionRects` is API 29+ (the ViewCompat call is a no-op
      * below), and the gesture inset reads 0 on 3-button navigation, where there is nothing to
-     * exclude. The whole list is replaced each time, so it never accumulates past Android's cap.
+     * exclude. The whole list is replaced each time, so it never accumulates past Android's cap of
+     * 200 dp per edge; each edge is cut to that cap by `edgeExclusion`, around its own anchor (the
+     * newest bubbles at the bottom of a conversation, the middle of the feed where a thumb starts).
      */
-    private fun applyRightEdgeExclusion() {
+    private fun applyEdgeExclusions() {
         val webView = liveWebView ?: return
-        val span = rightBandSpan
-        val band = if (span == null) {
-            null
-        } else {
-            val inset = ViewCompat.getRootWindowInsets(webView)
-                ?.getInsets(WindowInsetsCompat.Type.systemGestures())?.right ?: 0
-            rightEdgeExclusion(
-                webView.width, webView.height, resources.displayMetrics.density, inset, span.first, span.second
-            )
+        val insets = ViewCompat.getRootWindowInsets(webView)?.getInsets(WindowInsetsCompat.Type.systemGestures())
+        val density = resources.displayMetrics.density
+        val bands = buildMap {
+            for ((edge, span) in bandSpans) {
+                val inset = if (edge == Edge.LEFT) insets?.left ?: 0 else insets?.right ?: 0
+                val anchor = if (edge == Edge.LEFT) CapAnchor.CENTER else CapAnchor.BOTTOM
+                edgeExclusion(edge, webView.width, webView.height, density, inset, span.first, span.second, anchor)
+                    ?.let { put(edge, it) }
+            }
         }
-        if (band == appliedBand) return
-        appliedBand = band
-        Log.d("MainActivity", "right-edge gesture exclusion: span=$span -> $band")
+        if (bands == appliedBands) return
+        for (edge in Edge.entries) {
+            if (bands[edge] != appliedBands[edge]) {
+                Log.d("MainActivity", "${edge.name.lowercase()}-edge gesture exclusion: span=${bandSpans[edge]} -> ${bands[edge]}")
+            }
+        }
+        appliedBands = bands
         ViewCompat.setSystemGestureExclusionRects(
             webView,
-            if (band == null) emptyList() else listOf(Rect(band.left, band.top, band.right, band.bottom))
+            bands.values.map { Rect(it.left, it.top, it.right, it.bottom) }
         )
     }
 

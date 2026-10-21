@@ -19,6 +19,11 @@
   import { screenCover } from '$lib/actions/coversScreen.svelte';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
   import { releaseCallServiceOfPreviousPage } from '$lib/mobile/androidCallService';
+  import {
+    clearEdgeExclusionsForNewDocument,
+    excludeLeftEdgeOver,
+    wantsFeedLeftEdgeExclusion,
+  } from '$lib/mobile/edgeGestureExclusion';
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
   import AnnouncementModal from '$lib/components/shared/AnnouncementModal.svelte';
@@ -91,6 +96,10 @@
     const info = getAppVersionCheck();
     return !isBelowMinClientVersion() && info?.maintenance.enabled === true && isGlobalAdmin();
   });
+
+  // The root layout is created once per document and before any page reports a band, so this is
+  // the point where a reload drops the bands the previous document declared.
+  clearEdgeExclusionsForNewDocument();
 
   // Hide BottomNav and remove its padding from the composer when a conversation
   // is open on mobile (only relevant on the chat / communities routes).
@@ -294,6 +303,18 @@
 
   /** Whether this screen can swipe at all - `isSwipeNavArmed` owns the reasoning. */
   const swipeNavArmed = $derived(isSwipeNavArmed(pathname, swipeNavViewport));
+
+  // THE FEED'S LEFT EDGE IS THE CAMERA SWIPE'S, NOT ANDROID'S BACK (Mi 9T, 2026-10-21: a swipe
+  // started in the left 30 CSS px was taken as Back, 8 of 8). Declared on the feed alone and only
+  // while its swipe can happen; the cleanup removes it on every route change, keyboard rise or
+  // viewport change, so the left-edge Back is untouched everywhere else. A no-op off Android.
+  const feedLeftEdgeExcluded = $derived(
+    wantsFeedLeftEdgeExclusion(pathname, swipeNavArmed, isKeyboardOpen)
+  );
+  $effect(() => {
+    if (!feedLeftEdgeExcluded || !pageScrollWrap) return;
+    return excludeLeftEdgeOver(pageScrollWrap);
+  });
 
   // BOTH NEIGHBOURS' CODE IS FETCHED ON ARRIVAL, not at the horizontal lock. A fast swipe locks and
   // releases inside ~100ms, and the route's JS imported in that window was part of what the finger
