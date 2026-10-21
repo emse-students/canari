@@ -1445,6 +1445,36 @@ directory fails on the day it is committed. `cargo-blocked-update-report.sh` run
 --dry-run` in them on the Monday cron and OPENS AN ISSUE when the tree is behind; its header carries
 why the report is an issue and not a red run, and the four ways an empty answer can lie.
 
+### A vendored fork is watched for upstream releases (2026-10-21)
+
+Neither mechanism above reaches a crate replaced through `[patch.crates-io]` by a copy under
+`frontend/src-tauri/patches/`: its `=X.Y.Z` pin is one `cargo update` cannot move, and whether
+`cargo audit` matches advisories against a PATH package was never verified. Job `vendored-upstream`
+of `scheduled.yml` (the Monday `0 4 * * 1` slot it shares with `cargo-unreachable`; by hand: dispatch
+job `vendored-upstream`) runs `.github/scripts/vendored-upstream-report.sh`, which compares, for each
+crate on its ALLOWLIST (today `tauri-plugin-websocket` alone - [backlog](backlog.md) holds the two
+other forks), the fork's `[package]` version with crates.io's `max_stable_version`. Pre-releases are
+ignored on purpose: upstream has a `3.0.0-alpha` line, and a fork of a stable owes it nothing.
+
+| Exit | Means | Title |
+| --- | --- | --- |
+| 0 | every watched fork is upstream's latest stable | - |
+| 1 | upstream released past the fork (the message names the rebase: the release, the `CANARI PATCH` hunk count, the pin to move), or the forked release was yanked | `Upstream <crate> released past the vendored fork`, `Upstream withdrew the release <crate> was forked from` |
+| 1 | the reporter is broken: an allowlist entry the manifest no longer patches, a pin that does not name the fork's version (the patch would silently not apply), a 404, any unexpected status, a response with no usable version | `Stale vendored-fork allowlist entry`, `Vendored fork and its pin disagree`, `Vendored-fork watch is broken` |
+| 75 | crates.io did not answer after curl's own bounded retries (transport, 408, 429, 5xx); a finding in the same run wins | `crates.io unreachable - not a finding` |
+
+**Exits 1 and 75 look the same in `gh run list`** (both are an ordinary failed run): the
+annotation TITLE in the run summary is what tells a finding from an unreachable registry, without
+opening the log. The response body is written with `-o` to a file, never captured from stdout: with
+`--retry`, curl prints a failed attempt's body to stdout ahead of the successful one, so a 503 then
+a 200 read from stdout would be a false "broken reporter".
+
+**A red run is the report, like `alerts` and unlike `cargo-unreachable`**: a fork behind upstream is
+a rebase owed, not the normal state of a tree. `tests/vendored-upstream-report.test.sh` (in `make
+test-ci-scripts`) runs it against a fake `curl` and fixture trees - the control case is a newer
+release that must fail - and once against the REAL tree, so a pin that drifts from its fork fails on
+the pull request that drifts it.
+
 ### What it refuses, and why it is not a semver rule
 
 **A ceiling on an automatic merge is a statement about your tests, never about the version number.**

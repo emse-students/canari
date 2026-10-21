@@ -373,9 +373,9 @@ The client's path line ([calls](frontend/modules/calls.md); a diagnostic since 2
 
 The native chat socket now races IPv6 and IPv4 and closes a connect it abandoned ([mobile](frontend/mobile.md#the-native-socket-races-ipv6-and-ipv4)). Owed on the Mi 9T, on the alpha that carries it: the PC's mobile hotspot with broken IPv6 (bench P6), `Connected to Chat Gateway` within a second, one `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` instead means the IPv6 attempt errored rather than hung - record which), no `[WS] native socket completed ... closing it` WARN, and the iPhone's call RINGING the phone; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete with that reading.
 
-## P3 - Nothing reports an upstream `tauri-plugin-websocket` release past the vendored 2.5.0 (2026-10-20, not built)
+## P3 - Two vendored forks are not on the upstream-release watch (2026-10-21, a decision owed)
 
-The plugin is a vendored fork (`frontend/src-tauri/patches/tauri-plugin-websocket`, pinned `=2.5.0`), Dependabot does not watch `src-tauri`, and whether `cargo audit` matches advisories against a PATH package was not verified (rustsec's query is believed to scope to crates.io sources - read nowhere here). So an upstream fix, security included, would reach nobody. Wanted: a scheduled check (on `scheduled.yml`, no new workflow) that compares crates.io's latest version with the pinned one and reports a newer one, naming the rebase it asks for. Delete when it exists.
+Job `vendored-upstream` of `scheduled.yml` now reports an upstream `tauri-plugin-websocket` release past the fork ([cicd](cicd.md#a-vendored-fork-is-watched-for-upstream-releases-2026-10-21)); its allowlist holds that one crate, because the row that asked for it named one. `tauri-plugin-keystore` (forked from `2.1.0-alpha.1`, a PRE-release the watch has no rule for) and `tauri-plugin-system-components` (`=0.1.8`) are patched the same way and equally unwatched. Decision owed: add `system-components` (one line), and say what "newer" means for a fork of an alpha. Delete when both are decided.
 
 ## P3 - The call resume ladder has no jitter (review of #2148, 2026-10-19, not built)
 
