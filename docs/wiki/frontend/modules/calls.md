@@ -105,8 +105,8 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
 | B10 | **The hardware readings of the audio path**: CALL-L1 rows 0-12 on the current build; the Tier B audio cells (K1, K9, K12 on Mi 9T / iPhone / desktop; K6 both phones) of [the matrix](calls-revival-plan.md#7-the-test-matrix) | **partly read**: audio clean both ways and both transforms fed on `1.3.1-alpha.4` (#2161); forced TURN relay over UDP, TCP and TLS 443 clean on all three engines (#2165, readings PR open on 2026-10-21); row 8 `PASS` on alpha.2. **Owed**: row 0, rows 9-12 on the build carrying their fixes, cellular and campus Wi-Fi (no SIM on the bench), CALL-WS-V6's fix (#2167) on an IPv6-broken Wi-Fi | the board rows `PASS`, never `PASS-DIRTY` |
 | B11 | **Two P2 defects met on the bench**: CALL-PAIR-STALL and CALL-LATE-RING ([backlog](../../backlog.md#p2---a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20)) | **owed**: the dev `call-service` log of that minute and the iPhone's exported log, before any cause is named | diagnosis, then a fix or a refutation |
 | B12 | **A kill that is not two store releases** (WP-C13, `platform_config.calls_mode` = `off/testers/on`, enforced at `initiate`/`ring`/`room-token`) | **decided yes (Q2), a HARD PRE-FLIP BLOCKER; being built** (another agent) | merged and its `off` read refusing a ring, before the first alpha with the flip |
-| B13 | **The production server preflight** (read-only, below) | **owed** | every line of the preflight read |
-| B14 | **The store answers** (below): Apple review notes + demo accounts + video, privacy labels; Play Data safety | **owed** (Play FGS declaration: DONE 2026-10-21) | WP-C9 |
+| B13 | **The production server preflight** (read-only, below) | **checklist written** (P1-P10, each with its command, 2026-10-21); **owed**: running it after #2180 deploys production, P7 and P8 (c) in the review window | every line of the preflight read |
+| B14 | **The store answers** (below): Apple review notes + demo accounts + video, privacy labels; Play Data safety | **drafted** (the microphone string, the review notes, the privacy candidates, 2026-10-21); **owed**: the owner's answers to the privacy table, the demo pair, the video (Play FGS declaration: DONE 2026-10-21) | WP-C9 |
 
 ### The order
 
@@ -129,12 +129,19 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
    | `ios.yml`'s pre-release `audio` patch is deleted with its two cases in `callsCompiled.test.ts` (dead code once the committed plist carries `audio`) | `.github/workflows/ios.yml` | `callsCompiled.test.ts` |
    | **does NOT move**: the native ring's four (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`) under their own constant (B2'), and `CALLS_VIDEO_ENABLED` | | `callsCompiled.test.ts`, `features.test.ts` |
 
-6. **`vX.Y.Z-alpha.1` with the flip** -> dev and the store testers, `calls_mode` at `testers`. Tier B
+6. **`vX.Y.Z-alpha.1` with the flip** -> dev and the store testers, `calls_mode` at `testers` (as
+   #2180 builds it there is no `testers` value: pre-releases talk to dev, whose own row is open). Tier B
    audio cells re-read on it, the review build's notes and video checked. **Beta App Review**: an
    external TestFlight group reviews the declared modes; keep the flip to internal testers or have
    the notes ready ([mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)).
 7. **The stable** `vX.Y.Z` (it ships the alpha above) -> production web, Play, the App Store; then
-   `calls_mode` `on`.
+   `calls_mode` `on` (`audio` as #2180 builds it; a production change, so the owner's action at
+   `/admin/platform`). **Opened as soon as production deploys, NOT after
+   the stores publish**: the App Review build talks to PRODUCTION, so a reviewer who meets `off`
+   finds a declared `audio` mode whose feature refuses - the 2.5.4 refusal of 2026-08-31 again
+   ([B14](#the-store-answers-b14)). Production web deploys only once both store jobs are green, so
+   by then the submission is in; before that moment no production client has calls compiled, which
+   is why the mode may open then without exposing anything.
 8. **After both stores serve it**: `minClientVersion` raised to it (Q3); the first week's `[ring]`,
    `session end` and TURN usage read on production.
 
@@ -149,8 +156,9 @@ Production HAS Cloudflare TURN and has never used it: the `canari-calls` key car
 - **The key answers**: from a signed-in production session, `GET /api/calls/ice-servers` answers 200
   with `turn:` URLs over udp, tcp and `turns:` 443 (the endpoint is not behind the client switch), and
   the key id it uses is the `canari-calls` key of the Cloudflare account.
-- **The budget**: the Redis monthly counter at 0, and B7's counting in the deployed image; the
-  production budget variables are not touched (Q6).
+- **The budget**: B7's meter in the deployed image and readable with the production token (P6
+  below; the Redis estimate it replaces goes with #2180); the production budget variables are not
+  touched (Q6).
 - **The kill switch**: `calls_mode` reads `off` on production before the stable deploys (B12).
 - **The relay**: `call-service` runs on production with the p2p mode (the image of the release), and
   `wss://canari.emse.fr/api/call` upgrades through the host nginx. **The production path differs
@@ -163,6 +171,38 @@ Production HAS Cloudflare TURN and has never used it: the `canari-calls` key car
 - **No UDP from the host is needed**: 1:1 is peer to peer, the host carries signalling only
   ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md#8-what-works-with-no-port-opened-by-the-dsi-measured-2026-10-16)).
   Nothing is asked of the DSI.
+
+#### The checklist, with the command that reads each line (2026-10-21)
+
+Every line below READS; none writes production. It is run once, after the release carrying B7 and
+B12 (#2180, open on 2026-10-21) has deployed production and before the flip's stable is tagged; its
+outcome is a row of the [readings](../../device-readings-2026-10.md) pages, each line `PASS` or the
+defect it found. **The host's address, its SSH alias, the database and Redis credentials and the
+Cloudflare account and token values are in the private operations notes**, never here: the commands
+use `<prod-host>` and read every secret from the environment of the machine that runs them, never
+from an argument. Host commands are Docker reads, free under the shared-host rule (CLAUDE.md).
+
+**One thing #2180 changes for this list: with `calls_mode = off` (production's default),
+`ice-servers` refuses (403 `CALLS_DISABLED`) and the `[TURN-METER]` report is silent.** So the two
+Cloudflare lines (P5, P6) are read straight from Cloudflare while the switch is closed, and the
+end-to-end `ice-servers` line (P7) is read in the review window, once the mode is opened (the order,
+step 7).
+
+| # | What must be true | How it is read (read-only) | `PASS` when |
+| --- | --- | --- | --- |
+| P1 | Migration 014 (core-service, `014_platform_config_calls_mode.sql`, #2180) is applied and the switch reads `off` | `PROD_PG=$(docker ps --filter label=com.docker.compose.project=canari-prod --filter label=com.docker.compose.service=postgres --format '{{.Names}}')`, then `docker exec "$PROD_PG" sh -c 'psql -At -U "$POSTGRES_USER" -d auth_db -c "SELECT filename, applied_at FROM schema_migrations WHERE filename LIKE '"'"'%014_platform_config_calls_mode.sql'"'"'; SELECT calls_mode, min_client_version FROM platform_config WHERE id = 1; SELECT conname FROM pg_constraint WHERE conname = '"'"'CHK_platform_config_calls_mode'"'"';"'` | one ledger row; `off`; the constraint present. A missing row 1 is a defect, not an `off` (`utils/calls-mode.ts` logs it at error) |
+| P2 | The switch as clients see it, and the version floor | `curl -s https://canari.emse.fr/api/version` (public, no session) | `calls.mode` is `off`; `version` is the deployed stable; `minClientVersion` is the floor of today - raised only AFTER both stores serve the calls stable (Q3, step 8), so a raise before that is a finding |
+| P3 | Every calls secret reached the containers | the production deploy job of that release: `gh run view <run-id> --log \| grep 'is not set'` (`render-env.sh` prints `::warning::<KEY> is not set - <note>` for a `warn` key, `env-manifest.tsv`) | no line for `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_TURN_ANALYTICS_TOKEN`, `FIREBASE_SERVICE_ACCOUNT_JSON`. `CALL_ROOM_SECRET` and `JWT_SECRET` are `required`: a deploy without them fails, so a green deploy proves them. Names only, never `docker exec ... env` with values printed |
+| P4 | `call-service` runs the release's image and is healthy | `docker ps --filter label=com.docker.compose.project=canari-prod --filter label=com.docker.compose.service=call-service --format '{{.Image}} {{.Status}}'` (the compose healthcheck is `curl -f localhost:3004/api/health`, not reachable from outside) | the image tag is the deployed stable; `Up ... (healthy)`; `docker logs --since 24h <that container> 2>&1 \| grep -c ERROR` explained line by line, never skipped |
+| P5 | The TURN key mints credentials (Cloudflare Realtime) | from the workstation, `POST https://rtc.live.cloudflare.com/v1/turn/keys/$CLOUDFLARE_TURN_KEY_ID/credentials/generate-ice-servers` with `Authorization: Bearer $CLOUDFLARE_CALLS_API_TOKEN` and `{"ttl": 60}` - the call `calls.service.ts` makes. **The one line that is not a pure read**: it mints a 60 s credential nobody uses, which relays nothing and costs nothing | 201 with `turn:` URLs over UDP 3478, TCP and `turns:` 443; the key id is the `canari-calls` key named in the private notes |
+| P6 | The meter B7 trips on is readable with the production token | from the workstation, the GraphQL `settings` query and one day of `callsTurnUsageAdaptiveGroups` (`sum { egressBytes }`) under `viewer.accounts(filter: { accountTag: $CLOUDFLARE_ACCOUNT_ID })`, at `https://api.cloudflare.com/client/v4/graphql` with `$CLOUDFLARE_TURN_ANALYTICS_TOKEN` - the queries are the ones #2180's `turn-usage-meter.service.ts` builds (B7) | `enabled: true`; the per-date query answers with no `errors` (the one query #2180 measured only on dev); the month's egress is the known baseline (0 bytes to 2026-10-16) or explained. **This also closes the "per-date query unexercised" line of B7 on production** |
+| P7 | `ice-servers` answers end to end, through the switch and the meter | in the review window (mode `audio`), from a signed-in production session: `GET /api/calls/ice-servers` in the browser's DevTools (the access token stays in memory, so not `curl`) | 200 with the `turn:` URLs of P5 and no `turn.status: 'unavailable'`; the hour's `[TURN-METER]` line in the `chat-delivery-service` log reads `x/y GB` at `log` level |
+| P8 | The routes: `/api/calls/` reaches chat-delivery, `/api/call` upgrades to call-service | (a) `curl -si https://canari.emse.fr/api/calls/ice-servers` with no session; (b) `curl -si -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' https://canari.emse.fr/api/call` with no session; (c) in the review window, the `101 Switching Protocols` of `wss://canari.emse.fr/api/call` in a signed-in session's DevTools | (a) and (b) answer the `auth_request` refusal (401), never the SPA's `index.html` or a 404 - which proves the host nginx, the edge and the container nginx all route the prefix (`Dockerfile.frontend`, `location /api/calls/` and `location /api/call`); (c) a `101`, and the socket held across an idle minute (CALL-L1 row 0 on the production path, above) |
+| P9 | No call state is left over from before | `docker exec <prod redis> redis-cli --scan --pattern 'call:*' \| wc -l` and `--pattern 'turn:*'` (the Redis container name as P1 finds Postgres') | `call:*` 0 with calls off (a non-zero count is a room created while the switch was open - who opened it?); `turn:metered:*` only #2180's keys, and no `turn:usage:<this month>` (the removed estimator's key, written by no deployed code once #2180 ships) |
+| P10 | Push for the call paths | the `chat-delivery-service` boot lines: `docker logs <container> 2>&1 \| grep -i firebase \| head` | Firebase initialised (it serves `call_ring` and `call_ring_end`); the APNs VoIP key is NOT checked - the first release has no native ring (Q1) |
+
+**What this list does not read, and where it is**: the privacy wording (B5), the store forms (B14,
+below), and every hardware reading (B8-B10) - each is its own blocker.
 
 ### minClientVersion
 
@@ -207,6 +247,81 @@ Production HAS Cloudflare TURN and has never used it: the `canari-calls` key car
 - **Data safety form**: the same facts as Apple's labels - audio E2E, never stored; call metadata;
   IPs to the peer and to Cloudflare as a relay. Whether E2E audio must be declared as collected under
   Play's definition is **(unverified)**; update the form in the same week as the stable.
+
+#### The drafts still owed (2026-10-21)
+
+Everything above says WHAT each store needs; these are the texts and the gaps, read against the
+repository on 2026-10-21. **Convention, as on [store-ugc-answers](../../store-ugc-answers.md): a
+store's definition restated here is _(unverified against today's text)_** - re-read the form itself
+before filling it. The forms are the owner's one-off clicks (App Store Connect, Play Console).
+
+**1. The microphone purpose string - today's text does NOT name calls, as `callsCompiled.test.ts`
+requires while `CALLS_COMPILED` is false.** The base `Info.plist` and both `InfoPlist.strings` hold
+the same sentence (voice messages, the sound of videos for posts and CanaReels). The flip commit
+(step 5) replaces it in all three, and the test's whole-word match (`appels?` / `calls?`) is what
+holds it:
+
+| Where | Proposed text |
+| --- | --- |
+| `Info.plist` (base, French) and `fr.lproj` | `Canari utilise le microphone pour vos appels audio, pour enregistrer des messages vocaux et le son des vidéos que vous filmez pour vos publications et vos CanaReels.` |
+| `en.lproj` | `Canari uses the microphone for your audio calls, to record voice messages and the sound of the videos you film for your posts and CanaReels.` |
+
+No other key moves: `NSCameraUsageDescription` keeps its text (no video), and the app declares no
+`NSLocalNetworkUsageDescription` in a store build (the local-bench patch of `ios.yml` is
+pre-release only). Android has no purpose string for `RECORD_AUDIO`; its runtime prompt is the
+system's own. **A gap on the PRE-release side**: a pre-release build calls (and, on dev, offers
+video) with the stable's microphone string, so an EXTERNAL TestFlight group would put a calling
+build before Beta App Review with a purpose string that never mentions calls - one more reason the
+flip's alpha stays with internal testers ([mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)).
+
+**2. The review notes, draft (English; App Store Connect > App Review Information > Notes).** The
+bracketed parts are filled at submission; credentials go in the Sign-In Information fields, never in
+this repository.
+
+> Canari is the messaging app of the Mines Saint-Etienne student community. This version adds
+> one-to-one AUDIO calls between two members who share a direct conversation. Calls are end-to-end
+> encrypted: the audio goes directly between the two devices, relayed through Cloudflare's TURN
+> service only when no direct path exists, and our servers never receive it.
+>
+> To test: (1) on the sign-in screen, choose "Connexion externe (service-account)" and sign in with
+> the account given in Sign-In Information; (2) open the direct conversation with [second account];
+> (3) tap the call button in the conversation header [confirm the control's label on the review
+> build] - iOS asks for the microphone, and the request names calls; (4) a member of our team answers
+> on a second device [window, Europe/Paris, and a contact to arrange another time]; (5) during the
+> call, lock the screen: the call continues. That is what the `audio` background mode is used for -
+> an ongoing call keeps its microphone while the screen is locked.
+>
+> This version declares no `voip` background mode and uses neither CallKit nor PushKit: a call rings
+> only while the app is open. Video calls are not offered. From the conversation, a member can
+> report and block the other; a blocked member cannot call.
+
+**3. The demo pair - owed, and one fact is not known.** The reviewers' way in is the existing
+"Connexion externe (service-account)" sign-in ([ecosystem-convergence](../../ecosystem-convergence.md),
+item 12) with the store-review service account, which feeds exclude by design
+([moderation-and-blocking](../../moderation-and-blocking.md)). A call needs a SECOND production
+account, a direct conversation between the two, the call permission allowed on both sides and no
+block - the owner's one-off. **Unverified: whether a service account can be rung at all.** Nothing
+read here excludes one from `initiate` or `ring` (the exclusion found is a FEED filter), but it has
+never been tried; it is read by one call between the two accounts on production in the review window
+(preflight P7, P8), before the submission is sent.
+
+**4. The privacy deltas, as candidates for the owner** - the facts are register row C21 and the
+Cloudflare processor row ([register](../../compliance/register-of-processing.md)), the only copy;
+this table maps them onto the two forms. **Read the CURRENT label and Data safety answers first** -
+neither form is in this repository - and decide together with B5's wording, so the forms and
+`/legal/privacy` say the same thing.
+
+| Fact (C21) | App Store privacy label (candidate) | Play Data safety (candidate) |
+| --- | --- | --- |
+| Call audio, end-to-end encrypted, never stored or readable by the server | not collected, if Apple's "collect" (data you or a partner can access beyond servicing the request in real time) reads E2E media as outside it | not collected, if Play's exemption for end-to-end encrypted data still reads as it is remembered |
+| Call metadata in clear on the server (room binding, presence, ring fan-out; logs per C13) | Usage Data > Product Interaction, linked to the user, App Functionality - only if the current label does not already cover messaging metadata | App activity > Other actions, collected, App functionality - same proviso |
+| The peer and Cloudflare see each device's public IP, on EVERY call (relay candidates are always gathered) | Apple counts an IP as an identifier only for tracking or as derived location; neither applies, so probably no new row | no new data type if no location is derived from it; Cloudflare is a service provider (the form's sharing exemption) |
+| The `[CALL_REPORT]` lines in the in-app log | not collected: the log leaves the device only when the member exports it | same |
+| The ring push carries caller and conversation names (C7, C21) | already covered by the messaging rows, if they name push content | same |
+
+**What remains after these drafts**: the owner's answers to the table, the demo pair, the video
+(recorded during the Tier B runs, never staged), and the listing texts
+([store-listings](../../store-listings.md#2-the-current-play-texts-and-what-is-stale-2026-10-09)).
 
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
