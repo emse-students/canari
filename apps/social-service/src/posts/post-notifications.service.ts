@@ -24,7 +24,12 @@ import {
   followedPostContent,
   associationRepostContent,
   repostProposedContent,
+  repostPersonalRequestedContent,
   coorganiseProposedContent,
+  liveStartedContent,
+  liveCutContent,
+  liveSuspendedContent,
+  liveWithdrawnContent,
   publicMediaIconId,
   MENTION_TOKEN_RE,
   type PushContent,
@@ -94,9 +99,25 @@ export class PostNotificationsService {
         return associationRepostContent(actorName, text, icon);
       case 'repost_proposed':
         return repostProposedContent(actorName, text, icon);
+      // D38b: an association asks the AUTHOR to let it republish their personal post. `actorName`
+      // is the ASSOCIATION. Its answers (`repost_personal_accepted` / `_refused`) are in-app only.
+      case 'repost_personal_requested':
+        return repostPersonalRequestedContent(actorName, text, icon);
       // Co-organisation (D39). `actorName` is the ORGANISING association, `text` the event title.
       case 'coorganise_proposed':
         return coorganiseProposedContent(actorName, text, icon);
+      // A live started (WP-L7). `actorName` is the broadcaster, a person or an association; there
+      // is no text to quote.
+      case 'live_started':
+        return liveStartedContent(actorName, icon);
+      // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
+      // no icon - which moderator acted is not theirs to read, and the reason stays on the row.
+      case 'live_cut':
+        return liveCutContent();
+      case 'live_suspended':
+        return liveSuspendedContent();
+      case 'live_withdrawn':
+        return liveWithdrawnContent();
       // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':
@@ -133,22 +154,34 @@ export class PostNotificationsService {
    * `displayName`, so a post notification could name somebody differently from the post it opened.
    *
    * Falls back to the actor id, which is not a name but is addressable: a notification with no
-   * actor at all reads as a fault, and the client resolves an id it recognises.
+   * actor at all reads as a fault, and the client resolves an id it recognises. A caller for which
+   * an id is NOT acceptable as a title asks {@link resolveDisplayName} instead.
    */
   async resolveActorName(actorId: string): Promise<string> {
     try {
-      const rows: unknown = await this.postRepo.manager.query(
-        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
-        [actorId]
+      return (await this.resolveDisplayName(actorId)) ?? actorId;
+    } catch (e) {
+      this.logger.warn(
+        `[NOTIF] display name of ${actorId.slice(0, 8)} unreadable, the id stands in: ${e instanceof Error ? e.message : String(e)}`
       );
-      if (!Array.isArray(rows) || rows.length === 0) return actorId;
-      const u: unknown = rows[0];
-      if (typeof u !== 'object' || u === null) return actorId;
-      return formatUserDisplayNameFromRaw(u as Record<string, unknown>) || actorId;
-    } catch {
-      /* non-fatal */
+      return actorId;
     }
-    return actorId;
+  }
+
+  /**
+   * A user's display name, or `null` when there is GENUINELY none: no `users` row, or a row with no
+   * name. A failed lookup is not that answer and THROWS - the caller tells "nobody to name" from
+   * "could not ask" by the type of the outcome, never by reading a message.
+   */
+  async resolveDisplayName(actorId: string): Promise<string | null> {
+    const rows: unknown = await this.postRepo.manager.query(
+      `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
+      [actorId]
+    );
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const u: unknown = rows[0];
+    if (typeof u !== 'object' || u === null) return null;
+    return formatUserDisplayNameFromRaw(u as Record<string, unknown>) || null;
   }
 
   /**
@@ -186,6 +219,8 @@ export class PostNotificationsService {
    * Pass `actorName` to skip the DB lookup (e.g. system-generated notifications).
    * Pass `skipPush: true` when the caller already sends its own push (e.g. with a richer
    * message than `pushContent` can build) - otherwise the recipient gets duplicate pushes.
+   * `pushData` adds fields to the push payload over `{ type, postId }` - a typed `target` such as
+   * `NOTIFICATIONS_TARGET`, for a notice whose `postId` names no post.
    */
   async createNotification(data: {
     recipientId: string;
@@ -195,9 +230,10 @@ export class PostNotificationsService {
     text: string;
     actorName?: string;
     skipPush?: boolean;
+    pushData?: Record<string, string>;
   }) {
     if (data.recipientId === data.actorId) return;
-    const { skipPush, ...notifData } = data;
+    const { skipPush, pushData, ...notifData } = data;
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
     await this.notifRepo.save(this.notifRepo.create({ ...notifData, actorName }));
 
@@ -222,6 +258,7 @@ export class PostNotificationsService {
     void this.push.notifyContent(data.recipientId, content, {
       type: 'social',
       postId: data.postId,
+      ...pushData,
     });
   }
 
@@ -251,6 +288,11 @@ export class PostNotificationsService {
     associationLogoMediaId?: string | null;
     /** Extra fields for the push payload, e.g. the association the event belongs to. */
     pushData?: Record<string, string>;
+    /**
+     * In-app rows only, no push - a type that is deliberately never pushed (the answer to a
+     * republication request, D38b) rather than one `pushContent` forgot.
+     */
+    skipPush?: boolean;
   }): Promise<number> {
     const recipients = [...new Set(data.recipientIds)].filter((id) => id !== data.actorId);
     if (recipients.length === 0) return 0;
@@ -270,7 +312,55 @@ export class PostNotificationsService {
         })
       )
     );
+    if (data.skipPush) return recipients.length;
 
+    await this.fanOutPush({ ...data, actorName }, recipients);
+    return recipients.length;
+  }
+
+  /**
+   * A push for a notice the bell does NOT keep - one per recipient, through the same mapping, icon
+   * rule, mute and bounded fan-out as {@link createNotifications}, and no `post_notifications` row.
+   *
+   * For a notice about something that does not outlive its moment: a live (WP-L7) is deleted when it
+   * ends (L3), so a bell row naming it would point at a 404 for ever after. The LIVE card at the top
+   * of the feed is its in-app surface (L5). Returns how many recipients were addressed, before the
+   * mute (which only the push consults, exactly as for a post).
+   */
+  async pushNotice(data: {
+    recipientIds: string[];
+    type: string;
+    actorId: string;
+    actorName: string;
+    text: string;
+    associationId?: string;
+    associationLogoMediaId?: string | null;
+    pushData?: Record<string, string>;
+  }): Promise<number> {
+    const recipients = [...new Set(data.recipientIds)].filter((id) => id !== data.actorId);
+    if (recipients.length === 0) return 0;
+    await this.fanOutPush(data, recipients);
+    return recipients.length;
+  }
+
+  /**
+   * The push half of a notice: the picture, the content, the mute, then the bounded fan-out. Shared
+   * by {@link createNotifications} and {@link pushNotice} so neither can drift from the other's
+   * mapping or mute. Throws only when the mute lookup fails (fail closed, see below).
+   */
+  private async fanOutPush(
+    data: {
+      type: string;
+      actorId: string;
+      actorName: string;
+      text: string;
+      associationId?: string;
+      associationLogoMediaId?: string | null;
+      pushData?: Record<string, string>;
+    },
+    recipients: string[]
+  ): Promise<void> {
+    const actorName = data.actorName;
     // THE LOGO WHEN THE PUBLISHER IS AN ASSOCIATION, THE PERSON OTHERWISE - the same split the
     // notifications page makes, and for the same reason: `actorId` on an `association_post` row is
     // the member who pressed publish, so keying the picture off it shows a face where the reader
@@ -300,26 +390,26 @@ export class PostNotificationsService {
     );
     if (!content) {
       this.logger.warn(
-        `[NOTIFY] no push content for type=${data.type} - ${recipients.length} in-app ` +
-          'notification(s) were written, no system one was. Add the type to pushContent.'
+        `[NOTIFY] no push content for type=${data.type} - ${recipients.length} recipient(s) ` +
+          'got no system notification (any in-app row was written). Add the type to pushContent.'
       );
-      return recipients.length;
+      return;
     }
-    // THE MUTE, applied HERE and server-side: the in-app rows above are already written (a mute
-    // silences the PUSH, never the bell or the feed), and only a type that reaches a READER of the
+    // THE MUTE, applied HERE and server-side: any in-app row is already written (a mute silences
+    // the PUSH, never the bell or the feed), and only a type that reaches a READER of the
     // association is eligible - managers' operational pushes are never muted (`MUTABLE_PUSH_TYPES`).
     let pushRecipients = recipients;
     if (data.associationId && MUTABLE_PUSH_TYPES.has(data.type)) {
       // FAIL CLOSED, LOUDLY: if the lookup fails the push is NOT sent to everyone (that would
       // override a stated privacy choice) and not silently dropped either - the error is logged
-      // here and rethrown, so the caller's own warning names the post that was not pushed. The
-      // in-app rows are already written, so the bell still carries it.
+      // here and rethrown, so the caller's own warning names the post (or live) that was not
+      // pushed. A post's in-app rows are already written, so the bell still carries it.
       const muted = await this.pushMutes
         .mutedAmong(data.associationId, recipients)
         .catch((e: unknown) => {
           this.logger.error(
             `[NOTIFY] mute lookup failed for association=${data.associationId?.slice(0, 8)} - ` +
-              `push NOT sent to ${recipients.length} recipient(s), in-app rows kept: ${String(e)}`
+              `push NOT sent to ${recipients.length} recipient(s): ${String(e)}`
           );
           throw e;
         });
@@ -343,7 +433,6 @@ export class PostNotificationsService {
         this.logger.warn(`[NOTIFY] push failed for ${item}: ${String(error)}`);
       }
     });
-    return recipients.length;
   }
 
   /** Returns the most recent notifications for a user, newest first. */

@@ -44,12 +44,29 @@ function signingKey(): string {
   return key;
 }
 
+/**
+ * Base64url HMAC-SHA256 of `canonical` under `AGENDA_SIGNING_KEY` - THE ONE KEY for every link a
+ * calendar app opens without an identity (an agenda selection, a booking's `.ics`). Each caller
+ * prefixes its own canonical form, so a signature made for one kind of link can never be read as
+ * another's. Rotating the key ends every saved link of every kind at once - that is the revocation.
+ */
+export function signWithAgendaKey(canonical: string): string {
+  return crypto.createHmac('sha256', signingKey()).update(canonical).digest('base64url');
+}
+
+/** Constant-time comparison of `received` with the signature of `canonical`; false when absent. */
+export function agendaKeySignatureMatches(
+  canonical: string,
+  received: string | undefined
+): boolean {
+  const got = Buffer.from(received?.trim() ?? '');
+  const expected = Buffer.from(signWithAgendaKey(canonical));
+  return got.length === expected.length && crypto.timingSafeEqual(expected, got);
+}
+
 /** Base64url HMAC-SHA256 of the canonical selection. */
 export function signAgendaSelection(sel: SignedSelection): string {
-  return crypto
-    .createHmac('sha256', signingKey())
-    .update(canonicalAgendaSelection(sel))
-    .digest('base64url');
+  return signWithAgendaKey(canonicalAgendaSelection(sel));
 }
 
 /** Constant-time check; 403 `AGENDA_SIGNATURE_REQUIRED` when absent, `..._INVALID` when wrong. */

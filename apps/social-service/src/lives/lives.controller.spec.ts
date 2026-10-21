@@ -1,4 +1,5 @@
-import { HttpStatus } from '@nestjs/common';
+import { HttpStatus, Logger } from '@nestjs/common';
+import type { DataSource } from 'typeorm';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Readable } from 'stream';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
@@ -6,6 +7,8 @@ import { LiveEnabledGuard, isLiveEnabled } from './live-enabled.guard';
 import { LIVE_SEGMENT_MAX_BYTES } from './live.constants';
 import { LivesController } from './lives.controller';
 import type { LivesService } from './lives.service';
+import type { AssociationsService } from '../associations/associations.service';
+import type { LiveChatService } from './live-chat.service';
 import { readBoundedBody } from './read-bounded-body';
 
 /** A request whose body is `chunks`, with `content-length` when given. */
@@ -24,6 +27,15 @@ async function statusOf(p: Promise<unknown> | (() => unknown)): Promise<number> 
   return HttpStatus.OK;
 }
 
+/** A DataSource whose `platform_config` answers `rows` (or throws `error`) - the one read the guard makes. */
+function platformDb(rows: unknown[] | Error) {
+  const query = jest.fn(async () => {
+    if (rows instanceof Error) throw rows;
+    return rows;
+  });
+  return { db: { manager: { query } } as unknown as DataSource, query };
+}
+
 describe('the live switch (LIVE_ENABLED)', () => {
   const saved = process.env.LIVE_ENABLED;
   afterEach(() => {
@@ -36,10 +48,17 @@ describe('the live switch (LIVE_ENABLED)', () => {
       if (value === undefined) delete process.env.LIVE_ENABLED;
       else process.env.LIVE_ENABLED = value;
       expect(isLiveEnabled()).toBe(false);
-      expect(await statusOf(() => new LiveEnabledGuard().canActivate())).toBe(HttpStatus.NOT_FOUND);
+      // The deploy lock is asked FIRST: a closed estate never reads the database, even with lives on.
+      const { db, query } = platformDb([{ lives_mode: 'on' }]);
+      expect(await statusOf(() => new LiveEnabledGuard(db).canActivate())).toBe(
+        HttpStatus.NOT_FOUND
+      );
+      expect(query).not.toHaveBeenCalled();
     }
     process.env.LIVE_ENABLED = 'true';
-    expect(new LiveEnabledGuard().canActivate()).toBe(true);
+    await expect(
+      new LiveEnabledGuard(platformDb([{ lives_mode: 'on' }]).db).canActivate()
+    ).resolves.toBe(true);
   });
 
   it('guards the whole controller, the switch BEFORE the account check', () => {
@@ -47,6 +66,63 @@ describe('the live switch (LIVE_ENABLED)', () => {
       LiveEnabledGuard,
       NginxAuthGuard,
     ]);
+  });
+});
+
+/**
+ * THE RUNTIME KILL SWITCH (`platform_config.lives_mode`, migration 015 in core-service), ANDed with
+ * the deploy lock. Every `/api/lives` route sits behind this one guard (asserted above and in
+ * live-chat.service.spec.ts), so these cases are the refusal of each route.
+ */
+describe('the live kill switch (platform_config.lives_mode)', () => {
+  const saved = process.env.LIVE_ENABLED;
+  beforeEach(() => {
+    process.env.LIVE_ENABLED = 'true';
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.LIVE_ENABLED;
+    else process.env.LIVE_ENABLED = saved;
+  });
+
+  it('answers 404 while the switch is off, the answer of the deploy lock', async () => {
+    const { db, query } = platformDb([{ lives_mode: 'off' }]);
+    expect(await statusOf(() => new LiveEnabledGuard(db).canActivate())).toBe(HttpStatus.NOT_FOUND);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('SELECT lives_mode FROM platform_config')
+    );
+  });
+
+  it('reads the database on EVERY request, so a flip holds from the next one', async () => {
+    const answers = [[{ lives_mode: 'on' }], [{ lives_mode: 'off' }]];
+    const query = jest.fn(async () => answers.shift());
+    const guard = new LiveEnabledGuard({ manager: { query } } as unknown as DataSource);
+    await expect(guard.canActivate()).resolves.toBe(true);
+    expect(await statusOf(() => guard.canActivate())).toBe(HttpStatus.NOT_FOUND);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers 404 when the row is missing, and says so at error', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    expect(await statusOf(() => new LiveEnabledGuard(platformDb([]).db).canActivate())).toBe(
+      HttpStatus.NOT_FOUND
+    );
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('MISSING'));
+    error.mockRestore();
+  });
+
+  it.each(['ON', 'true', 'audio', '', null])(
+    'refuses (throws, never opens) on an unknown value %p',
+    async (value) => {
+      await expect(
+        new LiveEnabledGuard(platformDb([{ lives_mode: value }]).db).canActivate()
+      ).rejects.toThrow(/unknown value/);
+    }
+  );
+
+  it('refuses when the read fails - a switch that cannot be read is not read as open', async () => {
+    await expect(
+      new LiveEnabledGuard(platformDb(new Error('connection lost')).db).canActivate()
+    ).rejects.toThrow('connection lost');
   });
 });
 
@@ -71,10 +147,24 @@ describe('a segment body', () => {
   });
 });
 
+const MODERATOR = 'm'.repeat(64);
+
 describe('LivesController', () => {
   const ingest = jest.fn().mockResolvedValue({ index: 0 });
-  const manifest = jest.fn().mockResolvedValue({});
-  const controller = new LivesController({ ingest, manifest } as unknown as LivesService);
+  const manifest = jest.fn().mockResolvedValue({ liveId: 'm' });
+  const read = jest.fn().mockResolvedValue({ messages: [] });
+  const cut = jest.fn().mockResolvedValue({ newlyCut: true });
+  const rulesStatus = jest.fn().mockResolvedValue({ version: 1 });
+  /** The posts' one moderator predicate, faked: only `MODERATOR` holds `MODERATE` in a BDE. */
+  const isContentModerator = jest.fn(
+    async (userId: string, opts?: { isGlobalAdmin?: boolean }) =>
+      opts?.isGlobalAdmin === true || userId === MODERATOR
+  );
+  const controller = new LivesController(
+    { ingest, manifest, cut, rulesStatus } as unknown as LivesService,
+    { isContentModerator } as unknown as AssociationsService,
+    { read } as unknown as LiveChatService
+  );
   const LIVE = '22222222-2222-4222-8222-222222222222';
 
   beforeEach(() => jest.clearAllMocks());
@@ -99,5 +189,70 @@ describe('LivesController', () => {
     expect(await statusOf(controller.manifest(LIVE, 'b'.repeat(64), 'x'))).toBe(
       HttpStatus.BAD_REQUEST
     );
+  });
+
+  describe('the staff cut: WHO may (the posts moderation predicate)', () => {
+    const body = { reason: 'harassment' };
+
+    it.each([
+      ['a member', 'b'.repeat(64), undefined],
+      ['the broadcaster', 'a'.repeat(64), undefined],
+      ['a member sending x-global-admin: false', 'c'.repeat(64), 'false'],
+      ['a member sending a misspelt admin header', 'c'.repeat(64), 'TRUE'],
+    ])(
+      'refuses %s with 403 LIVE_CUT_FORBIDDEN, before the live is looked up',
+      async (_who, userId, admin) => {
+        await expect(controller.cut(LIVE, userId, admin, body)).rejects.toMatchObject({
+          status: HttpStatus.FORBIDDEN,
+          response: { code: 'LIVE_CUT_FORBIDDEN' },
+        });
+        expect(cut).not.toHaveBeenCalled();
+      }
+    );
+
+    it('lets a BDE moderator and a platform admin cut, the caller and the id in lower case', async () => {
+      await controller.cut(LIVE.toUpperCase(), MODERATOR.toUpperCase(), undefined, body);
+      expect(cut).toHaveBeenLastCalledWith(MODERATOR, LIVE, body);
+      await controller.cut(LIVE, 'd'.repeat(64), 'true', body);
+      expect(cut).toHaveBeenLastCalledWith('d'.repeat(64), LIVE, body);
+      expect(isContentModerator).toHaveBeenLastCalledWith('d'.repeat(64), { isGlobalAdmin: true });
+    });
+  });
+
+  it('answers the caller its first-live rules standing', async () => {
+    await controller.rules('A'.repeat(64));
+    expect(rulesStatus).toHaveBeenCalledWith('a'.repeat(64));
+  });
+
+  it('adds the chat block ONLY with chat=1, after the manifest let the viewer watch (WP-L6, C3)', async () => {
+    await expect(controller.manifest(LIVE, 'b'.repeat(64))).resolves.toEqual({ liveId: 'm' });
+    expect(read).not.toHaveBeenCalled();
+
+    await expect(controller.manifest(LIVE, 'B'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
+    });
+    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
+      messagesAfter: undefined,
+      reactionsAfter: undefined,
+    });
+    await controller.manifest(LIVE, 'b'.repeat(64), '3', '1', '41', '0');
+    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
+      messagesAfter: 41,
+      reactionsAfter: 0,
+    });
+  });
+
+  it('refuses a malformed chat cursor BEFORE the manifest renews a seat', async () => {
+    for (const bad of ['', '-1', '1.5', '0x1', '1234567890']) {
+      expect(await statusOf(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1', bad))).toBe(
+        HttpStatus.BAD_REQUEST
+      );
+      expect(
+        await statusOf(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1', '0', bad))
+      ).toBe(HttpStatus.BAD_REQUEST);
+    }
+    expect(manifest).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
   });
 });

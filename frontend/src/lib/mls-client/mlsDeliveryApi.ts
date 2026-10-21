@@ -9,7 +9,7 @@ import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
-import { ApiRefusalError, responseOrigin } from '$lib/utils/apiRefusal';
+import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 
 export type MlsDeliveryFetch = typeof fetch;
@@ -342,6 +342,40 @@ export class SendForbiddenError extends ApiRefusalError {
     super(403, null, `Message send refused with 403 for group ${groupId}`);
     this.name = 'SendForbiddenError';
   }
+}
+
+/**
+ * The delivery service - or a proxy in front of it - ANSWERED an application frame with a 5xx.
+ *
+ * Typed at the throw so the outbox counts it by TYPE, never by the sentence: N of them in a row park
+ * a text as failed (`MAX_CONSECUTIVE_SERVER_ERRORS` in `outbox.ts`, user 2026-10-18), while a
+ * transport failure ({@link DeliveryUnreachableError}: nobody answered) never counts. A 5xx IS an
+ * answer, whoever wrote it; `origin` says who, for the log line that has to tell a broken gateway
+ * from a relay in front of it.
+ */
+export class SendServerError extends ApiRefusalError {
+  constructor(
+    readonly groupId: string,
+    status: number,
+    readonly origin: ResponseOrigin,
+    /** The answer's `Retry-After`, in ms, or null when it sent none the client can read. */
+    readonly retryAfterMs: number | null = null
+  ) {
+    super(status, null, `Message send answered ${status} (${origin}) for group ${groupId}`);
+    this.name = 'SendServerError';
+  }
+}
+
+/**
+ * A `Retry-After` header in ms: delta-seconds, or an HTTP date read against `now`. `null` when
+ * absent or unreadable - never a default, the caller keeps its own schedule. A date in the past is 0.
+ */
+export function parseRetryAfterMs(header: string | null, now: number): number | null {
+  if (header === null) return null;
+  const value = header.trim();
+  if (/^[0-9]+$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
 }
 
 /**
@@ -807,27 +841,33 @@ export class MlsDeliveryApi {
       deviceAppVersion?: string;
     }>
   > {
-    const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
-      headers: await this.auth(),
-    });
-    if (!res.ok) throw new Error(`fetchUserDevices failed: ${res.status}`);
-    // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
-    // are re-validated with `typeof` below before being kept.
-    const devices = (await res.json()) as Array<{
-      keyPackage: string;
-      deviceId: string;
-      deviceName?: string;
-      deviceOs?: string;
-      deviceAppVersion?: string;
-    }>;
+    // SIMULTANEOUS ASKERS SHARE ONE REQUEST (WP-W4): a boot asked for the account's own device list
+    // three times - the pending-invitation sweep, the welcome-request answer and the group
+    // reconcile each sent theirs. The entry lives as long as the request, so no answer is served
+    // older than the request a caller joined (see {@link joinInFlight}).
+    return this.joinInFlight(`${userId}:devices`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) throw await refusalFromResponse(res, 'fetchUserDevices failed');
+      // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
+      // are re-validated with `typeof` below before being kept.
+      const devices = (await res.json()) as Array<{
+        keyPackage: string;
+        deviceId: string;
+        deviceName?: string;
+        deviceOs?: string;
+        deviceAppVersion?: string;
+      }>;
 
-    return devices.map((d) => ({
-      keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
-      deviceId: d.deviceId,
-      deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
-      deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
-      deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
-    }));
+      return devices.map((d) => ({
+        keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
+        deviceId: d.deviceId,
+        deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+        deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+        deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+      }));
+    });
   }
 
   /**
@@ -1122,7 +1162,7 @@ export class MlsDeliveryApi {
     );
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
     if (!res.ok) {
-      throw new Error(`GroupInfo fetch HTTP error: ${res.status}`);
+      throw await refusalFromResponse(res, 'GroupInfo fetch HTTP error');
     }
     const data = await res.json();
     // The server returns null (no body content) when nothing is stored.
@@ -1159,7 +1199,7 @@ export class MlsDeliveryApi {
       }
     );
     if (!res.ok) {
-      throw new Error(`GroupInfo store HTTP error: ${res.status}`);
+      throw await refusalFromResponse(res, 'GroupInfo store HTTP error');
     }
     const data = await res.json().catch(() => null);
     return { stored: data?.stored === true };
@@ -1403,7 +1443,17 @@ export class MlsDeliveryApi {
       if (res.status === 410) {
         throw new GroupDeletedError(groupId);
       }
-      throw new Error(`Message send HTTP error: ${res.status}`);
+      if (res.status >= 500) {
+        throw new SendServerError(
+          groupId,
+          res.status,
+          responseOrigin(res),
+          parseRetryAfterMs(res.headers.get('retry-after'), Date.now())
+        );
+      }
+      // ANY OTHER REFUSAL carries its status as a type too: an answer, which the outbox reads as
+      // breaking a run of 5xx - a sentence could not be read back.
+      throw new ApiRefusalError(res.status, null, `Message send HTTP error: ${res.status}`);
     }
     // The server's receive time for this frame - the `createdAt` every recipient's copy carries, and
     // the only server time the SENDER's own copy can ever get (it never receives its frame back). A
@@ -1563,7 +1613,7 @@ export class MlsDeliveryApi {
       headers: await this.auth({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ name }),
     });
-    if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'Rename failed');
   }
 
   /** Sets or clears (mediaId=null) the group's avatar on the server. Throws on non-2xx. */
@@ -1573,7 +1623,7 @@ export class MlsDeliveryApi {
       headers: await this.auth({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ mediaId }),
     });
-    if (!res.ok) throw new Error(`setGroupImage failed: ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'setGroupImage failed');
   }
 
   /** Soft-deletes `groupId` on the server. Returns `false` if already absent (404). */
@@ -1613,7 +1663,7 @@ export class MlsDeliveryApi {
       headers: await this.auth(),
     });
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
-    if (!res.ok) throw new Error(`getGroupMembers failed: ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'getGroupMembers failed');
     return await res.json();
   }
 
@@ -1629,7 +1679,7 @@ export class MlsDeliveryApi {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
         headers: await this.auth(),
       });
-      if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
+      if (!res.ok) throw await refusalFromResponse(res, 'getGroupUserMembers failed');
       return await res.json();
     });
   }
@@ -1749,13 +1799,17 @@ export class MlsDeliveryApi {
 
   /** Returns all groups `userId` belongs to, including soft-deleted tombstones (`deletedAt`). */
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
-    const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
-      headers: await this.auth(),
+    // ONE REQUEST FOR SIMULTANEOUS ASKERS (WP-W4): the boot reads this list from the conversation
+    // load, the sweep and the reconcile, three requests for one answer.
+    return this.joinInFlight(`${userId}:user-groups`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) {
+        throw await refusalFromResponse(res, 'getUserGroups failed');
+      }
+      return (await res.json()) as UserGroupRow[];
     });
-    if (!res.ok) {
-      throw new Error(`getUserGroups failed: ${res.status}`);
-    }
-    return await res.json();
   }
 
   /**
@@ -1861,7 +1915,7 @@ export class MlsDeliveryApi {
         body: JSON.stringify({ groupId }),
       }
     );
-    if (!res.ok) throw new Error(`dismissGroup refused: HTTP ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'dismissGroup refused');
   }
 
   /**
@@ -1873,7 +1927,7 @@ export class MlsDeliveryApi {
       `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups/${encodeURIComponent(groupId)}`,
       { method: 'DELETE', headers: await this.auth() }
     );
-    if (!res.ok) throw new Error(`undismissGroup refused: HTTP ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'undismissGroup refused');
   }
 
   /**
@@ -1963,7 +2017,7 @@ export class MlsDeliveryApi {
         headers: await this.auth(),
       }
     );
-    if (!res.ok) throw new Error(`device-memberships answered ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'device-memberships');
     return await res.json();
   }
 
@@ -1992,7 +2046,7 @@ export class MlsDeliveryApi {
       headers: await this.auth({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ deviceId, userId, groupId }),
     });
-    if (!res.ok) throw new Error(`kickStaleDevice failed: ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'kickStaleDevice failed');
   }
 
   /** Deletes the membership row for a specific device+group pair. Returns `{ affected: 0 }` on error. */

@@ -6,7 +6,7 @@
  * asserted is the component's own arithmetic over that model: how many rows the hidden entry
  * frame mounts, how many the widen adds, and where it leaves `scrollTop`.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
 import type { ChatMessage, Conversation } from '$lib/types';
@@ -23,6 +23,15 @@ vi.mock('$lib/utils/userAvatarCache', () => ({
 
 const PANE_PX = 700;
 const ROW_SELECTOR = '[id^="msg-"]';
+
+/**
+ * Rows in the thread, deliberately just above the 60-row entry window and not a long thread: what
+ * is asserted is the window's arithmetic, which a thread of 80 shows as well as one of 300 (a window
+ * of anything but 60 reads differently), and ChatArea's mount cost grows with the WHOLE thread -
+ * measured 2026-10-19, 2.0 s per test at 300 rows against 0.5 s at 70, which under suite load
+ * crossed the 5 s timeout. docs/wiki/test-suite-reform.md (WP-T9).
+ */
+const THREAD = 80;
 
 let rowPx = 36;
 const mounted: (() => void)[] = [];
@@ -87,7 +96,24 @@ function mountArea(count: number) {
   return target;
 }
 
+/**
+ * THE ENTRY'S CLOCK IS FAKE, SO THE TEST CHECKS ARITHMETIC AND NOT SPEED. The widen waits behind
+ * `scrollToBottomSettled` (animation frames, 250 and 600 ms re-pins) and `yieldToMainThread`; on
+ * real timers a loaded runner starves them and the wait outlasts any timeout. Frames and timers are
+ * advanced explicitly instead, so the result cannot depend on how busy the machine is.
+ */
+async function settleEntry() {
+  for (let i = 0; i < 12; i++) await vi.advanceTimersByTimeAsync(100);
+}
+
+beforeEach(() => {
+  vi.useFakeTimers({
+    toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout', 'clearTimeout'],
+  });
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   mounted.splice(0).forEach((f) => f());
   restore.splice(0).forEach((f) => f());
   vi.restoreAllMocks();
@@ -96,31 +122,33 @@ afterEach(() => {
 describe('ChatArea entry window (F6)', () => {
   it('a thread of one-line rows settles on the 60-row entry window, never on more', async () => {
     // 20 one-line rows (720 px) do not exceed a 700 px pane by the 40 px fillViewportThenPin wants,
-    // so it steps RENDER_GROUPS_STEP (140) from the 20-row tail: 160 rows in the hidden frame.
+    // so it steps to the full entry size in the hidden frame; the widen then has nothing to add.
     rowPx = 36;
     modelGeometry();
-    const target = mountArea(300);
-    await vi.waitFor(() => expect(target.querySelectorAll(ROW_SELECTOR).length).toBeGreaterThan(0));
-    await vi.waitFor(() => expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60), {
-      timeout: 2000,
-    });
+    const target = mountArea(THREAD);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBeGreaterThan(0);
+    await settleEntry();
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
   });
 
   it('mounts 20 rows first, widens to 60, and moves scrollTop by exactly the height added', async () => {
     rowPx = 48; // 20 rows = 960 px: the viewport is filled, no fill step.
     modelGeometry();
-    const target = mountArea(300);
+    const target = mountArea(THREAD);
     const scroller = () =>
       target
         .querySelector<HTMLElement>(ROW_SELECTOR)
         ?.closest<HTMLElement>('[class*="overflow-y"]') ?? null;
-    await vi.waitFor(() => expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(20));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(20);
     const el = scroller();
     expect(el).not.toBeNull();
     const heightBefore = el!.scrollHeight;
-    await vi.waitFor(() => expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60));
+    await settleEntry();
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
     expect(el!.scrollHeight - heightBefore).toBe(40 * rowPx);
     // The rows under the eye are the same: the reader is still at the bottom of the taller list.
-    await vi.waitFor(() => expect(el!.scrollTop).toBe(el!.scrollHeight));
+    expect(el!.scrollTop).toBe(el!.scrollHeight);
   });
 });

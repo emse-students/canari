@@ -11,6 +11,10 @@
  *
  * Dates are `YYYY-MM-DD` strings and times `HH:MM` or `HH:MM:SS` (PostgreSQL `date` and `time` as
  * TypeORM returns them). `24:00` is accepted as the end of a day: it is the next day's 00:00.
+ *
+ * COPIED BYTE FOR BYTE to the screen (`frontend/src/lib/bookings/zonedTime.ts`), declared in
+ * `.github/scripts/lib/declared-duplicates.mjs`: a space's times are read and written in its zone
+ * on both sides (D25), and two implementations of the same clock would drift at the first DST night.
  */
 
 const DAY_MS = 86_400_000;
@@ -134,6 +138,11 @@ export function zonedToUtcMs(date: string, time: string, zone: string): number {
 /** The local calendar date (`YYYY-MM-DD`) of `instantMs` in `zone`. */
 export function localDate(instantMs: number, zone: string): string {
   return new Date(wallClockMs(instantMs, zone)).toISOString().slice(0, 10);
+}
+
+/** The local wall time (`HH:MM`, `00:00`..`23:59`) of `instantMs` in `zone`. */
+export function localTime(instantMs: number, zone: string): string {
+  return new Date(wallClockMs(instantMs, zone)).toISOString().slice(11, 16);
 }
 
 /** `date` plus `days` calendar days (negative allowed). */

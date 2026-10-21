@@ -291,3 +291,41 @@ describe('CameraScreen', () => {
     expect(video.muted).toBe(true);
   });
 });
+
+describe('CameraScreen and the theme', () => {
+  it("entering and leaving the camera in the iOS app leaves the page's theme where it was", async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const { themeStore } = await import('$lib/stores/themeStore.svelte');
+    // The iOS shell: a posted theme becomes the window's style, which WKWebView's media query follows.
+    let schemeDark = false;
+    const listeners: Array<(e: { matches: boolean }) => void> = [];
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('dark') ? schemeDark : false,
+      media: query,
+      addEventListener: (_t: string, cb: (e: { matches: boolean }) => void) => listeners.push(cb),
+      removeEventListener: () => {},
+    }));
+    const postMessage = vi.fn((theme: string) => {
+      if ((theme === 'dark') === schemeDark) return;
+      schemeDark = theme === 'dark';
+      for (const cb of listeners) cb({ matches: schemeDark });
+    });
+    vi.stubGlobal('webkit', { messageHandlers: { canariTheme: { postMessage } } });
+    localStorage.removeItem('canari-theme');
+    try {
+      themeStore.init();
+      expect(document.documentElement.dataset.theme).toBe('light');
+
+      await render(() => Promise.resolve(stream(false)));
+      expect(postMessage).toHaveBeenLastCalledWith('dark');
+      expect(document.documentElement.dataset.theme).toBe('light');
+
+      unmount(mounted.pop()!);
+      expect(postMessage).toHaveBeenLastCalledWith('light');
+      expect(document.documentElement.dataset.theme).toBe('light');
+      expect(localStorage.getItem('canari-theme')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

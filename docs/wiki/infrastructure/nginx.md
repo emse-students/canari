@@ -26,15 +26,17 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API; Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe -> `GET /api/health` |
 | `/api/media/*` | `media-service:3011` | yes | Encrypted blob storage (Garage) |
+| `^~ /api/media/public/live/` -> nested `~ <uuid>/<uuid>\z` | `media-service:3011`, through the `live_segments` **`proxy_cache`** | no | One sealed live segment, answered from this nginx's cache from the second viewer on (`proxy_cache_lock`: viewers arriving together make ONE upstream request), keyed on the path alone; `private, max-age=120`; the WebView CORS allowlist; `lives_segments` limit 30 r/s burst 60 per address, plus `limit_conn` 24 (the viewer cap) and `limit_rate` 750 000 B/s per address (a coarse bound, twice the live share), refusals logged at `warn`; `proxy_force_ranges on` so a Range is a `206` from the cache. The `^~` guard owns the whole prefix: any other spelling (upper case, trailing slash) is its JSON 404, never `/api/media/public/`. The only `proxy_cache` in the file ([lives](../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4), `live-segments-route.test.mjs`) |
 | `/api/posts/*` | `social-service:3014` | yes | News feed |
 | `/api/forms/*` | `social-service:3014` | yes | Forms with payments |
 | `/api/bookings/*` | `social-service:3014` | yes | Bookings of rooms and slots |
-| `/api/lives/*` | `social-service:3014` | yes | Live broadcasts, 404 unless `LIVE_ENABLED` ([lives](../services/lives.md)). `client_max_body_size 5m` (a segment is at most 4 MiB), and the ONE `limit_req` zone of this file, `lives_ingest`: 2 r/s burst 20 per client address on `PUT` only (viewers polling from one campus address share it), answering 429. nginx's own 413 and 429 go to `@api_error_413` / `@api_error_429` with the WebView CORS headers, like its 5xx (`api-error-cors.test.mjs`) |
+| `/api/lives/*` | `social-service:3014` | yes | Live broadcasts, 404 unless `LIVE_ENABLED` ([lives](../services/lives.md)). `client_max_body_size 5m` (a segment is at most 4 MiB), and the `limit_req` zone `lives_ingest`: 2 r/s burst 20 per client address on `PUT` only (viewers polling from one campus address share it), answering 429. nginx's own 413 and 429 go to `@api_error_413` / `@api_error_429` with the WebView CORS headers, like its 5xx (`api-error-cors.test.mjs`) |
 | `/api/associations/*` | `social-service:3014` | yes | Clubs (Stripe Connect) |
 | `/api/channels/*` | `social-service:3014` | yes | Workspaces and channels |
 | `/api/auth/*` | `core-service:3012` | no | OIDC login, refresh, logout |
 | `/api/users/*` | `core-service:3012` | yes | User profiles, search |
-| `/api/payments/*` | `core-service:3012` | yes | Stripe payments |
+| `= /api/payments/lydia-request-callback` | `core-service:3012` | yes | Lydia's public callback, one of the three `limit_req` zones of this file (`lives_ingest`, `lives_segments`, `lydia_callback`): `lydia_callback`, 5 r/s burst 50 per client address on `POST`, answering 429 ([payments](../frontend/modules/payments.md#what-confirms-a-payment-2026-10-16)) |
+| `/api/payments/*` | `core-service:3012` | yes | Lydia payments |
 | `/internal/auth/verify` | `core-service:3012` | internal | `auth_request` subrequest only — never public |
 | `/_app/immutable/*`, `/.well-known/*`, `*.mjs`, other assets | static | no | Served from `build/client` + `build/prerendered` inside the image |
 | `/*` (HTML) | `frontend-ssr:3000` | no | Named `@ssr` location, reached via `try_files $uri $uri/ @ssr`; falls back to `@app_shell` on 5xx |
@@ -139,6 +141,7 @@ s-maxage=60` since 2026-09-17, because a purge can reach Cloudflare and can neve
 disk. Why those terms, what purges the zone and what `dev` gets instead are on
 [cloudflare-edge](cloudflare-edge.md#the-shell-is-cached-at-the-edge-and-nowhere-else-and-the-deploy-says-when-it-expired);
 the assertions that keep them honest are in `.github/scripts/tests/static-headers.test.mjs`.
+**Except a degraded page (2026-10-18):** when frontend-ssr's enrichment got no answer it sends `X-Canari-Degraded`, and `$ssr_cache_control` turns the header into `no-store` - nothing may cache the generic card. A response that declares its own `public, max-age=N` (the sitemap, 1 h) keeps it: the first map `$ssr_cache_control_declared` passes it through, only a page declaring nothing gets the 60 s default ([seo](../frontend/seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing)).
 
 Two things the first deployment got wrong, both worth keeping in mind for any future upstream:
 

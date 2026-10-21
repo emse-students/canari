@@ -38,14 +38,14 @@ describe('control events with no outbox controller', () => {
   it('a pin resolves and accuses the loss with its kind', async () => {
     unregisterOutbox();
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(setMessagePinned('m1', true, 1, deps)).resolves.toBeUndefined();
+    await expect(setMessagePinned('m1', true, 1, deps)).resolves.toBe(false);
     expect(err).toHaveBeenCalledWith(expect.stringContaining('control event "pin" not queued'));
   });
 
   it('a reaction resolves and accuses the loss with its kind', async () => {
     unregisterOutbox();
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(addReaction('m1', '👍', 1, deps)).resolves.toBeUndefined();
+    await expect(addReaction('m1', '👍', 1, deps)).resolves.toBe(false);
     expect(err).toHaveBeenCalledWith(
       expect.stringContaining('control event "reaction" not queued')
     );

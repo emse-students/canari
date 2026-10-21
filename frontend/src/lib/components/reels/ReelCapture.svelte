@@ -13,10 +13,13 @@
    * stands down meanwhile (`isSwipeNavActive` reads the overlay depth).
    *
    * THE DESTINATION (user, 2026-10-11, D-camera: this camera is the ONLY capture path). On the tab
-   * (`feed`) a take goes on to the publish step. In a composer (`post`, `chat`) it is handed back as
-   * a FILE through `oncapture` and the camera closes, so the composer's ordinary attachment path - and
-   * its retention class - carries it; see `destinationRules`. A chat takes PHOTOS ONLY until the reel
-   * message exists (docs/wiki/frontend/modules/reels-in-chat.md): no hold, no 90 s cap to read.
+   * (`feed`) a take goes on to the publish step. In a composer (`post`, `post-edit`, `chat`) a take is
+   * handed back as a FILE through `oncapture` and the camera closes, so the composer's ordinary
+   * attachment path - and its retention class - carries it; EXCEPT a video filmed from the new-post
+   * composer (`post`, user 2026-10-19: one camera, one behaviour), which goes to the reel publish step
+   * like the tab's, offering to be kept as a post instead; see `destinationRules`. A chat takes
+   * PHOTOS ONLY until the reel message exists (docs/wiki/frontend/modules/reels-in-chat.md): no
+   * hold, no 90 s cap to read.
    */
   import { onDestroy, onMount } from 'svelte';
   import { Images, RefreshCcw } from '@lucide/svelte';
@@ -31,6 +34,7 @@
     captureReducer,
     classifyLimitsFault,
     destinationRules,
+    handsBackTake,
     formatTakeTime,
     shutterRingFraction,
     SHUTTER_HOLD_THRESHOLD_MS,
@@ -72,6 +76,13 @@
     oncapture?: (file: File) => void;
     /** The overlay's close (the X, and after a hand-back); absent on the tab. */
     onclose?: () => void;
+    /** The new-post composer's text and identity, the start of a reel filmed from it (`post`). */
+    composerCaption?: string;
+    composerIdentity?: string;
+    /** A reel filmed from the composer was published (`post`), as `identity`. */
+    onpublished?: (identity: string) => void;
+    /** "Garder comme post" from the composer: the step's caption and identity, as they stand. */
+    onkept?: (caption: string, identity: string) => void;
   }
 
   let {
@@ -81,6 +92,10 @@
     publishDeps,
     oncapture,
     onclose,
+    composerCaption = '',
+    composerIdentity = '',
+    onpublished,
+    onkept,
   }: Props = $props();
 
   /** The opener for each way of asking the microphone (`DestinationRules.microphone`). */
@@ -241,9 +256,10 @@
 
   /**
    * A composer destination: the take leaves as a file for the composer's attachment path, and the
-   * camera closes. `blob` is the edited media when the editor changed it.
+   * camera closes. `blob` is the edited media when the editor changed it. Returns whether the
+   * composer received it (false: no `oncapture`, the take is lost and said so).
    */
-  function handBack(blob: Blob, poster: Blob | null | undefined) {
+  function handBack(blob: Blob, poster: Blob | null | undefined): boolean {
     const file = captureFileFrom(blob);
     if (poster && file.type.startsWith('video/')) attachCapturePoster(file, poster);
     console.debug(
@@ -252,18 +268,33 @@
     if (!oncapture) {
       console.error('[reel-capture] a composer destination has no oncapture: the take is lost');
       showToast(m.reels_capture_record_error(), 'error');
-      return;
+      return false;
     }
     oncapture(file);
+    leaveWithTake();
+    return true;
+  }
+
+  /**
+   * The take has left this screen (handed back, or published from a composer): its entry leaves the
+   * stack NOW, by abandon - its close would ask about a take that is no longer here. The entry stays
+   * as a ghost the next overlay takes over. The owner then unmounts the overlay, whose own entry is
+   * on top and abandoned the same way.
+   */
+  function leaveWithTake() {
     editorOpen = false;
-    // The take's entry leaves the stack NOW, by abandon - its close would ask about the take the
-    // composer just received. The entry stays as a ghost the next overlay takes over.
     const entry = takeEntry;
     takeEntry = null;
     if (entry) abandonHistoryOverlay(entry);
     send({ type: 'discard' });
-    // The owner unmounts the overlay, whose own entry is then on top and abandoned the same way.
     onclose?.();
+  }
+
+  /** A reel filmed from the new-post composer is published: the composer closes behind it. */
+  function publishedFromComposer(identity: string) {
+    console.debug(`[reel-capture] a reel filmed from the ${destination} composer was published`);
+    onpublished?.(identity);
+    leaveWithTake();
   }
 
   /** A recording is thrown away, a review discarded: the take is over. */
@@ -334,8 +365,9 @@
       return;
     }
     // The take's thumbnail for a composer (`ReelClip.poster`), taken NOW: before the drawing loop and
-    // the recorder exist, so its encode costs the take no frame. The reel publish step needs none.
-    takePoster = rules.handsBackFile ? (camera?.thumbnail() ?? null) : null;
+    // the recorder exist, so its encode costs the take no frame. Only a video that may go back to a
+    // composer needs it ("Garder comme post" included); the tab's reel publish step needs none.
+    takePoster = rules.videoHandsBack || rules.fromComposer ? (camera?.thumbnail() ?? null) : null;
     framed = camera?.startFramedStream() ?? null;
     if (!framed) {
       showToast(m.reels_capture_record_error(), 'error');
@@ -548,7 +580,7 @@
             {recording}
             {fraction}
             timeLabel={formatTakeTime(elapsedMs)}
-            disabled={(!rules.handsBackFile && !limits) ||
+            disabled={(!rules.photoHandsBack && !limits) ||
               !camera?.ready ||
               capture.kind === 'finishing' ||
               capture.kind === 'photo'}
@@ -594,7 +626,7 @@
 
   {#if capture.kind === 'review'}
     {@const clip = capture.clip}
-    {#if rules.handsBackFile}
+    {#if handsBackTake(rules, clip.blob)}
       <ReelReview
         {clip}
         ondiscard={() => void discardFromReview()}
@@ -604,12 +636,30 @@
         onnext={() => handBack(clip.blob, clip.poster)}
       />
     {:else if publishOpen && limits}
-      <ReelPublishSheet {clip} {limits} deps={publishDeps} onclose={() => (publishOpen = false)} />
+      <ReelPublishSheet
+        {clip}
+        {limits}
+        deps={publishDeps}
+        onclose={() => (publishOpen = false)}
+        composer={rules.fromComposer
+          ? {
+              caption: composerCaption,
+              identity: composerIdentity,
+              onkeep: (caption, identity) => {
+                // The take first: the step's caption and identity follow only a take the
+                // composer actually received, never one lost to a missing `oncapture`.
+                if (handBack(clip.blob, clip.poster)) onkept?.(caption, identity);
+              },
+              onpublished: publishedFromComposer,
+            }
+          : undefined}
+      />
     {:else}
       <ReelReview
         {clip}
         ondiscard={() => void discardFromReview()}
         onedit={() => (editorOpen = true)}
+        soundRemoval={rules.soundRemoval}
         onsoundchange={(soundRemoved) => {
           if (capture.kind === 'review') {
             capture = { kind: 'review', clip: { ...capture.clip, soundRemoved } };
@@ -628,7 +678,7 @@
       onnext={(blob) => {
         if (capture.kind !== 'review') return;
         // The edited media replaces the take (null: untouched), and the publish step opens at once.
-        if (rules.handsBackFile) {
+        if (handsBackTake(rules, blob ?? capture.clip.blob)) {
           // The poster is the take as filmed: the editor's drawings are not on the thumbnail.
           handBack(blob ?? capture.clip.blob, capture.clip.poster);
           return;

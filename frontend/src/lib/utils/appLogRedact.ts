@@ -254,7 +254,7 @@ const NESTED_FIELD_START_RE = /^[A-Za-z][\w-]*["']?\s*[:=]/;
  * first space. Only there - a SENSITIVE name still swallows such a value whole, or
  * `text=a="ok" my message` would hand the message to the inner, harmless field (2026-10-14).
  */
-function redactFields(text: string, onRedact: () => void): string {
+function redactFields(text: string, onRedact: () => void, proseOnly = false): string {
   const re = new RegExp(FIELD_RE.source, 'g');
   let out = '';
   let from = 0;
@@ -262,13 +262,15 @@ function redactFields(text: string, onRedact: () => void): string {
     out += text.slice(from, m.index);
     from = m.index + m[0].length;
     const [, name, sep, value, tail] = m;
-    const sensitivity = fieldSensitivity(name);
+    const found = fieldSensitivity(name);
+    // The console pass keeps secrets for the developer's terminal's own stages: prose only.
+    const sensitivity = proseOnly && found === 'secret' ? false : found;
     if (sensitivity === false && NESTED_FIELD_START_RE.test(value)) {
       out += `${name}${sep}`;
       from = re.lastIndex = m.index + name.length + sep.length;
       continue;
     }
-    out += redactField(name, sep, value, tail, sensitivity, onRedact);
+    out += redactField(name, sep, value, tail, sensitivity, onRedact, proseOnly);
   }
   out += text.slice(from);
   return out.includes(PROSE_END) ? out.replace(PROSE_REST_RE, '') : out;
@@ -281,10 +283,11 @@ function redactField(
   value: string,
   tail: string,
   sensitivity: false | 'secret' | 'prose',
-  onRedact: () => void
+  onRedact: () => void,
+  proseOnly = false
 ): string {
   if (sensitivity === false || isHarmlessFieldValue(name, value, tail)) {
-    return `${name}${sep}${redactFields(value, onRedact)}${redactFields(tail, onRedact)}`;
+    return `${name}${sep}${redactFields(value, onRedact, proseOnly)}${redactFields(tail, onRedact, proseOnly)}`;
   }
   // Already a marker this stage wrote: the line is being redacted a second time (the export
   // re-reads every stored line), and a second pass must change nothing - not even the count.
@@ -435,6 +438,16 @@ function looksLikeKeyMaterial(run: string): boolean {
 export interface RedactedLine {
   line: string;
   redactions: number;
+}
+
+/**
+ * What the LIVE console prints of a line: only the value of a PROSE field (`text=`, `contact=`,
+ * `body:`, ...) becomes `[N chars]`, by the same field rules the stored log applies. Nothing else
+ * changes - no cap, no accent stripping - because the console is read by a developer, and the
+ * message a member typed is the one thing it must not echo (WP-CONSOLE-PLAINTEXT).
+ */
+export function redactConsoleProse(raw: string): string {
+  return redactFields(raw, () => undefined, true);
 }
 
 /** Every stage of {@link redactLogLine} but the final cap. */

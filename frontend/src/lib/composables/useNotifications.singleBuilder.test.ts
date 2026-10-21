@@ -16,38 +16,26 @@
  * source read can say exactly.
  */
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { sourceFiles } from '../../test/sourceTree';
 
 /** Every way a page or a worker can put a banner on screen in this app. */
 const RAISES_A_BANNER = /new Notification\s*\(|\bsendNotification\s*\(|\.showNotification\s*\(/;
 
 const ROOTS = ['src', 'static'];
-const SKIP = new Set(['node_modules', 'paraglide', 'wasm', 'proto']);
-
-function* sourceFiles(dir: string): Generator<string> {
-  for (const entry of readdirSync(dir)) {
-    if (SKIP.has(entry)) continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      yield* sourceFiles(full);
-      continue;
-    }
-    if (!/\.(ts|js|svelte)$/.test(entry)) continue;
-    if (entry.endsWith('.test.ts')) continue;
-    yield full;
-  }
-}
+const SKIP = ['proto'];
 
 describe('the web and the desktop have ONE notification builder', () => {
   it('nothing outside useNotifications raises a banner', () => {
     const raisers: string[] = [];
-    for (const root of ROOTS) {
-      for (const file of sourceFiles(join(process.cwd(), root))) {
-        if (RAISES_A_BANNER.test(readFileSync(file, 'utf8'))) {
-          raisers.push(relative(process.cwd(), file).split(sep).join('/'));
-        }
-      }
+    for (const { path, text } of sourceFiles({
+      under: ROOTS,
+      extensions: ['ts', 'js', 'svelte'],
+      tests: 'exclude',
+      skipDirs: SKIP,
+    })) {
+      if (RAISES_A_BANNER.test(text)) raisers.push(path);
     }
 
     // A second entry here is a second builder, whatever raised it - a service worker handling

@@ -8,6 +8,7 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
+import { reportRejectionOnce } from '$lib/utils/reportRejectionOnce';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage, type IStorage } from '$lib/db';
 import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
@@ -18,6 +19,7 @@ import {
   KeyChangeSupersededError,
   LocalStateUnopenableError,
   performPinChange,
+  thisTabMayChangeDeviceKey,
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
 import { endIntoKeyRecovery, joinDeviceKeyLock } from '$lib/db/deviceKeyGate';
@@ -27,6 +29,8 @@ import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
 // `Failed to fetch`, and only the THROW knows which it is.
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { describeRefusalCode } from '$lib/utils/refusalCodes';
 import {
   LoginFailure,
   LoginStoppedBySignOutError,
@@ -1780,9 +1784,11 @@ export async function loginImpl(
               })
             );
             await cb.saveConversation(groupId);
-            await cb
-              .loadAndRestoreConversations()
-              .catch((e) => cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`));
+            // A burst of Welcomes is folded into ONE queued restore, so its failure is one line,
+            // not one per Welcome.
+            await reportRejectionOnce(cb.loadAndRestoreConversations(), (e) =>
+              cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`)
+            );
             // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
             // inviter pushes a bundle on the foreground add path, but its background twin
             // (send-welcome-and-commit) does not, so we compare here as well - which costs one
@@ -2338,6 +2344,10 @@ export async function changePinImpl(
 ): Promise<void> {
   const userId = ctx.getUserId();
   if (!userId.trim()) throw new LocalizedError(m.auth_no_user_signed_in());
+  // BEFORE THE SERVER IS ASKED ANYTHING: a follower tab cannot re-seal the MLS state (see
+  // thisTabMayChangeDeviceKey), and a verifier rotated for a change that cannot finish here costs
+  // the user a recovery.
+  if (!thisTabMayChangeDeviceKey(log)) throw new LocalizedError(m.auth_pin_change_follower_tab());
   log('[PIN_CHANGE] Starting PIN change...');
   onProgress?.({ percent: 2, stage: 'verify' });
 
@@ -2354,8 +2364,12 @@ export async function changePinImpl(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ userId, oldVerifier, newVerifier }),
   });
-  if (res.status === 403) throw new LocalizedError(m.auth_pin_change_current_incorrect());
-  if (!res.ok) throw new LocalizedError(m.auth_pin_change_server_error());
+  if (!res.ok) {
+    // Worded from the refusal's stable code (PIN_INCORRECT, PIN_NOT_SET), never its prose or a bare
+    // status: a 403 here is the one refusal, but the code is what says so.
+    const refusal = await refusalFromResponse(res, 'PIN change refused');
+    throw new LocalizedError(describeRefusalCode(refusal.code) ?? m.auth_pin_change_server_error());
+  }
   log('[PIN_CHANGE] Account verifier rotated server-side.');
 
   // Derive both device keys from the same salt: the old one to read the existing state,
@@ -2623,7 +2637,9 @@ export function tearDownLiveSession(
   ctx.setConnectionPaused(false);
   ctx.setIsMessagingInitializing(false);
   // The watchdog's candidate set IS the live conversation map, so emptying it is half of why
-  // nothing can drive recovery for a session that has ended.
+  // nothing can drive recovery for a session that has ended. The restore chain goes with it, or a
+  // restore this session queued would refill the map as the account that just left.
+  cb.invalidateRestores();
   cb.conversations.clear();
   resetSalonUnread();
   cb.setSelectedContact(null);

@@ -14,9 +14,44 @@
     src: string;
     /** Called when the user clicks the download button. Omit to hide the button. */
     onDownload?: () => void;
+    /**
+     * The type the message declares for these bytes. Only the refusal line reads it: asked of the
+     * engine through `canPlayType`, it separates "this engine cannot play that format" from "the
+     * bytes behind the URL are not what the message declares".
+     */
+    mimeType?: string;
   }
 
-  let { src, onDownload }: Props = $props();
+  let { src, onDownload, mimeType = '' }: Props = $props();
+
+  /** `MediaError.code` as a word, so a log line names its cause without a lookup table. */
+  const MEDIA_ERROR_NAMES: Record<number, string> = {
+    1: 'aborted',
+    2: 'network',
+    3: 'decode',
+    4: 'src-not-supported',
+  };
+
+  /**
+   * THE ONE BRANCH THAT DRAWS "FORMAT NON SUPPORTE", AND IT USED TO SAY NOTHING. The `<audio>`
+   * element's `error` event is the only evidence of why a voice note is refused, and four causes
+   * reach it - a revoked or unreadable blob URL, a decode failure, an unknown container, an abort.
+   * Two voice notes showed the label on the Mi 9T while an iPhone listed them (2026-10-06), and no
+   * line said which cause it was. This one carries what separates them: the code, the engine's own
+   * message, the declared type and whether the engine says it can play that type at all.
+   */
+  function reportRefusal(element: HTMLAudioElement | null) {
+    const error = element?.error ?? null;
+    const code = error?.code ?? 0;
+    console.warn('[voice] the audio element refused its source - shown as format unsupported', {
+      code,
+      cause: MEDIA_ERROR_NAMES[code] ?? 'unknown',
+      message: error?.message ?? '',
+      declaredType: mimeType || '(none)',
+      canPlayType: mimeType && element ? element.canPlayType(mimeType) || 'no' : '(not asked)',
+      source: src.slice(0, 48),
+    });
+  }
 
   let audioEl = $state<HTMLAudioElement | null>(null);
   let isPlaying = $state(false);
@@ -182,6 +217,7 @@
       isPlaying = false;
     }}
     onerror={() => {
+      reportRefusal(audioEl);
       isPlaying = false;
       cannotPlay = true;
     }}

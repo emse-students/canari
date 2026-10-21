@@ -1,6 +1,13 @@
 import axios from 'axios';
-import { Logger } from '@nestjs/common';
-import { LydiaPaymentProvider, PAYMENT_PROVIDER_REFUSED } from './lydia-payment-provider';
+import { BadRequestException, Logger } from '@nestjs/common';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  LYDIA_MAX_AMOUNT_CENTS,
+  LYDIA_MIN_AMOUNT_CENTS,
+  LydiaPaymentProvider,
+  PAYMENT_PROVIDER_REFUSED,
+} from './lydia-payment-provider';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -9,7 +16,6 @@ function makeProvider() {
   return new LydiaPaymentProvider({
     LYDIA_ENV: 'homologation',
     LYDIA_PROVIDER_TOKEN: 'provider-token',
-    LYDIA_PROVIDER_PRIVATE_TOKEN: 'provider-private-token',
   });
 }
 
@@ -154,6 +160,37 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
     expect(mockedAxios.post.mock.calls).toHaveLength(0);
   });
 
+  it('answers an out-of-range amount with the typed code and BOTH bounds, not just a sentence', async () => {
+    const provider = makeProvider();
+    const err = await provider
+      .createCheckoutSession({
+        lineItems: [{ productName: 'x', unitAmountCents: 49, quantity: 1, currency: 'eur' }],
+        successUrl: 's',
+        cancelUrl: 'c',
+        connectAccountId: 'vendor-token-abc',
+        payerRecipient: { value: 'user@example.com', type: 'email' },
+      })
+      .catch((e: unknown) => e);
+    expect((err as BadRequestException).getResponse()).toMatchObject({
+      code: 'AMOUNT_OUT_OF_RANGE',
+      minCents: 50,
+      maxCents: 100_000,
+      // The sentence is formatted from the constants, never a hardcoded copy of them.
+      message: 'Lydia accepts payments from 0.50 to 1000.00 EUR (got 0.49)',
+    });
+  });
+
+  it('holds the range the shared contract names, so social-service cannot drift from it', () => {
+    const contract = JSON.parse(
+      readFileSync(
+        join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'payment-amount-range.json'),
+        'utf8'
+      )
+    ) as { minCents: number; maxCents: number };
+    expect(LYDIA_MIN_AMOUNT_CENTS).toBe(contract.minCents);
+    expect(LYDIA_MAX_AMOUNT_CENTS).toBe(contract.maxCents);
+  });
+
   it('accepts both bounds of the range', async () => {
     mockedAxios.post.mockResolvedValue({
       data: { error: '0', request_uuid: 'r', mobile_url: 'https://lydia-app.com/pay/r' },
@@ -209,10 +246,15 @@ describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
   it.each([
     ['1', 'paid'],
     [1, 'paid'],
-    ['6', 'closed'],
+    ['6', 'cancelled-or-expired'],
     ['0', 'open'],
-    ['5', 'other'],
-    [undefined, 'other'],
+    // Measured on dev 2026-10-21: a payer's decline. It used to read `other`, which kept the
+    // answer `pending` with no retry for up to 30 minutes.
+    ['5', 'declined'],
+    [5, 'declined'],
+    ['7', 'unknown'],
+    ['constructor', 'unknown'],
+    [undefined, 'unknown'],
   ])('reads state %p as %s, never guessing an unmeasured code', async (raw, state) => {
     mockedAxios.post.mockResolvedValue({ data: { state: raw } });
     await expect(
@@ -381,19 +423,6 @@ describe('LydiaPaymentProvider retired/unimplemented methods', () => {
   });
 });
 
-describe('LydiaPaymentProvider.verifyRequestCallback', () => {
-  it('accepts a signature computed the same way Lydia computes it', () => {
-    const provider = makeProvider();
-    // md5("amount=12&request_id=124&YOUR_PRIVATE_TOKEN")-shaped check via the shared util,
-    // just confirming the provider wires its own private token into the same signing scheme.
-    const fields = { amount: '12', request_id: '124' };
-    const { signLydiaParams } = jest.requireActual('./lydia-signature');
-    const sig = signLydiaParams(fields, 'provider-private-token');
-    expect(provider.verifyRequestCallback(fields, sig)).toBe(true);
-    expect(provider.verifyRequestCallback(fields, 'wrong-signature')).toBe(false);
-  });
-});
-
 describe('LydiaPaymentProvider - refusals and logs', () => {
   afterEach(() => jest.restoreAllMocks());
 
@@ -417,6 +446,24 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
         message: "Ce lieu d'activite est temporairement bloque",
       },
     });
+  });
+
+  it('never logs the signature Lydia answers with, but still logs the rest of the answer', async () => {
+    const lines: string[] = [];
+    const sink = (m: unknown) => void lines.push(String(m));
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(sink);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(sink);
+    mockedAxios.post.mockResolvedValue({
+      data: { error: '0', request_uuid: 'REQ-VISIBLE', signature: 'SIGNATURESECRET' },
+    });
+    await makeProvider()
+      .createCheckoutSession(request)
+      .catch(() => undefined);
+    const logged = lines.join(' | ');
+    expect(logged).toContain('request/do');
+    // CONTROL: redaction is by key, not a blanket mute - the other fields are still diagnosable.
+    expect(logged).toContain('REQ-VISIBLE');
+    expect(logged).not.toContain('SIGNATURESECRET');
   });
 
   it('never logs the api_token or api_token_id of a freshly created business', async () => {

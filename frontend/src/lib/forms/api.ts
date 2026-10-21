@@ -1,6 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
+import type { PaymentRequestState } from './paymentReturn';
 
 export interface FormOption {
   label: string;
@@ -132,7 +133,8 @@ import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { fetchUpload } from '$lib/media';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
-import { SocialApiError } from '$lib/associations/api';
+import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
+import { Log } from '$lib/utils/Log';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 
 /**
@@ -149,10 +151,13 @@ import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 async function refusal(res: Response, fallback: string): Promise<SocialApiError> {
   const body = await res.json().catch(() => ({}));
   const message = Array.isArray(body.message) ? body.message.join(' ') : body.message;
+  const code = typeof body.code === 'string' ? body.code : null;
+  Log.i('FORMS', `${fallback}: refused status=${res.status} code=${code ?? 'none'}`);
   return new SocialApiError(
     message || `${fallback} (${res.status})`,
-    typeof body.code === 'string' ? body.code : null,
-    res.status
+    code,
+    res.status,
+    amountBoundsOf(body)
   );
 }
 
@@ -297,6 +302,8 @@ export interface PricingView {
 export async function checkSubmission(formId: string): Promise<{
   hasSubmitted: boolean;
   paymentStatus?: string;
+  /** The id of the caller's own answer when there is one (a `pending` one is confirmed on load). */
+  submissionId?: string;
   formFull: boolean;
   /** Null when the form has one price for everybody. */
   pricing: PricingView | null;
@@ -337,9 +344,13 @@ export async function getSubmissions(formId: string): Promise<Submission[]> {
 }
 
 /** The payment state of the caller's own submission, read by the return page after Lydia. */
-export async function getSubmissionPayment(
-  submissionId: string
-): Promise<{ id: string; formId: string; paymentStatus: string }> {
+export async function getSubmissionPayment(submissionId: string): Promise<{
+  id: string;
+  formId: string;
+  paymentStatus: string;
+  /** The request's state, typed, when the server read it on this call. */
+  requestState?: PaymentRequestState;
+}> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`
   );
@@ -350,11 +361,17 @@ export async function getSubmissionPayment(
 /**
  * Asks the server to read, at the payment provider, whether a pending online answer was paid, and
  * to record it if so - then answers the submission like `getSubmissionPayment`. The payer's return
- * page calls it, so a payment whose provider callback was lost is still confirmed.
+ * page calls it, so a payment whose provider callback was lost is still confirmed. A request the
+ * payer declined, or that was cancelled or expired, releases the answer: `requestState` says which,
+ * and the page offers the retry (`paymentReturnVerdict`).
  */
-export async function confirmSubmissionPayment(
-  submissionId: string
-): Promise<{ id: string; formId: string; paymentStatus: string }> {
+export async function confirmSubmissionPayment(submissionId: string): Promise<{
+  id: string;
+  formId: string;
+  paymentStatus: string;
+  /** The request's state, typed, when the server read it on this call. */
+  requestState?: PaymentRequestState;
+}> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/confirm-payment`,
     { method: 'POST' }
@@ -556,16 +573,9 @@ export async function submitForm(
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    // Typed, so a payment-provider refusal (`code`) is worded by the one shared function rather
-    // than shown as the bare reason; every other refusal still reads as its message.
-    throw new SocialApiError(
-      err.message || 'Submission failed',
-      typeof err.code === 'string' ? err.code : null,
-      res.status
-    );
-  }
+  // Through the one builder, so a payment refusal (`code`, and the amount bounds) is worded by
+  // `providerRefusalMessage` in the reader's language rather than shown as the server's prose.
+  if (!res.ok) throw await refusal(res, 'Submission failed');
   return res.json();
 }
 

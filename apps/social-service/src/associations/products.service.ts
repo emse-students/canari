@@ -34,7 +34,7 @@ import {
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
-import { mapCorePaymentError } from '../common/core-payment-error';
+import { amountOutOfRange, mapCorePaymentError } from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
 import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
@@ -976,6 +976,28 @@ export class ProductsService {
   }
 
   /**
+   * Refuses an amount outside a free-amount product's own bounds with the typed
+   * `AMOUNT_OUT_OF_RANGE` (both bounds, `null` max = unbounded), logged at the decision. ONE check
+   * for both ways an amount reaches such a product: the buyer's checkout and the manager's cash grant.
+   */
+  private assertWithinCustomBounds(
+    product: AssociationProduct,
+    associationId: string,
+    amountCents: number,
+    what: 'custom amount' | 'cash grant amount'
+  ): void {
+    const min = product.customAmountMinCents ?? 0;
+    const max = product.customAmountMaxCents ?? null;
+    if (amountCents >= min && (max === null || amountCents <= max)) return;
+    const allowed = `${min}-${max ?? 'unbounded'}`;
+    this.logger.warn(
+      `[SHOP] ${what} refused: product=${product.id.slice(0, 8)} association=${associationId.slice(0, 8)} ` +
+        `amount=${amountCents} allowed=${allowed} cents`
+    );
+    throw amountOutOfRange(min, max, `The ${what} must be between ${allowed} cents`);
+  }
+
+  /**
    * Loads product/association, validates purchase rules, and resolves the amount in cents.
    */
   private async resolvePurchase(
@@ -1044,11 +1066,7 @@ export class ProductsService {
         amountCents = product.amountCents;
       }
     } else if (product.allowCustomAmount && customAmountCents !== undefined) {
-      const min = product.customAmountMinCents ?? 0;
-      const max = product.customAmountMaxCents ?? Infinity;
-      if (customAmountCents < min || customAmountCents > max) {
-        throw new BadRequestException(`Custom amount must be between ${min} and ${max} cents`);
-      }
+      this.assertWithinCustomBounds(product, associationId, customAmountCents, 'custom amount');
       amountCents = customAmountCents;
     } else {
       throw new BadRequestException('No amount provided for this product');
@@ -1408,12 +1426,10 @@ export class ProductsService {
       throw new BadRequestException('amountCents is required for this product');
     }
 
-    if (product.allowCustomAmount && product.customAmountMinCents != null) {
-      const min = product.customAmountMinCents;
-      const max = product.customAmountMaxCents ?? Infinity;
-      if (amountCents < min || amountCents > max) {
-        throw new BadRequestException(`amountCents must be between ${min} and ${max}`);
-      }
+    // Whenever the product takes a free amount - as the checkout does - so a max set with no min
+    // still binds the grant.
+    if (product.allowCustomAmount) {
+      this.assertWithinCustomBounds(product, associationId, amountCents, 'cash grant amount');
     }
 
     this.logger.log(
@@ -1439,12 +1455,19 @@ export class ProductsService {
    * Called by the payment callback (via core-service) after a successful product purchase.
    * Grants membership tags, dispatches Cercle webhooks, and records the purchase.
    * Idempotent: skips processing if payment intent was already recorded.
+   *
+   * `vendorToken` is the Business whose key verified the callback: unless it is the account the
+   * product's association is paid into (its own, or its approved parent's), nothing is granted -
+   * an authentic callback of one association never fulfils another's product. Not reached from a
+   * Lydia callback since 2026-10-16: a boutique checkout stores no row naming its request, so
+   * nothing of ours could settle it, and core-service refuses until one exists (lot B3, payments.md).
    */
   async handlePurchaseCompleted(
     productId: string,
     userId: string,
     amountCents: number,
-    paymentIntentId: string
+    paymentIntentId: string,
+    vendorToken: string
   ): Promise<void> {
     const existing = await this.purchaseRecordService.findByPaymentIntent(paymentIntentId);
     if (existing) {
@@ -1455,6 +1478,15 @@ export class ProductsService {
     const product = await this.productRepo.findOne({ where: { id: productId } });
     if (!product) {
       this.logger.error(`[SHOP] product ${productId} not found for purchase ${paymentIntentId}`);
+      return;
+    }
+
+    const payee = await this.associationsService.getLydiaPayeeAccountId(product.associationId);
+    if (!payee || payee !== vendorToken) {
+      this.logger.error(
+        `[SHOP] purchase ${paymentIntentId} of product ${productId.slice(0, 8)} REFUSED: verified for a ` +
+          `Business that is not the product's payee (${payee ? 'another account' : 'no Lydia payee'}) - nothing granted`
+      );
       return;
     }
 

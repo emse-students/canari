@@ -21,7 +21,8 @@
  *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
  *   POST /media/internal/live/:liveId/:name - store one sealed live segment (X-Internal-Secret)
  *   POST /media/internal/live-purge - delete every segment of an ended live (X-Internal-Secret)
- *   GET  /media/live/:liveId/:name - one sealed live segment, by the name its manifest gave (JWT)
+ *   GET  /media/public/live/:liveId/:name - one sealed live segment, by the name its manifest gave
+ *                         (NO JWT: ciphertext, cached by Canari's nginx - WP-L4)
  *   (the three live routes answer 404 unless LIVE_ENABLED=true - docs/wiki/services/lives.md)
  *
  * A `form-file` object is served by `GET /media/internal/form-file/:id` ONLY: `GET /media/:id` and
@@ -70,6 +71,7 @@ import {
   boundedSharp,
   FORM_FILE_MAX_BYTES,
   isRetentionClass,
+  POSTER_CLASSES,
   SERVER_READ_ONLY_CLASS,
   type FormFilePurgeOutcome,
   type MediaStorageStats,
@@ -84,6 +86,7 @@ import {
   type LivePurgeResult,
 } from './live-segments.service';
 import { assertInternalSecret } from './internal-secret.util';
+import { fetchLivesMode } from './lives-mode';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
 const POLICY_MAX_MEDIA_MB = 100;
@@ -117,11 +120,17 @@ const RETENTION_CLASS_MAX_IDS = 500;
  * An unrecognised value is ignored rather than refused (an old client sends none, and failing an
  * upload over it would break posting; an unclassified object is KEPT). `form-file` is REFUSED: it is
  * the plaintext class only social-service may create (`POST internal/form-file`), and a client naming
- * it would mint an object nobody tracks, kept for ever and readable by nobody.
+ * it would mint an object nobody tracks, kept for ever and readable by nobody. A CLAIMED poster's
+ * class (`poster`, `poster-association`) is refused too: only `internal/poster-claim` sets it, on
+ * a `poster-pending` upload, and a client minting `poster-association` would keep its object past
+ * its own erasure, bound to no space.
  */
 export function clientRetentionClass(value: unknown): RetentionClass | undefined {
-  if (value === SERVER_READ_ONLY_CLASS) {
-    throw new BadRequestException(`class '${SERVER_READ_ONLY_CLASS}' is not a client upload class`);
+  if (
+    value === SERVER_READ_ONLY_CLASS ||
+    (typeof value === 'string' && POSTER_CLASSES.has(value))
+  ) {
+    throw new BadRequestException(`class '${String(value)}' is not a client upload class`);
   }
   return isRetentionClass(value) ? value : undefined;
 }
@@ -136,10 +145,26 @@ export class MediaController {
     private readonly liveSegments: LiveSegmentsService
   ) {}
 
-  /** 404 on every live route while `LIVE_ENABLED` is off - what a route that does not exist answers. */
+  /**
+   * THE DEPLOY LOCK: 404 on every live route while `LIVE_ENABLED` is off - what a route that does
+   * not exist answers. Asked first, before anything costs a hop.
+   */
   private assertLiveEnabled(): void {
     if (!isLiveEnabled()) {
       this.logger.debug('[LIVE] a live route was called while LIVE_ENABLED is off - 404');
+      throw new NotFoundException();
+    }
+  }
+
+  /**
+   * THE RUNTIME KILL SWITCH: 404 while `platform_config.lives_mode` is not `on`, asked of
+   * social-service on every call ({@link fetchLivesMode}, which fails closed). Each route asks it
+   * AFTER its own cheap refusals (the secret, the canonical path), so a caller that would be refused
+   * anyway never makes this service reach social-service.
+   */
+  private async assertLivesModeOn(): Promise<void> {
+    if ((await fetchLivesMode(this.logger)) !== 'on') {
+      this.logger.debug('[LIVE] a live route was called while lives_mode is off - 404');
       throw new NotFoundException();
     }
   }
@@ -556,10 +581,14 @@ export class MediaController {
     // the size) are known: applying either to an existing id would make that object sweepable by
     // age - a claimed reel's blob deleted under its live post.
     // `form-file` likewise: only `internal/form-file` creates one, with its uploader.
+    // The poster classes likewise: `poster-pending` at upload, the claimed ones by
+    // `internal/poster-claim` with an owner and a space.
     if (
       retentionClass === 'chat-reel' ||
       retentionClass === 'reel-pending' ||
-      retentionClass === SERVER_READ_ONLY_CLASS
+      retentionClass === SERVER_READ_ONLY_CLASS ||
+      retentionClass === 'poster-pending' ||
+      POSTER_CLASSES.has(retentionClass)
     ) {
       throw new BadRequestException(
         `class '${retentionClass}' is set by the upload that creates the object`
@@ -634,6 +663,58 @@ export class MediaController {
       throw new BadRequestException('ownerId must be a non-empty string');
     }
     return this.mediaService.claimReels(ids, body.ownerId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/poster-claim - a booking space's poster, claimed for its uploader
+  // ---------------------------------------------------------------------------
+  /**
+   * Sole consumer: social-service's `BookingPosterMedia.claim`, before a space stores a poster. It
+   * PROVES the object is the member's own fresh upload; the rule is {@link MediaService.claimPosters}.
+   */
+  @Post('internal/poster-claim')
+  async claimPosters(
+    @Body()
+    body: { mediaIds?: unknown; ownerId?: unknown; spaceId?: unknown; retentionClass?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ claimed: string[]; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+    const ids = this.boundedIds(body?.mediaIds, 'mediaIds');
+    if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
+      throw new BadRequestException('ownerId must be a non-empty string');
+    }
+    if (typeof body.spaceId !== 'string' || body.spaceId.length === 0) {
+      throw new BadRequestException('spaceId must be a non-empty string');
+    }
+    if (body.retentionClass !== 'poster' && body.retentionClass !== 'poster-association') {
+      throw new BadRequestException("retentionClass must be 'poster' or 'poster-association'");
+    }
+    return this.mediaService.claimPosters(ids, body.ownerId, body.spaceId, body.retentionClass);
+  }
+
+  /**
+   * Releases claimed posters to the idle sweep. Sole consumer: social-service's
+   * `releaseUncitedPosters`; the class allowlist is {@link MediaService.releasePosters}.
+   */
+  @Post('internal/poster-release')
+  async releasePosters(
+    @Body() body: { mediaIds?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ released: string[]; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+    return this.mediaService.releasePosters(this.boundedIds(body?.mediaIds, 'mediaIds'));
+  }
+
+  /**
+   * Every claimed poster and its space. Sole consumer: social-service's poster reconciliation
+   * (`BookingPosterMedia.reconcileOnce`).
+   */
+  @Get('internal/poster-list')
+  listPosters(@Headers('x-internal-secret') internalSecret: string | undefined): {
+    posters: Array<{ mediaId: string; spaceId: string | null }>;
+  } {
+    assertInternalSecret(internalSecret);
+    return { posters: this.mediaService.listPosters() };
   }
 
   // ---------------------------------------------------------------------------
@@ -760,6 +841,7 @@ export class MediaController {
   ): Promise<{ ok: true }> {
     this.assertLiveEnabled();
     assertInternalSecret(internalSecret);
+    await this.assertLivesModeOn();
     const data = requireUploadedFile(file).buffer;
     if (data.length === 0 || data.length > LIVE_SEGMENT_MAX_BYTES) {
       throw new PayloadTooLargeException(`a live segment is 1 to ${LIVE_SEGMENT_MAX_BYTES} bytes`);
@@ -912,24 +994,28 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
-  // GET /media/live/:liveId/:name - one sealed live segment
+  // GET /media/public/live/:liveId/:name - one sealed live segment, no JWT (WP-L4)
   // ---------------------------------------------------------------------------
   /**
-   * One sealed segment of a live, to a signed-in member, by the random name its manifest listed.
-   * The bytes are ciphertext under the live's key; WHO may read the key and the names is decided by
-   * social-service (a removed viewer is refused both), and this route only proves an account.
+   * One sealed segment of a live, by the random name its manifest listed. NO ACCOUNT IS CHECKED,
+   * and that is the plan's C9 model (docs/wiki/services/lives.md, "Serving a segment"): the bytes
+   * are ciphertext under the live's key, which only social-service hands out (a removed or blocked
+   * viewer is refused it, and the manifest that names the next segment); the names are random
+   * uuids chosen by the server at ingest. What an unauthenticated route buys is that the SAME bytes
+   * answer every viewer, so Canari's nginx caches them (`proxy_cache`, `live_segments` zone) and a
+   * second viewer's fetch never reaches this process: this handler runs about once per segment, not
+   * once per viewer.
    *
-   * WHY NO PER-VIEWER CHECK HERE, deliberately (docs/wiki/services/lives.md, "Reading a segment"):
-   * a live is the whole network's (L2), so "a member" IS the audience and the JWT proves it. The one
-   * account a check here could still refuse - a viewer removed, or blocked, AFTER reading the key -
-   * can only ask for names it already learned from a manifest, i.e. segments it was allowed to
-   * fetch and decrypt then; a NEW name is learned only from the manifest, which social-service
-   * refuses it. Asking social-service on every segment fetch (one every few seconds per viewer)
-   * would buy nothing more and put a cross-service call on the hottest path, which WP-L4 moves to
-   * nginx's cache anyway. The tokens carry no audience claim to narrow them by (one HS256 token
-   * for every service). Two path segments, so it never collides with the catch-all `@Get(':id')`.
+   * Cache-Control is NOT set here: the nginx location in front owns the header every client sees
+   * (and ignores any upstream one for its own cache), so the policy is stated once.
+   * Four path segments, so it collides neither with `public/:id` nor with the catch-all `:id`.
+   *
+   * ONLY THE CANONICAL PATH IS ANSWERED, everything else is a 404 before the store is asked
+   * ({@link LiveSegmentsService.isCanonicalSegmentPath}): Express 5 would match an upper-case id, a
+   * trailing slash or `/api/media/PUBLIC/...`, and every such spelling is an address nginx neither
+   * caches nor rate-limits - a way to reach the store once per request (the review of #2105).
    */
-  @Get('live/:liveId/:name')
+  @Get('public/live/:liveId/:name')
   async downloadLiveSegment(
     @Param('liveId') liveId: string,
     @Param('name') name: string,
@@ -937,11 +1023,19 @@ export class MediaController {
     @Res() res: Response
   ): Promise<void> {
     this.assertLiveEnabled();
-    this.verifyToken(req);
+    if (!LiveSegmentsService.isCanonicalSegmentPath(req.originalUrl, liveId, name)) {
+      // DEBUG, not warn: an unauthenticated caller reaches this through `/api/media/public/` (any
+      // case variant), which no rate applies to - a warn there is noise anybody can force.
+      this.logger.debug(
+        `[LIVE] segment refused: not the canonical path (${req.originalUrl.slice(0, 200)})`
+      );
+      throw new NotFoundException('Live segment not found');
+    }
+    await this.assertLivesModeOn();
     const { stream, size } = await this.liveSegments.read(liveId, name);
+    this.logger.debug(`[LIVE] segment ${liveId}/${name} served to the edge cache (${size} B)`);
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', size);
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     stream.on('error', (err) => {
       this.logger.warn(`[LIVE] segment ${liveId}/${name} stream failed: ${String(err)}`);
       res.destroy(err);

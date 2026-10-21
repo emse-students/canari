@@ -8,6 +8,7 @@
  * They are taken back only when nothing of them left the device - a refusal, never a lost answer.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { getChannelReactions } from '$lib/stores/reactionStore.svelte';
@@ -155,7 +156,7 @@ describe('a salon edit', () => {
   });
 
   it('stays when no answer came with the link up: the outcome is unknown', async () => {
-    sendChannelEdit.mockRejectedValue(new TypeError('Failed to fetch'));
+    sendChannelEdit.mockRejectedValue(new TransportFailureError(new TypeError('Failed to fetch')));
     const ctx = makeContext();
 
     await useChannelWorkspaces().editChannelMessage(SALON, 'srv-mine', 'answer lost', ctx);
@@ -189,7 +190,7 @@ describe('a salon reaction', () => {
   it('a POST that meets the link going down is owed, and its repeat is the SAME row', async () => {
     sendChannelReaction.mockImplementationOnce(() => {
       connectivity.notifyServerUnreachable();
-      return Promise.reject(new TypeError('Failed to fetch'));
+      return Promise.reject(new TransportFailureError(new TypeError('Failed to fetch')));
     });
     const ctx = makeContext();
 

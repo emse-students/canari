@@ -250,6 +250,11 @@
   --z-modal-popover: 290;
   /* A full-screen media viewer. Above a modal because it opens from one. */
   --z-viewer: 300;
+  /* A dialog opened from INSIDE a full-screen viewer (the reel comments' GIF picker and report
+     dialog): its own rung, sheet or modal, is under the viewer it opens from. `ModalOverlay` and
+     `Modal` take this one when `utils/viewerLayer.ts` says they are inside a viewer. Under the
+     toast, which answers whatever was done in it. */
+  --z-viewer-dialog: 305;
 
   /* The answer to something the reader just did, readable over WHATEVER they did it in - including a
      full-screen viewer. It sat at 60 and "CanaReel enregistre dans votre galerie" was painted
@@ -258,11 +263,15 @@
      `--z-critical`, which a confirmation holds. */
   --z-toast: 310;
 
-  /* Interrupts everything below: a confirmation, the call UI. Nothing decorative may be here. */
+  /* Interrupts everything below: a confirmation. Nothing decorative may be here. */
   --z-critical: 320;
-  /* The incoming-call notice, which must clear even the call UI - it is how a second call is
-     answered while the first one is on screen. */
-  --z-call-notice: 340;
+  /* The full-screen call, OVER a confirmation, decided 2026-10-19: both used to share 320, so DOM
+     order picked the winner. A call is the thing the reader is doing; a confirmation raised behind
+     it waits (its promise with it) until the call is minimised or over. Below it on purpose: the
+     PIN lock (`--z-modal`), which the call never covers - while the lock is up the call is the
+     banner (`callView.showsFullScreen`). A minimised call is a row of the banner column, in flow,
+     and needs no rung. (The incoming-call toast's 340 went with the toast the same day.) */
+  --z-call: 330;
 
   /* Follows the pointer and is never interactive, so it may sit over anything without trapping it. */
   --z-tooltip: 400;
@@ -1389,6 +1398,35 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   padding-top: 0;
 }
 
+/* A MINIMISED CALL IS ABOVE EVERY LAYER (CALL-BAR-COVERED, Mi 9T and iPhone, 2026-10-19). With the
+   new-post composer (a modal, 280) or its camera (a viewer, 300) open, the call bar - a row of the
+   banner column at `--z-banner`, 120 - was painted over, and `elementFromPoint` on its hang-up
+   returned the camera's video. While a call bar is up (`data-call-bar`, set by `CallBanner`):
+   1. the banner column takes `--z-call`, above every sheet, modal, viewer and confirmation;
+   2. every covering surface (`data-covers-screen`, set by the `coversScreen` action) reads its top
+      inset as the status bar PLUS the banner column, so its own top controls (the camera's close,
+      a modal's title) land below the bar instead of under it - the bar becomes part of the status
+      band, as the in-call status bar is on a phone. `--app-cover-top` is resolved HERE, on the root,
+      so the surface's redefinition of `--safe-area-inset-top` cannot read itself;
+   3. the camera tab, which gives its shell padding back to run under the status bar, takes it again:
+      without it the bar would sit under the notch.
+   Pinned by `callBarLayer.test.ts`; the rule is in calls.md. */
+:root {
+  --app-cover-top: calc(var(--safe-area-inset-top, 0px) + var(--app-banner-height, 0px));
+}
+
+:root[data-call-bar] .app-banner-column {
+  z-index: var(--z-call);
+}
+
+:root[data-call-bar] [data-covers-screen] {
+  --safe-area-inset-top: var(--app-cover-top);
+}
+
+:root.fullscreen-place-open[data-call-bar] .app-shell {
+  padding-top: var(--safe-area-inset-top, 0px);
+}
+
 /* A GLYPH CONFINED TO A FIXED BOX DOES NOT GROW WITH THE SYSTEM TEXT SIZE. Android's WebView
    scales font sizes and leaves lengths alone, so at 200 % avatar initials came out twice the size
    of their circle and were cut by it (Mi 9T, 2026-09-30). `--text-zoom` is that factor, measured by
@@ -2269,6 +2307,63 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   top: 0;
   outline: 3px solid var(--cn-yellow);
   outline-offset: 2px;
+}
+
+/* THE DOUBLE-TAP HEART (`DoubleTapHeart.svelte`): it springs up where the finger landed, holds,
+   and fades - about the time Instagram's takes. Centred on the tap by the translate, sized off the
+   type scale so 2x text grows it too. Its element is removed on `animationend`, so the animation
+   MUST end: `both` keeps the last frame (invisible) until it does. */
+.double-tap-heart {
+  position: absolute;
+  font-size: var(--text-3xl);
+  line-height: 1;
+  filter: drop-shadow(0 0.125rem 0.5rem rgb(0 0 0 / 0.35));
+  animation: doubleTapHeart 800ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes doubleTapHeart {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(2.8);
+  }
+  30% {
+    transform: translate(-50%, -50%) scale(2.4);
+  }
+  75% {
+    opacity: 1;
+    transform: translate(-50%, -60%) scale(2.4);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -90%) scale(2.2);
+  }
+}
+
+@keyframes doubleTapHeartFade {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion: no spring and no rise, a still heart that fades. The global rule below shortens
+   every animation to 0.01ms with `!important`, which would remove the heart before it is ever
+   painted; this selector is more specific and also `!important`, so a fade the reader can see is
+   kept - an opacity change is not motion (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  .double-tap-heart {
+    transform: translate(-50%, -50%) scale(2.4);
+    animation-name: doubleTapHeartFade !important;
+    animation-duration: 500ms !important;
+    animation-timing-function: linear !important;
+  }
 }
 
 /* ── Accessibility: prefers-reduced-motion ──────────────────────────────────

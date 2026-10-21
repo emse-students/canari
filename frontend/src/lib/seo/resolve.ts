@@ -39,6 +39,8 @@ export const PRIVATE_PREFIXES = [
   // was asked for, so it has no content and no canonical URL of its own.
   '/app-shell',
   '/auth',
+  // Reservations: a member's own bookings, and spaces reached by a link that is not a search result.
+  '/bookings',
   // The CanaReels camera: a device, not a page.
   '/camera',
   '/chat',

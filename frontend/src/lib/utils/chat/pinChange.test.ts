@@ -23,6 +23,7 @@ import type {
   StoredGraineSession,
   StoredMessage,
 } from '$lib/db';
+import { flushMacrotask } from '../../../test/flush';
 
 const storageForUser = new Map<string, IStorage>();
 vi.mock('$lib/db', async (importOriginal) => ({
@@ -330,6 +331,16 @@ describe('both PIN paths go through performPinChange', () => {
     }
   );
 
+  it('the change asks whether this tab may change the key BEFORE the server rotates the verifier', () => {
+    // A follower's re-seal is refused by the version guard (`pinChange.followerTab.test.ts`): asked
+    // after the server took the new PIN, the refusal would still cost the user a recovery.
+    const fn = body('export async function changePinImpl(');
+    const guard = fn.indexOf('thisTabMayChangeDeviceKey(');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(fn.indexOf('/api/mls/security/pin-change'));
+    expect(guard).toBeLessThan(fn.indexOf('await performPinChange('));
+  });
+
   it('the recovery hands performPinChange the STORED state, the change does not', () => {
     expect(body('export async function recoverPinImpl(')).toContain('storedMlsState: state');
     expect(body('export async function changePinImpl(')).not.toContain('storedMlsState');
@@ -575,7 +586,7 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await Promise.resolve();
 
     const change = performPinChange(options('u-inflight', fakeMls()), OLD, NEW);
-    await new Promise((r) => setTimeout(r, 20));
+    await flushMacrotask();
     land();
     await Promise.all([inFlight, change]);
 

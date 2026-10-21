@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { PlatformService } from './platform.service';
 import type { PlatformConfig } from './entities/platform-config.entity';
 import type { Repository } from 'typeorm';
@@ -6,6 +7,8 @@ import { deployedVersion } from './deployed-version';
 // The bound reads the build's OWN version off disk, which a unit test has no business depending on.
 jest.mock('./deployed-version', () => ({ deployedVersion: jest.fn() }));
 const mockDeployed = deployedVersion as jest.MockedFunction<typeof deployedVersion>;
+/** The acting administrator: a uuid whose first 8 characters are what the audit lines print. */
+const ADMIN = 'aaaaaaaa-1111-4111-8111-111111111111';
 
 describe('PlatformService', () => {
   let service: PlatformService;
@@ -26,6 +29,8 @@ describe('PlatformService', () => {
       maintenanceMessage: 'Pause',
       minClientVersion: '1.0.0',
       paymentProvider: 'lydia' as const,
+      callsMode: 'off' as const,
+      livesMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -37,6 +42,8 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: '0.0.0',
       paymentProvider: 'lydia' as const,
+      callsMode: 'off' as const,
+      livesMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -50,6 +57,8 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: '0.0.0',
       paymentProvider: 'lydia',
+      callsMode: 'off',
+      livesMode: 'off',
     });
 
     await service.ensureDefaults();
@@ -57,6 +66,24 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(
       expect.objectContaining({ id: 1, maintenanceEnabled: false })
     );
+  });
+
+  it('ensureDefaults creates the row with calls OFF - a fresh estate never opens calls by itself', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ callsMode: 'off' }));
+  });
+
+  it('ensureDefaults creates the row with lives OFF - a fresh estate never opens lives by itself', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ livesMode: 'off' }));
   });
 
   /** A config row with `minClientVersion` at `min`, wired into the repo mock. */
@@ -67,6 +94,8 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: min,
       paymentProvider: 'lydia',
+      callsMode: 'off',
+      livesMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -79,7 +108,7 @@ describe('PlatformService', () => {
     mockDeployed.mockReturnValue('0.14.1');
 
     // One keystroke from `0.14.1`, well-formed, and satisfiable by no client that exists.
-    await expect(service.updateConfig({ minClientVersion: '1.14.1' })).rejects.toThrow(
+    await expect(service.updateConfig({ minClientVersion: '1.14.1' }, ADMIN)).rejects.toThrow(
       /above this server's own version 0\.14\.1/
     );
     expect(repo.save).not.toHaveBeenCalled();
@@ -89,7 +118,7 @@ describe('PlatformService', () => {
     rowWithMin('0.14.0');
     mockDeployed.mockReturnValue('0.14.1');
 
-    const result = await service.updateConfig({ minClientVersion: '0.14.1' });
+    const result = await service.updateConfig({ minClientVersion: '0.14.1' }, ADMIN);
 
     expect(result.minClientVersion).toBe('0.14.1');
   });
@@ -100,7 +129,7 @@ describe('PlatformService', () => {
     // read would be a read failure masquerading as a policy.
     mockDeployed.mockReturnValue(null);
 
-    const result = await service.updateConfig({ minClientVersion: '9.9.9' });
+    const result = await service.updateConfig({ minClientVersion: '9.9.9' }, ADMIN);
 
     expect(result.minClientVersion).toBe('9.9.9');
   });
@@ -112,12 +141,14 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: '0.13.0',
       paymentProvider: 'lydia',
+      callsMode: 'off',
+      livesMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
     repo.save.mockImplementation(async (row) => row as PlatformConfig);
 
-    const result = await service.updateConfig({ paymentProvider: 'lydia' });
+    const result = await service.updateConfig({ paymentProvider: 'lydia' }, ADMIN);
 
     expect(result.paymentProvider).toBe('lydia');
     expect(result.minClientVersion).toBe('0.13.0');
@@ -130,14 +161,63 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: '0.13.0',
       paymentProvider: 'lydia',
+      callsMode: 'off',
+      livesMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
     repo.save.mockImplementation(async (row) => row as PlatformConfig);
 
-    const result = await service.updateConfig({ paymentProvider: 'disabled' });
+    const result = await service.updateConfig({ paymentProvider: 'disabled' }, ADMIN);
 
     expect(result.paymentProvider).toBe('disabled');
     expect(result.minClientVersion).toBe('0.13.0');
+  });
+
+  it('updateConfig moves the calls kill switch, logs it at warn, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ callsMode: 'audio' }, ADMIN);
+
+    expect(result.callsMode).toBe('audio');
+    expect(result.minClientVersion).toBe('0.13.0');
+    expect(result.paymentProvider).toBe(existing.paymentProvider);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'callsMode off -> audio by=aaaaaaaa'
+    );
+    warn.mockRestore();
+  });
+
+  it('updateConfig leaves the calls mode alone when the update does not name it', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.callsMode = 'audio_video';
+
+    const result = await service.updateConfig({ maintenanceEnabled: true }, ADMIN);
+
+    expect(result.callsMode).toBe('audio_video');
+  });
+
+  it('updateConfig moves the lives kill switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.callsMode = 'audio';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ livesMode: 'on' }, ADMIN);
+
+    expect(result.livesMode).toBe('on');
+    expect(result.callsMode).toBe('audio');
+    expect(result.minClientVersion).toBe('0.13.0');
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain('livesMode off -> on by=aaaaaaaa');
+    warn.mockRestore();
+  });
+
+  it('updateConfig leaves the lives mode alone when the update does not name it', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.livesMode = 'on';
+
+    const result = await service.updateConfig({ callsMode: 'off' }, ADMIN);
+
+    expect(result.livesMode).toBe('on');
   });
 });

@@ -10,6 +10,7 @@ import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
+import { Log } from '$lib/utils/Log';
 import type {
   AddMessageToChatOptions,
   MessageBatchOrigin,
@@ -1044,13 +1045,124 @@ export function useConversations() {
     return matches.sort((a, b) => a.ts - b.ts).map((m) => m.id);
   }
 
-  /** Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the conversations map. */
-  async function loadAndRestoreConversations(ctx: ConversationContext) {
+  /**
+   * One SESSION's restore chain: the restore running now, and the ONE restore queued behind it.
+   * Plain fields, not `$state`: nothing renders them, they only order calls.
+   *
+   * A generation, because this composable is a global singleton that outlives a sign-out and a
+   * chain must not. The sign-out retires it ({@link invalidateRestores}): a queued restore of a
+   * retired generation never starts - it would recreate an MLS client with the previous account's
+   * storage and key and refill the map the teardown just cleared - and a restore still running from
+   * one blocks nothing, because the next session asks on a fresh generation.
+   */
+  interface RestoreGeneration {
+    /** Numbered only so a log line can say which session a dropped ask belonged to. */
+    readonly id: number;
+    retired: boolean;
+    running: Promise<void> | null;
+    queued: Promise<void> | null;
+    /** The context the queued restore will run with - the latest one asked, as a later ask supersedes. */
+    queuedCtx: ConversationContext | null;
+    /** How many asks the queued restore carries, reported once when it starts rather than per ask. */
+    queuedAsks: number;
+  }
+
+  function newRestoreGeneration(id: number): RestoreGeneration {
+    return { id, retired: false, running: null, queued: null, queuedCtx: null, queuedAsks: 0 };
+  }
+
+  let restoreGeneration = newRestoreGeneration(0);
+
+  /**
+   * Retires the current session's restore chain - called by the sign-out teardown, next to the
+   * clearing of the map. What it guarantees is in {@link RestoreGeneration}; the restore already
+   * running cannot be interrupted, but its end no longer marks the map restored nor wakes the MLS
+   * client it captured, and the next login's restore does not wait for it.
+   */
+  function invalidateRestores(): void {
+    const retired = restoreGeneration;
+    retired.retired = true;
+    restoreGeneration = newRestoreGeneration(retired.id + 1);
+    Log.i(
+      'RESTORE',
+      `generation ${retired.id} retired (running=${retired.running !== null}, queued asks=${retired.queuedAsks})`
+    );
+  }
+
+  /**
+   * Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the
+   * conversations map.
+   *
+   * ONE RESTORE AT A TIME, AND AT MOST ONE QUEUED BEHIND IT (performance audit 2026-10-12, finding
+   * 8). Every Welcome for a group the map lacks asks for a whole restore - every stored
+   * conversation read, `/groups` asked, every history replayed - so a new device joining 80 groups
+   * in one drain restored 80 times, the restores overlapping on the one WASM client their phase 2
+   * is serialised for. An ask while a restore runs cannot join it: that run read the store before
+   * the asker saved its row. So it is queued as the run AFTER it, and every further ask while that
+   * one waits is folded into it - its caller awaits the same run, which starts after their rows
+   * were saved and therefore reads them. A burst of N asks costs at most two restores, decided by
+   * the order of the calls and nothing else.
+   *
+   * Every caller folded into the queued restore receives THE SAME promise, so a failure reaches
+   * each of them as one rejection - which is what lets a caller report it once
+   * (`reportRejectionOnce`). A chain belongs to one session: see {@link RestoreGeneration}.
+   */
+  function loadAndRestoreConversations(ctx: ConversationContext): Promise<void> {
+    const gen = restoreGeneration;
+    if (!gen.running && !gen.queued) return startRestore(gen, ctx);
+    gen.queuedCtx = ctx;
+    gen.queuedAsks++;
+    // Folded silently: the queued restore names how many asks it carries when it starts, one line
+    // per burst instead of one per Welcome.
+    if (gen.queued) return gen.queued;
+    const running = gen.running as Promise<void>;
+    // The running restore's failure is delivered to ITS callers; the queued one runs either way,
+    // because the asks it carries were made after that run read the store.
+    gen.queued = running
+      .then(
+        () => undefined,
+        () => undefined
+      )
+      .then(() => {
+        const next = gen.queuedCtx as ConversationContext;
+        const asks = gen.queuedAsks;
+        gen.queued = null;
+        gen.queuedCtx = null;
+        gen.queuedAsks = 0;
+        if (gen.retired) {
+          // The session that asked has ended: running it would act as that account on the next
+          // one's map. Its callers resolve - there is nothing left for them to wait for.
+          next.log(
+            `[RESTORE] ${asks} queued ask(s) dropped - generation ${gen.id} ended before they ran`
+          );
+          return;
+        }
+        next.log(`[RESTORE] one restore for ${asks} ask(s) made while the previous one ran`);
+        return startRestore(gen, next);
+      });
+    return gen.queued;
+  }
+
+  /** Starts one restore and marks it running in its generation until it settles. */
+  function startRestore(gen: RestoreGeneration, ctx: ConversationContext): Promise<void> {
+    const run = restoreOnce(gen, ctx).finally(() => {
+      if (gen.running === run) gen.running = null;
+    });
+    gen.running = run;
+    return run;
+  }
+
+  /** One restore pass - see {@link loadAndRestoreConversations} for why passes never overlap. */
+  async function restoreOnce(gen: RestoreGeneration, ctx: ConversationContext) {
     if (!ctx.storage) return;
     // The restore supersedes any local preview: from here the map is the session's.
     landingPreviewKey = null;
     landingPreviewOwner = null;
+    // THE CLIENT THIS PASS RESTORED INTO, named once: asking `ensureMls()` again at the end would
+    // CREATE a client if a sign-out retired this one meanwhile.
+    let mlsService: IMlsService | null = null;
     try {
+      mlsService = ctx.ensureMls();
       await loadExistingConversations({
         // The landing target stays pending while it is displayed, so this keeps the thread on
         // screen through the rebuild - see `preserveMessagesOf`.
@@ -1058,7 +1170,7 @@ export function useConversations() {
         userId: ctx.userId,
         deviceKeyB64: ctx.deviceKeyB64,
         storage: ctx.storage,
-        mlsService: ctx.ensureMls(),
+        mlsService,
         conversations,
         messageReactions: ctx.messageReactions,
         archivedConversationIds: [],
@@ -1067,11 +1179,15 @@ export function useConversations() {
         onArchivedIdsChange: () => {},
       });
     } finally {
-      conversationsRestored = true;
-      // A frame that reached the handler while this map was still empty was left in the server
-      // queue rather than dropped. The restore finishing is what makes it readable, so it is the
-      // trigger to ask again - there is no timer waiting to notice.
-      ctx.ensureMls().notifyConversationsRestored();
+      // A pass whose session ended speaks for nobody: the map is the next session's to mark, and
+      // the client it would wake belongs to the account that left.
+      if (!gen.retired) {
+        conversationsRestored = true;
+        // A frame that reached the handler while this map was still empty was left in the server
+        // queue rather than dropped. The restore finishing is what makes it readable, so it is the
+        // trigger to ask again - there is no timer waiting to notice.
+        mlsService?.notifyConversationsRestored();
+      }
     }
   }
 
@@ -2172,6 +2288,7 @@ export function useConversations() {
     noteLiveStreamTransition,
     /** Reads saved conversations from IndexedDB and populates the reactive map. */
     loadAndRestoreConversations,
+    invalidateRestores,
     /** Prepends an older page of messages from IndexedDB to the conversation. */
     loadOlderMessages,
     /** Asks a peer for the page below what this device holds, once the local store is exhausted. */

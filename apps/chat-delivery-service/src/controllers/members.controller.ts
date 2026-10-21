@@ -42,6 +42,7 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 
 /**
  * The most groups `POST /api/mls/group-rosters` answers in one request.
@@ -120,7 +121,12 @@ export class MembersController {
       if (memberCount === 0) return;
     }
 
-    throw new ForbiddenException('Caller is not authorized to modify this group membership');
+    throw new ForbiddenException(
+      refusalBody(
+        RefusalCode.MEMBERSHIP_NOT_ALLOWED,
+        'Caller is not authorized to modify this group membership'
+      )
+    );
   }
 
   /**
@@ -143,7 +149,9 @@ export class MembersController {
       where: { groupId: safeGroupId, userId: caller },
     });
     if (callerMemberships > 0) return;
-    throw new ForbiddenException('Caller is not a member of this group');
+    throw new ForbiddenException(
+      refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller is not a member of this group')
+    );
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -455,7 +463,7 @@ export class MembersController {
         `[ADD_MEMBER] REFUSED key-distribution group=${safeGroupId} user=${safeUserId.slice(0, 8)}`
       );
       throw new ForbiddenException({
-        code: 'KEY_DISTRIBUTION_GROUP',
+        code: RefusalCode.KEY_DISTRIBUTION_GROUP,
         message:
           'A key-distribution group is joined through its community, not through this route.',
       });
@@ -484,7 +492,7 @@ export class MembersController {
         `[ADD_MEMBER][${traceId}] REFUSED block between caller=${caller} target=${safeUserId}`
       );
       throw new ForbiddenException({
-        code: 'USER_BLOCKED',
+        code: RefusalCode.USER_BLOCKED,
         message: 'This person cannot be added.',
       });
     }
@@ -794,7 +802,9 @@ export class MembersController {
       this.logger.warn(
         `[GROUP_EXCLUSIONS] REFUSED group=${safeGroupId} caller=${caller ? caller.slice(0, 8) : 'unidentified'} - not a current member`
       );
-      throw new ForbiddenException('Caller is not a member of this group');
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller is not a member of this group')
+      );
     }
 
     // WHOSE WINDOWS COUNT: every roster member, AND every person holding a device row in the group,

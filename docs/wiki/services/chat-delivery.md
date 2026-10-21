@@ -876,6 +876,40 @@ refusal is a server bug, not a state to keep rotating through. The MLS credentia
 `userId:deviceId`, so a new id *is* a new device: local history is gone and every group must
 re-invite it. That is the intended cost of a revocation being real.
 
+## Refusal codes - one stable name per refusal a member can act on (2026-10-19)
+
+A refusal's `message` is dev-facing English and a client never shows or branches on it. What it keys
+on is the body's `code`, from ONE registry per service (`src/utils/refusal-codes.ts` here,
+`src/common/refusal-codes.ts` in core-service; `refusalBody(code, message, extra)` builds the body),
+and it words the code through Paraglide in `frontend/src/lib/utils/refusalCodes.ts`
+(`describeRefusalCode(refusalCode(error))`). `refusalCodes.test.ts` reads both registries and fails
+when a code is neither worded nor declared `TYPED_ELSEWHERE_CODES`. Codes are additive: the old
+`message` text stays beside the code, so an older client reads what it always read and no shim exists.
+A code is a contract - a rename is a new code plus the old one kept until `minClientVersion` drops
+every client that reads it. Social-service keeps its own table ([social-service](social-service.md)).
+
+| Service | Code | Status | Raised when | Worded on |
+| --- | --- | --- | --- | --- |
+| delivery | `DEVICE_REVOKED`, `DEVICE_LIMIT_REACHED`, `KEY_PACKAGE_IDENTITY_INVALID`, `KEY_DISTRIBUTION_GROUP` | 403/400 | already coded before this pass | typed flows, never a sentence |
+| delivery | `USER_BLOCKED` | 403 | a block stands between two people (add, call) | call and add-member screens, neutral |
+| delivery | `NOT_A_MEMBER` | 403 | invite link, roster read or notification setting on a conversation the caller is not in | share link, panel |
+| delivery | `MEMBERSHIP_NOT_ALLOWED` | 403 | a non-member changes a roster | add-member |
+| delivery | `INVITE_INVALID` | 404 | unknown, expired or revoked invitation | `/g/join/[token]` |
+| delivery | `INVITE_NOT_A_GROUP` | 400 | invite link requested for a 1-to-1 | share link |
+| delivery | `NO_ACTIVE_DEVICE` | 400 | the joiner has no usable key package | `/g/join/[token]` |
+| delivery | `PIN_INCORRECT` | 403 | wrong current PIN, or the lost compare-and-swap | PIN change |
+| delivery | `PIN_NOT_SET` | 400 | PIN change on an account with no PIN | PIN change |
+| core | `BLOCK_SELF`, `BLOCK_TARGET_NOT_FOUND`, `BLOCK_LIMIT_REACHED` (+`max`), `NOT_BLOCKED` | 400/404/422/404 | the block list | settings, blocked people |
+| core | `ADMIN_SELF_DEMOTE` | 403 | an administrator removes their own right | no screen calls it yet |
+| core | `USER_SEARCH_FILTER_REQUIRED`, `USER_SEARCH_TOO_LONG` (+`max`) | 400 | the directory with no filter, a search past 200 characters | `/directory` |
+
+`MAINTENANCE`, `ACCOUNT_ERASURE_PENDING` and `ACCOUNT_ERASURE_BLOCKED` were coded in
+`auth.controller.ts` earlier and are worded by the sign-in screen. **Not coded, on purpose:** header
+and shape validation (`Missing X-User-Id`, `ids must be ...`: a client bug, not a member's), shared-secret
+guards, push-token and link-preview failures (no screen words them), calls (held off, dev builds only),
+Lydia payment errors (the paid half waits for WP-LYDIA-1), and anything in social-service, account
+erasure, lives or reels.
+
 ## Routes
 
 All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (injected by Nginx) unless noted.
@@ -1841,6 +1875,15 @@ description when the page declared none. A site with good tags is never made wor
 The YouTube short-circuit stays ahead of all of it: it needs no HTML fetch at all, so it is strictly
 cheaper.
 
+#### What counts as the app: an exact host, never a suffix
+
+`isPublicAppUrl` (`publicAppUrl.ts`) accepts `PUBLIC_APP_HOSTS` plus the host of the origin the build
+advertises (`publicAppOrigin()`, so `dev.canari-emse.fr` is the app on the dev estate only). It used
+to accept every `*.canari-emse.fr` / `*.canari.emse.fr`, so a link to `archives.canari-emse.fr` (a
+separate Omeka site) was treated as the app: `AppLink` replaced its text with a generic label and
+navigated to the same path on the current origin. Sibling subdomains are external and keep their own
+host, text and preview card.
+
 #### Ecosystem sites are named, not spelled out
 
 `frontend/src/lib/utils/ecosystemHosts.ts` maps the four hosts we share users with -
@@ -1917,11 +1960,16 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 |---|---|---|
 | POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group and its caller (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service`. The answer window is NOT open yet: `/api/calls/ring` opens it. 403 `USER_BLOCKED` when a block stands between the caller and the other member - no room is bound ([calls](../frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)) |
 | GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 403 `USER_BLOCKED` for a block set while it rang, 410 for an unknown/expired room or after the ring window ([calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
-| GET | `/api/calls/ice-servers` | Get ICE server configuration |
+| GET | `/api/calls/ice-servers` | Get ICE server configuration. STUN only, typed `turn: { status: 'unavailable', code }`, once the month's egress METERED by Cloudflare (GraphQL analytics, account-wide, `TurnUsageMeter`) reaches `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` (`TURN_BUDGET_REACHED`), or when that meter is unconfigured or unreadable (`TURN_METER_UNAVAILABLE`, error log, failure cached 30 s; every readable day re-asked and stored in `turn:metered:days:<YYYY-MM>` for the days past retention, meter readings single-flight (credentials never shared), 5 s timeouts, an hourly `[TURN-METER]` report while calls are open) - no TURN credential without a budget, and no refused call that needs no relay ([calls](../frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)) |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
 | POST | `/api/calls/ring` | Open the room's 60 s answer window (`call:room:<id>:answer_by`, one `SET NX` expiring with the binding; once, from its caller only; 403 otherwise, 410 for an unknown or expired room), then fan out an incoming-call ring to all group members (WP-XP-5) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere (reason: answered/cancelled/ended) |
+
+**The kill switch.** `initiate`, `room-token`, `ring` and `ice-servers` first read
+`platform_config.calls_mode` (core-service's row, plain SQL, every request): `off` answers 403
+`CALLS_DISABLED`, `audio` answers a video ring 403 `CALLS_VIDEO_DISABLED`. `ring-end`, `presence`
+and `sibling-status` are never gated ([calls](../frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
 
 The room id returned by `/api/calls/initiate` **is** the `callId` used by every other call route and
 by the SFU, so this service's `[call] invite` / `[ring] call=` lines and call-service's

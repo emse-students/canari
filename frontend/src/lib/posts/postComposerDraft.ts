@@ -274,3 +274,26 @@ export function formatFormOpensAt(opensAt: string): string {
     minute: '2-digit',
   });
 }
+
+/** The composer fields a CanaReel cannot carry (the server's `assertCreateKindShape` refuses each). */
+export interface ReelRefusedFields {
+  scheduledAt: string;
+  includePoll: boolean;
+  includeForm: boolean;
+  linkedCalendarEventId: string;
+}
+
+/**
+ * Whether a video filmed with the new-post composer's camera may become a CanaReel (user,
+ * 2026-10-19: one camera, one behaviour). NOT when the member set a schedule, a poll, a form or a
+ * linked event: a reel can honour none of them, so the video keeps the camera's old outcome and is
+ * attached to the post that can (review of #2124).
+ */
+export function composerAllowsReel(fields: ReelRefusedFields): boolean {
+  return (
+    !fields.scheduledAt &&
+    !fields.includePoll &&
+    !fields.includeForm &&
+    !fields.linkedCalendarEventId.trim()
+  );
+}

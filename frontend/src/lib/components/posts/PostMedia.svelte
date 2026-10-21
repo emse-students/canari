@@ -443,11 +443,14 @@
          `blobUrl` set - the assertions on it say that, which the guard cannot. -->
     {#if mediaType === 'image'}
       <!-- ========== IMAGE ========== -->
+      <!-- `data-double-tap-defers`: on a post card the viewer opens once the double-tap window has
+           passed, since a second tap on the picture likes the post (`doubleTapLike`). -->
       <button
         type="button"
         onclick={handleClick}
         class="group/img block h-full w-full cursor-zoom-in outline-none focus-visible:z-10 focus-visible:ring-4 focus-visible:ring-amber-500/50"
         aria-label={m.post_zoom_image_label()}
+        data-double-tap-defers
       >
         <!-- NO HOVER ZOOM WHEN THE WHOLE PICTURE IS THE POINT: scaling a contained picture past
              its box crops it again, which is the defect this branch exists to end. The grid cell

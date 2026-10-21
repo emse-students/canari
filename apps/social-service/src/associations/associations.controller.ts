@@ -1,3 +1,4 @@
+import { Throttle } from '@nestjs/throttler';
 import {
   BadRequestException,
   Body,
@@ -22,6 +23,7 @@ import {
 import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import {
   PERM_FLAG_KEY,
   GlobalAdminOrAssociationRoleGuard,
@@ -67,6 +69,7 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
+import { wholeCentsOf } from '../common/core-payment-error';
 import {
   AGENDA_SELECTION_REQUIRED,
   assertAgendaAccess,
@@ -76,6 +79,13 @@ import {
 import { isInternalSecret } from '../internal/is-internal-secret.util';
 
 const LOGO_UPLOAD_MB = 2;
+
+/**
+ * Writes of a Lydia Business key per user AND association per minute. A wrong key is only found
+ * by the first callback it fails to verify, so the route must not become a loop; a manager
+ * correcting a paste needs a handful.
+ */
+export const LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE = 5;
 
 /** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
 @Controller('associations')
@@ -530,6 +540,58 @@ export class AssociationsController {
       throw new ForbiddenException('MANAGE_PAYOUT_ACCOUNT permission required');
     }
     return this.service.getPayoutAccount(id);
+  }
+
+  /**
+   * Whether the association's Lydia Business private token is stored - `{ set }` and NOTHING else,
+   * ever: the key is write-only. MANAGE_PAYOUT_ACCOUNT only, like the payout account it belongs to.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/lydia-business-key')
+  async lydiaBusinessKeyStatus(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<{ set: boolean }> {
+    await this.assertPayoutAccountManager(userId, ga, id, 'Business key status read');
+    return { set: await this.service.isLydiaBusinessKeySet(id) };
+  }
+
+  /**
+   * Stores the association's Lydia Business private token (encrypted at rest), the key its Lydia
+   * callbacks are verified with. MANAGE_PAYOUT_ACCOUNT only. Answers `{ set: true }` - never the
+   * value, which no route returns to a browser. Replaces any key already stored. Throttled per
+   * user and association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`): nothing checks the key against
+   * Lydia here, the first callback it verifies is what proves it.
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE, ttl: 60_000 } })
+  @Put(':id/lydia-business-key')
+  async setLydiaBusinessKey(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { businessPrivateToken?: unknown }
+  ): Promise<{ set: true }> {
+    await this.assertPayoutAccountManager(userId, ga, id, 'Business key write');
+    await this.service.setLydiaBusinessKey(id, body?.businessPrivateToken, userId);
+    return { set: true };
+  }
+
+  /** Refuses anyone but a MANAGE_PAYOUT_ACCOUNT holder of the association (403). */
+  private async assertPayoutAccountManager(
+    userId: string,
+    ga: string | undefined,
+    id: string,
+    what: string
+  ): Promise<void> {
+    const allowed = await this.service.canManagePayoutAccount(userId, id, {
+      isGlobalAdmin: ga === 'true',
+    });
+    if (!allowed) {
+      this.logger.debug(`[PERM] ${what} refused on ${sanitizeLog(id)}`);
+      throw new ForbiddenException('MANAGE_PAYOUT_ACCOUNT permission required');
+    }
   }
 
   /** Recent posts and forms for this association (picker when linking calendar ↔ content). */
@@ -1404,17 +1466,20 @@ export class AssociationsController {
     @Headers('x-user-id') userId: string,
     @Body()
     body?: {
-      customAmountCents?: number;
+      customAmountCents?: unknown;
       successUrl?: string;
       cancelUrl?: string;
       payerEmail?: string;
     }
   ) {
+    // Read as `unknown` and checked HERE: an inline body type is never validated, so a fraction or
+    // a string reached the bounds check (NaN passes it) and the charge (rounded by `toFixed(2)`).
+    const customAmountCents = wholeCentsOf(body?.customAmountCents, this.logger, 'SHOP');
     return this.productsService.createCheckoutSession(
       id,
       productId,
       userId,
-      body?.customAmountCents,
+      customAmountCents,
       { successUrl: body?.successUrl, cancelUrl: body?.cancelUrl },
       body?.payerEmail
     );
@@ -1710,19 +1775,31 @@ export class AssociationsController {
     return this.service.clearLydiaAccount(id);
   }
 
-  /** Called by core-service when a product purchase completes. */
+  /**
+   * Fulfils a product purchase - refused unless `vendorToken` is the product's payee. NO CALLER
+   * since 2026-10-16: core-service refuses to fulfil a product from a Lydia callback until a
+   * boutique checkout is a stored row to settle from (lot B3, payments.md "What confirms a
+   * payment"). Kept as the entry point B3 wires back.
+   */
   @Post('products/:productId/purchase-completed')
   purchaseCompleted(
     @Param('productId') productId: string,
-    @Body() body: { userId: string; amountCents: number; paymentIntentId: string },
+    @Body()
+    body: { userId: string; amountCents: number; paymentIntentId: string; vendorToken?: unknown },
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
+    const vendorToken = typeof body?.vendorToken === 'string' ? body.vendorToken : '';
+    if (!vendorToken) {
+      this.logger.warn(`[SHOP] purchase-completed refused: no vendorToken`);
+      throw new BadRequestException('vendorToken is required');
+    }
     return this.productsService.handlePurchaseCompleted(
       productId,
       body.userId,
       body.amountCents,
-      body.paymentIntentId
+      body.paymentIntentId,
+      vendorToken
     );
   }
 }

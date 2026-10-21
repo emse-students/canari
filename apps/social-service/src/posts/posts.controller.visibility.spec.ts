@@ -39,8 +39,11 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
       'addReaction',
       (c: PostsController) => c.addReaction('reader', POST, { reactionType: 'like' } as never),
     ],
-    ['addComment', (c: PostsController) => c.addComment('reader', POST, { text: 'x' } as never)],
-    ['likeComment', (c: PostsController) => c.likeComment('reader', POST, 'comment')],
+    [
+      'addComment',
+      (c: PostsController) => c.addComment('reader', undefined, POST, { text: 'x' } as never),
+    ],
+    ['likeComment', (c: PostsController) => c.likeComment('reader', undefined, POST, 'comment')],
   ] as const)('%s answers 404 and writes nothing', async (name, call) => {
     const { controller, assertVisible, interactions } = make();
     await expect(call(controller)).rejects.toBeInstanceOf(NotFoundException);

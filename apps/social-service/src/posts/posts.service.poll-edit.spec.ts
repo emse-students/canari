@@ -37,6 +37,8 @@ describe('PostsService keeps poll votes across an edit', () => {
     const postRepo = {
       findOne: () => Promise.resolve(post),
       save: (entity: Post) => Promise.resolve(entity),
+      // The shaping reads the editor's republication rights (D38b) for a personal post: none here.
+      manager: { query: () => Promise.resolve([]) },
     };
     const service = new PostsService(
       postRepo as unknown as Repository<Post>,

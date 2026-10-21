@@ -1,6 +1,6 @@
 {
   "productName": "Canari",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "identifier": "fr.emse.canari",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -91,6 +91,24 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "live"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "republication-requests"
+        },
+        {
+          "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "notifications"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",
@@ -101,6 +119,7 @@
             "/notifications",
             "/calendar",
             "/shop",
+            "/bookings",
             "/"
           ],
           "pathPrefix": [
@@ -114,7 +133,8 @@
             "/g/join/",
             "/notifications/",
             "/calendar/",
-            "/shop/"
+            "/shop/",
+            "/bookings/"
           ]
         },
         {
@@ -129,6 +149,7 @@
             "/notifications",
             "/calendar",
             "/shop",
+            "/bookings",
             "/"
           ],
           "pathPrefix": [
@@ -142,7 +163,8 @@
             "/g/join/",
             "/notifications/",
             "/calendar/",
-            "/shop/"
+            "/shop/",
+            "/bookings/"
           ]
         }
       ]
@@ -163,7 +185,7 @@
       "developmentTeam": "4CLNB8SR6L"
     },
     "android": {
-      "versionCode": 100300001
+      "versionCode": 100300105
     }
   }
 }

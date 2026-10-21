@@ -23,9 +23,9 @@
    * A return with no submission starts on its answer: its first title, the one the route announcer
    * reads at the navigation, is already "Paiement introuvable".
    */
-  let status = $state<'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'error'>(
-    untrack(() => submissionId) ? 'loading' : 'error'
-  );
+  let status = $state<
+    'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'declined' | 'ended' | 'error'
+  >(untrack(() => submissionId) ? 'loading' : 'error');
   let formId = $state<string | null>(null);
 
   /**
@@ -38,6 +38,8 @@
     confirmed: () => m.form_success_confirmed_heading(),
     pending: () => m.form_success_pending_heading(),
     overCapacity: () => m.form_success_over_capacity_heading(),
+    declined: () => m.form_success_declined_heading(),
+    ended: () => m.form_success_ended_heading(),
     error: () => m.form_success_not_found_heading(),
   };
   $effect(() => {
@@ -49,13 +51,19 @@
     for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
       const submission = await confirmSubmissionPayment(id);
       formId = submission.formId;
-      const verdict = paymentReturnVerdict(submission.paymentStatus);
+      const verdict = paymentReturnVerdict(submission.paymentStatus, submission.requestState);
       if (verdict === 'confirmed') {
         status = 'confirmed';
         return;
       }
       if (verdict === 'overCapacity') {
         status = 'overCapacity';
+        return;
+      }
+      if (verdict === 'declined' || verdict === 'ended') {
+        // The request is dead and the server released the answer: the payer may try again.
+        console.info(`[forms/success] request ${verdict}, the answer is released for a retry`);
+        status = verdict;
         return;
       }
       if (verdict === 'failed') {
@@ -109,7 +117,7 @@
           <CircleCheck size={48} class="text-green-ok" />
         </div>
       </div>
-    {:else if status === 'error'}
+    {:else if status === 'error' || status === 'declined' || status === 'ended'}
       <div class="flex justify-center">
         <div class="bg-red-err/20 rounded-full p-4">
           <CircleX size={48} class="text-red-500" />
@@ -131,7 +139,11 @@
               ? m.form_success_pending_desc()
               : status === 'overCapacity'
                 ? m.form_success_over_capacity_desc()
-                : m.form_success_not_found_desc()}
+                : status === 'declined'
+                  ? m.form_success_declined_desc()
+                  : status === 'ended'
+                    ? m.form_success_ended_desc()
+                    : m.form_success_not_found_desc()}
         </p>
       {/if}
     </div>
@@ -142,6 +154,14 @@
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {m.form_success_back_to_form()}
+      </a>
+    {:else if status === 'declined' || status === 'ended'}
+      <!-- The answer is released: the form's own pay button is the retry, one tap away. -->
+      <a
+        href={formId ? `/forms/${formId}` : '/forms'}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+      >
+        {m.form_success_retry()}
       </a>
     {:else if status === 'overCapacity'}
       <a

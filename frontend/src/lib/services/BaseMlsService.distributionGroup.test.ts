@@ -30,6 +30,7 @@ import {
   takeGroupsAwaiting,
   type UnackedReason,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
+import { flushMacrotask } from '../../test/flush';
 
 /**
  * A Graine key-distribution group on the client (WP-22) - a community's, or a private salon's.
@@ -663,7 +664,7 @@ describe('the durable registry', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     proto.registerDistributionGroup.call(ctx, WS, 'g-1');
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
 
     expect(proto.isDistributionGroup.call(ctx, 'g-1')).toBe(true);
     expect(warn).toHaveBeenCalledWith(

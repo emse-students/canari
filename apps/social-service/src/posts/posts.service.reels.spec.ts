@@ -13,6 +13,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import type { CommentIdentityService } from './comment-identity';
 import type { Repository } from 'typeorm';
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
@@ -24,6 +25,7 @@ import type { PostNotificationsService } from './post-notifications.service';
 import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { PushService } from '../push/push.service';
 import { DAY_MS, REEL_RETENTION_DAYS } from './reel.constants';
+import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const BLOB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -156,6 +158,58 @@ describe('reads exclude a reel past its month', () => {
     }
   });
 
+  it('with singlePhotos, reels AND one-picture posts, in EVERY feed arm', async () => {
+    for (const feed of ['all', 'associations', 'custom'] as const) {
+      const { service, queries } = makeService({});
+      await service.listPosts({
+        limit: 10,
+        offset: 0,
+        feed,
+        kind: 'reel',
+        singlePhotos: true,
+        viewerUserId: 'alice',
+      });
+      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
+      expect(sql).toContain(`posts.kind = 'reel' OR (posts.kind = 'post' AND`);
+      expect(sql).toContain(SINGLE_PHOTO_POST_SQL);
+      // The visibility of a post is still asked of every row the arm serves.
+      expect(sql).toContain(`posts.kind <> 'reel' OR posts."expiresAt" > NOW()`);
+    }
+  });
+
+  it('the CanaReels list is newest first in EVERY arm: a pin does not head it', async () => {
+    for (const feed of ['all', 'associations', 'custom'] as const) {
+      const { service, queries } = makeService({});
+      await service.listPosts({
+        limit: 10,
+        offset: 0,
+        feed,
+        kind: 'reel',
+        singlePhotos: true,
+        viewerUserId: 'alice',
+      });
+      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
+      expect(sql).toContain(`ORDER BY posts."publishedAt" DESC, posts.id DESC`);
+      expect(sql).not.toContain('posts.pinned DESC');
+    }
+  });
+
+  it('every other list keeps its pinned posts first', async () => {
+    for (const kind of [undefined, 'post'] as const) {
+      const { service, queries } = makeService({});
+      await service.listPosts({ limit: 10, offset: 0, feed: 'all', kind, viewerUserId: 'alice' });
+      const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+      expect(sql).toContain(`ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`);
+    }
+  });
+
+  it('singlePhotos means nothing without kind=reel', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({ limit: 10, offset: 0, feed: 'all', singlePhotos: true });
+    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(sql).not.toContain(SINGLE_PHOTO_POST_SQL);
+  });
+
   it('absent kind means both: no kind clause, but the live-reel clause stays', async () => {
     const { service, queries } = makeService({});
     await service.listPosts({ limit: 10, offset: 0, feed: 'all', viewerUserId: 'alice' });
@@ -178,6 +232,18 @@ describe('reads exclude a reel past its month', () => {
     await service.searchPosts('trip', 10, 0, { viewerUserId: 'alice' });
     expect(queries.find((q) => /ILIKE/.test(q.sql))?.sql).toContain(
       `posts.kind <> 'reel' OR posts."expiresAt" > NOW()`
+    );
+  });
+
+  it('search pages and the event post pick in a TOTAL order: id breaks a publishedAt tie', async () => {
+    const { service, queries } = makeService({});
+    await service.searchPosts('trip', 10, 0, { viewerUserId: 'alice' });
+    expect(queries.find((q) => /ILIKE/.test(q.sql))?.sql).toContain(
+      `ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`
+    );
+    await service.findPostLinkedToCalendarEvent('ev-1', 'alice', false);
+    expect(queries.find((q) => /"linkedCalendarEventId" = \$1/.test(q.sql))?.sql).toContain(
+      `ORDER BY posts."publishedAt" DESC, posts.id DESC`
     );
   });
 
@@ -224,7 +290,8 @@ describe('PostInteractionsService on a dead reel', () => {
       repo as unknown as Repository<Post>,
       {} as PostNotificationsService,
       {} as PushService,
-      {} as PostMediaRetentionService
+      {} as PostMediaRetentionService,
+      {} as CommentIdentityService
     );
 
     await expect(interactions.addReaction('r1', 'bob', 'like')).rejects.toBeInstanceOf(

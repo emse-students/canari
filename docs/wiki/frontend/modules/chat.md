@@ -1327,8 +1327,10 @@ out of the tab.
 `extract_full_message_info`) decides WHAT a decrypted message is and reads `voice_note` (field 11)
 beside the `MediaKind`: a declared recording is announced `Message vocal` / `Voice message`, an
 undeclared audio (an import, or a recording from before 2026-09-17) `Fichier audio` / `Audio file`.
-Every sentence it composes - the system events, `a réagi {emoji}`, the four media placeholders, the
-poll line, the two call lines and the `événement de groupe ({event})` trap - is written ONCE, in both
+Every sentence it composes - the system events, `a réagi {emoji}`, the media placeholders (a
+CanaReel's included since WP-RC-7, declared by `MediaMsg.intent` the same way:
+[reels-in-chat](reels-in-chat.md#push-text)), the poll line, the two call lines and the
+`événement de groupe ({event})` trap - is written ONCE, in both
 languages, in `mobile/push_text.rs` (`PushText::render`): a closed enum whose exhaustive `match`
 refuses to compile a sentence written in one language only, and a test that writes out all of them.
 The text somebody TYPED passes through untouched.
@@ -1343,6 +1345,18 @@ to the OS locale in that one case, so the two may disagree on a device that has 
 that mirrors the locale; a device that has, cannot. Why Rust and not a KIND worded natively: the text
 is what the FCM cache persists as a message body, and one implementation keeps Android and iOS from
 diverging ([mobile](../mobile.md#the-language-a-notification-speaks)).
+
+### "Format non supporte" names its cause in the log (2026-10-18)
+
+`VoiceMessagePlayer` draws "Format non supporte / Telecharger" on ANY `error` event of its `<audio>`
+element, and four causes reach that event: an abort (`MediaError` code 1), a revoked or unreadable
+blob URL (2), bytes the engine cannot decode (3), a container it does not know (4). Two voice notes showed the label
+on the Mi 9T on 2026-10-06 while an iPhone listed them, and the branch logged nothing, so the cause
+could not be read. It now writes one `[voice] the audio element refused its source` warning carrying
+the code and its name, the engine's message, the type the message declares and the engine's
+`canPlayType` answer for that type: `canPlayType` "no" means the engine lacks the format, a
+"maybe"/"probably" with code 3 or 4 means the bytes are not what the message declares. **Owed: the
+line from the Mi 9T on that conversation** ([backlog](../../backlog.md)).
 
 ### A system event is executed, never displayed
 

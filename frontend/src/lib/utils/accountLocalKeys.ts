@@ -53,6 +53,11 @@ export const ACCOUNT_KEY = {
   /** `salonReadMarkQueue.ts`: the DM and group read marks still owed to the outbox (lower-cased). */
   dmReadMarks: (userId: string) => `canari.dmReadMarks.${userId.toLowerCase()}`,
   /**
+   * `controlRefusals.svelte.ts`: the reactions, edits, pins and deletes the outbox refused, still
+   * offered for Retry - message and group ids, an emoji and instants, never a message's text.
+   */
+  controlRefusals: (userId: string) => `canari_control_refusals:v1:${userId}`,
+  /**
    * `feedStoreEpoch.ts`: the account's stored-feed epoch. Called with `''` it is the prefix a
    * sign-out enumerates to end EVERY account's epoch.
    */
@@ -123,6 +128,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.salonUnsent(userId),
     ACCOUNT_KEY.salonReadMarks(userId),
     ACCOUNT_KEY.dmReadMarks(userId),
+    ACCOUNT_KEY.controlRefusals(userId),
     ACCOUNT_KEY.feedStoreEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),

@@ -156,10 +156,13 @@
   {#if !frameReady}
     <VideoPoster />
   {/if}
+  <!-- `data-double-tap-defers`: on a post card (`doubleTapLike`) the viewer opens once the double-tap
+       window has passed, since a second tap there likes the post; anywhere else it means nothing. -->
   <button
     type="button"
     class="absolute inset-0 cursor-zoom-in outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:ring-inset"
     aria-label={openLabel}
+    data-double-tap-defers
     onclick={(e) => {
       e.stopPropagation();
       // The viewer opens where this video is, not at its first frame (`videoResume`).

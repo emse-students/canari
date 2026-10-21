@@ -45,6 +45,15 @@ describe('which sections a reader may open', () => {
     expect(mayOpenEditSection('formulaires', docs)).toBe(false);
   });
 
+  it('opens the bookings section on MANAGE_BOOKINGS alone, never on MANAGE_FORMS (D30)', () => {
+    const bookings = editRights(withFlags(AssociationPermissionFlag.MANAGE_BOOKINGS));
+    expect(visibleEditSections(bookings)).toEqual(['profile', 'reservations']);
+    const forms = editRights(withFlags(AssociationPermissionFlag.MANAGE_FORMS));
+    expect(mayOpenEditSection('reservations', forms)).toBe(false);
+    const list = editRights(withFlags(AssociationPermissionFlag.MANAGE_BOOKINGS), 'list');
+    expect(visibleEditSections(list, LIST_EDIT_SECTIONS)).toEqual(['profile', 'reservations']);
+  });
+
   it('opens payments on the shop right, and cotisations on members OR shop', () => {
     const shop = editRights(withFlags(AssociationPermissionFlag.MANAGE_PRODUCTS));
     expect(mayOpenEditSection('payments', shop)).toBe(true);
@@ -90,11 +99,12 @@ describe('which sections a reader may open', () => {
     ).toBe(true);
   });
 
-  it('gives a list three sections and refuses it the association-only ones', () => {
+  it('gives a list four sections, bookings included (D38), and refuses it the association-only ones', () => {
     const admin = editRights({ ...none, isGlobalAdmin: true }, 'list');
     expect(visibleEditSections(admin, LIST_EDIT_SECTIONS)).toEqual([
       'profile',
       'members',
+      'reservations',
       'danger',
     ]);
     const plain = editRights(none, 'list');

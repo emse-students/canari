@@ -22,8 +22,12 @@ import { refusalStatus } from '$lib/utils/apiRefusal';
  * device offers no control the server has not just confirmed.
  */
 
-/** The served verdicts on the reader: every `canXxx` field of a post. */
-const SERVED_RIGHT = /^can[A-Z]/;
+/**
+ * The served verdicts on the reader: every `canXxx` field of a post, and `republicationRequests`
+ * (D38b) - what the reader's associations asked, which the menu's "Annuler la demande" acts on and
+ * which may have been answered since.
+ */
+const SERVED_RIGHT = /^(can[A-Z]|republicationRequests$)/;
 
 /** One stored page, as sealed. `owner` and `key` repeat the slot's own coordinates on purpose. */
 interface StoredFeedPage {

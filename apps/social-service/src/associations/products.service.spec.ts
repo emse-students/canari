@@ -204,6 +204,63 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     expect(result.amountCents).toBe(1000);
   });
 
+  describe('a free amount outside the product bounds', () => {
+    const bounded = () =>
+      product({
+        amountCents: null,
+        allowCustomAmount: true,
+        customAmountMinCents: 100,
+        customAmountMaxCents: 5000,
+      });
+
+    it('is refused with the typed code, both bounds, and a log line at the decision', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(bounded());
+      const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const err = await (service as any)
+        .resolvePurchase('asso1', 'prod1', 'user1', 6000)
+        .catch((e: unknown) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: 'AMOUNT_OUT_OF_RANGE',
+        minCents: 100,
+        maxCents: 5000,
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('amount=6000'));
+    });
+
+    it('CONTROL: an amount inside the bounds is accepted and logs no refusal', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(bounded());
+      const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1', 3000);
+      expect(result.amountCents).toBe(3000);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('an unbounded maximum answers maxCents null', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({
+          amountCents: null,
+          allowCustomAmount: true,
+          customAmountMinCents: 100,
+          customAmountMaxCents: null,
+        })
+      );
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const err = await (service as any)
+        .resolvePurchase('asso1', 'prod1', 'user1', 50)
+        .catch((e: unknown) => e);
+      expect(err.getResponse()).toMatchObject({ minCents: 100, maxCents: null });
+    });
+  });
+
   it('derives the dated cotisation tag for member pricing/gating checks', async () => {
     const { service, productRepo, assoRepo, userTagService } = makeService();
     assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'dated' }));
@@ -508,6 +565,85 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       webhookSecret: 'shhh',
       ...overrides,
     } as Partial<AssociationProduct>);
+
+  describe('a cash grant on a free-amount product', () => {
+    const bounded = () =>
+      product({
+        type: 'other',
+        amountCents: null,
+        allowCustomAmount: true,
+        customAmountMinCents: 100,
+        customAmountMaxCents: 5000,
+      });
+
+    it('refuses an amount past the bounds with the typed code, both bounds, and a log line', async () => {
+      const { service, productRepo, purchaseRecordService } = makeService();
+      productRepo.findOne.mockResolvedValue(bounded());
+      productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
+      const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const err = await service
+        .grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1', amountCents: 6000 })
+        .catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'AMOUNT_OUT_OF_RANGE',
+        minCents: 100,
+        maxCents: 5000,
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cash grant amount refused'));
+      expect(purchaseRecordService.create).not.toHaveBeenCalled();
+    });
+
+    it('binds a maximum set with no minimum, as the checkout does', async () => {
+      const { service, productRepo, purchaseRecordService } = makeService();
+      productRepo.findOne.mockResolvedValue(
+        product({
+          type: 'other',
+          amountCents: null,
+          allowCustomAmount: true,
+          customAmountMinCents: null,
+          customAmountMaxCents: 5000,
+        })
+      );
+      productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const err = await service
+        .grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1', amountCents: 6000 })
+        .catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'AMOUNT_OUT_OF_RANGE',
+        minCents: 0,
+        maxCents: 5000,
+      });
+      expect(purchaseRecordService.create).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: records an amount inside the bounds', async () => {
+      const { service, productRepo, purchaseRecordService } = makeService();
+      productRepo.findOne.mockResolvedValue(bounded());
+      productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
+      purchaseRecordService.create.mockResolvedValue({
+        id: 'rec1',
+        userId: 'user1',
+        source: 'product',
+        productId: 'prod1',
+        formId: null,
+        productName: 'Sweat',
+        amountCents: 3000,
+        paymentMethod: 'cash',
+        paidAt: new Date('2026-08-28T12:00:00Z'),
+      });
+
+      await service.grantProductPurchase('asso1', 'prod1', 'admin1', {
+        userId: 'user1',
+        amountCents: 3000,
+      });
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentMethod: 'cash', amountCents: 3000 })
+      );
+    });
+  });
 
   describe('a cash grant may not be recorded against a Cercle top-up', () => {
     it('refuses the grant, before touching the buyer or the books', async () => {

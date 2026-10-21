@@ -100,14 +100,16 @@
     </div>
   {:else if post}
     <!--
-      `commentsOpen` because this page IS the post: a reader who followed a link to it came for the
-      thread, not to scroll past it. In the feed the section stays closed behind the comment button.
+      The thread is a SHEET now (`PostCommentsSheet`), and it opens at once only when a notification
+      named a comment: that reader came for the thread. Anyone else who followed a link to the post
+      sees the post, its newest comment and the line to write one - a full-screen sheet over the
+      post they came to read would be a decision made for them.
     -->
     <PostCard
       {post}
       currentUserId={userId}
       {authToken}
-      commentsOpen
+      commentsOpen={focusCommentId !== undefined}
       {focusCommentId}
       onDelete={() => goto('/posts')}
     />

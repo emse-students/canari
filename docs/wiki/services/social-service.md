@@ -101,7 +101,11 @@ its migrations are already recorded, so the query succeeds there whatever the co
   failure costs more than a retry.
 - Tests: `post-media-retention.reels.spec.ts` (both passes failing, only one failing, a healthy schema).
 
-**The same window, for a column every request would read (migration 090, 2026-10-17).** `channel_messages."clientMessageId"` is the salon send's idempotence key: a partial unique index on `(authorId, channelId, clientMessageId)`, and a repeated `POST /api/channels/:id/messages` with the same `messageId` is answered with the stored row - nothing written, published or pushed; two racing repeats are settled by the index, the loser answered with the winner's row. On the entity it is `select: false, update: false`, so no history read and no pin names it before the migration. **Every INSERT does**: TypeORM lists each insertable column in its INSERT (`DEFAULT` for an absent value), so in the seconds between the services starting and 090 running EVERY salon INSERT fails - a send with or without a client id, an edit, a reaction, a system notice - whole, storing nothing. A `messageId` that is not a UUID is refused 400 `CHANNEL_CLIENT_MESSAGE_ID_INVALID`. The answer echoes `clientMessageId`, which is how a client learns a repeat is safe. A message delete first writes the id's tombstone (`channel_message_client_tombstones`, cascaded with its salon), and a repeat that meets it is refused 410 `CHANNEL_MESSAGE_DELETED` - so a delete, too, fails whole in the deploy window. The delete locks the message ROW before the client id's advisory lock (`deleteChannelMessage`), so a delete racing an account erasure waits for it and writes no tombstone of the erased author. A tombstone is kept **30 days** (decision 2026-10-18): `ChannelRetentionScheduler.purgeExpiredClientTombstones`, daily at 03:50, deletes the ones whose `deletedAt` is older, at the instant it is handed. Tests: `channel.service.spec.ts`, `channel-message-client-id.integration.spec.ts` (needs `SOCIAL_IT_DATABASE_URL`; the deploy-window case fails without `select: false`). Why: [offline-and-weak-network](../frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17).
+**A column every request would read (migration 090, 2026-10-17; the deploy-window reasoning below is HISTORICAL - since #1563 the deploy applies the migrations BEFORE it replaces any service, so only a rollback across a migration meets old code on a newer schema).** `channel_messages."clientMessageId"` is the salon send's idempotence key: a partial unique index on `(authorId, channelId, clientMessageId)`, and a repeated `POST /api/channels/:id/messages` with the same `messageId` is answered with the stored row - nothing written, published or pushed; two racing repeats are settled by the index, the loser answered with the winner's row. On the entity it is `select: false, update: false`, so no history read and no pin names it before the migration. **Every INSERT does**: TypeORM lists each insertable column in its INSERT (`DEFAULT` for an absent value), so on a schema without 090 EVERY salon INSERT fails - a send with or without a client id, an edit, a reaction, a system notice - whole, storing nothing. A `messageId` that is not a UUID is refused 400 `CHANNEL_CLIENT_MESSAGE_ID_INVALID`. The answer echoes `clientMessageId`, which is how a client learns a repeat is safe. A message delete first writes the id's tombstone (`channel_message_client_tombstones`, cascaded with its salon), and a repeat that meets it is refused 410 `CHANNEL_MESSAGE_DELETED` - so a delete, too, fails whole on such a schema. The delete locks the message ROW before the client id's advisory lock (`deleteChannelMessage`), so a delete racing an account erasure waits for it and writes no tombstone of the erased author. A tombstone is kept **30 days** (decision 2026-10-18): `ChannelRetentionScheduler.purgeExpiredClientTombstones`, daily at 03:50, deletes the ones whose `deletedAt` is older, at the instant it is handed. Tests: `channel.service.spec.ts`, `channel-message-client-id.integration.spec.ts` (needs `SOCIAL_IT_DATABASE_URL`; the deploy-window case fails without `select: false`). Why: [offline-and-weak-network](../frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17).
+
+**A salon row's broadcast and push come from an outbox (migration 093, 2026-10-18).** `sendMessage` inserts the row AND a `channel_message_fanout` entry (`messageId`, a `payload` holding the cleartext mentions and the seed frame the push carries) in ONE transaction, answers, then publishes `channel.message.created` and rings the phones off the request path; the entry is deleted only when BOTH were handed off (each failure is logged by branch). The entry cascades with its message. **What it covers: PROCESS DEATH and DATABASE failures (an audience, member or workspace read that throws) - NOT a Redis outage**: `RedisService.publish` swallows its own errors, so the frame counts as handed off and the entry is deleted.
+
+**Who finishes a fan-out that did not complete.** (1) A normal deploy is the commonest process death: the old replica is told SIGTERM after its successor is healthy, and its last requests were answered BEFORE their fan-outs ran. `ChannelService` tracks every in-process fan-out by message id and `drainOnSigterm` awaits `settleFanouts()` before `process.exit` (bounded only by the stop timeout), so a deploy leaves no entry. (2) `onApplicationBootstrap` drains the entries left by a real crash, once per boot (a failure is logged at ERROR, retried at the next boot, never fatal). (3) A repeat of a send (WP-OFF-3) drains its own entry at once, skipping one whose fan-out is running in this process. No clock decides any of it. **Accepted, not fixed:** an entry kept by a DB failure waits for the next boot, where it rings phones for an old message. The client facts that make a late duplicate or a late push imperfect: the web client shows a weeks-old message with unloaded history as a new bubble; Android's duplicate-push dedupe keeps only 128 keys (`ALERTED_PREFS`); the iOS notification extension has no channel-push dedupe. A cross-replica claim is out of scope: a boot drain on a new replica can repeat a fan-out the old replica is still finishing (one duplicate frame, settled by message id). Both pull requests may ride the same release: the deploy migrates before it replaces services, and a rollback leaves a harmless unread table. Tests: `channel.service.spec.ts`, `drain-on-sigterm.spec.ts` in chat-delivery-service, which proves this service's byte-identical copy (an owed fan-out is awaited before exit), and `channel-message-client-id.integration.spec.ts` (an incomplete fan-out leaves its entry and the boot drain finishes it; a send whose entry cannot be written leaves no row).
 
 ## Storage and retention: a channel message costs one row, forever
 
@@ -150,6 +154,10 @@ The numbers and what they imply are in
 | POST | `/api/posts/:postId/comments` | Add comment |
 | PATCH | `/api/posts/:postId/pin` | Pin post (admin only) |
 | PATCH | `/api/posts/:postId/unpin` | Unpin post (admin only) |
+| POST | `/api/posts/:postId/republication-requests` | Ask the AUTHOR of a personal post to let an association carry it (D38b; `POST_AS_ASSO` held, typed `REPOST_PERSONAL_*` refusals, [profiles-and-access](../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
+| GET | `/api/posts/me/republication-requests` | The caller's inbox of requests to answer (D38b); answered through `POST /api/associations/proposals/:id/accept` or `/refuse` (409 `PROPOSAL_SENDER_GONE` when the asker no longer speaks for the association) |
+| GET | `/api/posts/me/republication-requests/count` | `{ pending }`, the count alone, for `/notifications` (D38b); like the inbox, it leaves out a request whose asker no longer speaks for the association |
+| DELETE | `/api/posts/:postId/republications/:associationId` | Withdraw a republication: the republishing association, or the author of a personal post (D38b) |
 
 **`:postId` is parsed as a UUID on every route (`ParseUUIDPipe`), so a malformed id is a `400`.**
 `posts.id` is a Postgres `uuid`. Before 2026-10-02, a path segment that was not a UUID reached the
@@ -774,6 +782,14 @@ all eight routes that answer a row, so a column added later is private until som
 payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
 test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).
 
+**The Lydia Business private token is write-only (2026-10-16, migration 100).** `PUT :id/lydia-business-key`
+(`canManagePayoutAccount`) stores it encrypted (`common/secret-box.ts`, `LYDIA_KEY_ENCRYPTION_SECRET`,
+bound to the association and its vendor token) in `"lydiaBusinessKeyCiphertext"`, a column the entity
+maps `select`/`insert`/`update: false` and only raw SQL touches; `GET` on the same path answers `{ set }`.
+The one route that answers it decrypted is the internal `POST /api/internal/associations/lydia-callback-key`
+(`InternalLydiaKeyController`, `X-Internal-Secret`, `no-store`), for core-service to verify a Lydia
+callback. Why and how: [payments](../frontend/modules/payments.md#what-confirms-a-payment-2026-10-16).
+
 ### The document vault's markers are parsed in two languages, and they disagreed for seven weeks
 
 A vault document's encryption key is never stored. The association holds one
@@ -949,7 +965,9 @@ accident):
 | --- | --- | --- |
 | `association_post` | a reader | yes |
 | `association_repost` | a reader the republication newly reached (the mute is the REPUBLISHING association's) | yes |
+| `live_started` | a follower of the association broadcasting a live (WP-L7; push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | yes |
 | `repost_proposed`, `coorganise_proposed` | managers who must accept | **no** - operational |
+| `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | **yes** - the author's mute of the asking association |
 | `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | **no** - operational |
 | `followed_post`, `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | **no** - not an association's push |
 
@@ -1135,7 +1153,7 @@ publishes like the other four. The audience always comes from `channelAudience`,
 reaches its roster and a public one the whole community, and the publish always happens AFTER the
 row is saved - the audience is derived from access, so announcing first would address the event to
 everyone except the person it is about.
-| `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals |
+| `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals; typing goes to the channel audience MINUS the typist (user ids, so their other devices too) |
 
 The chat-gateway subscribers fan out these events to all connected devices of the affected users.
 

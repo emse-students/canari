@@ -32,11 +32,14 @@ const AUDIO_BITRATE_VIDEO = 64_000;
 
 /**
  * Applies Opus encoding parameters on all audio senders (bitrate cap, mono preference).
- * Best-effort: ignored on browsers that do not expose encoding controls.
+ * Best-effort: a sender that refuses `setParameters` (some WebViews do before negotiation
+ * completes) keeps the engine's default bitrate, and the refusal is LOGGED through `log` - a
+ * swallowed refusal is a bitrate nobody can explain afterwards.
  */
 export async function configureCallAudioSenders(
   pc: RTCPeerConnection,
-  hasVideo: boolean
+  hasVideo: boolean,
+  log: (msg: string) => void
 ): Promise<void> {
   const maxBitrate = hasVideo ? AUDIO_BITRATE_VIDEO : AUDIO_BITRATE_VOICE;
 
@@ -52,8 +55,10 @@ export async function configureCallAudioSenders(
         encoding.maxBitrate = maxBitrate;
       }
       await sender.setParameters(params);
-    } catch {
-      // Some WebViews reject setParameters before negotiation completes.
+    } catch (e) {
+      log(
+        `[Call] audio sender setParameters refused (maxBitrate=${maxBitrate}, signaling=${pc.signalingState}): ${String(e)} - engine default kept`
+      );
     }
   }
 }

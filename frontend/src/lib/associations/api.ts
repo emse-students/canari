@@ -406,10 +406,40 @@ export class SocialApiError extends ApiRefusalError {
    * See {@link describeApiRefusal} for the sentence each becomes. Extending {@link ApiRefusalError}
    * is what lets `refusalStatus` / `refusalCode` read it without importing this module.
    */
-  constructor(message: string, code: string | null, status: number) {
+  constructor(
+    message: string,
+    code: string | null,
+    status: number,
+    /**
+     * The allowed amount range an `AMOUNT_OUT_OF_RANGE` refusal carries, in cents (`maxCents` null
+     * = no upper bound). Typed numbers so the UI words the range itself instead of echoing prose.
+     */
+    readonly amountBounds: AmountBounds | null = null
+  ) {
     super(status, code, message);
     this.name = 'SocialApiError';
   }
+}
+
+/** The allowed range of an `AMOUNT_OUT_OF_RANGE` refusal, in cents (`maxCents` null = unbounded). */
+export interface AmountBounds {
+  minCents: number;
+  maxCents: number | null;
+}
+
+/**
+ * Reads the allowed range an amount refusal carries beside its `code`, from an already-parsed body.
+ * THE ONE READER: every helper that builds a {@link SocialApiError} from a refusal (`socialRefusal`
+ * here, the forms and bookings ones) passes its body through this, so no surface loses the bounds
+ * and falls back to the server's English sentence. `null` when the body carries no integer range.
+ */
+export function amountBoundsOf(body: unknown): AmountBounds | null {
+  if (!body || typeof body !== 'object') return null;
+  const { minCents, maxCents } = body as Record<string, unknown>;
+  if (typeof minCents !== 'number' || !Number.isInteger(minCents)) return null;
+  if (maxCents === null) return { minCents, maxCents: null };
+  if (typeof maxCents !== 'number' || !Number.isInteger(maxCents)) return null;
+  return { minCents, maxCents };
 }
 
 /**
@@ -423,6 +453,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   const raw = await res.text().catch(() => '');
   let message = raw || res.statusText;
   let code: string | null = null;
+  let amountBounds: AmountBounds | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -442,10 +473,12 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     ) {
       code = (parsed as Record<string, string>).code;
     }
+    // An amount refusal carries its allowed range beside the code, as numbers.
+    amountBounds = amountBoundsOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
-  return new SocialApiError(message, code, res.status);
+  return new SocialApiError(message, code, res.status, amountBounds);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -2241,6 +2274,31 @@ export async function getAssociationPayoutAccount(
 ): Promise<AssociationPayoutAccount> {
   return request<AssociationPayoutAccount>(
     `/api/associations/${encodeURIComponent(associationId)}/payout-account`
+  );
+}
+
+/**
+ * Whether the association's Lydia Business private token is stored (MANAGE_PAYOUT_ACCOUNT). The key
+ * is WRITE-ONLY: this is the one thing a browser ever learns about it. Without one, Lydia's
+ * callbacks are refused and a payment is confirmed only when the payer returns to the app.
+ */
+export async function getLydiaBusinessKeyStatus(associationId: string): Promise<{ set: boolean }> {
+  return request<{ set: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`
+  );
+}
+
+/**
+ * Stores the association's Lydia Business private token (MANAGE_PAYOUT_ACCOUNT), encrypted on the
+ * server; replaces any key already stored. Answers `{ set: true }` and never the value.
+ */
+export async function setLydiaBusinessKey(
+  associationId: string,
+  businessPrivateToken: string
+): Promise<{ set: boolean }> {
+  return request<{ set: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`,
+    { method: 'PUT', body: JSON.stringify({ businessPrivateToken }) }
   );
 }
 

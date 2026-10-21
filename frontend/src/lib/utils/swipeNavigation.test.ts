@@ -1,5 +1,6 @@
 import { APP_PLACES, MOBILE_NAV_PLACES } from '$lib/navigation/places';
 import {
+  GESTURE_LOCK_PX,
   MOBILE_SWIPE_PLACES,
   classifySwipeRelease,
   isSwipeNavArmed,
@@ -120,6 +121,21 @@ describe('gesture classification', () => {
     );
     expect(state.phase).toBe('horizontal');
     expect(classifySwipeRelease(-300, 2, state.phase, SLOW_MS)).toBe('next');
+  });
+
+  // THE MI 9T READING (2026-10-21): Chrome's first delivered move is past its 8 dp slop, at 9-11 px
+  // on a slow thumb. Left `pending` there, the move went unclaimed and Chrome took the touch.
+  it('locks on the first move Chrome delivers past its 8 dp slop', () => {
+    expect(GESTURE_LOCK_PX).toBeLessThanOrEqual(8);
+    const fresh = { startX: 0, startY: 0, startedAt: 0, phase: 'pending' as const, dragPx: 0 };
+    expect(updateSwipeNavGesture(fresh, 9, 0).phase).toBe('horizontal');
+    expect(updateSwipeNavGesture(fresh, -10, 1).phase).toBe('horizontal');
+    expect(updateSwipeNavGesture(fresh, 1, 9).phase).toBe('vertical');
+  });
+
+  it('stays pending under the lock, so a still finger claims nothing', () => {
+    const fresh = { startX: 0, startY: 0, startedAt: 0, phase: 'pending' as const, dragPx: 0 };
+    expect(updateSwipeNavGesture(fresh, GESTURE_LOCK_PX - 1, 0).phase).toBe('pending');
   });
 
   it('treats vertical scroll as non-navigating', () => {

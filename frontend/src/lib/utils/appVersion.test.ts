@@ -23,6 +23,7 @@ import {
   isMobileTauriRuntime,
   parseServerVersionInfo,
   releaseTag,
+  serverVersionInfoToWire,
 } from './appVersion';
 
 describe('compareSemver', () => {
@@ -79,7 +80,61 @@ describe('parseServerVersionInfo', () => {
       version: '1.2.3',
       minClientVersion: '1.0.0',
       maintenance: { enabled: true, message: 'Pause' },
+      callsMode: 'off',
+      livesMode: 'off',
     });
+  });
+
+  it.each(['off', 'audio', 'audio_video'] as const)('reads the calls kill switch %s', (mode) => {
+    expect(parseServerVersionInfo({ version: '1.2.3', calls: { mode } })?.callsMode).toBe(mode);
+  });
+
+  it.each([
+    ['absent (a server before the switch)', undefined],
+    ['not an object', 'audio'],
+    ['an unknown value', { mode: 'on' }],
+  ])('reads calls as CLOSED when the field is %s - a kill switch fails closed', (_n, calls) => {
+    expect(parseServerVersionInfo({ version: '1.2.3', calls })?.callsMode).toBe('off');
+  });
+
+  // THE SESSION CACHE STORES WHAT IT PARSES BACK. It used to store the parsed shape (`callsMode` at
+  // the top) and re-parse it as a wire body (`calls.mode`), so every cached mode came back `off`.
+  it.each(['off', 'audio', 'audio_video'] as const)(
+    'survives the cache round trip with calls %s',
+    (mode) => {
+      const info = parseServerVersionInfo({
+        version: '1.2.3',
+        minClientVersion: '1.0.0',
+        maintenance: { enabled: true, message: 'Pause' },
+        calls: { mode },
+      });
+      expect(info).not.toBeNull();
+      const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+      expect(parseServerVersionInfo(cached)).toEqual(info);
+    }
+  );
+
+  it.each(['off', 'on'] as const)('reads the lives kill switch %s', (mode) => {
+    expect(parseServerVersionInfo({ version: '1.2.3', lives: { mode } })?.livesMode).toBe(mode);
+  });
+
+  it.each([
+    ['absent (a server before the switch)', undefined],
+    ['not an object', 'on'],
+    ['an unknown value', { mode: 'ON' }],
+    ['a boolean', { mode: true }],
+  ])('reads lives as CLOSED when the field is %s - a kill switch fails closed', (_n, lives) => {
+    expect(parseServerVersionInfo({ version: '1.2.3', lives })?.livesMode).toBe('off');
+  });
+
+  it.each(['off', 'on'] as const)('survives the cache round trip with lives %s', (mode) => {
+    const info = parseServerVersionInfo({
+      version: '1.2.3',
+      calls: { mode: 'audio' },
+      lives: { mode },
+    });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
   });
 });
 
@@ -96,7 +151,11 @@ describe('buildAppVersionCheckResult', () => {
       version: '99.99.99',
       minClientVersion: '0.0.0',
       maintenance: { enabled: false, message: null },
+      callsMode: 'audio',
+      livesMode: 'on',
     });
+    expect(result.callsMode).toBe('audio');
+    expect(result.livesMode).toBe('on');
     expect(result.clientVersion).toBe(client);
     expect(result.serverVersion).toBe('99.99.99');
     expect(result.upToDate).toBe(false);
@@ -108,8 +167,18 @@ describe('buildAppVersionCheckResult', () => {
       version: '2.0.0',
       minClientVersion: '99.99.99',
       maintenance: { enabled: false, message: null },
+      callsMode: 'off',
+      livesMode: 'off',
     });
     expect(result.belowMinVersion).toBe(true);
+  });
+
+  it('knows calls as closed before any server has answered', () => {
+    expect(buildAppVersionCheckResult(null).callsMode).toBe('off');
+  });
+
+  it('knows lives as closed before any server has answered', () => {
+    expect(buildAppVersionCheckResult(null).livesMode).toBe('off');
   });
 });
 
@@ -150,6 +219,8 @@ describe('fetchServerAppVersionReliable', () => {
       version: '1.2.3',
       minClientVersion: '1.0.0',
       maintenance: { enabled: false, message: null },
+      callsMode: 'off',
+      livesMode: 'off',
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });

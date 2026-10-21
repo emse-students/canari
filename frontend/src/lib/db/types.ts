@@ -191,6 +191,13 @@ export interface OutboxEntry {
   lastAttemptAt?: number;
   /** Earliest time (Unix ms) the next flush attempt may run (backoff). */
   nextAttemptAt?: number;
+  /**
+   * CONSECUTIVE send attempts the server answered with a 5xx (text and reply only). Durable, so a
+   * reload neither forgets the run nor restarts it; any other ANSWER, a success or the member's
+   * retry resets it, a transport failure (no answer) leaves it as it is. At
+   * `MAX_CONSECUTIVE_SERVER_ERRORS` the entry is parked as failed (`outbox.ts`). Absent = 0.
+   */
+  serverErrors?: number;
   createdAt: number;
 }
 

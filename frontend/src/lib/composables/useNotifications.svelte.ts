@@ -16,6 +16,7 @@ import {
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { appendLog } from '$lib/utils/sessionLog';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
   isPermissionGranted,
@@ -421,11 +422,50 @@ export function useNotifications() {
   }
 
   /**
-   * Shows an OS notification for an incoming call.
+   * The ring waiting for the app to leave the screen, and the listener that posts it then.
+   * Cleared by `dismissIncomingCall` (answered, declined, ended), so a ring that is over never posts.
+   */
+  let deferredCallNotice: { callerName: string; groupId: string } | null = null;
+  let deferredCallNoticeListener: (() => void) | null = null;
+
+  function clearDeferredCallNotice() {
+    deferredCallNotice = null;
+    if (deferredCallNoticeListener) {
+      document.removeEventListener('visibilitychange', deferredCallNoticeListener);
+      deferredCallNoticeListener = null;
+    }
+  }
+
+  /**
+   * Shows an OS notification for an incoming call - ONLY WHILE THE APP IS OFF SCREEN.
+   *
+   * On screen the ring is already the whole screen (`CallOverlay`, every route) or the top bar under
+   * the PIN lock, so an OS banner on top of it says the same thing twice and covers the top of the
+   * ring (CALL-OS-BANNER, iPhone, 2026-10-19). So a visible page DEFERS the notice: it is posted if
+   * the page hides while the call still rings, and dropped when the ring ends.
    * Not rate-limited (unlike message notifications). Tap opens the conversation in /chat.
    */
   async function notifyIncomingCall(callerName: string, groupId: string) {
     if (typeof window === 'undefined') return;
+
+    if (document.visibilityState === 'visible') {
+      appendLog(
+        `[NOTIF] incoming call in ${groupId} rings in-app - no OS notification while the app is on screen`
+      );
+      clearDeferredCallNotice();
+      deferredCallNotice = { callerName, groupId };
+      deferredCallNoticeListener = () => {
+        if (document.visibilityState !== 'hidden' || !deferredCallNotice) return;
+        const pending = deferredCallNotice;
+        clearDeferredCallNotice();
+        appendLog(
+          `[NOTIF] the app left the screen while ${pending.groupId} rings - posting the OS notification`
+        );
+        void notifyIncomingCall(pending.callerName, pending.groupId);
+      };
+      document.addEventListener('visibilitychange', deferredCallNoticeListener);
+      return;
+    }
 
     const title = m.call_incoming_label();
     const body = callerName
@@ -494,6 +534,7 @@ export function useNotifications() {
 
   /** Dismisses the incoming-call OS notification (call answered, declined, or ended). */
   async function dismissIncomingCall() {
+    clearDeferredCallNotice();
     if (incomingCallNotification) {
       try {
         incomingCallNotification.close();

@@ -151,12 +151,16 @@ jobs:
           DEV_INTERNAL_SHARED_SECRET: ${{ secrets.DEV_INTERNAL_SHARED_SECRET }}
           DEV_CALL_ROOM_SECRET: ${{ secrets.DEV_CALL_ROOM_SECRET }}
           DEV_AGENDA_SIGNING_KEY: ${{ secrets.DEV_AGENDA_SIGNING_KEY }}
+          DEV_LIVE_REPORT_SIGNING_KEY: ${{ secrets.DEV_LIVE_REPORT_SIGNING_KEY }}
           DEV_INTERNAL_SECRET: ${{ secrets.DEV_INTERNAL_SECRET }}
           DEV_EXTERNAL_API_KEY: ${{ secrets.DEV_EXTERNAL_API_KEY }}
           DEV_SKY_API_KEY: ${{ secrets.DEV_SKY_API_KEY }}
           DEV_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.DEV_FIREBASE_SERVICE_ACCOUNT_JSON }}
           DEV_CLOUDFLARE_CALLS_API_TOKEN: ${{ secrets.DEV_CLOUDFLARE_CALLS_API_TOKEN }}
           DEV_CLOUDFLARE_TURN_KEY_ID: ${{ secrets.DEV_CLOUDFLARE_TURN_KEY_ID }}
+          DEV_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DEV_CLOUDFLARE_ACCOUNT_ID }}
+          DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${{ secrets.DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN }}
+          DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${{ secrets.DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB }}
           DEV_MIGALLERY_API_KEY: ${{ secrets.DEV_MIGALLERY_API_KEY }}
           DEV_GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.DEV_GOOGLE_SAFE_BROWSING_API_KEY }}
           DEV_KLIPY_API_KEY: ${{ secrets.DEV_KLIPY_API_KEY }}
@@ -169,6 +173,9 @@ jobs:
           # on dev. `LYDIA_ENV=homologation` is pinned in docker-compose.dev.yml, not read from here.
           DEV_LYDIA_PROVIDER_TOKEN: ${{ secrets.DEV_LYDIA_PROVIDER_TOKEN }}
           DEV_LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.DEV_LYDIA_PROVIDER_PRIVATE_TOKEN }}
+          # Encrypts the Business keys managers enter on dev. Dev's OWN value: the copy of
+          # production's rows then holds keys dev cannot open, by design.
+          DEV_LYDIA_KEY_ENCRYPTION_SECRET: ${{ secrets.DEV_LYDIA_KEY_ENCRYPTION_SECRET }}
           DEV_APNS_VOIP_KEY_P8: ${{ secrets.DEV_APNS_VOIP_KEY_P8 }}
           DEV_APNS_VOIP_KEY_ID: ${{ secrets.DEV_APNS_VOIP_KEY_ID }}
           DEV_APNS_VOIP_TEAM_ID: ${{ secrets.DEV_APNS_VOIP_TEAM_ID }}
@@ -276,7 +283,9 @@ jobs:
           SMOKE_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
           SMOKE_USERNAME: ${{ secrets.DEV_SMOKE_USERNAME }}
           SMOKE_PASSWORD: ${{ secrets.DEV_SMOKE_PASSWORD }}
-          SMOKE_FLOW_SLUG: ${{ vars.DEV_SMOKE_FLOW_SLUG }}
+          # MiConnect's default flow is CAS-only and denies a password account; this is the one the
+          # test campaign signs in through (`PASSWORD_LOGIN_FLOW_SLUG`, docs/wiki/infrastructure/authentik.md).
+          SMOKE_FLOW_SLUG: password-login
         run: |
           set -euo pipefail
           bun .github/scripts/smoke-login.mjs
@@ -293,4 +302,3 @@ jobs:
             "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
             refs/tags/dev-deployed
           echo "dev-deployed -> ${{ inputs.sha }} (v${{ inputs.version }})"
-

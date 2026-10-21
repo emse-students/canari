@@ -10,7 +10,7 @@ use axum::{
 };
 use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -39,7 +39,7 @@ use webrtc::track::track_remote::TrackRemote;
 
 mod p2p;
 
-use p2p::{count_relayed, JoinOutcome, P2pPeer, P2pRoom, RelayedKind};
+use p2p::{count_relayed, JoinOutcome, P2pPeer, P2pRoom, PartnerState, RelayedKind, ResumeOutcome};
 
 type RoomId = String;
 type PeerId = String;
@@ -71,7 +71,69 @@ impl RoomMode {
 /// proxied socket after 60 s without a read from upstream (no `proxy_read_timeout` is set there,
 /// realtime-media-feasibility section 9, 4a), and a peer-to-peer call sends NO signalling once ICE
 /// has connected - so without this, every 1:1 call would lose its socket a minute in.
-const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(25);
+///
+/// IT IS ALSO THE LIVENESS PROOF (CALL-WIFI, 2026-10-19). A phone whose Wi-Fi goes off leaves a
+/// HALF-OPEN socket: the server's ping write lands in the kernel buffer and "succeeds" for minutes,
+/// so a write error never came and the seat was never marked away. Measured on the bench: the
+/// partner's ICE restart offer was relayed into that dead socket, and after a 90 s outage the
+/// partner sat on "Reconnexion..." until its own hang-up. Now the peer must ANSWER: a socket that
+/// let [`MISSED_PONGS_LIMIT`] pings go by without sending a single frame is ended as
+/// `keepalive-lost`, which keeps a p2p seat for a resume like any network failure. Overridden by
+/// `CALL_KEEPALIVE_MS` (the tests' only use).
+///
+/// A browser answers a Ping from its network stack while its process RUNS - a throttled background
+/// tab included. A SUSPENDED process (a phone app the OS froze, screen locked or backgrounded)
+/// answers nothing: such a call now becomes `keepalive-lost` 20-30 s in and `PeerLeft` for the
+/// partner a grace later - a behaviour change owed a reading on both phones (CALL-L1).
+const DEFAULT_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Pings in a row a socket may leave unanswered before it is held dead: one can cross a slow
+/// moment, two in a row is a peer that is gone. A COUNT of ticks, so detection takes at most
+/// `(MISSED_PONGS_LIMIT + 1) x keepalive` (30 s by default) after the peer's last frame.
+const MISSED_PONGS_LIMIT: u32 = 2;
+
+/// What one bounded write of the socket loop came to.
+#[derive(Debug, PartialEq)]
+enum WriteOutcome<E> {
+    Sent,
+    Failed(E),
+    /// Not taken within the bound: the peer reads nothing and the TCP window is full.
+    NotTaken,
+}
+
+/// Bounds one write of the socket loop by `bound` (one keepalive period). A peer that stops
+/// READING fills the TCP window, and an unbounded write then parks the loop - and with it the
+/// keepalive tick that would have held the peer dead - for as long as the kernel keeps the
+/// connection. Every write the loop makes goes through here.
+async fn bounded_write<E>(
+    bound: std::time::Duration,
+    write: impl std::future::Future<Output = Result<(), E>>,
+) -> WriteOutcome<E> {
+    match tokio::time::timeout(bound, write).await {
+        Ok(Ok(())) => WriteOutcome::Sent,
+        Ok(Err(e)) => WriteOutcome::Failed(e),
+        Err(_) => WriteOutcome::NotTaken,
+    }
+}
+
+/// Reads the keepalive period from `CALL_KEEPALIVE_MS`; absent or not a positive number of
+/// milliseconds, the default stands (a bad value is logged).
+fn keepalive_from(raw: Option<String>) -> std::time::Duration {
+    match raw.as_deref().map(str::trim) {
+        None | Some("") => DEFAULT_KEEPALIVE,
+        Some(v) => match v.parse::<u64>() {
+            Ok(ms) if ms > 0 => std::time::Duration::from_millis(ms),
+            _ => {
+                error!(
+                    "CALL_KEEPALIVE_MS={:?} is not a positive number of milliseconds - using the default {} s",
+                    v,
+                    DEFAULT_KEEPALIVE.as_secs()
+                );
+                DEFAULT_KEEPALIVE
+            }
+        },
+    }
+}
 
 /// The largest signalling frame accepted. The biggest legitimate one is an SDP offer, a few KiB
 /// for audio and well under 16 KiB with video; the library default (64 MiB) would let one socket
@@ -97,6 +159,45 @@ struct RoomClaims {
     /// group and nobody else (see [`p2p::P2pRoom::join`]).
     group_id: String,
     exp: usize,
+    /// Present only on a RESUME token, minted here at `Joined`: the seat (peer id) its holder may
+    /// take back. chat-delivery-service never sets it, so its tokens can only seat, never resume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    seat: Option<String>,
+}
+
+/// How long a resume token lives: the longest call chat-delivery-service counts (its room binding
+/// is the 60 s ring window plus 4 h). Past it the call is over by that service's own horizon.
+const RESUME_TOKEN_TTL_SECS: u64 = 4 * 60 * 60;
+
+/// How long an AWAY seat is kept for its device to resume, unless `CALL_P2P_SEAT_GRACE_SEC` says
+/// otherwise. It must outlast the client's reconnection ladder (`CALL_SIGNALLING_RESUME_ATTEMPTS`
+/// in `CallService.ts`: five attempts, the last one 31 s after the loss) with room for a slow
+/// handshake. This is a RESOURCE bound, not a verdict: a wrong value only ends a dead call earlier
+/// or later, and a resume after it is refused `call-over`, which the client reads as the end.
+const DEFAULT_P2P_SEAT_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `serde` helper: a `false` flag is left out of the frame, so older clients see no new field.
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// Reads the away-seat grace from `CALL_P2P_SEAT_GRACE_SEC`. An unparseable value is refused with
+/// a line and the default stands, so a typo cannot silently become "no grace at all".
+fn seat_grace_from(raw: Option<String>) -> std::time::Duration {
+    match raw.as_deref().map(str::trim) {
+        None | Some("") => DEFAULT_P2P_SEAT_GRACE,
+        Some(v) => match v.parse::<u64>() {
+            Ok(secs) => std::time::Duration::from_secs(secs),
+            Err(_) => {
+                error!(
+                    "CALL_P2P_SEAT_GRACE_SEC={:?} is not a number of seconds - using the default {} s",
+                    v,
+                    DEFAULT_P2P_SEAT_GRACE.as_secs()
+                );
+                DEFAULT_P2P_SEAT_GRACE
+            }
+        },
+    }
 }
 
 /// Query parameters for the WebSocket upgrade endpoint.
@@ -118,6 +219,10 @@ struct AppState {
     jwt_secret: String,
     /// Secret shared with chat-delivery-service to sign and verify room access tokens.
     call_room_secret: String,
+    /// How long an away p2p seat waits for its device - see [`DEFAULT_P2P_SEAT_GRACE`].
+    p2p_seat_grace: std::time::Duration,
+    /// Ping period, and the unit of the liveness proof - see [`DEFAULT_KEEPALIVE`].
+    keepalive: std::time::Duration,
 }
 
 struct Room {
@@ -172,6 +277,10 @@ enum Disposition {
     SiblingEvicted,
     /// The room was reclaimed after 30 min of signal silence with this peer still in it.
     RoomReaped,
+    /// P2P: the same device took its seat back on a new socket before this one was seen to die.
+    Resumed,
+    /// The peer answered none of the last keepalive pings: a half-open socket, the network gone.
+    KeepaliveLost,
 }
 
 impl Disposition {
@@ -185,6 +294,8 @@ impl Disposition {
             Disposition::SendFailed => "send-failed",
             Disposition::SiblingEvicted => "sibling-evicted",
             Disposition::RoomReaped => "room-reaped",
+            Disposition::Resumed => "resumed",
+            Disposition::KeepaliveLost => "keepalive-lost",
         }
     }
 
@@ -192,7 +303,22 @@ impl Disposition {
     /// otherwise, so the summary is emitted at a level that accuses: a record nobody's eye is
     /// drawn to is a record read a day late.
     fn is_expected(self) -> bool {
-        matches!(self, Disposition::ClientClose | Disposition::SiblingEvicted)
+        matches!(
+            self,
+            Disposition::ClientClose | Disposition::SiblingEvicted | Disposition::Resumed
+        )
+    }
+
+    /// Whether a p2p seat SURVIVES this ending, away, for its device to resume. Only the network
+    /// failing does: a Close frame is a hangup, and a rate limit is the server's own decision.
+    fn keeps_p2p_seat(self) -> bool {
+        matches!(
+            self,
+            Disposition::TransportError
+                | Disposition::StreamEnded
+                | Disposition::SendFailed
+                | Disposition::KeepaliveLost
+        )
     }
 }
 
@@ -575,21 +701,51 @@ enum SignalMessage {
     /// Sent when the peer is registered and ready to receive Offer/Answer signaling.
     Joined {
         room_id: String,
+        /// P2P only: a room token naming THIS seat (claim `seat`), so this device can take the
+        /// seat back after its socket dies without a Close frame - see [`p2p::P2pRoom::resume`].
+        /// A fresh one comes with every `Joined`, a resume's included.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume_token: Option<String>,
     },
     /// P2P only, server -> client: the room now holds both parties. `initiator` makes the offer
     /// and is the impolite side; the other answers and yields on a collision. Sent again to the
     /// remaining peer when the other party's device is replaced, so it renegotiates from scratch.
     PeerReady {
         initiator: bool,
+        /// `true` when this pairing follows a RESUME of a pair that had already been formed: keep
+        /// the peer connection, and the initiator restarts ICE if the media path is down. Absent
+        /// (false) means build the peer connection from nothing.
+        #[serde(default, skip_serializing_if = "is_false")]
+        resumed: bool,
     },
     /// P2P only, server -> client: the other party's socket is gone (or this device was replaced
-    /// by another of the same user). The call this socket was signalling is over.
+    /// by another of the same user), or its away seat was never resumed. The call is over.
     PeerLeft,
+    /// P2P only, server -> client: the other party's socket died WITHOUT a Close frame. Its seat
+    /// is kept for the grace; the call goes on, and a `PeerReady { resumed }` or a `PeerLeft`
+    /// follows.
+    PeerAway,
     /// P2P only, server -> client: the `Join` was refused, and why, so the client fails at once
     /// with a reason instead of waiting out its Join timeout.
     Refused {
         reason: String,
     },
+    /// P2P only, client -> server -> partner, relayed verbatim: the POLITE side's media path is
+    /// down and it cannot restart ICE itself (only the initiator offers), so it asks the initiator
+    /// to. Bounded by the asker's own restart budget.
+    IceRestartRequest,
+    /// P2P only, client -> server -> partner, relayed verbatim: the SENDER's operating system took
+    /// its microphone (`suspended: true`: the capture track went `muted`, which is not the user's
+    /// mute button) or gave it back (`false`). The partner hears nothing in between and has no
+    /// other way to tell that from a silent speaker or a lost path; only the sender knows, so the
+    /// sender says it (WP-C-BG-I, calls.md).
+    MicSuspended {
+        suspended: bool,
+    },
+    /// Server-internal, never on the wire: tells a socket loop to send a Close frame and end -
+    /// the seat it held was resumed by the same device on a new socket.
+    #[serde(skip)]
+    Shutdown,
     Offer {
         sdp: String,
     },
@@ -613,6 +769,10 @@ impl SignalMessage {
             SignalMessage::IceCandidate { .. } => "ice",
             SignalMessage::PeerReady { .. } => "peer-ready",
             SignalMessage::PeerLeft => "peer-left",
+            SignalMessage::PeerAway => "peer-away",
+            SignalMessage::IceRestartRequest => "ice-restart-request",
+            SignalMessage::MicSuspended { .. } => "mic-suspended",
+            SignalMessage::Shutdown => "shutdown",
             SignalMessage::Refused { .. } => "refused",
         }
     }
@@ -662,18 +822,22 @@ fn resolve_peer<'a>(
     if let Some(ctx) = room.peers.get(peer_id) {
         return Some(ctx);
     }
-    let already_explained = session
-        .ledger
-        .as_ref()
-        .map(|l| l.disposition().is_some())
-        .unwrap_or(false);
-    if !already_explained {
+    if !session_ended(session) {
         warn!(
             "[call] {} sent {} in room {} but is not registered in it - dropped",
             peer_id, frame, room_id
         );
     }
     None
+}
+
+/// The session's record already names why it ended (a resume, an eviction): later events of the
+/// same socket are consequences, and must not be logged as fresh accusations.
+fn session_ended(session: &PeerSession) -> bool {
+    session
+        .ledger
+        .as_ref()
+        .is_some_and(|l| l.disposition().is_some())
 }
 
 /// Records why a session ended on its ledger, when it has one. A socket that never completed a
@@ -720,6 +884,8 @@ async fn main() -> anyhow::Result<()> {
         p2p_rooms: DashMap::new(),
         jwt_secret,
         call_room_secret,
+        p2p_seat_grace: seat_grace_from(std::env::var("CALL_P2P_SEAT_GRACE_SEC").ok()),
+        keepalive: keepalive_from(std::env::var("CALL_KEEPALIVE_MS").ok()),
     });
 
     // Background task: evict rooms idle for more than 30 minutes.
@@ -810,8 +976,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
         mode: RoomMode::Sfu,
     };
     // `interval` fires at once on its first tick; skip it so the first ping goes out one period in.
-    let mut keepalive =
-        tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
+    let period = state.keepalive;
+    let mut keepalive = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    // A loop held up (a slow write) must not fire the missed ticks back to back: each would count
+    // as one more unanswered ping without the peer having had a period to answer it.
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Pings sent since the peer's last frame of ANY kind (a Pong, a signal, its own Ping).
+    let mut unanswered_pings: u32 = 0;
 
     let (tx, mut rx) = mpsc::channel::<SignalMessage>(100);
 
@@ -824,8 +995,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
     let mut writer_socket = socket;
 
     loop {
+        // `biased`: the arms are polled IN ORDER. A frame already readable (a Pong) is taken before
+        // a keepalive tick that would count it missing, and an outbound frame - `Shutdown` above
+        // all - before a tick that would accuse a socket whose seat already moved.
         tokio::select! {
+            biased;
             msg = writer_socket.recv() => {
+                if matches!(msg, Some(Ok(_))) {
+                    unanswered_pings = 0;
+                }
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         // Rate limiting: reset window every second, reject if over 50 msg/s.
@@ -876,15 +1054,27 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                     _ => {}
                 }
             }
-            _ = keepalive.tick() => {
-                // A Ping frame, answered by the browser's own Pong; nothing in the page sees it.
-                if let Err(e) = writer_socket.send(Message::Ping(Default::default())).await {
-                    warn!("[call] {} keepalive ping failed: {}", peer_id, e);
-                    end_session(&session, Disposition::SendFailed);
+            Some(msg) = rx.recv() => {
+                if matches!(msg, SignalMessage::Shutdown) {
+                    // Our seat was resumed on another socket: this one is the same device's stale
+                    // connection. Its record already says `resumed`.
+                    info!("[call] {} closing - its seat was resumed on a new socket", peer_id);
+                    // Bounded like every write: a stale socket the peer no longer reads must not
+                    // hold this loop.
+                    match bounded_write(period, writer_socket.send(Message::Close(None))).await {
+                        WriteOutcome::Sent => {}
+                        WriteOutcome::Failed(e) => {
+                            info!("[call] {} Close to the replaced socket failed: {}", peer_id, e)
+                        }
+                        WriteOutcome::NotTaken => info!(
+                            "[call] {} Close to the replaced socket not taken within {} ms - dropped unsent",
+                            peer_id,
+                            period.as_millis()
+                        ),
+                    }
+                    end_session(&session, Disposition::Resumed);
                     break;
                 }
-            }
-            Some(msg) = rx.recv() => {
                 // A frame we cannot serialise is dropped and named, never panicked on: this is
                 // the writer for every outbound signal and it must not take the call down.
                 let text = match serde_json::to_string(&msg) {
@@ -894,18 +1084,79 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                         continue;
                     }
                 };
-                // `.into()`: axum 0.8 carries text frames as `Utf8Bytes`, not `String`.
-                if let Err(e) = writer_socket.send(Message::Text(text.into())).await {
-                    error!("[call] {} socket write failed on {}: {}", peer_id, msg.kind(), e);
-                    end_session(&session, Disposition::SendFailed);
+                // `.into()`: axum 0.8 carries text frames as `Utf8Bytes`, not `String`. Bounded
+                // by one keepalive period: a peer that reads nothing fills the TCP window, and an
+                // unbounded write would park this loop - and its liveness tick - for good.
+                match bounded_write(period, writer_socket.send(Message::Text(text.into()))).await {
+                    WriteOutcome::Sent => {}
+                    WriteOutcome::Failed(e) => {
+                        error!("[call] {} socket write failed on {}: {}", peer_id, msg.kind(), e);
+                        end_session(&session, Disposition::SendFailed);
+                        break;
+                    }
+                    WriteOutcome::NotTaken => {
+                        warn!(
+                            "[call] {} write of {} not taken within {} ms - the peer reads nothing (TCP backpressure), held dead",
+                            peer_id,
+                            msg.kind(),
+                            period.as_millis()
+                        );
+                        end_session(&session, Disposition::SendFailed);
+                        break;
+                    }
+                }
+            }
+            _ = keepalive.tick() => {
+                if session_ended(&session) {
+                    // The record already names the end (a resume moved the seat): no accusation.
+                    info!("[call] {} keepalive stopped - session already ended", peer_id);
                     break;
+                }
+                if unanswered_pings >= MISSED_PONGS_LIMIT {
+                    warn!(
+                        "[call] {} answered none of {} keepalive pings - held dead (half-open socket)",
+                        peer_id, unanswered_pings
+                    );
+                    end_session(&session, Disposition::KeepaliveLost);
+                    break;
+                }
+                unanswered_pings += 1;
+                // A Ping frame, answered by the browser's own Pong; nothing in the page sees it.
+                // Bounded like every write (see the frame writer above).
+                match bounded_write(period, writer_socket.send(Message::Ping(Default::default()))).await {
+                    WriteOutcome::Sent => {}
+                    WriteOutcome::Failed(e) => {
+                        warn!("[call] {} keepalive ping failed: {}", peer_id, e);
+                        end_session(&session, Disposition::SendFailed);
+                        break;
+                    }
+                    WriteOutcome::NotTaken => {
+                        warn!(
+                            "[call] {} keepalive ping not taken within {} ms - the peer reads nothing (TCP backpressure), held dead",
+                            peer_id,
+                            period.as_millis()
+                        );
+                        end_session(&session, Disposition::KeepaliveLost);
+                        break;
+                    }
                 }
             }
         }
     }
 
     if let (Some(room_id), RoomMode::P2p) = (session.room_id.clone(), session.mode) {
-        p2p_leave(&state, &room_id, &peer_id);
+        // The FIRST cause on the record decides: a socket already replaced (sibling, resume) holds
+        // no seat, and both calls below then find nothing to do.
+        let keeps_seat = session
+            .ledger
+            .as_ref()
+            .and_then(|l| l.disposition())
+            .is_some_and(Disposition::keeps_p2p_seat);
+        if keeps_seat {
+            p2p_go_away(&state, &room_id, &peer_id);
+        } else {
+            p2p_leave(&state, &room_id, &peer_id);
+        }
     } else if let Some(room_id) = session.room_id.clone() {
         let remove_room = if let Some(room) = state.rooms.get(&room_id) {
             // Close the PeerConnection rather than only dropping it: webrtc-rs holds the ICE
@@ -959,11 +1210,24 @@ async fn handle_signal(
             room_token,
             mode,
         } => {
-            let Some(group_id) =
+            let Some(claims) =
                 authorize_join(state, user_id, peer_id, &room_id, room_token.as_deref())
             else {
+                if mode == RoomMode::P2p {
+                    // An answer, not a silence: a p2p client resuming with an expired token would
+                    // otherwise wait out its Join timeout and retry a token that can never pass.
+                    p2p_send(
+                        &notify_tx,
+                        SignalMessage::Refused {
+                            reason: "token-refused".to_string(),
+                        },
+                        &room_id,
+                        peer_id,
+                    );
+                }
                 return;
             };
+            let group_id = claims.group_id;
 
             // Reject if peer is already in a room - prevents multi-room joins.
             if let Some(existing) = &session.room_id {
@@ -1000,8 +1264,21 @@ async fn handle_signal(
             }
 
             if mode == RoomMode::P2p {
-                p2p_join(
-                    state, user_id, peer_id, &group_id, session, room_id, notify_tx,
+                match claims.seat {
+                    Some(seat) => p2p_resume(
+                        state, user_id, peer_id, &group_id, &seat, session, room_id, notify_tx,
+                    ),
+                    None => p2p_join(
+                        state, user_id, peer_id, &group_id, session, room_id, notify_tx,
+                    ),
+                }
+                return;
+            }
+            if claims.seat.is_some() {
+                // A resume token only ever names a p2p seat; the SFU has nothing to resume.
+                warn!(
+                    "[call] {} presented a p2p resume token for an SFU join of room {} - refused",
+                    peer_id, room_id
                 );
                 return;
             }
@@ -1306,6 +1583,7 @@ async fn handle_signal(
             if let Err(e) = notify_tx
                 .send(SignalMessage::Joined {
                     room_id: room_id.clone(),
+                    resume_token: None,
                 })
                 .await
             {
@@ -1342,6 +1620,26 @@ async fn handle_signal(
                 peer_id,
                 RelayedKind::Ice,
                 SignalMessage::IceCandidate { candidate },
+            )
+            .await;
+        }
+        SignalMessage::IceRestartRequest if session.mode == RoomMode::P2p => {
+            p2p_relay(
+                state,
+                session,
+                peer_id,
+                RelayedKind::IceRestartRequest,
+                SignalMessage::IceRestartRequest,
+            )
+            .await;
+        }
+        SignalMessage::MicSuspended { suspended } if session.mode == RoomMode::P2p => {
+            p2p_relay(
+                state,
+                session,
+                peer_id,
+                RelayedKind::MicSuspended,
+                SignalMessage::MicSuspended { suspended },
             )
             .await;
         }
@@ -1472,6 +1770,8 @@ async fn handle_signal(
         SignalMessage::Joined { .. }
         | SignalMessage::PeerReady { .. }
         | SignalMessage::PeerLeft
+        | SignalMessage::PeerAway
+        | SignalMessage::Shutdown
         | SignalMessage::Refused { .. } => {
             // Server -> client only. A client sending one is confused, and the line says which.
             warn!(
@@ -1480,6 +1780,24 @@ async fn handle_signal(
                 signal.kind()
             );
         }
+        SignalMessage::IceRestartRequest | SignalMessage::MicSuspended { .. } => {
+            // Peer-to-peer frames that reached this arm because the session is not in a p2p room:
+            // either nothing is joined yet, or the room is an SFU one, where there is no partner
+            // to relay them to. The two are told apart, since only the first is a timing matter.
+            if session.room_id.is_none() {
+                warn!(
+                    "[call] {} sent {} before Join completed - dropped",
+                    peer_id,
+                    signal.kind()
+                );
+            } else {
+                warn!(
+                    "[call] {} sent p2p-only frame {} in an SFU room - dropped",
+                    peer_id,
+                    signal.kind()
+                );
+            }
+        }
     }
 }
 
@@ -1487,15 +1805,15 @@ async fn handle_signal(
 /// room and THIS user. Every refusal is named, because a refused Join is otherwise a client waiting
 /// out its timeout with nothing anywhere saying why.
 ///
-/// Returns the token's `group_id` when the token is good: the group is what a peer-to-peer room
-/// compares between its two seats.
+/// Returns the token's claims when the token is good: the group is what a peer-to-peer room
+/// compares between its two seats, and a `seat` makes the Join a RESUME of that seat.
 fn authorize_join(
     state: &Arc<AppState>,
     user_id: &str,
     peer_id: &str,
     room_id: &str,
     room_token: Option<&str>,
-) -> Option<String> {
+) -> Option<RoomClaims> {
     let Some(token) = room_token else {
         warn!(
             "[auth] Peer {} attempted Join without room_token - rejected",
@@ -1520,7 +1838,7 @@ fn authorize_join(
             );
             None
         }
-        Ok(data) => Some(data.claims.group_id),
+        Ok(data) => Some(data.claims),
         Err(e) => {
             warn!("[auth] Peer {} invalid room_token: {}", peer_id, e);
             None
@@ -1559,7 +1877,7 @@ fn p2p_join(
         room.value().join(me)
     };
 
-    let (initiator, evicted) = match outcome {
+    let (initiator, evicted, partner_away) = match outcome {
         JoinOutcome::Full => {
             warn!(
                 "[call] {} refused from p2p room {}: two other users already hold it",
@@ -1592,8 +1910,9 @@ fn p2p_join(
             );
             return;
         }
-        JoinOutcome::Waiting { evicted } => (None, evicted),
-        JoinOutcome::Paired { initiator, evicted } => (Some(initiator), evicted),
+        JoinOutcome::Waiting { evicted } => (None, evicted, false),
+        JoinOutcome::Paired { initiator, evicted } => (Some(initiator), evicted, false),
+        JoinOutcome::PartnerAway { evicted } => (None, evicted, true),
     };
 
     info!(
@@ -1614,46 +1933,280 @@ fn p2p_join(
         p2p_send(&gone.tx, SignalMessage::PeerLeft, &room_id, &gone.peer_id);
     }
 
-    if !p2p_send(
-        &notify_tx,
-        SignalMessage::Joined {
-            room_id: room_id.clone(),
-        },
-        &room_id,
-        peer_id,
-    ) {
+    if !p2p_send_joined(state, &notify_tx, &room_id, user_id, group_id, peer_id) {
         return;
     }
 
+    if partner_away {
+        info!(
+            "[call] p2p room={} peer={} joined while the other party is away - waiting for its resume",
+            room_id, peer_id
+        );
+        p2p_send(&notify_tx, SignalMessage::PeerAway, &room_id, peer_id);
+        return;
+    }
     let Some(initiator) = initiator else {
         return;
     };
-    // Both records mark the pairing: `paired_ms` on each is measured from its own Join.
+    let me = P2pPeer {
+        peer_id: peer_id.to_string(),
+        user_id: user_id.to_string(),
+        group_id: group_id.to_string(),
+        tx: notify_tx,
+        ledger,
+    };
+    p2p_announce_pair(&room_id, &initiator, &me, false);
+}
+
+/// Tells a pair of PRESENT seats that they are paired: `PeerReady` to each, with its role. Both
+/// records mark the pairing: `paired_ms` on each is measured from its own Join.
+fn p2p_announce_pair(room_id: &str, initiator: &P2pPeer, polite: &P2pPeer, resumed: bool) {
     initiator.ledger.mark_connected();
-    ledger.mark_connected();
+    polite.ledger.mark_connected();
     info!(
-        "[call] p2p paired room={} initiator={} polite={}",
-        room_id, initiator.peer_id, peer_id
+        "[call] p2p paired room={} initiator={} polite={} resumed={}",
+        room_id, initiator.peer_id, polite.peer_id, resumed
     );
-    for (tx, is_initiator, who) in [
-        (&initiator.tx, true, initiator.peer_id.as_str()),
-        (&notify_tx, false, peer_id),
-    ] {
+    for (peer, is_initiator) in [(initiator, true), (polite, false)] {
         // Delivered directly rather than through `p2p_send`: a lost PeerReady is one event, and it
         // gets ONE line, at error, because this call can then never negotiate.
         if let Err(reason) = p2p::deliver(
-            tx,
+            &peer.tx,
             SignalMessage::PeerReady {
                 initiator: is_initiator,
+                resumed,
             },
         ) {
             error!(
                 "[call] p2p peer-ready DROPPED room={} to={}: {} - this call cannot negotiate",
                 room_id,
-                who,
+                peer.peer_id,
                 reason.as_str()
             );
         }
+    }
+}
+
+/// Mints the RESUME token for seat `seat`: a room token like chat-delivery-service's, signed with
+/// the same secret, carrying the `seat` claim. Only a peer already seated is ever handed one, so it
+/// grants nothing a Join had not already granted - and [`p2p::P2pRoom::resume`] accepts it for that
+/// seat, that user and that group only.
+fn mint_resume_token(
+    state: &Arc<AppState>,
+    room_id: &str,
+    user_id: &str,
+    group_id: &str,
+    seat: &str,
+) -> Option<String> {
+    let exp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() + RESUME_TOKEN_TTL_SECS)
+        .ok()?;
+    let claims = RoomClaims {
+        room_id: room_id.to_string(),
+        sub: user_id.to_string(),
+        group_id: group_id.to_string(),
+        exp: exp as usize,
+        seat: Some(seat.to_string()),
+    };
+    match encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(state.call_room_secret.as_bytes()),
+    ) {
+        Ok(token) => Some(token),
+        Err(e) => {
+            error!(
+                "[call] p2p resume token NOT minted room={} seat={}: {} - this seat cannot survive a network blip",
+                room_id, seat, e
+            );
+            None
+        }
+    }
+}
+
+/// Sends `Joined` with a fresh resume token for this socket's seat. Returns whether it was queued.
+fn p2p_send_joined(
+    state: &Arc<AppState>,
+    tx: &mpsc::Sender<SignalMessage>,
+    room_id: &str,
+    user_id: &str,
+    group_id: &str,
+    peer_id: &str,
+) -> bool {
+    p2p_send(
+        tx,
+        SignalMessage::Joined {
+            room_id: room_id.to_string(),
+            resume_token: mint_resume_token(state, room_id, user_id, group_id, peer_id),
+        },
+        room_id,
+        peer_id,
+    )
+}
+
+/// Gives seat `seat` back to the same device on a new socket (its resume token named the seat).
+///
+/// Never creates a room: a resume of a call the server no longer holds is the answer
+/// `Refused { reason: "call-over" }`, which the client reads as the end of the call.
+#[allow(clippy::too_many_arguments)]
+fn p2p_resume(
+    state: &Arc<AppState>,
+    user_id: &str,
+    peer_id: &str,
+    group_id: &str,
+    seat: &str,
+    session: &mut PeerSession,
+    room_id: RoomId,
+    notify_tx: mpsc::Sender<SignalMessage>,
+) {
+    let call_over = |why: &str| {
+        info!(
+            "[call] p2p resume REFUSED room={} seat={} peer={}: {} - the call is over",
+            room_id, seat, peer_id, why
+        );
+        p2p_send(
+            &notify_tx,
+            SignalMessage::Refused {
+                reason: "call-over".to_string(),
+            },
+            &room_id,
+            peer_id,
+        );
+    };
+    let Some(room) = state.p2p_rooms.get(&room_id).map(|r| r.value().clone()) else {
+        call_over("no such room");
+        return;
+    };
+    let ledger = Arc::new(CallLedger::new(
+        room_id.clone(),
+        peer_id.to_string(),
+        RoomMode::P2p,
+    ));
+    let me = P2pPeer {
+        peer_id: peer_id.to_string(),
+        user_id: user_id.to_string(),
+        group_id: group_id.to_string(),
+        tx: notify_tx.clone(),
+        ledger: ledger.clone(),
+    };
+    let (replaced, partner) = match room.resume(seat, me.clone()) {
+        ResumeOutcome::Unknown => {
+            call_over("the seat expired or was never this user's");
+            return;
+        }
+        ResumeOutcome::Resumed { replaced, partner } => (replaced, partner),
+    };
+
+    info!(
+        "[call] session start room={} peer={} mode=p2p resumed_seat={}",
+        room_id, peer_id, seat
+    );
+    session.room_id = Some(room_id.clone());
+    session.mode = RoomMode::P2p;
+    session.ledger = Some(ledger);
+    if let Some(old) = replaced {
+        // The server had not seen that socket die. Its record says why it ended, and it is CLOSED
+        // rather than left for the keepalive to find: a half-open socket must not linger.
+        old.ledger.end(Disposition::Resumed);
+        p2p_send(&old.tx, SignalMessage::Shutdown, &room_id, &old.peer_id);
+    }
+
+    if !p2p_send_joined(state, &notify_tx, &room_id, user_id, group_id, peer_id) {
+        return;
+    }
+    match partner {
+        PartnerState::Alone { was_paired: true } => {
+            info!(
+                "[call] p2p room={} peer={} resumed after the other party left - the call is over",
+                room_id, peer_id
+            );
+            p2p_send(&notify_tx, SignalMessage::PeerLeft, &room_id, peer_id);
+        }
+        PartnerState::Alone { was_paired: false } => {}
+        PartnerState::Away => {
+            p2p_send(&notify_tx, SignalMessage::PeerAway, &room_id, peer_id);
+        }
+        PartnerState::Present {
+            partner,
+            i_am_initiator,
+            resumed,
+        } => {
+            if i_am_initiator {
+                p2p_announce_pair(&room_id, &me, &partner, resumed);
+            } else {
+                p2p_announce_pair(&room_id, &partner, &me, resumed);
+            }
+        }
+    }
+}
+
+/// A p2p socket died WITHOUT a Close frame: its seat stays, ABSENT, for the grace; the partner is
+/// told `PeerAway`; and the grace's end frees the seat unless the device resumed it meanwhile.
+fn p2p_go_away(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
+    let Some(room) = state.p2p_rooms.get(room_id).map(|r| r.value().clone()) else {
+        warn!(
+            "[call] {} lost its socket but p2p room {} is already gone",
+            peer_id, room_id
+        );
+        return;
+    };
+    let Some(partner) = room.mark_absent(peer_id) else {
+        // Replaced by a sibling or by its own resume: its record already says so.
+        return;
+    };
+    let grace = state.p2p_seat_grace;
+    info!(
+        "[call] p2p seat away room={} peer={} grace_s={} - kept for a resume",
+        room_id,
+        peer_id,
+        grace.as_secs()
+    );
+    if let Some(partner) = partner {
+        p2p_send(
+            &partner.tx,
+            SignalMessage::PeerAway,
+            room_id,
+            &partner.peer_id,
+        );
+    }
+    let state = state.clone();
+    let room_id = room_id.to_string();
+    let peer_id = peer_id.to_string();
+    tokio::spawn(async move {
+        tokio::time::sleep(grace).await;
+        p2p_expire(&state, &room_id, &peer_id);
+    });
+}
+
+/// The grace of an away seat ran out: frees it if nobody resumed it, tells a present partner the
+/// call is over, and drops the room once empty - under the map's shard lock, as [`p2p_leave`].
+fn p2p_expire(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
+    let mut outcome: Option<Option<P2pPeer>> = None;
+    let removed = state.p2p_rooms.remove_if(room_id, |_, room| {
+        outcome = room.expire(peer_id);
+        room.is_empty()
+    });
+    let Some(partner) = outcome else {
+        // Resumed (or the room already went): the routine case, and the reason the grace exists.
+        return;
+    };
+    warn!(
+        "[call] p2p seat EXPIRED room={} peer={} after {} s away - the call is over",
+        room_id,
+        peer_id,
+        state.p2p_seat_grace.as_secs()
+    );
+    if removed.is_some() {
+        info!("[call] p2p room {} removed - no peers remaining", room_id);
+    }
+    if let Some(partner) = partner {
+        p2p_send(
+            &partner.tx,
+            SignalMessage::PeerLeft,
+            room_id,
+            &partner.peer_id,
+        );
     }
 }
 
@@ -1707,12 +2260,26 @@ async fn p2p_relay(
         return;
     };
     let Some(partner) = room.partner_of(peer_id) else {
-        // Two benign cases, kept apart: an evicted device still trickling (already explained by
-        // its record), and a peer alone in the room - which the client should never produce,
-        // since it offers only on `PeerReady`.
+        // Three cases, kept apart: an evicted device still trickling (already explained by its
+        // record), a partner AWAY (expected while it reconnects: the sender was told `PeerAway`,
+        // and the pair renegotiates on its resume), and a peer alone in the room - which the
+        // client should never produce, since it offers only on `PeerReady`.
         if room.contains(peer_id) {
-            if let Some(ledger) = &session.ledger {
-                bump(&ledger.ice_in_failed);
+            // The column counts ICE that went nowhere, the one kind it was written for: an offer,
+            // a restart request or a microphone state dropped here is carried by the line below.
+            if kind == RelayedKind::Ice {
+                if let Some(ledger) = &session.ledger {
+                    bump(&ledger.ice_in_failed);
+                }
+            }
+            if room.partner_is_away(peer_id) {
+                info!(
+                    "[call] {} sent {} in p2p room {} while the other party is away - dropped",
+                    peer_id,
+                    frame.kind(),
+                    room_id
+                );
+                return;
             }
             warn!(
                 "[call] {} sent {} in p2p room {} with nobody to receive it - dropped",
@@ -2312,20 +2879,93 @@ mod tests {
         assert_eq!(Disposition::SendFailed.as_str(), "send-failed");
         assert_eq!(Disposition::SiblingEvicted.as_str(), "sibling-evicted");
         assert_eq!(Disposition::RoomReaped.as_str(), "room-reaped");
+        assert_eq!(Disposition::Resumed.as_str(), "resumed");
+        assert_eq!(Disposition::KeepaliveLost.as_str(), "keepalive-lost");
     }
 
-    /// Only a hangup and a deliberate multi-device replacement are endings the design intends.
-    /// Everything else is a defect until shown otherwise, and is emitted at a level that says so.
+    /// Only the network failing keeps a p2p seat for a resume: a Close frame is a hangup and a
+    /// rate limit is the server's decision, so both free the seat at once (CALL-WIFI).
+    #[test]
+    fn only_a_network_failure_keeps_a_p2p_seat() {
+        for d in [
+            Disposition::TransportError,
+            Disposition::StreamEnded,
+            Disposition::SendFailed,
+            Disposition::KeepaliveLost,
+        ] {
+            assert!(d.keeps_p2p_seat(), "{} must keep the seat", d.as_str());
+        }
+        for d in [
+            Disposition::ClientClose,
+            Disposition::RateLimited,
+            Disposition::SiblingEvicted,
+            Disposition::RoomReaped,
+            Disposition::Resumed,
+        ] {
+            assert!(!d.keeps_p2p_seat(), "{} must free the seat", d.as_str());
+        }
+    }
+
+    /// A write the peer never takes (a pending future: a full TCP window) ends at its bound instead
+    /// of parking the loop; a write taken at once, or refused, is reported as such. Deterministic:
+    /// a pending future never completes, so the bound is the only way out whatever the clock does.
+    #[tokio::test]
+    async fn a_write_the_peer_never_takes_ends_at_its_bound() {
+        let bound = std::time::Duration::from_millis(10);
+        assert_eq!(
+            bounded_write(bound, std::future::pending::<Result<(), ()>>()).await,
+            WriteOutcome::NotTaken
+        );
+        assert_eq!(
+            bounded_write(bound, async { Ok::<(), ()>(()) }).await,
+            WriteOutcome::Sent
+        );
+        assert_eq!(
+            bounded_write(bound, async { Err::<(), &str>("reset") }).await,
+            WriteOutcome::Failed("reset")
+        );
+    }
+
+    /// The keepalive period is read from the environment; zero or not a number keeps the default.
+    #[test]
+    fn the_keepalive_defaults_and_refuses_a_bad_value() {
+        assert_eq!(keepalive_from(None), DEFAULT_KEEPALIVE);
+        assert_eq!(
+            keepalive_from(Some("150".into())),
+            std::time::Duration::from_millis(150)
+        );
+        assert_eq!(keepalive_from(Some("0".into())), DEFAULT_KEEPALIVE);
+        assert_eq!(keepalive_from(Some("10s".into())), DEFAULT_KEEPALIVE);
+    }
+
+    /// The grace is read from the environment; a value that is not a number is refused and the
+    /// default stands, so a typo can never become "no grace at all".
+    #[test]
+    fn the_seat_grace_defaults_and_refuses_a_bad_value() {
+        assert_eq!(seat_grace_from(None), DEFAULT_P2P_SEAT_GRACE);
+        assert_eq!(seat_grace_from(Some(" ".into())), DEFAULT_P2P_SEAT_GRACE);
+        assert_eq!(
+            seat_grace_from(Some("90".into())),
+            std::time::Duration::from_secs(90)
+        );
+        assert_eq!(seat_grace_from(Some("1m".into())), DEFAULT_P2P_SEAT_GRACE);
+    }
+
+    /// Only a hangup, a deliberate multi-device replacement and a device resuming its own seat are
+    /// endings the design intends. Everything else is a defect until shown otherwise, and is
+    /// emitted at a level that says so.
     #[test]
     fn every_ending_the_design_did_not_intend_accuses() {
         assert!(Disposition::ClientClose.is_expected());
         assert!(Disposition::SiblingEvicted.is_expected());
+        assert!(Disposition::Resumed.is_expected());
         for d in [
             Disposition::TransportError,
             Disposition::StreamEnded,
             Disposition::RateLimited,
             Disposition::SendFailed,
             Disposition::RoomReaped,
+            Disposition::KeepaliveLost,
         ] {
             assert!(!d.is_expected(), "{} must accuse", d.as_str());
         }

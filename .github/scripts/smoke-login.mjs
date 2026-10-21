@@ -24,7 +24,9 @@
  *   SMOKE_IDP_URL        MiConnect's base URL
  *   SMOKE_CLIENT_ID      the OIDC client id the web app uses
  *   SMOKE_USERNAME / SMOKE_PASSWORD   the dedicated dev-only account (absent -> loud skip)
- *   SMOKE_FLOW_SLUG      optional - the flow to start from; absent, the authorize endpoint names it
+ *   SMOKE_FLOW_SLUG      optional - the flow to start from; absent, the authorize endpoint names it.
+ *                        On MiConnect that default (`miconnect-auth`) is CAS-only and DENIES a
+ *                        password account, so `serve-dev.yml` passes `password-login`.
  *
  *   bun .github/scripts/smoke-login.mjs
  */
@@ -36,6 +38,8 @@ const SCOPE = 'openid profile promo name formation';
 const MAX_STAGES = 12;
 /** A redirect chain longer than this is a loop. */
 const MAX_HOPS = 10;
+/** The sign-in flow, then any authorization flow the provider chains after it; more is a loop. */
+const MAX_FLOWS = 3;
 
 /** A refused sign-in, carrying the stage it died at. */
 export class SmokeError extends Error {
@@ -159,7 +163,7 @@ export async function smokeLogin(o) {
 
   /** One request with the jar, never following a redirect (the code is IN the redirect). */
   const send = async (url, init = {}) => {
-    const headers = { ...(init.headers ?? {}) };
+    const headers = { ...init.headers };
     const cookie = jar.header();
     if (cookie) headers.Cookie = cookie;
     const res = await fetchImpl(url, {
@@ -180,84 +184,107 @@ export async function smokeLogin(o) {
     state: crypto.randomUUID(),
   })}`;
 
-  /** Follows redirects from `url` until one names the redirect URI (the code) or a flow page. */
+  /**
+   * Follows redirects from `url` until one names the redirect URI (the code) or the chain stops on a
+   * flow page; then returns that page's slug and query string, which is exactly what MiConnect's flow
+   * interface hands its executor as `?query=` (the whole `location.search`, `next=` included).
+   */
   const chase = async (url) => {
     let current = url;
-    let slug = null;
     for (let hop = 0; hop < MAX_HOPS; hop += 1) {
       const res = await send(current);
       const location = res.headers.get('location');
       if (res.status < 300 || res.status >= 400 || !location) {
-        return { code: null, slug };
+        const landed = new URL(current);
+        const slug = flowSlugFromLocation(current, idp);
+        if (!slug) {
+          throw new SmokeError(
+            'authorize',
+            `stopped on ${landed.pathname} (HTTP ${res.status}) with no code and no flow - is the client id right?`
+          );
+        }
+        return { code: null, flow: { slug, query: landed.search.replace(/^\?/, '') } };
       }
       const code = codeFromLocation(location, redirectUri, current);
-      if (code) return { code, slug };
-      slug = flowSlugFromLocation(location, current) ?? slug;
+      if (code) return { code, flow: null };
       current = new URL(location, current).toString();
     }
     throw new SmokeError('authorize', `more than ${MAX_HOPS} redirects without a code`);
   };
 
-  log(`smoke-login: starting at ${idp} as the dedicated smoke account`);
-  const start = flowSlug
-    ? `${idp}/if/flow/${flowSlug}/?next=${encodeURIComponent(authorizePath)}`
-    : `${idp}${authorizePath}`;
-  let { code, slug } = await chase(start);
-  slug = flowSlug ?? slug;
-
-  if (!code) {
-    if (!slug) {
-      throw new SmokeError(
-        'authorize',
-        'the authorize endpoint named no flow and returned no code - is the client id right?'
-      );
-    }
-    const executor = `${idp}/api/v3/flows/executor/${slug}/`;
-    const query = `?query=${encodeURIComponent(flowSlug ? `next=${authorizePath}` : authorizePath.split('?')[1])}`;
-    let res = await send(`${executor}${query}`, { headers: { Accept: 'application/json' } });
-    for (let n = 0; n < MAX_STAGES && !code; n += 1) {
-      if (!res.ok) throw new SmokeError('flow', `the flow executor answered HTTP ${res.status}`);
+  /**
+   * Runs one flow through its executor and returns where its final `xak-flow-redirect` points.
+   * MiConnect (authentik 2026.8) answers an ACCEPTED stage with `302` back to the executor's own
+   * URL - the browser's fetch follows it, so this does too, with the jar - and a REFUSED one with a
+   * `200` challenge carrying `response_errors`.
+   */
+  const runFlow = async ({ slug, query }) => {
+    const executor = `${idp}/api/v3/flows/executor/${slug}/?query=${encodeURIComponent(query)}`;
+    const json = { Accept: 'application/json' };
+    let res = await send(executor, { headers: json });
+    let answered = null;
+    for (let n = 0; n < MAX_STAGES; n += 1) {
+      if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+        res = await send(new URL(res.headers.get('location'), executor).toString(), {
+          headers: json,
+        });
+        answered = null;
+        continue;
+      }
+      if (!res.ok) {
+        throw new SmokeError('flow', `the ${slug} flow executor answered HTTP ${res.status}`);
+      }
       const challenge = await res.json();
+      const errors = challenge.response_errors;
+      if (answered && errors && Object.keys(errors).length > 0) {
+        throw new SmokeError(
+          answered,
+          `MiConnect refused the answer (${Object.keys(errors).join(', ')}) - wrong username or password for the smoke account`
+        );
+      }
       stages.push(challenge.component);
-      if (challenge.component === 'xak-flow-redirect') {
-        const found = codeFromLocation(challenge.to, redirectUri, idp);
-        if (found) {
-          code = found;
-          break;
-        }
-        ({ code } = await chase(new URL(challenge.to, idp).toString()));
-        if (!code)
-          throw new SmokeError(
-            'flow',
-            `the final redirect carried no code (${stages.join(' > ')})`
-          );
-        break;
+      if (challenge.component === 'xak-flow-redirect') return challenge.to;
+      if (challenge.component === 'ak-stage-access-denied') {
+        throw new SmokeError(
+          'flow',
+          `MiConnect denied the account on the ${slug} flow (${challenge.error_message ?? 'no message'}) - a flow without a password stage, or a policy refusing it`
+        );
       }
       const body = answerStage(challenge, { username, password });
+      answered = challenge.component;
       const csrf = jar.get('authentik_csrf');
-      res = await send(`${executor}${query}`, {
+      res = await send(executor, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Accept: 'application/json',
+          ...json,
           ...(csrf ? { 'X-authentik-CSRF': csrf } : {}),
         },
         body: JSON.stringify(body),
       });
-      if (res.ok) {
-        // A refused field comes back as a 200 challenge carrying `response_errors`.
-        const peek = await res.clone().json();
-        const errors = peek.response_errors;
-        if (errors && Object.keys(errors).length > 0) {
-          throw new SmokeError(
-            challenge.component,
-            `MiConnect refused the answer (${Object.keys(errors).join(', ')}) - wrong username or password for the smoke account`
-          );
-        }
-      }
     }
-    if (!code)
-      throw new SmokeError('flow', `no code after ${MAX_STAGES} stages (${stages.join(' > ')})`);
+    throw new SmokeError('flow', `no redirect after ${MAX_STAGES} steps (${stages.join(' > ')})`);
+  };
+
+  log(`smoke-login: starting at ${idp} as the dedicated smoke account`);
+  // The flow page is given `next` URL-ENCODED, as `startOidcLogin` does: raw, its `&`s split it and
+  // the flow ends on an authorize URL that kept only `client_id` (observed on MiConnect, 2026-10-18).
+  let url = flowSlug
+    ? `${idp}/if/flow/${flowSlug}/?next=${encodeURIComponent(authorizePath)}`
+    : `${idp}${authorizePath}`;
+  let code = null;
+  for (let flows = 0; flows < MAX_FLOWS && !code; flows += 1) {
+    const landed = await chase(url);
+    if (landed.code) {
+      code = landed.code;
+      break;
+    }
+    const to = await runFlow(landed.flow);
+    code = codeFromLocation(to, redirectUri, idp);
+    url = new URL(to, idp).toString();
+  }
+  if (!code) {
+    throw new SmokeError('flow', `no code after ${MAX_FLOWS} flows (${stages.join(' > ')})`);
   }
   log(`smoke-login: MiConnect issued a code (stages: ${stages.join(' > ') || 'none'})`);
 

@@ -77,12 +77,14 @@ const MESSAGE_EVENT_TYPES = new Set<string>([
 export type TabOutboxEvent =
   | { type: 'outbox_flush_request' }
   | { type: 'outbox_entry_sent'; messageId: string; content?: string }
-  | { type: 'outbox_entry_cancelled'; messageId: string };
+  | { type: 'outbox_entry_cancelled'; messageId: string }
+  | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number };
 
 const OUTBOX_EVENT_TYPES = new Set<string>([
   'outbox_flush_request',
   'outbox_entry_sent',
   'outbox_entry_cancelled',
+  'outbox_entry_failed',
 ]);
 
 let messageChannel: BroadcastChannel | null = null;
@@ -171,6 +173,20 @@ export function publishOutboxEntrySent(messageId: string, content?: string): voi
     type: 'outbox_entry_sent',
     messageId,
     ...(content ? { content } : {}),
+  } satisfies TabOutboxEvent);
+}
+
+/**
+ * From the leader tab: a queued text was parked as FAILED (a run of 5xx). A follower draws the
+ * failed bubble and its Retry from it, as it settles a sent one from `outbox_entry_sent`: it never
+ * flushes, so nothing else would tell it before its next reload.
+ */
+export function publishOutboxEntryFailed(messageId: string, serverErrors: number): void {
+  if (!getIsTabLeader()) return;
+  ensureChannel()?.postMessage({
+    type: 'outbox_entry_failed',
+    messageId,
+    serverErrors,
   } satisfies TabOutboxEvent);
 }
 

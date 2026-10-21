@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  conformNativeFetch,
   conformPluginFetch,
   isTransportFailure,
   TransportFailureError,
@@ -17,10 +18,32 @@ const REQWEST =
   'error sending request for url (https://canari.emse.fr/api/channels/workspaces/user/me)';
 
 describe('isTransportFailure', () => {
-  it('reads the TypeError a browser fetch throws when it reached nobody', () => {
-    expect(isTransportFailure(new TypeError('Failed to fetch'))).toBe(true);
+  it('reads the typed rejection a conformed fetch throws when it reached nobody', () => {
+    expect(isTransportFailure(new TransportFailureError(new TypeError('Failed to fetch')))).toBe(
+      true
+    );
   });
 
+  it('never reads a programming TypeError as a transport failure (the fix of #1843 review)', () => {
+    expect(
+      isTransportFailure(new TypeError("Cannot read properties of undefined (reading 'x')"))
+    ).toBe(false);
+    expect(isTransportFailure(new TypeError('Failed to fetch'))).toBe(false);
+  });
+  it('reads a programming TypeError thrown inside a request try as a bug, not as no answer', async () => {
+    const f = conformNativeFetch(vi.fn().mockResolvedValue(new Response('null')));
+    let caught: unknown;
+    try {
+      const res = await f('https://x/api');
+      // The bug a caller really writes: a field read off a body that came back null.
+      const body = JSON.parse(await res.text()) as { x: { y: number } };
+      void body.x.y;
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TypeError);
+    expect(isTransportFailure(caught)).toBe(false);
+  });
   it('reads a deadline expiry as the absence of an answer', () => {
     expect(isTransportFailure(new RequestDeadlineError('read', 20_000, 'GET', '/x', 0))).toBe(true);
   });
@@ -80,9 +103,46 @@ describe('conformPluginFetch - the plugin rejects the way the fetch contract say
     await expect(conformPluginFetch(plugin)('https://x/api')).resolves.toBe(res);
   });
 
-  it('passes a TypeError through as it is - it already honours the contract', async () => {
+  it('types a plugin TypeError too: a bare TypeError is no longer transport on its own', async () => {
     const raw = new TypeError('Failed to fetch');
     const plugin = vi.fn().mockRejectedValue(raw);
-    await expect(conformPluginFetch(plugin)('https://x/api')).rejects.toBe(raw);
+    const failure = await conformPluginFetch(plugin)('https://x/api').catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(TransportFailureError);
+    expect((failure as TransportFailureError).cause).toBe(raw);
+  });
+});
+
+describe('conformNativeFetch - the browser fetch rejection is typed at the throw', () => {
+  it('types the native TypeError rejection as a transport failure keeping it as cause', async () => {
+    const raw = new TypeError('Failed to fetch');
+    const failure = await conformNativeFetch(vi.fn().mockRejectedValue(raw))('https://x/api').catch(
+      (e: unknown) => e
+    );
+    expect(failure).toBeInstanceOf(TransportFailureError);
+    expect(isTransportFailure(failure)).toBe(true);
+    expect((failure as TransportFailureError).cause).toBe(raw);
+  });
+
+  it('keeps AbortError semantics: an aborted request rejects with its own reason, not transport', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const abort = new DOMException('The operation was aborted.', 'AbortError');
+    const native = vi.fn().mockRejectedValue(abort);
+    const failure = await conformNativeFetch(native)('https://x/api', {
+      signal: controller.signal,
+    }).catch((e: unknown) => e);
+    expect(failure).toBe(abort);
+    expect(isTransportFailure(failure)).toBe(false);
+  });
+
+  it('passes a non-TypeError rejection and an answer through untouched', async () => {
+    const other = new Error('boom');
+    await expect(conformNativeFetch(vi.fn().mockRejectedValue(other))('https://x')).rejects.toBe(
+      other
+    );
+    const res = new Response('ok', { status: 502 });
+    await expect(conformNativeFetch(vi.fn().mockResolvedValue(res))('https://x')).resolves.toBe(
+      res
+    );
   });
 });

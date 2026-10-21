@@ -1,4 +1,9 @@
-import { SCHEMA_VERSION, isFreshDatabase, legacyBlobPurgeStatement } from './sqliteMigrations';
+import {
+  SCHEMA_VERSION,
+  isFreshDatabase,
+  legacyBlobPurgeStatement,
+  outboxServerErrorsStatement,
+} from './sqliteMigrations';
 
 // Columns of `CREATE TABLE messages` as it stands since the deviceKeyB64 refactor (2c3ec6fe).
 const CURRENT_MESSAGE_COLUMNS = ['id', 'conversation_id', 'timestamp', 'iv', 'cipher_text'];
@@ -49,5 +54,45 @@ describe('legacyBlobPurgeStatement', () => {
   it('drops the typeof guard when iv itself is gone', () => {
     const sql = legacyBlobPurgeStatement(['id', 'cipher_text']);
     expect(sql).toBe("DELETE FROM messages WHERE cipher_text LIKE '[%'");
+  });
+});
+
+/**
+ * v13 -> v14 on a REAL in-memory SQLite (`node:sqlite`, reached through `process.getBuiltinModule`
+ * as in `feedPages.test.ts`): rows queued before it read a run of 0, and a rerun does nothing.
+ */
+describe('outboxServerErrorsStatement (v14)', () => {
+  const V13_OUTBOX = `CREATE TABLE outbox (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, sent_at INTEGER,
+    kind TEXT, status TEXT, attempts INTEGER DEFAULT 0, last_attempt_at INTEGER, next_attempt_at INTEGER,
+    created_at INTEGER, iv TEXT, cipher_text TEXT)`;
+  const columnsOf = (engine: any): string[] =>
+    engine
+      .prepare('PRAGMA table_info(outbox)')
+      .all()
+      .map((c: { name: string }) => c.name);
+
+  it('adds the column to an existing table, and its queued rows read 0', () => {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const engine = new DatabaseSync(':memory:');
+    engine.exec(V13_OUTBOX);
+    engine.exec(
+      "INSERT INTO outbox (id, conversation_id, kind, attempts) VALUES ('a', 'g', 'text', 7)"
+    );
+
+    const sql = outboxServerErrorsStatement(columnsOf(engine));
+    expect(sql).not.toBeNull();
+    engine.exec(sql!);
+
+    expect(engine.prepare('SELECT server_errors, attempts FROM outbox').get()).toEqual({
+      server_errors: 0,
+      attempts: 7,
+    });
+    // Rerun: the column is there, nothing to do.
+    expect(outboxServerErrorsStatement(columnsOf(engine))).toBeNull();
+  });
+
+  it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
+    expect(outboxServerErrorsStatement(['id', 'attempts', 'server_errors'])).toBeNull();
+    expect(SCHEMA_VERSION).toBe(14);
   });
 });

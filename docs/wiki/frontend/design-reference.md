@@ -915,8 +915,8 @@ says `z-(--z-modal)`; twenty-six call sites were converted.
 | `--z-modal` | 280 | |
 | `--z-modal-popover` | 290 | a dropdown opened from inside a modal, portalled out of it |
 | `--z-viewer` | 300 | a full-screen media viewer |
-| `--z-critical` | 320 | a confirmation, the call UI |
-| `--z-call-notice` | 340 | the incoming-call notice, which must clear even the call UI |
+| `--z-critical` | 320 | a confirmation |
+| `--z-call` | 330 | the full-screen call, ABOVE a confirmation; and the banner column while a minimised call's bar is up ([calls](modules/calls.md#the-bar-is-never-under-a-layer-call-bar-covered-2026-10-19)); a minimised call is a row of the banner column, in flow, and the 340 incoming-call rung went with its toast on 2026-10-19 ([calls](modules/calls.md#which-layer-the-call-is-on-and-what-it-may-never-cover)) |
 | `--z-tooltip` | 400 | follows the pointer, never interactive |
 | `--z-skip-link` | 500 | the way out for someone who cannot use a pointer |
 
@@ -1012,7 +1012,7 @@ dropdown it closes. Renaming only the catcher would have sent it from 40 to 190 
 50: a full-screen click target over the thing it dims, which is the `Sidebar` defect this ladder was
 written to end, reintroduced by the gate meant to prevent it.
 
-**`CallOverlay` was on the suspect list and is clean** - it already takes `--z-critical` on its
+**`CallOverlay` was on the suspect list and is clean** - it took `--z-critical` then (its own `--z-call` rung since 2026-10-19) on its
 `fixed inset-0` root. Its class attribute spans lines, which is why a line-oriented sweep could not
 say so; the gate collapses whitespace before reading, so it can.
 
@@ -3178,6 +3178,63 @@ Android activity (capped at 200 dp of height per edge by the OS), a wider own-si
 nothing (Messenger has the same 12 px). Never an in-page workaround: the page receives only a
 `pointercancel`.
 
+## The swipe to the camera that "sometimes" did nothing: two classes, measured (Mi 9T, 2026-10-21)
+
+User report, phone app: *the swipe from the feed to the camera does not work every time*, and the
+user could not say when. The camera is the tab swipe's `prev` from `/posts`
+([reels](modules/reels.md#the-tab-c5)), so this is the TAB SWIPE (`+layout.svelte`,
+`swipeNavigation.ts`) and every finding holds for every tab. Reproduced on the Mi 9T
+(`v1.3.1-alpha.5`, dev, 436 CSS px wide, dpr 2.475, gesture navigation) with real touches
+(`adb input swipe` and `input motionevent` for curved paths) and passive CDP listeners on `window`
+recording every touch event's `cancelable` and `defaultPrevented`, 92 cells (then 30 with the fix
+simulated): start x from 20 to
+400 physical px, slope -0.3 to 0.6, 120 to 600 ms, 65 to 240 CSS px of travel, scroll top and
+mid-feed, started on media, text and empty card space, 50 ms to 1.2 s after a vertical fling, 0 to
+150 ms after coming back from the camera, curved starts. Evidence and the runner:
+`<harness-dir>/a1-bench/camera-swipe-r1021/`. Two classes failed, every time:
+
+| Class | Cells | What the events show |
+| --- | --- | --- |
+| **A. A slow start: the first `touchmove` lands under the 12 px lock** | 8 of 8 whose first move was < 12 CSS px (3 of them carried far enough to commit) | Chrome dispatches no `touchmove` inside its touch slop (8 dp = 8 CSS px in a WebView), so the first one arrives at 9-11 px. `updateSwipeNavGesture` is still `pending` below `GESTURE_LOCK_PX` (12), so nothing claims it, and Chrome starts its own gesture on that unclaimed move: EVERY later move is `cancelable=false` (move 1 at 12-21 px). At the lock, `claimTouchMove` reads that, logs `[touch] touchmove is not cancelable (a scroll is in progress) - not claimed`, and stands the swipe down. No scroll event fires (`pan-y` drops the horizontal pan) - the page just does not move |
+| **B. The start inside Android's LEFT system-gesture inset** - x < 74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74`) | 8 of 8 | `touchstart > touchcancel` at once: the SYSTEM took the touch as Back. Depending on the WebView history it lands on the previous page (`/associations`, a stale `/login`) or closes the app |
+
+**Everything else opened the camera, 64 of 64 that cleared the release rule**: every straight swipe
+from x >= 80 physical px at any slope up to 0.6, scroll top or mid-feed, on media, text or empty
+space; 4 of 4 straight after a fling; 6 of 6 within 150 ms of coming back from the camera. A fast
+swipe passes class A only because its first `touchmove` already jumps past 12 px - which is why
+REEL-1 and check V, both one 180-200 ms injected swipe, never saw it.
+
+**A decides on the first delivered move, and ONLY the speed at the slop decides it.** Same travel
+(113 CSS px), same line, same start: first move 11 px -> stayed; first move 13 px -> camera. Made
+deterministic with `input motionevent` (one `MOVE` per step): a path whose first move is 10 px stayed
+4 of 4, the same path with a 13 px first move opened the camera 4 of 4. A
+deliberate thumb crosses the slop slowly, a flick does not - "not every time", with no visible
+difference to the person swiping. Proved by SIMULATING the fix on the phone (no rebuild): a second
+non-passive listener on `.app-shell` that `preventDefault`s the first horizontal-dominant move past
+**8 px** made the same cells claimable every time - 12 of 12 that carried far enough opened the
+camera, 0 `cancelable=false` in 20, and the deterministic 10 px path opened it 4 of 4 - and five vertical scrolls, with or without it, scrolled the
+same (44-58 scroll events each). The `touchClaim.ts` comment attributes the `cancelable=false` it
+found on 2026-10-02 to "a sideways swipe right after a vertical fling"; the fling cells here all
+passed, and class A produces that exact line, so that observation was most likely class A.
+
+**Refused BY DESIGN, not defects:** a short slow drag (65-89 CSS px under 0.5 px/ms, below a quarter
+of the screen - [section 38](#a-tap-that-drifts-is-not-a-swipe-and-60px-could-not-tell-them-apart)),
+8 of 10 curved starts whose first 12 px were more vertical than horizontal (`vertical`, a scroll),
+a start on the header (`data-swipe-nav-ignore`), and any swipe while a modal is open (the
+overlay-stack depth - a composer left open from an earlier session refused two cells here).
+
+**iPhone, by code only (not measured):** WebKit has no slop suppression, so its first `touchmove`
+arrives at 1-2 px and the 12 px lock is reached with every move still `cancelable` until UIKit's
+own pan recognises - whether that happens before 12 px is not known, so class A is unproven there.
+Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipeBack`, and only in
+a conversation).
+
+**The fix for A** is the lock moving under the engine's slop - the move that decides who owns the
+touch must be the one the gesture claims ([backlog](../backlog.md#p2---the-tab-swipe-is-lost-on-a-slow-start-the-12-px-lock-sits-past-chromes-8-dp-slop-mi-9t-2026-10-21)).
+**B is not the page's to fix in-page**: the page only ever sees a `touchcancel`. The options are the
+ones the right edge had - exclusion rects (`edgeGestureExclusion.ts`, 200 dp per edge) over the
+feed, or nothing - and that is a user decision.
+
 ## Tooltips: one convention, audited 2026-10-08
 
 Audit of every `title` in `frontend/src` (about 440 hits, 270 of them `title={m.x()}` on an element).
@@ -3193,7 +3250,13 @@ click-opened `MessageInfoTooltip`, and the panels (`ReactorsPanel`, `SeenByHeads
 - **An icon-only control has `title` AND `aria-label`, both from Paraglide, both the same string when
   the text is the same.** Where they differ on purpose (short hint vs a longer accessible name,
   "Rechercher" / "Rechercher dans la conversation") two keys are fine; two keys with identical text
-  are not (four were merged).
+  are not (four were merged on 2026-10-08, three more on 2026-10-18: unpin, record a voice
+  message, manage communities and roles). **`tooltipOneKey.test.ts` asserts it**: it walks every
+  `.svelte` file and refuses an element whose `title` and `aria-label` are two keys holding the same
+  text in BOTH locales; the 29 pairs that differ on purpose pass, and a floor on that count keeps the
+  scan from passing vacuously.
+- **Three hover/tap systems, no shared `Tooltip` component** (the native `title`, the `PostPolls`
+  voters bubble, the click-opened `MessageInfoTooltip`). Build a shared one only if a fourth appears.
 - **Never a raw literal, never a stored key or an id.** A reaction type is the wire value
   (`Marteau`): its name is `reactionTypeToLabel()`. `Avatar`, `AssociationAvatar`, `Modal` and the
   admin project rename carried French literals; they are messages now.

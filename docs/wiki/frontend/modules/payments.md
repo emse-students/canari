@@ -49,7 +49,8 @@ their reasons in [stripe-archive](../../stripe-archive.md#the-names-that-outlive
   -> POST /api/associations/:id/products/:productId/checkout
      -> core-service creates a Lydia payment request
   -> Redirect to the Lydia page
-  -> On return: confirmed by lydia-request-callback (core-service)
+  -> Confirmed by lydia-request-callback (core-service), verified with the association's
+     Business key - no return path exists for a product (see "What confirms a payment")
 ```
 
 ## Components
@@ -76,10 +77,11 @@ their reasons in [stripe-archive](../../stripe-archive.md#the-names-that-outlive
 | `POST /api/payments/request-state` | Internal secret only. A request's state at Lydia, by its `request_uuid` and the Business's vendor token |
 | `POST /api/forms/submissions/:id/confirm-payment` (social-service) | Submitter or manager. Reads the row's OWN request at Lydia and records it if paid |
 
-**A form payment is confirmed by the callback, and by the payer's return when the callback has
-not.** The callback fires whether or not the buyer's browser returns; the return page polls
-`confirm-payment`, which asks Lydia about the request the row stored and, if it is paid, does what
-the callback would have done. `verify-session` and `cancel-session` were meant to be that return
+**A form payment is confirmed by Lydia's answer about the row's OWN request, read on either of two
+triggers: the callback, verified with the association's Business key, and the payer's return**
+([what confirms a payment](#what-confirms-a-payment-2026-10-16)). The callback fires whether or not
+the buyer's browser returns; the return page polls `confirm-payment`. Both read the request the row
+stored and record it only if Lydia answers paid. `verify-session` and `cancel-session` were meant to be that return
 path and never worked - they took the submission from an `order_ref` `request/state` does not echo
 ([below](#what-requeststate-answers-and-what-it-does-not-2026-10-15)) - and were deleted on
 2026-10-15. Repair a payment the callback missed through `confirm-payment`, never by an
@@ -163,6 +165,7 @@ dashboard or balance.
 
 ## See also
 
+- [../../lydia-api.md](../../lydia-api.md) - the Lydia API reference: credentials, calls, states, callbacks, what is measured and what is not.
 - [associations.md](associations.md) - association model, permission flags, admin panel tabs.
 - [../../cotisations.md](../../cotisations.md) - membership dues (also routed through the online payment).
 - [admin.md](admin.md) - platform admin surfaces (Cercle top-ups).
@@ -187,8 +190,19 @@ link. `layerLadder.test.ts` now treats `data-keyboard-aware-overlay` as what it 
 layer - and fails one that is not portalled or carries no named rung.
 
 Lydia confirmed on 2026-10-04 that a request must be between **0,50 EUR and 1000 EUR**;
-`LydiaPaymentProvider.createCheckoutSession` refuses anything outside it with a message instead of
-letting Lydia answer. In homologation the payer page offers a card form and, at its end, buttons to
+`LydiaPaymentProvider.createCheckoutSession` refuses anything outside it instead of letting Lydia
+answer. The refusal is TYPED: `code: AMOUNT_OUT_OF_RANGE` with `minCents` / `maxCents`, the same
+shape a shop product's own free-amount bounds answer, and social-service refuses a form total outside
+the range before calling core, with the same answer. The range lives in two constants that share no
+package - `LYDIA_MIN/MAX_AMOUNT_CENTS` (core) and `PROVIDER_MIN/MAX_AMOUNT_CENTS` (social,
+`core-payment-error.ts`) - and both apps' specs assert them against
+`libs/contracts/payment-amount-range.json`, so they cannot drift. Every frontend refusal builder
+reads the bounds through `amountBoundsOf` (`associations/api.ts`), and `providerRefusalMessage`
+words them in the reader's locale (`formatAmount`), never echoing the server's English. A shop
+product's free amount (`customAmountCents`) and a manager's cash grant go through ONE bounds check
+(`assertWithinCustomBounds`, `products.service.ts`); the checkout body is typed inline and so never
+validated by the pipe, which is why `wholeCentsOf` refuses anything but a non-negative safe integer
+at the controller (`AMOUNT_INVALID`) - `5000.5` used to be charged rounded and recorded as sent. In homologation the payer page offers a card form and, at its end, buttons to
 choose the final status - a real card is refused at the 3-D Secure step, so never type one there.
 
 ## Where Lydia sends the payer back (2026-10-05)
@@ -204,8 +218,8 @@ pending submission. Since 2026-10-15 each of those reads is `confirm-payment`, w
 Lydia about the row's own request, so a payment whose callback was lost is confirmed while the payer
 looks; the cancel page shows a paid answer as paid and a still-open request as such
 ([forms](forms.md#an-online-payment-holds-its-seat-for-30-minutes-and-a-late-one-is-decided-from-the-row-2026-10-15)).
-The boutique needs none of this: its return URLs carry no session id and its fulfilment is the
-callback.
+The boutique has none of this: its return URLs carry no session id, and since 2026-10-16 a Lydia
+callback does not fulfil it either (see "What confirms a payment" below).
 
 **Not verified, and owed to Lydia or a phone**: whether Lydia appends parameters to
 `browser_success_url`, whether it accepts the `fr.emse.canari://` deep link the phone app sends,
@@ -242,18 +256,15 @@ signatures redacted). One request, `request_id 12115506`, created with `order_re
   this call, and the answer is read server to server over TLS from Lydia's own host, which is
   what makes it trustworthy here - not the signature.
 
-**Not measured, and why: state 1 (paid) and state 5 (refused by the payer).** `1 = paid` is
-**Lydia's documentation, NOT a measurement**, and `confirm-payment`, the settle of a retry and the
-cancel all act on it. **A real sandbox payment, read back with `request/state`, is owed before
-any STABLE ships this.** Both are reached
-only by acting as the PAYER on Lydia's payer page (the homologation page's final-status buttons),
-which is a human at the Lydia form, so they were not driven here. The code reads `1` as paid
-from Lydia's documentation and reports `5`, like any code not measured, as `other`: a retry or a
-cancel that meets it refuses with `PREVIOUS_PAYMENT_OPEN` until the hold ends, and `confirm-payment`
-leaves the row as it is. Still owed, by a person on the homologation payer page, then one
-`request/state` each: pay a request (expect `1`, and read whether the confirm callback arrives),
-refuse one (expect `5`, and whether `request/cancel` then answers error 2), and what
-`request/cancel` answers on the PAID one. Request `12115506` was left open on the sandbox; it
+**State 1 (paid) and state 5 (declined by the payer) were measured on dev, sandbox, on
+2026-10-21**: `1` is a paid request, `5` a payer's decline, which sends NO callback and ends on
+Lydia's own error page with no link back. `LYDIA_REQUEST_STATES` classifies 0 / 1 / 5 / 6 as `open`
+/ `paid` / `declined` / `cancelled-or-expired`, and any other code as `unknown` (never paid, never
+settled). A `declined` request is final: a retry settles it and issues a new one, and
+`confirm-payment` releases the answer so the payer can retry
+([forms](forms.md#a-declined-payment-releases-the-answer-2026-10-21)). Before that it read as an
+unmeasured `other`, and a retry refused with `PREVIOUS_PAYMENT_OPEN` until the hold ended. Still not measured here: what `request/cancel` answers on a PAID or a
+DECLINED request (the state read after an error 2 is what makes either harmless). Request `12115506` was left open on the sandbox; it
 expires on its own (`expire_time 3600`).
 
 ## Which onboarding flag a screen reads (2026-10-03)
@@ -400,8 +411,8 @@ private token does NOT verify Lydia's callback** - consistent with the CSM's "si
 Business's token", though a wrong field set in `verifyRequestCallback` would fail the same way; the
 field names were not logged, since that log line fires only when fields are missing.
 
-**Not produced, so unmeasured:** the state of a PAID request (`1` expected) and of a payer decline
-(`5` expected), and what `request/cancel` answers on a paid request. A test card (`4111...`) is
+**Not produced that day** (since measured, 2026-10-21: `1` paid, `5` declined, see above): the
+state of a PAID request and of a payer decline. A test card (`4111...`) is
 refused before any status choice ("ne permet pas l'usage du code de securite 3DSecure",
 `/collect/payment-error?code=4`) and the request stays `state 0`; no Lydia sandbox test card is
 documented here, and none was guessed further.
@@ -421,12 +432,95 @@ and the names it was verified over** (`verified-over=[request_id,amount,currency
 because 2026-10-15 measured that the Provider private token does not verify Lydia's callback and a wrong
 field SET fails identically to a wrong KEY. **This is a hypothesis about Lydia's body type, not an observation of
 it**: the test reproduces the exact symptom without the interceptor, but the next real callback's
-log line is what settles it. No callback has yet been verified, so which private token signs one
-(the Provider's, as `verifyRequestCallback` assumes, or the Business's, as Lydia's CSM wrote on
-2026-10-15) is still open.
+log line is what settles it. (Settled on 2026-10-16: the Business's key, over every field but `sig` -
+[what confirms a payment](#what-confirms-a-payment-2026-10-16). The `verified-over` list is gone with
+the guessed field set.)
 
-### Which key signs Lydia's callback - the observation (2026-10-15)
+## What confirms a payment (2026-10-16)
 
-Lydia's CSM says the callback is signed with the BUSINESS private token; core stores none (`associations` holds only the public `vendor_token`, and `business/create`'s `api_token_id` is dropped on purpose), and the Provider private token verifies nothing. `LYDIA_OBSERVE_KEYS` (a comma list, dev only, never logged, REMOVED once the algorithm is known) feeds `matchLydiaSignature` (`lydia-signature-match.ts`): on a refused callback it tries every subset of the received field names x five algorithms per candidate key and the failure line adds `observe: key#N fields=[names] algorithm=...` - indexes and names, never a value. The refusal itself is unchanged. **Lasting design, a later lot:** capture the Business key at `business/create`, store it ENCRYPTED per association (column + migration) and verify with it.
+**Measured on the sandbox, 2026-10-16:** Lydia's `request/do` callback is `multipart/form-data` with
+seven fields - `currency`, `request_id`, `amount`, `signed`, `vendor_token`, `order_ref`, `sig` - and
+`sig` is `signLydiaParams` (MD5 of the `key=value` pairs sorted by key, joined by `&`, then `&` and the
+key) over EVERY received field but `sig`, `signed` included, with the **Business** private token of the
+Business that issued the request. The Provider private token never verified one, so nothing reads
+`LYDIA_PROVIDER_PRIVATE_TOKEN` any more (its secret and manifest row are a follow-up). The cancel and
+expire callbacks were measured; a CONFIRM is not (no payment completes in the sandbox) and is assumed
+to come from the same mechanism.
 
-The observation is bounded and guarded (review of #1928): it runs only when `LYDIA_ENV` is not `production` and the variable is set (the dev compose carries it, empty by default; production compose does not), it skips - and says so in the one line - a body over 10 fields or 2 KB (the route is public and its JSON body may be megabytes), and it ignores any non-string value, so a hostile body still gets its usual 400 and its log line.
+**The verification** (`lydia-callback-verification.ts`, core-service): the signed set is whatever
+arrived minus `sig` - not a list the code chooses - and every value must be a string (16 fields, 512
+characters each at most). The key is the one of the association whose `lydiaAccountId` is the body's
+`vendor_token`, asked of social-service over `POST /api/internal/associations/lydia-callback-key`
+(`X-Internal-Secret`, `Cache-Control: no-store`, under `/api/internal/`, which no nginx `location`
+routes). Resolving the key FROM the body is sound because the signature is the proof: anyone may name
+a public vendor token, nobody but the Business can sign for it. **Every failure is ONE 400 `Invalid
+signature`** - unknown association, no key, wrong key, wrong field set, a non-string value - so the
+route says nothing about which associations hold a key; the reason (`unsignable-body`,
+`no-vendor-token`, `no-key`, `mismatch`) goes to the server log only. Failing to READ the key (social
+unreachable, or social without `LYDIA_KEY_ENCRYPTION_SECRET`, which throws rather than answering null)
+and failing to APPLY a verified callback (fan-out error, the row's request unreadable at Lydia) are a
+503: not a verdict about the callback, and the status Lydia may retry.
+
+**A verified callback is a TRIGGER, never the payment.** For a form, core posts `{ vendorToken,
+requestId }` to `internal/forms/submissions/:id/provider-confirm`; social-service first checks the row's
+PAYEE account (its form's association, or that association's approved parent, whatever provider is
+active) is that `vendorToken` - so an authentic callback of association A naming B's submission in its
+`order_ref` settles nothing, logged at ERROR - then reads the row's OWN `request_uuid` at Lydia
+(`request/state`, with the verified Business) and calls `markPaid` only if Lydia answers paid. That is
+the very settle the payer's return makes (`settleFromProvider`); nothing of the callback's amount or
+request id decides a status. A confirm naming a request the row no longer holds is logged at ERROR (a
+payment nothing would record). The internal `mark-paid` route is gone. **A cancel or expire callback is
+a trigger by the same rule (2026-10-18):** core posts `{ requestId, vendorToken }` to `cancel-pending`,
+which acts only on the row's current request AND only if `vendorToken` is its payee, and then reads
+that request at Lydia (`settleFromProvider` again): `cancelled-or-expired` (state 6) or `declined` (5) releases the seat, under the row
+lock and only while the row still names the request read; `paid` records the payment instead; `open`,
+an unmeasured state or a failed read keeps the seat (`unreadable` becomes core's retryable 503). So a
+cancel signed with a key the payout manager typed cannot release a seat Lydia still holds open.
+
+**The signature is not canonical, and nothing depends on it being so.** Lydia's scheme joins
+`key=value` pairs with `&` and escapes neither, so `{a: '1&b=2'}` and `{a: '1', b: '2'}` sign the same
+string: one signed body can be re-split into another with the same digest. That is Lydia's format, not
+ours to change, and it costs nothing here because no outcome is decided from a callback's fields - every
+one re-reads the row's own request at Lydia. The signed set is built with `Object.fromEntries`, so a
+sender-chosen `__proto__` name stays a plain key (the protection of #1946).
+
+**The public route is rate-limited at the edge:** nginx's `lydia_callback` zone, 5 r/s burst 50 per
+client address on `POST`, answering 429 - far above the handful of callbacks Lydia sends per payment,
+and a bound on what a flood of forged bodies (each one a key lookup) can cost.
+
+**The boutique is REFUSED on the callback path until lot B3.** A product checkout stores no row naming
+its request, so there is nothing of ours to settle from - and a verified signature proves only that the
+key the payout manager TYPED signed it. Settling from the callback would let that manager grant any tag,
+fire any Cercle webhook and record any purchase with no money moved, even with payments disabled. So a
+verified `product:` confirm fulfils nothing: core logs it at ERROR, naming request, product and user
+for a human to settle, and answers 2xx (no retry changes the answer). `purchase-completed` keeps its
+payee check and has no caller until B3 stores a product checkout to settle from. **Consequence:** a
+boutique Lydia payment is taken and not fulfilled automatically - as before this change, when no
+callback verified at all.
+
+**Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
+(`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
+`associations."lydiaBusinessKeyCiphertext"` (migration 100): AES-256-GCM (`common/secret-box.ts`)
+under a key derived by HKDF from `LYDIA_KEY_ENCRYPTION_SECRET`, with `<associationId>:<vendorToken>` as
+additional data, so a ciphertext copied to another row, or kept across a re-onboarding to another
+Business, does not open. **Write-only:** `GET` on the same path answers `{ set }` and nothing else, the
+PUT answers `{ set: true }`, the audit line names the association and the actor and never the value,
+and the column is mapped `select`/`insert`/`update: false` so no entity read can carry it. Unlinking
+the Business clears it. The copies of production strip it (`copy-strips.sh`) and a local estate
+regenerates the secret (`env-from-prod.sh`), so a laptop with a dump cannot open one.
+
+**Why not capture it at `business/create`.** `business/create` answers `api_token`, `api_token_id` and
+`dashboard_url`; Lydia says each validated Business has a `private_token` in its console, "Mes
+informations". That `api_token_id` IS that private token is a hypothesis nobody has measured (it needs a
+validated Business's key to compare), and storing an unidentified secret is worse than storing none -
+so `api_token_id` stays unpersisted and redacted from logs.
+
+**No key yet: the designed state.** The Lydia panel shows "Non renseignee" and says callbacks cannot be
+verified yet. Every callback of that association is refused (400); a FORM payment is still confirmed
+when the payer comes back (`confirm-payment`). Nothing checks a key when it is saved - a wrong one shows
+only at the first refused callback - so the panel says so, and the PUT is throttled per user and
+association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`, `UserResourceThrottlerGuard`).
+
+**The secret is REQUIRED on both estates** (`env-manifest.tsv`, like `AGENDA_SIGNING_KEY`): a deploy
+without `LYDIA_KEY_ENCRYPTION_SECRET` / `DEV_LYDIA_KEY_ENCRYPTION_SECRET`, or with one under 32
+characters, fails its render naming the secret rather than starting a service that cannot store a key.

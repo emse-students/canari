@@ -3,7 +3,10 @@ import {
   fetchServerAppVersionReliable,
   isMaintenanceBlockingUser,
   parseServerVersionInfo,
+  serverVersionInfoToWire,
   type AppVersionCheckResult,
+  type CallsMode,
+  type LivesMode,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 
@@ -26,7 +29,11 @@ function loadCachedServerInfo(): ReturnType<typeof parseServerVersionInfo> {
 function saveCachedServerInfo(info: NonNullable<ReturnType<typeof parseServerVersionInfo>>): void {
   if (typeof sessionStorage === 'undefined') return;
   try {
-    sessionStorage.setItem(CACHED_SERVER_VERSION_KEY, JSON.stringify(info));
+    // The WIRE shape, the one `loadCachedServerInfo` parses: see `serverVersionInfoToWire`.
+    sessionStorage.setItem(
+      CACHED_SERVER_VERSION_KEY,
+      JSON.stringify(serverVersionInfoToWire(info))
+    );
   } catch {
     /* quota / private mode */
   }
@@ -56,6 +63,25 @@ export function getAppVersionCheck(): AppVersionCheckResult | null {
  */
 export function isAppUpdateAvailable(): boolean {
   return lastCheck !== null && !lastCheck.upToDate && !lastCheck.belowMinVersion;
+}
+
+/**
+ * The server's kill switch for calls as the last `/api/version` answer gave it, `off` before any
+ * answer. Reactive (it reads the `$state` above), so a call button hides on the refresh that
+ * closes calls. Read through `utils/callsAvailability.ts`, which joins it to the build switches.
+ */
+export function serverCallsMode(): CallsMode {
+  return lastCheck?.callsMode ?? 'off';
+}
+
+/**
+ * The server's kill switch for lives as the last `/api/version` answer gave it, `off` before any
+ * answer. Reactive like {@link serverCallsMode}, so the live card and the composer's Live chip hide
+ * on the refresh that closes lives. Read through `utils/livesAvailability.ts`, which joins it to
+ * the build switch.
+ */
+export function serverLivesMode(): LivesMode {
+  return lastCheck?.livesMode ?? 'off';
 }
 
 /** True when the client is below the server-enforced minimum version. */

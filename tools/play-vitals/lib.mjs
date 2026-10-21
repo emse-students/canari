@@ -6,23 +6,29 @@
  * dependency tree to sign one JWT would be the larger surface.
  *
  * The key is a SECRET and Canari is a PUBLIC repository, so it is never read from inside the work
- * tree. It lives beside the harness state at `../canari-harness/`, which `git clean -xdf` cannot
+ * tree. It lives in the harness state directory (`canari-harness/`), which `git clean -xdf` cannot
  * reach and where nothing can be committed by accident.
  */
 
 import { createSign } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /** The Play package this repo publishes. Matches `identifier` in `tauri.conf.json`. */
 export const PKG = 'fr.emse.canari';
 
-/** Where the service-account JSON lives. `PLAY_SA_KEY` overrides it (CI has its own path). */
-export const KEY_PATH =
-  process.env.PLAY_SA_KEY ??
-  new URL('../../../canari-harness/play-console-sa.json', import.meta.url).pathname.replace(
-    /^\/(?=[A-Za-z]:)/,
-    ''
-  );
+/**
+ * The ONE documented default: `play-console-sa.json` in the harness state directory, the same
+ * directory `tools/cross-client-harness/names.mjs` exports as `STATE_DIR` (`<repo>/../../canari-harness/`,
+ * resolved from the file's own location). It is resolved here from the same relative depth rather
+ * than imported, because `names.mjs` is gitignored and absent from a CI checkout.
+ */
+export const DEFAULT_KEY_PATH = fileURLToPath(
+  new URL('../../../../canari-harness/play-console-sa.json', import.meta.url)
+);
+
+/** Where the service-account JSON lives. `PLAY_SA_KEY` takes precedence over the default. */
+export const KEY_PATH = process.env.PLAY_SA_KEY || DEFAULT_KEY_PATH;
 
 /** Android vitals, anomalies and error reports. */
 export const REPORTING = 'https://playdeveloperreporting.googleapis.com/v1beta1';
@@ -52,7 +58,7 @@ export async function token() {
 
   if (!existsSync(KEY_PATH)) {
     throw new Error(
-      `Play service-account key not found at ${KEY_PATH}. Set PLAY_SA_KEY to its location.`
+      `Play service-account key not found at ${KEY_PATH}. Set PLAY_SA_KEY to its location, or put it at the default ${DEFAULT_KEY_PATH}.`
     );
   }
   const key = JSON.parse(readFileSync(KEY_PATH, 'utf8'));
