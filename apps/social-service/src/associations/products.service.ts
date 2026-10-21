@@ -1660,7 +1660,7 @@ export class ProductsService {
   async listAssociationPurchases(associationId: string): Promise<
     Array<{
       id: string;
-      userId: string;
+      userId: string | null;
       source: 'form' | 'product';
       productId: string | null;
       formId: string | null;
@@ -1706,7 +1706,9 @@ export class ProductsService {
 
     purchases.forEach((p) => {
       sheet.addRow({
-        lastName: p.lastName ?? '',
+        // A guest (no account) is named as the responses table names one; the organiser finds the
+        // person through the form's own answers ("Nom Prenom").
+        lastName: p.lastName ?? (p.userId ? '' : 'Invité'),
         firstName: p.firstName ?? '',
         source: p.source === 'form' ? 'Formulaire' : 'Boutique',
         productName: p.productName,
@@ -1751,7 +1753,7 @@ export class ProductsService {
   private async enrichPurchaseRecords(records: PurchaseRecord[]): Promise<
     Array<{
       id: string;
-      userId: string;
+      userId: string | null;
       source: 'form' | 'product';
       productId: string | null;
       formId: string | null;
@@ -1763,7 +1765,8 @@ export class ProductsService {
       lastName: string | null;
     }>
   > {
-    const userIds = [...new Set(records.map((r) => r.userId))];
+    // A guest's payment on a public form names no buyer (migration 102): nobody to look up.
+    const userIds = [...new Set(records.map((r) => r.userId).filter((id) => id != null))];
     const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
     if (userIds.length > 0) {
       const rows: { id: string; firstName: string | null; lastName: string | null }[] =

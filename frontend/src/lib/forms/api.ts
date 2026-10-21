@@ -579,14 +579,38 @@ export async function submitForm(
   return res.json();
 }
 
-/** What a guest on a public form's link is served: the questions, and nothing about its owner. */
+/**
+ * What a guest on a public form's link is served: the questions, what they cost, and nothing about
+ * its owner. A public form may charge (WP-P1): a base price, option supplements, cash, and a grid on
+ * ANSWERS, whose whole slice is `pricing` (a guest has no profile for a grid to resolve).
+ */
 export type PublicForm = Pick<
   Form,
-  'id' | 'title' | 'description' | 'imageUrl' | 'items' | 'opensAt' | 'anonymous'
+  | 'id'
+  | 'title'
+  | 'description'
+  | 'imageUrl'
+  | 'items'
+  | 'opensAt'
+  | 'anonymous'
+  | 'basePrice'
+  | 'currency'
+  | 'allowCashPayment'
 > & {
   closedAt?: string | null;
   formFull: boolean;
+  pricing: PricingView | null;
 };
+
+/**
+ * What a guest's submit answers: that it was taken, and when the form charges, Lydia's payer page
+ * to go to or that cash is owed to the organiser. Never a submission id.
+ */
+export interface PublicSubmitReply {
+  ok: true;
+  checkoutUrl?: string;
+  cashPayment?: true;
+}
 
 /** Why a public form could not be read: it is not there (or not public), or the call failed. */
 export class PublicFormUnavailableError extends Error {
@@ -608,16 +632,24 @@ export async function getPublicForm(id: string): Promise<PublicForm> {
 
 /**
  * Sends one guest answer. `website` is the honeypot the page hides from people; the server drops
- * any answer that fills it. The server's own sentence is thrown.
+ * any answer that fills it. A paid answer carries the address Lydia sends the request to
+ * (`payerEmail`, never stored) and the method. A refusal is thrown through the one builder, so a
+ * payment refusal (`code`, the amount bounds) is worded by `providerRefusalMessage`.
  */
 export async function submitPublicForm(
   id: string,
-  payload: { answers: Record<string, unknown>; website: string }
-): Promise<void> {
+  payload: {
+    answers: Record<string, unknown>;
+    website: string;
+    payerEmail?: string;
+    paymentMethod?: 'online' | 'cash';
+  }
+): Promise<PublicSubmitReply> {
   const res = await fetch(`${socialUrl()}/api/public/forms/${encodeURIComponent(id)}/submit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw await refusal(res, 'Submission failed');
+  return res.json();
 }

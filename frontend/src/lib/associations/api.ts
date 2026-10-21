@@ -1808,7 +1808,8 @@ export interface ViewerPrice {
 /** A completed purchase with buyer display name. */
 export interface AssociationPurchase {
   id: string;
-  userId: string;
+  /** Null for a guest's payment on a public form: a guest has no account. */
+  userId: string | null;
   source: 'form' | 'product';
   productId: string | null;
   formId: string | null;

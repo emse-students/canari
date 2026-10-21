@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   Body,
   Controller,
   Get,
@@ -36,8 +37,9 @@ export class PublicFormsController {
   }
 
   /**
-   * One guest answer. The reply says nothing but that it was taken: a guest has nothing to come
-   * back to, and a submission id would be a handle on a row they cannot read.
+   * One guest answer. The reply is an ALLOWLIST (`toGuestSubmitReply`): that it was taken and, when
+   * the form charges, where to pay (Lydia's payer page) or that cash is owed. Never a submission id
+   * or anything else the service answers beside it.
    */
   @UseGuards(ClientIpThrottlerGuard)
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
@@ -50,8 +52,47 @@ export class PublicFormsController {
       this.logger.warn(`[FORMS] guest answer dropped by the honeypot form=${id.slice(0, 8)}`);
       return { ok: true };
     }
-    await this.service.submit(id, { answers: dto.answers }, 'guest');
-    this.logger.log(`[FORMS] guest answer stored form=${id.slice(0, 8)}`);
-    return { ok: true };
+    const result = await this.service.submit(
+      id,
+      { answers: dto.answers, payerEmail: dto.payerEmail, paymentMethod: dto.paymentMethod },
+      'guest'
+    );
+    const reply = toGuestSubmitReply(result);
+    this.logger.log(
+      `[FORMS] guest answer stored form=${id.slice(0, 8)} ` +
+        (reply.checkoutUrl ? 'online payment issued' : reply.cashPayment ? 'cash owed' : 'free')
+    );
+    return reply;
   }
+}
+
+/** What a guest is answered after a submit: these fields and nothing else. */
+export interface GuestSubmitReply {
+  ok: true;
+  /** Lydia's payer page, when the answer is paid online. */
+  checkoutUrl?: string;
+  /** The answer is recorded and its price is owed in cash to the organiser. */
+  cashPayment?: true;
+}
+
+/**
+ * Picks the guest's reply out of `FormsService.submit`'s result. A paid answer whose request was
+ * not issued (`submit` answers a `message` and has released the row) was NOT taken: it is a 502,
+ * rather than a guest reading that an answer nobody can pay for was recorded.
+ */
+export function toGuestSubmitReply(result: {
+  /** Read by nobody here: named so every shape `submit` answers is one this accepts. */
+  submissionId?: string;
+  checkoutUrl?: string;
+  cashPayment?: boolean;
+  message?: string;
+}): GuestSubmitReply {
+  if (result.message && !result.checkoutUrl) {
+    throw new BadGatewayException('The payment request could not be created.');
+  }
+  return {
+    ok: true,
+    ...(result.checkoutUrl ? { checkoutUrl: result.checkoutUrl } : {}),
+    ...(result.cashPayment ? { cashPayment: true as const } : {}),
+  };
 }

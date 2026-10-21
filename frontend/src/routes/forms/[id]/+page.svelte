@@ -19,10 +19,8 @@
     cancelPendingSubmission,
     confirmSubmissionPayment,
     type Form,
-    type FormItem,
-    type AnswerDimensionView,
   } from '$lib/forms/api';
-  import { OTHERS_BUCKET_ID, cellKey, hasCell, type CellValue } from '$lib/pricing/priceMatrix';
+  import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
     getCalendarEventLinkedToForm,
@@ -35,13 +33,13 @@
   import Button from '$lib/components/ui/Button.svelte';
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
+  import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import {
     firstMissingAnswer,
     formatAmount as formatCurrency,
     initialSelections,
     isItemAnswered,
     missingAnswerMessage,
-    pricedQuestionsAwaitingAnswer,
     visibleAnswers,
     visibleItems as visibleItemsOf,
   } from '$lib/forms/fillAnswers';
@@ -290,162 +288,36 @@
   );
 
   /**
-   * Which group of one answer criterion an answer falls in - `others` when it matches none.
-   *
-   * Named because the price and the per-option availability below ask the same question, and two
-   * copies of it is how an option offered here lands on a cell the server refuses.
+   * Everything the page shows about the price, from the slice the server sent (`fillPriceState`,
+   * shared with the guest's page): the cell their answers land on, whether it is decided or does
+   * not exist, the options that would close it, and the total the pay button names.
    */
-  function bucketIdOf(dimension: AnswerDimensionView, answer: unknown): string {
-    const chosen = Array.isArray(answer) ? (answer as string[]) : answer ? [String(answer)] : [];
-    return (
-      dimension.buckets.find((b) => chosen.some((v) => b.values.includes(v)))?.id ??
-      OTHERS_BUCKET_ID
-    );
-  }
-
-  /**
-   * One cell of this submitter's slice: a price, or `null` for a combination that does not exist.
-   *
-   * A key the slice does not carry is not a cheaper price - it is a broken invariant, since the
-   * server sends every combination and completeness is enforced when the grid is saved. So it is
-   * logged and reported as unavailable rather than falling back to a figure nobody chose: charging
-   * a plausible number is how a wrong price ships quietly.
-   */
-  function cellOf(view: PricingView, bucketIdsInOrder: string[]): CellValue {
-    const key = cellKey(bucketIdsInOrder);
-    if (!hasCell(view.cells, key)) {
-      console.error(`[FORMS] pricing slice carries no cell "${key}" - treated as unavailable`);
-      return null;
-    }
-    return view.cells[key];
-  }
-
-  /**
-   * The base price for this submitter, given what they have answered so far.
-   *
-   * With a grid, it is the cell their answers land in - looked up in the slice the server sent,
-   * never computed from a rule here. Without one, the form's single price. `null` means their
-   * combination is unavailable, which the page shows instead of a total.
-   */
-  const baseCents = $derived.by<CellValue>(() => {
-    if (!form) return 0;
-    if (!pricing) return form.basePrice ?? 0;
-    return cellOf(
+  const price = $derived(
+    fillPriceState({
+      basePrice: form?.basePrice ?? 0,
       pricing,
-      pricing.answerDimensions.map((d) => bucketIdOf(d, selections[d.questionId]))
-    );
-  });
-
-  /**
-   * The priced questions still to be answered: until they are, no cell is chosen, so the page says
-   * nothing about the price - no total, no "from" price, no "unavailable"
-   * (`pricedQuestionsAwaitingAnswer`). The "others" cell they would fall in is not their price.
-   */
-  const awaitingPricedAnswers = $derived(
-    pricing
-      ? pricedQuestionsAwaitingAnswer(
-          visibleItems,
-          pricing.answerDimensions.map((d) => d.questionId),
-          selections
-        )
-      : new Set<string>()
+      items: form?.items ?? [],
+      visibleItems,
+      selections,
+    })
   );
+  const priceDecided = $derived(price.priceDecided);
+  const priceUnavailable = $derived(price.priceUnavailable);
+  const priceCents = $derived(price.priceCents);
+  const appliedPricingLabel = $derived(price.appliedLabel);
 
-  /** Whether the answers have chosen a cell: no priced question is left to answer. */
-  const priceDecided = $derived(awaitingPricedAnswers.size === 0);
-
-  /**
-   * The combination they have landed on does not exist, so there is nothing to pay and nothing to
-   * submit. Distinct from `!maySubmit`, which is about who they ARE: this one moves as they answer.
-   */
-  const priceUnavailable = $derived(priceDecided && baseCents === null);
-
-  /** The price, once known to exist. Zero for a free form, so the display stays arithmetic. */
-  const priceCents = $derived(baseCents ?? 0);
-
-  /**
-   * Options that would land this submitter on a cell the manager marked as not existing.
-   *
-   * Computed rather than hidden: an option removed without a word reads as a bug, and the person
-   * needs to see that the combination exists but is closed to them. Only the questions the grid
-   * prices on can do this - every other answer leaves the cell where it was.
-   */
-  const unavailableOptionIds = $derived.by(() => {
-    const view = pricing;
-    if (!view) return new Set<string>();
-    const current = view.answerDimensions.map((d) => bucketIdOf(d, selections[d.questionId]));
-    return new Set(
-      view.answerDimensions.flatMap((dimension, index) => {
-        // Another priced question not answered yet leaves this one's cell undecided: nothing is
-        // closed until it is (an "others" stand-in would close options the person can reach).
-        const othersPending = view.answerDimensions.some(
-          (other, j) => j !== index && awaitingPricedAnswers.has(other.questionId)
-        );
-        if (othersPending) return [];
-        const item = form?.items.find((i) => i.id === dimension.questionId);
-        const closed: string[] = [];
-        for (const option of item?.options ?? []) {
-          if (!option.id) continue;
-          const candidate = [...current];
-          candidate[index] = bucketIdOf(dimension, option.id);
-          if (cellOf(view, candidate) === null) closed.push(option.id);
-        }
-        return closed;
-      })
-    );
-  });
-
-  /**
-   * A question the grid prices on adds no supplement: its answer already chose the cell. Adding one
-   * would charge the same choice twice - and the page would then disagree with the invoice.
-   */
-  const pricedByGrid = $derived(new Set(pricing?.ignoredModifierQuestionIds ?? []));
-
-  /**
-   * Why this price and not another - "Cotisant, ICM", from the groups the server matched.
-   *
-   * A price a person cannot account for is a support request, and this is the whole reason the
-   * server sends the labels rather than only the number.
-   */
-  const appliedPricingLabel = $derived(
-    pricing?.appliedLabels.length ? ` (${pricing.appliedLabels.join(', ')})` : ''
-  );
-
-  /**
-   * The supplement shown beside an option, in cents.
-   *
-   * Zero for a question the grid prices on: its answer selects a cell rather than adding to one, so
-   * showing a supplement there would describe a charge that does not happen.
-   */
+  /** The supplement shown beside an option, in cents - zero where the grid prices the question. */
   function optionModifier(item: { id: string }, opt: { priceModifier: number }): number {
-    return pricedByGrid.has(item.id) ? 0 : opt.priceModifier;
+    return optionModifierOf(price, item, opt);
   }
 
   /** Whether choosing this option would land on a combination the manager marked as not existing. */
   function optionClosed(opt: { id?: string }): boolean {
-    return !!opt.id && unavailableOptionIds.has(opt.id);
+    return !!opt.id && price.unavailableOptionIds.has(opt.id);
   }
 
   function calculateTotal(): number {
-    // Nothing to total on an unavailable combination: there is no price, and showing zero would
-    // read as free on a form that is going to refuse the submission. Nor before the cell is chosen:
-    // the "others" cell a blank falls in is not this person's price.
-    if (!form || !priceDecided || baseCents === null) return 0;
-    let total = baseCents;
-    for (const item of visibleItems) {
-      const val = selections[item.id];
-      if (!val || pricedByGrid.has(item.id)) continue;
-      if (['single_choice', 'dropdown'].includes(item.type)) {
-        const opt = item.options?.find((o) => o.id === val);
-        if (opt) total += opt.priceModifier;
-      } else if (item.type === 'multiple_choice' && Array.isArray(val)) {
-        for (const id of val) {
-          const opt = item.options?.find((o) => o.id === id);
-          if (opt) total += opt.priceModifier;
-        }
-      }
-    }
-    return Math.max(0, total);
+    return form ? price.total : 0;
   }
 
   /** The FILE questions whose file is still travelling: the answer is not sent while any is. */
@@ -803,49 +675,9 @@
       {/each}
     </div>
 
-    <!-- ── Payment method (cash vs online). `online` is the wire value. ── -->
+    <!-- ── Payment method (cash vs online) ── -->
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
-      <div class="border-cn-border mt-4 rounded-2xl border bg-(--cn-surface) p-5">
-        <p class="text-text-muted mb-3 text-xs font-bold tracking-wide uppercase">
-          {m.form_view_payment_mode_heading()}
-        </p>
-        <div class="grid grid-cols-2 gap-2">
-          <label
-            class="flex cursor-pointer items-center gap-2.5 rounded-2xl border-2 px-4 py-3 transition-all select-none {paymentMethodChoice ===
-            'online'
-              ? 'border-cn-yellow bg-cn-yellow/8'
-              : 'border-cn-border hover:border-cn-yellow/50'}"
-          >
-            <input
-              type="radio"
-              bind:group={paymentMethodChoice}
-              value="online"
-              class="accent-cn-yellow"
-            />
-            <div>
-              <p class="text-text-main text-sm font-semibold">{m.form_view_online_label()}</p>
-              <p class="text-text-muted text-xs">{m.form_view_online_desc()}</p>
-            </div>
-          </label>
-          <label
-            class="flex cursor-pointer items-center gap-2.5 rounded-2xl border-2 px-4 py-3 transition-all select-none {paymentMethodChoice ===
-            'cash'
-              ? 'border-cn-yellow bg-cn-yellow/8'
-              : 'border-cn-border hover:border-cn-yellow/50'}"
-          >
-            <input
-              type="radio"
-              bind:group={paymentMethodChoice}
-              value="cash"
-              class="accent-cn-yellow"
-            />
-            <div>
-              <p class="text-text-main text-sm font-semibold">{m.form_view_cash_label()}</p>
-              <p class="text-text-muted text-xs">{m.form_view_cash_desc()}</p>
-            </div>
-          </label>
-        </div>
-      </div>
+      <PaymentMethodChoice bind:method={paymentMethodChoice} />
     {/if}
 
     <!-- ── Error ── -->

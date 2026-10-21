@@ -1,5 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { FormsService } from './forms.service';
+import { OTHERS_BUCKET_ID } from '../pricing/audience';
 
 /**
  * A PUBLIC FORM IS ANSWERED BY SOMEBODY WITH NO ACCOUNT, AND EVERY RULE HERE FOLLOWS FROM THAT.
@@ -94,6 +95,53 @@ describe('FormsService - public forms', () => {
       expect(form.formFull).toBe(false);
     });
 
+    // An allowlist: a guest is served exactly these keys. Control: answer `{ ...form, formFull }`
+    // and this fails on `ownerId`, `associationId` and every other stored column.
+    it('serves exactly the allowlisted fields, the price included', async () => {
+      const { service } = makeService({
+        form: baseForm({ basePrice: 1200, allowCashPayment: true, grantsCotisation: false }),
+      });
+      const form = await service.getPublic('f1');
+      expect(Object.keys(form).sort()).toEqual(
+        [
+          'allowCashPayment',
+          'anonymous',
+          'basePrice',
+          'closedAt',
+          'currency',
+          'description',
+          'formFull',
+          'id',
+          'imageUrl',
+          'items',
+          'opensAt',
+          'pricing',
+          'title',
+        ].sort()
+      );
+      expect(form).toMatchObject({ basePrice: 1200, allowCashPayment: true, pricing: null });
+    });
+
+    it("serves a grid on answers as the guest's whole slice", async () => {
+      const { service } = makeService({
+        form: baseForm({
+          priceMatrix: {
+            dimensions: [
+              {
+                id: 'menu',
+                kind: 'answer',
+                questionId: 'q1',
+                buckets: [{ id: 'veg', label: 'Vegetarien', values: ['opt_veg'] }],
+              },
+            ],
+            cells: { veg: 1000, _others: 1500 },
+          },
+        }),
+      });
+      const { pricing } = await service.getPublic('f1');
+      expect(pricing).toMatchObject({ cells: { veg: 1000, _others: 1500 }, appliedLabels: [] });
+    });
+
     it('reports a form that is not public as absent', async () => {
       const { service } = makeService({ form: baseForm({ isPublic: false }) });
       await expect(service.getPublic('f1')).rejects.toThrow(NotFoundException);
@@ -158,26 +206,6 @@ describe('FormsService - public forms', () => {
       );
     });
 
-    it('refuses to charge for an option, since a guest has no account to charge', async () => {
-      const { service, saved } = makeService({
-        form: baseForm({
-          items: [
-            {
-              id: 'q1',
-              label: 'Menu',
-              required: false,
-              type: 'single_choice',
-              options: [{ id: 'o1', label: 'Gros', priceModifier: 500 }],
-            },
-          ],
-        }),
-      });
-      await expect(service.submit('f1', { answers: { q1: ['o1'] } }, 'guest')).rejects.toThrow(
-        BadRequestException
-      );
-      expect(saved).toHaveLength(0);
-    });
-
     it('asks for no profile to decide what a guest sees', async () => {
       const { service, pricingFacts } = makeService();
       await service.submit('f1', { answers: { q1: 'Ada' } }, 'guest');
@@ -200,21 +228,50 @@ describe('FormsService - public forms', () => {
         ...over,
       }) as any;
 
+    /** A grid on one criterion of `kind`, complete, as the editor saves it. */
+    const gridOn = (kind: string, extra: Record<string, unknown> = {}) => ({
+      dimensions: [
+        {
+          id: 'd1',
+          kind,
+          ...extra,
+          buckets: [{ id: 'b1', label: 'Groupe', values: ['opt_a'] }],
+        },
+      ],
+      cells: { b1: 1000, [OTHERS_BUCKET_ID]: 1500 },
+    });
+    const menuQuestion = {
+      id: 'q_menu',
+      label: 'Menu',
+      type: 'single_choice',
+      options: [
+        { id: 'opt_a', label: 'A', priceModifier: 0 },
+        { id: 'opt_b', label: 'B', priceModifier: 300 },
+      ],
+    };
+
+    // Each refusal below is a guard of `assertPublicConfigValid`. Controls (2026-10-22, WP-P1): with
+    // the grant check removed the "cotisation grant" case fails; with the `kind !== 'answer'` check
+    // removed the three profile-grid cases fail.
+    // Each case names the sentence of ITS refusal: a later check (the cotisation validation, which
+    // also refuses a grant with no association) must not be what makes the case pass.
     it.each([
-      ['requiresPayment', { requiresPayment: true }],
-      ['a base price', { basePrice: 500 }],
-      ['a price grid', { priceMatrix: { dimensions: [], cells: {} } }],
-      ['cash', { allowCashPayment: true }],
-      ['a cotisation grant', { grantsCotisation: true }],
-      ['an audience condition', { submitCondition: { promo: [2026] } }],
+      ['a cotisation grant', { grantsCotisation: true }, /cannot grant a cotisation/],
+      ['a grid on promo', { priceMatrix: gridOn('promo') }, /price only on answers/],
+      ['a grid on formation', { priceMatrix: gridOn('formation') }, /price only on answers/],
+      ['a grid on cotisation', { priceMatrix: gridOn('cotisation') }, /price only on answers/],
+      ['an audience condition', { submitCondition: { promo: [2026] } }, /depend on who answers/],
       [
         'a question shown by promo',
         { items: [{ id: 'q1', label: 'L', type: 'short_text', showIf: { promo: [2026] } }] },
+        /depend on who answers/,
       ],
-      ['a single answer per person', { allowMultipleSubmissions: false }],
-    ])('refuses a public form with %s', async (_name, over) => {
+      ['a single answer per person', { allowMultipleSubmissions: false }, /several answers/],
+    ])('refuses a public form with %s', async (_name, over, sentence) => {
       const { service, formRepo } = makeService();
-      await expect(service.create(input(over))).rejects.toThrow(BadRequestException);
+      const refusal = service.create(input(over));
+      await expect(refusal).rejects.toThrow(BadRequestException);
+      await expect(refusal).rejects.toThrow(sentence);
       expect(formRepo.save).not.toHaveBeenCalled();
     });
 
@@ -236,12 +293,48 @@ describe('FormsService - public forms', () => {
       expect(formRepo.save).toHaveBeenCalled();
     });
 
+    // PP1: a guest keeps everything that needs no account.
+    it.each([
+      ['a base price', { requiresPayment: true, basePrice: 500 }],
+      ['cash', { requiresPayment: true, basePrice: 500, allowCashPayment: true }],
+      ['an option supplement', { items: [menuQuestion] }],
+      [
+        'a grid on an answer',
+        {
+          requiresPayment: true,
+          items: [menuQuestion],
+          priceMatrix: gridOn('answer', { questionId: 'q_menu' }),
+        },
+      ],
+    ])('accepts a public form with %s', async (_name, over) => {
+      const { service, formRepo } = makeService();
+      await service.create(input(over));
+      expect(formRepo.save).toHaveBeenCalled();
+    });
+
     it('checks the stored flag when an edit leaves it out', async () => {
       const { service } = makeService();
       jest.spyOn(service, 'assertFormManager').mockResolvedValue(baseForm() as any);
       await expect(
-        service.update('f1', input({ isPublic: undefined, basePrice: 500 }), 'u1', false)
+        service.update('f1', input({ isPublic: undefined, grantsCotisation: true }), 'u1', false)
       ).rejects.toThrow(BadRequestException);
+    });
+
+    // An edit sending only `isPublic: true` must not publish what is STORED and refused.
+    // Control: pass `input.grantsCotisation` / `input.priceMatrix` alone to the check (as before
+    // WP-P1) and both cases save.
+    it.each([
+      ['a stored cotisation grant', { grantsCotisation: true }],
+      ['a stored grid on promo', { priceMatrix: gridOn('promo') }],
+    ])('refuses to publish a form holding %s that the edit leaves out', async (_name, stored) => {
+      const { service, formRepo } = makeService();
+      jest
+        .spyOn(service, 'assertFormManager')
+        .mockResolvedValue(baseForm({ isPublic: false, ...stored }) as any);
+      await expect(
+        service.update('f1', { isPublic: true, allowMultipleSubmissions: true } as any, 'u1', false)
+      ).rejects.toThrow(BadRequestException);
+      expect(formRepo.save).not.toHaveBeenCalled();
     });
   });
 });
