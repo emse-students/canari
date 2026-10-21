@@ -58,6 +58,13 @@ describe('categoryOfDataPush', () => {
     }
   );
 
+  it.each(['social_live_cut', 'social_live_suspended', 'social_live_withdrawn'])(
+    'never files %s: a sanction on the reader own account always goes out',
+    (contentKey) => {
+      expect(categoryOfDataPush({ type: 'social', contentKey })).toBeNull();
+    }
+  );
+
   it('never files an explicitly silent frame, whatever it is', () => {
     expect(categoryOfDataPush({ type: 'channel', silent: 'true' })).toBeNull();
   });

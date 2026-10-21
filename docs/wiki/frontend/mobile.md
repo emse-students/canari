@@ -902,6 +902,7 @@ destination column is what the app opens, the coverage column is what a test or 
 | `event_proposed` | FCM + APNs | `associationId`, `action` | `/admin/agenda` | same | routes (iOS read on hardware 2026-10-05) |
 | `event_validated/rejected/updated/deleted/pending` | FCM + APNs | same | `/calendar` | same | routes |
 | `profile_correction_applied/refused` | none (`skipPush`) | `requestId` | in-app row only, `/profile` | `notificationTarget.test` | no push by design |
+| `live_cut`, `live_suspended`, `live_withdrawn` (WP-L8b, 2026-10-21) | FCM + APNs | `target: 'notifications'` (wins over `postId`, the live's or the member's id) | `/notifications`, where the inert row says it | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test` | never run on a phone; never muted by a category ([lives](../services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)) |
 | Incoming call | FCM silent frame | `groupId`, `callId` | `/chat`, accept recorded | NOTIF rows | HELD: `CALLS_ENABLED = false` |
 | Browser (web) notification | `new Notification` from a WebSocket frame, **no service worker, no web push** | `conversationId` | `chatDeepLinkRoute` | `useNotifications.webClick.test` | **was `/chat` for a salon, fixed on the branch**; a closed tab gets nothing |
 

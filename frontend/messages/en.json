@@ -4147,6 +4147,8 @@
   "live_viewer_cut_title": "This live was stopped by moderators",
   "live_broadcast_cut_title": "Your live was stopped by moderators",
   "notif_live_cut_text": "Your live was stopped by moderators",
+  "notif_live_suspended_text": "Your right to start a live is suspended after another cut by moderators",
+  "notif_live_withdrawn_text": "Moderators have withdrawn your right to start a live",
   "moderation_type_live": "Live",
   "moderation_live_state_open": "On air",
   "moderation_live_state_ended": "Ended",
