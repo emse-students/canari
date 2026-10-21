@@ -12,6 +12,8 @@ import { LiveCut } from './entities/live-cut.entity';
 import { LiveRulesAcceptance } from './entities/live-rules-acceptance.entity';
 import { LiveChatMessage } from './entities/live-chat-message.entity';
 import { LiveReactionBurst } from './entities/live-reaction-burst.entity';
+import { LiveBroadcastWithdrawal } from './entities/live-broadcast-withdrawal.entity';
+import { LiveChatReportedLine } from './entities/live-chat-reported-line.entity';
 import { LIVE_STORE_TIMEOUT_MS } from './live.constants';
 import { HttpLiveSegmentStore, LIVE_SEGMENT_STORE } from './live-segment-store';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
@@ -22,7 +24,7 @@ import { LiveChatService } from './live-chat.service';
 import { LivesController } from './lives.controller';
 import { LivesService } from './lives.service';
 
-/** Every table of the module (migrations 091, 094, 097 and 098), parent first. */
+/** Every table of the module (migrations 091, 094, 097, 098 and 099), parent first. */
 export const LIVE_ENTITIES = [
   Live,
   LiveSegment,
@@ -32,6 +34,8 @@ export const LIVE_ENTITIES = [
   LiveRulesAcceptance,
   LiveChatMessage,
   LiveReactionBurst,
+  LiveBroadcastWithdrawal,
+  LiveChatReportedLine,
 ];
 
 /**

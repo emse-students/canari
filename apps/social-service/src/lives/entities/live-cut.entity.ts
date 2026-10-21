@@ -7,14 +7,17 @@ import type { LiveCutReason, LiveEndReason } from '../live.constants';
  *
  * IT OUTLIVES THE LIVE ROW ON PURPOSE (no foreign key): the live is deleted at its end (no replay,
  * L3), and this row is then what answers a viewer or the broadcaster `410 LIVE_ENDED` (with the
- * live's own end reason, `cut` when the cut ended it), the record of the decision (who, when, which reason code), and the count of a
- * broadcaster's earlier cuts a moderator reads. No strike policy reads it yet (the user's decision).
+ * live's own end reason, `cut` when the cut ended it), the record of the decision (who, when, which reason code), and the STRIKE
+ * LADDER's durable state (migration 099): `strike` is the cut's place on its broadcaster's ladder,
+ * fixed when it is recorded, and a strike of `LIVE_SUSPENSION_FROM_STRIKE` or more suspends the
+ * right to broadcast for `LIVE_SUSPENSION_MS` from `cutAt` (lives.md "The strike ladder").
  * `broadcasterId` and `associationId` repeat the live's so the rule of a post can be asked of this
  * row once the live's is gone. Deleted past `LIVE_CUT_RETENTION_MS` by the live sweep.
  */
 @Entity('live_cuts')
 @Index('live_cuts_broadcaster_idx', ['broadcasterId', 'cutAt'])
 @Index('live_cuts_cut_at_idx', ['cutAt'])
+@Check('live_cuts_strike', `strike >= 1`)
 @Check('live_cuts_reason', `reason IN ('spam', 'harassment', 'inappropriate', 'other')`)
 @Check(
   'live_cuts_live_end_reason',
@@ -60,4 +63,12 @@ export class LiveCut {
    */
   @Column({ type: 'varchar', length: 32 })
   liveEndReason: Exclude<LiveEndReason, 'erased'>;
+
+  /**
+   * 1 + the broadcaster's other cuts on record (`LIVE_STRIKE_WINDOW_MS`) when this one was recorded,
+   * under the per-broadcaster standing lock. Never recomputed: the prune of an older cut must not
+   * lift a suspension this one caused. Rows older than migration 099 are 1.
+   */
+  @Column({ type: 'smallint', default: 1 })
+  strike: number;
 }

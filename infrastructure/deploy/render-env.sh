@@ -197,6 +197,9 @@ compute_live_enabled() {
 min_length() {
   case "$1" in
   AGENDA_SIGNING_KEY) printf '32' ;;
+  # Signs a reported live chat line kept for staff (WP-L8b); shorter, social-service refuses the
+  # report with 503 LIVE_REPORT_SIGNING_UNAVAILABLE.
+  LIVE_REPORT_SIGNING_KEY) printf '32' ;;
   esac
 }
 
