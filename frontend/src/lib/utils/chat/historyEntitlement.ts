@@ -33,7 +33,11 @@
  *
  * Design and what it does not cover: docs/wiki/protocols/history-reconciliation.md.
  */
-import type { ExclusionWindow, GroupExclusions } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  WithheldUnsupportedError,
+  type ExclusionWindow,
+  type GroupExclusions,
+} from '$lib/mls-client/mlsDeliveryApi';
 import type { IMlsService } from '$lib/mlsService';
 
 /**
@@ -96,40 +100,37 @@ type EntitlementDeps = {
 
 /** What a read of one person's own windows needs - the receiver, and the push to an invitee. */
 type WithheldDeps = {
-  mlsService: Pick<IMlsService, 'getGroupWithheld'>;
+  mlsService: Pick<IMlsService, 'getGroupWithheld' | 'getGroupExclusions'>;
   log: (msg: string) => void;
 };
 
-/** The server's windows for `groupId`, or `null` (logged) when they cannot be read. */
-async function readExclusions(
-  groupId: string,
-  { mlsService, log }: EntitlementDeps,
-  consequence: string
-): Promise<GroupExclusions | null> {
-  try {
-    return await mlsService.getGroupExclusions(groupId);
-  } catch (e) {
-    log(
-      `[HISTORY_ENTITLEMENT] Cannot read the exclusion windows of ${groupId.slice(0, 8)}… - ${consequence}: ${String(e).slice(0, 120)}`
-    );
-    return null;
-  }
+/** Logs, once, that the windows of `groupId` could not be established and what that costs. */
+function cannotRead(groupId: string, log: (msg: string) => void, consequence: string, why: string) {
+  log(
+    `[HISTORY_ENTITLEMENT] Cannot read the exclusion windows of ${groupId.slice(0, 8)}… - ${consequence}: ${why.slice(0, 120)}`
+  );
 }
 
-/** The server's per-person withheld windows for `groupId`, or `null` (logged) when they cannot be read. */
-async function readWithheld(
+/**
+ * ONE person's withheld windows in `groupId`, or `null` (logged) when they cannot be established.
+ *
+ * **A MISSING ENTRY IS A REFUSAL, NOT AN EMPTY SET.** The server names every person it counts, an
+ * empty entry included, so a missing key means the person was not counted at all - an enrolment that
+ * failed, an admit that was dropped - and reading it as "nothing withheld" would hand them everything.
+ */
+function personalWindows(
   groupId: string,
-  { mlsService, log }: WithheldDeps,
+  withheld: GroupExclusions,
+  userId: string,
+  log: (msg: string) => void,
   consequence: string
-): Promise<GroupExclusions | null> {
-  try {
-    return await mlsService.getGroupWithheld(groupId);
-  } catch (e) {
-    log(
-      `[HISTORY_ENTITLEMENT] Cannot read the exclusion windows of ${groupId.slice(0, 8)}… - ${consequence}: ${String(e).slice(0, 120)}`
-    );
+): readonly ExclusionWindow[] | null {
+  const own = withheld.get(userId.toLowerCase());
+  if (own === undefined) {
+    cannotRead(groupId, log, consequence, `the server does not count ${userId.slice(0, 8)}`);
     return null;
   }
+  return own;
 }
 
 /**
@@ -150,16 +151,25 @@ export async function entitledHistorySelection<M extends PlaceableMessage>(
   invitee?: string
 ): Promise<M[] | null> {
   if (messages.length === 0) return [];
-  // Both read at once: one request behind them (`readGroupWindows`), and the two are one answer.
-  const [exclusions, withheld] = await Promise.all([
-    readExclusions(groupId, deps, 'sending no message'),
-    invitee === undefined
-      ? Promise.resolve(new Map() as GroupExclusions)
-      : readWithheld(groupId, deps, 'sending no message'),
-  ]);
-  if (exclusions === null || withheld === null) return null;
-
-  const inviteeWindows = invitee === undefined ? [] : (withheld.get(invitee.toLowerCase()) ?? []);
+  // Both read at once, for the same person: one request behind them (`readGroupWindows`), one answer,
+  // and one line when it fails.
+  let exclusions: GroupExclusions;
+  let inviteeWindows: readonly ExclusionWindow[] = [];
+  try {
+    const [union, withheld] = await Promise.all([
+      deps.mlsService.getGroupExclusions(groupId, invitee),
+      invitee === undefined ? null : deps.mlsService.getGroupWithheld(groupId, invitee),
+    ]);
+    exclusions = union;
+    if (invitee !== undefined && withheld !== null) {
+      const own = personalWindows(groupId, withheld, invitee, deps.log, 'sending no message');
+      if (own === null) return null;
+      inviteeWindows = own;
+    }
+  } catch (e) {
+    cannotRead(groupId, deps.log, 'sending no message', String(e));
+    return null;
+  }
   const windows = [...allWindows(exclusions), ...inviteeWindows];
   if (windows.length === 0) return [...messages];
 
@@ -197,15 +207,48 @@ export async function dropOwnExcludedMessages<M extends PlaceableMessage & { id:
   deps: WithheldDeps
 ): Promise<M[] | null> {
   if (messages.length === 0) return [];
-  const withheld = await readWithheld(groupId, deps, 'ingesting none of these messages');
-  if (withheld === null) return null;
-  const own = withheld.get(selfUserId.toLowerCase()) ?? [];
-  if (own.length === 0) return [...messages];
-
-  return messages.filter((m) => {
-    const reason = withholdReason(m, own);
-    if (reason === null) return true;
+  const consequence = 'ingesting none of these messages';
+  let withheld: GroupExclusions;
+  try {
+    withheld = await deps.mlsService.getGroupWithheld(groupId);
+  } catch (e) {
+    if (!(e instanceof WithheldUnsupportedError)) {
+      cannotRead(groupId, deps.log, consequence, String(e));
+      return null;
+    }
+    // A SERVER THAT PREDATES `withheld` keeps the rule it had: our own gaps, read from the union
+    // field. Not a fallback for a failure - the server ANSWERED, and has nothing newer to say. Shim
+    // recorded in docs/wiki/legacy-compatibility.md, gone once production serves the field.
+    try {
+      withheld = await deps.mlsService.getGroupExclusions(groupId);
+    } catch (e2) {
+      cannotRead(groupId, deps.log, consequence, String(e2));
+      return null;
+    }
+    // The union names only people WITH a gap, so here (and only here) absent is "no gap".
+    const gaps = withheld.get(selfUserId.toLowerCase()) ?? [];
     deps.log(
+      `[HISTORY_ENTITLEMENT] ${groupId.slice(0, 8)}… - the server predates the withheld windows; filtering on our ${gaps.length} gap(s) only`
+    );
+    return gaps.length === 0 ? [...messages] : dropInside(groupId, messages, gaps, deps.log);
+  }
+  const own = personalWindows(groupId, withheld, selfUserId, deps.log, consequence);
+  if (own === null) return null;
+  if (own.length === 0) return [...messages];
+  return dropInside(groupId, messages, own, deps.log);
+}
+
+/** `messages` minus those inside `windows`, each drop logged by id. */
+function dropInside<M extends PlaceableMessage & { id: string }>(
+  groupId: string,
+  messages: readonly M[],
+  windows: readonly ExclusionWindow[],
+  log: (msg: string) => void
+): M[] {
+  return messages.filter((m) => {
+    const reason = withholdReason(m, windows);
+    if (reason === null) return true;
+    log(
       `[HISTORY_ENTITLEMENT] Dropped ${m.id.slice(0, 8)} in ${groupId.slice(0, 8)}… (${reason}) - sent before we arrived or while we were out`
     );
     return false;

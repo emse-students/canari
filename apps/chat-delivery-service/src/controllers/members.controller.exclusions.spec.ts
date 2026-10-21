@@ -225,39 +225,54 @@ describe('MembersController - membership intervals and the exclusions read', () 
     expect(intervalFind).toHaveBeenCalledWith(GroupMembershipInterval, expect.anything());
   });
 
-  it('withholds, in a GROUP conversation, everything before each person arrived, then their gaps', async () => {
-    const got = await controller.getGroupExclusions('g-1', 'alice');
+  it('withholds, in a GROUP conversation, everything before the person arrived, then their gaps', async () => {
+    const got = await controller.getGroupExclusions('g-1', 'bob');
 
     expect(got.withheld).toEqual({
-      alice: [{ from: 0, until: T('2026-10-01T00:00:00Z').getTime() }],
       bob: [
         { from: 0, until: T('2026-10-01T00:00:00Z').getTime() },
         { from: T('2026-10-03T00:00:00Z').getTime(), until: T('2026-10-05T00:00:00Z').getTime() },
       ],
-      // carol arrived on the 7th: nothing before it is hers (user, 2026-10-21).
-      carol: [{ from: 0, until: T('2026-10-07T00:00:00Z').getTime() }],
     });
-    // The legacy field keeps its meaning for clients that still take a union.
+    // The union field keeps its meaning for a broadcast answer.
     expect(Object.keys(got.exclusions)).toEqual(['bob']);
   });
 
+  it("names the caller and the `for` person ONLY - nobody else's arrival leaves the server", async () => {
+    const got = await controller.getGroupExclusions('g-1', 'alice', 'carol');
+
+    expect(got.withheld).toEqual({
+      alice: [{ from: 0, until: T('2026-10-01T00:00:00Z').getTime() }],
+      // carol arrived on the 7th: nothing before it is hers (user, 2026-10-21).
+      carol: [{ from: 0, until: T('2026-10-07T00:00:00Z').getTime() }],
+    });
+  });
+
+  it('gives a counted person an EMPTY entry, so a missing key can only mean "not counted"', async () => {
+    group = { isGroup: false };
+    const got = await controller.getGroupExclusions('g-1', 'alice', 'nobody');
+
+    // alice has no gap in a 1:1, and is still named; `nobody` is not counted and is absent.
+    expect(got.withheld).toEqual({ alice: [] });
+  });
+
   it("takes a person's EARLIER device row as their arrival when the interval was recorded late", async () => {
-    // carol's device entered the tree on the 2nd; her interval only says the 7th (a pre-030 re-add).
+    // carol's device entered the tree on the 2nd; her interval only says the 7th (a pre-030 re-add,
+    // or an invitee whose admitted row waited for them: added = arrived).
     deviceRows = deviceRows.map((d) =>
       d.userId === 'carol' ? { ...d, createdAt: T('2026-10-02T00:00:00Z') } : d
     );
-    const got = await controller.getGroupExclusions('g-1', 'alice');
+    const got = await controller.getGroupExclusions('g-1', 'alice', 'carol');
     expect(got.withheld.carol).toEqual([{ from: 0, until: T('2026-10-02T00:00:00Z').getTime() }]);
   });
 
   it('withholds the gaps only in a 1:1, and in a key group', async () => {
     group = { isGroup: false };
-    expect((await controller.getGroupExclusions('g-1', 'alice')).withheld).toEqual(
-      (await controller.getGroupExclusions('g-1', 'alice')).exclusions
-    );
+    const oneToOne = await controller.getGroupExclusions('g-1', 'alice', 'bob');
+    expect(oneToOne.withheld).toEqual({ alice: [], bob: oneToOne.exclusions.bob });
     group = { isGroup: true, distributionWorkspaceId: 'ws-1' };
-    const keyGroup = await controller.getGroupExclusions('g-1', 'alice');
-    expect(keyGroup.withheld).toEqual(keyGroup.exclusions);
+    const keyGroup = await controller.getGroupExclusions('g-1', 'alice', 'bob');
+    expect(keyGroup.withheld).toEqual({ alice: [], bob: keyGroup.exclusions.bob });
   });
 
   it('heals a member with no open interval ONCE - the window before it is answered, and the ERROR is not repeated', async () => {

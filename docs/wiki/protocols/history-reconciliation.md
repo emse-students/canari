@@ -733,19 +733,32 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
 **Step C - BUILT: the inviter's push withholds the INVITEE's span.**
 
 - chat-delivery's exclusions route answers a second field, `withheld`
-  (`withheldWindows`, `utils/group-membership.ts`): each person's gaps plus everything before their
-  first arrival. `exclusions` keeps its old meaning for clients that still take a union.
+  (`withheldWindows`, `utils/group-membership.ts`): a person's gaps plus everything before their
+  first arrival. It names the CALLER and the one person asked `for` (`?for=userId`), nobody else, and
+  each of them gets an entry when the server counts them, an empty one included. **A missing entry
+  is therefore a refusal, never an empty set**: the push sends nothing and the receiver ingests
+  nothing on it. `exclusions` keeps its old meaning, the union a broadcast answer is filtered on.
+- **A server that predates `withheld`** (a store build runs ahead of production) answers without the
+  field. That fails the `withheld` read alone, as `WithheldUnsupportedError`. The push then sends the
+  invitee nothing, and the receiver keeps its old rule, its own gaps from the union
+  ([legacy-compatibility](../legacy-compatibility.md)).
 - **Group conversations only, never a 1:1.** Nobody is added to a 1:1, and its recorded arrivals are
   not arrivals: on production 2026-10-21, 51 of 472 1:1 members had a first interval starting more
   than 10 minutes after the conversation was created. Applying the span there would take a member's
   own past away from their next device. Key groups are read as 1:1s; nothing here reaches them.
 - **The first arrival is the earlier of the first interval and the person's first device row in the
-  group.** A device row is written when a commit admits that device, so it cannot predate the moment
-  the person could read. Measured on the control population, the 6 live group conversations with a
-  late joiner (2026-10-21, read-only): the 105 founding members' first intervals all match their
-  first device rows, but 4 of the 24 late joiners held a device row up to 268 hours before their
-  first interval (a re-add before migration `030` recorded nothing for the stretch before it). Their
-  next device would have lost those 268 hours without the device row.
+  group. This is a DECISION, not a proof: added = arrived** (as on WhatsApp). A device row is written
+  when a commit admits the device, and it can wait there for an invitee who is offline, so an invitee
+  is handed what was sent between the invitation and their first connection. Those frames were queued
+  to them live anyway. Measured on the control population, the 6 live group conversations with a late
+  joiner (2026-10-21, read-only): the 105 founding members' first intervals all match their first
+  device rows, but 4 of the 24 late joiners held a device row up to 268 hours before their first
+  interval. The likeliest reading is an offline invitee whose admitted row waited. Without the device
+  row, their next device would have lost those 268 hours.
+- **Two clocks, bounded.** An interval is stamped by chat-delivery's process clock, and a device row
+  by the database (the transaction's start). The admitting transaction commits before the commit
+  that lets the device read anything is fanned out, so the database instant can only be early, by at
+  most one transaction. Unifying them needs a column and a migration for that bound, and was declined.
 - `sendFullHistoryBundle` passes the invitee (`userIdOfLeaf(to)`) to `entitledHistorySelection`,
   whose filter becomes the union of gaps plus that one person's withheld windows. This is safe as a
   broadcast because every other member is entitled to a superset of what the invitee is. For a new

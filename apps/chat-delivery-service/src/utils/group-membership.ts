@@ -185,11 +185,21 @@ export function exclusionWindows(
  * from their next device.
  *
  * **The first arrival is the EARLIER of the first interval and the person's first device row in the
- * group.** A device row is written when a commit admits that device to the tree, so it can never
- * predate the moment the person could read. Intervals alone are not enough: on production
- * 2026-10-21, 4 of the 24 members who joined a group conversation late held a device row up to 268
- * hours before their recorded first interval - a re-add from before migration 030 recorded no
- * interval for the stretch before it, and their next device would have lost it.
+ * group - a DECISION, not a proof: added = arrived** (as on WhatsApp, where a member is in the group
+ * from the moment someone adds them). A device row is written when a commit admits the device
+ * (`ValidateCommitBody.admits`), and it can wait there for an invitee who is offline, so an invitee
+ * receives from the history what was sent between the invitation and their first connection - the
+ * frames of that span were queued to them live anyway. `registerDevice` also re-creates rows for a
+ * member's new device, which can only be later than their first. Intervals alone are not enough: on
+ * production 2026-10-21, 4 of the 24 members who joined a group conversation late held a device row up
+ * to 268 hours before their recorded first interval, and their next device would have lost that span.
+ *
+ * **Two clocks, bounded.** An interval is stamped by this process (`new Date()`), a device row by the
+ * database (`CreateDateColumn`, the transaction's start). The admitting transaction commits BEFORE
+ * the commit that lets the device read anything is fanned out, so the database instant can only be
+ * early, by at most that one transaction - which can hand the newcomer frames sealed at the epoch
+ * before theirs, received in those milliseconds. Unifying the clocks needs a column and a migration
+ * for a bound of one transaction; that trade was declined.
  *
  * A person with neither - nothing admitted, nothing enrolled - is withheld everything.
  *

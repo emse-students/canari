@@ -14,7 +14,11 @@ import {
   quotePreviewEntitled,
   withholdReason,
 } from './historyEntitlement';
-import { MalformedExclusionsError, parseGroupExclusions } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  MalformedExclusionsError,
+  parseGroupExclusions,
+  WithheldUnsupportedError,
+} from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14).
@@ -310,6 +314,40 @@ describe('the inviter push withholds the span before the INVITEE arrived', () =>
 
     expect(sentIds(mlsService)).toEqual(STORE.map((m) => m.id));
     expect(mlsService.getGroupWithheld).not.toHaveBeenCalled();
+  });
+
+  it('an invitee the server does not count is pushed nothing - a missing entry is no empty set', async () => {
+    const mlsService = lateJoinerGroup();
+    const log = vi.fn();
+
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith(STORE),
+      deviceKeyB64: 'k',
+      mlsService,
+      log,
+      to: 'user-x:device-x',
+    });
+
+    expect(sentIds(mlsService)).toEqual([]);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('does not count user-x'));
+  });
+
+  it('a server that predates `withheld` gets the invitee nothing, and one line says why', async () => {
+    const mlsService = lateJoinerGroup();
+    vi.mocked(mlsService.getGroupWithheld).mockRejectedValue(new WithheldUnsupportedError(GROUP));
+    const log = vi.fn();
+
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith(STORE),
+      deviceKeyB64: 'k',
+      mlsService,
+      log,
+      to: CAROL_DEVICE,
+    });
+
+    expect(sentIds(mlsService)).toEqual([]);
+    const lines = log.mock.calls.map(([l]) => String(l)).filter((l) => l.includes('Cannot read'));
+    expect(lines).toHaveLength(1);
   });
 
   it('an unreadable withheld set carries no message to the invitee', async () => {

@@ -146,6 +146,18 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
 
+### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
+
+**Site:** `dropOwnExcludedMessages` in `frontend/src/lib/utils/chat/historyEntitlement.ts`
+(`WithheldUnsupportedError`, thrown by `MlsDeliveryApi.getGroupWithheld`).
+**Shim (2026-10-22):** a server that predates the field answers the exclusions route without
+`withheld`. The receiver then filters a bundle on its own gaps read from `exclusions`, as it did
+before, and says so in one line per bundle. The inviter's push does NOT take the shim: it sends the
+invitee nothing, which is the decided outcome anyway
+([history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
+**Removal condition:** every estate's chat-delivery answers `withheld`; then the branch goes and the
+error is an ordinary refusal. A server version, not a client floor.
+
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
 **Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,
