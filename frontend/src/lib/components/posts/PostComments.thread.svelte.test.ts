@@ -241,3 +241,51 @@ describe('replying', () => {
     expect(document.activeElement).toBe(editor);
   });
 });
+
+describe('the like is ONE heart, at the right end of the row under the bubble', () => {
+  const heart = (row: HTMLElement) => row.querySelector<HTMLButtonElement>('button[aria-pressed]')!;
+
+  it('is a single control per comment, with no text "J\'aime" button next to it', () => {
+    const { target } = mountSection([comment('c1', { likes: ['u8', 'u9'] })]);
+    const row = target.querySelector<HTMLElement>('#comment-c1')!;
+    expect(row.querySelectorAll('button[aria-pressed]')).toHaveLength(1);
+    expect(
+      [...row.querySelectorAll('button')].some((b) => b.textContent?.trim() === m.post_like_label())
+    ).toBe(false);
+  });
+
+  it('says the count once: in the heart, as a number, and in its accessible name - not as a chip on the bubble', () => {
+    const { target } = mountSection([comment('c1', { likes: ['u8', 'u9'] })]);
+    const row = target.querySelector<HTMLElement>('#comment-c1')!;
+    const button = heart(row);
+    expect(button.textContent?.trim()).toBe('2');
+    expect(button.getAttribute('aria-label')).toBe(m.post_likes_count_label({ count: 2 }));
+    // The heart sits in the row UNDER the bubble, not inside it.
+    expect(row.querySelector('.rounded-3xl')?.contains(button)).toBe(false);
+    const showingTheCount = [...row.querySelectorAll('*')].filter(
+      (el) => el.children.length === 0 && el.textContent?.trim() === '2'
+    );
+    expect(showingTheCount).toHaveLength(1);
+  });
+
+  it('shows no number when nobody liked it, and presses on a tap', () => {
+    const { target, onLikeComment } = mountSection([comment('c1')]);
+    const button = heart(target.querySelector<HTMLElement>('#comment-c1')!);
+    expect(button.textContent?.trim()).toBe('');
+    expect(button.getAttribute('aria-label')).toBe(m.post_like_label());
+    button.click();
+    expect(onLikeComment).toHaveBeenCalledExactlyOnceWith('c1');
+  });
+
+  it('is filled and pressed when the reader already liked it', () => {
+    const { target } = mountSection([comment('c1', { likes: ['u1'] })]);
+    const button = heart(target.querySelector<HTMLElement>('#comment-c1')!);
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    expect(button.className).toContain('text-red-500');
+  });
+
+  it('is withheld on a comment the server has not acknowledged yet', () => {
+    const { target } = mountSection([comment('pending-1')], { pending: ['pending-1'] });
+    expect(target.querySelector('#comment-pending-1 button[aria-pressed]')).toBeNull();
+  });
+});

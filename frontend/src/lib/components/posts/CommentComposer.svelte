@@ -343,7 +343,7 @@
       <!-- The list of associations is asked when the picker is reached (focus or press), once. -->
       <div
         role="presentation"
-        class="shrink-0 pb-1.5"
+        class="shrink-0 pb-2 [@media(min-width:768px)_and_(pointer:fine)]:pb-1.25"
         onfocusin={() => void ensureAssociations()}
         onpointerdown={() => void ensureAssociations()}
       >
@@ -399,7 +399,7 @@
       </div>
 
       <div
-        class="flex min-w-0 flex-1 items-end rounded-2xl border border-black/5 bg-black/5 py-0.5 pr-0.5 pl-3.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
+        class="flex min-w-0 flex-1 items-end rounded-3xl bg-black/5 py-0.5 pr-0.5 pl-3.5 transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:bg-white/10 dark:focus-within:bg-black/40"
         onfocusin={() => {
           inputFocused = true;
           void ensureAssociations();
@@ -416,7 +416,7 @@
           {placeholder}
           maxlength={COMMENT_MAX_LENGTH}
           class="min-w-0 flex-1"
-          editorClass="flex-1 bg-transparent text-sm font-medium text-text-main outline-none py-2 min-h-0 max-h-32 overflow-y-auto"
+          editorClass="flex-1 bg-transparent text-sm font-medium text-text-main outline-none py-3 [@media(min-width:768px)_and_(pointer:fine)]:py-2.25 min-h-0 max-h-32 overflow-y-auto"
           minHeight="0"
           onpaste={handlePaste}
           onkeydown={handleKeyDown}
@@ -427,7 +427,7 @@
           disabled={uploadingMedia}
           title={m.chat_send_gif_label()}
           aria-label={m.chat_send_gif_label()}
-          class="text-text-muted text-2xs tap-target mr-0.5 mb-2.5 shrink-0 px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
+          class="text-text-muted text-2xs tap-target mr-0.5 flex h-11 shrink-0 items-center px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40 [@media(min-width:768px)_and_(pointer:fine)]:h-9.5"
         >
           GIF
         </button>

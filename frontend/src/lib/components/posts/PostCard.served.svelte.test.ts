@@ -411,13 +411,15 @@ it('a failed comment takes back only its own row, never a heart still being sent
   flushSync();
 
   vi.mocked(likeComment).mockReturnValue(new Promise(() => {})); // the heart is still out
-  const like = [...target.querySelectorAll('button')].find(
-    (b) => b.textContent?.trim() === m.post_like_label()
+  // The like is ONE heart control: it is found by its name, and says its count in that name.
+  const like = target.querySelector(
+    `button[aria-label="${m.post_like_label()}"]`
   ) as HTMLButtonElement;
   like.click();
   flushSync();
   const hearted = m.post_likes_count_label({ count: 1 });
-  expect(target.textContent).toContain(hearted);
+  const heartCounted = () => target.querySelector(`button[aria-label="${hearted}"]`) !== null;
+  expect(heartCounted()).toBe(true);
 
   vi.mocked(addComment).mockRejectedValue(new Error('offline'));
   const editor = target.querySelector('[contenteditable="true"]') as HTMLElement;
@@ -430,7 +432,7 @@ it('a failed comment takes back only its own row, never a heart still being sent
   await settle();
 
   expect(addComment).toHaveBeenCalled();
-  expect(target.textContent).toContain(hearted);
+  expect(heartCounted()).toBe(true);
 });
 
 it('an expanded thread is held over a feed row, then read again', async () => {
