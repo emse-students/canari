@@ -529,6 +529,19 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
                 : CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", stem]);
     return;
   }
+  // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and no
+  // fragment.
+  NSDictionary<NSString *, NSString *> *fixedSocial = @{
+    @"social_live_cut" : @"live_cut",
+    @"social_live_suspended" : @"live_suspended",
+    @"social_live_withdrawn" : @"live_withdrawn",
+  };
+  NSString *fixedStem = fixedSocial[key];
+  if (fixedStem) {
+    *title = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.title", fixedStem]);
+    *body = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", fixedStem]);
+    return;
+  }
   if ([key isEqualToString:@"social_reaction"]) {
     *title = CanariLocalized(@"notif.social.reaction.title");
     *body = [NSString stringWithFormat:CanariLocalized(@"notif.social.reaction.body"), actor, arg];

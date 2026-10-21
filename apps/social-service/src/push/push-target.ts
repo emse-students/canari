@@ -2,6 +2,13 @@
 export const REPUBLICATION_REQUESTS_TARGET = 'republication-requests';
 
 /**
+ * The `target` naming the reader's own notifications list, and the deep-link host for it: the tap of
+ * a notice whose subject has no page - a live moderators cut (deleted when it ended), a suspension or
+ * a withdrawal of the right to broadcast (WP-L8b). The row on that list is what says it.
+ */
+export const NOTIFICATIONS_TARGET = 'notifications';
+
+/**
  * WHERE A SOCIAL PUSH GOES WHEN IT IS TAPPED, as a deep link the SERVER writes.
  *
  * A tap is handled natively and the two platforms used to disagree about what it needed. Android
@@ -42,6 +49,12 @@ export function socialDeepLink(data: Record<string, string>): string {
   // the answer is given. A TYPED target, from a closed set - never a path the payload names.
   if (data.target === REPUBLICATION_REQUESTS_TARGET) {
     return `fr.emse.canari://${REPUBLICATION_REQUESTS_TARGET}`;
+  }
+  // A notice with no page of its own (a cut live, a suspension, a withdrawal): the notifications
+  // list, where its row says it. Before `postId`, which such a notice carries as the live's id or
+  // the member's - a `post/<id>` link would open a post that does not exist.
+  if (data.target === NOTIFICATIONS_TARGET) {
+    return `fr.emse.canari://${NOTIFICATIONS_TARGET}`;
   }
   const postId = data.postId;
   if (postId) {

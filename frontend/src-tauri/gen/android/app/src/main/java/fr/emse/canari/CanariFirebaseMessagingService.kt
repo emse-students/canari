@@ -4466,6 +4466,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_live_started_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_live_started_body) }
             )
+            // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences - no
+            // actor (which moderator acted is not theirs to read) and no fragment.
+            "social_live_cut" -> Pair(
+                res.getString(R.string.notif_social_live_cut_title),
+                res.getString(R.string.notif_social_live_cut_body)
+            )
+            "social_live_suspended" -> Pair(
+                res.getString(R.string.notif_social_live_suspended_title),
+                res.getString(R.string.notif_social_live_suspended_body)
+            )
+            "social_live_withdrawn" -> Pair(
+                res.getString(R.string.notif_social_live_withdrawn_title),
+                res.getString(R.string.notif_social_live_withdrawn_body)
+            )
             "form_opening_soon" -> Pair(
                 res.getString(R.string.notif_form_opening_soon_title),
                 res.getString(R.string.notif_form_opening_soon_body)

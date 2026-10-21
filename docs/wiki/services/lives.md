@@ -477,10 +477,9 @@ so PostgreSQL orders a cut against them rather than anything reconciling them af
 
 After the commit: the purge (every seat released, segments and row deleted - or left to the sweep
 while a segment is storing, whose confirm then purges), and an in-app notice to the broadcaster
-(`post_notifications` type `live_cut`, `text` = the reason CODE, no actor; **no push yet**: a push
-needs `notif_social_live_cut_*` in both native apps first, so `skipPush` - and so no "no push
-content" warn either). The broadcaster's own screen learns it at once from the `410` its next
-segment gets.
+(`post_notifications` type `live_cut`, `text` = the reason CODE, no actor) **and its push**
+([the ladder's pushes](#the-three-pushes-a-broadcaster-gets-wp-l8b)). The broadcaster's own screen
+learns it at once from the `410` its next segment gets.
 
 **Why `live_cuts` outlives the live row.** The row is deleted at the end (L3), within milliseconds of
 a cut. The cut row is then what answers `410 LIVE_ENDED` with the live's own end (`endReason:
@@ -530,11 +529,43 @@ rolling 90 days). No automatic cut: every rung starts from a person's cut. Code:
 - **A start** reads the standing under that lock, after the mute, the association right and the
   rules, before the hourly rate: `403 LIVE_BROADCAST_WITHDRAWN`, else `403 LIVE_BROADCAST_SUSPENDED`
   `{ suspendedUntil }`. `GET /api/lives/standing` is the caller's own standing.
-- **The notice** (`post_notifications`, `text` = the reason code, no actor, `skipPush`): `live_cut`
+- **The notice** (`post_notifications`, `text` = the reason code, no actor) **and its push**: `live_cut`
   for strike 1 when the cut ended the live (as before); **`live_suspended`** for strike 2 and later
   (whether or not the live was still open: a suspension is news either way); **`live_withdrawn`** at a
   withdrawal. A strike-1 cut of a live the broadcaster had already ended is not notified (unchanged).
-  The client strings for the two new types are owed.
+  The bell rows for all three are built (`NotificationRow`, `notif_live_*_text`, the reason label).
+
+### The three pushes a broadcaster gets (WP-L8b)
+
+Built 2026-10-21. The three notices above are pushed through the one pipeline
+(`PostNotificationsService.createNotification` -> `pushContent`), no longer `skipPush`:
+
+| Notice | `contentKey` | FR (EN) |
+| --- | --- | --- |
+| `live_cut` | `social_live_cut` | "Votre live a été interrompu" / "La modération a coupé votre live. Ceci est un avertissement." ("Your live was stopped" / "Moderators cut your live. This is a warning.") |
+| `live_suspended` | `social_live_suspended` | "Lives suspendus" / "Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment." ("Lives suspended" / "After another cut by moderators, you cannot start a live for now.") |
+| `live_withdrawn` | `social_live_withdrawn` | "Droit de lancer un live retiré" / "La modération vous a retiré le droit de lancer un live." ("Right to go live withdrawn" / "Moderators have withdrawn your right to start a live.") |
+
+- **Fixed sentences, composed on the device** (`notif_social_live_*` on Android, `notif.social.live_*`
+  in the iOS app and NSE, fr + en): no actor (which moderator acted is not the broadcaster's to
+  read), no fragment (the reason is a WORD, worded by the bell row), **no icon** (nobody to show; an
+  empty user id would be a present key with nothing to fetch). The server's French rides along as
+  `title`/`body` for builds without the keys. Pinned by `push-content.spec.ts` (legacy French =
+  the Android table) and `nativeStrings.test.ts` (every table, every composer).
+- **The tap opens the notifications list**: `pushData.target = 'notifications'` (`NOTIFICATIONS_TARGET`,
+  `push-target.ts`) wins over `postId`, which is the live's id (or the member's, for a withdrawal) -
+  a `post/<id>` link would open a post that does not exist. The `notifications` host is declared in
+  `tauri.conf.json` and the Android manifest (`deepLinkHostsDeclared.test.ts`) and routed by
+  `appRouteForDeepLink`. What a build older than that change does with the tap is EXPECTED, not
+  observed: the Android deep-link plugin should drop the undeclared host, and elsewhere the hook's
+  unknown-host branch should land on the list.
+- **Never muted BY CANARI**: the three keys are deliberately absent from chat-delivery's
+  `push-category.ts`, so no in-app notification setting silences a sanction on the reader's own
+  account (`push-category.spec.ts`). That holds on the server only: on Android they draw on the
+  social notification channel (`CHANNEL_SOCIAL`), so a member who turned that channel off in the
+  system settings does not see them - the in-app row on the notifications list remains.
+- **The 30 days are not in any sentence**: the suspension's end is `GET /api/lives/standing`'s to
+  say, so a change of `LIVE_SUSPENSION_MS` changes no table.
 - **The queue** carries `live.broadcasterStanding` (`{ cutsOnRecord, suspendedUntil, withdrawnAt,
   withdrawalDue }`) beside `broadcasterCuts`, which is now the WINDOWED count.
 - **Per-account start limits** are the ones that existed: 6 starts in a rolling hour and one open
@@ -686,9 +717,8 @@ live row and cut button and the `LiveEndReason` / `LiveRefusalCode` additions ar
 ([the moderation client](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
 What is left:
 
-- **The push for a cut**: `notif_social_live_cut_*` in both native apps, then `skipPush` goes.
-- **The ladder's screens** (WP-L8b): the `live_suspended` and `live_withdrawn` bell rows, the two
-  start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) and the
+- **The ladder's screens** (WP-L8b; the three pushes and the two bell rows are
+  [built](#the-three-pushes-a-broadcaster-gets-wp-l8b)): the two start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) and the
   pre-live screen reading `GET /api/lives/standing`; in `/admin/moderation`, the standing on a live
   report and the withdraw / lift buttons, and the `live_chat` row with its integrity - `altered`,
   `key-rotated` and `unverifiable` shown with ONE weight, "not proven" ([why](#a-reported-chat-line-wp-l8b)).

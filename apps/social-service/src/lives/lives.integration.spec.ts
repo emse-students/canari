@@ -1382,7 +1382,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
           actorId: '',
           actorName: '',
           text: 'harassment',
-          skipPush: true,
+          // Pushed (WP-L8b), and its tap opens the notifications list: the live has no page left.
+          pushData: { target: 'notifications' },
         },
       ]);
       const [listed] = await reports().listAllReports();
@@ -2296,10 +2297,14 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         details: 'three lives in a month',
       });
       expect(withdrawn).toMatchObject({ userId: ALICE, newlyWithdrawn: true, cutsOnRecord: 3 });
-      expect(bell[bell.length - 1]).toMatchObject({
+      expect(bell[bell.length - 1]).toEqual({
         recipientId: ALICE,
         type: 'live_withdrawn',
+        postId: ALICE,
+        actorId: '',
+        actorName: '',
         text: 'harassment',
+        pushData: { target: 'notifications' },
       });
       await expect(lives.withdraw(MOD, ALICE, { reason: 'spam' })).resolves.toMatchObject({
         newlyWithdrawn: false,

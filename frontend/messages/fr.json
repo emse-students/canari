@@ -4148,6 +4148,8 @@
   "live_viewer_cut_title": "Ce live a été interrompu par la modération",
   "live_broadcast_cut_title": "Votre live a été interrompu par la modération",
   "notif_live_cut_text": "Votre live a été interrompu par la modération",
+  "notif_live_suspended_text": "Votre droit de lancer un live est suspendu après une nouvelle coupure par la modération",
+  "notif_live_withdrawn_text": "La modération vous a retiré le droit de lancer un live",
   "moderation_type_live": "Live",
   "moderation_live_state_open": "En cours",
   "moderation_live_state_ended": "Terminé",

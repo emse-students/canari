@@ -35,8 +35,7 @@ the first-live rules acceptance is recorded and required ([lives](services/lives
 **Built 2026-10-19, dev builds, draft PR:** the viewer's and the broadcaster's cut screens, the
 `live_cut` bell row and the admin queue's live row with its cut button
 ([live](frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
-**Built 2026-10-19, draft PR:** the viewer's report control (a Flag in the top bar, the report dialog, the block offer; reporting one chat line stays impossible by the server's contract). **Owed, code:** the chat-line hiding inside WP-L6, by the contract written there; a push for the cut
-once `notif_social_live_cut_*` exist in both native apps. **DECIDED BY THE USER, 2026-10-20** (substance and contradictions with what exists:
+**Built 2026-10-19, draft PR:** the viewer's report control (a Flag in the top bar, the report dialog, the block offer; reporting one chat line stays impossible by the server's contract). **Owed, code:** the chat-line hiding inside WP-L6, by the contract written there. **DECIDED BY THE USER, 2026-10-20** (substance and contradictions with what exists:
 [lives](services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience)): strike policy =
 warning, then suspension, then withdrawal by staff; a cut is kept **90 days**; **no automatic cut on N
 reports**; live reports answered within **24 hours on working days**; **a reported chat message is kept (encrypted,
@@ -49,7 +48,9 @@ included), the five reaction kinds and `LIVE_RULES_VERSION` 2 ([lives](services/
 **Owed before it ships:** the GitHub secrets `LIVE_REPORT_SIGNING_KEY` and `DEV_LIVE_REPORT_SIGNING_KEY`
 (the user, one-off: REQUIRED in both estates, so a deploy is refused without them). **Owed, code:**
 (c) the client set of five kinds and (d) the rules sheet showing the posts' rules, both in #2170;
-the client half of the ladder - the `live_suspended` / `live_withdrawn` bell rows, the two start
+the client half of the ladder (the three pushes - cut, suspension, withdrawal - and the two new bell
+rows are BUILT 2026-10-21, draft PR, owed a reading on both phones once a store build carries the
+strings: [lives](services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)) - the two start
 refusals and `GET /api/lives/standing` on the pre-live screen, the admin standing, withdraw / lift
 buttons and the `live_chat` row with its integrity ([lives](services/lives.md#what-the-client-still-owes-strings-for-paraglide));
 (e) BUILT 2026-10-21: the hourly `[LIVE_REPORT_AGE]` alarm, `error` past 24 working hours

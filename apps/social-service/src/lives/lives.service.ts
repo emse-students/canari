@@ -23,6 +23,7 @@ import { isUniqueViolation } from '../common/pg-errors';
 import { isBlockedBetween } from '../common/user-blocks';
 import { ModerationService } from '../moderation/moderation.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
+import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import {
   LIVE_BYTE_BUDGET,
@@ -1028,10 +1029,11 @@ export class LivesService implements OnModuleDestroy {
    *   moderators stopped the live, which they did not.
    *
    * `text` the reason CODE (the client words it), no actor (`''`, as an anonymous post's notice:
-   * which moderator cut is not the broadcaster's to read). NO PUSH YET: a push needs its native
-   * strings in both apps first (`skipPush`, so no "no push content" warn either) - the broadcaster's
-   * own screen is told at once anyway, by the 410 its next segment gets. Best-effort: the cut is
-   * already durable.
+   * which moderator cut is not the broadcaster's to read). AND A PUSH, through the same call
+   * (`social_live_cut` / `social_live_suspended`, fixed sentences the device words), whose tap opens
+   * the notifications list (`NOTIFICATIONS_TARGET`): the live is deleted, so there is no page of it
+   * to open. The broadcaster's own screen is told at once anyway, by the 410 its next segment gets;
+   * the push is for the broadcaster who already left it. Best-effort: the cut is already durable.
    */
   private async notifyCut(cut: LiveCutResult): Promise<void> {
     if (cut.broadcasterId === DELETED_ACCOUNT) return;
@@ -1045,6 +1047,7 @@ export class LivesService implements OnModuleDestroy {
       this.logger.debug(`[LIVE_CUT] ${cut.liveId}: strike 1 on a live already ended - no notice`);
       return;
     }
+    this.logger.debug(`[LIVE_CUT] ${cut.liveId}: ${type} notice and push to the broadcaster`);
     try {
       await this.notifications.createNotification({
         recipientId: cut.broadcasterId,
@@ -1053,7 +1056,7 @@ export class LivesService implements OnModuleDestroy {
         actorId: '',
         actorName: '',
         text: cut.reason,
-        skipPush: true,
+        pushData: { target: NOTIFICATIONS_TARGET },
       });
     } catch (e) {
       this.logger.warn(
@@ -1157,7 +1160,8 @@ export class LivesService implements OnModuleDestroy {
    * `LIVE_WITHDRAWAL_NOT_DUE` with the count - the ladder is the owner's, and a moderator who wants
    * an account silenced sooner has the mute. Idempotent: a repeat answers the first withdrawal with
    * `newlyWithdrawn: false`. An open live of the account is NOT ended by it: that is a cut.
-   * The member is told by a `live_withdrawn` notice (reason code, no actor, no push yet).
+   * The member is told by a `live_withdrawn` notice (reason code, no actor) and its push
+   * (`social_live_withdrawn`, opening the notifications list).
    */
   async withdraw(
     reviewerId: string,
@@ -1222,7 +1226,7 @@ export class LivesService implements OnModuleDestroy {
           actorId: '',
           actorName: '',
           text: result.reason,
-          skipPush: true,
+          pushData: { target: NOTIFICATIONS_TARGET },
         });
       } catch (e) {
         this.logger.warn(
