@@ -68,6 +68,7 @@
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import { incomingShare } from '$lib/stores/incomingShare.svelte';
+  import { readSharedFiles } from '$lib/mobile/incomingShareDrain';
   import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
@@ -1135,8 +1136,8 @@
 
   // ─── A share from another app lands in the composer of the conversation it was sent to ────────
   // `IncomingShareHost` asked where it goes and landed on that conversation; once it is the one on
-  // screen, its text joins the draft and its files the pending queue - through the same preparation
-  // as a picked file (size ceiling, compression, video re-encode). The member sends it with Send:
+  // screen, its text joins the draft and its files are read from disk into the pending queue -
+  // through the same preparation as a picked file (size ceiling, compression, video re-encode). The member sends it with Send:
   // a share is never sent on its own.
   $effect(() => {
     const target = incomingShare.target;
@@ -1150,7 +1151,12 @@
         `[SHARE] staged in ${selected.slice(0, 16)}: ${share.text.length} chars, ${share.files.length} file(s)`
       );
       if (share.text) messageText = restoreFailedDraft(messageText, share.text);
-      if (share.files.length > 0) handleFilesSelected(share.files);
+      if (share.files.length === 0) return;
+      // The copies are read HERE, once a destination is on screen, and not when the share arrived.
+      void readSharedFiles(share.files).then(({ files, lost }) => {
+        if (lost > 0) showToast(m.share_items_lost({ count: lost }), 'error');
+        if (files.length > 0) handleFilesSelected(files);
+      });
     });
   });
 

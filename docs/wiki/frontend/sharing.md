@@ -21,33 +21,51 @@ builds on the IN half later and is not started.
    and `application/*` on `MainActivity` (`singleTask`), hand-maintained OUTSIDE the deep-link
    plugin's generated block. Guard: `src/lib/mobile/androidShareManifest.test.ts`. The deep-link
    plugin only reads `VIEW` intents, so a share never reaches `onOpenUrl`.
-2. **`IncomingShare.kt` copies at once, off the UI thread.** A `content://` grant lasts only as long
-   as the sender lets this activity hold it, and the page reads much later, after the PIN. Each
-   stream is streamed (64 KiB buffer, never whole in memory) into `cache/shared_inbox/<share id>/`.
-   Refused, and counted: a non-`content://` URI (a `file://` would let the sender name our own
-   data), an unreadable stream, a file over 512 MB (a video is re-encoded before upload, so the
-   shared size is not the sent size), anything past 10 files. Names are reduced to their last
-   segment and a conservative character set. `onCreate` skips a relaunch (`savedInstanceState`,
+2. **`IncomingShare.kt` copies at once, off the UI thread, one capture at a time.** A `content://`
+   grant lasts only as long as the sender lets this activity hold it, and the page reads much later,
+   after the PIN. Each stream is streamed (64 KiB buffer, never whole in memory) into
+   `cache/shared_inbox/<share id>/`. Refused, and counted (`share/ShareRules.kt`, JVM-tested in
+   `android-tests`):
+   - a non-`content://` URI: a `file://` would let the sender name our own data;
+   - one of THIS app's authorities (`fr.emse.canari.fileprovider` exposes parts of our cache): the
+     sender would make us copy our own private file back to ourselves (a confused deputy);
+   - a URI under a grant Canari HOLDS (`persistedUriPermissions`): a document the member gave to
+     Canari, not to the sender;
+   - an unreadable stream, more than 10 files, a file over 200 MB, or a share past 300 MB in all.
+     The page reads each kept file whole when it stages it, so these bound what the WebView holds.
+   Names are reduced to their last segment and a conservative character set
+   (`share/SharedFileName.kt`). `onCreate` skips a relaunch (`savedInstanceState`,
    `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) so a share is never offered twice.
 3. **The handoff is a file, `pending_share.json`** in the Tauri data directory, because a cold start
    gets the intent before the page exists and a value pushed into a page that then navigates is
-   lost. `read_and_clear_pending_share` (`commands/handoff.rs`, the same helper as the CallKit
-   answer's `pending_call_accept.json`) hands it over exactly once. A newer share REPLACES one the
-   page never drained, copies included; a drained one is never touched.
+   lost. It is written to a `.tmp` and renamed into place, so a drain on a return to the foreground
+   never reads half of it. `read_and_clear_pending_share` (`commands/handoff.rs`, the same helper as
+   the CallKit answer's `pending_call_accept.json`) hands it over exactly once. **Each capture first
+   empties the inbox**: a newer share replaces whatever came before (undrained, drained but never
+   staged, or left behind by a corrupt manifest or a failed read), and nothing outside the inbox is
+   ever deleted from there.
 4. **The page drains** (`IncomingShareHost.svelte`, mounted on every route by
    `ChatBackgroundService`) at mount, on `canari:incoming-share` (the native side announcing a share
    to a live page) and on `canari:foreground`. The listener is registered before the first drain,
-   so no share falls between the two. Each copy is read and deleted by `take_picked_file`, the
-   allowlisted command the system pickers already use (the app cache is one of its roots). An item
-   lost on the way is said in a toast (`share_items_lost`).
+   so no share falls between the two. **The drain takes the text and the file NAMES, no bytes**: it
+   runs before the PIN, and reading a share there would hold it in the WebView for as long as the
+   member takes to unlock and choose. What the native side refused is said in a toast
+   (`share_items_lost`).
 5. **"Envoyer a..."** is the forward picker (`ForwardMessageModal`, `variant="share"`): DMs, groups
    and salons. It opens only when the session is up, so the PIN always comes first, with no clock.
    The pick is published as a deep-link landing (`notifNav.navigate` + `chatDeepLinkRoute`), so the
    conversation opens exactly as a tapped notification would, salons under `/communities` included.
+   **A landing that ends without displaying its target** (abandoned, or the member went elsewhere)
+   gives the share back to the picker (`incomingShare.releaseTarget`): the landing ending is the
+   fact that says so.
 6. **The chat page stages it** once that conversation is the one displayed
-   (`incomingShare.takeFor`): the text joins the draft (in front of anything already typed), the
-   files go through `handleFilesSelected` - the same size ceiling, compression and video re-encode
-   as a picked file. **The member sends with Send. A share is never sent on its own.**
+   (`incomingShare.takeFor`): the text joins the draft (in front of anything already typed), and the
+   files are read NOW (`readSharedFiles`), each through `take_picked_file`, which deletes the copy
+   as it reads it. Its allowlist names the inbox itself and NOT the app cache around it, which also
+   holds the WebView's files and the gallery's decrypted staging; on Android its other roots are the
+   EXTERNAL cache and the process temp directory, so the two names are pinned equal by a test. The
+   files then go through `handleFilesSelected` - the same size ceiling, compression and video
+   re-encode as a picked file. **The member sends with Send. A share is never sent on its own.**
 
 ## Decisions
 

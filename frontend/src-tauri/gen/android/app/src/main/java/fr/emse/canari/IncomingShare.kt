@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.util.Log
+import fr.emse.canari.share.ShareRules
 import fr.emse.canari.share.SharedFileName
 import org.json.JSONArray
 import org.json.JSONObject
@@ -25,8 +26,10 @@ import java.util.UUID
  * WHY THE BYTES ARE COPIED HERE, AT ONCE. A shared `content://` URI is readable only while the
  * grant the sender gave this activity lasts, and the page reads much later (after the PIN). Each
  * stream is copied, streamed and never held whole in memory, into `cache/shared_inbox/<share id>/`,
- * a directory `take_picked_file` is allowed to read and delete. The copy runs off the UI thread: a
- * shared video would otherwise freeze the launch.
+ * a directory `take_picked_file` is allowed to read and delete, under the ceilings of `ShareRules`.
+ * The copies STAY ON DISK until the member has picked a destination and the page stages them:
+ * nothing is read into the WebView before that. The copy runs off the UI thread: a shared video
+ * would otherwise freeze the launch.
  *
  * Nothing is SENT from here. The page asks the member where to send it, and the composer is what
  * sends - a share is only ever a draft.
@@ -35,15 +38,6 @@ object IncomingShare {
     private const val TAG = "IncomingShare"
     private const val PENDING_FILE = "pending_share.json"
     private const val INBOX_DIR = "shared_inbox"
-
-    /** At most this many files are kept from one share; the rest are counted as refused. */
-    const val MAX_FILES = 10
-
-    /**
-     * Per-file ceiling for the COPY, above the server's own (a video is re-encoded on the device
-     * before upload, so its shared size is not its sent size). A larger stream is dropped, not cut.
-     */
-    const val MAX_FILE_BYTES = 512L * 1024 * 1024
 
     /** Whether `intent` is a share this activity accepts. */
     fun isShare(intent: Intent?): Boolean =
@@ -64,27 +58,7 @@ object IncomingShare {
         val appContext = context.applicationContext
         Thread {
             try {
-                discardUndrainedShare(appContext)
-                val shareId = UUID.randomUUID().toString()
-                val dir = File(File(appContext.cacheDir, INBOX_DIR), shareId).also { it.mkdirs() }
-                val files = JSONArray()
-                var refused = 0
-                for ((index, uri) in uris.withIndex()) {
-                    if (index >= MAX_FILES) {
-                        refused++
-                        continue
-                    }
-                    val copied = copyStream(appContext, uri, dir, index, intent.type)
-                    if (copied == null) refused++ else files.put(copied)
-                }
-                val payload = JSONObject()
-                    .put("id", shareId)
-                    .put("text", text)
-                    .put("files", files)
-                    .put("refused", refused)
-                File(MlsContextLoader.tauriDataDir(appContext), PENDING_FILE).writeText(payload.toString())
-                Log.i(TAG, "share $shareId ready: ${files.length()} file(s), $refused refused")
-                onReady()
+                if (runCapture(appContext, text, uris, intent.type)) onReady()
             } catch (e: Exception) {
                 Log.e(TAG, "share capture failed: ${e.message}", e)
             }
@@ -92,24 +66,76 @@ object IncomingShare {
     }
 
     /**
-     * A share the page never drained is REPLACED by a newer one, and its copies go with it: the
-     * member shared again, and only the latest is offered. A share the page already drained has no
-     * pending file any more, so the files it is still reading are never touched.
+     * One capture at a time: two shares arriving together would otherwise sweep each other's copies
+     * and race on the pending file. The newer one simply waits and then replaces the older.
      */
-    private fun discardUndrainedShare(context: Context) {
-        val pending = File(MlsContextLoader.tauriDataDir(context), PENDING_FILE)
-        if (!pending.exists()) return
-        try {
-            val id = JSONObject(pending.readText()).optString("id")
-            // The id names a directory under OUR inbox only; anything else is not ours to delete.
-            if (id.matches(Regex("[0-9a-f-]{36}"))) {
-                File(File(context.cacheDir, INBOX_DIR), id).deleteRecursively()
+    @Synchronized
+    private fun runCapture(context: Context, text: String, uris: List<Uri>, intentType: String?): Boolean {
+        sweepInbox(context)
+        val shareId = UUID.randomUUID().toString()
+        val dir = File(inboxDir(context), shareId).also { it.mkdirs() }
+        val heldGrants = context.contentResolver.persistedUriPermissions.map { it.uri.toString() }
+        val files = JSONArray()
+        var refused = 0
+        var kept = 0L
+        for ((index, uri) in uris.withIndex()) {
+            if (index >= ShareRules.MAX_FILES) {
+                Log.w(TAG, "stream $index refused: past ${ShareRules.MAX_FILES} files")
+                refused++
+                continue
             }
-            Log.i(TAG, "an undrained share ($id) was replaced by a newer one")
-        } catch (e: Exception) {
-            Log.w(TAG, "undrained share unreadable, replaced anyway: ${e.message}")
+            val ceiling = ShareRules.nextFileCeiling(kept)
+            val copied = if (ceiling <= 0) {
+                Log.w(TAG, "stream $index refused: the share already holds ${ShareRules.MAX_TOTAL_BYTES / 1024 / 1024} MB")
+                null
+            } else {
+                copyStream(context, uri, dir, index, intentType, ceiling, heldGrants)
+            }
+            if (copied == null) {
+                refused++
+            } else {
+                kept += copied.second
+                files.put(copied.first)
+            }
         }
-        pending.delete()
+        val payload = JSONObject()
+            .put("id", shareId)
+            .put("text", text)
+            .put("files", files)
+            .put("refused", refused)
+        // WRITTEN WHOLE OR NOT AT ALL: the page may drain at any moment (a return to the foreground),
+        // and a reader catching a half-written file would drop the share as corrupt. A rename within
+        // one directory is atomic.
+        val dataDir = MlsContextLoader.tauriDataDir(context)
+        val staging = File(dataDir, "$PENDING_FILE.tmp")
+        staging.writeText(payload.toString())
+        if (!staging.renameTo(File(dataDir, PENDING_FILE))) {
+            staging.delete()
+            dir.deleteRecursively()
+            Log.e(TAG, "share $shareId not handed over: the pending file could not be renamed into place")
+            return false
+        }
+        Log.i(TAG, "share $shareId ready: ${files.length()} file(s), $kept bytes, $refused refused")
+        return true
+    }
+
+    private fun inboxDir(context: Context) = File(context.cacheDir, INBOX_DIR)
+
+    /**
+     * Empties the inbox before a new share is copied into it. A newer share REPLACES whatever came
+     * before - undrained (its pending file goes too), drained but never staged (cancelled, or its
+     * conversation never opened), or left behind by a corrupt manifest or a failed read - so nothing
+     * in the inbox survives the next share, and nothing outside it is ever deleted from here.
+     */
+    private fun sweepInbox(context: Context) {
+        val pending = File(MlsContextLoader.tauriDataDir(context), PENDING_FILE)
+        if (pending.exists()) {
+            Log.i(TAG, "an undrained share was replaced by a newer one")
+            pending.delete()
+        }
+        val leftovers = inboxDir(context).listFiles().orEmpty()
+        if (leftovers.isNotEmpty()) Log.d(TAG, "sweeping ${leftovers.size} earlier share(s) from the inbox")
+        for (entry in leftovers) entry.deleteRecursively()
     }
 
     private fun sharedText(intent: Intent): String {
@@ -144,14 +170,31 @@ object IncomingShare {
     }
 
     /**
-     * Copies one stream into `dir` under a sanitised name. Returns its JSON entry, or null when it
-     * could not be read or exceeded [MAX_FILE_BYTES] (the partial copy is deleted).
+     * Copies one stream into `dir` under a sanitised name. Returns its JSON entry and its size, or
+     * null when it was refused: not a `content://` URI, one of our own providers or a grant we hold,
+     * unreadable, or larger than `ceiling` (the partial copy is deleted).
      */
-    private fun copyStream(context: Context, uri: Uri, dir: File, index: Int, intentType: String?): JSONObject? {
+    private fun copyStream(
+        context: Context,
+        uri: Uri,
+        dir: File,
+        index: Int,
+        intentType: String?,
+        ceiling: Long,
+        heldGrants: List<String>,
+    ): Pair<JSONObject, Long>? {
         if (uri.scheme != "content") {
             // A `file://` URI would let the sender name any path this app can read - including our
             // own data. Only a content provider's grant is accepted.
             Log.w(TAG, "stream $index refused: scheme '${uri.scheme}' is not content://")
+            return null
+        }
+        if (ShareRules.isOwnAuthority(uri.authority, context.packageName)) {
+            Log.w(TAG, "stream $index refused: authority '${uri.authority}' is this app's own")
+            return null
+        }
+        if (ShareRules.coveredByHeldGrant(uri.toString(), heldGrants)) {
+            Log.w(TAG, "stream $index refused: it falls under a grant the member gave Canari, not the sender")
             return null
         }
         val resolver = context.contentResolver
@@ -173,10 +216,10 @@ object IncomingShare {
                         val read = input.read(buffer)
                         if (read < 0) break
                         total += read
-                        if (total > MAX_FILE_BYTES) {
+                        if (total > ceiling) {
                             output.close()
                             target.delete()
-                            Log.w(TAG, "stream $index refused: over ${MAX_FILE_BYTES / 1024 / 1024} MB")
+                            Log.w(TAG, "stream $index refused: over its ceiling of ${ceiling / 1024 / 1024} MB")
                             return null
                         }
                         output.write(buffer, 0, read)
@@ -184,7 +227,7 @@ object IncomingShare {
                 }
             }
             Log.d(TAG, "stream $index copied: $mime, $total bytes")
-            JSONObject().put("path", target.absolutePath).put("name", name).put("mime", mime)
+            Pair(JSONObject().put("path", target.absolutePath).put("name", name).put("mime", mime), total)
         } catch (e: Exception) {
             target.delete()
             Log.w(TAG, "stream $index refused: ${e.message}")

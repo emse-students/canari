@@ -1,27 +1,23 @@
 /**
- * Reads the share the native layer left for the page (`pending_share.json`) into `incomingShare`.
+ * Reads the share the native layer left for the page (`pending_share.json`) into `incomingShare`,
+ * and later reads its files when it is staged.
  *
  * Android's `IncomingShare.kt` copies whatever another app shared into the app cache and writes a
- * manifest; `read_and_clear_pending_share` hands that manifest over exactly once, and each copy is
- * then read AND deleted by `take_picked_file`, the same allowlisted command the system pickers use.
- * See `docs/wiki/frontend/sharing.md`.
+ * manifest; `read_and_clear_pending_share` hands that manifest over exactly once. THE COPIES STAY ON
+ * DISK until the member has picked a destination and that conversation is displayed: the drain runs
+ * at mount, before the PIN, and reading a share's files there would hold them in the WebView for as
+ * long as the member takes to unlock and choose. Only `readSharedFiles` reads them, each through
+ * `take_picked_file`, which also deletes the copy. See `docs/wiki/frontend/sharing.md`.
  */
 import { invoke } from '@tauri-apps/api/core';
 import { Log } from '$lib/utils/Log';
-import { incomingShare } from '$lib/stores/incomingShare.svelte';
-
-/** One copied file, as the native manifest names it. */
-export interface SharedFileEntry {
-  path: string;
-  name: string;
-  mime: string;
-}
+import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.svelte';
 
 /** The native manifest, validated. */
 export interface SharedManifest {
   text: string;
   files: SharedFileEntry[];
-  /** Streams the native side could not keep (unreadable, too large, past the count cap). */
+  /** Streams the native side did not keep (unreadable, too large, past a cap, not the sender's). */
   refused: number;
 }
 
@@ -56,9 +52,9 @@ export function parseSharedManifest(raw: string): SharedManifest | null {
 }
 
 /**
- * Drains a waiting share, if any, into `incomingShare`. Returns how many shared items were lost on
- * the way (refused natively, or a copy that could not be read), so the caller can say so.
- * Returns null when nothing was waiting.
+ * Drains a waiting share, if any, into `incomingShare` - its text and the NAMES of its files, no
+ * bytes. Returns how many shared items were already lost natively, so the caller can say so; null
+ * when nothing was waiting.
  */
 export async function drainNativeShare(): Promise<{ lost: number } | null> {
   let raw: string | null;
@@ -78,9 +74,20 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
     'IncomingShare',
     `drained: ${manifest.text.length} chars, ${manifest.files.length} file(s), ${manifest.refused} refused natively`
   );
+  incomingShare.offer({ text: manifest.text, files: manifest.files });
+  return { lost: manifest.refused };
+}
+
+/**
+ * Reads a staged share's files into `File`s, each copy deleted as it is read. A copy that cannot be
+ * read (a newer share swept it, the OS purged the cache) is counted in `lost`, never thrown.
+ */
+export async function readSharedFiles(
+  entries: SharedFileEntry[]
+): Promise<{ files: File[]; lost: number }> {
   const files: File[] = [];
-  let lost = manifest.refused;
-  for (const entry of manifest.files) {
+  let lost = 0;
+  for (const entry of entries) {
     try {
       const bytes = await invoke<ArrayBuffer>('take_picked_file', { path: entry.path });
       files.push(new File([bytes], entry.name, { type: entry.mime, lastModified: Date.now() }));
@@ -89,6 +96,6 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
       console.error(`[SHARE] a shared file could not be read: ${String(error)}`);
     }
   }
-  incomingShare.offer({ text: manifest.text, files });
-  return { lost };
+  Log.d('IncomingShare', `read ${files.length} file(s), ${lost} lost`);
+  return { files, lost };
 }

@@ -17,10 +17,20 @@
  */
 import { appendLog } from '$lib/utils/sessionLog';
 
+/**
+ * One shared file, still ON DISK where the native layer copied it. It is read only when the share
+ * is staged in a conversation (`readSharedFiles`), never before a destination is picked.
+ */
+export interface SharedFileEntry {
+  path: string;
+  name: string;
+  mime: string;
+}
+
 /** What was shared: text (a link is text) and files, both possibly empty but never both. */
 export interface IncomingSharePayload {
   text: string;
-  files: File[];
+  files: SharedFileEntry[];
 }
 
 let pending = $state<IncomingSharePayload | null>(null);
@@ -68,6 +78,18 @@ export const incomingShare = {
     target = null;
     appendLog(`[SHARE] taken by ${conversationId.slice(0, 16)}`);
     return taken;
+  },
+  /**
+   * The landing on the chosen conversation ended before that conversation was displayed (it was
+   * abandoned, or the member went elsewhere): the share asks for its destination again rather than
+   * waiting for a conversation that will not open.
+   */
+  releaseTarget(): void {
+    if (!pending || target === null) return;
+    appendLog(
+      `[SHARE] the landing on ${target.slice(0, 16)} ended before it was displayed - asking again`
+    );
+    target = null;
   },
   /** The member dismissed the picker: the share is dropped. */
   cancel(): void {

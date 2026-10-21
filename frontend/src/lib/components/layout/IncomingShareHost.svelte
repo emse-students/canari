@@ -33,8 +33,8 @@
   );
 
   /**
-   * Drains one waiting share; says how many items were lost on the way, if any. Silent when nothing
-   * waits - this runs on every return to the foreground.
+   * Drains one waiting share (its text and file names, no bytes); says how many items the native
+   * side refused, if any. Silent when nothing waits - this runs on every return to the foreground.
    */
   async function drain(reason: string): Promise<void> {
     const result = await drainNativeShare();
@@ -42,6 +42,14 @@
     appendLog(`[SHARE] drained on ${reason}, ${result.lost} item(s) lost`);
     if (result.lost > 0) showToast(m.share_items_lost({ count: result.lost }), 'error');
   }
+
+  // A LANDING CAN END WITHOUT DISPLAYING ITS TARGET (abandoned, or the member went elsewhere), and
+  // then nothing would ever take the share: it would sit with a destination that never opens and no
+  // picker to change it. The landing ending is the fact that says so - no clock.
+  $effect(() => {
+    const target = incomingShare.target;
+    if (target !== null && notifNav.pending !== target) incomingShare.releaseTarget();
+  });
 
   function pick(_key: string, conversation: Conversation) {
     // The conversation ID, not the map key: a DM is keyed by its display name, and a landing names

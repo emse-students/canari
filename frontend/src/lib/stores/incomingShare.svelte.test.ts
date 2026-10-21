@@ -5,7 +5,11 @@ import { incomingShare } from './incomingShare.svelte';
  * that destination. Each step below is a way it could be offered twice, to the wrong conversation,
  * or not at all.
  */
-const file = (name: string) => new File(['x'], name, { type: 'image/png' });
+const file = (name: string) => ({
+  path: `/cache/shared_inbox/x/0_${name}`,
+  name,
+  mime: 'image/png',
+});
 
 describe('incomingShare', () => {
   beforeEach(() => incomingShare.cancel());
@@ -51,6 +55,15 @@ describe('incomingShare', () => {
     incomingShare.offer({ text: 'hello', files: [] });
     incomingShare.cancel();
     expect(incomingShare.pending).toBeNull();
+  });
+
+  it('asks for its destination again when the landing on it ended undisplayed', () => {
+    incomingShare.offer({ text: 'hello', files: [] });
+    incomingShare.chooseTarget('group-1');
+    incomingShare.releaseTarget();
+    expect(incomingShare.target).toBeNull();
+    expect(incomingShare.pending?.text).toBe('hello');
+    expect(incomingShare.takeFor('group-1')).toBeNull();
   });
 
   it('ignores a destination when nothing is pending', () => {

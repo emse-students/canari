@@ -13,6 +13,8 @@
 //! A COMMAND THAT READS AND DELETES A PATH THE PAGE NAMES TAKES AN ALLOWLIST, NEVER A DENYLIST: only
 //! a file under the canonical caches or temporary directory - the two places the pickers write - is
 //! touched, and `..` or a symlink cannot reach outside them because the CANONICAL path is compared.
+//! The same command reads the copies of a share INTO Canari (Android), from the one directory those
+//! are made in - see `docs/wiki/frontend/sharing.md`.
 //! See `docs/wiki/frontend/modules/chat.md` (the attachment menu).
 
 use std::path::{Path, PathBuf};
@@ -51,8 +53,22 @@ fn picker_roots<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
             Err(e) => log::warn!("[PickedFiles] {name} directory unresolved: {e}"),
         }
     }
+    // The copies Android's `IncomingShare.kt` makes of what another app shared into Canari. That
+    // directory, and NOT the whole app cache around it: the cache also holds the WebView's own files
+    // and the gallery's decrypted staging, none of which the page may read or delete by name.
+    if let Ok(inbox) = app.path().app_cache_dir().map(|d| d.join(SHARED_INBOX)) {
+        match inbox.canonicalize() {
+            Ok(d) => roots.push(d),
+            // Absent until the first share: nothing to read there, and nothing wrong.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("[PickedFiles] shared inbox unresolved: {e}"),
+        }
+    }
     roots
 }
+
+/// The directory under the app cache that `IncomingShare.kt` copies shared streams into.
+const SHARED_INBOX: &str = "shared_inbox";
 
 /// Reads the picker's copy at `path`, deletes it, and returns its bytes as a raw IPC body.
 ///

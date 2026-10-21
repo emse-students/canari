@@ -57,3 +57,32 @@ describe('AndroidManifest makes Canari a share target', () => {
     expect(mainActivity()).toMatch(/android:launchMode="singleTask"/);
   });
 });
+
+/**
+ * The copies are made in ONE directory and read through ONE allowlist, written in two languages.
+ * On Android `take_picked_file`'s other roots are the EXTERNAL cache and the process temp
+ * directory, not the app cache the copies land in: if the two names drift apart, every shared file
+ * is refused by the page with no build failing - which is how this was first written (2026-10-21).
+ */
+describe('the shared inbox is the directory take_picked_file allows', () => {
+  const kotlin = readFileSync(
+    resolve(
+      here,
+      '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/IncomingShare.kt'
+    ),
+    'utf8'
+  );
+  const rust = readFileSync(
+    resolve(here, '../../../src-tauri/src/commands/picked_files.rs'),
+    'utf8'
+  );
+
+  it('names the same directory on both sides, under the app cache', () => {
+    const copiedInto = /INBOX_DIR = "([^"]+)"/.exec(kotlin)?.[1];
+    const allowed = /const SHARED_INBOX: &str = "([^"]+)";/.exec(rust)?.[1];
+    expect(copiedInto).toBeDefined();
+    expect(allowed).toBe(copiedInto);
+    expect(kotlin).toMatch(/File\(context\.cacheDir, INBOX_DIR\)/);
+    expect(rust).toMatch(/app_cache_dir\(\)\.map\(\|d\| d\.join\(SHARED_INBOX\)\)/);
+  });
+});
