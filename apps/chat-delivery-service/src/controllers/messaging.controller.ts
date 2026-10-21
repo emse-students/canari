@@ -9,6 +9,7 @@ import {
   UseGuards,
   Headers,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -19,7 +20,7 @@ import {
   MessagingService,
   SendMessageBody,
   AckMessagesBody,
-  assertClientSendFields,
+  clientSendRefusal,
 } from '../services/messaging.service';
 import { sanitizeEpoch, sanitizeLogValue } from '../utils/sanitize';
 
@@ -33,14 +34,19 @@ export class MessagingController {
   @UseGuards(HeaderAuthGuard)
   @Post('mls/send')
   async sendMessage(@Body() body: SendMessageBody, @Headers('x-user-id') authUserId?: string) {
-    try {
-      assertClientSendFields(body);
-    } catch (e) {
+    // `HeaderAuthGuard` has already required the header, so a caller is always named here.
+    const caller = authUserId ?? '';
+    const refusal = clientSendRefusal(body, caller);
+    if (refusal) {
+      // ONE line, every caller-supplied value sanitised: the refusal is the event, and the response
+      // body carries the code only.
       this.logger.warn(
-        `[SEND] REJECT client_fields user=${sanitizeLogValue(authUserId ?? 'none')} ` +
-          `device=${sanitizeLogValue(String(body?.senderDeviceId ?? 'unknown'))}: ${String(e)}`
+        `[SEND] REJECT ${refusal.error} user=${sanitizeLogValue(caller)} ${refusal.detail}`
       );
-      throw e;
+      const response = { error: refusal.error, message: 'this send is not accepted' };
+      throw refusal.status === 403
+        ? new ForbiddenException(response)
+        : new BadRequestException(response);
     }
     return this.messagingService.sendMessage(body, authUserId);
   }
@@ -57,9 +63,10 @@ export class MessagingController {
       senderId?: string;
       excludeDeviceIds?: string[];
       groupInfo?: string;
-    }
+    },
+    @Headers('x-user-id') authUserId?: string
   ) {
-    return this.messagingService.validateCommit(body);
+    return this.messagingService.validateCommit(body, authUserId);
   }
 
   /**

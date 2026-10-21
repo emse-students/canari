@@ -854,12 +854,16 @@ describe('MessagingService - visibility vs durability', () => {
       await expect(service.sendMessage(send({ isCommit: true }))).resolves.toBeDefined();
     });
 
-    it('accepts a frame from a device with no membership row, which is an external join in flight', async () => {
-      // The row is written by the commit that admits the device, so a send racing just ahead of it
-      // is normal. It is logged, because the same shape is also what a ghost looks like.
+    it('refuses a frame from a device with no membership row in a live group - no member at all', async () => {
+      // An external join's own commit activates its row before the commit is fanned out, so an
+      // application frame never legitimately precedes it (0 such sends on production, 2026-10-22).
       deviceGroupRepo.findOne.mockResolvedValue(null);
 
-      await expect(service.sendMessage(send({ durable: true }))).resolves.toBeDefined();
+      await expect(service.sendMessage(send({ durable: true }))).rejects.toMatchObject({
+        response: { error: 'sender_not_member' },
+      });
+      expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+      expect(redis.xadd).not.toHaveBeenCalled();
     });
   });
 });

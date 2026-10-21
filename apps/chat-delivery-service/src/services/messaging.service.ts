@@ -349,29 +349,81 @@ const CLIENT_SEND_FIELDS: ReadonlySet<string> = new Set([
   'silent',
   'durable',
   'recipientDevices',
-  // The retired content path (`LEGACY_CONTENT_PATH`), which accuses on every use.
-  'content',
-  'type',
 ]);
 
 /**
- * Refuses a client send that sets a field only an internal caller may set.
- *
- * Who receives a frame, and whether it is a handshake, is decided here: the recipient set from the
- * membership table and a commit by {@link MessagingService.validateCommit}. A client field that
- * narrowed the set or marked a frame as a commit would let a sender choose both. Refused with the
- * field names, never silently dropped: a caller sending one is a caller that must be found.
+ * The devices a commit's fan-out may skip: the ones THIS commit admits (they join by Welcome and
+ * cannot process it) and the committing device itself - nobody else. A declared exclusion naming
+ * any other member would keep the commit from a device that must apply it, splitting the group's
+ * epoch; such entries are dropped (the device receives the commit) and reported through `onDropped`.
+ * A device staged out for an invalid KeyPackage is also dropped: it is in no tree, so receiving
+ * the commit costs it one unreadable frame.
  */
-export function assertClientSendFields(body: unknown): void {
+export function commitExclusions(
+  body: Pick<ValidateCommitBody, 'excludeDeviceIds' | 'senderId'>,
+  admitted: ReadonlyArray<{ userId: string; deviceId: string }>,
+  committerDeviceId: string,
+  onDropped: (dropped: string[]) => void
+): string[] {
+  const declared = Array.isArray(body.excludeDeviceIds) ? body.excludeDeviceIds : [];
+  const allowed = new Set(admitted.map((a) => `${a.userId}:${a.deviceId}`));
+  if (body.senderId) allowed.add(`${body.senderId}:${committerDeviceId}`);
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  for (const entry of declared) {
+    if (typeof entry === 'string' && allowed.has(entry)) kept.push(entry);
+    else dropped.push(typeof entry === 'string' ? entry.slice(0, 128) : 'invalid');
+  }
+  if (dropped.length > 0) onDropped(dropped);
+  return kept;
+}
+
+/** Why a client send was refused before anything was read: the `error` of its 400/403 body. */
+export type ClientSendRefusal =
+  | { error: 'send_body_invalid'; status: 400; detail: string }
+  | { error: 'send_field_refused'; status: 400; detail: string }
+  | { error: 'proto_required'; status: 400; detail: string }
+  | { error: 'sender_mismatch'; status: 403; detail: string };
+
+/**
+ * Whether a client send is one this route accepts, or why not - decided before anything is read.
+ *
+ * - Only {@link CLIENT_SEND_FIELDS}: who receives a frame, and whether it is a handshake, are decided
+ *   here (the recipient set from the membership table, a commit by `POST /mls/commit`).
+ * - A `proto`: the pre-MLS content path is retired (measured unused 2026-10-22,
+ *   `docs/wiki/legacy-compatibility.md`).
+ * - The caller as sender, with a device: a frame is attributed to its sender by every reader of the
+ *   group's log, and the membership gate below is keyed on that device.
+ *
+ * `detail` is for the server's log only, already sanitised and bounded: a refused field's NAME is
+ * the caller's text, and it never reaches the response body.
+ */
+export function clientSendRefusal(body: unknown, caller: string): ClientSendRefusal | null {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    throw new BadRequestException('the send body must be an object');
+    return { error: 'send_body_invalid', status: 400, detail: 'not an object' };
   }
   const refused = Object.keys(body).filter((field) => !CLIENT_SEND_FIELDS.has(field));
   if (refused.length > 0) {
-    throw new BadRequestException(
-      `field(s) not accepted on a client send: ${refused.slice(0, 8).join(', ')}`
-    );
+    const names = refused.slice(0, 8).map((f) => sanitizeLogValue(f.slice(0, 64)));
+    return { error: 'send_field_refused', status: 400, detail: `fields=${names.join(',')}` };
   }
+  const { proto, senderId, senderDeviceId } = body as SendMessageBody;
+  if (typeof proto !== 'string' || proto.length === 0) {
+    return { error: 'proto_required', status: 400, detail: 'no proto' };
+  }
+  if (
+    typeof senderId !== 'string' ||
+    typeof senderDeviceId !== 'string' ||
+    senderDeviceId.length === 0 ||
+    senderId.toLowerCase() !== caller.toLowerCase()
+  ) {
+    return {
+      error: 'sender_mismatch',
+      status: 403,
+      detail: `sender=${sanitizeLogValue(senderId)}:${sanitizeLogValue(senderDeviceId)}`,
+    };
+  }
+  return null;
 }
 
 export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
@@ -1196,11 +1248,22 @@ export class MessagingService {
             where: { groupId, deviceId: body.senderDeviceId },
           });
           if (!senderMembership) {
-            // Not refused: a missing row is a different defect from a `pending` one, with causes
-            // this seam cannot see. It is logged because nothing else would ever show it.
-            this.logger.warn(
-              `[SEND][${traceId}] sender has NO membership row group=${groupId} device=${body.senderDeviceId}`
+            // REFUSED (2026-10-22): a device with no row in this group is no member of it, and
+            // queueing its frame would let any signed-in device write into any group. Measured
+            // before the refusal: 0 such sends in the live production log.
+            //
+            // A DELETED GROUP IS ASKED FIRST: its deletion swept every row, so its members land here
+            // too, and the client's outbox reads `group_deleted` (410) to drop the conversation -
+            // a 403 would leave it retrying a group that no longer exists.
+            await this.enqueueForLiveGroup([], groupId, 'SEND', traceId, undefined);
+            this.logger.error(
+              `[SEND][${traceId}] REJECT sender_not_member group=${groupId} device=${body.senderDeviceId}`
             );
+            throw new ForbiddenException({
+              error: 'sender_not_member',
+              groupId,
+              deviceId: body.senderDeviceId,
+            });
           } else if (senderMembership.status !== 'active') {
             this.logger.error(
               `[SEND][${traceId}] REJECT sender_not_active group=${groupId} ` +
@@ -1392,78 +1455,13 @@ export class MessagingService {
         }
       }
     } else {
-      // ── Legacy path (frontend fallback / group fan-out) ───────────────────
-      //
-      // A FALLBACK IS A SIGNAL, NEVER A PATH. This branch predates MLS and writes `content` instead
-      // of `proto`; the database says nothing has taken it - 817 of 817 queued rows carry `proto`
-      // and `content` is NULL on every one, back to 2026-07-28. That is strong but it is not a
-      // census: the queue holds only what was UNDELIVERED, so a legacy message delivered instantly
-      // leaves no row behind, and the service log window is one container lifetime. So the branch
-      // accuses instead of answering silently, and its removal date is set from what this line does
-      // or does not print (see docs/wiki/legacy-compatibility.md).
-      this.logger.warn(
-        `[SEND][${traceId}] LEGACY_CONTENT_PATH sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} ` +
-          `group=${body.groupId ?? 'none'} - a client sent no proto; this path is retired and its caller must be found`
+      // THE PRE-MLS CONTENT PATH IS GONE (2026-10-22): measured unused - 0 rows in two months of the
+      // queue, 0 sends in the live log - and a client route already refuses a send with no proto.
+      // An internal caller reaching here is a defect in that caller.
+      this.logger.error(
+        `[SEND][${traceId}] REJECT proto_required group=${body.groupId ?? 'none'} - the content path is retired`
       );
-      const senderId = sanitizeQueryValue(body.senderId, 'senderId');
-      const senderDeviceId = sanitizeOptionalQueryValue(body.senderDeviceId, 'senderDeviceId');
-      const groupId = sanitizeQueryValue(body.groupId, 'groupId');
-      const rawContent: unknown = body.content;
-      const rawType: unknown = body.type;
-
-      if (typeof rawContent !== 'string' || rawContent.length === 0) {
-        throw new BadRequestException('content is required');
-      }
-
-      const safeContent: string = rawContent;
-      const safeType: string =
-        typeof rawType === 'string' && rawType.length > 0 ? rawType : 'message';
-
-      const targetList: { userId: string; deviceId: string }[] = [];
-
-      if (!body.recipients || body.recipients.length === 0) {
-        const members = await this.groupMemberRepo.find({ where: { groupId } });
-        const memberUserIds = members.map((m) => m.userId).filter((id) => id !== senderId);
-
-        if (memberUserIds.length > 0) {
-          const devices = await this.keyPackageRepo.find({
-            where: { userId: In(memberUserIds) },
-          });
-          for (const d of devices) {
-            targetList.push({ userId: d.userId, deviceId: d.deviceId });
-          }
-        }
-      } else {
-        for (const r of body.recipients) {
-          const recipientUserId = sanitizeQueryValue(r.userId, 'recipients.userId');
-          if (r.deviceId) {
-            const recipientDeviceId = sanitizeQueryValue(r.deviceId, 'recipients.deviceId');
-            targetList.push({
-              userId: recipientUserId,
-              deviceId: recipientDeviceId,
-            });
-          } else {
-            console.warn(
-              'Skipping recipient without deviceId. Fan-out is disabled for MLS security.'
-            );
-          }
-        }
-      }
-
-      for (const r of targetList) {
-        ops.push(
-          this.queuedMessageRepo.create({
-            recipientId: r.userId,
-            deviceId: r.deviceId,
-            senderId,
-            senderDeviceId,
-            groupId,
-            content: safeContent,
-            type: safeType,
-            createdAt: receivedAt,
-          })
-        );
-      }
+      throw new BadRequestException({ error: 'proto_required', message: 'proto is required' });
     }
 
     // The sender declares durability (`body.durable`); the server sees ciphertext and can classify
@@ -1702,10 +1700,26 @@ export class MessagingService {
    * Returns accepted=true with newEpoch on success, or accepted=false with
    * currentEpoch and a reason string when the commit is rejected.
    */
-  async validateCommit(body: ValidateCommitBody): Promise<ValidateCommitResult> {
+  async validateCommit(
+    body: ValidateCommitBody,
+    authUserIdRaw?: string
+  ): Promise<ValidateCommitResult> {
     const traceId = this.makeTraceId('commit');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    // THE COMMITTER IS THE CALLER. `senderId` names the author of the fan-out and the member whose
+    // device this commit activates, so a client route must name itself. Absent header = an internal
+    // caller (the background Welcome), which authenticated the device on its own route.
+    if (authUserIdRaw !== undefined) {
+      if (typeof body.senderId !== 'string' || body.senderId.length === 0) {
+        this.logger.warn(`[COMMIT][${traceId}] REJECT no_sender group=${groupId}`);
+        throw new BadRequestException({
+          error: 'sender_required',
+          message: 'senderId is required',
+        });
+      }
+      this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'COMMIT');
+    }
     const baseEpoch =
       typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)
         ? Math.floor(body.baseEpoch)
@@ -1922,7 +1936,16 @@ export class MessagingService {
           senderDeviceId: deviceId,
           proto: commitProto,
           isCommit: true,
-          excludeDeviceIds: body.excludeDeviceIds,
+          excludeDeviceIds: commitExclusions(body, admitted, deviceId, (dropped) =>
+            this.logger.warn(
+              `[COMMIT][${traceId}] EXCLUSION_DROPPED group=${groupId} count=${dropped.length} ` +
+                `devices=${dropped
+                  .slice(0, 8)
+                  .map((d) => sanitizeLogValue(d))
+                  .join(',')} - ` +
+                `not admitted by this commit, so they receive it`
+            )
+          ),
         },
         undefined,
         parting

@@ -597,6 +597,76 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
    * at the Welcome instead, a frame sent in between skipped the newcomer, and a second commit
    * landing first named the wrong epoch.
    */
+  /**
+   * A commit's routing fields come from the client, so they are bounded by what the commit itself
+   * establishes: the committer is the caller, and the fan-out skips only the devices it admits and
+   * the committing device.
+   */
+  describe('who a client commit may name', () => {
+    const fanOut = () =>
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+    const commit = (extra: Record<string, unknown> = {}, caller?: string) => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      return service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: 'Y29tbWl0',
+          senderId: 'user-1',
+          ...extra,
+        },
+        caller
+      );
+    };
+
+    it('refuses a commit whose sender is not the caller, before the epoch moves', async () => {
+      const sent = fanOut();
+
+      await expect(commit({}, 'user-2')).rejects.toBeInstanceOf(ForbiddenException);
+      expect(transaction).not.toHaveBeenCalled();
+      expect(sent).not.toHaveBeenCalled();
+    });
+
+    it('refuses a client commit that names no sender', async () => {
+      await expect(commit({ senderId: undefined }, 'user-1')).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it('lets the fan-out skip only the devices it admits and the committer', async () => {
+      keyPackageRepo.find.mockResolvedValue([{ userId: 'user-2', deviceId: 'phone-2' }]);
+      const sent = fanOut();
+
+      await commit(
+        {
+          admits: [{ userId: 'user-2', deviceId: 'phone-2' }],
+          excludeDeviceIds: ['user-1:device-1', 'user-2:phone-2', 'user-3:laptop-3'],
+        },
+        'user-1'
+      );
+
+      // user-3 is a member this commit does not admit: it must receive the commit.
+      expect(sent).toHaveBeenCalledWith(
+        expect.objectContaining({ excludeDeviceIds: ['user-1:device-1', 'user-2:phone-2'] }),
+        undefined,
+        []
+      );
+    });
+
+    it('still serves an internal caller, which names no header', async () => {
+      const sent = fanOut();
+
+      const res = await commit({ excludeDeviceIds: ['user-1:device-1'] });
+
+      expect(res.accepted).toBe(true);
+      expect(sent).toHaveBeenCalled();
+    });
+  });
+
   describe('the newcomers a commit admits', () => {
     const accept = (admits?: { userId: string; deviceId: string }[]) => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });

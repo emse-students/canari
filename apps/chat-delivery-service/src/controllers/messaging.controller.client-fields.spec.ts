@@ -1,20 +1,20 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { MessagingController } from './messaging.controller';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService, SendMessageBody } from '../services/messaging.service';
 
 /**
- * `POST /mls/send` accepts the fields a client sends and nothing else (`assertClientSendFields`).
+ * `POST /mls/send` accepts what a client sends and nothing else (`clientSendRefusal`): the allowlisted
+ * fields, a `proto`, and the caller as the sender with a device.
  *
  * Who receives a frame and whether it is a handshake are decided by the server: the recipient set
- * from the membership table, a commit by `POST /mls/commit`. The fields that would let a caller
- * decide either are set by the service's own callers only, which never cross this route.
+ * from the membership table, a commit by `POST /mls/commit`.
  */
-describe('MessagingController - POST mls/send accepts client fields only', () => {
+describe('MessagingController - POST mls/send accepts a client send only', () => {
   let controller: MessagingController;
   let warn: jest.SpyInstance;
   const sendMessage = jest.fn().mockResolvedValue({ status: 'ok', queued: 1, sent: 1 });
@@ -29,6 +29,10 @@ describe('MessagingController - POST mls/send accepts client fields only', () =>
       durable: true,
       ...extra,
     }) as SendMessageBody;
+
+  /** The refusal a call raised, for its type and its response body. */
+  const refusalOf = async (body: SendMessageBody, caller = 'alice') =>
+    controller.sendMessage(body, caller).catch((e: unknown) => e);
 
   beforeEach(async () => {
     sendMessage.mockClear();
@@ -49,11 +53,12 @@ describe('MessagingController - POST mls/send accepts client fields only', () =>
 
   afterEach(() => warn.mockRestore());
 
-  it('passes the body the web client sends, addressed or not', async () => {
+  it('passes the body the web client sends, addressed or not, whatever the case of the sender', async () => {
     await controller.sendMessage(clientBody(), 'alice');
     await controller.sendMessage(clientBody({ recipientDevices: ['bob:web-b'] }), 'alice');
+    await controller.sendMessage(clientBody({ senderId: 'Alice' }), 'alice');
 
-    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledTimes(3);
   });
 
   it.each([
@@ -61,30 +66,69 @@ describe('MessagingController - POST mls/send accepts client fields only', () =>
     ['isCommit', { isCommit: true }],
     ['isWelcome', { isWelcome: true }],
     ['recipients', { recipients: [{ userId: 'bob', deviceId: 'web-b' }] }],
+    ['the retired content', { content: 'hi', type: 'message' }],
     ['an unknown field', { somethingNew: 1 }],
-  ])('refuses %s, and reaches no delivery', async (_name, extra) => {
-    await expect(controller.sendMessage(clientBody(extra), 'alice')).rejects.toThrow(
-      'not accepted on a client send'
-    );
+  ])('refuses %s with a generic 400, and reaches no delivery', async (_name, extra) => {
+    const refusal = await refusalOf(clientBody(extra));
+
+    expect(refusal).toBeInstanceOf(BadRequestException);
+    expect((refusal as BadRequestException).getResponse()).toEqual({
+      error: 'send_field_refused',
+      message: 'this send is not accepted',
+    });
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('names the refused field and the caller in one line', async () => {
-    await expect(
-      controller.sendMessage(clientBody({ excludeDeviceIds: ['bob:web-b'] }), 'alice')
-    ).rejects.toThrow('excludeDeviceIds');
+  it('refuses a send with no proto - the content path is retired', async () => {
+    const refusal = await refusalOf(clientBody({ proto: undefined }));
+
+    expect((refusal as BadRequestException).getResponse()).toMatchObject({
+      error: 'proto_required',
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['another user', { senderId: 'bob' }],
+    ['an omitted sender', { senderId: undefined }],
+    ['an omitted device', { senderDeviceId: undefined }],
+  ])('refuses %s as the sender with a 403', async (_name, extra) => {
+    const refusal = await refusalOf(clientBody(extra));
+
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      error: 'sender_mismatch',
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('logs ONE line naming the caller, with every refused name sanitised and bounded', async () => {
+    const forged = 'x\n[Nest] 1 - LOG forged line';
+    await refusalOf(clientBody({ [forged]: 1, ['y'.repeat(500)]: 2 }));
 
     expect(warn).toHaveBeenCalledTimes(1);
     const line = String(warn.mock.calls[0][0]);
-    expect(line).toContain('REJECT client_fields');
-    expect(line).toContain('user=alice');
-    expect(line).toContain('device=web-a');
+    expect(line).toContain('REJECT send_field_refused user=alice');
+    expect(line).not.toContain('\n');
+    expect(line).not.toContain('forged line');
+    expect(line).toContain('invalid');
+    expect(line.length).toBeLessThan(400);
+  });
+
+  it('never echoes a refused name in the response body', async () => {
+    const refusal = await refusalOf(clientBody({ secretField: 1 }));
+
+    expect(JSON.stringify((refusal as BadRequestException).getResponse())).not.toContain(
+      'secretField'
+    );
   });
 
   it('refuses a body that is not an object', async () => {
-    await expect(controller.sendMessage([] as unknown as SendMessageBody, 'alice')).rejects.toThrow(
-      'must be an object'
-    );
+    const refusal = await refusalOf([] as unknown as SendMessageBody);
+
+    expect((refusal as BadRequestException).getResponse()).toMatchObject({
+      error: 'send_body_invalid',
+    });
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
