@@ -6,6 +6,7 @@ import {
   CALL_E2E_PATH_RECHECKS,
   CALL_ICE_RESTART_ATTEMPTS,
   CALL_ICE_TRANSPORT_POLICY,
+  CALL_REPORT_INTERVAL_MS,
   CALL_SIGNALLING_RESUME_ATTEMPTS,
   CALL_SIGNALLING_RESUME_MAX_DELAY_MS,
   CALL_SIGNALLING_RESUME_TIMEOUT_MS,
@@ -98,9 +99,11 @@ const workerAnswers = {
   terminated: 0,
   /** The last worker the service created: a test posts the transforms' own messages through it. */
   last: null as { onmessage: ((e: MessageEvent) => void) | null } | null,
+  /** The keys the service handed the last worker (`setKeys`). */
+  keys: null as { send: ArrayBuffer; receive: ArrayBuffer } | null,
 };
 
-/** The E2E worker: answers `setKey` with `keyReady` and `report` with counters, as the real one does. */
+/** The E2E worker: answers `setKeys` with `keyReady` and `report` with counters, as the real one does. */
 vi.mock('../workers/encryption.worker?worker', () => ({
   default: class {
     onmessage: ((e: MessageEvent) => void) | null = null;
@@ -114,7 +117,7 @@ vi.mock('../workers/encryption.worker?worker', () => ({
     removeEventListener(_: string, l: (e: MessageEvent) => void) {
       this.listeners = this.listeners.filter((x) => x !== l);
     }
-    postMessage(msg: { type: string; tag?: string }) {
+    postMessage(msg: { type: string; tag?: string; send?: ArrayBuffer; receive?: ArrayBuffer }) {
       if (msg.type === 'report') {
         const frames = workerAnswers.report;
         if (!frames) return;
@@ -146,7 +149,8 @@ vi.mock('../workers/encryption.worker?worker', () => ({
         });
         return;
       }
-      if (msg.type !== 'setKey') return;
+      if (msg.type !== 'setKeys') return;
+      workerAnswers.keys = { send: msg.send!, receive: msg.receive! };
       // A TASK, as a real worker's answer is (another thread posts it): an `addTrack` whose
       // transform waited for it would be one task late, which Chromium short-circuits.
       void flushMacrotask().then(() => {
@@ -297,10 +301,16 @@ class FakePeerConnection {
   }
   /** When set, `getStats` refuses with it. */
   statsError: Error | null = null;
+  /** When set, `getStats` answers only once it settles: a reading still in flight. */
+  statsGate: Promise<void> | null = null;
+  /** Entries added to every reading as they are (`[CALL_REPORT]` byte totals and timestamps). */
+  extraStats: Record<string, unknown>[] = [];
   async getStats() {
     workerAnswers.reads.push('stats');
+    if (this.statsGate) await this.statsGate;
     if (this.statsError) throw this.statsError;
     const stats = new Map<string, unknown>();
+    this.extraStats.forEach((entry, i) => stats.set(`extra-${i}`, entry));
     if (this.videoOutboundPackets !== null) {
       stats.set('out-v', {
         type: 'outbound-rtp',
@@ -463,7 +473,7 @@ class FakePeerConnection {
 class FakeTransform {
   constructor(
     public worker: unknown,
-    public options: { side: string; epoch?: number }
+    public options: { side: string; kind: string; epoch?: number }
   ) {
     workerAnswers.epoch = options.epoch ?? 0;
   }
@@ -474,7 +484,10 @@ const fakeTrack = () =>
   Object.assign(new EventTarget(), { kind: 'audio', stop: vi.fn(), enabled: true, muted: false });
 const fakeMls = {
   getDeviceId: () => 'device-1',
-  exportSecret: vi.fn(async () => new Uint8Array(32).fill(7)),
+  // A key filled with the context's LAST byte: `...|caller` and `...|callee` give different keys.
+  exportSecret: vi.fn(async (_g: string, _l: string, context: Uint8Array) =>
+    new Uint8Array(32).fill(context[context.length - 1])
+  ),
   sendMessage: vi.fn(async () => {
     order.push('mls');
   }),
@@ -507,6 +520,7 @@ beforeEach(() => {
   workerAnswers.terminated = 0;
   workerAnswers.video = { sender: 0, receiver: 0 };
   workerAnswers.reads = [];
+  workerAnswers.keys = null;
   order.length = 0;
   FakeSocket.instances = [];
   FakePeerConnection.instances = [];
@@ -1238,7 +1252,11 @@ describe('the E2E worker report (2026-10-19)', () => {
     expect(lines().filter((l) => l.includes('the worker did not answer in'))).toHaveLength(1);
     workerAnswers.report = { sender: 250, receiver: 251 };
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(lines()).toContain('[Call] E2E worker report (re-check): the worker answers again');
+    // Said ONCE, by whichever request it answers first: a path re-check or a `[CALL_REPORT]` tick
+    // (both ask the same worker, and the silence is the worker's, not one asker's).
+    expect(
+      lines().filter((l) => /^\[Call\] E2E worker report \(.+\): the worker answers again$/.test(l))
+    ).toHaveLength(1);
   });
 
   it('a negotiation reaching stable re-checks media the last check could not judge', async () => {
@@ -1282,7 +1300,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     vi.stubGlobal(
       'RTCRtpScriptTransform',
       class extends FakeTransform {
-        constructor(worker: unknown, options: { side: string; epoch?: number }) {
+        constructor(worker: unknown, options: { side: string; kind: string; epoch?: number }) {
           if (options.side === 'sender') throw new Error('NotSupportedError');
           super(worker, options);
         }
@@ -2953,5 +2971,275 @@ describe('an audio-only build (CALLS_VIDEO_ENABLED off)', () => {
     expect((created.receiver.transform as FakeTransform).options.side).toBe('receiver');
     const shown = get(service.remoteStream)?.getTracks() ?? [];
     expect(shown.some((t) => (t as MediaStreamTrack).kind === 'video')).toBe(false);
+  });
+});
+
+/** The media keys: one per direction, logged as a hash, and a mismatch the user SEES (F5 of #1997). */
+describe('the call keys (port of #2013, 2026-10-21)', () => {
+  const byte = (b: ArrayBuffer) => new Uint8Array(b)[0];
+  const CALLER = 'r'.charCodeAt(0); // the last byte of `room-1|caller`
+  const CALLEE = 'e'.charCodeAt(0); // the last byte of `room-1|callee`
+  const logLines = async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    return vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+  };
+  /** A message the worker's transforms post, delivered to the service's handler. */
+  const fromWorker = (data: Record<string, unknown>) =>
+    workerAnswers.last?.onmessage?.({ data } as MessageEvent);
+
+  it('the caller sends with the caller key and decrypts with the callee key', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    expect(byte(workerAnswers.keys!.send)).toBe(CALLER);
+    expect(byte(workerAnswers.keys!.receive)).toBe(CALLEE);
+    expect(fakeMls.exportSecret).toHaveBeenCalledWith(
+      'group-1',
+      'mls-webrtc-media-v2',
+      new TextEncoder().encode('room-1|caller'),
+      32
+    );
+  });
+
+  it('the callee holds the same two keys, the other way round', async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+    expect(byte(workerAnswers.keys!.send)).toBe(CALLEE);
+    expect(byte(workerAnswers.keys!.receive)).toBe(CALLER);
+  });
+
+  it("hands every transform its track's kind, authenticated by the worker in each frame", async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    const pc = FakePeerConnection.instances[0];
+    expect((pc.senders[0].transform as FakeTransform).options).toMatchObject({
+      side: 'sender',
+      kind: 'audio',
+    });
+    expect((pc.receivers[0].transform as FakeTransform).options).toMatchObject({
+      side: 'receiver',
+      kind: 'audio',
+    });
+  });
+
+  it('logs a SHA-256 fingerprint of each key, never key bytes', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    await vi.waitFor(async () =>
+      expect((await logLines()).some((l) => l.includes('media keys derived'))).toBe(true)
+    );
+    const line = (await logLines()).find((l) => l.includes('media keys derived'))!;
+    expect(line).toMatch(/\(role=caller send_fp=[0-9a-f]{8} recv_fp=[0-9a-f]{8}, sha256\)$/);
+    const keyHex = (b: number) => b.toString(16).repeat(4);
+    expect(line).not.toContain(keyHex(CALLER));
+    expect(line).not.toContain(keyHex(CALLEE));
+  });
+
+  describe('a receiver that decrypts nothing', () => {
+    async function inCall() {
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+      const service = new CallService(fakeMls);
+      const ws = await callerJoined(service);
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      return { showToast, epoch: workerAnswers.epoch, ws };
+    }
+    const undecryptable = (epoch: number, mediaKind = 'audio') =>
+      fromWorker({ type: 'undecryptable', epoch, mediaKind, failures: 100 });
+
+    it('is a key mismatch when NO receiver decrypted: said at ERROR and shown ONCE per call', async () => {
+      const { showToast, epoch } = await inCall();
+      undecryptable(epoch);
+      undecryptable(epoch, 'video');
+      expect(showToast).toHaveBeenCalledTimes(1);
+      expect(showToast).toHaveBeenCalledWith(m.call_e2e_key_mismatch(), 'error');
+      expect(
+        (await logLines()).filter((l) => l.startsWith('[Call] ERROR E2E key mismatch - 100 '))
+      ).toHaveLength(2);
+    });
+
+    it('is NOT a key mismatch when another receiver of the call decrypts: ERROR, no notice', async () => {
+      const { showToast, epoch } = await inCall();
+      fromWorker({ type: 'inPath', side: 'receiver', epoch, mediaKind: 'audio' });
+      undecryptable(epoch, 'video');
+      expect(showToast).not.toHaveBeenCalled();
+      expect((await logLines()).some((l) => l.endsWith('- not a key mismatch'))).toBe(true);
+    });
+
+    it("ignores a replaced peer connection's receiver: its epoch proves nothing about this one", async () => {
+      const { showToast, epoch } = await inCall();
+      undecryptable(epoch - 1);
+      expect(showToast).not.toHaveBeenCalled();
+    });
+
+    it("judges a REPLACED device on its own frames: the old one's decrypts do not silence it", async () => {
+      const { showToast, epoch, ws } = await inCall();
+      fromWorker({ type: 'inPath', side: 'receiver', epoch, mediaKind: 'audio' });
+      // The other party's device is replaced: a new peer connection, a new epoch.
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      expect(workerAnswers.epoch).toBe(epoch + 1);
+      undecryptable(epoch + 1);
+      expect(showToast).toHaveBeenCalledWith(m.call_e2e_key_mismatch(), 'error');
+    });
+  });
+});
+
+/** WP-C2 (port of #2011): the `[CALL_REPORT]` line, every 10 s of a live call and once at its end. */
+describe('the call report (port of #2011, 2026-10-21)', () => {
+  const reports = async (phase: string) => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    return vi
+      .mocked(appendLog)
+      .mock.calls.map(([l]) => String(l))
+      .filter((l) => l.startsWith('[CALL_REPORT]') && l.includes(`phase=${phase}`));
+  };
+
+  async function liveCall() {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    return { service, ws, pc: FakePeerConnection.instances[0] };
+  }
+
+  it('ticks every 10 s while in a call - never before - and stops at its end', async () => {
+    const { service, pc } = await liveCall();
+    // Not in a call yet (still ringing): nothing to report on.
+    await vi.advanceTimersByTimeAsync(CALL_REPORT_INTERVAL_MS);
+    expect(await reports('tick')).toHaveLength(0);
+
+    pc.setConnection('connected');
+    await vi.advanceTimersByTimeAsync(CALL_REPORT_INTERVAL_MS);
+    expect(await reports('tick')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(CALL_REPORT_INTERVAL_MS);
+    expect(await reports('tick')).toHaveLength(2);
+
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(await reports('end')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(3 * CALL_REPORT_INTERVAL_MS);
+    expect(await reports('tick')).toHaveLength(2);
+  });
+
+  it("writes the end report from a peer connection still open, with the worker's counts", async () => {
+    const { service, pc } = await liveCall();
+    pc.setConnection('connected');
+    service.endCall();
+    // The reading starts at the hangup; the summary keeps the peer connection 1.5 s.
+    await settle();
+    expect(pc.closed).toBe(false);
+    const [end] = await reports('end');
+    expect(end).toContain('call=room-1 phase=end');
+    // The fake worker's report: 250 encrypted, 251 decrypted, no failure.
+    expect(end).toContain('e2e=on enc_frames=250 dec_frames=251 dec_fail=0');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(pc.closed).toBe(true);
+  });
+
+  it('never rates the end line against a tick of a peer connection the call no longer has', async () => {
+    const { service, ws, pc } = await liveCall();
+    pc.setConnection('connected');
+    // The old peer connection's tick is held in flight with LARGE totals.
+    let release!: () => void;
+    pc.statsGate = new Promise<void>((resolve) => (release = resolve));
+    pc.extraStats = [
+      { id: 'o', type: 'outbound-rtp', kind: 'audio', bytesSent: 9_000_000, timestamp: 10_000 },
+    ];
+    await vi.advanceTimersByTimeAsync(CALL_REPORT_INTERVAL_MS);
+    // The other device is replaced: a new peer connection, counting its bytes from zero.
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    const fresh = FakePeerConnection.instances[1];
+    fresh.extraStats = [
+      { id: 'o', type: 'outbound-rtp', kind: 'audio', bytesSent: 40_000, timestamp: 20_000 },
+    ];
+    // The call ends while the old tick is STILL in flight, then that tick lands.
+    service.endCall();
+    release();
+    await vi.advanceTimersByTimeAsync(1_500);
+    const [end] = await reports('end');
+    // No `previous` from the dead peer connection: no rate at all, never a negative or a bogus one.
+    expect(end).toContain('out_kbps=- in_kbps=-');
+  });
+
+  it('zeroes the call keys at the end of the call', async () => {
+    const { service } = await liveCall();
+    const keys = (service as unknown as { callKeys: { send: Uint8Array; receive: Uint8Array } })
+      .callKeys;
+    expect(keys.send.some((b) => b !== 0)).toBe(true);
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(keys.send.every((b) => b === 0)).toBe(true);
+    expect(keys.receive.every((b) => b === 0)).toBe(true);
+  });
+
+  it('says e2e=- when the worker does not answer, rather than vouching for it', async () => {
+    const { service, pc } = await liveCall();
+    pc.setConnection('connected');
+    workerAnswers.report = null;
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    const [end] = await reports('end');
+    expect(end).toContain('e2e=- enc_frames=-');
+  });
+
+  it('says so when the stats cannot be read, and still ends the call', async () => {
+    const { service, pc } = await liveCall();
+    pc.setConnection('connected');
+    pc.statsError = new Error('getStats failed');
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(lines).toContain('[Call] WARN call report (end) not written: Error: getStats failed');
+    expect(pc.closed).toBe(true);
+    expect(get(service.callState)).toBe('idle');
+  });
+
+  it('writes no end report for a call that never built a peer connection', async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(await reports('end')).toHaveLength(0);
+  });
+
+  it('writes a refused line on an engine that cannot encrypt', async () => {
+    vi.stubGlobal('RTCRtpScriptTransform', undefined);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    await expect(new CallService(fakeMls).startCall('group-1', false)).rejects.toBeInstanceOf(
+      CallE2eUnsupportedError
+    );
+    expect(await reports('refused')).toEqual([
+      expect.stringMatching(
+        /^\[CALL_REPORT\] call=- phase=refused engine=\S+ e2e=refused reason=no-rtp-script-transform$/
+      ),
+    ]);
   });
 });
