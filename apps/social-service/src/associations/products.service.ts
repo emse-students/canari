@@ -34,7 +34,7 @@ import {
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
-import { mapCorePaymentError } from '../common/core-payment-error';
+import { amountOutOfRange, mapCorePaymentError } from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
 import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
@@ -1047,7 +1047,15 @@ export class ProductsService {
       const min = product.customAmountMinCents ?? 0;
       const max = product.customAmountMaxCents ?? Infinity;
       if (customAmountCents < min || customAmountCents > max) {
-        throw new BadRequestException(`Custom amount must be between ${min} and ${max} cents`);
+        this.logger.warn(
+          `[SHOP] custom amount refused: product=${product.id.slice(0, 8)} association=${associationId.slice(0, 8)} ` +
+            `amount=${customAmountCents} allowed=${min}-${Number.isFinite(max) ? max : 'unbounded'} cents`
+        );
+        throw amountOutOfRange(
+          min,
+          Number.isFinite(max) ? max : null,
+          `Custom amount must be between ${min} and ${Number.isFinite(max) ? max : 'unbounded'} cents`
+        );
       }
       amountCents = customAmountCents;
     } else {

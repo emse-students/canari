@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Logger } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { LydiaPaymentProvider, PAYMENT_PROVIDER_REFUSED } from './lydia-payment-provider';
 
 jest.mock('axios');
@@ -152,6 +152,24 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
       })
     ).rejects.toThrow(/0\.50 to 1000\.00 EUR/);
     expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+
+  it('answers an out-of-range amount with the typed code and BOTH bounds, not just a sentence', async () => {
+    const provider = makeProvider();
+    const err = await provider
+      .createCheckoutSession({
+        lineItems: [{ productName: 'x', unitAmountCents: 49, quantity: 1, currency: 'eur' }],
+        successUrl: 's',
+        cancelUrl: 'c',
+        connectAccountId: 'vendor-token-abc',
+        payerRecipient: { value: 'user@example.com', type: 'email' },
+      })
+      .catch((e: unknown) => e);
+    expect((err as BadRequestException).getResponse()).toMatchObject({
+      code: 'AMOUNT_OUT_OF_RANGE',
+      minCents: 50,
+      maxCents: 100_000,
+    });
   });
 
   it('accepts both bounds of the range', async () => {

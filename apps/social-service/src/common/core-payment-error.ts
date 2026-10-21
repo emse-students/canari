@@ -4,6 +4,22 @@ import { describeHttpError } from './http-error-log';
 /** Mirrors core-service's `PAYMENT_PROVIDER_REFUSED` (`lydia-payment-provider.ts`): the body `code` of a refusal. */
 export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
 
+/**
+ * The body `code` of a refusal because the amount is outside what can be paid: the platform's
+ * provider range (answered by core-service, same constant there) or a product's own bounds. Carries
+ * `minCents` and `maxCents` (`null` = unbounded) so the UI words the allowed range itself.
+ */
+export const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
+
+/** The typed 400 for an amount outside `[minCents, maxCents]` (`null` max = no upper bound). */
+export function amountOutOfRange(
+  minCents: number,
+  maxCents: number | null,
+  message: string
+): BadRequestException {
+  return new BadRequestException({ code: AMOUNT_OUT_OF_RANGE, message, minCents, maxCents });
+}
+
 /** Minimal logger surface, so a service passes its own `Logger` and the log carries ITS context. */
 interface WarnLogger {
   warn(message: string): void;
@@ -38,6 +54,18 @@ export function mapCorePaymentError(err: unknown, logger: WarnLogger, what: stri
     answer?.data && typeof answer.data === 'object' ? (answer.data as Record<string, unknown>) : {};
   const message = typeof body.message === 'string' && body.message.trim() ? body.message : null;
 
+  if (
+    status === 400 &&
+    message &&
+    body.code === AMOUNT_OUT_OF_RANGE &&
+    typeof body.minCents === 'number' &&
+    typeof body.maxCents === 'number'
+  ) {
+    logger.warn(
+      `[${what}] payment provider refused the amount (allowed ${body.minCents}-${body.maxCents} cents): ${describeHttpError(err)}`
+    );
+    return amountOutOfRange(body.minCents, body.maxCents, message);
+  }
   if (status !== null && status >= 400 && status < 500 && message) {
     logger.warn(`[${what}] payment provider answered ${status}: ${describeHttpError(err)}`);
     return new BadRequestException(

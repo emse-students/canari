@@ -204,6 +204,63 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     expect(result.amountCents).toBe(1000);
   });
 
+  describe('a free amount outside the product bounds', () => {
+    const bounded = () =>
+      product({
+        amountCents: null,
+        allowCustomAmount: true,
+        customAmountMinCents: 100,
+        customAmountMaxCents: 5000,
+      });
+
+    it('is refused with the typed code, both bounds, and a log line at the decision', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(bounded());
+      const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const err = await (service as any)
+        .resolvePurchase('asso1', 'prod1', 'user1', 6000)
+        .catch((e: unknown) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: 'AMOUNT_OUT_OF_RANGE',
+        minCents: 100,
+        maxCents: 5000,
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('amount=6000'));
+    });
+
+    it('CONTROL: an amount inside the bounds is accepted and logs no refusal', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(bounded());
+      const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1', 3000);
+      expect(result.amountCents).toBe(3000);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('an unbounded maximum answers maxCents null', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({
+          amountCents: null,
+          allowCustomAmount: true,
+          customAmountMinCents: 100,
+          customAmountMaxCents: null,
+        })
+      );
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      const err = await (service as any)
+        .resolvePurchase('asso1', 'prod1', 'user1', 50)
+        .catch((e: unknown) => e);
+      expect(err.getResponse()).toMatchObject({ minCents: 100, maxCents: null });
+    });
+  });
+
   it('derives the dated cotisation tag for member pricing/gating checks', async () => {
     const { service, productRepo, assoRepo, userTagService } = makeService();
     assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: 'dated' }));
