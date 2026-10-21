@@ -1141,3 +1141,96 @@ Cellular and campus Wi-Fi stay owed: no SIM on the bench.
   about the missing secret. Whether that secret exists NOW is not knowable from the repo.
 - **One list of "calls readings"** does not exist: they are spread over CALL-L1, calls B8-B13 and the backlog, which is why
   this section exists.
+
+## 2026-10-21 - `v1.3.1-alpha.5` - push banners
+
+This complements the stable-gate section above, whose smoke left "the push banner not read". Same builds and
+accounts: the Mi 9T as `delta`, the iPhone 12 as `gamma`. The peer was the rig's W2 desktop Chrome on dev, and the
+two phones sent to each other.
+
+**Dev cannot send a push, so the code this stable changes cannot be read on dev.**
+
+- `serve-dev.yml` passes `DEV_FIREBASE_SERVICE_ACCOUNT_JSON`, and that secret exists in neither the repository nor
+  the `development` environment. Adding it is the owner item in [backlog](backlog.md) ("set the
+  `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret").
+- The stable's native change, `push_text.rs` and `proto_fields.rs` (#2112, WP-RC-7), is called only by the FCM
+  service and the iOS NSE.
+- So no banner for an app that is backgrounded or killed can appear on dev, on either phone. What dev CAN show is
+  the in-app path: the WebSocket, and the app raising a local notification itself.
+
+| Item | Mi 9T | iPhone 12 |
+| --- | --- | --- |
+| App backgrounded, screen off or locked, a DM arrives | **`NOT-OBSERVABLE` on dev.** On HOME the app logs `[WS] Paused - disconnect sent, socket released until the next foreground`, and no notification follows. | **`NOT-OBSERVABLE` on dev.** After the app went to state 2, nothing about a push appears in the syslog: no `apsd` delivery, no NSE line. |
+| Foreground again, the message is there | **`PASS`.** `[PENDING] Fetched 1 pending messages`, then decrypted and added to the conversation. | **`PASS`.** The message is in the DM after launch. |
+| A DM while the app is open elsewhere (the feed) | **`PASS`.** `[NOTIF] Inbound ... while the app is open on /posts showing the list - asking`, then `Raised ... by the native builder`. The notification sits on `canari_messages_v2`, titled with the sender and carrying the text, with the Répondre and Marquer comme lu actions. | **`PASS`.** The iOS banner shows the sender and the text in the foreground (`willPresentNotification delivery succeeded`). |
+| Tapping that notification opens the conversation | **`PASS`.** `[notifNav] routing to /chat for pending conversation <the DM>`, and the DM opens. | **`PASS`.** `UNNotificationDefaultActionIdentifier`, and the DM with `delta` opens. |
+| A reaction to your own message | **`NOT-OBSERVABLE` on dev.** The reaction frame was processed, and the in-app path raised nothing. That is by construction: `canari_reactions_v2` is posted only by `CanariFirebaseMessagingService`. | not read |
+| A group or community message | none: the reset seed has no community | none |
+
+**Logs.** No line from app code reached warning or error, with one exception:
+
+- **Mi 9T, one warning:** `[WS] pauseSocket: native disconnect failed: Trying to work with closed connection`.
+  - It came when the notification shade sent the app to the background on the tap. The socket was already closed, so
+    a log warning was raised over an outcome that changed nothing.
+  - It is **P3 noise**, under the rule that a line is expected AND necessary or is fixed.
+- **Mi 9T, platform lines.** Codec2 and MediaCodec lines came from the feed's video decoder.
+- **Mi 9T, 26 camera warnings at 08:53:20.** `Handler ... on a dead thread` came from `CameraCaptureSessionImpl.finalize`.
+  - A camera session from the earlier camera-swipe work was not closed: the garbage collector finalized it when the app
+    was backgrounded.
+  - It is filed in Found on the way below.
+- **iPhone:** only WebKit sandbox lines, media-timebase lines and UIKit keyboard lines.
+
+**PASS for what dev can carry; the FCM banner itself is owed.** That means the background banners on both phones, the reaction notification and the
+reel text. They need production, or dev given its Firebase secret.
+
+### What the unread code risks
+
+`git diff v1.3.0 v1.3.1-alpha.5 -- frontend/src-tauri/src/mobile` touches ONE branch: a `MediaMsg`.
+
+- **What `reel` decides.** `reel` is `kind == video && intent (field 14) == 1`. When it is false, the text, the
+  `mediaKind` and `thumbnail_readable` all compute exactly as `v1.3.0` did. Only the debug line's wording changed. So
+  every message kind that already existed - text, reply, photo, video, voice note, audio, attachment, poll, reaction,
+  system events - is unchanged.
+- **What the tests cover.**
+  - `a_reel_message_is_announced_as_a_canareel_and_never_hands_over_its_key`, `a_reel_caption_follows_the_announcement`,
+    `a_single_block_reel_still_withholds_its_key` and `only_a_video_declaring_reel_message_is_a_reel` cover the new
+    branch: no caption, a caption, an empty caption, an unknown intent, no intent, and a photo that declares the intent.
+  - `every_sentence_is_written_in_both_languages` covers the two new sentences.
+  - They build the bytes by field number, and those numbers match `libs/proto/canari.proto` (`caption = 8`,
+    `encoding = 12`, `intent = 14`, `MEDIA_INTENT_REEL_MESSAGE = 1`).
+  - The tests ran green in "Test Rust (Frontend Native (Tauri))", CI run 39247158171 on #2112's merge commit, 139
+    passed. They could not be re-run here: this box's shared `target/` points at a deleted worktree.
+- **Not covered.**
+  - No test feeds bytes written by the TypeScript encoder to the Rust reader. `codec.reelMessage.test.ts` proves the
+    writer's half on its own.
+  - The Kotlin and Objective-C callers pass `mediaKind: "reel"` through. Their only test of it is `!= "image"`, so a
+    reel never gets a thumbnail. That rule is read in the code and was never seen on a device.
+- **Where reels can come from.** At `v1.3.1-alpha.5` no shipped client CREATES a reel message: the in-chat camera
+  takes photos only until RC-3..RC-5 ([reels-in-chat](frontend/modules/reels-in-chat.md)), and `intent` is only
+  carried through on decode and on forward. So the new branch has no traffic to meet in production.
+
+**Risk: low.** The changed path is unreachable by shipped writers, and for every existing kind it is identical to
+`v1.3.0`, which already passed on the FCM path. An FCM banner read on production after the release is enough.
+
+### Incident: a dev PIN reset on `gamma`
+
+To unlock the rig's W2 Chrome profile on dev, the product's "PIN oublié > Réinitialiser" was used, as the
+stable-gate reading had done on the phones. **W2's dev profile (rig account key `third`) IS `gamma`, the iPhone's
+account.**
+
+- **What the server reset did.** `pin-reset` purges every device of the account (`security.controller.ts`
+  `resetPin`), the iPhone's key packages and push token included.
+- **How the iPhone came back.** Its local state was then sealed under a PIN the server no longer knew, so the iPhone
+  went through the same reset. W2 was purged in turn.
+- **The state afterwards.** The iPhone rejoined by an external commit, and `delta` answered its history request with 6
+  messages. Dev only, a test account, nothing lost that mattered.
+- **Rig lesson.** Before resetting a PIN, read which account the profile holds: the avatar label next to "Accéder au
+  profil". A reset on one device signs out the account's other devices.
+
+### Found on the way
+
+| Id | What | Evidence |
+| --- | --- | --- |
+| PAUSE-WARN | `[WS] pauseSocket: native disconnect failed: Trying to work with closed connection` logged as a warning for a socket that was already closed (P3 noise) | Mi 9T console 08:57:14.173 |
+| CAMERA-LEAK | 26 `W/MessageQueue ... Handler on a dead thread` from `CameraCaptureSessionImpl.finalize` at 08:53:20, when the app was backgrounded: a camera capture session left for the garbage collector instead of being closed. The camera was last used by the camera-swipe session before this reading, so the source is not separated | Mi 9T logcat, pid 32161 |
+| (rig) shade tap = background | Opening the shade to tap a notification backgrounds the app, so its pause/resume runs once per tap. Expected, but it explains PAUSE-WARN | Mi 9T console 08:57:14 |
