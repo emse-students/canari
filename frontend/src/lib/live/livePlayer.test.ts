@@ -305,6 +305,17 @@ describe('the join', () => {
     expect(deps.fetchManifest).toHaveBeenCalledTimes(3);
   });
 
+  it('a failed poll hands the screen NO count, never the last one', async () => {
+    live.viewers = 4;
+    await joined(3);
+    expect(viewerCounts).toEqual([4]);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    live.manifestErrors.push(refusal('seats-unavailable'));
+    await tickTimer();
+    expect(kinds().at(-1)).toBe('reconnecting');
+    expect(viewerCounts.at(-1)).toBeNull();
+  });
+
   it('joining after a re-acquire takes the newest segment OWN init, never segment 0', async () => {
     live.reacquiredAt = 2;
     await joined(4); // 0, 1 on the first camera; 2, 3 on the second

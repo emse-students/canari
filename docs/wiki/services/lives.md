@@ -321,7 +321,9 @@ the first public live** (not a change: a question).
 ## The viewer count (2026-10-21)
 
 **The owner's decision (2026-10-21): the viewers of a live see HOW MANY watch it, like Instagram,
-and so does its broadcaster.** Before it, nobody saw a number and the broadcaster had no list
+and so does its broadcaster.** That the number is EXACT is not part of that answer - it is the
+implementer's choice ([below](#exact-not-rounded---the-implementers-choice-owed-the-owners-confirmation)),
+owed the owner's explicit confirmation. Before it, nobody saw a number and the broadcaster had no list
 either: no route answers viewer ids (the broadcaster learns an account id only from a chat line's
 author, which is how a removal names one). That stays true - **a COUNT, never an identity and never a
 list, to anybody: the broadcaster, a viewer, staff.**
@@ -329,7 +331,11 @@ list, to anybody: the broadcaster, a viewer, staff.**
 **A viewer is a SEAT** - an account holding one on this live (above): taken by the key read, renewed
 by every manifest poll, gone on `DELETE .../seat`, a removal, the live's end, or 30 s without a poll.
 So the count is accounts, not devices (a seat is the account's), the broadcaster is never counted (it
-takes none), and the caller is counted in its own answer. **No second tracker and no new state**: the
+takes none), and the caller is counted in its own answer. **A blocked account is counted**: a block
+between the broadcaster and a member keeps that member from watching (no seat, so not counted), but a
+block between two VIEWERS hides neither from the other's count - the same stance as online presence,
+which a block does not hide either (register C18, [moderation-and-blocking](../moderation-and-blocking.md#what-a-block-does-not-do)).
+A number names nobody, so there is nothing for a block to withhold. **No second tracker and no new state**: the
 count is read from `live:seats`, in Redis, by the scripts of `live-seats.ts`:
 
 - **a viewer's poll**: `TAKE_SEAT_LUA` answers `{1, seated, watching}`, `watching` counted in the
@@ -337,7 +343,8 @@ count is read from `live:seats`, in Redis, by the scripts of `live-seats.ts`:
   gone from it before it is counted;
 - **the broadcaster's poll** (its chat loop, `chat=1`, the one request it already makes):
   `COUNT_LIVE_SEATS_LUA`, read-only, the seats renewed within the lease on Redis's clock - exactly
-  the ones the next sweep keeps.
+  the ones the next sweep keeps. Its KEY read (`GET /:id`, on a return from the background) shows no
+  count and runs none (`viewerCount` is asked by the manifest only).
 
 **The members are read INSIDE the script** and only a number leaves Redis, so no viewer's id reaches
 social-service for this, let alone a response. `lives.integration.spec.ts` asserts that neither a
@@ -358,14 +365,19 @@ a display number must not take down: `watching` answers `null`, logged as an `er
 ... the viewer count did not answer`), and the screen shows no number. Every viewer's poll is failing
 on the same outage at that moment, so the line is not alone.
 
-**EXACT, NOT ROUNDED - a deliberate choice, the owner's.** The plan had proposed a rounded count for
+### Exact, not rounded - the implementer's choice, owed the owner's confirmation
+
+**The owner answered one question - viewers see the count. Exactness is the implementer's reading
+of "like Instagram", NOT an owner decision, and it is owed the owner's explicit confirmation**
+(asked 2026-10-21). The plan had proposed a rounded count for
 viewers. With at most 24 seats an exact small number can tell someone who already suspects it that a
 particular person just arrived (the count went from 3 to 4 when a friend said "I'm opening it"). Rounding
 was weighed and refused: at this size any bucket wide enough to hide one arrival (say 1-5, 6-10)
 makes the number useless as "how many are here", and it only moves the tell to the bucket's edge. The
 count carries no identity, the chat already shows its writers' names to the same audience, and an
-arrival is otherwise invisible. So the owner's "like Instagram" is taken literally: the exact number,
-to the broadcaster and the viewers alike, with no asymmetry between them.
+arrival is otherwise invisible. So "like Instagram" was taken literally: the exact number, to the
+broadcaster and the viewers alike, with no asymmetry between them. If the owner wants rounding, it is
+one function on the client (`liveViewerCount`) or the server (the manifest's `viewers`).
 
 ## The key (Q4): served like a post CEK, removal enforced by the server
 

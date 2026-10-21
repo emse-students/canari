@@ -125,7 +125,10 @@ export interface LivePlayerOptions {
   onState(state: LiveViewerState): void;
   /** Told the live's age at each manifest (the database's clock on both ends), in ms. */
   onElapsed?(ms: number): void;
-  /** Told the manifest's viewer count at each poll (`null`: none to show). A number, never a name. */
+  /**
+   * Told the manifest's viewer count at each poll, and `null` on every failed step (none to show:
+   * a number on screen is always the last answered poll's). A number, never a name.
+   */
   onViewers?(count: number | null): void;
   /**
    * The live chat (WP-L6), riding THIS poll: asked for its cursors before each manifest request and
@@ -427,6 +430,8 @@ export class LivePlayer {
   /** Every failure of a step, decided once: stop on a state, or retry `step` after a backoff. */
   private fail(gen: number, error: unknown, step: (gen: number) => Promise<void>): void {
     if (!this.alive(gen)) return;
+    // No stale count: until a poll answers again, the last number is no longer known to be true.
+    this.opts.onViewers?.(null);
     const outcome =
       error instanceof StopOn
         ? { stop: error.state }

@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import LiveBroadcaster from './LiveBroadcaster.svelte';
 import LiveOverlay from './LiveOverlay.svelte';
+import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { LiveBroadcast } from '$lib/live/liveBroadcast.svelte';
 import { fakeCamera, fakeDeps } from '$lib/live/liveBroadcast.test-helper';
 import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -425,6 +427,47 @@ describe('LiveOverlay', () => {
       expect(q('[data-live-viewer-count]')?.getAttribute('data-live-viewer-count')).toBe('4')
     );
     expect(q('[data-live-viewer-count]')?.textContent).toContain(m.live_viewer_count({ count: 4 }));
+  });
+
+  it('a failed chat poll takes the count off the screen rather than leaving a stale one', async () => {
+    vi.mocked(liveApi.fetchLiveManifest)
+      .mockResolvedValueOnce({ ...chatManifest([]), viewers: 4 })
+      .mockRejectedValue(new TransportFailureError('offline'));
+    screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    await vi.waitFor(() => expect(q('[data-live-viewer-count]')).not.toBeNull());
+    // The next tick (one second on) fails: no number until a poll answers again.
+    await vi.waitFor(() => expect(q('[data-live-viewer-count]')).toBeNull(), { timeout: 3000 });
+  });
+
+  it('off air, the count goes with the live', async () => {
+    vi.mocked(liveApi.fetchLiveManifest).mockResolvedValue({ ...chatManifest([]), viewers: 2 });
+    screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    await vi.waitFor(() => expect(q('[data-live-viewer-count]')).not.toBeNull());
+    q<HTMLButtonElement>('[data-live-end]')!.click();
+    await settle();
+    expect(q('[data-live-ended]')).not.toBeNull();
+    expect(q('[data-live-viewer-count]')).toBeNull();
+  });
+
+  it("the chat gives its count back when it goes - a new live never opens on the last one's audience", async () => {
+    vi.mocked(liveApi.fetchLiveManifest).mockResolvedValue({ ...chatManifest([]), viewers: 6 });
+    const counts: (number | null)[] = [];
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const chat = mount(LiveBroadcasterChat, {
+      target,
+      props: { liveId: LIVE_ID, keyHex: KEY, onViewers: (c: number | null) => counts.push(c) },
+    });
+    await vi.waitFor(() => expect(counts).toEqual([6]));
+    // The screen keys this component on the live id: a new live unmounts it first.
+    unmount(chat);
+    expect(counts).toEqual([6, null]);
   });
 
   it("the chat's 410 with endReason 'cut' shows the broadcaster's cut screen", async () => {

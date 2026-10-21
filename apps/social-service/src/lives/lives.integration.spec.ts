@@ -174,10 +174,18 @@ class MemorySeats {
       throw new ServiceUnavailableException({ code: 'LIVE_FULL', viewerCap: this.cap });
     }
     this.held.add(member);
-    return (await this.watching(liveId)) ?? 0;
+    return this.count(liveId);
   }
 
+  /** How many times the broadcaster's read-only count was asked. */
+  watchingCalls = 0;
+
   async watching(liveId: string): Promise<number | null> {
+    this.watchingCalls++;
+    return this.count(liveId);
+  }
+
+  private count(liveId: string): number {
     const prefix = seatMember(liveId, '');
     return [...this.held].filter((m) => m.startsWith(prefix)).length;
   }
@@ -507,9 +515,14 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
       expect(bobs.viewers).toBe(1);
       await lives.get(CAROL, live.id);
       expect((await lives.manifest(CAROL, live.id)).viewers).toBe(2);
-      // The broadcaster reads the same number without taking a seat.
+      // The broadcaster's KEY read (a return from the background) shows no count, so runs none.
+      seats.watchingCalls = 0;
+      await lives.get(ALICE, live.id);
+      expect(seats.watchingCalls).toBe(0);
+      // Its manifest reads the same number as the viewers', without taking a seat.
       const alices = await lives.manifest(ALICE, live.id);
       expect(alices.viewers).toBe(2);
+      expect(seats.watchingCalls).toBe(1);
       expect(seats.held.size).toBe(2);
       // NO IDENTITY IN THE ANSWER: no viewer's id anywhere in what the broadcaster or a viewer reads.
       expect(JSON.stringify(bobs)).not.toContain(CAROL);

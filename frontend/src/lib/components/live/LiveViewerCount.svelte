@@ -23,7 +23,6 @@
 {#if count !== null}
   <span
     class="bg-cn-scrim/40 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
-    title={m.live_viewer_count({ count })}
     aria-live="off"
     data-live-viewer-count={count}
   >

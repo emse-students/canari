@@ -29,7 +29,10 @@
     keyHex: string;
     /** Told when the server says the live is over, with its verdict (`endReason` in the body). */
     onEnded?: (verdict: LiveRefusalError) => void;
-    /** Told the live's viewer count at each poll of this loop (`null`: none to show). */
+    /**
+     * Told the live's viewer count at each poll of this loop, `null` on a failed poll and when this
+     * component goes (off air, or a new live): none to show, never a stale or another live's number.
+     */
     onViewers?: (count: number | null) => void;
     /** Replace the outside world - for tests. */
     chatDeps?: Partial<LiveChatDeps>;
@@ -93,6 +96,9 @@
       poller.stop();
       s.stop();
       session = null;
+      // The count was THIS live's while on air: off air, or remounted for a new live (the screen
+      // keys this component on the live id), the screen must not keep it.
+      onViewers?.(null);
     };
   });
 

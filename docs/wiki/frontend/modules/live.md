@@ -211,7 +211,9 @@ because the manifest is per-viewer by design (the segment names are the capabili
 The seat sorted set (`live:seats`, one Lua script a poll) already knows who is watching within the
 30 s lease. Uncapped, the grant stops refusing and the set only COUNTS: `ZCARD` per live (one set per
 live then, since the count walks the shared set today), shown to the broadcaster and to viewers -
-**decided 2026-10-21: viewers see it, EXACT, not rounded** ([the viewer count](#the-viewer-count-2026-10-21)). It stays
+**the owner decided 2026-10-21 that viewers see it; that it is EXACT, not rounded, is the
+implementer's choice from the "like Instagram" reference, owed the owner's explicit confirmation**
+([the viewer count](#the-viewer-count-2026-10-21)). It stays
 the removal point (a removed viewer's seat is freed and its key refused) and the load figure the
 bitrate choice of D2 reads. A seat renewed every poll is N Redis scripts a second: renew once per
 lease interval, as the gate-on-a-lease change above does. `LIVE_FULL`, its screen and
@@ -761,8 +763,10 @@ Built for the owner decisions of 2026-10-20 ([lives](../../services/lives.md#dec
 ## The viewer count (2026-10-21)
 
 **The owner decided (2026-10-21): viewers see HOW MANY watch a live, like Instagram, and so does the
-broadcaster - a count, never a name or a list, to anybody.** The server side (what a viewer is, why
-the number is EXACT and not rounded, what happens when Redis does not answer) is
+broadcaster - a count, never a name or a list, to anybody.** That the number is EXACT, not rounded,
+is the implementer's choice from the "like Instagram" reference, **owed the owner's explicit
+confirmation**. The server side (what a viewer is, blocked accounts counted, the reasoning on
+exactness, what happens when Redis does not answer) is
 [lives](../../services/lives.md#the-viewer-count-2026-10-21), the only copy. Dev builds only, behind
 `LIVE_ENABLED`, like the rest of the live.
 
@@ -772,6 +776,10 @@ the number is EXACT and not rounded, what happens when Redis does not answer) is
   argument. `liveViewerCount` (`lib/live/liveViewerCount.ts`) is the one reader: a non-negative
   integer, or `null` - absent (a server older than the field) silently, anything else malformed with
   a `warn`.
+- **No stale number.** A failed poll hands `null` too - the viewer's player on every failed poll
+  (the reconnecting state), the broadcaster's loop on every failed tick - so a number on screen is
+  always the last poll's. The broadcaster's screen also drops it when it goes off air and when a
+  NEW live starts, so a second live never opens on the first one's audience.
 - **`LiveViewerCount.svelte`**: an `Eye` and the number in a `cn-scrim` pill, in the viewer's top bar
   after the time on air (not on a final screen) and under the broadcaster's ON AIR badge. `null`
   draws nothing, never a placeholder. The number is `aria-hidden`; a screen reader reads
@@ -780,5 +788,6 @@ the number is EXACT and not rounded, what happens when Redis does not answer) is
   which also mutes it inside the broadcaster's `role="status"` row).
 - **Tests**: `liveViewerCount.test.ts` (the reader, both languages' plurals), `livePlayer.test.ts`
   and `liveChat.test.ts` (the count from each manifest, no extra fetch), `LiveViewer.svelte.test.ts`
-  and `LiveBroadcaster.svelte.test.ts` (drawn, updated, hidden on `null` and on the end screen).
+  and `LiveBroadcaster.svelte.test.ts` (drawn, updated, hidden on `null`, on a failed poll, on the
+  end screen, and reset for a new live).
 - **Owed on hardware**: one look on both phones at the pill next to the badge (check Y's run).

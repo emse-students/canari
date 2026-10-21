@@ -69,7 +69,11 @@
   let batteryLevel = $state<number | null>(null);
   /** Re-read every second on air, only to redraw the elapsed time. */
   let elapsedMs = $state(0);
-  /** How many watch, from the chat loop's poll - a number, never who (null: nothing to show). */
+  /**
+   * How many watch, from the chat loop's poll - a number, never who (null: nothing to show). The
+   * chat sets it back to null on a failed poll and when it unmounts (off air, or keyed anew for a
+   * new live), so no live opens on the previous one's audience.
+   */
   let viewers = $state<number | null>(null);
   let ticker: ReturnType<typeof setInterval> | null = null;
   let frameReady = $state(false);

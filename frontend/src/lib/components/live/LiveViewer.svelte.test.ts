@@ -225,6 +225,22 @@ describe('LiveViewer', () => {
     expect(count()).toBeNull();
   });
 
+  it('a failed poll (reconnecting) takes the count off the screen, and the next answer brings it back', async () => {
+    await render();
+    expect(document.querySelector('[data-live-viewer-count]')).not.toBeNull();
+    manifestErrors.push(refusal('seats-unavailable', 503));
+    timers.shift()!();
+    await settle();
+    expect(stateOf()).toBe('reconnecting');
+    expect(document.querySelector('[data-live-viewer-count]')).toBeNull();
+    viewerCount = 3;
+    timers.shift()!();
+    await settle();
+    expect(
+      document.querySelector('[data-live-viewer-count]')?.getAttribute('data-live-viewer-count')
+    ).toBe('3');
+  });
+
   it('draws no count on the end screen', async () => {
     await render();
     expect(document.querySelector('[data-live-viewer-count]')).not.toBeNull();

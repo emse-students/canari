@@ -432,13 +432,23 @@ describe("the broadcaster's chat loop", () => {
       undefined,
       (count) => counts.push(count)
     );
-    manifests.push(manifest(block([], 0), 3), manifest(block([], 0), null));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    manifests.push(
+      manifest(block([], 0), 3),
+      manifest(block([], 0), null),
+      manifest(block([], 0), 5),
+      new TransportFailureError('offline')
+    );
     poller.start();
     await vi.waitFor(() => expect(timers).toHaveLength(1));
     await runTimer();
-    expect(counts).toEqual([3, null]);
+    await runTimer();
+    // A failed tick drops the number rather than leaving the last one on screen.
+    await runTimer();
+    expect(counts).toEqual([3, null, 5, null]);
     // One request a tick: the count costs no fetch of its own.
-    expect(fetchManifest).toHaveBeenCalledTimes(2);
+    expect(fetchManifest).toHaveBeenCalledTimes(4);
+    warn.mockRestore();
     poller.stop();
   });
 });
