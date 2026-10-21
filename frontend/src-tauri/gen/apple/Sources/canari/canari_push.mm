@@ -2683,9 +2683,9 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
 // `read_and_clear_pending_call_accept` Tauri command) and the CallKit session is closed as soon as
 // the app becomes active - the in-app call UI takes over from there.
 
-/// Mirrors CALLS_COMPILED in frontend/src/lib/features.ts (callsCompiled.test.ts asserts it),
-/// which holds calling as the store binaries carry it off until it has been run on hardware
-/// (rung 15 CALL / CALL-13). It is duplicated rather than read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
+/// Mirrors CALLS_NATIVE_RING_COMPILED in frontend/src/lib/features.ts (CALLS_COMPILED until
+/// 2026-10-21; callsCompiled.test.ts asserts it), which holds the native ring - PushKit and CallKit -
+/// off until it has been run on hardware (WP-C6, K6/K7/K8). It is duplicated rather than read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
 /// at process start, and there is nothing to ask. The two must be flipped in the same commit,
 /// together with the `voip` UIBackgroundModes entry that Info.plist no longer carries: without that
 /// entry PKPushRegistry can never obtain a token, so installing it here would be a permanent

@@ -66,8 +66,8 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
     expect(manifest).toMatch(/android:name=["']\.CanariNotificationActionReceiver["']/);
   });
 
-  // The calls switches (USE_FULL_SCREEN_INTENT, the Kotlin CALLS_ENABLED, the ring channels)
-  // are asserted against CALLS_COMPILED in callsCompiled.test.ts, with their three iOS twins.
+  // The native ring's switches (USE_FULL_SCREEN_INTENT, the Kotlin CALLS_ENABLED) are asserted
+  // against CALLS_NATIVE_RING_COMPILED in callsCompiled.test.ts, with their iOS twins.
 
   it('does not reintroduce android:debuggable with placeholder (breaks release merge)', () => {
     // build.gradle.kts does not define manifestPlaceholders["debuggable"] -> an

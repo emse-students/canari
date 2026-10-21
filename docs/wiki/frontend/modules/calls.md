@@ -335,7 +335,8 @@ Nothing in this lot needs the DSI.
 
 | Constant | Value | Holds |
 |---|---|---|
-| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `audio` (since 2026-10-20), `USE_FULL_SCREEN_INTENT`. Once it flips, the committed plist carries `audio` and `ios.yml`'s pre-release patch finds it there and adds nothing (it is idempotent; it can then be deleted). Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all six switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
+| `CALLS_COMPILED` | `false` | the store binaries' calling WITHOUT the native ring (since 2026-10-21, B2'): in-app calls, `audio` (since 2026-10-20), the microphone purpose strings, the Android microphone foreground service. Once it flips, the committed plist carries `audio` and `ios.yml`'s pre-release patch finds it there and adds nothing (it is idempotent; it can then be deleted). `callsCompiled.test.ts` asserts its switches agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)) |
+| `CALLS_NATIVE_RING_COMPILED` | `false` | the NATIVE RING of an app closed or in the background (since 2026-10-21, B2'): `voip`, `USE_FULL_SCREEN_INTENT`, the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`. The owner's decision of 2026-10-21 ships the first production calls WITHOUT it; it turns on with WP-C5 + WP-C6 and their K6/K7/K8 readings, and never while `CALLS_COMPILED` is off (asserted) |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
 | `CALLS_VIDEO_ENABLED` | `deployEnvironment() === 'development'` (since 2026-10-21; `CALLS_ENABLED` from 2026-10-20) | the video-call button and the camera controls; dev builds only, and it does NOT follow `CALLS_COMPILED`: the first production calls are audio only ([the audio enablement](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
 
@@ -346,7 +347,7 @@ call; production web and stable apps do not.** A local workstation build sets no
 `VITE_DEPLOY_ENVIRONMENT=development` in `frontend/.env` to call locally (it also raises the banner).
 
 **The flow.** Ring and hangup are unchanged (MLS `call_invite` / `call_answered` / `call_hangup`,
-silent, over the chat socket - so an OPEN app rings; a killed one does not, that is `CALLS_COMPILED`).
+silent, over the chat socket - so an OPEN app rings; a killed one does not, that is `CALLS_NATIVE_RING_COMPILED`).
 Then, on each side:
 
 0. `POST /api/calls/initiate` binds the new room id to its group in Redis (`call:room:<id>`, TTL =
@@ -878,6 +879,15 @@ was sent with no AAD under one key until then. Both ends need this build; calls 
 only, so no shim exists ([legacy-compatibility](../../legacy-compatibility.md#nothing-to-remove---a-call-media-frame-is-v2-only-2026-10-21)).
 
 ## The switches agree, and a silent frame stays unread
+
+**Two facts since 2026-10-21 (B2').** The owner decided that the first production calls ship
+without the native ring, so `callsCompiled.test.ts` now reads TWO constants: the ring's four
+switches (the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`, `voip`,
+`USE_FULL_SCREEN_INTENT`) agree with `CALLS_NATIVE_RING_COMPILED`; `audio` and the microphone purpose
+strings agree with `CALLS_COMPILED`; and the ring is never on while `CALLS_COMPILED` is off. Nothing
+flipped: every value was `false` / absent and stays so. What the iPhone without a VoIP token is sent
+for a ring (an FCM ALERT titled with the caller's name, `ringViaFcm`) is unchanged and is the owner's
+call with the audio enablement. The paragraph below is the 2026-10-18 shape.
 
 **One test, one fact (2026-10-18).** `frontend/src/lib/mobile/callsCompiled.test.ts` reads
 `CALLS_COMPILED` from `features.ts` and asserts that the other switches of the table at the top

@@ -36,9 +36,17 @@ describe('CALLS_ENABLED', () => {
   });
 
   it('leaves the native ring off whatever the build', async () => {
+    // B2' (owner, 2026-10-21): the native ring is its own fact, and the first production calls ship
+    // without it - so it stays off even on the day CALLS_COMPILED flips.
     vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
     const f = await load();
-    expect(f.CALLS_COMPILED).toBe(false);
+    expect(f.CALLS_NATIVE_RING_COMPILED).toBe(false);
+  });
+
+  it('keeps the store binaries without calls until the flip commit', async () => {
+    // The flip rewrites this case, and only this one: CALLS_COMPILED moves alone (calls.md).
+    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
+    expect((await load()).CALLS_COMPILED).toBe(false);
   });
 
   it('carries video on a dev build, never production (lot 2)', async () => {

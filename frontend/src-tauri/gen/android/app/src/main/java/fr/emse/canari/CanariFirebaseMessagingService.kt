@@ -160,13 +160,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val EXTRA_CALL_ID       = "callId"
 
         /**
-         * Mirrors CALLS_COMPILED in frontend/src/lib/features.ts - calling as the store binaries
-         * carry it, held off until it has been run on hardware (rung 15 CALL / CALL-13). Duplicated
+         * Mirrors CALLS_NATIVE_RING_COMPILED in frontend/src/lib/features.ts (CALLS_COMPILED until
+         * 2026-10-21) - the native ring as the store binaries carry it, held off until it has been
+         * run on hardware (WP-C5, K6/K7/K8). Duplicated
          * rather than read from the webview because this service handles pushes while no webview
          * exists. Flip both in the same commit, and restore USE_FULL_SCREEN_INTENT in
          * AndroidManifest.xml with them - Play gates that permission on the app being a calling
          * app, exactly as App Review gates the iOS `voip` background mode.
-         * `callsCompiled.test.ts` fails if any of the five switches disagrees with features.ts.
+         * `callsCompiled.test.ts` fails if any of the four ring switches disagrees with features.ts.
          *
          * It gates the native RING and nothing else. It used to decide whether a silent push was
          * decrypted at all - 10.7 s of Argon2 per frame on a Mi 9T (NOTIF-11, 2026-09-07) - so
