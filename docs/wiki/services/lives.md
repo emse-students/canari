@@ -27,6 +27,7 @@ media-service's answer (a 404, kept 10 s) (`live-enabled.guard.ts`, `isLiveEnabl
 production**, asserted on the rendered files by `deploy-env.test.sh`. The local compose defaults it
 to `true`. Three things run whatever it says, on purpose: the live sweep and the media purge and live-list routes, so
 a live started while the switch was on is still ended and deleted after it is turned off.
+What must be true before it turns on in production, and in what order: [live-production](../frontend/modules/live-production.md).
 
 ## The numbers, and where each is the ONE copy
 

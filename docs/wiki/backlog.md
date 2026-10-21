@@ -29,7 +29,7 @@ half, the shipped half is a pointer, never a retelling.
 
 ## P1 - Live moderation (WP-L8): the server half is BUILT, the client half is BUILT, the decisions of 2026-10-20 are taken and their server work is owed (2026-10-19)
 
-A RELEASE BLOCKER (D3): no stable carries lives before it. Built on the server, draft PR: a live is
+A RELEASE BLOCKER (D3): no stable carries lives before it. **The production gate list, the order of the switch and the viewer-cap steps: [live-production](frontend/modules/live-production.md)** (2026-10-21); the signing secrets of both estates are SET (2026-10-21). Built on the server, draft PR: a live is
 reported through `content_reports`, staff cut it (`POST /api/lives/:id/cut`, 410 `endReason: 'cut'`),
 the first-live rules acceptance is recorded and required ([lives](services/lives.md#moderation-wp-l8-server-half)).
 **Built 2026-10-19, dev builds, draft PR:** the viewer's and the broadcaster's cut screens, the
@@ -45,8 +45,7 @@ wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan
 **WP-L8b, server half BUILT 2026-10-21 (draft PR):** the strike ladder, the 90-day retention, the
 reported chat line (checked, signed, kept until handled and 90 days at most, the author's erasure
 included), the five reaction kinds and `LIVE_RULES_VERSION` 2 ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
-**Owed before it ships:** the GitHub secrets `LIVE_REPORT_SIGNING_KEY` and `DEV_LIVE_REPORT_SIGNING_KEY`
-(the user, one-off: REQUIRED in both estates, so a deploy is refused without them). **Owed, code:**
+**Owed, code:**
 (c) the client set of five kinds and (d) the rules sheet showing the posts' rules, both in #2170;
 the client half of the ladder (the three pushes - cut, suspension, withdrawal - and the two new bell
 rows are BUILT 2026-10-21, draft PR, owed a reading on both phones once a store build carries the
