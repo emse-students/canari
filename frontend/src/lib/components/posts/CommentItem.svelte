@@ -18,6 +18,7 @@
     ChevronUp,
     CornerDownRight,
     Flag,
+    Heart,
     Pencil,
     Send,
     Trash2,
@@ -95,6 +96,8 @@
   const authorName = $derived(commentAuthorName(comment));
   const authorHref = $derived(commentAuthorHref(comment));
   const isPending = $derived(pendingCommentIds?.has(comment.id) ?? false);
+  const liked = $derived(comment.likes?.includes(currentUserId) ?? false);
+  const likeCount = $derived(comment.likes?.length ?? 0);
   const isFocused = $derived(comment.id === focusCommentId);
   const replies = $derived(isReply ? [] : comments.filter((c) => c.parentId === comment.id));
 
@@ -160,13 +163,13 @@
 <div
   id={commentAnchorId(comment.id)}
   data-focused={isFocused || undefined}
-  class="flex scroll-mt-24 items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'} {isPending
+  class="flex scroll-mt-24 items-start gap-2.5 {isReply ? 'mt-3' : 'mt-5'} {isPending
     ? 'opacity-60'
     : ''}"
 >
   {#snippet avatar()}
     {#if kind === 'association' && comment.association}
-      <span class="block h-7 w-7">
+      <span class="block h-8 w-8">
         <AssociationAvatar
           fill
           shape="circle"
@@ -175,9 +178,9 @@
         />
       </span>
     {:else if kind === 'anonymous'}
-      <span class="block h-7 w-7"><AnonymousAvatar fill /></span>
+      <span class="block h-8 w-8"><AnonymousAvatar fill /></span>
     {:else if comment.userId}
-      <Avatar userId={comment.userId} size="sm" />
+      <span class="block h-8 w-8"><Avatar userId={comment.userId} fill /></span>
     {/if}
   {/snippet}
 
@@ -227,7 +230,7 @@
       <!-- The comment a notification tap opened the post at carries a ring: the bubble only, so
            a focused comment does not mark the replies drawn under it. -->
       <div
-        class="w-fit max-w-full rounded-2xl rounded-tl-sm border border-black/5 bg-black/5 px-3.5 py-2.5 shadow-sm dark:border-white/5 dark:bg-white/5 {isFocused
+        class="w-fit max-w-full rounded-3xl bg-black/5 px-3.5 py-2 dark:bg-white/10 {isFocused
           ? 'ring-2 ring-amber-500/60'
           : ''}"
       >
@@ -296,7 +299,7 @@
       </div>
     {/if}
 
-    <div class="mt-1 flex items-center gap-4 px-2">
+    <div class="mt-1 flex items-center gap-x-4 px-2">
       <span
         class="text-text-muted text-2xs font-bold opacity-80"
         title={exactDate(comment.createdAt)}
@@ -310,20 +313,6 @@
            act on it until it exists. `tap-target` gives each small control a 44px hit box on a touch
            screen without changing how it is drawn. -->
       {#if !isPending}
-        <button
-          type="button"
-          onclick={() => onLike(comment.id)}
-          class="tap-target text-2xs font-bold transition-colors outline-none focus-visible:underline {comment.likes?.includes(
-            currentUserId
-          )
-            ? 'text-red-500'
-            : 'text-text-muted hover:text-text-main'}"
-        >
-          {comment.likes?.length
-            ? m.post_likes_count_label({ count: comment.likes.length })
-            : m.post_like_label()}
-        </button>
-
         <button
           type="button"
           onclick={() => onReply(comment)}
@@ -363,6 +352,24 @@
             <Flag size={11} strokeWidth={2.5} />
           </button>
         {/if}
+
+        <!-- THE ONE LIKE CONTROL: a heart at the right end of the row, under the bubble, with the count
+             beside it when there is one. It is not a reaction chip laid over the bubble, and the count
+             is not said a second time anywhere else. -->
+        <button
+          type="button"
+          onclick={() => onLike(comment.id)}
+          aria-pressed={liked}
+          aria-label={likeCount > 0
+            ? m.post_likes_count_label({ count: likeCount })
+            : m.post_like_label()}
+          class="tap-target text-2xs ml-auto flex items-center gap-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {liked
+            ? 'text-red-500'
+            : 'text-text-muted hover:text-text-main'}"
+        >
+          <Heart size={15} strokeWidth={2.25} class={liked ? 'fill-current' : ''} />
+          {#if likeCount > 0}<span class="tabular-nums">{likeCount}</span>{/if}
+        </button>
       {/if}
     </div>
 
@@ -384,9 +391,7 @@
         </button>
       {/if}
       {#if showReplies}
-        <div
-          class="mt-1 ml-2 border-l-2 border-black/5 pl-3 sm:ml-3.5 sm:pl-4 dark:border-white/10"
-        >
+        <div class="mt-1 ml-1 pl-3">
           {#each replies as reply (reply.id)}
             <CommentItem
               comment={reply}
