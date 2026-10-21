@@ -33,6 +33,9 @@ export type PushContentKey =
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
   | 'social_live_started'
+  | 'social_live_cut'
+  | 'social_live_suspended'
+  | 'social_live_withdrawn'
   | 'form_opening_soon'
   | 'form_open'
   | 'event_proposed'
@@ -111,6 +114,8 @@ export type PushContent = {
    * - `social_reaction`: the reaction itself (an emoji)
    * - `social_association_post` / `social_followed_post`: the opening of the post's own text
    * - `social_live_started`: nothing, always empty
+   * - the three live moderation keys (`social_live_cut`, `_suspended`, `_withdrawn`): nothing, always
+   *   empty - the reason is a WORD, so it stays on the in-app row, which the client words
    * - the two form keys: nothing, always empty
    * - the five event keys: the event's own title, which is not translatable either
    */
@@ -577,5 +582,49 @@ export function liveStartedContent(broadcasterName: string, icon?: PushIcon): Pu
     arg: '',
     legacyTitle: `${broadcasterName} est en live`,
     legacyBody: 'Appuyez pour regarder',
+  };
+}
+
+/**
+ * THE THREE NOTICES A BROADCASTER GETS FROM THE STRIKE LADDER (WP-L8b, owner 2026-10-20): the 1st
+ * cut (a warning, the live stopped), a SUSPENSION of the right to broadcast (the 2nd cut and later),
+ * and its WITHDRAWAL by staff. Three keys and not one with a flag: the rung is a word (see the
+ * calendar answers above).
+ *
+ * FIXED SENTENCES, NO ACTOR, NO ICON. Which moderator acted is not the broadcaster's to read (the
+ * in-app row has no actor either), and the reason is a word the client translates on that row, so
+ * nothing variable travels. No icon: there is no person to show, and an empty user id would be a
+ * present key with nothing to fetch.
+ */
+export function liveCutContent(): PushContent {
+  return {
+    key: 'social_live_cut',
+    actorName: '',
+    arg: '',
+    legacyTitle: 'Votre live a été interrompu',
+    legacyBody: 'La modération a coupé votre live. Ceci est un avertissement.',
+  };
+}
+
+/** The 2nd cut on record (and later): broadcasting is suspended. See {@link liveCutContent}. */
+export function liveSuspendedContent(): PushContent {
+  return {
+    key: 'social_live_suspended',
+    actorName: '',
+    arg: '',
+    legacyTitle: 'Lives suspendus',
+    legacyBody:
+      'Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment.',
+  };
+}
+
+/** Staff withdrew the right to broadcast. See {@link liveCutContent}. */
+export function liveWithdrawnContent(): PushContent {
+  return {
+    key: 'social_live_withdrawn',
+    actorName: '',
+    arg: '',
+    legacyTitle: 'Droit de lancer un live retiré',
+    legacyBody: 'La modération vous a retiré le droit de lancer un live.',
   };
 }

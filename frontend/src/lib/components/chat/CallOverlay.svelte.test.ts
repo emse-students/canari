@@ -17,6 +17,37 @@ vi.mock('$lib/utils/userAvatarCache', () => ({
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(() => Promise.resolve(new Response('[]', { status: 200 }))),
 }));
+// The camera controls are drawn where video is on (a dev build): held on here.
+vi.mock('$lib/features', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/features')>()),
+  CALLS_VIDEO_ENABLED: true,
+}));
+// ...and the server's kill switch open to video (B12): `audio` hides the camera, tested below. It is
+// REACTIVE like the real store (`set` re-renders what read it), so a flip mid-call can be tested.
+const callsMode = vi.hoisted(() => {
+  const state = {
+    value: 'audio_video' as 'off' | 'audio' | 'audio_video',
+    notify: () => {},
+    set(mode: 'off' | 'audio' | 'audio_video') {
+      state.value = mode;
+      state.notify();
+    },
+  };
+  return state;
+});
+vi.mock('$lib/stores/appVersionCheck.svelte', async () => {
+  const { createSubscriber } = await import('svelte/reactivity');
+  const subscribe = createSubscriber((update) => {
+    callsMode.notify = update;
+    return () => (callsMode.notify = () => {});
+  });
+  return {
+    serverCallsMode: () => {
+      subscribe();
+      return callsMode.value;
+    },
+  };
+});
 const logs = vi.hoisted(() => [] as string[]);
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: (l: string) => logs.push(l) }));
 
@@ -38,6 +69,9 @@ function fakeService(state: CallState) {
     localStreamStore: writable<MediaStream | null>(null),
     isMuted: writable(false),
     isVideoOff: writable(true),
+    cameraFacing: writable<'user' | 'environment'>('user'),
+    canSwitchCamera: writable(false),
+    incomingHasVideo: false,
     connectedAt: writable<number | null>(state === 'incall' ? 1 : null),
     endedAt: writable<number | null>(null),
     reconnecting: writable(false),
@@ -50,6 +84,7 @@ function fakeService(state: CallState) {
     endCall: vi.fn(),
     toggleMute: vi.fn(),
     toggleVideo: vi.fn(),
+    switchCamera: vi.fn(async () => {}),
   };
 }
 
@@ -269,6 +304,165 @@ describe('the size of every control', () => {
     for (const b of buttons) {
       const ok = b.classList.contains('ui-icon-button') || b.classList.contains('size-16');
       expect(ok, b.getAttribute('aria-label') ?? b.outerHTML).toBe(true);
+    }
+  });
+});
+
+describe('a video call (lot 2)', () => {
+  type FakeTrack = {
+    kind: string;
+    id: string;
+    readyState: string;
+    muted: boolean;
+    addEventListener: () => void;
+    removeEventListener: () => void;
+  };
+  let ids = 0;
+  const track = (kind: string, muted = false): FakeTrack => ({
+    kind,
+    id: `${kind}-${++ids}`,
+    readyState: 'live',
+    muted,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  });
+  /** A stream as the call surfaces read it; the engine's own needs real tracks. */
+  class FakeStream {
+    constructor(public tracks: FakeTrack[] = []) {}
+    getTracks() {
+      return this.tracks;
+    }
+    getVideoTracks() {
+      return this.tracks.filter((t) => t.kind === 'video');
+    }
+    getAudioTracks() {
+      return this.tracks.filter((t) => t.kind === 'audio');
+    }
+  }
+  beforeEach(() => {
+    vi.stubGlobal('MediaStream', FakeStream);
+    // happy-dom's element accepts only its own MediaStream; what is bound is not under test here.
+    vi.spyOn(HTMLMediaElement.prototype, 'srcObject', 'set').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const selfView = () => document.querySelector<HTMLVideoElement>('[data-testid="call-self-view"]');
+  const remoteView = () => document.querySelector('[data-testid="call-remote-video"]');
+  const cameraOn = (service: ReturnType<typeof fakeService>) => {
+    service.localStreamStore.set(
+      new FakeStream([track('audio'), track('video')]) as unknown as MediaStream
+    );
+    service.isVideoOff.set(false);
+    flushSync();
+  };
+  const peerVideo = (service: ReturnType<typeof fakeService>, muted = false) => {
+    const stream = new FakeStream([track('audio'), track('video', muted)]);
+    service.remoteStreams.set(new Map([['remote', stream as unknown as MediaStream]]));
+    flushSync();
+  };
+
+  it('says a VIDEO call rings', async () => {
+    const service = fakeService('incoming');
+    service.incomingHasVideo = true;
+    await render(service);
+    expect(document.querySelector('[data-testid="call-status"]')?.textContent?.trim()).toBe(
+      m.call_incoming_video_label()
+    );
+  });
+
+  it('shows the self view full screen until the peer has a picture, then in a corner', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    expect(selfView()).toBeNull();
+    cameraOn(service);
+    expect(selfView()?.classList.contains('inset-0')).toBe(true);
+
+    peerVideo(service);
+    expect(remoteView()).not.toBeNull();
+    expect(selfView()?.classList.contains('inset-0')).toBe(false);
+    expect(selfView()?.classList.contains('w-28')).toBe(true);
+  });
+
+  it('mirrors the FRONT camera only', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    cameraOn(service);
+    expect(selfView()?.classList.contains('-scale-x-100')).toBe(true);
+    service.cameraFacing.set('environment');
+    flushSync();
+    expect(selfView()?.classList.contains('-scale-x-100')).toBe(false);
+  });
+
+  it("shows the avatar, not a frozen frame, while the peer's camera is off (its track muted)", async () => {
+    const service = fakeService('incall');
+    await render(service);
+    peerVideo(service, true);
+    expect(remoteView()).toBeNull();
+    peerVideo(service, false);
+    expect(remoteView()).not.toBeNull();
+  });
+
+  it('offers the camera switch only with the camera on and a second camera', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    const switchButton = () =>
+      document.querySelector<HTMLButtonElement>('[data-testid="call-switch-camera"]');
+    cameraOn(service);
+    expect(switchButton()).toBeNull();
+    service.canSwitchCamera.set(true);
+    flushSync();
+    switchButton()!.click();
+    expect(service.switchCamera).toHaveBeenCalledTimes(1);
+    service.isVideoOff.set(true);
+    flushSync();
+    expect(switchButton()).toBeNull();
+  });
+
+  it('keeps four controls on one row at 390 px: the camera button sits beside the others', async () => {
+    await render(fakeService('incall'));
+    const camera = document.querySelector('[data-testid="call-camera"]');
+    expect(camera).not.toBeNull();
+    expect(camera!.closest('.gap-2')).not.toBeNull();
+  });
+
+  it('draws no camera control when the server allows audio only (calls_mode=audio)', async () => {
+    callsMode.value = 'audio';
+    try {
+      await render(fakeService('incall'));
+      expect(document.querySelector('[data-testid="call-camera"]')).toBeNull();
+    } finally {
+      callsMode.value = 'audio_video';
+    }
+  });
+
+  // THE SWITCH GATES TURNING THE CAMERA ON, NEVER OFF. The mode moves mid-call when an admin closes
+  // video; hiding the control then would leave a running camera with nothing on screen to stop it.
+  it('keeps the camera control while the camera runs when the mode drops to audio mid-call', async () => {
+    const service = fakeService('incall');
+    const camera = () => document.querySelector<HTMLButtonElement>('[data-testid="call-camera"]');
+    try {
+      await render(service);
+      cameraOn(service);
+      expect(camera()).not.toBeNull();
+
+      callsMode.set('audio');
+      flushSync();
+      expect(camera()).not.toBeNull();
+      camera()!.click();
+      expect(service.toggleVideo).toHaveBeenCalledTimes(1);
+
+      service.isVideoOff.set(true);
+      flushSync();
+      expect(camera()).toBeNull();
+
+      // The flip itself re-renders (the mock is as reactive as the store), so the pass above is real.
+      callsMode.set('audio_video');
+      flushSync();
+      expect(camera()).not.toBeNull();
+    } finally {
+      callsMode.set('audio_video');
     }
   });
 });

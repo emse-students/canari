@@ -43,7 +43,7 @@ reached by API, and is unaffected.
 | Simulcast | **None.** One encoding per track, forwarded as received; no layer selection. A slow viewer gets the same bitrate as a fast one, and its PLIs reach the publisher. | `main.rs` (no simulcast/RID handling) |
 | Keyframes | Subscriber PLI/FIR is relayed to the publisher, plus a coalesced 3 s recovery timer. With N viewers, every viewer's PLI lands on the broadcaster's encoder. | `forward_pli_from_subscriber`, `periodic_keyframe_recovery` |
 | Room access | `Join { room_id, room_token }`; the token is an HS256 JWT minted by chat-delivery `POST /api/calls/initiate` after a **group membership** check, valid 5 min. A live has no group, so this gate does not fit as is. | [call-service](../../services/call-service.md#websocket-protocol), [calls](calls.md#api-endpoints-chat-delivery-service) |
-| Frame E2E | `CallService.ts` derives the key with `mlsService.exportSecret(groupId, 'mls-webrtc-media', callId, 32)` and applies AES-GCM in a worker through `RTCRtpScriptTransform` (or `createEncodedStreams`). **An MLS exporter needs an MLS group, and the network is not one**, so a live needs a different key source (L2: the key in the row). | `frontend/src/lib/services/CallService.ts` `setupEncryption`, `workers/encryption.worker.ts` |
+| Frame E2E | `CallService.ts` derives one key per direction with `mlsService.exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>|<sender role>', 32)` (`utils/callKeys.ts`) and applies AES-GCM in a worker through `RTCRtpScriptTransform` (or `createEncodedStreams`). **An MLS exporter needs an MLS group, and the network is not one**, so a live needs a different key source (L2: the key in the row). | `frontend/src/lib/services/CallService.ts` `setupEncryption`, `workers/encryption.worker.ts` |
 | A silent cleartext path | When `RTCRtpScriptTransform` is missing or `VITE_CALL_E2E_ENCRYPTION=false`, the client logs and sends media **unencrypted** through the SFU. Under the project's no-fallback rule this must not carry over to live: no transform, no broadcast. | `CallService.ts` `attachMediaTransforms` |
 | TURN provider | **Cloudflare TURN (the Calls/Realtime TURN service), a SaaS reached by API**, not the Cloudflare proxy: both `call-service` and chat-delivery mint credentials at `https://rtc.live.cloudflare.com/v1/turn/keys/{id}/credentials/generate-ice-servers`, and the production compose passes `CLOUDFLARE_CALLS_API_TOKEN` / `CLOUDFLARE_TURN_KEY_ID` to both. **No TURN server runs on the host** (`coturn` is in the LOCAL compose only). Whether the production secrets are set today is _(unverified: read from the compose, not the box)_. | `main.rs` `fetch_cloudflare_ice_servers`, `calls.service.ts`, `infrastructure/docker-compose.prod.yml` |
 | TURN path | **Both ends are relay-only**: the client sets `iceTransportPolicy: 'relay'`, the SFU selects `RTCIceTransportPolicy::Relay` when a TURN server is configured. So **every media byte, broadcaster in and each viewer out, crosses Cloudflare TURN** - viewers do not pull from the SFU directly. Whether the host may reach Cloudflare TURN over UDP at all is _(unverified)_: its outbound traffic is filtered upstream (TCP 7844 to Cloudflare was found blocked, [estate-migration](../../infrastructure/estate-migration.md)). | `CallService.ts`, `main.rs` `create_peer_connection` |
@@ -52,7 +52,7 @@ reached by API, and is unaffected.
 | Host capacity | 4 vCPU, 11 G RAM shared with prod, dev, Le Cercle, Authentik and the DSI's co-tenant sites. **The uplink speed and any egress cap are not documented anywhere** _(unverified)_. | [estate-migration](../../infrastructure/estate-migration.md), [storage-and-retention](../../infrastructure/storage-and-retention.md) |
 | Followers | Both relations exist: `user_follows` and `association_follows`, plus `association_push_mutes`. | `apps/social-service/src/follows/entities/` |
 | Reports | `content_reports` (social-service) is the only report store. | [moderation-and-blocking](../../moderation-and-blocking.md) |
-| State of calls | `CALLS_ENABLED = false` since 0.14.15; five switches move together; the SFU has never placed a real call; webrtc 0.20 is a port, not a bump. | [calls](calls.md) |
+| State of calls | `CALLS_ENABLED = false` since 0.14.15; the switches move in two groups since 2026-10-21 (`CALLS_COMPILED` for in-app calls, `CALLS_NATIVE_RING_COMPILED` for the native ring, which the first production calls ship without); the SFU has never placed a real call; webrtc 0.20 is a port, not a bump. | [calls](calls.md) |
 
 **The egress arithmetic, which is an ESTIMATE until a bench measures it.** The ~1.5 Mb/s per viewer
 of C9 is a planning figure, not a measurement. Whatever the path, **the host sends one copy per
@@ -268,7 +268,7 @@ User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede
 
 ## Decisions of 2026-10-20
 
-The user's answers to the moderation questions, in full on [lives](../../services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience) (none is built): **strike policy** warning, then suspension of the right to broadcast, then withdrawal by staff; a cut is kept **90 days**; **no automatic cut** on N reports; live reports answered within **24 h**; **a reported chat line is kept (encrypted, for staff) until handled - this REVERSES C2** ([the consequences](../../services/lives.md#a-reported-chat-line-is-kept-until-handled-reverses-c2)); the **floating reactions** are heart, laugh, bravo, fire and the canary chick; the **first-live rules are the posts' rules**, no live-specific clause; **no viewer cap** ([the plan](#uncapped-audience---the-plan-2026-10-20)).
+The user's answers to the moderation questions, in full on [lives](../../services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience) (**the server half of the ladder, the 90 days, the reported chat line, the five reactions and the rules version 2 are BUILT 2026-10-21, WP-L8b** - [the ladder](../../services/lives.md#the-strike-ladder-wp-l8b), [the reported line](../../services/lives.md#a-reported-chat-line-wp-l8b); the 24 h alarm and the viewer cap are not): **strike policy** warning, then suspension of the right to broadcast, then withdrawal by staff; a cut is kept **90 days**; **no automatic cut** on N reports; live reports answered within **24 h**; **a reported chat line is kept (encrypted, for staff) until handled - this REVERSES C2** ([the consequences](../../services/lives.md#a-reported-chat-line-is-kept-until-handled-reverses-c2)); the **floating reactions** are heart, laugh, bravo, fire and the canary chick; the **first-live rules are the posts' rules**, no live-specific clause; **no viewer cap** ([the plan](#uncapped-audience---the-plan-2026-10-20)).
 
 ## The client foundation (2026-10-19)
 
@@ -572,6 +572,23 @@ only then `POST /api/lives/:id/cut` through `cutLive`. A repeat (`newlyCut: fals
 success and the page says "already cut"; a refusal gets its own sentence by `code` and returns to
 the form.
 
+**The strike ladder's staff half (2026-10-21, built; server #2172).** A `live` report row also carries
+the broadcaster's standing (`ReportedLive.broadcasterStanding`, the server's `LiveStanding`: cuts on
+record over the rolling 90 days, `suspendedUntil`, `withdrawnAt`, `withdrawalDue`), drawn by
+`ModerationLiveBlock` as "N of 3 cuts on record", the suspension's end or the withdrawal's date, and
+"the withdrawal is due" - a standing view that needs NO new endpoint, because the queue already reads
+it per broadcaster. The "Retirer le droit" button exists ONLY while the server says `withdrawalDue`
+(never from a client-side count; `LIVE_WITHDRAWAL_FROM_CUTS` and `LIVE_STRIKE_WINDOW_DAYS` in
+`live/constants.ts` only draw the "N of M") and stays offered on a `gone` live, where the broadcaster
+is all that is left to restrict. It opens `ModerationLiveWithdrawDialog` (reason, details, one red
+confirm) and calls `withdrawBroadcaster` = `POST /api/lives/broadcasters/:userId/withdrawal`; refusals
+are sentenced by `code` (`LIVE_WITHDRAWAL_FORBIDDEN`, `LIVE_WITHDRAWAL_NOT_DUE`, the two invalid-input
+codes); a repeat (`newlyWithdrawn: false`) is a success the page words "already withdrawn". **Not
+built:** lifting a withdrawal (`DELETE` of the same path exists, no control yet) and a standing view
+for a broadcaster with no reported live (there is no per-account staff read; the caller's own
+`GET /api/lives/standing` is not for staff). Tests: the standing and withdrawal blocks of
+`ModerationLiveBlock.svelte.test.ts`.
+
 **The viewer's report control (2026-10-19, built).** `LiveReportControl` sits in the viewer's TOP BAR
 (the strip above the picture: it never covers the video, a double-tap region or the chat panel), a
 `Flag` icon button named `live_report_button`, hidden on the broadcaster's own copy
@@ -707,7 +724,7 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 
 | WP | What | Starting point | Done when |
 | --- | --- | --- | --- |
-| **WP-L0** | **Calls revival**: the five switches in one commit, the SIXTH (no names in a silent invite) and the SEVENTH (`none` level vs. a ring) decided, rung 15 CALL + CALL-13 on real hardware, the by-hand relay-path call, then **the screen recording App Review asks for**. | `frontend/src/lib/features.ts` `CALLS_ENABLED` and the switch table in [calls](calls.md) | the board rows `PASS`; the video recorded; a build accepted with calls on |
+| **WP-L0** | **Calls revival**: `CALLS_COMPILED`'s switches in one commit (the native ring's `CALLS_NATIVE_RING_COMPILED` later, on its own readings), the SIXTH (no names in a silent invite) and the SEVENTH (`none` level vs. a ring) decided, rung 15 CALL + CALL-13 on real hardware, the by-hand relay-path call, then **the screen recording App Review asks for**. | `frontend/src/lib/features.ts` `CALLS_ENABLED` and the switch table in [calls](calls.md) | the board rows `PASS`; the video recorded; a build accepted with calls on |
 | **WP-L1** | **The C feasibility bench, before any product code**: on both phones, record 720p into short fMP4 segments for 30-60 min, seal and upload them, and play a growing source through MSE in the WebView. **And the host's usable uplink**, from the DSI's answer first (Q3), which sets the viewer cap L8 turns into. | `frontend/src/lib/mediaSegmented.ts`, the camera of [reels](reels.md), the segmented reader | latency, phone uplink, battery and heat measured on Mi 9T and iPhone 12, and the host's usable uplink, written here; or a refutation of C |
 | **WP-L2** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
 | **WP-L3** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |

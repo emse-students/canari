@@ -12,19 +12,23 @@
  * What it does, on one of the harness profiles (`launch.mjs`, the profile signed in on the estate
  * the phone uses):
  *   1. `--launch` starts that profile with a FAKE microphone (Chrome's beep, or `--wav <file>`) so
- *      the phone hears something known; without it, it attaches to the running profile as is;
+ *      the phone hears something known - and a fake CAMERA at 30 fps (Chrome's test pattern), so a
+ *      video call has a known picture; without it, it attaches to the running profile as is;
  *   2. tracks every `RTCPeerConnection` the page creates (a subclass installed before the app
  *      loads - the app's own service is not reachable from the page), then reloads;
  *   3. `--dial` presses the conversation header's audio-call button (the conversation must be open
- *      on screen), `--accept` presses Accept when the phone rings this side;
+ *      on screen) - its VIDEO-call button with `--video` - and `--accept` presses Accept when the
+ *      phone rings this side;
  *   4. once a peer connection is `connected`, samples `getStats()` every second for `--seconds`
  *      (default 60) or until the call ends, and prints a line every 5 s: packets, loss, CONCEALED %,
- *      jitter, level, codec;
+ *      jitter, level, codec - and, once the phone sends video, the RECEIVED picture: size, decoded
+ *      frames per second, key frames, freezes and the codec (it must be VP8, calls.md "Video");
  *   5. writes every sample and every `[Call]` console line (the E2E worker report included) to
  *      `--out` (default: the OS temp dir) and prints the totals; `--hangup` ends the call after.
  *
  *   bun callpeer.mjs --browser w3 --launch --url https://dev.canari-emse.fr/chat --accept --seconds 60
  *   bun callpeer.mjs --browser w2 --dial --hangup
+ *   bun callpeer.mjs --browser w3 --launch --dial --video --seconds 60 --hangup
  *
  * Reads the button labels from `frontend/messages/fr.json`, never a copy: a renamed label is then a
  * failed lookup here, not a silent wait for a button that no longer exists.
@@ -108,6 +112,16 @@ export const SAMPLE = `(async () => {
         bytesReceived: v.bytesReceived, inCodec: c.mimeType + '/' + c.payloadType, inFmtp: c.sdpFmtpLine,
       });
     }
+    if (v.type === 'inbound-rtp' && v.kind === 'video') {
+      Object.assign(out, {
+        vFramesDecoded: v.framesDecoded, vKeyFrames: v.keyFramesDecoded, vFreezes: v.freezeCount,
+        vWidth: v.frameWidth, vHeight: v.frameHeight, vPli: v.pliCount,
+        vCodec: (byId.get(v.codecId) || {}).mimeType,
+      });
+    }
+    if (v.type === 'outbound-rtp' && v.kind === 'video') {
+      Object.assign(out, { vFramesEncoded: v.framesEncoded, vOutCodec: (byId.get(v.codecId) || {}).mimeType });
+    }
     if (v.type === 'outbound-rtp' && v.kind === 'audio') {
       Object.assign(out, { packetsSent: v.packetsSent, outCodec: (byId.get(v.codecId) || {}).mimeType });
     }
@@ -125,6 +139,17 @@ function concealedPct(a, b) {
   const recv = (b.totalSamplesReceived ?? 0) - (a.totalSamplesReceived ?? 0);
   if (recv <= 0) return null;
   return Math.round((((b.concealedSamples ?? 0) - (a.concealedSamples ?? 0)) / recv) * 1000) / 10;
+}
+
+/**
+ * The received picture between two samples `dt` seconds apart, or nothing before the phone sends
+ * video: ` | video WxH fps=N key=+N freezes=N codec`.
+ */
+function videoLine(a, b, dt) {
+  if (b.vFramesDecoded === undefined) return '';
+  const fps =
+    dt > 0 ? Math.round((((b.vFramesDecoded ?? 0) - (a.vFramesDecoded ?? 0)) / dt) * 10) / 10 : '-';
+  return ` | video ${b.vWidth ?? '?'}x${b.vHeight ?? '?'} fps=${fps} key=+${(b.vKeyFrames ?? 0) - (a.vKeyFrames ?? 0)} freezes=${b.vFreezes ?? 0} ${b.vCodec ?? '?'}`;
 }
 
 /** Waits for an element by CSS selector, then clicks it for real. */
@@ -149,7 +174,8 @@ async function main() {
     if (await isUp(WHICH)) {
       throw new Error(`${WHICH} is already up - close it first (bun launch.mjs close ${WHICH})`);
     }
-    const mic = ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'];
+    // fps=30: Chrome's fake camera defaults to 20, which reads as a slow phone on the other end.
+    const mic = ['--use-fake-device-for-media-stream=fps=30', '--use-fake-ui-for-media-stream'];
     if (WAV) mic.push(`--use-file-for-fake-audio-capture=${WAV}`);
     say(`starting ${WHICH} with a fake microphone (${WAV || "Chrome's beep"}) on ${URL_}`);
     await startBrowser(WHICH, URL_, mic);
@@ -167,10 +193,11 @@ async function main() {
   say(`tracking peer connections on ${await evaluate(cx, 'location.href')}`);
 
   if (flag('dial')) {
+    const video = flag('video');
     await clickWhenThere(
       cx,
-      `[aria-label="${label('chat_audio_call_label')}"]`,
-      'the audio-call button',
+      `[aria-label="${label(video ? 'chat_video_call_label' : 'chat_audio_call_label')}"]`,
+      video ? 'the video-call button' : 'the audio-call button',
       30_000
     );
   }
@@ -207,7 +234,7 @@ async function main() {
     if (i % 5 === 0) {
       const a = samples.at(-6) ?? samples[0];
       say(
-        `t=${i}s pkts +${(s.packetsReceived ?? 0) - (a.packetsReceived ?? 0)} lost +${(s.packetsLost ?? 0) - (a.packetsLost ?? 0)} concealed ${concealedPct(a, s) ?? '-'}% jitter ${Math.round((s.jitter ?? 0) * 1000)} ms level ${(s.audioLevel ?? 0).toFixed(3)} ${s.inCodec ?? '?'}`
+        `t=${i}s pkts +${(s.packetsReceived ?? 0) - (a.packetsReceived ?? 0)} lost +${(s.packetsLost ?? 0) - (a.packetsLost ?? 0)} concealed ${concealedPct(a, s) ?? '-'}% jitter ${Math.round((s.jitter ?? 0) * 1000)} ms level ${(s.audioLevel ?? 0).toFixed(3)} ${s.inCodec ?? '?'}${videoLine(a, s, samples.length - 1 - samples.indexOf(a))}`
       );
     }
   }
@@ -233,6 +260,22 @@ async function main() {
     packetsReceived: (last.packetsReceived ?? 0) - (first.packetsReceived ?? 0),
     packetsLost: (last.packetsLost ?? 0) - (first.packetsLost ?? 0),
     concealedPct: concealedPct(first, last),
+    ...(last.vFramesDecoded === undefined
+      ? {}
+      : {
+          videoCodec: last.vCodec,
+          videoSentCodec: last.vOutCodec,
+          videoSize: `${last.vWidth}x${last.vHeight}`,
+          videoFps:
+            Math.round(
+              (((last.vFramesDecoded ?? 0) - (first.vFramesDecoded ?? 0)) /
+                Math.max(1, samples.length - 1 - samples.indexOf(first))) *
+                10
+            ) / 10,
+          videoKeyFrames: (last.vKeyFrames ?? 0) - (first.vKeyFrames ?? 0),
+          videoFreezes: last.vFreezes ?? 0,
+          videoPli: last.vPli ?? 0,
+        }),
   };
   writeFileSync(
     OUT,

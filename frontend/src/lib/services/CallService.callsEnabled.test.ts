@@ -10,7 +10,7 @@ import { isBlockedWith } from '$lib/users/blocks';
  * still be green on the day the constant is flipped back for real (rung 15 CALL / CALL-13).
  */
 
-vi.mock('$lib/features', () => ({ CALLS_ENABLED: true }));
+vi.mock('$lib/features', () => ({ CALLS_ENABLED: true, CALLS_VIDEO_ENABLED: true }));
 vi.mock('$lib/users/blocks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/users/blocks')>()),
   isBlockedWith: vi.fn(async () => false),

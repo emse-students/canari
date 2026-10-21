@@ -40,7 +40,8 @@ describing it as a live rival is what made it look like a design decision rather
 | `post` | post id | first 250 characters of the markdown |
 | `comment` | comment id | the comment text, plus `postId` for navigation |
 | `user` | the reported account's id | the account's display name |
-| `live` | a live's id | the broadcaster's display name, plus `live: { state, ... }` - open, ended, cut or gone ([lives](services/lives.md#moderation-wp-l8-server-half)) |
+| `live` | a live's id | the broadcaster's display name, plus `live: { state, ..., broadcasterStanding }` - open, ended, cut or gone ([lives](services/lives.md#moderation-wp-l8-server-half)) |
+| `live_chat` | a live chat MESSAGE's id (with `liveId` and the plaintext `message`) | the kept line's text, plus `liveChat: { text, authorName, keptUntil, integrity, ... }` ([lives](services/lives.md#a-reported-chat-line-wp-l8b)) |
 
 `live` arrived with WP-L8 (2026-10-19, decision D6: a live is moderated like a post). Its `reportedUserId` is
 the broadcaster read from the live row, never the client's; the live must still have a row and be
@@ -48,8 +49,16 @@ visible to the reporter (the rule of a post, no block), else `404 LIVE_NOT_FOUND
 answer is "delete the post", a live's is **"cut the live"**: `POST /api/lives/:id/cut`, the same
 `isContentModerator` predicate, which ends the live for everyone, records the cut (`live_cuts`: who,
 when, which reason code) and marks the live's pending reports `reviewed`. A live is never
-auto-hidden by a count. No strike policy reads the cuts yet - the user's decision
-([lives](services/lives.md#moderation-wp-l8-server-half)).
+auto-hidden by a count. **A strike ladder reads the cuts** (WP-L8b, 2026-10-21): a warning, then a
+30-day suspension of BROADCASTING (posts untouched - the account mute stays the one posting
+sanction), then a withdrawal staff decide ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
+
+`live_chat` arrived with WP-L8b (2026-10-21): the one case where a report CARRIES content. A live
+chat line is sealed with the live key, which the server holds while the live runs, so unlike an MLS
+message it CAN check what the reporter hands over: the server opens the line, compares it to
+`message`, keeps the checked text signed until the report is handled (90 days at most), and never
+keeps the key. Every refusal that would tell a line exists is `404 LIVE_NOT_FOUND`
+([lives](services/lives.md#a-reported-chat-line-wp-l8b)).
 
 `user` arrived with blocking, as its counterpart: blocking is silent, reporting is how a person asks
 for help. A `message` case was declared in the DTO, the entity and the client type and produced by

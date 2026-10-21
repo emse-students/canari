@@ -12,10 +12,26 @@
  * would export.
  */
 
+import { engineFromUserAgent, type E2eWorkerReport } from './callE2eReport';
+
 /** The subset of an `RTCStatsReport` entry this reader looks at. */
 type StatsEntry = {
   type: string;
   id: string;
+  /** Milliseconds, on the browser's own stats clock - the only clock a rate is computed from. */
+  timestamp?: number;
+  /** Chromium: the ICE server URL a local relay candidate came from (no credential in it). */
+  url?: string;
+  kind?: string;
+  bytesSent?: number;
+  bytesReceived?: number;
+  packetsLost?: number;
+  packetsReceived?: number;
+  /** Seconds. */
+  jitter?: number;
+  audioLevel?: number;
+  codecId?: string;
+  mimeType?: string;
   selectedCandidatePairId?: string;
   selected?: boolean;
   nominated?: boolean;
@@ -140,4 +156,199 @@ export function audioCodecOrder(sdp: string | undefined): string {
  */
 export function relayGapIsSuspect(relayCount: number, ice: RTCIceConnectionState): boolean {
   return relayCount === 0 && ice !== 'connected' && ice !== 'completed';
+}
+
+/** The subset of a video `inbound-rtp` / `outbound-rtp` stats entry the video line reads. */
+type VideoRtpEntry = RtpCodecEntry & {
+  frameWidth?: number;
+  frameHeight?: number;
+  framesPerSecond?: number;
+  framesDecoded?: number;
+  keyFramesDecoded?: number;
+  freezeCount?: number;
+  totalFreezesDuration?: number;
+  pliCount?: number;
+  framesEncoded?: number;
+  qualityLimitationReason?: string;
+};
+
+/**
+ * Describes the call's VIDEO as the engine reports it, both directions:
+ * `video recv=video/VP8 640x480 fps=30 decoded=900 keyframes=1 freezes=0 (0 s) pli=0 | send=video/VP8 640x480 fps=30 encoded=900 limit=none`.
+ * A direction with no stream reads `none`. Logged at each conclusive E2E path check of a call that
+ * carries video, so a phone reading says whether the picture decoded smoothly, not only whether it
+ * was encrypted. Counts are cumulative over the stream's life.
+ */
+export function describeVideoStats(stats: RTCStatsReport): string {
+  const entries = new Map<string, VideoRtpEntry>();
+  stats.forEach((value: VideoRtpEntry) => entries.set(value.id, value));
+  const find = (type: 'outbound-rtp' | 'inbound-rtp') =>
+    [...entries.values()].find((e) => e.type === type && (e.kind ?? e.mediaType) === 'video');
+  const codecOf = (rtp: VideoRtpEntry) =>
+    (rtp.codecId ? entries.get(rtp.codecId)?.mimeType : undefined) ?? '?';
+  const size = (rtp: VideoRtpEntry) =>
+    rtp.frameWidth ? `${rtp.frameWidth}x${rtp.frameHeight ?? '?'}` : '?x?';
+  const fps = (rtp: VideoRtpEntry) =>
+    typeof rtp.framesPerSecond === 'number' ? Math.round(rtp.framesPerSecond) : '?';
+  const inbound = find('inbound-rtp');
+  const outbound = find('outbound-rtp');
+  const recv = inbound
+    ? `${codecOf(inbound)} ${size(inbound)} fps=${fps(inbound)} decoded=${inbound.framesDecoded ?? '?'} keyframes=${inbound.keyFramesDecoded ?? '?'} freezes=${inbound.freezeCount ?? '?'} (${Math.round(inbound.totalFreezesDuration ?? 0)} s) pli=${inbound.pliCount ?? '?'}`
+    : 'none';
+  const send = outbound
+    ? `${codecOf(outbound)} ${size(outbound)} fps=${fps(outbound)} encoded=${outbound.framesEncoded ?? '?'} limit=${outbound.qualityLimitationReason ?? '?'}`
+    : 'none';
+  return `video recv=${recv} | send=${send}`;
+}
+
+/** The byte totals and stats-clock time of one reading, kept to turn the NEXT one into a rate. */
+export interface MediaSnapshot {
+  atMs: number;
+  bytesSent: number;
+  bytesReceived: number;
+}
+
+/** Everything a `[CALL_REPORT]` line says that `getStats()` cannot. */
+export interface CallReportContext {
+  /** The room id: the same value as the relay's `room=`, the only join key between the halves. */
+  callId: string;
+  phase: 'tick' | 'end';
+  /** Since the user's tap (call or answer), on `performance.now()`. */
+  durMs: number;
+  /** Tap to the first unmuted remote audio track; `null` while no audio has arrived. */
+  setupMs: number | null;
+  /** `callReportEngine`. */
+  engine: string;
+  ice: string;
+  /** The worker's answer to `report`; `null` when it could not be asked or did not answer. */
+  e2e: E2eWorkerReport | null;
+}
+
+/** What one reading measured, and the snapshot the next reading needs. */
+export interface CallReport {
+  line: string;
+  snapshot: MediaSnapshot;
+}
+
+/** `turn:turn.cloudflare.com:3478?transport=udp` -> `turn.cloudflare.com:3478` (no query, no credential). */
+function turnHost(url: string | undefined): string | null {
+  if (!url) return null;
+  const match = /^turns?:([^?]+)/.exec(url);
+  return match ? match[1] : null;
+}
+
+/** `audio/opus` -> `opus`; `-` when the codec is not reported. */
+function codecName(entries: Map<string, StatsEntry>, rtp: StatsEntry | undefined): string {
+  const mime = rtp?.codecId ? entries.get(rtp.codecId)?.mimeType : undefined;
+  return mime ? (mime.split('/')[1] ?? mime).toLowerCase() : '-';
+}
+
+const fixed = (n: number | undefined, digits: number) =>
+  typeof n === 'number' && Number.isFinite(n) ? n.toFixed(digits) : '-';
+
+/**
+ * Frames the receiver could not use: AES-GCM failures plus NON-empty frames too short to be one of
+ * ours (a peer sending in clear). Empty frames are not counted - Chrome hands the receiver a few in
+ * every call, and they carry nothing.
+ */
+function decryptFailuresOf(r: E2eWorkerReport): number {
+  return r.decryptFailures + (r.tooShort - r.tooShortEmpty);
+}
+
+/**
+ * Builds THE `[CALL_REPORT]` line of the revival plan (section 6, WP-C2): one per device, every
+ * 10 s while in a call and once at its end, carrying the numbers a "the call connected but nobody
+ * heard anything" report needs - `setup_ms`, `audio_level_in`, and `dec_frames` against
+ * `dec_fail`, which separate a key mismatch from no media at all - and `relayed=`, the only field
+ * that says whether a call cost TURN volume.
+ *
+ * Rates are computed between two readings on the stats' OWN timestamps, never on a wall clock, so
+ * the same two reports always give the same line. Nothing in it names a person, an address, an
+ * SDP or a credential: the in-app log that carries it is exported.
+ *
+ * @param stats The report from `RTCPeerConnection.getStats()`.
+ * @param ctx What the service knows that the stats do not.
+ * @param previous The snapshot of the previous reading of the SAME peer connection, or `null`.
+ */
+export function buildCallReport(
+  stats: RTCStatsReport,
+  ctx: CallReportContext,
+  previous: MediaSnapshot | null
+): CallReport {
+  const entries = new Map<string, StatsEntry>();
+  stats.forEach((value: StatsEntry) => entries.set(value.id, value));
+  const all = [...entries.values()];
+
+  const outbound = all.filter((e) => e.type === 'outbound-rtp');
+  const inbound = all.filter((e) => e.type === 'inbound-rtp');
+  const inAudio = inbound.find((e) => e.kind === 'audio');
+  const inVideo = inbound.find((e) => e.kind === 'video');
+  const outAudioSource = all.find((e) => e.type === 'media-source' && e.kind === 'audio');
+
+  const sum = (list: StatsEntry[], key: 'bytesSent' | 'bytesReceived') =>
+    list.reduce((acc, e) => acc + (e[key] ?? 0), 0);
+  const atMs = Math.max(0, ...all.map((e) => e.timestamp ?? 0));
+  const snapshot: MediaSnapshot = {
+    atMs,
+    bytesSent: sum(outbound, 'bytesSent'),
+    bytesReceived: sum(inbound, 'bytesReceived'),
+  };
+  const spanMs = previous ? atMs - previous.atMs : 0;
+  // Never below 0: a byte total that went DOWN (a counter the engine reset) is no negative rate.
+  const kbps = (now: number, before: number) =>
+    previous && spanMs > 0 ? String(Math.max(0, Math.round(((now - before) * 8) / spanMs))) : '-';
+
+  const lost = inAudio?.packetsLost ?? 0;
+  const received = inAudio?.packetsReceived ?? 0;
+  const lossPct = received + lost > 0 ? ((lost * 100) / (received + lost)).toFixed(1) : '-';
+
+  const localRelay = all.find((e) => e.type === 'local-candidate' && e.candidateType === 'relay');
+  const e2e = ctx.e2e;
+
+  const fields = [
+    `[CALL_REPORT] call=${ctx.callId}`,
+    `phase=${ctx.phase}`,
+    `dur_ms=${Math.round(ctx.durMs)}`,
+    `setup_ms=${ctx.setupMs === null ? '-' : Math.round(ctx.setupMs)}`,
+    `engine=${ctx.engine}`,
+    `ice=${ctx.ice}`,
+    describeSelectedPair(stats),
+    `turn=${turnHost(localRelay?.url) ?? '-'}`,
+    `out_kbps=${kbps(snapshot.bytesSent, previous?.bytesSent ?? 0)}`,
+    `in_kbps=${kbps(snapshot.bytesReceived, previous?.bytesReceived ?? 0)}`,
+    `loss_in_pct=${lossPct}`,
+    `jitter_ms=${typeof inAudio?.jitter === 'number' ? Math.round(inAudio.jitter * 1000) : '-'}`,
+    `audio_level_out=${fixed(outAudioSource?.audioLevel, 3)}`,
+    `audio_level_in=${fixed(inAudio?.audioLevel, 3)}`,
+    // `on` only when the worker answered: without its counts this line cannot vouch for E2E.
+    `e2e=${e2e ? 'on' : '-'}`,
+    `enc_frames=${e2e ? e2e.encrypted.audio + e2e.encrypted.video : '-'}`,
+    `dec_frames=${e2e ? e2e.decrypted.audio + e2e.decrypted.video : '-'}`,
+    `dec_fail=${e2e ? decryptFailuresOf(e2e) : '-'}`,
+    `keyframes_in=${e2e ? (e2e.videoKeyframesIn ?? '-') : '-'}`,
+    `codec_a=${codecName(entries, inAudio)}`,
+    `codec_v=${codecName(entries, inVideo)}`,
+  ];
+  return { line: fields.join(' '), snapshot };
+}
+
+/**
+ * The report of a call this engine REFUSED before any request, because it cannot encrypt frames
+ * (`RTCRtpScriptTransform` absent). One line, so a refusal is counted in the same grep as a call.
+ *
+ * @param callId The room id when answering a known call, `-` when starting one (none exists yet).
+ */
+export function refusedCallReport(callId: string, engine: string): string {
+  return `[CALL_REPORT] call=${callId} phase=refused engine=${engine} e2e=refused reason=no-rtp-script-transform`;
+}
+
+/**
+ * The report's `engine=` field: the engine as the E2E worker report names it
+ * (`engineFromUserAgent`: `Chrome/155`, `Safari/18`, `iOS/18` for a WKWebView, `Firefox/140`),
+ * prefixed by the app shell when there is one (`tauri-android/Chrome/140`). A name and a major
+ * version, never the whole user agent.
+ */
+export function callReportEngine(userAgent: string, shell: 'android' | 'ios' | null): string {
+  const engine = engineFromUserAgent(userAgent);
+  return shell ? `tauri-${shell}/${engine}` : engine;
 }

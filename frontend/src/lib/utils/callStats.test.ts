@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import type { E2eWorkerReport } from './callE2eReport';
 import {
   audioCodecOrder,
+  buildCallReport,
+  callReportEngine,
   describeAudioCodecs,
   describeSelectedPair,
+  describeVideoStats,
+  refusedCallReport,
   relayGapIsSuspect,
 } from './callStats';
 
@@ -153,5 +158,179 @@ describe('relayGapIsSuspect (CALL-GATHER-0)', () => {
 
   it('is quiet whenever a relay was gathered', () => {
     expect(relayGapIsSuspect(3, 'checking')).toBe(false);
+  });
+});
+
+describe('describeVideoStats', () => {
+  it('names what each video direction decodes and encodes', () => {
+    const out = describeVideoStats(
+      report([
+        {
+          id: 'I',
+          type: 'inbound-rtp',
+          kind: 'video',
+          codecId: 'C1',
+          frameWidth: 640,
+          frameHeight: 480,
+          framesPerSecond: 29.7,
+          framesDecoded: 900,
+          keyFramesDecoded: 1,
+          freezeCount: 0,
+          totalFreezesDuration: 0,
+          pliCount: 0,
+        },
+        {
+          id: 'O',
+          type: 'outbound-rtp',
+          kind: 'video',
+          codecId: 'C1',
+          frameWidth: 640,
+          frameHeight: 480,
+          framesPerSecond: 30,
+          framesEncoded: 905,
+          qualityLimitationReason: 'none',
+        },
+        { id: 'A', type: 'inbound-rtp', kind: 'audio', codecId: 'C2' },
+        { id: 'C1', type: 'codec', mimeType: 'video/VP8' },
+        { id: 'C2', type: 'codec', mimeType: 'audio/opus' },
+      ])
+    );
+    expect(out).toBe(
+      'video recv=video/VP8 640x480 fps=30 decoded=900 keyframes=1 freezes=0 (0 s) pli=0 | send=video/VP8 640x480 fps=30 encoded=905 limit=none'
+    );
+  });
+
+  it('reads none for a direction with no video stream', () => {
+    expect(describeVideoStats(report([]))).toBe('video recv=none | send=none');
+  });
+});
+
+/** One reading of a live call, at stats-clock time `at` (ms), with byte totals as given. */
+function liveReading(at: number, sent: number, received: number): RTCStatsReport {
+  return report([
+    { id: 'T', type: 'transport', selectedCandidatePairId: 'P', timestamp: at },
+    { id: 'P', type: 'candidate-pair', localCandidateId: 'L2', remoteCandidateId: 'R1' },
+    { ...relayLocal, url: 'turn:turn.cloudflare.com:3478?transport=udp' },
+    srflxRemote,
+    { id: 'O', type: 'outbound-rtp', kind: 'audio', bytesSent: sent, timestamp: at },
+    {
+      id: 'I',
+      type: 'inbound-rtp',
+      kind: 'audio',
+      bytesReceived: received,
+      packetsLost: 1,
+      packetsReceived: 99,
+      jitter: 0.012,
+      audioLevel: 0.25,
+      codecId: 'C',
+      timestamp: at,
+    },
+    { id: 'S', type: 'media-source', kind: 'audio', audioLevel: 0.5 },
+    { id: 'C', type: 'codec', mimeType: 'audio/opus' },
+  ]);
+}
+
+/** The worker's answer to `report`, with the counts the line reads; the rest at zero. */
+function workerReport(over: Partial<E2eWorkerReport> = {}): E2eWorkerReport {
+  return {
+    tag: 't',
+    transformers: { sender: 1, receiver: 1 },
+    framesIn: {},
+    encrypted: { audio: 500, video: 0 },
+    decrypted: { audio: 497, video: 1 },
+    decryptFailures: 2,
+    videoKeyframesIn: 1,
+    tooShort: 5,
+    tooShortEmpty: 4,
+    droppedNoKey: 0,
+    opusInvalid: { sender: 0, receiver: 0 },
+    doubleEncrypted: 0,
+    ...over,
+  };
+}
+
+const ctx = {
+  callId: 'room-1',
+  phase: 'tick' as const,
+  durMs: 12_345.6,
+  setupMs: 812.4,
+  engine: 'Chrome/155',
+  ice: 'connected',
+  e2e: workerReport(),
+};
+
+describe('buildCallReport', () => {
+  it('writes every field of the plan line, and no rate on the first reading', () => {
+    const { line, snapshot } = buildCallReport(liveReading(1_000, 4_000, 8_000), ctx, null);
+    expect(line).toBe(
+      '[CALL_REPORT] call=room-1 phase=tick dur_ms=12346 setup_ms=812 engine=Chrome/155 ice=connected ' +
+        'pair=relay/udp->srflx/udp relayed=yes relay_proto=tls turn=turn.cloudflare.com:3478 ' +
+        'out_kbps=- in_kbps=- loss_in_pct=1.0 jitter_ms=12 audio_level_out=0.500 audio_level_in=0.250 ' +
+        'e2e=on enc_frames=500 dec_frames=498 dec_fail=3 keyframes_in=1 codec_a=opus codec_v=-'
+    );
+    expect(snapshot).toEqual({ atMs: 1_000, bytesSent: 4_000, bytesReceived: 8_000 });
+  });
+
+  it('counts a NON-empty frame too short to be ours as a decrypt failure, an empty one not', () => {
+    // 2 AES failures + (5 short - 4 empty): an empty frame carries nothing, Chrome hands a few per call.
+    const { line } = buildCallReport(liveReading(1_000, 0, 0), ctx, null);
+    expect(line).toContain('dec_fail=3');
+  });
+
+  it('computes rates on the stats clock between two readings, never on a wall clock', () => {
+    const first = buildCallReport(liveReading(1_000, 4_000, 8_000), ctx, null);
+    // 10 s later on the stats clock: +40 000 bytes out = 32 kbps, +80 000 in = 64 kbps.
+    const { line } = buildCallReport(liveReading(11_000, 44_000, 88_000), ctx, first.snapshot);
+    expect(line).toContain('out_kbps=32 in_kbps=64');
+  });
+
+  it('never writes a negative rate when a byte total went down', () => {
+    const first = buildCallReport(liveReading(1_000, 44_000, 88_000), ctx, null);
+    const { line } = buildCallReport(liveReading(11_000, 4_000, 8_000), ctx, first.snapshot);
+    expect(line).toContain('out_kbps=0 in_kbps=0');
+  });
+
+  it('says what it does not know rather than inventing it', () => {
+    const { line } = buildCallReport(report([]), { ...ctx, setupMs: null, e2e: null }, null);
+    expect(line).toContain('setup_ms=-');
+    expect(line).toContain('pair=none');
+    expect(line).toContain('turn=-');
+    expect(line).toContain('loss_in_pct=-');
+    expect(line).toContain('e2e=- enc_frames=- dec_frames=- dec_fail=- keyframes_in=-');
+  });
+
+  it('carries no address and no credential', () => {
+    const stats = report([
+      {
+        id: 'L',
+        type: 'local-candidate',
+        candidateType: 'relay',
+        address: '192.0.2.10',
+        url: 'turn:turn.cloudflare.com:3478?transport=udp&username=u',
+      },
+    ]);
+    const { line } = buildCallReport(stats, ctx, null);
+    expect(line).not.toMatch(/192\.0\.2|username/);
+  });
+});
+
+describe('refusedCallReport', () => {
+  it('is one grep-able line naming the engine and the reason', () => {
+    expect(refusedCallReport('-', 'Firefox/140')).toBe(
+      '[CALL_REPORT] call=- phase=refused engine=Firefox/140 e2e=refused reason=no-rtp-script-transform'
+    );
+  });
+});
+
+describe('callReportEngine', () => {
+  const chrome =
+    'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.7339.0 Mobile Safari/537.36';
+  const iosWebview =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148';
+
+  it('names the engine as the E2E report does, and prefixes the app shell when there is one', () => {
+    expect(callReportEngine(chrome, null)).toBe('Chrome/140');
+    expect(callReportEngine(chrome, 'android')).toBe('tauri-android/Chrome/140');
+    expect(callReportEngine(iosWebview, 'ios')).toBe('tauri-ios/iOS/18');
   });
 });

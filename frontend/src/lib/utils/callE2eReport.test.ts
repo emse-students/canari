@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeE2eReport,
+  describeVideoFrames,
   diagnoseE2eReport,
   e2eBypassedSides,
   engineFromUserAgent,
@@ -220,5 +221,34 @@ describe('e2eBypassedSides (CALL-E2E-BYPASS-MI9T)', () => {
       ['c', { type: 'codec' }],
     ]) as unknown as RTCStatsReport;
     expect(rtpPacketCounts(stats)).toEqual(packets(200, 240, 50, 0));
+  });
+});
+
+describe('the video segment of the report (lot 2)', () => {
+  it('leaves an audio-only call line unchanged', () => {
+    expect(describeVideoFrames(report())).toBe('');
+    expect(describeE2eReport(report(), NATIVE)).not.toContain('video frames');
+  });
+
+  it('counts the video frames per side on this peer connection, with failures and key frames', () => {
+    const r = report({
+      framesInBy: { '3|sender|video': 900, '3|receiver|video': 880, '3|sender|audio': 250 },
+      encrypted: { audio: 250, video: 900 },
+      decrypted: { audio: 249, video: 879 },
+      decryptFailuresBy: { audio: 0, video: 1 },
+      videoKeyframesIn: 3,
+      videoCodecUnexpected: 0,
+    });
+    expect(describeVideoFrames(r, 3)).toBe(
+      'video frames in sender=900 receiver=880 encrypted=900 decrypted=879 decrypt-failed=1 keyframes-in=3 not-vp8=0 short-sent=0 | '
+    );
+  });
+
+  it('is a FAULT when a frame of another codec crossed the transform', () => {
+    const d = diagnoseE2eReport(report({ videoCodecUnexpected: 4 }), NATIVE);
+    expect(d?.level).toBe('fault');
+    expect(describeE2eReport(report({ videoCodecUnexpected: 4 }), NATIVE)).toMatch(
+      /^\[Call\] ERROR .*not-vp8=4/
+    );
   });
 });

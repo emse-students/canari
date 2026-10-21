@@ -44,7 +44,7 @@ export class LiveReactionBurst {
   @Column({ type: 'integer' })
   window: number;
 
-  /** `{ like?: n, love?: n, ... }`, each 1..10, validated against `LIVE_REACTION_KINDS`. */
+  /** `{ like?: n, fire?: n, ... }`, each 1..10, validated against `LIVE_REACTION_KINDS`. */
   @Column({ type: 'jsonb' })
   counts: Record<string, number>;
 

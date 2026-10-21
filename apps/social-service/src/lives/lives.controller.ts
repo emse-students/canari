@@ -72,6 +72,64 @@ export class LivesController {
     return this.lives.rulesStatus(callerOf(userId));
   }
 
+  /**
+   * The caller's own place on the strike ladder (WP-L8b): `{ cutsOnRecord, suspendedUntil,
+   * withdrawnAt }` - what the pre-live screen says before a start would be refused
+   * `LIVE_BROADCAST_SUSPENDED` / `LIVE_BROADCAST_WITHDRAWN`. Declared before `:id`.
+   */
+  @Get('standing')
+  standing(@Headers('x-user-id') userId: string) {
+    return this.lives.standing(callerOf(userId));
+  }
+
+  /**
+   * STAFF WITHDRAW an account's right to broadcast (the ladder's 3rd step, WP-L8b):
+   * `{ reason, details? }`. `isContentModerator` only (403 `LIVE_WITHDRAWAL_FORBIDDEN`, asked
+   * first); 409 `LIVE_WITHDRAWAL_NOT_DUE` below `LIVE_WITHDRAWAL_FROM_CUTS` cuts on record.
+   * Idempotent.
+   */
+  @Post('broadcasters/:userId/withdrawal')
+  @HttpCode(200)
+  async withdraw(
+    @Param('userId') target: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string | undefined,
+    @Body() body: { reason?: unknown; details?: unknown }
+  ) {
+    const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    return this.lives.withdraw(caller, target, body ?? {});
+  }
+
+  /** STAFF LIFT a withdrawal: `{ userId, lifted }`, idempotent. Same predicate as the withdrawal. */
+  @Delete('broadcasters/:userId/withdrawal')
+  @HttpCode(200)
+  async liftWithdrawal(
+    @Param('userId') target: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string | undefined
+  ) {
+    const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    return this.lives.liftWithdrawal(caller, target);
+  }
+
+  /**
+   * The ONE staff predicate of this API (`isContentModerator`: a platform admin or a BDE member
+   * holding `MODERATE`, the posts' moderation controls'), asked before anything is read. Returns the
+   * caller; refuses 403 with `code`.
+   */
+  private async assertStaff(
+    userId: string,
+    globalAdmin: string | undefined,
+    code: string
+  ): Promise<string> {
+    const caller = callerOf(userId);
+    const mayModerate = await this.associations.isContentModerator(caller, {
+      isGlobalAdmin: globalAdmin === 'true',
+    });
+    if (!mayModerate) throw new ForbiddenException({ code });
+    return caller;
+  }
+
   /** The open lives the caller may watch, newest first. */
   @Get()
   list(@Headers('x-user-id') userId: string) {
@@ -199,11 +257,7 @@ export class LivesController {
     @Headers('x-global-admin') globalAdmin: string | undefined,
     @Body() body: { reason?: unknown; details?: unknown }
   ) {
-    const caller = callerOf(userId);
-    const mayModerate = await this.associations.isContentModerator(caller, {
-      isGlobalAdmin: globalAdmin === 'true',
-    });
-    if (!mayModerate) throw new ForbiddenException({ code: 'LIVE_CUT_FORBIDDEN' });
+    const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_CUT_FORBIDDEN');
     return this.lives.cut(caller, id.toLowerCase(), body ?? {});
   }
 }

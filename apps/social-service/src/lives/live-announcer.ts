@@ -4,9 +4,9 @@ import type { DataSource } from 'typeorm';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { liveVisibleToUserSql } from '../spaces/reader-spaces';
 import { isLiveEnabled } from './live-enabled.guard';
+import { short } from './live-log';
 
 /** Short form of an id for a log line. */
-const short = (id: string) => id.slice(0, 8);
 
 /**
  * Who is told that a live started (decision L10): the broadcaster's FOLLOWERS - `user_follows` for a

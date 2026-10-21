@@ -78,7 +78,8 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
-  import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
+  import { callsAvailable, callVideoAvailable } from '$lib/utils/callsAvailability';
+  import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import type {
     AddMessageToChatOptions,
     ChatMessage,
@@ -1544,12 +1545,12 @@
             messaging.removePendingMediaFile(convs.selectedContact, index)}
           videoPreparation={messaging.videoPreparation}
           isUploading={messaging.isUploadingMedia}
-          onStartAudioCall={CALLS_ENABLED && selectedIsDirect
+          onStartAudioCall={callsAvailable(serverCallsMode()) && selectedIsDirect
             ? () => {
                 void startCallForCurrentConversation(false);
               }
             : undefined}
-          onStartVideoCall={CALLS_ENABLED && CALLS_VIDEO_ENABLED && selectedIsDirect
+          onStartVideoCall={callVideoAvailable(serverCallsMode()) && selectedIsDirect
             ? () => {
                 void startCallForCurrentConversation(true);
               }

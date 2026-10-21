@@ -22,7 +22,52 @@ interface Transformer {
     seed?: number;
     passthrough?: boolean;
     doubleEncrypt?: boolean;
+    kind?: 'audio' | 'video';
+    wholeFrameVideo?: boolean;
   };
+}
+
+/** The rig's key, captured from the same `setKey` the app worker receives (whole-frame experiment). */
+let rigKey: CryptoKey | null = null;
+self.addEventListener('message', (e: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
+  if (e.data?.type !== 'setKey' || !e.data.payload) return;
+  void crypto.subtle
+    .importKey('raw', e.data.payload, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+    .then((k) => (rigKey = k));
+});
+
+/** Frames the whole-frame experiment could not encrypt or decrypt (dropped). */
+let wholeFrameFailures = 0;
+
+/** IV + AES-GCM over the whole frame (the experiment's framing); a frame that fails is dropped. */
+function wholeFrame(op: 'encrypt' | 'decrypt') {
+  return new TransformStream({
+    async transform(frame: { data: ArrayBuffer }, controller) {
+      if (!rigKey) return;
+      try {
+        if (op === 'encrypt') {
+          const iv = crypto.getRandomValues(new Uint8Array(12));
+          const ct = new Uint8Array(
+            await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, rigKey, frame.data)
+          );
+          const out = new Uint8Array(12 + ct.byteLength);
+          out.set(iv, 0);
+          out.set(ct, 12);
+          frame.data = out.buffer;
+        } else {
+          const d = new Uint8Array(frame.data);
+          frame.data = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: d.slice(0, 12) },
+            rigKey,
+            d.slice(12)
+          );
+        }
+        controller.enqueue(frame);
+      } catch {
+        wholeFrameFailures++;
+      }
+    },
+  });
 }
 
 type Scope = typeof self & { onrtctransform: ((event: Event) => void) | null };
@@ -94,6 +139,14 @@ scope.onrtctransform = (event: Event) => {
     void readable.pipeTo(writable);
     return;
   }
+  if (o.kind === 'video' && o.wholeFrameVideo) {
+    // EXPERIMENT: the worker's video framing before 2026-10-20 - IV + AES-GCM over the WHOLE
+    // frame, VP8 payload header included - re-implemented here so the app worker stays as shipped.
+    void readable
+      .pipeThrough(wholeFrame(o.side === 'sender' ? 'encrypt' : 'decrypt'))
+      .pipeTo(writable);
+    return;
+  }
   // Built field by field: the platform transformer's members are prototype getters, so a spread
   // would copy none of them.
   if (o.side === 'sender' && o.doubleEncrypt) {
@@ -126,4 +179,4 @@ self.addEventListener('message', (e: MessageEvent<{ type: string }>) => {
     self.postMessage({ type: 'tap', sent: sentTap, received: receivedTap });
 });
 
-setInterval(() => self.postMessage({ type: 'impair', dropped, passed }), 1000);
+setInterval(() => self.postMessage({ type: 'impair', dropped, passed, wholeFrameFailures }), 1000);

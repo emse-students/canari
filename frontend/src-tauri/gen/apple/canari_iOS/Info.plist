@@ -17,7 +17,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.3.1</string>
 	<key>CFBundleVersion</key>
-	<string>100300104</string>
+	<string>100300105</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -26,18 +26,21 @@
 		<string>processing</string>
 		<string>fetch</string>
 		<!-- NO `voip` HERE, DELIBERATELY. The mode is only legitimate for an app that reports an
-		     incoming call to CallKit, and calling is held off (frontend/src/lib/features.ts,
-		     CALLS_COMPILED; callsCompiled.test.ts asserts the two agree) until it has been run on hardware. App Review refused the declaration
+		     incoming call to CallKit, and the native ring is held off (frontend/src/lib/features.ts,
+		     CALLS_NATIVE_RING_COMPILED, its own switch since 2026-10-21; callsCompiled.test.ts asserts
+		     the two agree) until it has been run on hardware. App Review refused the declaration
 		     under guideline 2.5.4 on 2026-08-31 for a VoIP service it could not locate - correctly,
 		     since on that build no iPad could even register a push token. Re-add it in the SAME
-		     commit that flips CALLS_COMPILED and restores CanariCallKitSetup(), never before: an
+		     commit that flips CALLS_NATIVE_RING_COMPILED and restores CanariCallKitSetup() - not with
+		     CALLS_COMPILED, whose in-app calls ship without the native ring - never before: an
 		     undeclared-but-unused mode is a rejection, and a used-but-undeclared one cannot get a
 		     PushKit token at all. -->
-		<!-- NO `audio` HERE EITHER, FOR THE SAME REASON (WP-C-BG-I). WKWebView mutes a page's
+		<!-- NO `audio` HERE EITHER, FOR A SIMILAR REASON (WP-C-BG-I), BUT ON THE OTHER SWITCH. WKWebView mutes a page's
 		     microphone when the app is hidden or the screen locks unless this array holds `audio`
 		     (measured on the iPhone 2026-10-20), so a call needs it - and a stable places no call.
 		     ios.yml adds it to every PRE-RELEASE build, the builds that can call; it comes here in
-		     the commit that flips CALLS_COMPILED (callsCompiled.test.ts asserts both). -->
+		     the commit that flips CALLS_COMPILED - the in-app call needs it, the native ring does
+		     not decide it (callsCompiled.test.ts asserts both). -->
 	</array>
 	<!-- BGTaskScheduler identifiers the app may submit. Must list every identifier passed to
 	     registerForTaskWithIdentifier: / submitTaskRequest: or BGTaskScheduler throws. This
