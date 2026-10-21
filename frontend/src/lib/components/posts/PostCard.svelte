@@ -20,7 +20,12 @@
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { reportComment } from '$lib/posts/reportComment';
-  import { PostCommentThread, onPostComments } from '$lib/posts/postCommentThread.svelte';
+  import {
+    PostCommentThread,
+    onPostComments,
+    type CommentOutcome,
+  } from '$lib/posts/postCommentThread.svelte';
+  import type { CommentIdentity } from '$lib/posts/postIdentity';
   import { applyCommentChange, commentCountOf } from '$lib/posts/commentChange';
   import {
     DOUBLE_TAP_REACTION,
@@ -177,6 +182,8 @@
     }
   });
   let commentText = $state('');
+  /** Why the last comment did not go, said beside the box (it was the card's bottom banner). */
+  let commentError = $state('');
   // `untrack` states what the prop IS: an initial value, read once. The card owns the open/closed
   // state from then on - a parent that flipped the prop later would otherwise fight the reader's
   // own taps on the comment button.
@@ -206,7 +213,8 @@
         servedAt(full)
       );
     },
-    fail: (message) => (errorMessage = message),
+    // Every refusal this thread raises is about the comment box, so it is said THERE.
+    fail: (message) => (commentError = message),
   });
   let showReactionPicker = $state(false);
 
@@ -433,11 +441,17 @@
    * Posts a new comment (or reply) with optional encrypted media. The box empties when the row is
    * shown, and gets the text back if the write failed and nothing was typed meanwhile.
    */
-  async function handleAddComment(parentId?: string, media?: PostMediaRef) {
+  async function handleAddComment(
+    parentId?: string,
+    media?: PostMediaRef,
+    identity?: CommentIdentity
+  ): Promise<CommentOutcome> {
     const text = commentText.trim();
-    if (!text && !media) return;
-    const outcome = await thread.add(text, parentId, media, () => (commentText = ''));
+    if (!text && !media) return 'refused';
+    commentError = '';
+    const outcome = await thread.add(text, parentId, media, () => (commentText = ''), identity);
     if (outcome === 'failed' && !commentText.trim()) commentText = text;
+    return outcome;
   }
 
   /**
@@ -758,18 +772,21 @@
 
     <div data-no-double-tap>
       <PostComments
+        {postId}
         {comments}
         {topLevelComments}
         {showComments}
         {commentText}
         submittingComment={thread.submitting}
         pendingCommentIds={thread.pending}
+        sendError={commentError}
         {currentUserId}
         {authToken}
         {focusCommentId}
         onToggleComments={() => (showComments = !showComments)}
         onCommentTextChange={async (text) => {
           commentText = text;
+          commentError = '';
         }}
         onAddComment={handleAddComment}
         onLikeComment={(id) => void thread.like(id)}
