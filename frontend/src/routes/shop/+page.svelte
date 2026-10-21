@@ -27,6 +27,7 @@
   import { ShoppingBag, Handshake } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { associationAccent } from '$lib/associations/accent';
+  import { customAmountLabel } from '$lib/associations/customAmountLabel';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { parseTab, tabUrl, withoutQuery } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
@@ -128,9 +129,7 @@
       return `${(p.amountCents / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
     }
     if (p.allowCustomAmount) {
-      const min = p.customAmountMinCents ? (p.customAmountMinCents / 100).toFixed(2) : '0';
-      const max = p.customAmountMaxCents ? (p.customAmountMaxCents / 100).toFixed(2) : 'inf';
-      return m.shop_price_libre({ min, max, currency: p.currency.toUpperCase() });
+      return customAmountLabel(p);
     }
     return m.shop_price_free();
   }
