@@ -23,7 +23,7 @@
  *
  * Plain text only (C15): a message is drawn as text, never as markup or a link.
  */
-import { reactionTypeToEmoji, reactionTypeToLabel } from '$lib/posts/reactions';
+import { m } from '$lib/paraglide/messages';
 import { Log } from '$lib/utils/Log';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import {
@@ -54,35 +54,40 @@ const TAG = 'LiveChat';
  */
 export const LIVE_CHAT_KEPT_LINES = 200;
 
-/** The five kinds, in the order the reaction bar draws them (the server's `LIVE_REACTION_KINDS`). */
+/**
+ * The five kinds, in the order the reaction bar draws them (the server's `LIVE_REACTION_KINDS`):
+ * heart, laugh, bravo, fire and the canary chick (owner decision 2026-10-20). `love` and `happy`
+ * left the list; a burst of either is refused `400 LIVE_REACTION_INVALID`.
+ */
 export const LIVE_REACTION_KINDS: readonly LiveReactionKind[] = [
   'like',
-  'love',
   'laugh',
-  'happy',
+  'clap',
+  'fire',
   'canari',
 ];
 
 /**
- * Each live kind as the post reaction it is (C8): the SAME emoji (drawn as Noto SVG by `EmojiText`)
- * and the same localised name, so a live and a post never disagree on what a heart means.
+ * Each live kind's emoji (drawn as a Noto SVG by `EmojiText`, never a font - emoji.md) and its
+ * localised name. `like`, `laugh` and `canari` are the posts' own reactions, so a live and a post
+ * never disagree on what a heart means; `clap` and `fire` exist only here.
  */
-const POST_REACTION_OF: Record<LiveReactionKind, string> = {
-  like: "J'aime",
-  love: "J'adore",
-  laugh: 'Rire',
-  happy: 'Joyeux',
-  canari: 'Canari',
+const LIVE_REACTION_ART: Record<LiveReactionKind, { emoji: string; label: () => string }> = {
+  like: { emoji: '❤️', label: () => m.post_reaction_name_like() },
+  laugh: { emoji: '😂', label: () => m.post_reaction_name_laugh() },
+  clap: { emoji: '👏', label: () => m.live_reaction_name_clap() },
+  fire: { emoji: '🔥', label: () => m.live_reaction_name_fire() },
+  canari: { emoji: '🐤', label: () => m.post_reaction_name_canari() },
 };
 
-/** The emoji of a live reaction kind - the post reaction's. */
+/** The emoji of a live reaction kind. */
 export function liveReactionEmoji(kind: LiveReactionKind): string {
-  return reactionTypeToEmoji(POST_REACTION_OF[kind]);
+  return LIVE_REACTION_ART[kind].emoji;
 }
 
-/** The localised name of a live reaction kind - the post reaction's. */
+/** The localised name of a live reaction kind. */
 export function liveReactionLabel(kind: LiveReactionKind): string {
-  return reactionTypeToLabel(POST_REACTION_OF[kind]);
+  return LIVE_REACTION_ART[kind].label();
 }
 
 /**

@@ -65,6 +65,8 @@ export type LiveBroadcastPhase = 'preview' | 'starting' | 'live' | 'away' | 'end
 export type LiveStartProblem =
   | 'muted'
   | 'rules-not-accepted'
+  | 'suspended'
+  | 'withdrawn'
   | 'already-open'
   | 'association-forbidden'
   | 'rate-limited'
@@ -162,6 +164,8 @@ export function startProblemOf(error: unknown): LiveStartProblem {
   if (error instanceof LiveRefusalError) {
     if (error.code === 'LIVE_MUTED') return 'muted';
     if (error.code === 'LIVE_RULES_NOT_ACCEPTED') return 'rules-not-accepted';
+    if (error.kind === 'suspended') return 'suspended';
+    if (error.kind === 'withdrawn') return 'withdrawn';
     if (error.code === 'LIVE_ALREADY_OPEN') return 'already-open';
     if (error.code === 'LIVE_ASSOCIATION_FORBIDDEN') return 'association-forbidden';
     if (error.kind === 'rate-limited') return 'rate-limited';
@@ -189,6 +193,8 @@ export class LiveBroadcast {
   rulesAcceptedHere = $state(false);
   limitsProblem = $state<LiveLimitsProblem | null>(null);
   startProblem = $state<LiveStartProblem | null>(null);
+  /** `suspended`: when the suspension ends (ISO string, as the server sent it), else null. */
+  startSuspendedUntil = $state<string | null>(null);
   endCause = $state<LiveEndCause | null>(null);
   health = $state<LiveUploadHealth>('ok');
   /** Segments sealed and waiting for the server. */
@@ -324,6 +330,7 @@ export class LiveBroadcast {
     console.log(`[LIVE-BROADCAST] starting`);
     this.phase = 'starting';
     this.startProblem = null;
+    this.startSuspendedUntil = null;
     let live: LiveView;
     let keyHex: string;
     try {
@@ -336,6 +343,9 @@ export class LiveBroadcast {
     } catch (e) {
       if (this.#disposed) return;
       this.startProblem = startProblemOf(e);
+      if (this.startProblem === 'suspended' && e instanceof LiveRefusalError) {
+        this.startSuspendedUntil = e.suspendedUntil;
+      }
       if (this.startProblem === 'rules-not-accepted') await this.#rulesRefused();
       if (this.#disposed) return;
       this.phase = 'preview';

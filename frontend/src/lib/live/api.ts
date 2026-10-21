@@ -63,7 +63,9 @@ export class LiveRefusalError extends ApiRefusalError {
      * `LIVE_ENDED`: why it ended (`cut`: a moderator ended it) - what a screen branches on, never
      * the message. Null when the body carries none, or a value this build does not know.
      */
-    readonly endReason: LiveEndReason | null = null
+    readonly endReason: LiveEndReason | null = null,
+    /** `LIVE_BROADCAST_SUSPENDED`: when the suspension ends (ISO string), null when absent. */
+    readonly suspendedUntil: string | null = null
   ) {
     super(status, code, message);
     this.name = 'LiveRefusalError';
@@ -105,6 +107,9 @@ export function classifyLiveRefusal(
   if (code === 'LIVE_NOT_FOUND') return 'not-found';
   if (code === 'LIVE_ENDED') return 'ended';
   if (code === 'LIVE_VIEWER_REMOVED') return 'removed';
+  // The strike ladder's two refusals of a START (WP-L8b): 403 with the code, told apart by code only.
+  if (code === 'LIVE_BROADCAST_SUSPENDED') return 'suspended';
+  if (code === 'LIVE_BROADCAST_WITHDRAWN') return 'withdrawn';
   if (code === 'LIVE_SEGMENT_OUT_OF_ORDER') return 'out-of-order';
   if (code !== null && RETRY_SEGMENT_CODES.has(code)) return 'retry-segment';
   if (status === 404 && code === null) {
@@ -169,7 +174,8 @@ async function liveRefusal(
     numberField(body, 'viewerCap'),
     numberField(body, 'nextIndex'),
     endedAt,
-    endReason
+    endReason,
+    typeof body?.suspendedUntil === 'string' ? body.suspendedUntil : null
   );
 }
 

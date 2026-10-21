@@ -300,6 +300,18 @@ describe('NotificationRow for a live a moderator cut', () => {
     expect(target.querySelector('[aria-label^="Avatar de"]')).toBeNull();
   });
 
+  it('a suspension and a withdrawal read as their own sentences, with the reason', () => {
+    for (const [type, text] of [
+      ['live_suspended', m.notif_live_suspended_text()],
+      ['live_withdrawn', m.notif_live_withdrawn_text()],
+    ] as const) {
+      const target = renderRow({ ...base, type });
+      expect(target.textContent).toContain(text);
+      expect(target.textContent).toContain(m.moderation_reason_harassment());
+      expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    }
+  });
+
   it('is not activatable: its live is deleted, there is nowhere to go', () => {
     const target = renderRow(base);
     expect(target.querySelector('button')!.disabled).toBe(true);
