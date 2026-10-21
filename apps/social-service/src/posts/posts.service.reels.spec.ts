@@ -13,6 +13,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import type { CommentIdentityService } from './comment-identity';
 import type { Repository } from 'typeorm';
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
@@ -289,7 +290,8 @@ describe('PostInteractionsService on a dead reel', () => {
       repo as unknown as Repository<Post>,
       {} as PostNotificationsService,
       {} as PushService,
-      {} as PostMediaRetentionService
+      {} as PostMediaRetentionService,
+      {} as CommentIdentityService
     );
 
     await expect(interactions.addReaction('r1', 'bob', 'like')).rejects.toBeInstanceOf(

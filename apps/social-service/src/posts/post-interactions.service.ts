@@ -10,9 +10,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { isUnsafeObjectKey } from '../common/object-keys';
-import { PostNotificationsService } from './post-notifications.service';
+import {
+  ANONYMOUS_NOTIFICATION_ACTOR_ID,
+  ANONYMOUS_NOTIFICATION_ACTOR_NAME,
+  PostNotificationsService,
+} from './post-notifications.service';
 import { PushService } from '../push/push.service';
 import { isAnonymousPoll, recordAnonymousVote, servePolls } from './anonymous-poll';
+import { CommentIdentityService, commentIdentityOf, commentRights } from './comment-identity';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredReel } from './reel.constants';
 import {
@@ -33,7 +38,8 @@ export class PostInteractionsService {
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly notifications: PostNotificationsService,
     private readonly push: PushService,
-    private readonly mediaRetention: PostMediaRetentionService
+    private readonly mediaRetention: PostMediaRetentionService,
+    private readonly identity: CommentIdentityService
   ) {}
 
   /**
@@ -122,30 +128,50 @@ export class PostInteractionsService {
   }
 
   /**
-   * Appends a comment to a post. Enriches it with the author's display name from the
-   * users table (non-fatal if unavailable). Fires notifications fire-and-forget style:
-   * the post author gets a "comment" notification; the parent comment author gets a "reply".
+   * Appends a comment to a post. Fires notifications fire-and-forget style: the post author gets
+   * a "comment" notification; the parent comment author gets a "reply".
+   *
+   * `data.anonymous` / `data.associationId` say who the comment speaks as (`comment-identity.ts`).
+   * The caller has already checked the right to speak for an association. EITHER WAY the REAL
+   * `userId` is stored - mute, report and erasure act on the account - but then NO NAME is: a
+   * name in `post.comments` would reach every reader of the array. Notifications are masked HERE,
+   * at the write, because a notification row has no read-time shaping.
+   *
+   * @returns the comment as its writer is to see it.
    */
   async addComment(
     postId: string,
-    data: { userId: string; text?: string; parentId?: string; media?: any }
+    data: {
+      userId: string;
+      text?: string;
+      parentId?: string;
+      media?: any;
+      anonymous?: boolean;
+      associationId?: string;
+    },
+    isGlobalAdmin = false
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
 
+    const { anonymous, associationId } = commentIdentityOf(data);
+    const masked = anonymous || !!associationId;
+
     let displayName: string | null = null;
     let firstName: string | null = null;
     let lastName: string | null = null;
-    try {
-      const rows: any[] = await this.postRepo.manager.query(
-        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1 LIMIT 1`,
-        [data.userId]
-      );
-      if (rows[0]) {
-        ({ displayName = null, firstName = null, lastName = null } = rows[0]);
+    if (!masked) {
+      try {
+        const rows: any[] = await this.postRepo.manager.query(
+          `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1 LIMIT 1`,
+          [data.userId]
+        );
+        if (rows[0]) {
+          ({ displayName = null, firstName = null, lastName = null } = rows[0]);
+        }
+      } catch {
+        /* non-fatal */
       }
-    } catch {
-      /* non-fatal */
     }
 
     const existingComments: any[] = post.comments ?? [];
@@ -169,9 +195,9 @@ export class PostInteractionsService {
     const comment = {
       id: crypto.randomUUID(),
       userId: data.userId,
-      displayName,
-      firstName,
-      lastName,
+      ...(masked ? {} : { displayName, firstName, lastName }),
+      ...(anonymous ? { anonymous: true } : {}),
+      ...(associationId ? { associationId } : {}),
       text: data.text ?? '',
       parentId: data.parentId ?? null,
       likes: [] as string[],
@@ -190,25 +216,48 @@ export class PostInteractionsService {
       const preview = previewOf(text);
       // The stored row keeps its mention tokens for the app to resolve; a push cannot.
       const pushPreview = await this.notifications.renderMentionsForPush(preview);
-      const actorName = await this.notifications.resolveActorName(data.userId);
+      // WHO THE NOTICE SAYS IT IS FROM: nobody for an anonymous comment, the association for an
+      // association's. The real id still keeps the writer out of their own notices below.
+      let actorId = data.userId;
+      let actorName: string;
+      if (anonymous) {
+        actorId = ANONYMOUS_NOTIFICATION_ACTOR_ID;
+        actorName = ANONYMOUS_NOTIFICATION_ACTOR_NAME;
+      } else if (associationId) {
+        actorId = ANONYMOUS_NOTIFICATION_ACTOR_ID;
+        actorName = await this.associationName(associationId);
+      } else {
+        actorName = await this.notifications.resolveActorName(data.userId);
+      }
       const alreadyNotified = new Set<string>([data.userId]);
+      const notify = (recipientId: string, type: 'comment' | 'reply' | 'mention') =>
+        this.notifications.createNotification({
+          recipientId,
+          type,
+          postId,
+          actorId,
+          actorName: masked ? actorName : undefined,
+          text: preview,
+          skipPush: true,
+        });
+      const pushContentFor = {
+        comment: commentContent,
+        reply: replyContent,
+        mention: mentionContent,
+      };
+      const send = async (recipientId: string, type: 'comment' | 'reply' | 'mention') => {
+        await notify(recipientId, type);
+        await this.push.notifyContent(recipientId, pushContentFor[type](actorName, pushPreview), {
+          type: 'social',
+          postId,
+          commentId: comment.id,
+        });
+      };
 
       if (post.authorId && !alreadyNotified.has(post.authorId)) {
         alreadyNotified.add(post.authorId);
         try {
-          await this.notifications.createNotification({
-            recipientId: post.authorId,
-            type: 'comment',
-            postId,
-            actorId: data.userId,
-            text: preview,
-            skipPush: true,
-          });
-          await this.push.notifyContent(post.authorId, commentContent(actorName, pushPreview), {
-            type: 'social',
-            postId,
-            commentId: comment.id,
-          });
+          await send(post.authorId, 'comment');
         } catch (e) {
           this.logger.warn(
             `[NOTIFY] comment notification failed for post.authorId=${post.authorId}`,
@@ -219,25 +268,28 @@ export class PostInteractionsService {
 
       if (data.parentId) {
         const parent = post.comments.find((c: any) => c.id === data.parentId);
-        if (parent?.userId && !alreadyNotified.has(parent.userId)) {
-          alreadyNotified.add(parent.userId);
+        // A reply to an association's comment reaches everyone who speaks for it; to an anonymous
+        // one, the real account behind it - the replier never learns who that is.
+        let recipients: string[] = parent?.userId ? [parent.userId] : [];
+        if (parent?.associationId) {
           try {
-            await this.notifications.createNotification({
-              recipientId: parent.userId,
-              type: 'reply',
-              postId,
-              actorId: data.userId,
-              text: preview,
-              skipPush: true,
-            });
-            await this.push.notifyContent(parent.userId, replyContent(actorName, pushPreview), {
-              type: 'social',
-              postId,
-              commentId: comment.id,
-            });
+            recipients = await this.identity.holdersOf(parent.associationId);
           } catch (e) {
             this.logger.warn(
-              `[NOTIFY] reply notification failed for parent.userId=${parent.userId}`,
+              `[NOTIFY] holders of association ${String(parent.associationId)} unreadable, reply not delivered`,
+              e
+            );
+            recipients = [];
+          }
+        }
+        for (const recipientId of recipients) {
+          if (alreadyNotified.has(recipientId)) continue;
+          alreadyNotified.add(recipientId);
+          try {
+            await send(recipientId, 'reply');
+          } catch (e) {
+            this.logger.warn(
+              `[NOTIFY] reply notification failed for parent.userId=${recipientId}`,
               e
             );
           }
@@ -251,19 +303,7 @@ export class PostInteractionsService {
           if (alreadyNotified.has(recipientId)) continue;
           alreadyNotified.add(recipientId);
           try {
-            await this.notifications.createNotification({
-              recipientId,
-              type: 'mention',
-              postId,
-              actorId: data.userId,
-              text: preview,
-              skipPush: true,
-            });
-            await this.push.notifyContent(recipientId, mentionContent(actorName, pushPreview), {
-              type: 'social',
-              postId,
-              commentId: comment.id,
-            });
+            await send(recipientId, 'mention');
           } catch (e) {
             this.logger.warn(
               `[NOTIFY] mention notification failed for recipientId=${recipientId}`,
@@ -274,11 +314,30 @@ export class PostInteractionsService {
       }
     })();
 
-    return { ok: true, comment };
+    const [served] = await this.identity.serve([comment], post, {
+      viewerId: data.userId,
+      isGlobalAdmin,
+    });
+    return { ok: true, comment: served };
+  }
+
+  /** The association's display name for a notice, or a neutral word when it cannot be read. */
+  private async associationName(associationId: string): Promise<string> {
+    try {
+      const rows: { name: string }[] = await this.postRepo.manager.query(
+        `SELECT name FROM associations WHERE id = $1`,
+        [associationId]
+      );
+      if (rows[0]?.name) return rows[0].name;
+      this.logger.warn(`[NOTIFY] association ${associationId} has no name row`);
+    } catch (e) {
+      this.logger.warn(`[NOTIFY] association ${associationId} name unreadable`, e);
+    }
+    return ANONYMOUS_NOTIFICATION_ACTOR_NAME;
   }
 
   /** Toggles a like on a comment - adds the userId if not present, removes it if already liked. */
-  async likeComment(postId: string, commentId: string, userId: string) {
+  async likeComment(postId: string, commentId: string, userId: string, isGlobalAdmin = false) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     const comments: any[] = post.comments ?? [];
@@ -290,33 +349,62 @@ export class PostInteractionsService {
       : [...likes, userId];
     post.comments = comments;
     await this.postRepo.save(post);
-    return { ok: true, comment };
+    const [served] = await this.identity.serve([comment], post, {
+      viewerId: userId,
+      isGlobalAdmin,
+    });
+    return { ok: true, comment: served };
   }
 
-  /** Updates the text of a comment. Only the original author may edit their own comment. */
-  async editComment(postId: string, commentId: string, userId: string, text: string) {
+  /**
+   * Updates the text of a comment. `commentRights` says who: the writer of an ordinary or an
+   * anonymous comment, any holder of `POST_AS_ASSO` (or a platform admin) for an association's.
+   */
+  async editComment(
+    postId: string,
+    commentId: string,
+    userId: string,
+    text: string,
+    isGlobalAdmin = false
+  ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     const comments: any[] = post.comments ?? [];
     const comment = comments.find((c: any) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
-    if (comment.userId !== userId) throw new UnauthorizedException('Not your comment');
+    const viewer = await this.identity.viewerFor([comment], { viewerId: userId, isGlobalAdmin });
+    if (!commentRights(comment, viewer).canEdit) {
+      throw new UnauthorizedException('Not your comment');
+    }
     comment.text = text;
     // Served as "(modifie)" - the client had no way to tell an edited comment from the original.
     comment.editedAt = new Date().toISOString();
     post.comments = comments;
     await this.postRepo.save(post);
-    return { ok: true, comment };
+    const [served] = await this.identity.serve([comment], post, {
+      viewerId: userId,
+      isGlobalAdmin,
+    });
+    return { ok: true, comment: served };
   }
 
-  /** Removes a comment and all of its replies. Original author or global admin may delete. */
+  /**
+   * Removes a comment and all of its replies, for whoever `commentRights` lets: the writer, a
+   * platform admin, a content moderator for an anonymous one, any association holder for its own.
+   */
   async deleteComment(postId: string, commentId: string, userId: string, isAdmin = false) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     const comments: any[] = post.comments ?? [];
     const comment = comments.find((c: any) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
-    if (!isAdmin && comment.userId !== userId) throw new UnauthorizedException('Not your comment');
+    const viewer = await this.identity.viewerFor([comment], {
+      viewerId: userId,
+      isGlobalAdmin: isAdmin,
+    });
+    if (!commentRights(comment, viewer).canDelete) {
+      throw new UnauthorizedException('Not your comment');
+    }
     const removed = comments.filter((c: any) => c.id === commentId || c.parentId === commentId);
     post.comments = comments.filter((c: any) => c.id !== commentId && c.parentId !== commentId);
     await this.postRepo.save(post);
