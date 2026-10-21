@@ -5,7 +5,7 @@
  * plugin name (`Builder::new("customtabs")`), NOT the Android class identifier passed to
  * `register_android_plugin` ("app.tauri.customtabs"), and the command must be listed in the
  * plugin's `build.rs` COMMANDS array or the IPC boundary refuses it silently.
- * `customTabsCommands.test.ts` pins both against the Rust sources.
+ * `nativePluginCommands.test.ts` pins both against the Rust sources.
  */
 
 /** Tauri plugin name - the prefix of the command below. */

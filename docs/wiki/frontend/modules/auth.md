@@ -1636,7 +1636,7 @@ Two things must line up, and no compiler checks either:
 | ACL | listed in the plugin's `build.rs` COMMANDS **and** granted in `permissions/default.toml` | absent - the IPC boundary refuses the call although the Rust fn exists |
 
 Build the identifier with `keystoreCommand()` from `services/keystoreCommands.ts` rather than
-writing the string; `keystoreCommands.test.ts` reads the Rust sources and fails CI when a name,
+writing the string; `nativePluginCommands.test.ts` reads the Rust sources and fails CI when a name,
 the handler registration, the ACL array or the default permission set drift apart.
 
 `has_key_bytes` never prompts: Android reads SharedPreferences only, iOS matches keychain

@@ -13,7 +13,7 @@
  *     exists and the name is spelled right.
  *
  * Both were wrong until v0.11.4: `isKeyPresent` always returned false, so biometric unlock became
- * unreachable the moment it was enrolled. `keystoreCommands.test.ts` now pins the names against
+ * unreachable the moment it was enrolled. `nativePluginCommands.test.ts` now pins the names against
  * the Rust sources.
  */
 
