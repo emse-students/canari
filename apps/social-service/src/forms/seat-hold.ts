@@ -64,6 +64,36 @@ export const CONFIRMABLE_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * What a payment request IS, as core-service's `payments/request-state` classified it at the
+ * provider boundary (`CheckoutRequestStateKind` there; Lydia 0 / 1 / 5 / 6, measured on the
+ * sandbox). `declined` (the payer refused) and `cancelled-or-expired` are FINAL and leave nothing
+ * payable: the answer is released so the payer can retry. `unknown` - any code core has not
+ * measured, or a wire value this service does not know - is never paid and never settled.
+ */
+export type RequestState = 'open' | 'paid' | 'declined' | 'cancelled-or-expired' | 'unknown';
+
+const REQUEST_STATES: ReadonlySet<string> = new Set([
+  'open',
+  'paid',
+  'declined',
+  'cancelled-or-expired',
+]);
+
+/** The states after which the request can never be paid: the answer waiting on it is released. */
+export const SETTLED_REFUSED_REQUEST_STATES: ReadonlySet<RequestState> = new Set([
+  'declined',
+  'cancelled-or-expired',
+]);
+
+/**
+ * Reads core's `state` field into the type. Anything this service does not know - an older core
+ * answering `closed` during a deploy, a typo, a missing field - is `unknown`: refused, never guessed.
+ */
+export function toRequestState(wire: unknown): RequestState {
+  return typeof wire === 'string' && REQUEST_STATES.has(wire) ? (wire as RequestState) : 'unknown';
+}
+
+/**
  * The shape of a Lydia `request_uuid`: 32 hex digits, no dash (measured on the sandbox,
  * 2026-10-15) - the same pattern core-service's `payments/request-state` accepts (`SESSION_ID_RE`).
  * A row from the Stripe era still holds a `cs_...` id there, which core refuses with a 400, so

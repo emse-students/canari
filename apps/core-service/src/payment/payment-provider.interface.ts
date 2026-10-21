@@ -102,12 +102,23 @@ export interface CheckoutSessionResult {
 export type CancelRequestOutcome = 'cancelled' | 'already-settled';
 
 /**
- * A request's state as the provider reports it: `paid` (Lydia state 1), `closed` (state 6, which
- * a cancel and an expiry both leave - measured), `open` (state 0, still payable), or `other` for
- * any code nothing here has measured; `raw` is the provider's own code, for the log.
+ * What a payment request IS, classified ONCE, at the provider boundary (`getCheckoutRequestState`),
+ * so no caller reads a provider code or a message. Lydia's codes, measured on the sandbox
+ * (2026-10-15 and 2026-10-21, payments.md): `0` open (still payable), `1` paid, `5` declined by the
+ * payer (final: Lydia sends no callback and shows its own error page), `6` cancelled or expired (a
+ * cancel and an expiry both leave it). `unknown` is any other code: NEVER paid and NEVER settled -
+ * a caller that meets it records no payment and releases nothing.
  */
+export type CheckoutRequestStateKind =
+  | 'open'
+  | 'paid'
+  | 'declined'
+  | 'cancelled-or-expired'
+  | 'unknown';
+
+/** A request's classified state; `raw` is the provider's own code, for the log only. */
 export interface CheckoutRequestState {
-  state: 'paid' | 'closed' | 'open' | 'other';
+  state: CheckoutRequestStateKind;
   raw: string;
 }
 

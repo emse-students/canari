@@ -1,6 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
+import type { PaymentRequestState } from './paymentReturn';
 
 export interface FormOption {
   label: string;
@@ -297,6 +298,8 @@ export interface PricingView {
 export async function checkSubmission(formId: string): Promise<{
   hasSubmitted: boolean;
   paymentStatus?: string;
+  /** The id of the caller's own answer when there is one (a `pending` one is confirmed on load). */
+  submissionId?: string;
   formFull: boolean;
   /** Null when the form has one price for everybody. */
   pricing: PricingView | null;
@@ -337,9 +340,13 @@ export async function getSubmissions(formId: string): Promise<Submission[]> {
 }
 
 /** The payment state of the caller's own submission, read by the return page after Lydia. */
-export async function getSubmissionPayment(
-  submissionId: string
-): Promise<{ id: string; formId: string; paymentStatus: string }> {
+export async function getSubmissionPayment(submissionId: string): Promise<{
+  id: string;
+  formId: string;
+  paymentStatus: string;
+  /** The request's state, typed, when the server read it on this call. */
+  requestState?: PaymentRequestState;
+}> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`
   );
@@ -350,11 +357,17 @@ export async function getSubmissionPayment(
 /**
  * Asks the server to read, at the payment provider, whether a pending online answer was paid, and
  * to record it if so - then answers the submission like `getSubmissionPayment`. The payer's return
- * page calls it, so a payment whose provider callback was lost is still confirmed.
+ * page calls it, so a payment whose provider callback was lost is still confirmed. A request the
+ * payer declined, or that was cancelled or expired, releases the answer: `requestState` says which,
+ * and the page offers the retry (`paymentReturnVerdict`).
  */
-export async function confirmSubmissionPayment(
-  submissionId: string
-): Promise<{ id: string; formId: string; paymentStatus: string }> {
+export async function confirmSubmissionPayment(submissionId: string): Promise<{
+  id: string;
+  formId: string;
+  paymentStatus: string;
+  /** The request's state, typed, when the server read it on this call. */
+  requestState?: PaymentRequestState;
+}> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/confirm-payment`,
     { method: 'POST' }

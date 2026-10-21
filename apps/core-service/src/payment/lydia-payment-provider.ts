@@ -4,6 +4,7 @@ import type { ConnectAccountStatusResponse } from './payment-provider.interface'
 import type {
   CancelRequestOutcome,
   CheckoutRequestState,
+  CheckoutRequestStateKind,
   CheckoutSessionResult,
   ConnectBalanceSummary,
   CreateCheckoutSessionParams,
@@ -28,6 +29,17 @@ export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
 
 /** `request/cancel`'s answer for a request already cancelled or expired (sandbox, 2026-10-15). */
 const LYDIA_CANCEL_ALREADY_SETTLED = '2';
+
+/**
+ * Every `request/state` code Lydia answers that has been MEASURED on the sandbox (2026-10-15 and
+ * 2026-10-21, payments.md), and what it means. A code missing here is `unknown`, never guessed.
+ */
+const LYDIA_REQUEST_STATES: Readonly<Record<string, CheckoutRequestStateKind>> = {
+  '0': 'open',
+  '1': 'paid',
+  '5': 'declined',
+  '6': 'cancelled-or-expired',
+};
 
 /**
  * Fields no log line may ever carry in the clear - `api_token_id` may be the Business's own
@@ -261,9 +273,8 @@ export class LydiaPaymentProvider implements PaymentProvider {
    * Lydia still answers the state, but unsigned; with it the answer is `{state,
    * used_ease_of_payment, signature}`. NO variant echoes `order_ref`, so the caller must already
    * know which answer the request belongs to - it reads by the uuid its own row stored.
-   * 6 is what a cancel and an expiry both leave and 0 is still payable (both measured); 1 is paid
-   * per Lydia's documentation, NOT measured (paying needs the payer form). Any other code - 5,
-   * refused by the payer, among them, also unmeasured - is reported as `other`, never guessed.
+   * The code is classified HERE, once (`LYDIA_REQUEST_STATES`): 0 open, 1 paid, 5 declined by the
+   * payer, 6 cancelled or expired, all measured. Any other code is `unknown`, at WARN.
    */
   async getCheckoutRequestState(
     sessionId: string,
@@ -278,10 +289,14 @@ export class LydiaPaymentProvider implements PaymentProvider {
       vendor_token: connectAccountId,
     });
     const raw = data.state === undefined || data.state === null ? '' : String(data.state);
-    const state: CheckoutRequestState['state'] =
-      raw === '1' ? 'paid' : raw === '6' ? 'closed' : raw === '0' ? 'open' : 'other';
-    if (state === 'other') {
-      this.logger.warn(`Lydia request ${sessionId} is in unmeasured state "${raw}"`);
+    // `Object.hasOwn`: a code such as "constructor" must not read the prototype as a state.
+    const state: CheckoutRequestStateKind = Object.hasOwn(LYDIA_REQUEST_STATES, raw)
+      ? LYDIA_REQUEST_STATES[raw]
+      : 'unknown';
+    if (state === 'unknown') {
+      this.logger.warn(`Lydia request ${sessionId} answered an unknown state code "${raw}"`);
+    } else {
+      this.logger.debug(`Lydia request ${sessionId} is ${state} (code ${raw})`);
     }
     return { state, raw };
   }

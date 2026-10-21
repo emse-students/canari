@@ -365,7 +365,9 @@ export class PaymentController {
    * Reads a payment request's state at the provider. SERVER-TO-SERVER ONLY (internal secret):
    * social-service asks it when a cancel answered `already-settled`, to tell a request that was
    * PAID (the answer is then paid, and no new request may be issued) from one cancelled or expired.
-   * `sessionId` is the `request_uuid`; answers `{ ok: true, state, raw }`.
+   * `sessionId` is the `request_uuid`; answers `{ ok: true, state, raw }`, `state` the TYPED
+   * `CheckoutRequestStateKind` (open | paid | declined | cancelled-or-expired | unknown) the
+   * provider classified - the caller decides on it and never on `raw`, which is for its log.
    */
   @Post('request-state')
   @HttpCode(200)
