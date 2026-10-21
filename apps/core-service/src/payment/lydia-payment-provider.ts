@@ -35,9 +35,10 @@ const LYDIA_CANCEL_ALREADY_SETTLED = '2';
  * Fields no log line may ever carry in the clear - `api_token_id` is the Business's own
  * private_token (see `createOnboarding`'s docblock on why it is never persisted either), and
  * `api_token` is the Business's vendor token, which `business/create` answers with and which was
- * logged in clear until 2026-10-07.
+ * logged in clear until 2026-10-07. `signature` is the value Lydia's `request/state` answers with
+ * (and the callbacks carry): the proof the whole confirmation rests on, never a log field.
  */
-const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id', 'api_token']);
+const LYDIA_LOG_REDACT_KEYS = new Set(['api_token_id', 'api_token', 'signature']);
 
 function redactForLog(data: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(

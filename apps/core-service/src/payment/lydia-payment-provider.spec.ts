@@ -419,6 +419,24 @@ describe('LydiaPaymentProvider - refusals and logs', () => {
     });
   });
 
+  it('never logs the signature Lydia answers with, but still logs the rest of the answer', async () => {
+    const lines: string[] = [];
+    const sink = (m: unknown) => void lines.push(String(m));
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(sink);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(sink);
+    mockedAxios.post.mockResolvedValue({
+      data: { error: '0', request_uuid: 'REQ-VISIBLE', signature: 'SIGNATURESECRET' },
+    });
+    await makeProvider()
+      .createCheckoutSession(request)
+      .catch(() => undefined);
+    const logged = lines.join(' | ');
+    expect(logged).toContain('request/do');
+    // CONTROL: redaction is by key, not a blanket mute - the other fields are still diagnosable.
+    expect(logged).toContain('REQ-VISIBLE');
+    expect(logged).not.toContain('SIGNATURESECRET');
+  });
+
   it('never logs the api_token or api_token_id of a freshly created business', async () => {
     const lines: string[] = [];
     const sink = (m: unknown) => void lines.push(String(m));
