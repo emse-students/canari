@@ -52,7 +52,12 @@ builds on the IN half later and is not started.
    replacement or over the ceiling (`discard_picked_file`, the same allowlist), or the capture that
    replaces an undrained share. What a dead page leaves is swept **once per process, at the first
    `onCreate`** - when no page exists to be staging anything - keeping only what the waiting
-   manifest names (`IncomingShare.sweepOrphansOnce`).
+   manifest names (`IncomingShare.sweepOrphansOnce`). An activity re-created INSIDE a living process
+   does not sweep: what its dead page held waits for the next process start.
+   The claim is atomic because `rename(2)` resolves its path atomically (Android, iOS); a Rust test
+   races two takers on it (`commands/handoff.rs`, POSIX only - Windows renames by handle).
+   The Kotlin half (claim, replace, sweep) has no JVM test: it is Android-only, and is read on the
+   Mi 9T (Owed).
 4. **The page drains** (`IncomingShareHost.svelte`, mounted on every route by
    `ChatBackgroundService`) at mount, on `canari:incoming-share` (the native side announcing a share
    to a live page) and on `canari:foreground`. The listener is registered before the first drain,
@@ -69,7 +74,9 @@ builds on the IN half later and is not started.
    fact that says so.
 6. **The chat page stages it** once that conversation is the one displayed
    (`incomingShare.takeFor`): the text joins the draft (in front of anything already typed), and the
-   files are read NOW and **one at a time** (`stageSharedFiles`), each through `take_picked_file`,
+   files are read NOW and **one at a time** (`stageSharedFiles`), behind the same session hold as a
+   picked file (`whenSessionUp`), every one into the conversation the share was taken by - read ONCE,
+   so a member opening another one during a video re-encode does not receive the rest - each through `take_picked_file`,
    which deletes the copy as it reads it, and staged before the next is read. **A non-video over
    the composer's ceiling is deleted unread**: the manifest carries each copy's size, and the share
    applies the composer's own predicate (`refusedBeforePreparation`, `media.ts`) against the
@@ -97,5 +104,8 @@ builds on the IN half later and is not started.
 ## Owed
 
 - A reading on the Mi 9T: text from Chrome, one and several pictures from the gallery, a PDF from
-  Files, a video; cold start, warm, and with the PIN gate up. `adb logcat -s IncomingShare` and the
+  Files, a video; cold start, warm, and with the PIN gate up. And the native half no JVM test reaches:
+  a second share while the first waits (the first's copies go), a share whose every stream is
+  refused while one waits (that one stays, the refusal is told), and a kill then relaunch (orphans
+  swept, the waiting share kept). `adb logcat -s IncomingShare` and the
   page's `[SHARE]` lines tell each step.

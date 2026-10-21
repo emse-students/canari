@@ -1155,19 +1155,25 @@
       if (share.files.length === 0) return;
       // The copies are read HERE, once a destination is on screen, and not when the share arrived -
       // one at a time, each staged before the next is read, under the composer's own ceiling.
-      void stageShare(share.files);
+      const files = share.files;
+      const destination = selected;
+      whenSessionUp(
+        `a share of ${files.length} file(s)`,
+        () => void stageShare(files, destination)
+      );
     });
   });
 
   /**
    * Stages a share's files in the open conversation, one at a time, and says what did not make it:
    * a copy over the upload ceiling (deleted unread, told as the composer tells a picked one) and a
-   * copy that could not be read.
+   * copy that could not be read. Every file goes to `destination`, the conversation the share was
+   * taken by, whichever one is on screen when its turn comes (`stageSharedFiles`).
    */
-  async function stageShare(files: SharedFileEntry[]) {
+  async function stageShare(files: SharedFileEntry[], destination: string) {
     const limits = await new MediaService().uploadLimits();
-    const { lost, tooLarge } = await stageSharedFiles(files, limits, (file) =>
-      messaging.handleFilesSelected([file], msgCtx())
+    const { lost, tooLarge } = await stageSharedFiles(files, destination, limits, (file, to) =>
+      messaging.handleFilesSelected([file], { ...msgCtx(), selectedContact: to })
     );
     if (lost > 0) showToast(m.share_items_lost({ count: lost }), 'error');
     if (tooLarge.length > 0 && limits) {

@@ -93,16 +93,22 @@ export interface SharedStagingResult {
 }
 
 /**
- * Stages a share's files in the composer ONE AT A TIME: each copy is read (and deleted) by
+ * Stages a share's files in the composer of `destination` ONE AT A TIME: each copy is read (and deleted) by
  * `take_picked_file`, handed to `stage`, and only then is the next one read - so the WebView holds
  * one shared file's raw bytes at a time, not the whole share. A copy the composer would refuse
  * (`refusedBeforePreparation`, against the server's `limits`) is deleted UNREAD rather than read
  * whole and refused afterwards. Nothing here throws: a copy that cannot be read is counted in `lost`.
+ *
+ * THE DESTINATION IS READ ONCE, by the caller, and handed to every `stage`: a video re-encode takes
+ * seconds, and a destination re-read per file would put the rest of the share in whichever
+ * conversation the member opened meanwhile. Each file goes to the conversation they CHOSE, whose
+ * composer queue keeps it whether or not it is still on screen.
  */
 export async function stageSharedFiles(
   entries: SharedFileEntry[],
+  destination: string,
   limits: { maxPlaintextBytes: number } | null,
-  stage: (file: File) => Promise<void>
+  stage: (file: File, destination: string) => Promise<void>
 ): Promise<SharedStagingResult> {
   const result: SharedStagingResult = { staged: 0, lost: 0, tooLarge: [] };
   for (const entry of entries) {
@@ -121,7 +127,7 @@ export async function stageSharedFiles(
       continue;
     }
     try {
-      await stage(file);
+      await stage(file, destination);
       result.staged++;
     } catch (error) {
       result.lost++;

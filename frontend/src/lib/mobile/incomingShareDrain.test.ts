@@ -110,6 +110,7 @@ describe('stageSharedFiles', () => {
         { path: '/c/1_b.pdf', name: 'b.pdf', mime: 'application/pdf', size: 3 },
         { path: '/c/2_c.png', name: 'c.png', mime: 'image/png', size: 3 },
       ],
+      'g',
       limits,
       async (file) => {
         order.push(`stage ${file.name} ${file.type} ${file.size}`);
@@ -133,7 +134,7 @@ describe('stageSharedFiles', () => {
     const pdf = { path: '/c/0_big.pdf', name: 'big.pdf', mime: 'application/pdf', size: 150 * MB };
     const video = { path: '/c/1_v.mp4', name: 'v.mp4', mime: 'video/mp4', size: 150 * MB };
     const staged: string[] = [];
-    const result = await stageSharedFiles([pdf, video], limits, async (file) => {
+    const result = await stageSharedFiles([pdf, video], 'g', limits, async (file) => {
       staged.push(file.name);
     });
     expect(result.tooLarge).toEqual([pdf]);
@@ -150,7 +151,7 @@ describe('stageSharedFiles', () => {
     );
     const at = { path: '/c/0_at', name: 'at', mime: 'application/pdf', size: 50 * MB };
     const over = { path: '/c/1_over', name: 'over', mime: 'application/pdf', size: 50 * MB + 1 };
-    const result = await stageSharedFiles([at, over], limits, async () => {});
+    const result = await stageSharedFiles([at, over], 'g', limits, async () => {});
     expect(result.staged).toBe(1);
     expect(result.tooLarge).toEqual([over]);
   });
@@ -160,7 +161,28 @@ describe('stageSharedFiles', () => {
       cmd === 'take_picked_file' ? new ArrayBuffer(1) : undefined
     );
     const big = { path: '/c/0_big.pdf', name: 'big.pdf', mime: 'application/pdf', size: 500 * MB };
-    const result = await stageSharedFiles([big], null, async () => {});
+    const result = await stageSharedFiles([big], 'g', null, async () => {});
     expect(result).toEqual({ staged: 1, lost: 0, tooLarge: [] });
+  });
+
+  it('stages every file in the conversation chosen, even when another opens mid-batch', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'take_picked_file' ? new ArrayBuffer(1) : undefined
+    );
+    // The member opens another conversation while the first file is being prepared.
+    let onScreen = 'chosen';
+    const stagedIn: string[] = [];
+    const entry = (n: string) => ({ path: `/c/${n}`, name: n, mime: 'video/mp4', size: 1 });
+    await stageSharedFiles(
+      [entry('a'), entry('b'), entry('c')],
+      onScreen,
+      limits,
+      async (_f, to) => {
+        stagedIn.push(to);
+        onScreen = 'elsewhere';
+      }
+    );
+    expect(onScreen).toBe('elsewhere');
+    expect(stagedIn).toEqual(['chosen', 'chosen', 'chosen']);
   });
 });
