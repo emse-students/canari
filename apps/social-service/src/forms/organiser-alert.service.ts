@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { PostNotificationsService } from '../posts/post-notifications.service';
+import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { PushService } from '../push/push.service';
 import { formPaidOverCapacityContent } from '../push/push-content';
 import { FORM_RESPONSES_TARGET } from '../push/push-target';
@@ -32,7 +32,6 @@ export const FORM_PAID_OVER_CAPACITY_TYPE = 'form_paid_over_capacity';
 
 /** Who the row names as its actor: nobody acted on the organiser, a payment provider answered. */
 const SYSTEM_ACTOR_ID = 'system';
-const SYSTEM_ACTOR_NAME = 'Canari';
 
 /**
  * TELLS A FORM'S MANAGERS THAT A PAYMENT LANDED ON IT WHILE IT WAS FULL - a refund they owe.

@@ -52,6 +52,13 @@ import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 export const ANONYMOUS_NOTIFICATION_ACTOR_ID = '';
 export const ANONYMOUS_NOTIFICATION_ACTOR_NAME = 'Anonyme';
 
+/**
+ * The name a notification gives as its actor when no PERSON acted on the reader - the platform
+ * itself: an admin answering a profile correction for it, a form reminder, a payment provider's
+ * answer. One constant, so every such row names the platform the same way.
+ */
+export const SYSTEM_ACTOR_NAME = 'Canari';
+
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
 export class PostNotificationsService {

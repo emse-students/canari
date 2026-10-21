@@ -5,7 +5,7 @@ import { Repository, Between, LessThanOrEqual } from 'typeorm';
 import { FormReminder } from './entities/form-reminder.entity';
 import { PushService } from '../push/push.service';
 import { formOpeningSoonContent, formOpenContent } from '../push/push-content';
-import { PostNotificationsService } from '../posts/post-notifications.service';
+import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { FormsService } from './forms.service';
 
 /** Retention durations for unbounded-growth data tables. */
@@ -57,7 +57,7 @@ export class FormReminderScheduler {
           type: 'form_reminder',
           postId: r.formId,
           actorId: 'system',
-          actorName: 'Canari',
+          actorName: SYSTEM_ACTOR_NAME,
           text: content.legacyBody,
           skipPush: true,
         });
@@ -91,7 +91,7 @@ export class FormReminderScheduler {
           type: 'form_reminder',
           postId: r.formId,
           actorId: 'system',
-          actorName: 'Canari',
+          actorName: SYSTEM_ACTOR_NAME,
           text: content.legacyBody,
           skipPush: true,
         });

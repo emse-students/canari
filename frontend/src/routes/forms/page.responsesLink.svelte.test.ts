@@ -62,9 +62,9 @@ it('opens nothing without the parameter', async () => {
 });
 
 it('says in the log that the named form is not on the list, and opens nothing', async () => {
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
   url.value = new URL('https://canari.test/forms?responses=gone');
   render();
-  await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('gone')));
+  await vi.waitFor(() => expect(info).toHaveBeenCalledWith(expect.stringContaining('gone')));
   expect(api.getSubmissions).not.toHaveBeenCalled();
 });
