@@ -321,7 +321,7 @@ describe('createMlsStatePersister - receive-skip measurement switch', () => {
     persister.onBulkIngestStart();
     for (let i = 0; i < frames; i++) persister.scheduleDeferred();
     await persister.onBulkIngestEnd(phase);
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
   }
 
   it('OFF (default) checkpoints after every drain, exactly as before', async () => {
@@ -357,7 +357,7 @@ describe('createMlsStatePersister - receive-skip measurement switch', () => {
     persister.onBulkIngestStart();
     persister.persistNow();
     await persister.onBulkIngestEnd(live);
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });
 
@@ -374,7 +374,7 @@ describe('createMlsStatePersister - receive-skip measurement switch', () => {
     persister.scheduleDeferred();
     await persister.onBulkIngestEnd(replay);
     await persister.onBulkIngestEnd(live);
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });
 
@@ -384,7 +384,7 @@ describe('createMlsStatePersister - receive-skip measurement switch', () => {
       fail ? Promise.reject(new Error('disk')) : Promise.resolve()
     );
     persister.persistNow();
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
     fail = false;
     await drain(persister);
@@ -418,7 +418,7 @@ describe('createMlsStatePersister - frames read outside the conversation path', 
     persister.onBulkIngestStart();
     persister.noteReceivedFrame(true);
     await persister.onBulkIngestEnd(live);
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });
 
@@ -428,7 +428,7 @@ describe('createMlsStatePersister - frames read outside the conversation path', 
     persister.onBulkIngestStart();
     for (let i = 0; i < 3; i++) persister.noteReceivedFrame(false);
     await persister.onBulkIngestEnd(live);
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });
 
@@ -436,7 +436,7 @@ describe('createMlsStatePersister - frames read outside the conversation path', 
     const { persistCheckpoint, persister } = make(0);
     persister.noteReceivedFrame(true);
     persister.noteReceivedFrame(false);
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
     expect(persistCheckpoint).not.toHaveBeenCalled();
     await persister.flush();
     expect(persistCheckpoint).not.toHaveBeenCalled();
@@ -455,14 +455,14 @@ describe('createMlsStatePersister - frames read outside the conversation path', 
         : Promise.resolve();
     });
     persister.persistNow();
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
     // A receive-only drain ends while the urgent write is still running.
     persister.onBulkIngestStart();
     persister.scheduleDeferred();
     await persister.onBulkIngestEnd(live);
     rejectWrite(new Error('disk'));
-    await new Promise((r) => setTimeout(r, 10));
+    await flushMacrotask();
     expect(persistCheckpoint).toHaveBeenCalledTimes(2);
   });
 });
@@ -489,7 +489,7 @@ describe('persistMlsStructuralCheckpoint and the measurement switch', () => {
     persister.onBulkIngestStart();
     persister.scheduleDeferred();
     await persister.onBulkIngestEnd(live);
-    await new Promise((r) => setTimeout(r, 10));
+    await flushMacrotask();
     return persistCheckpoint;
   }
 
