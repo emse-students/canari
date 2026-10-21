@@ -12,9 +12,12 @@ import { LiveCut } from './entities/live-cut.entity';
 import { LiveRulesAcceptance } from './entities/live-rules-acceptance.entity';
 import { LiveChatMessage } from './entities/live-chat-message.entity';
 import { LiveReactionBurst } from './entities/live-reaction-burst.entity';
+import { LiveBroadcastWithdrawal } from './entities/live-broadcast-withdrawal.entity';
+import { LiveChatReportedLine } from './entities/live-chat-reported-line.entity';
 import { LIVE_STORE_TIMEOUT_MS } from './live.constants';
 import { HttpLiveSegmentStore, LIVE_SEGMENT_STORE } from './live-segment-store';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
+import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer } from './live-announcer';
 import { LiveSeats } from './live-seats';
 import { LiveChatController } from './live-chat.controller';
@@ -22,7 +25,7 @@ import { LiveChatService } from './live-chat.service';
 import { LivesController } from './lives.controller';
 import { LivesService } from './lives.service';
 
-/** Every table of the module (migrations 091, 094, 097 and 098), parent first. */
+/** Every table of the module (migrations 091, 094, 097, 098 and 099), parent first. */
 export const LIVE_ENTITIES = [
   Live,
   LiveSegment,
@@ -32,13 +35,15 @@ export const LIVE_ENTITIES = [
   LiveRulesAcceptance,
   LiveChatMessage,
   LiveReactionBurst,
+  LiveBroadcastWithdrawal,
+  LiveChatReportedLine,
 ];
 
 /**
  * Lives (docs/wiki/services/lives.md): the row, its key and removed viewers (WP-L2), the segment
  * ingest, the manifest and the sweep (WP-L3), and the push to the followers when a live goes on air
  * (WP-L7, server half), and the live chat and floating reactions (WP-L6). Every route, and that
- * push, is behind `LIVE_ENABLED`.
+ * push, is behind `LIVE_ENABLED`; the sweep and the hourly report-age alarm run regardless.
  */
 @Module({
   imports: [
@@ -56,6 +61,7 @@ export const LIVE_ENTITIES = [
   providers: [
     LivesService,
     LiveRetentionScheduler,
+    LiveReportAgeScheduler,
     LiveAnnouncer,
     LiveSeats,
     LiveChatService,

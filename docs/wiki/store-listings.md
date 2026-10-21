@@ -42,7 +42,10 @@ Stale against `store/whats-new.txt` (v1.1.2) and `CHANGELOG`:
 
 1. **"Stripe" is false.** Stripe was removed (#1589); payments go through Lydia. The bullet should
    say "integrated payment" and name no provider, so it cannot go stale again.
-2. **"audio calls" is false.** Calling is held off (`CALLS_ENABLED = false`).
+2. **"audio calls" is false.** Calling is held off (`CALLS_ENABLED = false`). It becomes true with
+   the stable that flips `CALLS_COMPILED`, AUDIO 1:1 only (owner, 2026-10-21): the bullet then says
+   audio calls and never video, and changes in the same week as that stable, with the store answers
+   of [calls, B14](frontend/modules/calls.md#the-store-answers-b14).
 3. Missing, and shipped: audiences (an agenda scoped to your campus and programme, staff following
    a whole campus), Canareels (short videos, camera tab), communities, institutions created in-app,
    the carte de la vie asso poster generator, nominative read grants.

@@ -868,6 +868,8 @@ with their examples, in [testing-methodology](../../docs/wiki/testing-methodolog
 page before writing a check or believing one. The ones that decide whether a run is worth reading at
 all:
 
+- **ONE DRIVER PER BENCH PHONE AT A TIME**, assigned by the lead (BENCH-SHARED-2, 2026-10-21): a second
+  session's swipes and reloads spoiled a reading. [testing-methodology](../../docs/wiki/testing-methodology.md#one-driver-per-bench-phone-at-a-time-bench-shared-2-2026-10-21).
 - **A PUSH ROW MEASURES CANARI ONLY IF THE PHONE'S LINK TO GOOGLE IS ALIVE, AND THAT LINK FAILS
   `ESTABLISHED`.** Four verdicts on 2026-09-07 named the app over a transport that had silently
   stopped carrying anything while every readable fact - standby bucket, Doze whitelist, `ping`, the

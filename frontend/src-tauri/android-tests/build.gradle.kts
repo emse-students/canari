@@ -33,6 +33,8 @@ sourceSets {
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/push")
         // The right-edge back-gesture exclusion arithmetic, same rule: no Android import allowed.
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/gesture")
+        // The ongoing-call service's transition table and output choice (WP-C-BG-A), same rule.
+        kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/call")
     }
 }
 

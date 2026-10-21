@@ -65,8 +65,11 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'repost_personal_refused':
       return `/posts/${notif.postId}`;
     // A live a moderator cut (`postId` is the live, deleted when it ended): the row tells the
-    // broadcaster and goes nowhere - there is no page of a live that no longer exists.
+    // broadcaster and goes nowhere - there is no page of a live that no longer exists. The same for
+    // the right to broadcast suspended or withdrawn (WP-L8b; `postId` is the member's own id).
     case 'live_cut':
+    case 'live_suspended':
+    case 'live_withdrawn':
       return null;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
@@ -102,6 +105,8 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'profile_correction_applied',
   'profile_correction_refused',
   'live_cut',
+  'live_suspended',
+  'live_withdrawn',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */

@@ -40,6 +40,7 @@ import { publicationTime } from './publication-time';
 import { POST_LIST_CACHE_PREFIX, invalidatePostListCache } from './post-list-cache';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
+import { pageComments, type CommentOrder } from './comment-page';
 import { previewOf } from '../push/push-content';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
 import {
@@ -1606,6 +1607,29 @@ export class PostsService {
       }
     }
     return shaped;
+  }
+
+  /**
+   * One page of a post's comments as WHOLE THREADS (`pageComments`), for the comment sheet.
+   *
+   * Visibility is `getById`'s: a post this reader may not open is a 404 here too, so the comment
+   * route is no side door around the audience or the block rules. Blocked accounts are dropped
+   * the way `getById` drops them from the full array.
+   */
+  async listComments(
+    postId: string,
+    viewerId: string | undefined,
+    opts: { cursor?: number; limit?: number; order?: CommentOrder }
+  ) {
+    await this.assertVisible(postId, viewerId, 'READ_OR_REACT');
+    const post = await this.postRepo.findOne({ where: { id: postId } });
+    if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
+    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewerId);
+    const page = pageComments((post.comments ?? []) as any[], { ...opts, blockedIds });
+    this.logger.debug(
+      `listComments ${postId}: ${page.comments.length} rows, cursor=${String(opts.cursor)} hasMore=${page.hasMore}`
+    );
+    return page;
   }
 
   /** Updates a post's content. See `assertMayManage` for who may. */

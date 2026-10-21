@@ -69,3 +69,29 @@ audio on the transceiver the caller's offer created (`addTrack` reuses it; `ontr
 sender, as the app does) and must PASS; `fault-reuse-bare-sender` leaves that sender bare in
 `ontrack`, as the app did, and must fail
 ([calls](../../docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).
+
+## The video rows (2026-10-20)
+
+`video`, `video-camera-late`, `video-switch` and `video-off-on` are GATED: both pages send Chrome's
+fake camera (`--use-fake-device-for-media-stream=fps=30`) through the app's own worker, with the
+app's `callVideoConstraints`, `applyCallVideoSenderLimits` and `preferVp8` IMPORTED from
+`frontend/src/lib/utils/callVideo.ts`. Each adds these checks (`videoChecks`, self-tested by
+`matrix.test.mjs`):
+
+| Check                 | Reads                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------ |
+| `video-in-path`       | the worker's `framesInBy` for video, both sides > 0                                                    |
+| `video-decrypted`     | decrypted video frames > 0 and `decryptFailuresBy.video` = 0                                           |
+| `video-codec`         | the inbound video codec is VP8                                                                         |
+| `video-fps`           | decoded frames per second >= 27                                                                        |
+| `video-freezes`       | `freezeCount` = 0                                                                                      |
+| `video-keyframes`     | `keyFramesDecoded` <= 5 - a key-frame storm is the signature of a header the depacketiser cannot read  |
+| `video-picture`       | the mean colour of the received picture within 24 of the sent one (32x24 canvas, both before `finish`) |
+| `video-fed-after-op`  | after a switch or an off/on, the sender transform is still handed frames                               |
+| `video-mute-when-off` | the peer's remote track mutes while the camera is off, and unmutes after                               |
+
+`video-whole-frame` (VP8 encrypted whole) and `video-h264` (H.264 negotiated, encrypted whole) are
+the experiments that justify the clear header and the VP8-only rule; `fault-video-bare-sender` puts
+the callee's camera on the REUSED sender the caller's offer created, left bare, and must fail
+`video-in-path` and `video-decrypted`. The run writes a video table to `results.md`
+([calls](../../docs/wiki/frontend/modules/calls.md#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)).

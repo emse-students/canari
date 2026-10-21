@@ -1,7 +1,8 @@
 # Test suite reform - the measured estate and the plan (2026-10-18)
 
-> **Status 2026-10-19: WP-T1, T2, T3, T5 (first pass) and T6 are MERGED** (#2033, #2034, #2030, #2042,
-> #2043); **WP-T4 is draft #2041**; WP-T7 and WP-T8 are not started. The measured sections below are
+> **Status 2026-10-21: WP-T1, T2, T3, T5 (first pass), T6 and T9 are MERGED** (#2033, #2034, #2030, #2042,
+> #2043, #2139); **WP-T4 is draft #2041**; the inventory (#2129, section 7) and the deletion of the
+> declared spec copies (section 7.2) are the WP's first steps; WP-T7 and WP-T8 are not started. The measured sections below are
 > the baseline those packages were written against, not today's counts.
 >
 > Asked by the user on 2026-10-18 (*"la refonte de tout
@@ -512,3 +513,70 @@ Written by hand against the block above; the numbers it quotes are that block's.
 - **Next measurement owed**: the same command with a vitest report from a quiet CI-shaped run, since the
   local timings above ranked a loaded machine, and jest `--json` reports for the four services so their
   rows carry a time.
+
+### 7.2 The declared copies, deleted (2026-10-21)
+
+The first deletion step of WP-TEST-TOOLING-REFORM, the one 7.1 called defensible. **Ten of the eleven
+`declared-copy` rows were deleted; one was kept, with its reason written into the group.**
+
+**The rule, now in the header of `.github/scripts/lib/declared-duplicates.mjs`: a copied module needs
+ONE spec, not one per copy.** An `exact` group pins every copy of the module to the same bytes, so the
+spec beside the group's FIRST file proves all of them; a byte-identical spec beside each other copy ran
+the same assertions on the same text. The old reason for the copies ("or three services assert the
+behaviour and the fourth only inherits the file") was true of the spec and false of the behaviour: the
+fourth file IS the first file, and `declared-duplicates.test.mjs` fails on one changed byte (shown on
+2026-10-21 by changing `once` to `on` in social-service's `drain-on-sigterm.ts`: `FAIL ... 1 of 3
+cop(y|ies) drifted`, naming the file). That gate runs in `make test-ci-scripts`, on every pull request.
+
+Principle 1 of section 4, applied to each one - the class the copy caught, and the layer that still does:
+
+| Deleted | Cases (run) | What the copy imported beyond node | Still caught by |
+| --- | --- | --- | --- |
+| `cors-origins.spec.ts` in core, media, social | 3 x 9 = 27 | `@nestjs/common` `Logger` (log only) | chat-delivery's spec + the `exact` module group |
+| `drain-on-sigterm.spec.ts` in core, media, social | 3 x 4 = 12 | `@nestjs/common` `Logger` (log only) | same |
+| `internal-token.spec.ts` in core, social | 2 x 6 = 12 | `UnauthorizedException`, node `crypto` | same; each service's `framework-boot.spec.ts` asserts its own `@nestjs/*` tree |
+| `presence-audience.spec.ts` in social | 10 (5 static; an `it.each` over the `libs/contracts` cases) | `BadRequestException`, `Logger` | chat-delivery's spec (it reads the same `libs/contracts` file) + the group |
+| `user-display-name.spec.ts` in social | 20 (4 static; an `it.each` over the `libs/contracts` cases) | nothing | chat-delivery's spec (same contract file) + the group |
+| **Total** | **81** = core 19 + media 13 + social 49 | | |
+
+**Kept: `http-error-log.spec.ts` in BOTH core and social.** The module is duck-typed (no `axios`
+import), but its spec builds an `AxiosError` from the `axios` THAT service resolved, and each service
+has its own `bun.lock`: an `axios` bump in one service only could change the error's shape under that
+service's copy, and the other service's spec would not see it. The property is a secret not reaching a
+log, so the copy earns its place. Its group carries `keepEachCopy: true`, which `tools/test-inventory`
+reads so the row stops being proposed.
+
+**Why `@nestjs/common` did not keep the others, said honestly.** Version skew is NOT what separates
+them: Dependabot's `nestjs` group also moves per service directory, so one service's Nest can differ
+from another's exactly as its `axios` can. What differs is what the spec feeds the module. The
+`http-error-log` spec hands the duck-typed renderer an OBJECT BUILT BY THE DEPENDENCY (`config`,
+`headers`, `response`), whose shape is the very thing the renderer reads, and it guards a secret leak.
+The deleted specs use `@nestjs/common` only for a `Logger` and the CLASS an exception is thrown as -
+the module and its spec import that class from the same package, so the assertion cannot diverge
+between services unless Nest changes what `new UnauthorizedException()` / `new BadRequestException()`
+is. **That is the residual risk, named:** a Nest major landing in one service that changed those
+exception classes or `Logger` would no longer be seen by a spec in THAT service. What still stands in
+front of it is that service's `framework-boot.spec.ts` (the `@nestjs/*` tree coheres and boots), its
+other specs that throw the same classes, and the human review the auto-merge ceiling forces on every
+major. Judged implausible enough not to keep nine copies for it.
+
+**Counts.** Jest, same machine, before then after (`bun run test` in each service):
+
+| Service | Suites | Cases |
+| --- | --- | --- |
+| chat-delivery-service | 90 -> 90 | 978 -> 978 |
+| core-service | 42 -> 39 | 457 -> 438 |
+| media-service | 23 -> 21 | 263 -> 250 |
+| social-service | 179 -> 174 | 2,515 -> 2,466 |
+| **Total** | **334 -> 324** | **4,213 -> 4,132 (-81)** |
+
+The inventory (`bun tools/test-inventory/inventory.mjs --json`, no timings) reads 1,499 files and
+13,767 static cases after the change, and **0 `declared-copy` flags** (was 11). `declared-duplicates`
+went from 20 groups to 15 (the five spec groups emptied to one member and were deleted).
+`bun rows.mjs` is unchanged by construction - no runner was touched: 261 rows named, 192 answered.
+
+**What the inventory still flags, and what is left of the WP:** `customTabsCommands` /
+`keystoreCommands` (merge their shared cases with a `describe.each`, 7.1); `features.test.ts`, a new
+`source-text` flag no reading has covered yet; the two `no-assertion` files (`liveCrypto`,
+`mlsPerGroupScheduler`); then WP-T7, the rig change in one campaign session (helpers, IndexedDB,
+named SQL, `archive/` renamed), which owes harness re-runs under rule 33 and is not a desk task.

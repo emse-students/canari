@@ -36,6 +36,10 @@ export const RefusalCode = {
   PIN_INCORRECT: 'PIN_INCORRECT',
   /** 400 - a PIN change for an account that never registered one. */
   PIN_NOT_SET: 'PIN_NOT_SET',
+  /** 403 - calls are closed on this estate (`platform_config.calls_mode = off`, the kill switch). */
+  CALLS_DISABLED: 'CALLS_DISABLED',
+  /** 403 - this estate allows audio calls only (`calls_mode = audio`) and the ring asked for video. */
+  CALLS_VIDEO_DISABLED: 'CALLS_VIDEO_DISABLED',
 } as const;
 
 /** A stable refusal code of this service. */

@@ -65,6 +65,7 @@ All frames are JSON-encoded `SignalMessage`:
 | `Offer { sdp }` | Client → Server | Initial offer from the joining peer (first peer in room). |
 | `Answer { sdp }` | Client → Server or Server → Client | SDP answer completing a negotiation. |
 | `IceCandidate { candidate }` | Bidirectional | Trickle ICE candidates (JSON-encoded `RTCIceCandidateInit`). |
+| `MicSuspended { suspended }` | Client → Server → partner | P2P only, relayed verbatim: the sender's operating system took (`true`) or gave back (`false`) its microphone - the capture track's `mute`, never the user's mute button. One relay line each, no ledger counter. Dropped with a line before `Join`, in an SFU room (`p2p-only frame ... in an SFU room`) and while the partner is away; a drop is never counted as `ice_in_failed`, which counts ICE alone. The partner has no other way to tell it from silence ([calls](../frontend/modules/calls.md#the-call-in-the-background-2026-10-19)). |
 
 ### Room join flow
 

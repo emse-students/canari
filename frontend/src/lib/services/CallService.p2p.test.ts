@@ -6,6 +6,7 @@ import {
   CALL_E2E_PATH_RECHECKS,
   CALL_ICE_RESTART_ATTEMPTS,
   CALL_ICE_TRANSPORT_POLICY,
+  CALL_REPORT_INTERVAL_MS,
   CALL_SIGNALLING_RESUME_ATTEMPTS,
   CALL_SIGNALLING_RESUME_MAX_DELAY_MS,
   CALL_SIGNALLING_RESUME_TIMEOUT_MS,
@@ -25,7 +26,9 @@ import { flushMacrotask } from '../../test/flush';
  * docs/wiki/frontend/modules/calls.md.
  */
 
-vi.mock('$lib/features', () => ({ CALLS_ENABLED: true }));
+/** Mutable: the audio-only describe turns video off; every other test runs a build that has it. */
+const features = vi.hoisted(() => ({ CALLS_ENABLED: true, CALLS_VIDEO_ENABLED: true }));
+vi.mock('$lib/features', () => features);
 vi.mock('$lib/users/blocks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/users/blocks')>()),
   isBlockedWith: vi.fn(async () => false),
@@ -56,6 +59,8 @@ const server = {
   ringTimeoutMs: 60_000,
   initiateStatus: 200,
   iceStatus: 200,
+  /** The `turn` field of the ICE answer: `available` unless a test withholds the relay (B7). */
+  iceTurn: { status: 'available' } as { status: string; code?: string },
   ringStatus: 200,
   roomTokenStatus: 200,
   /** When set, the ring request waits for it: a test can act while the ring is in flight. */
@@ -77,7 +82,8 @@ vi.mock('$lib/utils/apiFetch', () => ({
       );
     if (url.includes('/api/calls/room-token'))
       return json({ roomToken: 'rt-2' }, server.roomTokenStatus);
-    if (url.includes('/api/calls/ice-servers')) return json({ iceServers: ICE }, server.iceStatus);
+    if (url.includes('/api/calls/ice-servers'))
+      return json({ iceServers: ICE, turn: server.iceTurn }, server.iceStatus);
     if (url.includes('/api/calls/ring-end')) return json({});
     if (url.includes('/api/calls/ring')) return json({ rang: 1 }, server.ringStatus);
     return json({});
@@ -96,9 +102,13 @@ const workerAnswers = {
   terminated: 0,
   /** The last worker the service created: a test posts the transforms' own messages through it. */
   last: null as { onmessage: ((e: MessageEvent) => void) | null } | null,
+  /** The keys the service handed the last worker (`setKeys`). */
+  keys: null as { send: ArrayBuffer; receive: ArrayBuffer } | null,
+  /** When set, the worker answers `setKeys` only once it settles: a key import still running. */
+  keysHold: null as Promise<void> | null,
 };
 
-/** The E2E worker: answers `setKey` with `keyReady` and `report` with counters, as the real one does. */
+/** The E2E worker: answers `setKeys` with `keyReady` and `report` with counters, as the real one does. */
 vi.mock('../workers/encryption.worker?worker', () => ({
   default: class {
     onmessage: ((e: MessageEvent) => void) | null = null;
@@ -112,7 +122,7 @@ vi.mock('../workers/encryption.worker?worker', () => ({
     removeEventListener(_: string, l: (e: MessageEvent) => void) {
       this.listeners = this.listeners.filter((x) => x !== l);
     }
-    postMessage(msg: { type: string; tag?: string }) {
+    postMessage(msg: { type: string; tag?: string; send?: ArrayBuffer; receive?: ArrayBuffer }) {
       if (msg.type === 'report') {
         const frames = workerAnswers.report;
         if (!frames) return;
@@ -144,10 +154,12 @@ vi.mock('../workers/encryption.worker?worker', () => ({
         });
         return;
       }
-      if (msg.type !== 'setKey') return;
+      if (msg.type !== 'setKeys') return;
+      workerAnswers.keys = { send: msg.send!, receive: msg.receive! };
+      const hold = workerAnswers.keysHold ?? Promise.resolve();
       // A TASK, as a real worker's answer is (another thread posts it): an `addTrack` whose
       // transform waited for it would be one task late, which Chromium short-circuits.
-      void flushMacrotask().then(() => {
+      void hold.then(flushMacrotask).then(() => {
         const e = { data: { type: 'keyReady' } } as MessageEvent;
         this.onmessage?.(e);
         // A copy: the service removes its listener from inside the callback.
@@ -216,13 +228,42 @@ function withTransformSlot<T extends object>(o: T): T & { transform: unknown; la
   return slot;
 }
 
+type FakeSender = {
+  track: { kind: string } | null;
+  kind: string;
+  transform: unknown;
+  late?: boolean;
+  replaceTrack: (t: { kind: string } | null) => Promise<void>;
+};
+
+/** A sender whose `replaceTrack` swaps its track in place, as the browser's (no negotiation). */
+function fakeSender(track: { kind: string } | null, kind: string): FakeSender {
+  const sender = withTransformSlot({ track, kind } as {
+    track: { kind: string } | null;
+    kind: string;
+  }) as FakeSender;
+  sender.replaceTrack = async (t) => {
+    sender.track = t;
+  };
+  return sender;
+}
+
+/** A transceiver: its `direction` is what this side asks, `codecs` what `setCodecPreferences` set. */
+type FakeTransceiver = {
+  sender: FakeSender;
+  receiver: { transform: unknown; late?: boolean };
+  direction: RTCRtpTransceiverDirection;
+  readonly currentDirection: RTCRtpTransceiverDirection | null | undefined;
+  codecs: { mimeType: string }[] | null;
+  setCodecPreferences: (c: { mimeType: string }[]) => void;
+};
+
 class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
   signalingState: RTCSignalingState = 'stable';
   localDescription: RTCSessionDescriptionInit | null = null;
   remoteDescription: RTCSessionDescriptionInit | null = null;
-  senders: { track: { kind: string } | null; kind: string; transform: unknown; late?: boolean }[] =
-    [];
+  senders: FakeSender[] = [];
   onnegotiationneeded: (() => Promise<void>) | null = null;
   onicecandidate = null;
   ontrack = null;
@@ -266,10 +307,16 @@ class FakePeerConnection {
   }
   /** When set, `getStats` refuses with it. */
   statsError: Error | null = null;
+  /** When set, `getStats` answers only once it settles: a reading still in flight. */
+  statsGate: Promise<void> | null = null;
+  /** Entries added to every reading as they are (`[CALL_REPORT]` byte totals and timestamps). */
+  extraStats: Record<string, unknown>[] = [];
   async getStats() {
     workerAnswers.reads.push('stats');
+    if (this.statsGate) await this.statsGate;
     if (this.statsError) throw this.statsError;
     const stats = new Map<string, unknown>();
+    this.extraStats.forEach((entry, i) => stats.set(`extra-${i}`, entry));
     if (this.videoOutboundPackets !== null) {
       stats.set('out-v', {
         type: 'outbound-rtp',
@@ -325,24 +372,18 @@ class FakePeerConnection {
       this.reusedByAddTrack += 1;
       return free;
     }
-    const sender = withTransformSlot({ track, kind: track.kind } as {
-      track: { kind: string } | null;
-      kind: string;
-    });
+    const sender = fakeSender(track, track.kind);
     this.senders.push(sender);
     this.receivers.push(withTransformSlot({}));
     return sender;
   }
   /** Always a NEW transceiver, created in this task. */
   addTransceiver(track: { kind: string }) {
-    const sender = withTransformSlot({ track, kind: track.kind } as {
-      track: { kind: string } | null;
-      kind: string;
-    });
+    const sender = fakeSender(track, track.kind);
     const receiver = withTransformSlot({});
     this.senders.push(sender);
     this.receivers.push(receiver);
-    return { sender, receiver };
+    return this.transceiverOf(sender);
   }
   ontrackHandler() {
     return this.ontrack as unknown as ((e: unknown) => void) | null;
@@ -352,16 +393,14 @@ class FakePeerConnection {
    * transceiver (a bare sender, a receiver) and fires `ontrack` in the same task, as the browser.
    */
   remoteOfferAdds(kind: string) {
-    const sender = withTransformSlot({ track: null, kind } as {
-      track: { kind: string } | null;
-      kind: string;
-    });
+    const sender = fakeSender(null, kind);
     const receiver = withTransformSlot({});
     this.senders.push(sender);
     this.receivers.push(receiver);
     const track = { kind, id: `remote-${kind}-1`, readyState: 'live', muted: false };
-    this.ontrackHandler()?.({ track, receiver, transceiver: { sender, receiver } });
-    return { sender, receiver };
+    const transceiver = this.transceiverOf(sender);
+    this.ontrackHandler()?.({ track, receiver, transceiver });
+    return transceiver;
   }
   removeTrack(sender: unknown) {
     const i = this.senders.indexOf(sender as (typeof this.senders)[number]);
@@ -375,12 +414,33 @@ class FakePeerConnection {
    * Unset entries read `sendrecv`, a call whose offer/answer completed.
    */
   directions = new Map<number, RTCRtpTransceiverDirection | null>();
+  /** One transceiver object per sender, as the browser: identity holds across `getTransceivers`. */
+  private transceivers = new Map<FakeSender, FakeTransceiver>();
+  transceiverOf(sender: FakeSender): FakeTransceiver {
+    let t = this.transceivers.get(sender);
+    if (!t) {
+      const negotiated = () => {
+        const i = this.senders.indexOf(sender);
+        return this.directions.has(i) ? this.directions.get(i) : 'sendrecv';
+      };
+      t = {
+        sender,
+        receiver: this.receivers[this.senders.indexOf(sender)],
+        direction: 'sendrecv',
+        get currentDirection() {
+          return negotiated();
+        },
+        codecs: null,
+        setCodecPreferences(c) {
+          this.codecs = c;
+        },
+      };
+      this.transceivers.set(sender, t);
+    }
+    return t;
+  }
   getTransceivers() {
-    return this.senders.map((sender, i) => ({
-      sender,
-      receiver: this.receivers[i],
-      currentDirection: this.directions.has(i) ? this.directions.get(i) : 'sendrecv',
-    }));
+    return this.senders.map((sender) => this.transceiverOf(sender));
   }
   async setLocalDescription(desc?: RTCSessionDescriptionInit) {
     await this.lag();
@@ -419,16 +479,21 @@ class FakePeerConnection {
 class FakeTransform {
   constructor(
     public worker: unknown,
-    public options: { side: string; epoch?: number }
+    public options: { side: string; kind: string; epoch?: number }
   ) {
     workerAnswers.epoch = options.epoch ?? 0;
   }
 }
 
-const fakeTrack = () => ({ kind: 'audio', stop: vi.fn(), enabled: true });
+/** The microphone track: an `EventTarget`, since the service watches its `mute` / `unmute` (WP-C-BG-I). */
+const fakeTrack = () =>
+  Object.assign(new EventTarget(), { kind: 'audio', stop: vi.fn(), enabled: true, muted: false });
 const fakeMls = {
   getDeviceId: () => 'device-1',
-  exportSecret: vi.fn(async () => new Uint8Array(32).fill(7)),
+  // A key filled with the context's LAST byte: `...|caller` and `...|callee` give different keys.
+  exportSecret: vi.fn(async (_g: string, _l: string, context: Uint8Array) =>
+    new Uint8Array(32).fill(context[context.length - 1])
+  ),
   sendMessage: vi.fn(async () => {
     order.push('mls');
   }),
@@ -443,10 +508,18 @@ const settle = async () => {
   await flushMacrotask();
 };
 
+// EVERY test runs on a fake clock, never the real one (2026-10-20). A call a test leaves up has a
+// 5 s path check armed on `window.setTimeout`: on the real clock it FIRED seconds later, inside
+// whichever test happened to be running, ended its service and wrote a "call end" worker report
+// into a neighbour's `appendLog` (1 run in ~15 failed 'owes no report for a call that never
+// connected'). A fake clock is thrown away with its test, so nothing outlives it. `setTimeout` only:
+// the harness's own yields (`flushMacrotask`) hold the real one.
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   server.ringTimeoutMs = 60_000;
   server.initiateStatus = 200;
   server.iceStatus = 200;
+  server.iceTurn = { status: 'available' };
   server.ringStatus = 200;
   server.roomTokenStatus = 200;
   server.ringHold = null;
@@ -454,6 +527,8 @@ beforeEach(() => {
   workerAnswers.terminated = 0;
   workerAnswers.video = { sender: 0, receiver: 0 };
   workerAnswers.reads = [];
+  workerAnswers.keys = null;
+  workerAnswers.keysHold = null;
   order.length = 0;
   FakeSocket.instances = [];
   FakePeerConnection.instances = [];
@@ -473,18 +548,92 @@ beforeEach(() => {
       }
     }
   );
-  const stream = {
-    getTracks: () => [fakeTrack()],
-    getVideoTracks: () => [],
-    getAudioTracks: () => [],
-  };
-  vi.stubGlobal('navigator', {
-    ...navigator,
-    mediaDevices: { getUserMedia: vi.fn(async () => stream) },
-  });
+  cameras.length = 0;
+  vi.stubGlobal('RTCRtpReceiver', { getCapabilities: () => ({ codecs: VIDEO_CODECS }) });
+  vi.stubGlobal(
+    'RTCRtpTransceiver',
+    class {
+      setCodecPreferences() {}
+    }
+  );
+  stubMedia();
 });
 
+/** The engine's video codecs: H.264 FIRST, as WebKit lists them - VP8 must be chosen, not found. */
+const VIDEO_CODECS = [
+  { mimeType: 'video/H264', clockRate: 90000 },
+  { mimeType: 'video/VP8', clockRate: 90000 },
+  { mimeType: 'video/rtx', clockRate: 90000 },
+];
+
+type FakeCam = {
+  kind: 'video';
+  id: string;
+  stop: ReturnType<typeof vi.fn>;
+  enabled: boolean;
+  readyState: string;
+  muted: boolean;
+  facing: string;
+  getSettings: () => { facingMode: string };
+  onended?: (() => void) | null;
+  onunmute?: (() => void) | null;
+};
+/** Every camera capture the service opened, in order. */
+const cameras: FakeCam[] = [];
+
+/** The microphone stream; the service ADDS the camera track to it, as to the browser's. */
+function fakeMicStream() {
+  const tracks: { kind: string }[] = [fakeTrack()];
+  return {
+    getTracks: () => tracks.slice(),
+    getVideoTracks: () => tracks.filter((t) => t.kind === 'video'),
+    getAudioTracks: () => tracks.filter((t) => t.kind === 'audio'),
+    addTrack: (t: { kind: string }) => tracks.push(t),
+    removeTrack: (t: { kind: string }) => {
+      const i = tracks.indexOf(t);
+      if (i >= 0) tracks.splice(i, 1);
+    },
+  };
+}
+
+/**
+ * `getUserMedia`: the microphone, or a camera of the facing asked (`exact` refused when
+ * `refuseFacing` names it); `cameraCount` video inputs listed.
+ */
+function stubMedia(opts: { refuseFacing?: string; cameraCount?: number } = {}) {
+  vi.stubGlobal('navigator', {
+    ...navigator,
+    mediaDevices: {
+      getUserMedia: vi.fn(async (c: MediaStreamConstraints) => {
+        if (!c.video) return fakeMicStream();
+        const fm = (c.video as MediaTrackConstraints).facingMode as {
+          exact?: string;
+          ideal?: string;
+        };
+        const facing = fm.exact ?? fm.ideal ?? 'user';
+        if (fm.exact && fm.exact === opts.refuseFacing) throw new Error('OverconstrainedError');
+        const cam: FakeCam = {
+          kind: 'video',
+          id: `cam-${cameras.length + 1}`,
+          stop: vi.fn(),
+          enabled: true,
+          readyState: 'live',
+          muted: false,
+          facing,
+          getSettings: () => ({ facingMode: facing }),
+        };
+        cameras.push(cam);
+        return { getVideoTracks: () => [cam] };
+      }),
+      enumerateDevices: vi.fn(async () =>
+        Array.from({ length: opts.cameraCount ?? 2 }, () => ({ kind: 'videoinput' }))
+      ),
+    },
+  });
+}
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -664,6 +813,10 @@ describe('the E2E worker report (2026-10-19)', () => {
     get transform() {
       return null;
     }
+    /** The receiver's codec list (`RTCRtpReceiver.getCapabilities`), H.264 first as on WebKit. */
+    static getCapabilities() {
+      return { codecs: VIDEO_CODECS };
+    }
   }
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -682,18 +835,8 @@ describe('the E2E worker report (2026-10-19)', () => {
 
   /** Our camera goes on (`toggleVideo`), with a fake capture; returns its track. */
   async function turnCameraOn(service: CallService) {
-    const camTrack = { kind: 'video', stop: vi.fn(), enabled: true };
-    const local = service as unknown as {
-      localStream: { addTrack: () => void; getVideoTracks: () => unknown[] };
-    };
-    local.localStream.addTrack = () => {};
-    local.localStream.getVideoTracks = () => [];
-    vi.stubGlobal('navigator', {
-      ...navigator,
-      mediaDevices: { getUserMedia: vi.fn(async () => ({ getVideoTracks: () => [camTrack] })) },
-    });
     await service.toggleVideo();
-    return camTrack;
+    return cameras[cameras.length - 1];
   }
 
   async function connectedCall() {
@@ -919,6 +1062,54 @@ describe('the E2E worker report (2026-10-19)', () => {
     expect(get(service.callState)).toBe('incall');
   });
 
+  describe("an audio-only build judges the peer's HIDDEN video like any other (B0 of the calls plan)", () => {
+    // The fakes say what the worker counts; whether WebKit and Chromium FEED a receiver transform
+    // whose track has no sink is a phone reading (calls.md, B0; device-verification CALL-L1 row 13).
+    beforeEach(() => {
+      features.CALLS_VIDEO_ENABLED = false;
+    });
+    afterEach(() => {
+      features.CALLS_VIDEO_ENABLED = true;
+    });
+
+    it('frames through the receiver transform: conclusive, the call goes on, nothing is shown', async () => {
+      const { service, pc, lines } = await connectedCall();
+      pc.outboundPackets = 250;
+      pc.inboundPackets = 251;
+      await vi.advanceTimersByTimeAsync(5_000);
+      pc.remoteOfferAdds('video');
+      workerAnswers.video = { sender: 0, receiver: 30 };
+      pc.videoInboundPackets = 400;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(lines()).toContain(
+        '[Call] E2E path check (after a new video m-line): no media around the transform (packets sent audio=250 video=0 received audio=251 video=400)'
+      );
+      expect(get(service.callState)).toBe('incall');
+      const shown = get(service.remoteStream)?.getTracks() ?? [];
+      expect(shown.some((t) => (t as MediaStreamTrack).kind === 'video')).toBe(false);
+    });
+
+    it('packets and never a frame: still ENDED as media around the transform, hidden or not', async () => {
+      const { service, pc, lines } = await connectedCall();
+      pc.outboundPackets = 250;
+      pc.inboundPackets = 251;
+      await vi.advanceTimersByTimeAsync(5_000);
+      pc.remoteOfferAdds('video');
+      pc.videoInboundPackets = 120;
+      await vi.advanceTimersByTimeAsync(5_000);
+      pc.videoInboundPackets = 240;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(
+        lines().some(
+          (l) =>
+            l.startsWith('[Call] ERROR E2E path check') &&
+            l.includes('AROUND the transform on receiver:video')
+        )
+      ).toBe(true);
+      expect(get(service.callState)).not.toBe('incall');
+    });
+  });
+
   it('re-checks a camera whose negotiation outlasted the check, and catches its bypass then (review S1)', async () => {
     const { service, pc, lines } = await connectedCall();
     pc.outboundPackets = 250;
@@ -1069,7 +1260,11 @@ describe('the E2E worker report (2026-10-19)', () => {
     expect(lines().filter((l) => l.includes('the worker did not answer in'))).toHaveLength(1);
     workerAnswers.report = { sender: 250, receiver: 251 };
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(lines()).toContain('[Call] E2E worker report (re-check): the worker answers again');
+    // Said ONCE, by whichever request it answers first: a path re-check or a `[CALL_REPORT]` tick
+    // (both ask the same worker, and the silence is the worker's, not one asker's).
+    expect(
+      lines().filter((l) => /^\[Call\] E2E worker report \(.+\): the worker answers again$/.test(l))
+    ).toHaveLength(1);
   });
 
   it('a negotiation reaching stable re-checks media the last check could not judge', async () => {
@@ -1113,7 +1308,7 @@ describe('the E2E worker report (2026-10-19)', () => {
     vi.stubGlobal(
       'RTCRtpScriptTransform',
       class extends FakeTransform {
-        constructor(worker: unknown, options: { side: string; epoch?: number }) {
+        constructor(worker: unknown, options: { side: string; kind: string; epoch?: number }) {
           if (options.side === 'sender') throw new Error('NotSupportedError');
           super(worker, options);
         }
@@ -1124,6 +1319,221 @@ describe('the E2E worker report (2026-10-19)', () => {
       '[Call] E2E sender transform failed in ontrack (video): Error: NotSupportedError'
     );
     expect(get(service.callState)).toBe('ended');
+  });
+
+  describe('the camera (video, lot 2)', () => {
+    const mimes = (t: { codecs: { mimeType: string }[] | null }) =>
+      t.codecs?.map((c) => c.mimeType);
+
+    it("holds EVERY video transceiver to VP8, the camera's and the one the peer's offer made", async () => {
+      const { service, pc } = await connectedCall();
+      const theirs = pc.remoteOfferAdds('video');
+      expect(mimes(theirs)).toEqual(['video/VP8', 'video/rtx']);
+      const cam = await turnCameraOn(service);
+      const mine = pc.getTransceivers().find((t) => t.sender.track === cam)!;
+      expect(mimes(mine)).toEqual(['video/VP8', 'video/rtx']);
+    });
+
+    it('OFF stops the capture, empties the SAME sender and goes recvonly; ON hands it a new capture, sendrecv', async () => {
+      const { service, pc, lines } = await connectedCall();
+      const first = await turnCameraOn(service);
+      const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+      const count = pc.senders.length;
+
+      await service.toggleVideo();
+      expect(first.stop).toHaveBeenCalled();
+      expect(t.sender.track).toBeNull();
+      expect(t.direction).toBe('recvonly');
+      expect(get(service.isVideoOff)).toBe(true);
+      expect(lines()).toContain(
+        '[Call] camera off (turned off) - sender emptied, recvonly (renegotiating)'
+      );
+
+      const second = await turnCameraOn(service);
+      expect(second).not.toBe(first);
+      // The same transceiver and its transform: no new m-line, no transform to attach late.
+      expect(pc.senders.length).toBe(count);
+      expect(t.sender.track).toBe(second);
+      expect(t.direction).toBe('sendrecv');
+      expect(t.sender.late).toBeUndefined();
+      expect(get(service.isVideoOff)).toBe(false);
+    });
+
+    it('switches to the other camera on the same sender, the old capture stopped first', async () => {
+      const { service, pc } = await connectedCall();
+      const front = await turnCameraOn(service);
+      const t = pc.getTransceivers().find((x) => x.sender.track === front)!;
+      expect(get(service.canSwitchCamera)).toBe(true);
+
+      await service.switchCamera();
+      const back = cameras[cameras.length - 1];
+      expect(front.stop).toHaveBeenCalled();
+      expect(back.facing).toBe('environment');
+      expect(t.sender.track).toBe(back);
+      expect(get(service.cameraFacing)).toBe('environment');
+    });
+
+    it('a switch that cannot open the other camera leaves the camera OFF, said and logged', async () => {
+      const { service, pc, lines } = await connectedCall();
+      const front = await turnCameraOn(service);
+      const t = pc.getTransceivers().find((x) => x.sender.track === front)!;
+      stubMedia({ refuseFacing: 'environment' });
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+
+      await service.switchCamera();
+      expect(front.stop).toHaveBeenCalled();
+      expect(t.sender.track).toBeNull();
+      expect(t.direction).toBe('recvonly');
+      expect(get(service.isVideoOff)).toBe(true);
+      expect(showToast).toHaveBeenCalledWith(m.call_camera_switch_failed(), 'warning');
+      expect(
+        lines().some((l) => l.startsWith('[Call] ERROR camera switch to environment failed'))
+      ).toBe(true);
+    });
+
+    it('offers no switch on a device with one camera', async () => {
+      stubMedia({ cameraCount: 1 });
+      const { service } = await connectedCall();
+      await turnCameraOn(service);
+      expect(get(service.canSwitchCamera)).toBe(false);
+    });
+
+    it('never opens the camera on an engine that cannot hold video to VP8', async () => {
+      vi.stubGlobal('RTCRtpReceiver', {
+        getCapabilities: () => ({ codecs: [{ mimeType: 'video/H264', clockRate: 90000 }] }),
+      });
+      const { service, pc, lines } = await connectedCall();
+      const before = pc.senders.length;
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+
+      await service.toggleVideo();
+      expect(cameras).toHaveLength(0);
+      expect(pc.senders.length).toBe(before);
+      expect(get(service.isVideoOff)).toBe(true);
+      expect(showToast).toHaveBeenCalledWith(m.call_camera_unavailable(), 'warning');
+      expect(lines()).toContain(
+        '[Call] ERROR this engine cannot hold video to VP8 - the camera stays off'
+      );
+    });
+
+    /** The next camera capture waits for `release()`: a permission prompt still up. */
+    function holdNextCapture() {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const md = navigator.mediaDevices as unknown as {
+        getUserMedia: (c: MediaStreamConstraints) => Promise<unknown>;
+      };
+      const real = md.getUserMedia;
+      md.getUserMedia = async (c) => {
+        md.getUserMedia = real;
+        await gate;
+        return real(c);
+      };
+      return release;
+    }
+
+    it('never adopts a capture that resolves after its call ended - not into the NEXT call', async () => {
+      const { service, lines } = await connectedCall();
+      const release = holdNextCapture();
+      const pending = service.toggleVideo();
+      service.endCall();
+      await vi.advanceTimersByTimeAsync(1_500);
+      // Another call is up before the old prompt answers.
+      const next = service.startCall('group-1', false);
+      await settle();
+      const ws = FakeSocket.instances[FakeSocket.instances.length - 1];
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-2' });
+      await next;
+      release();
+      await pending;
+      const cam = cameras[cameras.length - 1];
+      expect(cam.stop).toHaveBeenCalled();
+      expect(get(service.isVideoOff)).toBe(true);
+      expect(
+        (
+          service as unknown as { localStream: { getVideoTracks: () => unknown[] } }
+        ).localStream.getVideoTracks()
+      ).toEqual([]);
+      expect(lines().some((l) => l.includes('resolved after it ended - capture stopped'))).toBe(
+        true
+      );
+    });
+
+    it('an OFF tapped while the camera is still opening wins: the camera ends OFF', async () => {
+      const { service, pc, lines } = await connectedCall();
+      const release = holdNextCapture();
+      const opening = service.toggleVideo();
+      // The button already shows ON's destination; this tap means OFF and is queued, not dropped.
+      await service.toggleVideo();
+      expect(lines()).toContain(
+        '[Call] camera off queued - applied once the running camera operation ends'
+      );
+      release();
+      await opening;
+      await settle();
+      const cam = cameras[cameras.length - 1];
+      expect(cam.stop).toHaveBeenCalled();
+      expect(get(service.isVideoOff)).toBe(true);
+      const t = pc.getTransceivers().find((x) => x.sender.kind === 'video');
+      expect(t?.sender.track ?? null).toBeNull();
+    });
+
+    it('the background turns the camera OFF for real and the return turns it ON again - never black frames', async () => {
+      const { service, pc } = await connectedCall();
+      const first = await turnCameraOn(service);
+      const t = pc.getTransceivers().find((x) => x.sender.track === first)!;
+      let hidden = true;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      try {
+        document.dispatchEvent(new Event('visibilitychange'));
+        await settle();
+        expect(first.stop).toHaveBeenCalled();
+        expect(first.enabled).toBe(true); // never the black-frame pause
+        expect(t.sender.track).toBeNull();
+        expect(t.direction).toBe('recvonly');
+
+        hidden = false;
+        document.dispatchEvent(new Event('visibilitychange'));
+        await settle();
+        const back = cameras[cameras.length - 1];
+        expect(back).not.toBe(first);
+        expect(t.sender.track).toBe(back);
+        expect(t.direction).toBe('sendrecv');
+        expect(get(service.isVideoOff)).toBe(false);
+      } finally {
+        delete (document as unknown as { hidden?: boolean }).hidden;
+      }
+    });
+
+    it('names a non-VP8 video frame ONCE per call at ERROR, and the kind of a failed decrypt', async () => {
+      const { lines } = await connectedCall();
+      const post = (data: Record<string, unknown>) =>
+        workerAnswers.last?.onmessage?.({ data } as MessageEvent);
+      post({ type: 'videoCodecUnexpected', mimeType: 'video/H264', count: 1 });
+      post({ type: 'videoCodecUnexpected', mimeType: 'video/H264', count: 2 });
+      post({ type: 'decryptError', detail: 'OperationError', count: 1, mediaKind: 'video' });
+      expect(lines().filter((l) => l.includes('not VP8'))).toEqual([
+        '[Call] ERROR E2E: video frames of video/H264, not VP8, crossed the transform - encrypted whole, they cannot decode (1 so far)',
+      ]);
+      expect(lines()).toContain('[Call] E2E decrypt failed (video, 1): OperationError');
+    });
+
+    it("republishes the remote stream when the peer's camera goes off (its track mutes)", async () => {
+      const { service, pc } = await connectedCall();
+      pc.remoteOfferAdds('video');
+      let published = 0;
+      const unsub = service.remoteStreams.subscribe(() => (published += 1));
+      const before = published;
+      const remote = (
+        service as unknown as { mergedRemoteStream: { tracks: { onmute?: () => void }[] } }
+      ).mergedRemoteStream.tracks.find((x) => x)!;
+      remote.onmute?.();
+      expect(published).toBe(before + 1);
+      unsub();
+    });
   });
 
   it('arms the sender of a peer-created transceiver as armed, not attached (review L1)', async () => {
@@ -1303,6 +1713,29 @@ describe('the ring window, both sides', () => {
     expect(get(service.callState)).toBe('calling');
   });
 
+  it('rings as a VIDEO call only when the invite says so, and an audio one opens no camera', async () => {
+    const video = new CallService(fakeMls);
+    await video.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      { ...invite(5), hasVideo: true },
+      'me@example.org',
+      'device-1'
+    );
+    expect(video.incomingHasVideo).toBe(true);
+
+    const audio = new CallService(fakeMls);
+    await audio.handleCallSignal(
+      'peer@example.org',
+      'group-2',
+      { ...invite(5), hasVideo: undefined },
+      'me@example.org',
+      'device-1'
+    );
+    expect(audio.incomingHasVideo).toBe(false);
+    expect(cameras).toHaveLength(0);
+  });
+
   it('stops ringing the callee when the window closes, and writes nothing', async () => {
     const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
     vi.mocked(recordCallMissed).mockClear();
@@ -1465,6 +1898,83 @@ describe('a refused answer', () => {
     // The one MLS frame is the hangup; the answered frame never left.
     expect(order.filter((o) => o === 'mls')).toHaveLength(1);
     expect(order).not.toContain('api:/api/calls/ice-servers');
+  });
+});
+
+/**
+ * B7: a spent relay budget or an unreadable meter withholds TURN, never the call. The server answers
+ * STUN only, typed; the client goes on with the direct path and says so at error.
+ */
+describe('a call whose TURN relay the server withheld', () => {
+  it.each(['TURN_BUDGET_REACHED', 'TURN_METER_UNAVAILABLE'])(
+    'still starts on the direct path, and logs %s at error',
+    async (code) => {
+      server.iceTurn = { status: 'unavailable', code };
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      vi.mocked(appendLog).mockClear();
+      const service = new CallService(fakeMls);
+
+      await callerJoined(service);
+
+      expect(order).toContain('api:/api/calls/ring');
+      expect(vi.mocked(appendLog).mock.calls.map(([l]) => String(l))).toContain(
+        `[Call] ERROR: TURN relay withheld by the server (${code}) - direct path only`
+      );
+      service.endCall();
+    }
+  );
+
+  it('logs TURN off by configuration at info, never as an ERROR', async () => {
+    server.iceTurn = { status: 'unavailable', code: 'TURN_DISABLED' };
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+
+    await callerJoined(service);
+
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(lines).toContain(
+      '[Call] TURN relay disabled by the server (TURN_DISABLED) - direct path only'
+    );
+    expect(lines.some((l) => l.includes('ERROR') && l.includes('TURN'))).toBe(false);
+    service.endCall();
+  });
+
+  it.each([
+    [
+      'withheld',
+      { status: 'unavailable', code: 'TURN_BUDGET_REACHED' },
+      () => m.call_relay_withheld(),
+    ],
+    ['disabled', { status: 'unavailable', code: 'TURN_DISABLED' }, () => m.call_relay_disabled()],
+    ['available', { status: 'available' }, () => m.call_connection_lost()],
+  ])('a call that never connects with the relay %s says so', async (_n, turn, sentence) => {
+    server.iceTurn = turn;
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+
+    FakePeerConnection.instances[0].setIce('failed');
+    await settle();
+
+    expect(showToast).toHaveBeenCalledWith(sentence(), 'error');
+    expect(get(service.callState)).not.toBe('incall');
+  });
+
+  it('logs nothing of the kind when the relay is available', async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+
+    await callerJoined(service);
+
+    expect(
+      vi.mocked(appendLog).mock.calls.some(([l]) => String(l).includes('TURN relay withheld'))
+    ).toBe(false);
+    service.endCall();
   });
 });
 
@@ -1869,6 +2379,49 @@ describe('a network blip does not end the call', () => {
     expect(['ended', 'idle']).toContain(get(service.callState));
   });
 
+  /** CALL-GATHER-0: a gathering cut short by a working direct pair is not a TURN fault. */
+  describe('the no-relay WARN accuses only a call that settled with no working pair', () => {
+    async function callWithRelayGap() {
+      const service = new CallService(fakeMls);
+      const started = service.startCall('group-1', false);
+      await settle();
+      const ws = FakeSocket.instances[0];
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-1' });
+      await started;
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      const pc = FakePeerConnection.instances[0];
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      vi.mocked(appendLog).mockClear();
+      // Gathering ends with host candidates only, ICE still checking.
+      pc.iceConnectionState = 'checking';
+      const onCandidate = pc.onicecandidate as unknown as (e: {
+        candidate: RTCIceCandidate | null;
+      }) => void;
+      onCandidate({ candidate: { type: 'host' } as RTCIceCandidate });
+      onCandidate({ candidate: null });
+      const warned = () =>
+        vi
+          .mocked(appendLog)
+          .mock.calls.some(([l]) => String(l).includes('WARN no TURN relay candidate'));
+      return { pc, warned };
+    }
+
+    it('is silent when the direct pair then connects', async () => {
+      const { pc, warned } = await callWithRelayGap();
+      expect(warned()).toBe(false);
+      await ice(pc, 'connected');
+      expect(warned()).toBe(false);
+    });
+
+    it('warns when ICE then fails without ever connecting', async () => {
+      const { pc, warned } = await callWithRelayGap();
+      await ice(pc, 'failed');
+      expect(warned()).toBe(true);
+    });
+  });
+
   /**
    * The three outages of the 2026-10-19 bench reading of `1.3.1-alpha.2`, replayed. The Mi 9T is
    * the POLITE callee whose Wi-Fi goes off; the iPhone is the INITIATOR, whose own socket never
@@ -2226,5 +2779,751 @@ describe('a network blip does not end the call', () => {
       await ice(pc, 'failed');
       expect(get(service.callState)).toBe('ended');
     });
+  });
+});
+
+/**
+ * THE OS TAKING THE MICROPHONE (WP-C-BG-I, CALL-IOS-MIC-HIDDEN): measured on the iPhone, locked or in
+ * the background, the capture track goes `muted` while the call and its WebRTC stack keep running -
+ * the partner hears nothing and, before this, nothing said why. The sender tells the partner over
+ * the relay; each pairing rebuilds that state from the sender's own truth.
+ */
+describe('a microphone the system took', () => {
+  /** A capture track whose `mute` / `unmute` the OS fires - an EventTarget, as the real one is. */
+  class FakeMic extends EventTarget {
+    kind = 'audio';
+    enabled = true;
+    muted = false;
+    readyState = 'live';
+    stop = vi.fn();
+    systemTakes() {
+      this.muted = true;
+      this.dispatchEvent(new Event('mute'));
+    }
+    systemGivesBack() {
+      this.muted = false;
+      this.dispatchEvent(new Event('unmute'));
+    }
+  }
+
+  let mic: FakeMic;
+  beforeEach(() => {
+    mic = new FakeMic();
+    const stream = {
+      getTracks: () => [mic],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [mic],
+    };
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      mediaDevices: { getUserMedia: vi.fn(async () => stream) },
+    });
+  });
+
+  async function pairedCaller(service: CallService) {
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    return ws;
+  }
+
+  it('tells the other party when the system takes the microphone and when it gives it back', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+
+    mic.systemTakes();
+    expect(get(service.localMicSuspended)).toBe(true);
+    expect(ws.framesOfType('MicSuspended')).toEqual([{ type: 'MicSuspended', suspended: true }]);
+    // Not the user's mute: the button state is untouched.
+    expect(get(service.isMuted)).toBe(false);
+
+    mic.systemGivesBack();
+    expect(get(service.localMicSuspended)).toBe(false);
+    expect(ws.framesOfType('MicSuspended').at(-1)).toEqual({
+      type: 'MicSuspended',
+      suspended: false,
+    });
+    // The screen was hidden while it lasted: the user is told on the way back.
+    expect(showToast).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows what the other party said, and clears it when it says the microphone is back', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+
+    ws.deliver({ type: 'MicSuspended', suspended: true });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(true);
+    ws.deliver({ type: 'MicSuspended', suspended: false });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(false);
+  });
+
+  it('says nothing before the pairing, and announces a microphone still held when the pair forms', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+
+    mic.systemTakes();
+    expect(get(service.localMicSuspended)).toBe(true);
+    expect(ws.framesOfType('MicSuspended')).toHaveLength(0);
+
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    expect(ws.framesOfType('MicSuspended')).toEqual([{ type: 'MicSuspended', suspended: true }]);
+  });
+
+  it("forgets the other party's report at a new pairing: a `false` lost with a socket cannot leave it stuck", async () => {
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+    ws.deliver({ type: 'MicSuspended', suspended: true });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(true);
+
+    ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(false);
+  });
+
+  it("clears the other party's report when it goes away: no fresh evidence, no claim", async () => {
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+    ws.deliver({ type: 'MicSuspended', suspended: true });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(true);
+
+    ws.deliver({ type: 'PeerAway' });
+    await settle();
+    expect(get(service.peerMicSuspended)).toBe(false);
+  });
+
+  it('names the state a dead socket could not carry, and re-announces it after a RESUMED pairing', async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const service = new CallService(fakeMls);
+      const started = service.startCall('group-1', false);
+      await settle();
+      const ws = FakeSocket.instances[0];
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-1' });
+      await started;
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      const pc = FakePeerConnection.instances[0];
+      pc.setIce('connected');
+      pc.setConnection('connected');
+
+      ws.drop();
+      vi.mocked(appendLog).mockClear();
+      mic.systemTakes();
+      expect(get(service.localMicSuspended)).toBe(true);
+      expect(ws.framesOfType('MicSuspended')).toHaveLength(0);
+      expect(
+        vi
+          .mocked(appendLog)
+          .mock.calls.some(([line]) =>
+            /\[Call\] signalling MicSuspended NOT sent - socket/.test(String(line))
+          )
+      ).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(
+        cappedReconnectDelayMs(0, CALL_SIGNALLING_RESUME_MAX_DELAY_MS)
+      );
+      await settle();
+      const ws2 = FakeSocket.instances[1];
+      ws2.open();
+      ws2.deliver({ type: 'Joined', room_id: 'room-1', resume_token: 'resume-2' });
+      ws2.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+      expect(ws2.framesOfType('MicSuspended')).toEqual([{ type: 'MicSuspended', suspended: true }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a track handed over already muted counts from the start', async () => {
+    mic.muted = true;
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    expect(get(service.localMicSuspended)).toBe(true);
+  });
+
+  it('leaves no state and no listener behind when the call ends', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await pairedCaller(service);
+    mic.systemTakes();
+    ws.deliver({ type: 'MicSuspended', suspended: true });
+    await settle();
+
+    service.endCall();
+    await settle();
+    expect(get(service.localMicSuspended)).toBe(false);
+    expect(get(service.peerMicSuspended)).toBe(false);
+    const sentBefore = ws.sent.length;
+    mic.systemGivesBack();
+    expect(ws.sent.length).toBe(sentBefore);
+  });
+});
+
+/**
+ * THE FIRST PRODUCTION CALLS ARE AUDIO ONLY (owner, 2026-10-21), and hiding the video button is not
+ * what holds that: an invite with `hasVideo: true` - from a modified client, or later from a build
+ * with video - reaches an audio-only build too, and accepting it used to open the camera with no
+ * control on screen to close it. Every camera open is refused at the service.
+ */
+describe('an audio-only build (CALLS_VIDEO_ENABLED off)', () => {
+  beforeEach(() => {
+    features.CALLS_VIDEO_ENABLED = false;
+  });
+  afterEach(() => {
+    features.CALLS_VIDEO_ENABLED = true;
+  });
+
+  const videoAsked = () =>
+    vi
+      .mocked(navigator.mediaDevices.getUserMedia)
+      .mock.calls.filter(([c]) => !!(c as MediaStreamConstraints).video);
+
+  it('accepts a VIDEO invite as an audio call and never asks for a camera', async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: true,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+    expect(service.incomingHasVideo).toBe(false);
+
+    // Even an explicit `video: true` from a caller of the API.
+    const accepted = service.acceptCall('group-1', 'room-1', true);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled();
+    expect(videoAsked()).toHaveLength(0);
+    expect(cameras).toHaveLength(0);
+  });
+
+  it('places an audio call when asked for video, and the invite says no video', async () => {
+    const service = new CallService(fakeMls);
+    const started = service.startCall('group-1', true);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await started;
+
+    expect(videoAsked()).toHaveLength(0);
+    const { apiFetch } = await import('$lib/utils/apiFetch');
+    const ring = vi
+      .mocked(apiFetch)
+      .mock.calls.find(([url]) => String(url).includes('/calls/ring'));
+    expect(JSON.parse(String((ring![1] as RequestInit).body)).hasVideo).toBe(false);
+  });
+
+  it('never opens the camera from the call screen', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+
+    await service.toggleVideo();
+    expect(videoAsked()).toHaveLength(0);
+    expect(FakePeerConnection.instances[0].senders.filter((x) => x.track)).toHaveLength(1);
+  });
+
+  it("receives the peer's video under its transforms and never shows it", async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    const pc = FakePeerConnection.instances[0];
+
+    const created = pc.remoteOfferAdds('video');
+    // Decrypted, so the E2E path check still judges this m-line rather than ending the call.
+    expect((created.receiver.transform as FakeTransform).options.side).toBe('receiver');
+    const shown = get(service.remoteStream)?.getTracks() ?? [];
+    expect(shown.some((t) => (t as MediaStreamTrack).kind === 'video')).toBe(false);
+  });
+});
+
+/** The media keys: one per direction, logged as a hash, and a mismatch the user SEES (F5 of #1997). */
+describe('the call keys (port of #2013, 2026-10-21)', () => {
+  const byte = (b: ArrayBuffer) => new Uint8Array(b)[0];
+  const CALLER = 'r'.charCodeAt(0); // the last byte of `room-1|caller`
+  const CALLEE = 'e'.charCodeAt(0); // the last byte of `room-1|callee`
+  const logLines = async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    return vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+  };
+  /** A message the worker's transforms post, delivered to the service's handler. */
+  const fromWorker = (data: Record<string, unknown>) =>
+    workerAnswers.last?.onmessage?.({ data } as MessageEvent);
+
+  it('the caller sends with the caller key and decrypts with the callee key', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    expect(byte(workerAnswers.keys!.send)).toBe(CALLER);
+    expect(byte(workerAnswers.keys!.receive)).toBe(CALLEE);
+    expect(fakeMls.exportSecret).toHaveBeenCalledWith(
+      'group-1',
+      'mls-webrtc-media-v2',
+      new TextEncoder().encode('room-1|caller'),
+      32
+    );
+  });
+
+  it('the callee holds the same two keys, the other way round', async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+    expect(byte(workerAnswers.keys!.send)).toBe(CALLEE);
+    expect(byte(workerAnswers.keys!.receive)).toBe(CALLER);
+  });
+
+  it('hangup during the mic prompt, then a second call: the keys of call 2 reach the worker', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    // The microphone prompt of call 1 stays up until `release()`.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const md = navigator.mediaDevices as unknown as {
+      getUserMedia: (c: MediaStreamConstraints) => Promise<ReturnType<typeof fakeMicStream>>;
+    };
+    const real = md.getUserMedia;
+    let lateStream: ReturnType<typeof fakeMicStream> | null = null;
+    md.getUserMedia = async (c) => {
+      md.getUserMedia = real;
+      await gate;
+      lateStream = await real(c);
+      return lateStream;
+    };
+
+    const service = new CallService(fakeMls);
+    const first = service.startCall('group-1', false);
+    await settle();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(get(service.callState)).toBe('idle');
+    // The prompt is answered after the call was cleaned up.
+    release();
+    await first;
+    await settle();
+    const lateTracks = lateStream!.getTracks() as unknown as ReturnType<typeof fakeTrack>[];
+    expect(lateTracks).toHaveLength(1);
+    for (const t of lateTracks) expect(t.stop).toHaveBeenCalledTimes(1);
+    expect(workerAnswers.keys).toBeNull();
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(await logLines()).toContain(
+      '[Call] the call ended during its setup (after the microphone prompt, state=idle) - setup abandoned'
+    );
+
+    // Call 2 keys ITS worker; nothing of call 1 is left to stand in for it.
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    expect(byte(workerAnswers.keys!.send)).toBe(CALLER);
+    expect(byte(workerAnswers.keys!.receive)).toBe(CALLEE);
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('never keys a worker for a call that ended while its keys were exported', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    vi.mocked(fakeMls.exportSecret).mockImplementationOnce(async (_g, _l, context) => {
+      await gate;
+      return new Uint8Array(32).fill(context[context.length - 1]);
+    });
+    const service = new CallService(fakeMls);
+    const first = service.startCall('group-1', false);
+    await settle();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    release();
+    await first;
+    await settle();
+    expect(workerAnswers.keys).toBeNull();
+    expect(await logLines()).toContain(
+      '[Call] the call ended during its setup (after the key export, state=idle) - setup abandoned'
+    );
+  });
+
+  /** The next microphone prompt waits for `release()` (or fails with `refuse(e)`). */
+  function holdNextMicrophone() {
+    let release!: () => void;
+    let refuse!: (e: Error) => void;
+    const gate = new Promise<void>((resolve, reject) => {
+      release = resolve;
+      refuse = reject;
+    });
+    const md = navigator.mediaDevices as unknown as {
+      getUserMedia: (c: MediaStreamConstraints) => Promise<ReturnType<typeof fakeMicStream>>;
+    };
+    const real = md.getUserMedia;
+    const got: ReturnType<typeof fakeMicStream>[] = [];
+    md.getUserMedia = async (c) => {
+      md.getUserMedia = real;
+      await gate;
+      const stream = await real(c);
+      got.push(stream);
+      return stream;
+    };
+    return { release, refuse, got };
+  }
+
+  /** An incoming call, ringing on this device. */
+  async function ringing(service: CallService) {
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+  }
+
+  it('acceptCall: a hangup during the ended SUMMARY (same sequence, state ended) abandons the setup', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const mic = holdNextMicrophone();
+    const service = new CallService(fakeMls);
+    await ringing(service);
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    service.endCall();
+    expect(get(service.callState)).toBe('ended');
+    // The prompt is answered INSIDE the 1.5 s summary: cleanup has not run yet.
+    mic.release();
+    await accepted;
+    await settle();
+    expect(mic.got[0].getTracks()).toHaveLength(1);
+    for (const t of mic.got[0].getTracks() as unknown as ReturnType<typeof fakeTrack>[]) {
+      expect(t.stop).toHaveBeenCalledTimes(1);
+    }
+    expect(workerAnswers.keys).toBeNull();
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(showToast).not.toHaveBeenCalled();
+    expect(await logLines()).toContain(
+      '[Call] the call ended during its setup (after the microphone prompt, state=ended) - setup abandoned'
+    );
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(get(service.callState)).toBe('idle');
+  });
+
+  it('acceptCall: a step that FAILS after its call ended is logged, not shown as a call failure', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const mic = holdNextMicrophone();
+    const service = new CallService(fakeMls);
+    await ringing(service);
+    const accepted = service.acceptCall('group-1', 'room-1');
+    await settle();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    mic.refuse(new Error('NotAllowedError'));
+    await accepted;
+    await settle();
+    expect(showToast).not.toHaveBeenCalled();
+    expect(await logLines()).toContain(
+      '[Call] a setup step failed after its call ended: Error: NotAllowedError - not reported'
+    );
+  });
+
+  it('a key wait the cleanup interrupts is settled, and its timer never touches the NEXT call', async () => {
+    let release!: () => void;
+    workerAnswers.keysHold = new Promise<void>((r) => (release = r));
+    const service = new CallService(fakeMls);
+    const first = service.startCall('group-1', false);
+    await settle();
+    expect(workerAnswers.keys).not.toBeNull();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    await first;
+    expect(await logLines()).toContain(
+      '[Call] the call ended while the worker took its keys - the wait is settled'
+    );
+
+    // Call 2, keyed at once; then the first wait's 3 s would have passed.
+    workerAnswers.keysHold = null;
+    workerAnswers.keys = null;
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    expect(byte(workerAnswers.keys!.send)).toBe(CALLER);
+    await vi.advanceTimersByTimeAsync(3_000);
+    release();
+    await settle();
+    const lines = await logLines();
+    expect(lines.some((l) => l.includes('encryption worker key timeout'))).toBe(false);
+    // Call 2's transforms still find their worker keyed.
+    expect(get(service.callState)).not.toBe('idle');
+    expect(lines.some((l) => l.includes('the worker holds no call key'))).toBe(false);
+  });
+
+  it("hands every transform its track's kind, authenticated by the worker in each frame", async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    const pc = FakePeerConnection.instances[0];
+    expect((pc.senders[0].transform as FakeTransform).options).toMatchObject({
+      side: 'sender',
+      kind: 'audio',
+    });
+    expect((pc.receivers[0].transform as FakeTransform).options).toMatchObject({
+      side: 'receiver',
+      kind: 'audio',
+    });
+  });
+
+  it('logs a SHA-256 fingerprint of each key, never key bytes', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    await vi.waitFor(async () =>
+      expect((await logLines()).some((l) => l.includes('media keys derived'))).toBe(true)
+    );
+    const line = (await logLines()).find((l) => l.includes('media keys derived'))!;
+    expect(line).toMatch(/\(role=caller send_fp=[0-9a-f]{8} recv_fp=[0-9a-f]{8}, sha256\)$/);
+    const keyHex = (b: number) => b.toString(16).repeat(4);
+    expect(line).not.toContain(keyHex(CALLER));
+    expect(line).not.toContain(keyHex(CALLEE));
+  });
+
+  describe('a receiver that decrypts nothing', () => {
+    async function inCall() {
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+      const service = new CallService(fakeMls);
+      const ws = await callerJoined(service);
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      return { showToast, epoch: workerAnswers.epoch, ws };
+    }
+    const undecryptable = (epoch: number, mediaKind = 'audio') =>
+      fromWorker({ type: 'undecryptable', epoch, mediaKind, failures: 100 });
+
+    it('is a key mismatch when NO receiver decrypted: said at ERROR and shown ONCE per call', async () => {
+      const { showToast, epoch } = await inCall();
+      undecryptable(epoch);
+      undecryptable(epoch, 'video');
+      expect(showToast).toHaveBeenCalledTimes(1);
+      expect(showToast).toHaveBeenCalledWith(m.call_e2e_key_mismatch(), 'error');
+      expect(
+        (await logLines()).filter((l) => l.startsWith('[Call] ERROR E2E key mismatch - 100 '))
+      ).toHaveLength(2);
+    });
+
+    it('is NOT a key mismatch when another receiver of the call decrypts: ERROR, no notice', async () => {
+      const { showToast, epoch } = await inCall();
+      fromWorker({ type: 'inPath', side: 'receiver', epoch, mediaKind: 'audio' });
+      undecryptable(epoch, 'video');
+      expect(showToast).not.toHaveBeenCalled();
+      expect((await logLines()).some((l) => l.endsWith('- not a key mismatch'))).toBe(true);
+    });
+
+    it("ignores a replaced peer connection's receiver: its epoch proves nothing about this one", async () => {
+      const { showToast, epoch } = await inCall();
+      undecryptable(epoch - 1);
+      expect(showToast).not.toHaveBeenCalled();
+    });
+
+    it("judges a REPLACED device on its own frames: the old one's decrypts do not silence it", async () => {
+      const { showToast, epoch, ws } = await inCall();
+      fromWorker({ type: 'inPath', side: 'receiver', epoch, mediaKind: 'audio' });
+      // The other party's device is replaced: a new peer connection, a new epoch.
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      expect(workerAnswers.epoch).toBe(epoch + 1);
+      undecryptable(epoch + 1);
+      expect(showToast).toHaveBeenCalledWith(m.call_e2e_key_mismatch(), 'error');
+    });
+  });
+});
+
+/** WP-C2 (port of #2011): the `[CALL_REPORT]` line, every 10 s of a live call and once at its end. */
+describe('the call report (port of #2011, 2026-10-21)', () => {
+  const reports = async (phase: string) => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    return vi
+      .mocked(appendLog)
+      .mock.calls.map(([l]) => String(l))
+      .filter((l) => l.startsWith('[CALL_REPORT]') && l.includes(`phase=${phase}`));
+  };
+
+  async function liveCall() {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    return { service, ws, pc: FakePeerConnection.instances[0] };
+  }
+
+  it('ticks every 10 s while in a call - never before - and stops at its end', async () => {
+    const { service, pc } = await liveCall();
+    // Not in a call yet (still ringing): nothing to report on.
+    await vi.advanceTimersByTimeAsync(CALL_REPORT_INTERVAL_MS);
+    expect(await reports('tick')).toHaveLength(0);
+
+    pc.setConnection('connected');
+    await vi.advanceTimersByTimeAsync(CALL_REPORT_INTERVAL_MS);
+    expect(await reports('tick')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(CALL_REPORT_INTERVAL_MS);
+    expect(await reports('tick')).toHaveLength(2);
+
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(await reports('end')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(3 * CALL_REPORT_INTERVAL_MS);
+    expect(await reports('tick')).toHaveLength(2);
+  });
+
+  it("writes the end report from a peer connection still open, with the worker's counts", async () => {
+    const { service, pc } = await liveCall();
+    pc.setConnection('connected');
+    service.endCall();
+    // The reading starts at the hangup; the summary keeps the peer connection 1.5 s.
+    await settle();
+    expect(pc.closed).toBe(false);
+    const [end] = await reports('end');
+    expect(end).toContain('call=room-1 phase=end');
+    // The fake worker's report: 250 encrypted, 251 decrypted, no failure.
+    expect(end).toContain('e2e=on enc_frames=250 dec_frames=251 dec_fail=0');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(pc.closed).toBe(true);
+  });
+
+  it('never rates the end line against a tick of a peer connection the call no longer has', async () => {
+    const { service, ws, pc } = await liveCall();
+    pc.setConnection('connected');
+    // The old peer connection's tick is held in flight with LARGE totals.
+    let release!: () => void;
+    pc.statsGate = new Promise<void>((resolve) => (release = resolve));
+    pc.extraStats = [
+      { id: 'o', type: 'outbound-rtp', kind: 'audio', bytesSent: 9_000_000, timestamp: 10_000 },
+    ];
+    await vi.advanceTimersByTimeAsync(CALL_REPORT_INTERVAL_MS);
+    // The other device is replaced: a new peer connection, counting its bytes from zero.
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    const fresh = FakePeerConnection.instances[1];
+    fresh.extraStats = [
+      { id: 'o', type: 'outbound-rtp', kind: 'audio', bytesSent: 40_000, timestamp: 20_000 },
+    ];
+    // The call ends while the old tick is STILL in flight, then that tick lands.
+    service.endCall();
+    release();
+    await vi.advanceTimersByTimeAsync(1_500);
+    const [end] = await reports('end');
+    // No `previous` from the dead peer connection: no rate at all, never a negative or a bogus one.
+    expect(end).toContain('out_kbps=- in_kbps=-');
+  });
+
+  it('ICE connecting during the 1.5 s summary does not reopen the call: cleanup runs, the mic stops', async () => {
+    const { service, pc } = await liveCall();
+    const mic = get(service.localStreamStore)!.getTracks() as unknown as ReturnType<
+      typeof fakeTrack
+    >[];
+    service.endCall();
+    expect(get(service.callState)).toBe('ended');
+    pc.setConnection('connected');
+    expect(get(service.callState)).toBe('ended');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(get(service.callState)).toBe('idle');
+    for (const t of mic) expect(t.stop).toHaveBeenCalled();
+  });
+
+  it('zeroes the call keys at the end of the call', async () => {
+    const { service } = await liveCall();
+    const keys = (service as unknown as { callKeys: { send: Uint8Array; receive: Uint8Array } })
+      .callKeys;
+    expect(keys.send.some((b) => b !== 0)).toBe(true);
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(keys.send.every((b) => b === 0)).toBe(true);
+    expect(keys.receive.every((b) => b === 0)).toBe(true);
+  });
+
+  it('says e2e=- when the worker does not answer, rather than vouching for it', async () => {
+    const { service, pc } = await liveCall();
+    pc.setConnection('connected');
+    workerAnswers.report = null;
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    const [end] = await reports('end');
+    expect(end).toContain('e2e=- enc_frames=-');
+  });
+
+  it('says so when the stats cannot be read, and still ends the call', async () => {
+    const { service, pc } = await liveCall();
+    pc.setConnection('connected');
+    pc.statsError = new Error('getStats failed');
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(lines).toContain('[Call] WARN call report (end) not written: Error: getStats failed');
+    expect(pc.closed).toBe(true);
+    expect(get(service.callState)).toBe('idle');
+  });
+
+  it('writes no end report for a call that never built a peer connection', async () => {
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(await reports('end')).toHaveLength(0);
+  });
+
+  it('writes a refused line on an engine that cannot encrypt', async () => {
+    vi.stubGlobal('RTCRtpScriptTransform', undefined);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    await expect(new CallService(fakeMls).startCall('group-1', false)).rejects.toBeInstanceOf(
+      CallE2eUnsupportedError
+    );
+    expect(await reports('refused')).toEqual([
+      expect.stringMatching(
+        /^\[CALL_REPORT\] call=- phase=refused engine=\S+ e2e=refused reason=no-rtp-script-transform$/
+      ),
+    ]);
   });
 });

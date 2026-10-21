@@ -6,7 +6,7 @@ import { BadRequestException, Logger } from '@nestjs/common';
  * reaching this bound here is a caller bug, never a user's list.
  *
  * ONE NUMBER IN THREE PLACES, PINNED BY ONE FILE: `libs/contracts/presence-audience.cases.json`
- * carries it as `maxUserIds`, and the gateway's test and this module's spec (in both services)
+ * carries it as `maxUserIds`, and the gateway's test and this module's spec (in chat-delivery)
  * assert their own constant against it.
  */
 export const MAX_PRESENCE_AUDIENCE_USERS = 1000;

@@ -811,3 +811,195 @@ constructs its peer connection by the global name at call time - no reload, no P
 selection mode, so a tap on a log SELECTS it and `Ouvrir` attaches it - check the attached name before sending; the
 Mi 9T reached over CDP after a Wi-Fi change keeps its `adb` USB forward; Chrome's own log needs `--enable-logging
 --vmodule=*/webrtc/*=1` and holds ICE passwords, so it stays in the scratch directory.
+
+## 2026-10-20 (afternoon) - `v1.3.1-alpha.4`: what a locked iPhone keeps, measured for WP-C-BG-I
+
+Same builds and accounts as the morning (Mi 9T `delta`, iPhone 12 `gamma`, iOS 27.0.1), same Wi-Fi. The Mi 9T's
+console and a `getStats()` poll every 5 s over CDP (a constructor hook on `RTCPeerConnection` installed before the
+dial); the iPhone's app state and lock through WDA every 15 s. Mi 9T called, the iPhone accepted, then WDA locked the
+iPhone for 3 min 20 s.
+
+| Observable | Verdict |
+| --- | --- |
+| iPhone process during the lock | **alive**: the same pid before and after, app state `3` (background, running) at all 12 polls, never `2` |
+| iPhone WebRTC during the lock | **alive**: its RTCP kept arriving at the Mi 9T (`remote-inbound-rtp` round-trip measurements 4 -> 39, `remote-outbound-rtp` reports 3 -> 42) |
+| iPhone microphone during the lock | **muted within 3 s**: the Mi 9T's inbound audio packets froze at 1020 for the whole lock, concealment +240 000 samples per 5 s |
+| After unlock | packets again within 10 s (1020 -> 1614), audio level back; the call never left `connected` |
+
+So CALL-IOS-MIC-HIDDEN is the capture alone - the reasoning and the fix are
+[calls, WP-C-BG-I](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20).
+
+### Found on the way (not filed against WP-C-BG-I)
+
+| Id | What | Evidence |
+| --- | --- | --- |
+| CALL-PAIR-STALL | the first call of the session never paired: the iPhone accepted and showed "Connexion..." for the whole window, the Mi 9T (caller) logged `call_answered` (`signal from ...`) but no `PeerReady`, then its call socket closed `1006` at exactly +60 s (`signalling pair broken`) and the ring window closed. The Mi 9T's CHAT socket had logged `4 pings without server response - closing zombie connection` before it. Neither the dev `call-service` log nor the iPhone's log was read | Mi 9T console 15:16:33-15:17:35 local |
+| CALL-LATE-RING | after the Mi 9T's chat socket reconnected (15:18:50), it rang for the iPhone's call `87214182...` that the iPhone had ALREADY hung up: the invite and the hangup arrived together, the full-screen ring stayed up, and a new outgoing call was then refused locally as `busy (state=incoming ...)` | Mi 9T console 15:18:50-15:19:11 |
+| BENCH-SHARED | during the measured call the Mi 9T received invites from `gamma` and from another `delta` device (`ignoring invite from own account on another device`): another client of both accounts was calling at the same time. The measurement is unaffected (one peer connection, its counters above), but a run on these accounts is not isolated | Mi 9T console 15:20:35-15:22:38 |
+
+## 2026-10-21 - `v1.3.1-alpha.5` - the stable gate
+
+What a stable `v1.3.1` owes, read on both bench phones with `v1.3.1-alpha.5` as installed.
+
+- **Mi 9T**: release APK, `versionCode` 100300105, account `delta`. Console over CDP, logcat by pid.
+- **iPhone 12**: TestFlight `1.3.1-alpha.5`, account `gamma`. Driven through WDA, syslog through `pymobiledevice3`.
+
+Both sign in to `dev.canari-emse.fr`, which was reset to the fictional seed the same day
+([dev-environment](infrastructure/dev-environment.md)). The seed has no communities, no conversations and no reels.
+
+| Item | Mi 9T | iPhone 12 |
+| --- | --- | --- |
+| 1a. double tap likes a POST | **`PASS`** | **`PASS` with W3C taps**, see DT-IOS |
+| 1b. double tap likes a REEL | **`PASS`** | **`PASS` with W3C taps**, see DT-IOS |
+| 2. the camera no longer turns the app dark | **`PASS`** | **`PASS`** |
+| 3. delete a form, then an association | **`PASS`** | nothing to delete: `gamma` is not admin and the UI offers no management |
+| 4. five-minute smoke | **partial**: sign-in, DM receive and DM send `PASS`; background/foreground not read | **partial**: sign-in, DM send and receive, background/foreground `PASS`; the push banner not read |
+| 5. calls and lives are a pre-release thing | gated off in a stable, by code and tests | same build flag |
+
+### 1. Double tap to like
+
+**Mi 9T posts** (CDP touch events on the WebView):
+
+- A single tap on a post logs nothing and sends nothing.
+- A double tap logs `[doubleTapLike] double tap`, then `[PostCard.doubleTap] 08697804...: like`. It sends `POST .../reactions`, which answers `201`, and the heart shows 1.
+- A double tap on a liked post logs `already reacted, heart only` and sends no request, so it never unlikes.
+- Two taps 450 ms apart are outside the 250 ms window and do not like.
+- A triple tap gives ONE like and ONE `POST`.
+- After a reaction picked in the picker (😂), a double tap is `heart only`, with no request.
+- A single tap on the reaction button still opens the picker.
+
+**Mi 9T reel**: reel `e9b08462` was filmed with the composer camera (4 s, long press) and published as `delta`.
+
+- A single tap logs nothing.
+- A double tap logs `[reel-viewer] double tap on e9b08462...: like`, sends a `POST` that answers `201`, and the label reads `J'aime, 1 réaction`.
+- A second double tap sends no request.
+
+**DT-IOS: reported as a P1, then NOT REPRODUCED.** The follow-up PR, which logs what reached the card, is
+[#2175](https://github.com/emse-students/canari/pull/2175).
+
+- **First attempts, all missed.** They ran right after the PIN-reset sign-in, on a feed still showing its stale pre-sign-in page:
+  - a W3C double tap with 100 ms between taps on the "Liste Fictive" post;
+  - a W3C double tap with 200 ms on "BDE Fictif";
+  - three native `/wda/doubleTap` calls.
+- **The same W3C gesture later liked.** It is one pointer, 40 ms holds:
+  - 120 ms on "Alice Fictif" gave `❤️ 1`;
+  - 200 ms on "Tournoi" gave `❤️ 1`;
+  - on reel `e9b08462`, `J'aime, 1 réaction` became `J'aime, 2 réactions`.
+- **XCUITest's own `doubleTap` never likes.** It was tried on "Repetition" and on the reel. Its two taps are not what a finger sends, so it is no evidence about WebKit.
+
+So a real double tap likes on iOS. The first misses are unexplained, and #2175's log is what would explain them next
+time. The single-tap and never-unlike sub-checks were read on the Mi 9T only. The reading left two of `gamma`'s
+reactions on the dev seed:
+
+- a 😊 on "Liste Fictive", from a stray tap;
+- a ❤️ on "BDE Fictif", whose moment is uncertain.
+
+### 2. The camera and the theme (#2123)
+
+**iPhone, with the system in light mode.** The app stayed light after every close (screenshots):
+
+- the composer camera, opened and closed 3 times, then 2 more times with the keyboard up;
+- the swipe-to-camera tab, opened and closed 3 times.
+
+**Mi 9T:**
+
+- With the system in light mode, `data-theme` read `light` and the body background read `rgb(240, 242, 245)` during and after every cycle, keyboard up included.
+- With the system in dark mode, the app stays dark.
+
+Landscape does not apply: both apps are portrait-only.
+
+- The iPhone's `Info.plist` declares Portrait only.
+- A forced Android rotation leaves the viewport at 436x945.
+
+The Mi 9T's rotation and night-mode settings were restored after the reading.
+
+### 3. Deleting a form and an association (#2133)
+
+Admin was granted and revoked on the dev test account for this reading, with the owner's approval. The route was
+[dev-environment](infrastructure/dev-environment.md) section 3, on the dev database only:
+
+1. A read-only `SELECT` first.
+2. One `UPDATE users SET admin = true` on `delta`, which answered `UPDATE 1`.
+3. After the deletes, `admin = false`, which answered `UPDATE 1`.
+4. A final `SELECT`: `delta` reads `f`, and 0 of the 13 users are admins.
+
+**On the Mi 9T, as `delta`**, after a cold start that carried the claim:
+
+1. "Asso Lecture 1.3.1" was created through the UI: `POST /api/associations` answered `201`.
+2. A form was created in it through Gestion > Formulaires > Nouveau formulaire: `POST /api/forms` answered `201`.
+3. The form was deleted from the list: `DELETE /api/forms/65e2d181...` answered `200`, and the list emptied.
+4. The association was deleted through Gestion > Danger > Supprimer l'association: `DELETE /api/associations/329017de...` answered `200`, followed by the directory reload.
+
+There was no 4xx or 5xx in the window. **`PASS`.**
+
+**On the iPhone, as `gamma` (not admin)**, the association showed in the directory. Its page offers Suivre, Agenda and
+Membres, and no management link: the intended refusal.
+
+### 4. The smoke
+
+- **Sign-in**: both phones signed in again after the reset (artefacts below).
+- **Communities**: none exist on the reset seed, so opening one was not read.
+- **DM, iPhone to Mi 9T.** `gamma` created the DM.
+  - The Mi 9T processed the Welcome: `[WELCOME] Group 192834c7... ready`.
+  - It decrypted the message.
+  - The native builder raised a notification while the app was open on `/posts`, titled with the sender and carrying the text.
+- **DM, Mi 9T to iPhone.** The Mi 9T logged `[OUTBOX] 79fa14fa... sent`, the bubble showed on the iPhone, and the iPhone's `read_watermark` came back.
+- **iPhone background and foreground.**
+  - The app was sent home (state `3`, running in the background) and a message was sent to it from the Mi 9T.
+  - On foreground the app resumed in the conversation (state `4`, the same process since 07:55) with the message shown.
+  - The push BANNER itself was not observed: the syslog capture had stopped, and the swipe did not open Notification Center. The push is **not read**.
+  - On foreground, the app process's only error lines were UIKit keyboard, RemoteTextInput and AudioAnalytics lines. These are frameworks restoring the keyboard, not app code.
+- **Mi 9T background and foreground: not read** (see BENCH-SHARED-2).
+
+### 5. Calls and lives in a stable
+
+"En direct" and the `/api/lives` and `/api/calls/*` requests appear in alpha.5 only because it is a development
+build. `frontend/src/lib/features.ts` sets four flags:
+
+- `CALLS_COMPILED = false`;
+- `CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'development'`;
+- `CALLS_VIDEO_ENABLED = false`;
+- `LIVE_ENABLED = deployEnvironment() === 'development'`.
+
+`deployEnvironment()` returns `null` unless `VITE_DEPLOY_ENVIRONMENT` names dev, and a production build leaves it
+unset. `features.test.ts` pins three things:
+
+- `CALLS_ENABLED` is true for `development`, and false for `''` and for `staging`;
+- `CALLS_COMPILED` is false;
+- `CALLS_VIDEO_ENABLED` is false.
+
+On the server, `LIVE_ENABLED` makes `/api/lives` answer `404` in production. **A stable build shows neither feature.**
+
+### Filed as dev-reset artefacts (dev only, not product defects)
+
+- **`local_state_sealed_under_old_pin` on both phones** after the reset. Each phone's saved MLS state was sealed under
+  the PIN of the pre-reset account. It was cleared through the product's own "PIN oublié ?" > "Réinitialiser".
+- **The sentence on that screen misleads after a server reset.** "Si vous avez changé votre PIN sur un autre appareil,
+  saisissez l'ancien ci-dessous pour les garder" - but no PIN was changed, the server was reset. Only dev does that.
+- **On the Mi 9T, `delta` was then refused `pin_mismatch`**: the reset dev verifier differs from the rig's PIN.
+  `delta`'s PIN was reset to the rig's value, so a client that signs in as `delta` on dev with another PIN is now
+  refused.
+
+### Found on the way
+
+| Id | What | Evidence |
+| --- | --- | --- |
+| BENCH-SHARED-2 | **The Mi 9T was driven by another session from 08:03.** That session's camera-swipe investigation sent CDP swipes and `location.href = '/posts'` recoveries, and a system back finished the activity at 08:21:37.<ul><li>Full reloads at 08:21:19, 08:21:28 and 08:28:10 (`[nav] allowing navigation to .../posts`).</li><li>Two `[TAURI] Couldn't find callback id` warnings: Tauri's own line for a reload while a Rust call is pending.</li><li>The Mi 9T background/foreground and a second push attempt could not run.</li></ul>Item 3's `DELETE`s answered before the first reload. **Two sessions on one bench phone invalidate each other's logs: the rig owes a device lock** | Mi 9T logcat 08:21:19-08:21:38, console 08:28:10 |
+| EXIT-FORTIFY | **When the activity finished, the process logged a native abort**: `F libc: FORTIFY: pthread_mutex_lock called on a destroyed mutex` at 08:21:37.731, just after `onDestroy: destroying the WebView (... finishing=true)`.<ul><li>`dumpsys activity exit-info` records `EXIT_SELF` with status 0: `exit()` won the race and no crash was reported.</li><li>One of the morning's two finishing exits logged it; the 08:10:47 exit did not.</li></ul>A thread still locks a mutex that the exit's destructors already tore down. **Not filed yet** | Mi 9T logcat, pid 31452 |
+| (known) absent-conversation at reload | After the 08:28:10 reload, the drain read a DM frame before the restore had seeded its conversation row: `Message for absent conversation`, then `[PENDING] 1 frame(s) left unacknowledged ... absent-conversation: 1`. The re-fetch on seeding delivered the frame 20 ms later. This is the cold-start P2 in [backlog](backlog.md) ("an absent conversation at cold start"), now on alpha.5. The warning's "re-fetched on every reconnect" overstates a frame recovered at once | Mi 9T console 08:28:11.7-08:28:12.2 |
+| (open) overnight zombie sockets | `[WS] 4 pings without server response - closing zombie connection` at 04:36, 04:45, 04:55 and 06:12 local, with the Mi 9T idle overnight. The same line preceded CALL-PAIR-STALL above. Not investigated | Mi 9T console |
+| (rig) sign-in warning | `[auth] redirect loop to /posts broken - staying on /login` at 08:05:17, during the Mi 9T sign-in. BENCH-SHARED-2 was forcing navigations to `/posts` in the same minutes, and the cause is not separated | Mi 9T console |
+| (incident) | One failed login on a personal account via the iOS autofill sheet; the owner was informed | - |
+
+### Rig lessons
+
+- **The iOS autofill sheet sits over the keyboard's Go key.** "Remplir le nom d'utilisateur" covers the spot a scripted
+  submit taps. Close it first (its X), and take a screenshot before every submit on a credential form.
+- **XCUITest's `doubleTap` is no double tap for WebKit.** Read a double tap on the iPhone with a W3C sequence: one
+  pointer, two 40 ms holds, and the gap under test.
+- **`login.mjs` defaults to the `owner` account.** A device holding another account answers
+  `device_holds_other_account`, so pass `--account`.
+- **Stale Custom Tabs block `login.mjs`.** It fails with "Custom Tab never rendered a credential form". Tap
+  "Connexion externe" once by hand, then re-run it, and it answers the open form.
+- **A bench phone needs ONE driver.** Look for other CDP or adb clients of the serial before a reading, and again
+  before believing a reload in its log (BENCH-SHARED-2).

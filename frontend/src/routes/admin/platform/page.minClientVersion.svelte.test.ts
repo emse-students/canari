@@ -29,6 +29,7 @@ const CONFIG = {
   maintenanceMessage: null,
   minClientVersion: '1.2.7',
   paymentProvider: 'disabled',
+  callsMode: 'audio',
 };
 const CEILING_REFUSAL =
   "minClientVersion 9.9.9 is above this server's own version 1.3.0: no client that can satisfy it has been built, so every client would be locked out.";
@@ -133,6 +134,51 @@ describe('admin/platform minClientVersion', () => {
     );
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  // A STALE FORM MUST NOT UNDO ANOTHER ADMIN. The save used to PATCH every field as it was loaded,
+  // so a page left open while someone else closed calls re-opened them on an unrelated save.
+  it('sends only what changed: an unrelated save never names the calls kill switch', async () => {
+    route(
+      () => new Response(JSON.stringify({ ...CONFIG, minClientVersion: '1.2.8' }), { status: 200 })
+    );
+    await render();
+    await submitWith('1.2.8');
+
+    const body = JSON.parse((patchCalls()[0][1] as { body: string }).body) as unknown;
+    expect(body).toEqual({ minClientVersion: '1.2.8' });
+    expect(document.body.textContent).toContain(m.admin_platform_calls_mode_label());
+  });
+
+  // A save after a FAILED load used to send the whole form - its placeholders included: calls `off`
+  // and a floor of `0.0.0` written over whatever the server held.
+  it('refuses to save when nothing was loaded, and sends nothing', async () => {
+    apiFetch.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.endsWith('/announcement')
+          ? new Response(JSON.stringify({ announcement: null }), { status: 200 })
+          : new Response('down', { status: 500 })
+      )
+    );
+    await render();
+    await submitWith('1.2.8');
+
+    expect(patchCalls()).toHaveLength(0);
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      m.admin_platform_save_needs_load()
+    );
+  });
+
+  it('diffs the next save against the server answer, not the first load', async () => {
+    route(
+      () => new Response(JSON.stringify({ ...CONFIG, minClientVersion: '1.2.8' }), { status: 200 })
+    );
+    await render();
+    await submitWith('1.2.8');
+    await submitWith('1.2.8');
+
+    expect(patchCalls()).toHaveLength(2);
+    expect(JSON.parse((patchCalls()[1][1] as { body: string }).body)).toEqual({});
   });
 
   it('sends a non-admin away before any request is made', async () => {

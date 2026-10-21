@@ -322,6 +322,63 @@ jobs:
           echo "AAB: $AAB"
           echo "APK: $APK"
 
+      # THE ONGOING-CALL SERVICE SHIPS EXACTLY WHERE CALLS ARE PLACED (WP-C-BG-A). Its manifest overlay
+      # is merged by gradle on `VITE_DEPLOY_ENVIRONMENT=development` - a pre-release - and a stable
+      # carrying it would declare a microphone foreground service Play reviews and no user can use.
+      # `androidCallServiceManifest.test.ts` asserts the SOURCE; this reads what was BUILT, in both
+      # artifacts: the AAB's manifest is protobuf, whose strings are plain UTF-8 (no bundletool), the
+      # APK's is binary XML, read by aapt2. RECORD_AUDIO is the anchor: a dump that lost it is unread,
+      # never a pass. docs/wiki/frontend/modules/calls.md
+      - name: Check the built manifests carry the call service only where calls are placed
+        env:
+          AAB: ${{ steps.outputs.outputs.aab }}
+          APK: ${{ steps.outputs.outputs.apk }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # CALLS_COMPILED is read as the ONE exported boolean declaration; anything else (renamed,
+          # moved, a computed value) fails here rather than reading as false.
+          DECLS=$(grep -cE '^export const CALLS_COMPILED\b' frontend/src/lib/features.ts || true)
+          COMPILED=$(sed -nE 's/^export const CALLS_COMPILED(: boolean)? = (true|false);[[:space:]]*(\/\/.*)?$/\2/p' frontend/src/lib/features.ts)
+          if [ "$DECLS" != 1 ] || { [ "$COMPILED" != true ] && [ "$COMPILED" != false ]; }; then
+            echo "::error::cannot read CALLS_COMPILED from frontend/src/lib/features.ts (declarations=${DECLS}, value='${COMPILED}')"
+            exit 1
+          fi
+          # WHEN CALLS_COMPILED FLIPS TO true, A STABLE FAILS THIS STEP BY DESIGN: gradle still merges
+          # the service only on VITE_DEPLOY_ENVIRONMENT=development, so a stable would be built
+          # without it. The revival commit moves the declaration into src/main/AndroidManifest.xml
+          # (androidCallServiceManifest.test.ts holds it to that) - until then this step says so.
+          if [ "$PRERELEASE" = "true" ] || [ "$COMPILED" = true ]; then
+            EXPECTED=1
+          else
+            EXPECTED=0
+          fi
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -name aapt2 | sort -V | tail -1)
+          if [ -z "$AAPT2" ]; then
+            echo "::error::no aapt2 under $ANDROID_HOME/build-tools - the APK manifest cannot be read"
+            exit 1
+          fi
+          AAB_MANIFEST=$(unzip -p "$AAB" base/manifest/AndroidManifest.xml | grep -a -o 'android\.permission\.[A-Z_]*\|fr\.emse\.canari\.CallForegroundService' || true)
+          APK_MANIFEST=$("$AAPT2" dump xmltree --file AndroidManifest.xml "$APK")
+          FAILED=0
+          for artifact in AAB APK; do
+            if [ "$artifact" = "AAB" ]; then TEXT="$AAB_MANIFEST"; else TEXT="$APK_MANIFEST"; fi
+            if ! grep -q 'android\.permission\.RECORD_AUDIO' <<<"$TEXT"; then
+              echo "::error::${artifact} manifest unreadable: RECORD_AUDIO not found in the dump"
+              FAILED=1
+              continue
+            fi
+            for name in 'android\.permission\.FOREGROUND_SERVICE_MICROPHONE' 'fr\.emse\.canari\.CallForegroundService'; do
+              if grep -q "$name" <<<"$TEXT"; then FOUND=1; else FOUND=0; fi
+              if [ "$FOUND" != "$EXPECTED" ]; then
+                echo "::error::${artifact} manifest: ${name} present=${FOUND}, expected ${EXPECTED} (prerelease=${PRERELEASE})"
+                FAILED=1
+              fi
+            done
+          done
+          [ "$FAILED" = 0 ]
+          echo "Call service in the built manifests: expected=${EXPECTED}, both artifacts agree"
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:

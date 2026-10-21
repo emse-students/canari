@@ -29,6 +29,8 @@ const REFUSAL_WORDING: Readonly<Record<string, () => string>> = {
   ADMIN_SELF_DEMOTE: m.refusal_admin_self_demote,
   USER_SEARCH_FILTER_REQUIRED: m.refusal_user_search_filter_required,
   USER_SEARCH_TOO_LONG: m.refusal_user_search_too_long,
+  CALLS_DISABLED: m.call_calls_disabled,
+  CALLS_VIDEO_DISABLED: m.call_video_disabled,
 };
 
 /**
