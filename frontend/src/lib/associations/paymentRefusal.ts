@@ -32,6 +32,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === ALREADY_ANSWERED) {
     return m.form_already_answered();
   }
+  if (err instanceof SocialApiError && err.code === GUEST_PENDING_LIMIT) {
+    return m.form_guest_pending_limit();
+  }
   if (err instanceof SocialApiError && err.code === PREVIOUS_CHECKOUT_OPEN) {
     return m.shop_previous_checkout_open();
   }
@@ -57,6 +60,13 @@ export const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
  * no payment is requested (`seat-hold.ts`).
  */
 export const ALREADY_ANSWERED = 'ALREADY_ANSWERED';
+
+/**
+ * The body `code` of social-service's 429 when one visitor (one network address) already has three
+ * paid answers waiting for payment on a public form (`guest-visitor.ts`, decision PP5). The
+ * sentence says how the place comes back: a payment, or the 30-minute hold ending.
+ */
+export const GUEST_PENDING_LIMIT = 'GUEST_PENDING_LIMIT';
 
 /**
  * The body `code` of social-service's 409 when the buyer already bought this non-repeatable

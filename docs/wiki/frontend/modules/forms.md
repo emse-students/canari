@@ -476,7 +476,34 @@ return URL is `/f/:id`, never one the client names. `getPublic` is an allowlist 
 cash, the answer-grid slice) and the submit reply is one too (`toGuestSubmitReply`: the payer page or
 "cash owed", never the submission id). A guest's purchase record has `userId` NULL (migration 103);
 the association's Achats tab names it "Invité". Both fill pages total with ONE rule,
-`lib/forms/fillPricing.ts`. Not yet built: the per-visitor ceiling of pending paid answers (WP-P3).
+`lib/forms/fillPricing.ts`.
+
+### At most three answers waiting per visitor (WP-P3, decision PP5)
+
+A guest's paid answer holds a seat while it waits (30 minutes online, until the cash deadline in
+cash), and a public form takes any number of answers from one link - so one script could fill an
+event with answers nobody pays. `submit` refuses a visitor's FOURTH waiting answer on a form with a
+429 `GUEST_PENDING_LIMIT` (`guest-visitor.ts`, worded by `paymentRefusal.ts`).
+
+- **Counted from the rows, under the form's seat lock**, like the capacity count: a guest's paid
+  answer carries `guestVisitorKey` (migration 105) and the count is its rows still WAITING - an online
+  one within its hold (`livePendingWhere`), a cash one not validated. A paid, cancelled or expired
+  answer frees its place at once, with no job.
+- **The visitor is its address** (`clientAddress`, the `X-Real-IP` nginx sets - the throttle's own
+  key, one function for both), and the key is never the address: an HMAC-SHA256 under
+  `INTERNAL_SECRET` of the form id and the address (keyed, because a plain hash of 32 bits is
+  reversed by trying them all; per form, so two forms' rows cannot be joined). No secret, no key:
+  `submit` throws rather than store an unkeyed hash.
+- **Kept only while it counts**: `forgetSettledGuestVisitors`, in the 5-minute expiry tick (its own
+  `try`), clears the key of every answer no longer waiting. Register row C8 and the privacy policy
+  say so.
+- **The paid path keeps the free path's guards**: the honeypot drops a paid answer before any row or
+  payment, and the route keeps `ClientIpThrottlerGuard` at 30 per minute (both asserted in
+  `public-forms.controller.spec.ts`).
+- **Known cost**: guests behind ONE address (an event hall's network) share the ceiling - three
+  can wait to pay at once, the fourth waits a moment or pays later. Not measured ("to evaluate" in
+  PP5). A filled honeypot answers `{ ok: true }`, which on a PAID form a bot can tell from a real
+  reply (no payer page): the honeypot catches form-fillers, it does not deceive them.
 
 ### The guest's return from Lydia: a receipt, not an id (WP-P2) - A SECURITY SURFACE
 

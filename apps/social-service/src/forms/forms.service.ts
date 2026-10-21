@@ -3,6 +3,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
@@ -58,6 +60,7 @@ import {
   toGuestReceiptView,
   type GuestReceiptView,
 } from './guest-receipt';
+import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
@@ -1037,8 +1040,19 @@ export class FormsService {
     };
   }
 
-  /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a checkout URL. */
-  async submit(id: string, input: SubmitFormDto, origin: SubmitOrigin = 'member') {
+  /**
+   * Validates answers, calculates the total price (base + option modifiers), enforces capacity
+   * limits, creates a Submission, and - if totalCents > 0 - returns a checkout URL.
+   *
+   * `visitorAddress` (a guest only, `clientAddress`): who a guest's PAID answer is counted against
+   * in the per-visitor ceiling (PP5). Required for a guest who pays; ignored otherwise.
+   */
+  async submit(
+    id: string,
+    input: SubmitFormDto,
+    origin: SubmitOrigin = 'member',
+    visitorAddress?: string
+  ) {
     const guest = origin === 'guest';
     // A guest names nobody, whatever reached this call: the row and the payment are written with
     // no account and no stored address, by construction rather than by each caller's care.
@@ -1190,6 +1204,15 @@ export class FormsService {
       guest && totalCents > 0 && !(form.allowCashPayment && input.paymentMethod === 'cash')
         ? newGuestReceipt()
         : null;
+    // A guest's PAID answer waits for its money while holding a seat, online or in cash: it names
+    // who is waiting, so one visitor cannot hold more than the ceiling (PP5, `guest-visitor.ts`).
+    let visitorKey: string | null = null;
+    if (guest && totalCents > 0) {
+      if (!visitorAddress) {
+        throw new Error(`guest paid answer on form ${id} reached submit without a visitor address`);
+      }
+      visitorKey = guestVisitorKey(id, visitorAddress);
+    }
 
     let savedSubmission!: Submission;
     await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
@@ -1245,6 +1268,31 @@ export class FormsService {
       if (form.maxSubmissions && !holdsSeat) {
         const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
+      }
+      // PP5, under the form lock like the capacity count: two submits from one visitor queue here,
+      // so the fourth sees the three before it. Counted from the rows that still WAIT - an online
+      // answer within its hold, a cash one not yet validated - so a paid, cancelled or expired one
+      // frees its place in the ceiling with no job having run.
+      if (visitorKey) {
+        const waiting = await manager.count(Submission, {
+          where: [
+            livePendingWhere(id, { guestVisitorKey: visitorKey }),
+            { formId: id, guestVisitorKey: visitorKey, paymentStatus: 'pending_cash' },
+          ],
+        });
+        if (waiting >= GUEST_PENDING_CEILING) {
+          this.logger.warn(
+            `[Forms] guest answer refused on form ${id.slice(0, 8)}: this visitor already has ` +
+              `${waiting} answers waiting for payment (ceiling ${GUEST_PENDING_CEILING})`
+          );
+          throw new HttpException(
+            {
+              code: GUEST_PENDING_LIMIT,
+              message: `This visitor already has ${GUEST_PENDING_CEILING} answers waiting for payment on this form. Pay or let one expire first.`,
+            },
+            HttpStatus.TOO_MANY_REQUESTS
+          );
+        }
       }
 
       // A guest's FREE answer, and every anonymous answer. A guest who owes money takes the paid
@@ -1322,6 +1370,7 @@ export class FormsService {
           paymentMethod: null,
           cashExpiresAt: null,
           guestReceiptHash: receipt?.hash ?? null,
+          guestVisitorKey: visitorKey,
         });
         savedSubmission = await manager.save(submission);
       }
@@ -2346,6 +2395,28 @@ export class FormsService {
     const count = result.affected ?? 0;
     if (count > 0) {
       this.logger.log(`[Forms] Expired ${count} online payment(s) left pending past the hold`);
+    }
+    return count;
+  }
+
+  /**
+   * Clears the visitor key of every guest answer that no longer WAITS for its payment (PP5,
+   * `guest-visitor.ts`). The key exists to be counted against the ceiling, and only a waiting
+   * answer is counted, so it is personal data with nothing left to do: it goes. Run by the expiry
+   * job after it has moved stale `pending` rows to `expired`, so those go in the same tick.
+   * Idempotent from the rows - the `WHERE` names only keys still set on rows that stopped waiting.
+   */
+  async forgetSettledGuestVisitors(): Promise<number> {
+    const result = await this.submissionRepo
+      .createQueryBuilder()
+      .update()
+      .set({ guestVisitorKey: null })
+      .where('"guestVisitorKey" IS NOT NULL')
+      .andWhere('"paymentStatus" NOT IN (:...waiting)', { waiting: ['pending', 'pending_cash'] })
+      .execute();
+    const count = result.affected ?? 0;
+    if (count > 0) {
+      this.logger.log(`[Forms] Forgot the visitor of ${count} guest answer(s) no longer waiting`);
     }
     return count;
   }

@@ -156,9 +156,19 @@ export class FormReminderScheduler {
     }
     this.expiringPendingPayments = true;
     try {
-      await this.formsService.expireStalePendingPayments();
-    } catch (e) {
-      this.logger.warn('[PENDING] Error expiring stale online payments', e);
+      try {
+        await this.formsService.expireStalePendingPayments();
+      } catch (e) {
+        this.logger.warn('[PENDING] Error expiring stale online payments', e);
+      }
+      // Its own `try`: a failed expiry must not keep a visitor key the rows no longer need, and a
+      // failed forget must not hide an expiry that worked. AFTER the expiry, so the rows it just
+      // moved out of `pending` lose their key in the same tick.
+      try {
+        await this.formsService.forgetSettledGuestVisitors();
+      } catch (e) {
+        this.logger.warn('[PENDING] Error clearing settled guest visitor keys', e);
+      }
     } finally {
       this.expiringPendingPayments = false;
     }

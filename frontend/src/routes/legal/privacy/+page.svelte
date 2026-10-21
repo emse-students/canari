@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="21/10/2026"
+  updated="22/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -118,6 +118,19 @@
           (montant, produit, statut, identifiant de la transaction chez Lydia). Aucune donnée
           bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un formulaire (par
           exemple un CV) sont lisibles par l'association qui l'a créé.
+        </dd>
+      </div>
+      <div>
+        <dt>Formulaires publics (réponses sans compte)</dt>
+        <dd>
+          Une personne sans compte qui répond à un formulaire public laisse ses réponses, et, si le
+          formulaire est payant, le montant, le statut du paiement et l'identifiant de la demande
+          chez Lydia. L'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas
+          conservée par Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de
+          retour (jamais le lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse
+          payante attend son paiement, elle porte une empreinte chiffrée avec une clé secrète de
+          l'adresse IP et du formulaire, qui limite à trois les réponses en attente depuis une même
+          connexion ; cette empreinte est effacée dès que la réponse n'attend plus.
         </dd>
       </div>
       <div>
@@ -446,6 +459,13 @@
           <tr>
             <td>Réponses aux formulaires</td>
             <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
+          </tr>
+          <tr>
+            <td>Empreinte de l'adresse IP d'une réponse payante sans compte</td>
+            <td>
+              Tant que la réponse attend son paiement (30 minutes en ligne, jusqu'à l'échéance fixée
+              pour un paiement en espèces), puis effacée dans les cinq minutes
+            </td>
           </tr>
           <tr>
             <td>Réponses et fichiers d'une réservation</td>

@@ -8,9 +8,12 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
+import { clientAddress } from '../common/client-address';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import { GuestReceiptDto, GuestSubmitFormDto } from './dto/form.dto';
 import { CONFIRM_PAYMENT_PER_MINUTE } from './forms.controller';
@@ -48,7 +51,11 @@ export class PublicFormsController {
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post(':id/submit')
   @HttpCode(200)
-  async submit(@Param('id', ParseUUIDPipe) id: string, @Body() dto: GuestSubmitFormDto) {
+  async submit(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: GuestSubmitFormDto,
+    @Req() req: Request
+  ) {
     // A filled honeypot is answered exactly like a real answer, so the bot learns nothing, and
     // logged, so a rise in them is seen rather than guessed.
     if (dto.website) {
@@ -58,7 +65,9 @@ export class PublicFormsController {
     const result = await this.service.submit(
       id,
       { answers: dto.answers, payerEmail: dto.payerEmail, paymentMethod: dto.paymentMethod },
-      'guest'
+      'guest',
+      // The visitor a paid answer is counted against (PP5): the address the throttle counts too.
+      clientAddress(req)
     );
     const reply = toGuestSubmitReply(result);
     this.logger.log(

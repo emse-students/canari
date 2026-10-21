@@ -10,6 +10,9 @@ import {
 /** TypeORM entity representing a user's submission to a form, including payment status. */
 @Entity('submissions')
 @Index(['formId', 'userId'])
+@Index('submissions_guest_visitor_idx', ['formId', 'guestVisitorKey'], {
+  where: '"guestVisitorKey" IS NOT NULL',
+})
 export class Submission {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -116,6 +119,15 @@ export class Submission {
     where: '"guestReceiptHash" IS NOT NULL',
   })
   guestReceiptHash: string | null;
+
+  /**
+   * Who is WAITING on a guest's paid answer (migration 105, `guest-visitor.ts`): a keyed hash of the
+   * form and the visitor's address, counted against the per-visitor ceiling. Set only while the
+   * answer is `pending` or `pending_cash`, and cleared by `forgetSettledGuestVisitors` once it is not.
+   * `select: false`: no read of a submission carries it.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true, select: false })
+  guestVisitorKey: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+} from '@nestjs/common';
 import { CONFIRM_PAYMENT_PER_MINUTE, FormsController } from './forms.controller';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import axios from 'axios';
@@ -7,6 +12,7 @@ import { FormsService } from './forms.service';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { guestReference, hashGuestReceipt } from './guest-receipt';
+import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { InternalFormsController } from '../internal/internal-forms.controller';
 import {
   PENDING_HOLD_CUTOFF_SQL,
@@ -50,6 +56,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     purchaseRecordedAt?: Date | null;
     organiserNotifiedAt?: Date | null;
     guestReceiptHash?: string | null;
+    guestVisitorKey?: string | null;
     answers?: Record<string, unknown>;
   };
   type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
@@ -1863,6 +1870,15 @@ describe('FormsService - the seat a pending payment holds', () => {
   // WP-P1 of `public-paid-forms-chantier.md`: a guest (a public form, no account) pays as a member
   // does - the same row, the same hold, the same settle - with `userId` NULL throughout.
   describe('a guest who pays (public form)', () => {
+    /** The visitor's address, as `clientAddress` reads it: a guest's paid answer is counted on it. */
+    const VISITOR = '203.0.113.7';
+    const savedSecret = process.env.INTERNAL_SECRET;
+    // The visitor key is an HMAC under the internal secret (`guest-visitor.ts`).
+    beforeAll(() => (process.env.INTERNAL_SECRET = 'internal-secret-for-test'));
+    afterAll(() => {
+      if (savedSecret === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = savedSecret;
+    });
     const GUEST_UUID = 'abcdefabcdefabcdefabcdefabcdef01';
     const guestRow = (over: Partial<Row> = {}) =>
       row({
@@ -1888,7 +1904,8 @@ describe('FormsService - the seat a pending payment holds', () => {
         'f1',
         // Whatever a caller passes, a guest names nobody: `userId` and `email` are dropped.
         { userId: 'forged', email: 'x@y.z', payerEmail: 'guest@example.org', answers: {} } as any,
-        'guest'
+        'guest',
+        VISITOR
       );
       expect(result).toMatchObject({ checkoutUrl: 'https://lydia.example/pay/1' });
       expect(rows).toHaveLength(1);
@@ -1930,8 +1947,8 @@ describe('FormsService - the seat a pending payment holds', () => {
         isPublic: true,
         allowMultipleSubmissions: true,
       });
-      await service.submit('f1', { answers: {} } as any, 'guest');
-      await service.submit('f1', { answers: {} } as any, 'guest');
+      await service.submit('f1', { answers: {} } as any, 'guest', VISITOR);
+      await service.submit('f1', { answers: {} } as any, 'guest', VISITOR);
       expect(core.calls[0].body.successUrl).not.toBe(core.calls[1].body.successUrl);
     });
 
@@ -1947,7 +1964,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.submit(
         'f1',
         { answers: {}, successUrl: 'http://localhost/forms/success?x=1' } as any,
-        'guest'
+        'guest',
+        VISITOR
       );
       expect(core.calls[0].body.successUrl).toMatch(
         /^http:\/\/localhost\/f\/f1\/receipt\?receipt=/
@@ -1967,7 +1985,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       const result = await service.submit(
         'f1',
         { answers: {}, paymentMethod: 'cash' } as any,
-        'guest'
+        'guest',
+        VISITOR
       );
       expect(result).toEqual({
         submissionId: rows[0].id,
@@ -1990,11 +2009,89 @@ describe('FormsService - the seat a pending payment holds', () => {
         allowMultipleSubmissions: true,
       });
       const results = await Promise.allSettled([
-        service.submit('f1', { answers: {} } as any, 'guest'),
-        service.submit('f1', { answers: {} } as any, 'guest'),
+        service.submit('f1', { answers: {} } as any, 'guest', VISITOR),
+        service.submit('f1', { answers: {} } as any, 'guest', VISITOR),
       ]);
       expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
       expect(rows.filter((r) => r.paymentStatus === 'pending')).toHaveLength(1);
+    });
+
+    describe('the ceiling of answers one visitor may leave waiting (PP5)', () => {
+      const paidPublic = (over: Record<string, unknown> = {}) =>
+        makeStore({
+          maxSubmissions: null,
+          basePrice: 1500,
+          rows: [],
+          provider: 'lydia',
+          isPublic: true,
+          allowMultipleSubmissions: true,
+          allowCashPayment: true,
+          ...over,
+        });
+
+      // Control (2026-10-22): the ceiling check removed from `submit` -> this test failed.
+      it(`refuses the ${GUEST_PENDING_CEILING + 1}th waiting answer from one visitor, with its code, and issues nothing for it`, async () => {
+        const { service, rows, core } = paidPublic();
+        for (let i = 0; i < GUEST_PENDING_CEILING; i++) {
+          await service.submit('f1', { answers: {} } as any, 'guest', VISITOR);
+        }
+        const err = await service
+          .submit('f1', { answers: {} } as any, 'guest', VISITOR)
+          .catch((e: HttpException) => e);
+        expect(err).toBeInstanceOf(HttpException);
+        expect((err as HttpException).getStatus()).toBe(429);
+        expect((err as HttpException).getResponse()).toMatchObject({ code: GUEST_PENDING_LIMIT });
+        expect(rows).toHaveLength(GUEST_PENDING_CEILING);
+        expect(core.calls).toHaveLength(GUEST_PENDING_CEILING);
+        // Another visitor is another count.
+        await expect(
+          service.submit('f1', { answers: {} } as any, 'guest', '198.51.100.9')
+        ).resolves.toMatchObject({ checkoutUrl: expect.any(String) });
+      });
+
+      it('counts a cash answer still waiting for the organiser', async () => {
+        const { service, rows } = paidPublic();
+        for (let i = 0; i < GUEST_PENDING_CEILING; i++) {
+          await service.submit(
+            'f1',
+            { answers: {}, paymentMethod: 'cash' } as any,
+            'guest',
+            VISITOR
+          );
+        }
+        await expect(
+          service.submit('f1', { answers: {} } as any, 'guest', VISITOR)
+        ).rejects.toBeInstanceOf(HttpException);
+        expect(rows.map((r) => r.paymentStatus)).toEqual(
+          Array(GUEST_PENDING_CEILING).fill('pending_cash')
+        );
+      });
+
+      it('stores a keyed hash of the form and the address, never the address', async () => {
+        const { service, rows } = paidPublic();
+        await service.submit('f1', { answers: {} } as any, 'guest', VISITOR);
+        expect(rows[0].guestVisitorKey).toBe(guestVisitorKey('f1', VISITOR));
+        expect(rows[0].guestVisitorKey).toMatch(/^[0-9a-f]{64}$/);
+        expect(rows[0].guestVisitorKey).not.toContain(VISITOR);
+        expect(guestVisitorKey('f2', VISITOR)).not.toBe(rows[0].guestVisitorKey);
+      });
+
+      it('leaves a free guest answer uncounted and unkeyed', async () => {
+        const { service, rows } = paidPublic({ basePrice: 0 });
+        for (let i = 0; i < GUEST_PENDING_CEILING + 2; i++) {
+          await service.submit('f1', { answers: {} } as any, 'guest', VISITOR);
+        }
+        expect(rows).toHaveLength(GUEST_PENDING_CEILING + 2);
+        expect(rows.every((r) => (r.guestVisitorKey ?? null) === null)).toBe(true);
+      });
+
+      it('refuses to key a paid guest answer that names no visitor, rather than count it on nobody', async () => {
+        const { service, rows } = paidPublic();
+        await expect(service.submit('f1', { answers: {} } as any, 'guest')).rejects.toThrow(
+          'without a visitor address'
+        );
+        expect(rows).toHaveLength(0);
+      });
     });
 
     it('records a guest payment: paid, a purchase record with no buyer, no grant', async () => {
