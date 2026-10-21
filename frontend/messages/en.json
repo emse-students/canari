@@ -4179,6 +4179,8 @@
   "moderation_live_withdraw_already": "The right to broadcast had already been withdrawn.",
   "moderation_live_withdraw_forbidden": "You are not allowed to withdraw the right to broadcast.",
   "moderation_live_withdraw_not_due": "Not enough cuts are on record to withdraw the right yet.",
+  "moderation_live_withdraw_this_account": "This account",
+  "moderation_live_withdraw_account_invalid": "The server does not recognise this account.",
   "moderation_live_withdraw_invalid": "The server refused the reason or the details.",
   "moderation_live_withdraw_error": "The right could not be withdrawn. Try again.",
   "moderation_live_prior_cuts": [

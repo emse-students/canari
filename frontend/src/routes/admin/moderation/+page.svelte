@@ -533,6 +533,7 @@
                 reasonLabel={(code) => reasonLabel[code] ?? code}
                 onCut={handleLiveCut}
                 onWithdrawn={handleLiveWithdrawn}
+                onStale={() => void loadReports()}
               />
             {/if}
 

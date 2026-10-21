@@ -94,6 +94,7 @@ const standingOf = (over: Partial<LiveStanding> = {}): LiveStanding => ({
 function render(live: ReportedLive) {
   const onCut = vi.fn<(r: LiveCutResult) => void>();
   const onWithdrawn = vi.fn<(r: LiveWithdrawalResult) => void>();
+  const onStale = vi.fn<() => void>();
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(ModerationLiveBlock, {
@@ -105,11 +106,12 @@ function render(live: ReportedLive) {
       reasonLabel: (code: string) => `reason(${code})`,
       onCut,
       onWithdrawn,
+      onStale,
     },
   });
   mounted.push(() => void unmount(app));
   flushSync();
-  return { onCut, onWithdrawn, target };
+  return { onCut, onWithdrawn, onStale, target };
 }
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
@@ -372,6 +374,37 @@ describe("the broadcaster's standing and the withdrawal", () => {
     expect(onWithdrawn).toHaveBeenCalledWith(expect.objectContaining({ newlyWithdrawn: false }));
   });
 
+  it('names a broadcaster with no display name by a generic string, never an empty one', () => {
+    render(openLive({ broadcasterName: null, broadcasterStanding: standingOf() }));
+    q('[data-moderation-live-withdraw]')!.click();
+    flushSync();
+    const body = q('[data-live-withdraw-body]')!.textContent ?? '';
+    expect(body).toContain(
+      m.moderation_live_withdraw_body({ name: m.moderation_live_withdraw_this_account() })
+    );
+    expect(body.trimStart()).toBe(body);
+  });
+
+  it('asks for the queue to be re-read only when the withdrawal was refused as not due', async () => {
+    withdrawBroadcaster.mockRejectedValue(
+      new LiveRefusalError(409, 'LIVE_WITHDRAWAL_NOT_DUE', '', 'refused', null, null, null)
+    );
+    const { onStale } = render(openLive({ broadcasterStanding: standingOf() }));
+    toWithdrawForm();
+    q('[data-live-withdraw-confirm-button]')!.click();
+    await settle();
+    expect(onStale).toHaveBeenCalledTimes(1);
+    expect(q('[data-live-withdraw-error]')!.textContent).toContain(
+      m.moderation_live_withdraw_not_due()
+    );
+    withdrawBroadcaster.mockRejectedValue(
+      new LiveRefusalError(403, 'LIVE_WITHDRAWAL_FORBIDDEN', '', 'refused', null, null, null)
+    );
+    q('[data-live-withdraw-confirm-button]')!.click();
+    await settle();
+    expect(onStale).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     [
       '403 forbidden',
@@ -382,6 +415,13 @@ describe("the broadcaster's standing and the withdrawal", () => {
     ],
     ['409 not due', 409, 'LIVE_WITHDRAWAL_NOT_DUE', 'refused', 'moderation_live_withdraw_not_due'],
     ['400 reason', 400, 'LIVE_CUT_REASON_INVALID', 'refused', 'moderation_live_withdraw_invalid'],
+    [
+      '400 account',
+      400,
+      'LIVE_ACCOUNT_INVALID',
+      'refused',
+      'moderation_live_withdraw_account_invalid',
+    ],
     ['500 no code', 500, null, 'unavailable', 'moderation_live_withdraw_error'],
   ] as const)('%s says its own sentence and stays open', async (_n, status, code, kind, key) => {
     withdrawBroadcaster.mockRejectedValue(

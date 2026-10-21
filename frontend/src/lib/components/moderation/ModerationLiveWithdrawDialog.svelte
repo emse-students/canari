@@ -16,10 +16,15 @@
     broadcasterName: string;
     /** Told the server's answer (`newlyWithdrawn: false` is a repeat) once it is recorded. */
     onWithdrawn: (result: LiveWithdrawalResult) => void;
+    /** Told the row is stale (the server refused the withdrawal as not due) so the queue is re-read. */
+    onStale: () => void;
     onClose: () => void;
   }
 
-  let { open, userId, broadcasterName, onWithdrawn, onClose }: Props = $props();
+  let { open, userId, broadcasterName, onWithdrawn, onStale, onClose }: Props = $props();
+
+  /** A report can name a broadcaster with no display name: the sentence still reads whole. */
+  const displayName = $derived(broadcasterName || m.moderation_live_withdraw_this_account());
 
   let reason = $state<ReportReason | ''>('');
   let details = $state('');
@@ -45,6 +50,7 @@
     if (e instanceof LiveRefusalError) {
       if (e.code === 'LIVE_WITHDRAWAL_FORBIDDEN') return m.moderation_live_withdraw_forbidden();
       if (e.code === 'LIVE_WITHDRAWAL_NOT_DUE') return m.moderation_live_withdraw_not_due();
+      if (e.code === 'LIVE_ACCOUNT_INVALID') return m.moderation_live_withdraw_account_invalid();
       if (e.code === 'LIVE_CUT_REASON_INVALID' || e.code === 'LIVE_CUT_DETAILS_INVALID') {
         return m.moderation_live_withdraw_invalid();
       }
@@ -70,6 +76,8 @@
         e
       );
       error = errorText(e);
+      // The row that offered this button is stale (the cuts on record changed): read the queue again.
+      if (e instanceof LiveRefusalError && e.code === 'LIVE_WITHDRAWAL_NOT_DUE') onStale();
     } finally {
       submitting = false;
     }
@@ -85,7 +93,7 @@
 >
   <div class="space-y-4 px-1 pb-2" data-live-withdraw-dialog>
     <p class="text-text-main text-sm leading-relaxed" data-live-withdraw-body>
-      {m.moderation_live_withdraw_body({ name: broadcasterName })}
+      {m.moderation_live_withdraw_body({ name: displayName })}
     </p>
     <p class="text-text-muted text-xs font-semibold">
       {m.moderation_live_withdraw_reason_prompt()}

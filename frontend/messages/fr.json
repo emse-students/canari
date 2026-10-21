@@ -4179,6 +4179,8 @@
   "moderation_live_withdraw_already": "Le droit de diffuser avait déjà été retiré.",
   "moderation_live_withdraw_forbidden": "Vous n'avez pas le droit de retirer le droit de diffuser.",
   "moderation_live_withdraw_not_due": "Il n'y a pas encore assez de coupures au dossier pour retirer le droit.",
+  "moderation_live_withdraw_this_account": "Ce compte",
+  "moderation_live_withdraw_account_invalid": "Le serveur ne reconnaît pas ce compte.",
   "moderation_live_withdraw_invalid": "Le serveur a refusé le motif ou les précisions.",
   "moderation_live_withdraw_error": "Impossible de retirer le droit. Réessayez.",
   "moderation_live_prior_cuts": [

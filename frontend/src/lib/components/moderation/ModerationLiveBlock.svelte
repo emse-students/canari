@@ -22,9 +22,11 @@
     onCut: (result: LiveCutResult) => void;
     /** Told after a withdrawal so the queue is read again. */
     onWithdrawn: (result: LiveWithdrawalResult) => void;
+    /** Told the standing drawn here is stale (a withdrawal was refused as not due): re-read the queue. */
+    onStale: () => void;
   }
 
-  let { liveId, live, formatDate, reasonLabel, onCut, onWithdrawn }: Props = $props();
+  let { liveId, live, formatDate, reasonLabel, onCut, onWithdrawn, onStale }: Props = $props();
 
   let dialogOpen = $state(false);
 
@@ -169,6 +171,7 @@
     userId={live.broadcasterId}
     {broadcasterName}
     onWithdrawn={handleWithdrawn}
+    {onStale}
     onClose={() => (withdrawOpen = false)}
   />
 {/if}
