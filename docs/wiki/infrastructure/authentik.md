@@ -631,6 +631,7 @@ decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1
 - [`infrastructure/nginx.md`](nginx.md) — `auth_request` configuration
 - [`infrastructure/backup.md`](backup.md) — Backup and restore procedures
 - [`infrastructure/MIGRATION.md`](../../../infrastructure/MIGRATION.md) — Server bootstrap and migration
+- [`cas-callback-state.md`](cas-callback-state.md) — a CAS sign-in that returns with no `code` and no `state`: cause, setting, measurements
 
 ## The terms of use are a stage of the authorization flow (2026-10-16)
 
