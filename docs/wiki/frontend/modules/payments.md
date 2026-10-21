@@ -505,6 +505,10 @@ Since migration 101 it is a trigger on the stored ATTEMPT, by the same rule as a
 request is read at Lydia, and the verified Business must be the one it was issued to
 ([below](#a-product-checkout-is-a-row-one-per-attempt-2026-10-21)).
 
+**Production rollout (per the user, 2026-10-22, relayed by the lead session):** migrations 100 (the
+per-association Lydia Business key) and 101 (product checkout attempts) MAY ride the next STABLE to
+production; payments stay OFF in production (`platform_config.payment_provider` unchanged).
+
 **Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
 `associations."lydiaBusinessKeyCiphertext"` (migration 100): AES-256-GCM (`common/secret-box.ts`)
