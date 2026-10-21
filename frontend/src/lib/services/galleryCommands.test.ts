@@ -44,6 +44,10 @@ describe('gallery command contract', () => {
     );
     expect(commandsRs).toMatch(/fn save_video[\s\S]*?session: String,\s*name: String/);
     expect(commandsRs).toMatch(/fn discard_video[\s\S]*?session: String/);
+    expect(commandsRs).toMatch(/fn share_text[\s\S]*?text: String/);
+    expect(commandsRs).toMatch(
+      /fn share_staged[\s\S]*?session: String,\s*name: String,\s*mime: String/
+    );
   });
 
   it('is granted to the app and registered on mobile', () => {

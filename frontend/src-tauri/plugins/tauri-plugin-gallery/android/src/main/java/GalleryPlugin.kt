@@ -2,6 +2,7 @@ package app.tauri.gallery
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
 import android.content.ContentValues
 import android.content.Intent
 import android.media.MediaScannerConnection
@@ -20,6 +21,7 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import androidx.core.content.FileProvider
 import java.io.File
 
 private const val TAG = "GalleryPlugin"
@@ -131,6 +133,65 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
         } catch (e: Exception) {
             Log.e(TAG, "saveVideo failed", e)
             invoke.reject("saveVideo failed: ${e.message}")
+        }
+    }
+
+    @InvokeArg
+    class ShareTextArgs {
+        lateinit var text: String
+    }
+
+    @InvokeArg
+    class ShareFileArgs {
+        lateinit var path: String
+        lateinit var mime: String
+    }
+
+    /** The system share sheet on a text: a message, a link. */
+    @Command
+    fun shareText(invoke: Invoke) {
+        val args = invoke.parseArgs(ShareTextArgs::class.java)
+        Log.d(TAG, "shareText: ${args.text.length} chars")
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, args.text)
+        openChooser(invoke, send)
+    }
+
+    /**
+     * The system share sheet on a file in the cache's `share_out/`, the one cache directory the app's
+     * FileProvider exposes (`res/xml/file_paths.xml`). The receiving app gets a READ grant on that
+     * one `content://` URI, carried by the intent's ClipData so the chooser passes it on.
+     */
+    @Command
+    fun shareFile(invoke: Invoke) {
+        val args = invoke.parseArgs(ShareFileArgs::class.java)
+        val uri = try {
+            FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", File(args.path))
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "shareFile: the file is outside the FileProvider's paths", e)
+            invoke.reject("shareFile: the file is not shareable")
+            return
+        }
+        Log.d(TAG, "shareFile: ${args.mime} as $uri")
+        val send = Intent(Intent.ACTION_SEND)
+            .setType(args.mime)
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        send.clipData = ClipData.newRawUri(null, uri)
+        openChooser(invoke, send)
+    }
+
+    /** Opens the chooser on `send`; resolved once it is shown, whatever the member then picks. */
+    private fun openChooser(invoke: Invoke, send: Intent) {
+        activity.runOnUiThread {
+            try {
+                activity.startActivity(Intent.createChooser(send, null))
+                invoke.resolve()
+            } catch (e: Exception) {
+                Log.e(TAG, "the share sheet did not open", e)
+                invoke.reject("the share sheet did not open: ${e.message}")
+            }
         }
     }
 

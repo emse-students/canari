@@ -5,4 +5,7 @@
   <external-path name="downloads" path="Download/" />
   <!-- Fichiers temporaires créés par Tauri dans le cache interne de l'app -->
   <cache-path name="tauri_cache" path="tauri/" />
+  <!-- One file at a time shared OUT of Canari (tauri-plugin-gallery, share_staged): this directory
+       alone, never the cache around it, which holds decrypted media being staged. -->
+  <cache-path name="share_out" path="share_out/" />
 </paths>
