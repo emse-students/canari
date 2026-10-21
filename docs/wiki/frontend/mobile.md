@@ -3552,7 +3552,9 @@ reviewer probably cannot place a call on it: calling needs two accounts on the D
 direct conversation between them, so the reviewer may again find a declared mode whose feature it
 cannot locate. Internal testers are not reviewed. If an external group is ever added, the answer
 must be ready before submission: a demo pair of dev accounts in the review notes, or the mode left
-out of that group's build.
+out of that group's build. Such a build also carries the stable's microphone purpose string, which
+does not name calls; the stable's notes and string are drafted in
+[calls, B14](modules/calls.md#the-drafts-still-owed-2026-10-21).
 
 ### Where the three channels actually are - READ THEM, NEVER READ THIS
 
