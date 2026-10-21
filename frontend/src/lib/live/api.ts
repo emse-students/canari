@@ -30,6 +30,7 @@ import type {
   LiveLimits,
   LiveCutReason,
   LiveCutResult,
+  LiveWithdrawalResult,
   LiveEndReason,
   LiveListItem,
   LiveManifest,
@@ -385,6 +386,31 @@ export async function cutLive(
   });
   console.log(`[LIVE] ${liveId} cut (${cut.newlyCut ? 'new' : 'repeat'}, ${cut.priorCuts} prior)`);
   return cut;
+}
+
+/**
+ * `POST /api/lives/broadcasters/:userId/withdrawal` - a content moderator withdraws an account's
+ * right to broadcast (the ladder's 3rd step). Idempotent (`newlyWithdrawn: false`). Refusals, read by
+ * `code`: `LIVE_WITHDRAWAL_FORBIDDEN` (403), `LIVE_WITHDRAWAL_NOT_DUE` (409, below the cuts it needs),
+ * `LIVE_CUT_REASON_INVALID` / `LIVE_CUT_DETAILS_INVALID` (400).
+ */
+export async function withdrawBroadcaster(
+  userId: string,
+  reason: LiveCutReason,
+  details?: string
+): Promise<LiveWithdrawalResult> {
+  console.debug(`[LIVE] withdraw the right of ${userId} (${reason})`);
+  const body: { reason: LiveCutReason; details?: string } = { reason };
+  if (details) body.details = details;
+  const done = await liveJson<LiveWithdrawalResult>(
+    `${livesBase()}/broadcasters/${encodeURIComponent(userId)}/withdrawal`,
+    'Live withdrawal',
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+  console.log(
+    `[LIVE] right of ${userId} withdrawn (${done.newlyWithdrawn ? 'new' : 'repeat'}, ${done.cutsOnRecord} cuts)`
+  );
+  return done;
 }
 
 /**

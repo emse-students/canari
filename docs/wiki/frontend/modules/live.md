@@ -572,6 +572,23 @@ only then `POST /api/lives/:id/cut` through `cutLive`. A repeat (`newlyCut: fals
 success and the page says "already cut"; a refusal gets its own sentence by `code` and returns to
 the form.
 
+**The strike ladder's staff half (2026-10-21, built; server #2172).** A `live` report row also carries
+the broadcaster's standing (`ReportedLive.broadcasterStanding`, the server's `LiveStanding`: cuts on
+record over the rolling 90 days, `suspendedUntil`, `withdrawnAt`, `withdrawalDue`), drawn by
+`ModerationLiveBlock` as "N of 3 cuts on record", the suspension's end or the withdrawal's date, and
+"the withdrawal is due" - a standing view that needs NO new endpoint, because the queue already reads
+it per broadcaster. The "Retirer le droit" button exists ONLY while the server says `withdrawalDue`
+(never from a client-side count; `LIVE_WITHDRAWAL_FROM_CUTS` and `LIVE_STRIKE_WINDOW_DAYS` in
+`live/constants.ts` only draw the "N of M") and stays offered on a `gone` live, where the broadcaster
+is all that is left to restrict. It opens `ModerationLiveWithdrawDialog` (reason, details, one red
+confirm) and calls `withdrawBroadcaster` = `POST /api/lives/broadcasters/:userId/withdrawal`; refusals
+are sentenced by `code` (`LIVE_WITHDRAWAL_FORBIDDEN`, `LIVE_WITHDRAWAL_NOT_DUE`, the two invalid-input
+codes); a repeat (`newlyWithdrawn: false`) is a success the page words "already withdrawn". **Not
+built:** lifting a withdrawal (`DELETE` of the same path exists, no control yet) and a standing view
+for a broadcaster with no reported live (there is no per-account staff read; the caller's own
+`GET /api/lives/standing` is not for staff). Tests: the standing and withdrawal blocks of
+`ModerationLiveBlock.svelte.test.ts`.
+
 **The viewer's report control (2026-10-19, built).** `LiveReportControl` sits in the viewer's TOP BAR
 (the strip above the picture: it never covers the video, a double-tap region or the chat panel), a
 `Flag` icon button named `live_report_button`, hidden on the broadcaster's own copy
