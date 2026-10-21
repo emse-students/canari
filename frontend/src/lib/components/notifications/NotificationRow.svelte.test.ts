@@ -317,3 +317,31 @@ describe('NotificationRow for a live a moderator cut', () => {
     expect(target.textContent).not.toContain('something_new');
   });
 });
+
+describe('NotificationRow for the right to broadcast suspended or withdrawn (WP-L8b)', () => {
+  it.each([
+    ['live_suspended', () => m.notif_live_suspended_text()],
+    ['live_withdrawn', () => m.notif_live_withdrawn_text()],
+  ])(
+    '%s is told in the reader locale with its reason, inert, with no avatar of nobody',
+    (type, text) => {
+      const target = renderRow({
+        id: 'n10',
+        type,
+        // The member's own id for a withdrawal, the live's for a suspension: neither is a page.
+        postId: 'x1',
+        actorId: '',
+        actorName: '',
+        text: 'spam',
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+      expect(target.textContent).toContain(text());
+      expect(target.textContent).toContain(m.moderation_reason_spam());
+      expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+      expect(target.textContent).not.toContain(m.notif_live_cut_text());
+      expect(target.querySelector('[data-notif-live-cut-avatar]')).not.toBeNull();
+      expect(target.querySelector('button')!.disabled).toBe(true);
+    }
+  );
+});

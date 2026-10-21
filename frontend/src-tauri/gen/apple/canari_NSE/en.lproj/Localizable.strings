@@ -35,6 +35,12 @@
 "notif.social.coorganise_proposed.body" = "An event to co-organise";
 "notif.social.live_started.title" = "%@ is live";
 "notif.social.live_started.body" = "Tap to watch";
+"notif.social.live_cut.title" = "Your live was stopped";
+"notif.social.live_cut.body" = "Moderators cut your live. This is a warning.";
+"notif.social.live_suspended.title" = "Lives suspended";
+"notif.social.live_suspended.body" = "After another cut by moderators, you cannot start a live for now.";
+"notif.social.live_withdrawn.title" = "Right to go live withdrawn";
+"notif.social.live_withdrawn.body" = "Moderators have withdrawn your right to start a live.";
 "notif.form.opening_soon.title" = "Form opening soon";
 "notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
 "notif.form.open.title" = "Form now open!";

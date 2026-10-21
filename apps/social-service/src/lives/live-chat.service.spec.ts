@@ -94,7 +94,7 @@ describe('a reaction burst body (C6, C7, C8)', () => {
     ['a string count', { burstId: UUID, counts: { like: '2' } }],
     ['no tap at all', { burstId: UUID, counts: {} }],
     ['an array', { burstId: UUID, counts: [1] }],
-    ['more taps than a window allows', { burstId: UUID, counts: { like: 6, love: 5 } }],
+    ['more taps than a window allows', { burstId: UUID, counts: { like: 6, fire: 5 } }],
   ])('refuses %s: 400 LIVE_REACTION_INVALID', (_name, body) => {
     expect(refusal(() => parseReactionBurstInput(body))).toMatchObject({
       status: HttpStatus.BAD_REQUEST,
@@ -121,7 +121,7 @@ describe('the reaction sums a poll answers (C7, C10)', () => {
         { userId: C, window: 3, counts: { like: 1, laugh: 4 } },
         { userId: B, window: 4, counts: { like: 1, canari: 1 } },
         { userId: ME, window: 4, counts: { like: 9 } },
-        { userId: D, window: 4, counts: { love: 5 } },
+        { userId: D, window: 4, counts: { fire: 5 } },
       ],
       ME,
       new Set([D])
@@ -150,7 +150,7 @@ describe('the chat numbers are published, not carried by a client', () => {
       reactionBurstsPerWindow: 2,
       reactionTapsPerWindow: 10,
     });
-    expect([...LIVE_REACTION_KINDS]).toEqual(['like', 'love', 'laugh', 'happy', 'canari']);
+    expect([...LIVE_REACTION_KINDS]).toEqual(['like', 'laugh', 'clap', 'fire', 'canari']);
   });
 });
 

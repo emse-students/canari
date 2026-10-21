@@ -17,6 +17,8 @@ export interface LiveSweepReport {
   orphans: number;
   /** Staff cuts past `LIVE_CUT_RETENTION_MS`, deleted from `live_cuts`. */
   cutsPruned: number;
+  /** Reported chat lines erased: their report handled, or the 90-day bound reached (WP-L8b). */
+  chatLinesErased: number;
 }
 
 /**
@@ -30,6 +32,8 @@ export interface LiveSweepReport {
  *    and landed after its live's purge (`LivesService.reapOrphans`, a row-state rule, no clock) -
  *    and deletes the `live_starts` rows older than the hour they are counted in, and the `live_cuts`
  *    rows past their retention (`LIVE_CUT_RETENTION_MS`).
+ * 4. ERASES every reported chat line whose report was handled, or that was kept
+ *    `LIVE_CHAT_REPORT_MAX_KEEP_MS` unhandled (`LivesService.pruneReportedChatLines`, WP-L8b).
  *
  * THE STATE IS THE ROW: a live with `endedAt` and a row is due, a deleted row is done - no "last
  * run", no marker. Idempotent: a crash between the store and the row leaves an ended row whose
@@ -70,7 +74,14 @@ export class LiveRetentionScheduler {
 
   /** The whole run, separated so a test can call it without a scheduler. */
   async sweepOnce(): Promise<LiveSweepReport> {
-    const report: LiveSweepReport = { ended: 0, deleted: 0, kept: 0, orphans: 0, cutsPruned: 0 };
+    const report: LiveSweepReport = {
+      ended: 0,
+      deleted: 0,
+      kept: 0,
+      orphans: 0,
+      cutsPruned: 0,
+      chatLinesErased: 0,
+    };
     report.ended = (await this.lives.endDue()).length;
 
     const kept: string[] = [];
@@ -115,10 +126,15 @@ export class LiveRetentionScheduler {
     } catch (e) {
       this.logger.warn(`[LIVE_GC] cut prune skipped this run: ${String(e)}`);
     }
+    try {
+      report.chatLinesErased = await this.lives.pruneReportedChatLines();
+    } catch (e) {
+      this.logger.warn(`[LIVE_GC] reported chat line erasure skipped this run: ${String(e)}`);
+    }
 
-    if (report.ended + report.deleted + report.kept + report.orphans + report.cutsPruned > 0) {
+    if (Object.values(report).some((n) => n > 0)) {
       this.logger.log(
-        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans} cutsPruned=${report.cutsPruned}`
+        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans} cutsPruned=${report.cutsPruned} chatLinesErased=${report.chatLinesErased}`
       );
     }
     return report;

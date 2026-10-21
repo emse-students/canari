@@ -8,12 +8,13 @@ import { NATIVE_CALL_EVENT } from './androidCallService';
  * THE ONGOING-CALL SERVICE (WP-C-BG-A) IS DECLARED EXACTLY WHERE CALLS ARE PLACED.
  *
  * A foreground-service type is a Play Console declaration: declared in a build no user can call
- * from, it is the Play twin of the `voip` mode App Review refused (calls.md, the five switches); used
+ * from, it is the Play twin of the `voip` mode App Review refused (calls.md, the switches table); used
  * and undeclared, the service cannot start. So the declaration lives in `src/calls/AndroidManifest.xml`,
  * merged by `build.gradle.kts` only when `VITE_DEPLOY_ENVIRONMENT` is `development` - the fact that
  * turns `CALLS_ENABLED` on in the page - and moves into the main manifest the day `CALLS_COMPILED`
- * flips. Asserted as AGREEMENT with `CALLS_COMPILED`, as `callsCompiled.test.ts` does for the five
- * switches, so the revival commit fails here only if it forgets this one.
+ * flips. Asserted as AGREEMENT with `CALLS_COMPILED` (an in-app call's need, so NOT the native ring's
+ * `CALLS_NATIVE_RING_COMPILED`), as `callsCompiled.test.ts` does for the other switches, so the
+ * revival commit fails here only if it forgets this one.
  *
  * The bridge is a handful of names on each side of the WebView - the event, the interface, its methods -
  * and nothing compiles them against each other; read here as text. This proves what is written,

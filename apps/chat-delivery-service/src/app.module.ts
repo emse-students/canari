@@ -16,6 +16,7 @@ import { MessagingService } from './services/messaging.service';
 import { DeviceSignatureKeysService } from './services/device-signature-keys.service';
 import { CallsService } from './services/calls.service';
 import { ApnsVoipService } from './services/apns-voip.service';
+import { TurnUsageMeter } from './services/turn-usage-meter.service';
 import { CallsController } from './controllers/calls.controller';
 import { PushController } from './controllers/push.controller';
 import { InternalController } from './controllers/internal.controller';
@@ -145,6 +146,7 @@ class RedisShutdown implements OnModuleDestroy {
     DeviceSignatureKeysService,
     CallsService,
     ApnsVoipService,
+    TurnUsageMeter,
   ],
 })
 export class AppModule {}

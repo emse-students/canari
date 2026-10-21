@@ -27,6 +27,9 @@ import {
   repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
+  liveCutContent,
+  liveSuspendedContent,
+  liveWithdrawnContent,
   publicMediaIconId,
   MENTION_TOKEN_RE,
   type PushContent,
@@ -107,6 +110,14 @@ export class PostNotificationsService {
       // is no text to quote.
       case 'live_started':
         return liveStartedContent(actorName, icon);
+      // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
+      // no icon - which moderator acted is not theirs to read, and the reason stays on the row.
+      case 'live_cut':
+        return liveCutContent();
+      case 'live_suspended':
+        return liveSuspendedContent();
+      case 'live_withdrawn':
+        return liveWithdrawnContent();
       // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':
@@ -208,6 +219,8 @@ export class PostNotificationsService {
    * Pass `actorName` to skip the DB lookup (e.g. system-generated notifications).
    * Pass `skipPush: true` when the caller already sends its own push (e.g. with a richer
    * message than `pushContent` can build) - otherwise the recipient gets duplicate pushes.
+   * `pushData` adds fields to the push payload over `{ type, postId }` - a typed `target` such as
+   * `NOTIFICATIONS_TARGET`, for a notice whose `postId` names no post.
    */
   async createNotification(data: {
     recipientId: string;
@@ -217,9 +230,10 @@ export class PostNotificationsService {
     text: string;
     actorName?: string;
     skipPush?: boolean;
+    pushData?: Record<string, string>;
   }) {
     if (data.recipientId === data.actorId) return;
-    const { skipPush, ...notifData } = data;
+    const { skipPush, pushData, ...notifData } = data;
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
     await this.notifRepo.save(this.notifRepo.create({ ...notifData, actorName }));
 
@@ -244,6 +258,7 @@ export class PostNotificationsService {
     void this.push.notifyContent(data.recipientId, content, {
       type: 'social',
       postId: data.postId,
+      ...pushData,
     });
   }
 
