@@ -21,11 +21,14 @@ export class PlatformAdminController {
     return this.platformService.getConfig();
   }
 
-  /** Updates platform settings; only supplied fields are changed. */
+  /** Updates platform settings; only supplied fields are changed. The actor is logged on a switch. */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Patch()
-  updateConfig(@Body() dto: UpdatePlatformConfigDto): Promise<PlatformConfigPublic> {
-    return this.platformService.updateConfig(dto);
+  updateConfig(
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: UpdatePlatformConfigDto
+  ): Promise<PlatformConfigPublic> {
+    return this.platformService.updateConfig(dto, xUserId.trim().toLowerCase());
   }
 
   /** The announcement being shown right now and how many accounts have seen it, or `null`. */

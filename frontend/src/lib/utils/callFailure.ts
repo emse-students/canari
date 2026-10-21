@@ -7,6 +7,10 @@ import {
   refusalStatus,
 } from '$lib/utils/apiRefusal';
 import { USER_BLOCKED_CODE } from '$lib/users/blocks';
+import { describeRefusalCode } from '$lib/utils/refusalCodes';
+
+/** The server's kill switch refused (`platform_config.calls_mode`): every call, or video only. */
+const CALLS_CLOSED_CODES: readonly string[] = ['CALLS_DISABLED', 'CALLS_VIDEO_DISABLED'];
 
 /**
  * A refusal from `POST /api/calls/initiate`, carrying the STATUS instead of spelling it.
@@ -51,8 +55,8 @@ export class CallInitiateError extends ApiRefusalError {
   }
 }
 
-/** The three call-setup requests whose refusal reaches the reader. */
-export type CallSetupStep = 'initiate' | 'ring' | 'room-token';
+/** The call-setup requests whose refusal reaches the reader. */
+export type CallSetupStep = 'initiate' | 'ring' | 'room-token' | 'ice-servers';
 
 /**
  * The signalling relay answered a `Join` with `Refused { reason }`. An ANSWER, not a transport
@@ -129,6 +133,20 @@ export class CallE2eSetupError extends Error {
 }
 
 /**
+ * The call never connected AND the server had withheld its TURN relay (`ice-servers` answered
+ * `turn: { status: 'unavailable', code }`: the month's relay budget is spent, or its meter cannot
+ * be read). The two facts together are the explanation: a direct path was the only one left, and
+ * there was none. `code` is the server's (`TURN_BUDGET_REACHED`, `TURN_METER_UNAVAILABLE`), kept
+ * for the log; the reader gets one sentence for both, since neither is theirs to fix.
+ */
+export class CallRelayWithheldError extends Error {
+  constructor(public readonly code: string) {
+    super(`no direct path, and the server withheld the TURN relay (${code})`);
+    this.name = 'CallRelayWithheldError';
+  }
+}
+
+/**
  * THE SENTENCE A FAILED CALL SETUP READS AS, chosen from the status and nothing else.
  *
  * 404 is answered BEFORE `describeApiRefusal`, and that is the one deliberate departure: the
@@ -148,8 +166,14 @@ export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
   if (error instanceof CallE2eBypassedError) return m.call_e2e_bypassed();
   if (error instanceof CallE2eSetupError) return m.call_e2e_setup_failed();
+  if (error instanceof CallRelayWithheldError) return m.call_relay_withheld();
   // A block, on either side: neutral, as every block refusal is - never who blocked whom.
   if (refusalCode(error) === USER_BLOCKED_CODE) return m.call_unavailable();
+  // The kill switch, at whichever step it answered: said as such, never as a failure to retry.
+  const code = refusalCode(error);
+  if (code && CALLS_CLOSED_CODES.includes(code)) {
+    return describeRefusalCode(code) ?? m.call_calls_disabled();
+  }
   const status = refusalStatus(error);
   if (status === 404) return m.chat_call_group_desynced();
   if (error instanceof CallInitiateError) {
