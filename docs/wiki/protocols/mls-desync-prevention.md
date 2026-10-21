@@ -723,15 +723,10 @@ as an argument and:
    Nested inside a drain, the flush starts its own checkpoint.
 
 **What "landed" means, exactly.** The commit runs only when `fn` returned something to commit, the
-mark came after it, the flush resolved, AND that checkpoint's blob was written. The last condition
-did not hold on web until the same change: `WebMlsService.writeCheckpoint` ignored the version
-guard's outcome, so a `collision` (another tab's blob is the stored one) or a `stale` resolved as a
-checkpoint, and every waiter - this commit, `commitPendingHistoryMarks`, the send ledger,
-`externalJoin` - declared durable a state the store did not hold, while the markers landed in the
-`localStorage` both tabs share. It now throws `MlsStateWriteRefusedError` for both. `stale` is
-refused too because it is harmless only when the newer stored blob is this document's own later
-export, and the guard keeps no document identity to tell that from another tab's; a false refusal
-costs one more checkpoint (the persister re-raises the dirty flag) and a withheld marker.
+mark came after it, the flush resolved, AND that checkpoint's state is on disk: on web, `written`, or
+`superseded` by this document's own later capture, while `stale` and `collision` reject typed (the
+subsection above, "A web checkpoint resolves only when its state is on disk"). A typed refusal adds
+no line here: the guard has said it once.
 
 **A failed checkpoint rejects the flush and the commit never runs**: the markers stay behind the
 state, the survivable direction (a re-walk of frames already seen). No persister registered is a
@@ -760,7 +755,6 @@ rejected: the persister running registered thunks after a later checkpoint - the
 more state to own (registration, logout, two replays of one group).
 
 Pinned by `mlsBulkIngest.test.ts` (the real persister as observer: before the checkpoint lands, a
-failed checkpoint, a close inside a live drain, a checkpoint already running, nothing to commit;
-and no persister), `history.checkpointBoundMarks.test.ts` ("a LIVE mark made while the covering
-checkpoint seals is not made durable by the thunk") and `WebMlsService.changeDeviceKey.test.ts`
-("WebMlsService.writeCheckpoint").
+failed checkpoint, a version-guard refusal, a close inside a live drain, a checkpoint already
+running, nothing to commit; and no persister) and `history.checkpointBoundMarks.test.ts` ("a LIVE
+mark made while the covering checkpoint seals is not made durable by the thunk").

@@ -1,6 +1,7 @@
 import type { IMlsService } from './IMlsService';
 import type { MlsStatePersister } from './mlsStatePersister';
 import { activeMlsStatePersister } from './mlsStatePersisterRegistry';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 
 /**
  * Runs `fn` inside an MLS bulk-ingest window so disk persistence is deferred and a single
@@ -27,8 +28,10 @@ import { activeMlsStatePersister } from './mlsStatePersisterRegistry';
  * 3. `flushEncrypted` resolved - which, by its contract, happens only once a checkpoint that
  *    STARTED after that mark has resolved (a mark is cleared only by starting a checkpoint, and a
  *    checkpoint that fails raises it again);
- * 4. that checkpoint resolving means its blob was WRITTEN: on web `writeCheckpoint` rejects when the
- *    version guard drops the write (`stale` or `collision`), on native the save throws or lands.
+ * 4. that checkpoint resolving means this state is ON DISK: on web `writeCheckpoint` resolves on
+ *    `written`, or on `superseded` (this document's own later capture is stored, a superset), and
+ *    rejects typed on `stale` and `collision` (the stored blob is another document's); on native
+ *    the save throws or lands.
  *
  * At the outermost close the covering checkpoint is the one the close itself starts, so the mark
  * costs no extra write. Inside a live drain the close starts nothing, so the flush starts one of its
@@ -95,9 +98,12 @@ async function commitOnceCheckpointed(
   try {
     await persister.flushEncrypted();
   } catch (e) {
-    console.warn(
-      `[MLS] The checkpoint covering a bulk ingest failed - progress markers withheld, so they stay behind the state: ${String(e)}`
-    );
+    // A version-guard refusal has been said once, by the guard; this branch adds no second line.
+    if (!(e instanceof MlsStateWriteRefusedError)) {
+      console.warn(
+        `[MLS] The checkpoint covering a bulk ingest failed - progress markers withheld, so they stay behind the state: ${String(e)}`
+      );
+    }
     return;
   }
   console.debug('[MLS] Bulk ingest checkpoint landed - committing its progress markers.');

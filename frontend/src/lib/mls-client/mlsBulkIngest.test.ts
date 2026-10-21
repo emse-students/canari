@@ -5,6 +5,7 @@ import {
   unregisterMlsStatePersister,
 } from './mlsStatePersisterRegistry';
 import { flushMacrotask } from '../../test/flush';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 
 vi.mock('$lib/utils/scheduling/yieldToMainThread', () => ({
   yieldToMainThread: vi.fn().mockResolvedValue(undefined),
@@ -136,8 +137,8 @@ describe('withMlsBulkIngest', () => {
           releases.shift()?.resolve();
           await flushMacrotask();
         },
-        fail: async () => {
-          releases.shift()?.reject(new Error('disk full'));
+        fail: async (e: Error = new Error('disk full')) => {
+          releases.shift()?.reject(e);
           await flushMacrotask();
         },
       };
@@ -170,6 +171,19 @@ describe('withMlsBulkIngest', () => {
 
       expect(commit).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('progress markers withheld'));
+      warn.mockRestore();
+    });
+
+    it('withholds the commit on a version-guard REFUSAL without a second line - the guard said it', async () => {
+      const r = rig();
+      const commit = vi.fn();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await withMlsBulkIngest(r.svc, async () => 'cursor', commit);
+      await r.fail(new MlsStateWriteRefusedError('stale'));
+
+      expect(commit).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
       warn.mockRestore();
     });
 
