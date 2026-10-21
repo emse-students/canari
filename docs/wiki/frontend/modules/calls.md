@@ -575,7 +575,13 @@ was recreated, not rebased):
   notice; a stale epoch (a replaced device's dead peer connection) -> ignored. A replaced device is
   judged on its own frames. A key AGREEMENT over signalling is still not built (the relay carries a
   closed set of frames); two exported logs settle it: one side's `send_fp` must equal the other's
-  `recv_fp`. The call is not ended by it: the user is told, and hangs up.
+  `recv_fp`. The call is not ended by it: the user is told, and hangs up. **A setup never outlives
+  its call** (review of #2176): a hangup during the microphone prompt used to let `startCall` resume
+  after `cleanup`, key a worker whose memo outlived the call, and leave the NEXT call silent under
+  the previous call's keys - which this notice would have blamed on the app's version. Every await
+  of `startCall`/`acceptCall` is now followed by `assertSetupLive` (a sequence bumped at each setup
+  and each cleanup): a late microphone is stopped, late keys are zeroed and never posted, and no
+  socket or ring follows (`CallSetupAbandonedError`, no toast).
 - **The key log is a hash**: `media keys derived from MLS (role= send_fp= recv_fp=, sha256)`, the
   first 4 bytes of each key's SHA-256 (`keyFingerprint`), never key bytes. A build older than
   2026-10-21 printed key bytes: never paste its `fp=` line.

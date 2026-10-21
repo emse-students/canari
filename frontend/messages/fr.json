@@ -548,7 +548,7 @@
   "call_over": "Cet appel est terminé.",
   "call_unavailable": "Cet appel ne peut pas être passé.",
   "call_setup_failed": "L'appel n'a pas pu démarrer. Réessayez dans un instant.",
-  "call_e2e_key_mismatch": "Le son de l'appel ne peut pas être déchiffré : votre appareil et celui de votre correspondant ne sont pas synchronisés. Raccrochez, vérifiez que vous avez tous les deux la dernière version de l'application, ouvrez la conversation, puis rappelez.",
+  "call_e2e_key_mismatch": "Le son ou la vidéo de l'appel ne peut pas être déchiffré : votre appareil et celui de votre correspondant ne sont pas synchronisés. Raccrochez, vérifiez que vous avez tous les deux la dernière version de l'application, ouvrez la conversation, puis rappelez.",
   "call_label": "Appel",
   "call_audio_only_label": "Appel audio",
   "call_connecting_label": "Connexion…",

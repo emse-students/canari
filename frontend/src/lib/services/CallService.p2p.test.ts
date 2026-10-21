@@ -3025,6 +3025,73 @@ describe('the call keys (port of #2013, 2026-10-21)', () => {
     expect(byte(workerAnswers.keys!.receive)).toBe(CALLER);
   });
 
+  it('hangup during the mic prompt, then a second call: the keys of call 2 reach the worker', async () => {
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    // The microphone prompt of call 1 stays up until `release()`.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const md = navigator.mediaDevices as unknown as {
+      getUserMedia: (c: MediaStreamConstraints) => Promise<ReturnType<typeof fakeMicStream>>;
+    };
+    const real = md.getUserMedia;
+    let lateStream: ReturnType<typeof fakeMicStream> | null = null;
+    md.getUserMedia = async (c) => {
+      md.getUserMedia = real;
+      await gate;
+      lateStream = await real(c);
+      return lateStream;
+    };
+
+    const service = new CallService(fakeMls);
+    const first = service.startCall('group-1', false);
+    await settle();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(get(service.callState)).toBe('idle');
+    // The prompt is answered after the call was cleaned up.
+    release();
+    await first;
+    await settle();
+    const lateTracks = lateStream!.getTracks() as unknown as ReturnType<typeof fakeTrack>[];
+    expect(lateTracks).toHaveLength(1);
+    for (const t of lateTracks) expect(t.stop).toHaveBeenCalledTimes(1);
+    expect(workerAnswers.keys).toBeNull();
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(await logLines()).toContain(
+      '[Call] the call ended during its setup (after the microphone prompt, state=idle) - setup abandoned'
+    );
+
+    // Call 2 keys ITS worker; nothing of call 1 is left to stand in for it.
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    expect(byte(workerAnswers.keys!.send)).toBe(CALLER);
+    expect(byte(workerAnswers.keys!.receive)).toBe(CALLEE);
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('never keys a worker for a call that ended while its keys were exported', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    vi.mocked(fakeMls.exportSecret).mockImplementationOnce(async (_g, _l, context) => {
+      await gate;
+      return new Uint8Array(32).fill(context[context.length - 1]);
+    });
+    const service = new CallService(fakeMls);
+    const first = service.startCall('group-1', false);
+    await settle();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500);
+    release();
+    await first;
+    await settle();
+    expect(workerAnswers.keys).toBeNull();
+    expect(await logLines()).toContain(
+      '[Call] the call ended during its setup (after the key export, state=idle) - setup abandoned'
+    );
+  });
+
   it("hands every transform its track's kind, authenticated by the worker in each frame", async () => {
     const service = new CallService(fakeMls);
     const ws = await callerJoined(service);

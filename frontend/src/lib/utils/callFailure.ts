@@ -83,6 +83,20 @@ export class CallE2eUnsupportedError extends Error {
 }
 
 /**
+ * The call a setup step was working for ENDED while the step awaited (a hangup during the
+ * microphone prompt, a declined or cancelled ring): nothing failed, and the step's result belongs to
+ * nobody. Thrown by `CallService.assertSetupLive` after every await of `startCall`/`acceptCall`,
+ * so a late step never keys a worker, holds a microphone or joins a room for a call that is over -
+ * and caught there without a toast or a second hangup, the call having already ended.
+ */
+export class CallSetupAbandonedError extends Error {
+  constructor(public readonly step: string) {
+    super(`the call ended during its setup (${step})`);
+    this.name = 'CallSetupAbandonedError';
+  }
+}
+
+/**
  * Media crossed the network AROUND this device's E2E transform: RTP packets were sent (or received)
  * while the worker was never handed one frame on that side, so the engine sent clear media (or fed
  * the other party's ciphertext to the decoder). Proven from two counters (`e2eBypassedSides`), never
