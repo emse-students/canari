@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import axios from 'axios';
 import * as bodyParser from 'body-parser';
 import { Logger, type INestApplication } from '@nestjs/common';
@@ -436,5 +438,20 @@ describe('POST /api/payments/lydia-request-callback - the Business key, measured
     const res = await post('expire', many);
     expect(res.status).toBe(400);
     expect(keyLookups).toEqual([]);
+  });
+});
+
+describe('the cancel-pending answer core reads from social-service', () => {
+  // The two halves meet over HTTP, so a test of each against its own mock stays green when one
+  // renames what the other reads (the rebase of 2026-10-21 shipped social answering `{ ok }` while
+  // core waited for `outcome: 'unreadable'`). This pins the word on BOTH sides to the same source.
+  it('is the outcome word social-service really answers when Lydia cannot be read', () => {
+    const social = readFileSync(
+      join(__dirname, '..', '..', '..', 'social-service', 'src', 'forms', 'forms.service.ts'),
+      'utf8'
+    );
+    expect(social).toContain("return { ok: state !== 'unreadable', outcome: state }");
+    const core = readFileSync(join(__dirname, 'webhook.controller.ts'), 'utf8');
+    expect(core).toContain("read === 'unreadable'");
   });
 });

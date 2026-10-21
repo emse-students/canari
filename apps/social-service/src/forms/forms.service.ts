@@ -1771,25 +1771,31 @@ export class FormsService {
   }
 
   /**
-   * Marks a pending online-payment submission as cancelled without auth checks, when the provider
-   * reports ITS request cancelled or expired (core-service: Lydia's cancel/expire callback, or the
-   * payer returning from the fail URL).
+   * A Lydia cancel/expire callback, VERIFIED by core-service with the Business key of `vendorToken`,
+   * used as a TRIGGER and nothing more - the same rule as `confirmPaymentFromCallback`: the row's
+   * OWN request is read at Lydia with that Business (`settleFromProvider`), and only a request Lydia
+   * says is `closed` (state 6, which a cancel and an expiry both leave) releases the seat. A request
+   * Lydia reads `paid` is recorded paid instead; `open`, an unmeasured state or a failed read leaves
+   * the row as it is (the expiry job, or Lydia's retry of the callback, decides). So a callback
+   * signed by a Business key its payout manager typed cannot cancel a seat Lydia still holds.
    *
    * The report must NAME the request - `requestId` (Lydia's numeric `request_id`, what a callback
-   * carries) or `sessionId` (the `request_uuid`, what the fail URL carries) - and is applied only
-   * when that is the row's CURRENT request. `submit` reuses a pending row for a new request and
-   * cancels the old one first, which makes Lydia call back about the OLD one: applying that would
-   * cancel the answer the payer is paying for right now. A row that has no stored id names no
-   * request, so no report can match it - it leaves `pending` through the expiry job instead.
+   * carries) or `sessionId` (the `request_uuid`) - and is applied only when that is the row's
+   * CURRENT request. `submit` reuses a pending row for a new request and cancels the old one first,
+   * which makes Lydia call back about the OLD one: applying that would cancel the answer the payer
+   * is paying for right now. A row that has no stored id names no request, so no report can match
+   * it - it leaves `pending` through the expiry job instead.
    *
    * `vendorToken` is the Business whose key verified the callback: a report about a row whose
    * money goes to another account changes nothing (`isCallbackPayee`).
+   *
+   * Answers `outcome` for core-service's log; `unreadable` is what core turns into a retryable 503.
    */
   async cancelPendingSubmission(
     submissionId: string,
     request: { requestId?: string; sessionId?: string },
     vendorToken: string
-  ): Promise<{ ok: boolean }> {
+  ): Promise<{ ok: boolean; outcome: string }> {
     if (!request.requestId && !request.sessionId) {
       this.logger.warn(
         `[Forms] cancelPendingSubmission ${submissionId} refused: the report names no request`
@@ -1799,13 +1805,46 @@ export class FormsService {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) {
       this.logger.warn(`[Forms] cancel: submission ${submissionId} not found`);
-      return { ok: false };
+      return { ok: false, outcome: 'missing' };
     }
-    if (!(await this.isCallbackPayee(submission, vendorToken, 'cancel'))) return { ok: false };
-    const named = (submission: Submission) =>
-      (!!request.requestId && submission.paymentRequestId === request.requestId) ||
-      (!!request.sessionId && submission.stripeSessionId === request.sessionId);
-    return this.applyPendingCancel(submissionId, 'the provider', named);
+    if (!(await this.isCallbackPayee(submission, vendorToken, 'cancel'))) {
+      return { ok: false, outcome: 'other-account' };
+    }
+    const named = (row: Submission) =>
+      (!!request.requestId && row.paymentRequestId === request.requestId) ||
+      (!!request.sessionId && row.stripeSessionId === request.sessionId);
+    if (!named(submission)) {
+      // Expected after every reuse: the old request was cancelled on purpose, and Lydia reports it.
+      this.logger.log(
+        `[Forms] cancel callback for submission ${submissionId} left as is: the reported request ` +
+          `is not its current one (${submission.paymentRequestId ?? 'none'})`
+      );
+      return { ok: true, outcome: 'other-request' };
+    }
+    const sessionId = this.lydiaRequestToRead(submission, 'cancel callback');
+    if (!sessionId) return { ok: true, outcome: `nothing-to-read (${submission.paymentStatus})` };
+    const state = await this.settleFromProvider(
+      submissionId,
+      sessionId,
+      vendorToken,
+      'cancel callback'
+    );
+    if (state !== 'closed') {
+      if (state !== 'paid' && state !== 'stale') {
+        this.logger.warn(
+          `[Forms] cancel callback for submission ${submissionId}: request ${sessionId} reads ` +
+            `${state} at Lydia, not closed - the seat is kept`
+        );
+      }
+      return { ok: state !== 'unreadable', outcome: state };
+    }
+    // Under the row lock, the row must still name the very request that was read closed.
+    const { ok } = await this.applyPendingCancel(
+      submissionId,
+      'the provider',
+      (row) => named(row) && row.stripeSessionId === sessionId
+    );
+    return { ok, outcome: 'closed' };
   }
 
   /** Moves a `pending` row to `cancelled` (see `moveLockedSubmission`) and logs the outcome. */
