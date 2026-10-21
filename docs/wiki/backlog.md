@@ -52,7 +52,7 @@ included), the five reaction kinds and `LIVE_RULES_VERSION` 2 ([lives](services/
 the client half of the ladder - the `live_suspended` / `live_withdrawn` bell rows, the two start
 refusals and `GET /api/lives/standing` on the pre-live screen, the admin standing, withdraw / lift
 buttons and the `live_chat` row with its integrity ([lives](services/lives.md#what-the-client-still-owes-strings-for-paraglide));
-(e) BUILT 2026-10-21 (draft PR): the hourly `[LIVE_REPORT_AGE]` alarm, `error` past 24 working hours
+(e) BUILT 2026-10-21: the hourly `[LIVE_REPORT_AGE]` alarm, `error` past 24 working hours
 ([lives](services/lives.md#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e)), owed one reading of
 the line on dev; (f) the viewer cap lifted, after the plan's measurements. **Owed, the
 user:** the filtering statement and the terms' lives paragraph ([store-ugc-answers](store-ugc-answers.md)).

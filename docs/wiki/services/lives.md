@@ -628,8 +628,9 @@ report and prints ONE line:
   moderator goes from it.
 - **Working time, not wall time** (`workingMsBetween`, `lives/live-report-age.ts`): the parts of
   the age that fall Monday to Friday in `Europe/Paris`, each day cut at the zone's own midnights, so
-  a report filed on a Friday evening is not late on Sunday, and a daylight-saving day counts its 23
-  or 25 hours. **Public holidays count as working days** - no calendar of them exists here - so the
+  a report filed on a Friday evening is not late on Sunday. A span crossing a weekend that holds a
+  daylight-saving change is tested and exact (2026-10-23 to 26: 73 h on the wall, 24 h of work).
+  **Public holidays count as working days** - no calendar of them exists here - so the
   alarm may fire a day EARLY around one, never late. Overdue is strictly past 24 h.
 - **One clock, the database's**: `now()` and the creation instants come from one statement.
   `content_reports."createdAt"` is a `timestamp` without zone written by `now()`; `::timestamptz`

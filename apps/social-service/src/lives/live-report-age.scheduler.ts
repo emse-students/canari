@@ -25,9 +25,10 @@ const hours = (ms: number) => (ms / HOUR_MS).toFixed(1);
  * moderator goes from it.
  *
  * Purely a report: it changes nothing. It runs whatever `LIVE_ENABLED` says, like the sweep: a
- * report filed while the switch was on is still owed its answer after it is turned off. On an
- * estate with none it is one indexed empty query and a `pending=0` line - the line that proves the
- * alarm is alive, since an alarm that went silent would otherwise read as an empty queue.
+ * report filed while the switch was on is still owed its answer after it is turned off. Its cost is
+ * one sequential scan of `content_reports` an hour (no index covers `status` and `contentType`).
+ * On an empty queue it still prints `pending=0`, because that line is the alarm's own liveness
+ * proof: without it, an alarm that stopped running would read exactly like an empty queue.
  *
  * ONE CLOCK, THE DATABASE'S: the creation instants and `now()` come from the same statement.
  */
