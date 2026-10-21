@@ -719,6 +719,99 @@ reload the `--dial` role needs the PIN again (`pin.mjs --port 9223 --account thi
 done from the live page; with the conversation open on both a desktop and the iPhone signed in as `gamma`, a Mi 9T
 call rings both, and the desktop's accept stops the iPhone's ring.
 
+## 2026-10-20 (afternoon) - `v1.3.1-alpha.4` across networks: forced relay, TCP and TLS TURN, a NATed hotspot
+
+Same builds as the morning section (Mi 9T release APK `versionCode` 100300104, account `delta`; iPhone 12 TestFlight
+`1.3.1 (100300104)`, account `gamma`), plus two desktop Chrome 155 profiles on dev (`gamma`, `delta`, fake microphone
+playing a speech-like wav). Every reading so far ran on ONE Wi-Fi over host pairs; this one makes the direct path
+impossible on purpose. No app code was changed: the policy is forced from OUTSIDE the app, by a subclass of
+`RTCPeerConnection` evaluated into the LIVE page over CDP (no reload, so no PIN), which rewrites
+`iceTransportPolicy` and optionally keeps only some of the TURN URLs the server handed out, and records every
+`icecandidate`, `icecandidateerror` and state change with its millisecond. Stats are read every 5 s from the same
+object; the desktops' and the Mi 9T's `[Call]` lines come from the console over CDP, the iPhone's from its exported
+log (carried off through the bench conversation as before), the Mi 9T's libwebrtc lines from `logcat`, one desktop's
+from Chrome's own `--enable-logging` file. The driver is a scratch script, not committed. Cloudflare TURN keeps no log
+this project can read; the dev `call-service` log was not needed (every call paired).
+
+| # | Configuration | Verdict | What was read |
+| --- | --- | --- | --- |
+| D0 | desktop <-> desktop, policy as shipped (`all`) | **`PASS`, and CALL-GATHER-0 reproduced** | `host/udp` both ways, 0 lost, 0 % concealed, reports 250 / 268 at 5 s, `decrypt-failed=0`; the CALLEE logged `ICE gathering complete (host=4 srflx=0 relay=0)` + `WARN no TURN relay candidate`, the caller `host=4 srflx=1 relay=3` (below) |
+| D1 | desktop <-> desktop, BOTH `relay`, every TURN URL | **`PASS`** | `relay/udp -> relay/udp`, `relayed=yes relay_proto=udp`, RTT 16-22 ms, jitter 2-3 ms, 0 lost, **0 % concealed**; 250 / 273-274 frames at 5 s on both, `decrypt-failed=0`, path check `no media around the transform`; both sides gathered `relay=5` |
+| D2 | the same, TURN over TCP and TLS URLs only | **`PASS`** | `relay_proto=tcp`, RTT 18-24 ms, jitter 1-2 ms, 0 lost, 0.4-0.5 % concealed; 250 / 267-268 at 5 s, `decrypt-failed=0` |
+| D3 | the same, TURN over TLS on 443 only | **`PASS`** | `relay_proto=tls`, RTT 17-23 ms, jitter 1-2 ms, 0 lost, 0.1-0.2 % concealed; 250 / 267-268 at 5 s, `decrypt-failed=0`; one relay candidate per side |
+| P1 | Mi 9T -> desktop, both `all`, bench Wi-Fi | **`PASS`** | 0 lost, 0-0.1 % concealed; Mi 9T 252 / 277 at 5 s, desktop 250 / 248, `decrypt-failed=0`. Both logged `selected path ... relayed=yes` at `connected` (Mi 9T `srflx->relay`, desktop `relay->srflx`); `getStats` read `host/udp -> host/udp` at the end (CALL-PATH-LINE below) |
+| P2 | desktop (`relay`) -> Mi 9T (`relay`, TLS 443 only) | **`PASS`** | Mi 9T `relay_proto=tls`, RTT 24-27 ms, jitter 4 ms, 0 lost, 0 % concealed on both ends; Mi 9T 250 / 270 at 5 s and 2101 / 2138 (2093 decrypted) at the end, desktop 250 / 249 and 2093 / 2111, `decrypt-failed=0`; **no `CreatePermission` error in `logcat`** |
+| P3 | Mi 9T (`relay`, every URL) -> iPhone (`all`) | **`PASS`, both ends read** | `relay/udp -> srflx/udp`, RTT 16-44 ms, jitter 4-8 ms, 0 lost, Mi 9T concealed 3.2 % in the first 5 s then 0 %; Mi 9T 250 / 241 at 5 s, end 2102 / 2122 (2094 decrypted); iPhone (callee) `host=2 srflx=2 relay=12`, `selected path pair=srflx/udp->relay/udp relayed=yes`, 240 / 248 at 5 s, end 2108 / 2125 (2101 decrypted), `decrypt-failed=0` both |
+| P4 | iPhone (`all`) -> Mi 9T (`relay`, TLS 443 only) | **`PASS`** | `relay(tls) -> srflx`, RTT 19-48 ms, jitter 4-5 ms, 1 packet lost in 40 s, Mi 9T concealed 2.4 % cumulative (seven 5 s intervals at 0-3.4 %, one at 13.4 % with no loss and nobody speaking - TCP head-of-line delay is the likely reading, not measured); Mi 9T 250 / 240 at 5 s, end 2100 / 2120 (2090 decrypted); iPhone 241 / 267 at 5 s, end 2107 / 2141 (2099 decrypted), `decrypt-failed=0` both |
+| P5 | Mi 9T on this PC's Windows mobile hotspot (its own NATed subnet, no working IPv6 egress) -> iPhone on the bench Wi-Fi, both `all` | **`PASS` for the call; the network is lossy** | direct through the PC's NAT: Mi 9T `prflx/udp -> host/udp`, iPhone `host/udp -> prflx/udp`, `relayed=no`, RTT 129-174 ms, jitter 30 ms; Mi 9T hearing the iPhone: 1 lost, concealed 4.8 % in the first 5 s then 0-0.2 %; Mi 9T 251 / 244 at 5 s, end 2093 / 2114 (2086 decrypted); iPhone 240 / 227 at 5 s, end **2172 sent / 1891 received** (1822 decrypted, `decrypt-failed=0`): about 10 % of the Mi 9T's frames never reached the iPhone. The hotspot shares the PC's one Wi-Fi radio, so that loss is not attributed to the app |
+| P6 | iPhone -> Mi 9T, Mi 9T still on the hotspot | **`FAIL`: the Mi 9T never rang** | the iPhone rang its 60 s window (`ring window (60000 ms) closed unanswered`); the Mi 9T never received the invite: its chat socket had not been up since the network change (CALL-WS-V6 below). Back on the bench Wi-Fi the socket connected in 330 ms |
+| C1 | either phone on mobile data | **NOT-READ: no SIM** | neither bench phone has a SIM (`gsm.sim.state=ABSENT` on the Mi 9T) |
+| C2 | a desktop behind a different egress (a client-side SOCKS proxy through a remote host, or the school VPN), UDP filtered | **NOT-READ** | the user authorised both for this test; this session's permission guard refused to open the tunnel and to read the VPN profile, so neither was started |
+| C3 | as shipped (`all`) with all UDP blocked on one end | **NOT-READ** | Chrome 155 accepted `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` on its command line and still paired `host/udp` without a proxy; an outbound firewall rule needs an elevated shell, which this session did not have. D2-D3 and P2 show TCP/TLS TURN carrying the call; what is not shown is ICE falling back to it on its own |
+| - | the iPhone with relay forced | **NOT-READ** | the TestFlight WKWebView is not inspectable, so nothing can be evaluated into it |
+
+**CALL-GATHER-0 - the cause, read in libwebrtc's own log (desktop callee, Chrome `--enable-logging`).** It is not a TURN
+fault. The callee starts gathering only at its `setLocalDescription(answer)`, by then it already holds the caller's
+trickled host candidates, and on one LAN a host pair answers within a few milliseconds:
+
+```
+.119 basic_port_allocator: Start getting ports ... Allocation Phase=Udp   (4 host ports, STUN lookups started)
+.131 p2p_transport_channel: Changed writable_ to 1
+.131 basic_port_allocator: All candidates gathered
+.131 p2p_transport_channel: component 1 gathering complete
+.132 [Call] ICE gathering complete (host=4 srflx=0 relay=0)
+.220 basic_port_allocator: Discarding candidate because port is already done gathering.
+```
+
+With the default gather-once policy libwebrtc stops the allocator session as soon as a connection is writable; the
+relay phase, scheduled after the UDP phase, never starts, and the server-reflexive answer that arrives 90 ms later is
+discarded. The page timeline agrees on every desktop run: callee `gathering=gathering` at +75-87 ms, `ice=connected`
+and `gathering=complete` in the SAME millisecond 2-7 ms later. Every time the direct pair could NOT answer first, the
+callee gathered relays: `relay=5` (D1), `relay=12` on the iPhone as callee of a relay-only Mi 9T (P3), `relay=12` on
+the Mi 9T as callee of a desktop in the morning. So the callee's call never lacks a relay when it needs one; what is
+wrong is the WARN, which fires on every LAN call and names a cause ("Cloudflare TURN unreachable or misconfigured")
+that is not there. The predicate that would be true: warn only when gathering completes while ICE is not yet
+`connected`/`completed`, or count the page's `icecandidateerror` events, which the app does not listen to (on the
+desktops they read `701` "Address not associated with the desired network interface" for TCP/TLS TURN on virtual
+adapters, harmless).
+
+**The `TURN CreatePermission` errors (CALL-TURN), read on both engines.** Desktop (Chrome log, one call): 12
+`code=403`, every one on a pair from a local relay candidate to a remote HOST candidate whose address is a private
+IPv4: Cloudflare will not relay to RFC 1918 peers, and libwebrtc prunes the pair. Mi 9T (`logcat`): `403` and `600`
+(30 in one natural call: 6 and 24; 10 in P3; 2 in P4), on both its IPv4 and its IPv6 "Wildcard" relay ports - the
+Android WebView gathers on `any` networks, which is what the `Socket is bound to the address ... rather than an address
+associated with network` warnings say. `600` is, as far as this reading goes, the value libwebrtc reports for an error
+response that carries no `ERROR-CODE` attribute; which peers draw it was not resolved (the WebView logs no peer
+address). **When both ends were relay-only (P2) there were none**: the refusals come only from pairing a relay with the
+other end's host or IPv6 candidates, pairs that could not carry media anyway, and no selected pair was ever among
+them. Noise from libwebrtc on pairs that cannot work, not a credential problem; nothing in the app produces it.
+
+### Findings
+
+| Id | Severity | What | Evidence |
+| --- | --- | --- | --- |
+| CALL-WS-V6 | **P1** | On a Wi-Fi that hands out IPv6 addresses but carries no IPv6 traffic, the Android app's CHAT socket never connects: every attempt is abandoned by the 15 s JS timeout (`TauriMlsService.connect`) while the native socket's handshake completes 20-21 s after it started. The HTTP client (reqwest) falls back from the IPv6 address to the IPv4 one after 300 ms and works; the WebView's own WebSocket (the call signalling) works. So the phone sends, dials out and calls fine, but receives no live frame and NO CALL INVITE (P6) for as long as it stays on that network. The cause read here: the native connect tries the IPv6 address first and waits on it (IPv6 ping to the internet 100 % lost on that network, IPv6 default routes present); not read: whether each late-completed native socket is closed or left open | Mi 9T console: `Opening connection` at :55.7 / :40.8 / :25.8, `WebSocket connection timeout after 15s` 15 s later each time; `logcat` `tungstenite::handshake::client: Client handshake done` at :15.6 / :01.7 / :46.3, 20-21 s after each; `hyper_util ... connecting to [IPv6]:443` then `connecting to <IPv4>:443` 300 ms later, `connected`; back on the bench Wi-Fi `Connected to Chat Gateway` in 330 ms |
+| CALL-GATHER-0 | **P3, cause found: a false alarm** | the callee's `WARN no TURN relay candidate` fires whenever its direct pair becomes writable before its STUN/TURN servers answer (libwebrtc stops gathering then); the callee gathers relays whenever the direct path is slower. The WARN's predicate and its stated cause are wrong; the relay path is not | the libwebrtc log above; D0, D1, P3 |
+| CALL-TURN | **P3, explained** | `CreatePermission` `403` = Cloudflare refusing a private-IPv4 peer; `600` on the Android WebView's wildcard relay ports; both on pairs with no future, none when both ends relay; not a credential fault | above |
+| CALL-PATH-LINE | **P3** | the `selected path ... relayed=` line, which [calls](frontend/modules/calls.md) calls "the only place that says whether a call was billed", is written once at `connected`; in P1 both ends logged `relayed=yes` while the pair settled on `host/udp -> host/udp`, so the line over-counts relayed calls when ICE moves to a better pair afterwards | P1: the two `selected path` lines against the end `getStats` pair |
+
+**Proven:** the relay path works end to end with E2E on all three engines - Chrome 155, the Mi 9T's WebView Chrome/152
+and the iPhone's WKWebView - over Cloudflare TURN by UDP, by TCP, and by TLS on 443 alone (the one transport a
+filtered network nearly always lets out), with every frame encrypted and decrypted, 0 decrypt failures and 0-0.5 %
+concealment between desktops; and a call across two NATs connects direct. **Not proven:** a real cellular or campus
+network; a network that blocks UDP, with ICE choosing TCP/TLS TURN by itself; the iPhone's concealment as a receiver;
+the iPhone forced to relay.
+
+**Owed:** a SIM in one bench phone (C1); the user's permission rule for the client-side tunnel or the VPN (C2); an
+elevated shell for a UDP-blocking firewall rule, or a proxy that makes Chrome's `disable_non_proxied_udp` bite (C3).
+
+Rig lessons: the policy override is a subclass of `RTCPeerConnection` evaluated into the live page, because the app
+constructs its peer connection by the global name at call time - no reload, no PIN; the iPhone answers through WDA
+(`Accepter l'appel entrant`) and dials from the conversation's `Plus d'actions` menu; its file picker opens in
+selection mode, so a tap on a log SELECTS it and `Ouvrir` attaches it - check the attached name before sending; the
+Mi 9T reached over CDP after a Wi-Fi change keeps its `adb` USB forward; Chrome's own log needs `--enable-logging
+--vmodule=*/webrtc/*=1` and holds ICE passwords, so it stays in the scratch directory.
+
 ## 2026-10-20 (afternoon) - `v1.3.1-alpha.4`: what a locked iPhone keeps, measured for WP-C-BG-I
 
 Same builds and accounts as the morning (Mi 9T `delta`, iPhone 12 `gamma`, iOS 27.0.1), same Wi-Fi. The Mi 9T's
