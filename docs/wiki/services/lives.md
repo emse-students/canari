@@ -555,11 +555,14 @@ Built 2026-10-21. The three notices above are pushed through the one pipeline
   `push-target.ts`) wins over `postId`, which is the live's id (or the member's, for a withdrawal) -
   a `post/<id>` link would open a post that does not exist. The `notifications` host is declared in
   `tauri.conf.json` and the Android manifest (`deepLinkHostsDeclared.test.ts`) and routed by
-  `appRouteForDeepLink`. A build older than that change drops the host on Android (the app opens
-  where it was) and lands on the list through the hook's unknown-host branch elsewhere.
-- **Never muted**: the three keys are deliberately absent from chat-delivery's `push-category.ts`,
-  so no notification switch silences a sanction on the reader's own account
-  (`push-category.spec.ts`).
+  `appRouteForDeepLink`. What a build older than that change does with the tap is EXPECTED, not
+  observed: the Android deep-link plugin should drop the undeclared host, and elsewhere the hook's
+  unknown-host branch should land on the list.
+- **Never muted BY CANARI**: the three keys are deliberately absent from chat-delivery's
+  `push-category.ts`, so no in-app notification setting silences a sanction on the reader's own
+  account (`push-category.spec.ts`). That holds on the server only: on Android they draw on the
+  social notification channel (`CHANNEL_SOCIAL`), so a member who turned that channel off in the
+  system settings does not see them - the in-app row on the notifications list remains.
 - **The 30 days are not in any sentence**: the suspension's end is `GET /api/lives/standing`'s to
   say, so a change of `LIVE_SUSPENSION_MS` changes no table.
 - **The queue** carries `live.broadcasterStanding` (`{ cutsOnRecord, suspendedUntil, withdrawnAt,
