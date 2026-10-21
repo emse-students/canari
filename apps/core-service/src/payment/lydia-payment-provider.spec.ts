@@ -50,6 +50,46 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
     error.mockRestore();
   });
 
+  const anAttempt = () =>
+    makeProvider().createCheckoutSession({
+      lineItems: [{ productName: 'Sweat', unitAmountCents: 1500, quantity: 1, currency: 'eur' }],
+      successUrl: 'https://canari.example/success',
+      cancelUrl: 'https://canari.example/cancel',
+      connectAccountId: 'vendor-token-abc',
+      payerRecipient: { value: 'user@example.com', type: 'email' },
+      idempotencyKey: 'product:a:b',
+    });
+
+  it('answers an HTTP 4xx from Lydia as a typed REFUSAL, which releases the attempt', async () => {
+    mockedAxios.post.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 422'), {
+        response: { status: 422, data: {} },
+      })
+    );
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    // The control: before, this came back as the raw axios error - a 5xx that left the attempt
+    // open until its expiry although Lydia had answered that nothing was created.
+    const refusal = await anAttempt().catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(BadRequestException);
+    expect((refusal as BadRequestException).getResponse()).toMatchObject({
+      code: PAYMENT_PROVIDER_REFUSED,
+      providerCode: 'http-422',
+    });
+    warn.mockRestore();
+  });
+
+  it('CONTROL: an HTTP 5xx from Lydia stays a lost call, never a refusal', async () => {
+    mockedAxios.post.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 502'), {
+        response: { status: 502, data: {} },
+      })
+    );
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const lost = await anAttempt().catch((e: unknown) => e);
+    expect(lost).not.toBeInstanceOf(BadRequestException);
+    error.mockRestore();
+  });
+
   it('posts request/do as form-urlencoded with the summed amount and target vendor_token', async () => {
     mockedAxios.post.mockResolvedValue({
       data: { error: '0', request_uuid: 'req-uuid-1', mobile_url: 'https://lydia-app.com/pay/1' },

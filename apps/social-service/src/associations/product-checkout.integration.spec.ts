@@ -144,6 +144,42 @@ maybe('product checkout attempts against PostgreSQL', () => {
     log.mockRestore();
   });
 
+  it('completes the record when the return settled it while the callback held an open snapshot', async () => {
+    const buyer = 'e'.repeat(64);
+    const row = await openAttempt({ userId: buyer, requestUuid: null, requestId: null });
+    const repo = ds.getRepository(ProductCheckout);
+    const stale = await repo.findOneOrFail({ where: { id: row.id } });
+    // The payer's return wins the race: paid, no id known.
+    await (service as any).settlePaidCheckout(row.id);
+    const findOne = jest.spyOn(repo, 'findOne').mockResolvedValueOnce(stale);
+    // Lydia answers paid; the settlement then finds the row paid and records nothing.
+    const read = jest.fn(async (r: ProductCheckout) => {
+      await (service as any).settlePaidCheckout(r.id);
+      return 'paid';
+    });
+    const racing = Object.assign(Object.create(service) as object, {
+      readAndApplyRequestState: read,
+    }) as unknown as ProductsService;
+
+    await expect(
+      racing.handlePurchaseCompleted(PRODUCT, row.id, '1001', 'vendor-test')
+    ).resolves.toEqual({
+      outcome: 'paid',
+    });
+    findOne.mockRestore();
+    expect(read).toHaveBeenCalledTimes(1);
+    const records = await ds.query(
+      `SELECT "stripePaymentIntentId" FROM purchase_records WHERE "userId" = $1`,
+      [buyer]
+    );
+    expect(records).toEqual([{ stripePaymentIntentId: '1001' }]);
+    const [after] = await ds.query(
+      `SELECT "requestId", status FROM product_checkouts WHERE id = $1`,
+      [row.id]
+    );
+    expect(after).toEqual({ requestId: '1001', status: 'paid' });
+  });
+
   it('refuses a second OPEN attempt of one product and buyer, and allows one once the first is closed', async () => {
     const first = await openAttempt();
     const second = await openAttempt().catch((e: unknown) => e);

@@ -32,8 +32,12 @@ describe('secret-box', () => {
     const sealed = sealSecret('p', 'asso-1:vendor', 'k');
     expect(() => openSecret('p', 'asso-2:vendor', sealed)).toThrow(SecretBoxOpenError);
     expect(() => openSecret('q', 'asso-1:vendor', sealed)).toThrow(SecretBoxOpenError);
-    const last = sealed.slice(-1) === 'A' ? 'B' : 'A';
-    expect(() => openSecret('p', 'asso-1:vendor', sealed.slice(0, -1) + last)).toThrow(
+    // A BYTE is flipped, not a character: the last base64url character of a 29-byte seal carries
+    // two padding bits, so swapping it among A-D changed nothing and the "tampered" seal opened,
+    // about one run in sixteen.
+    const raw = Buffer.from(sealed.slice('v1.'.length), 'base64url');
+    raw[raw.length - 1] ^= 0x01;
+    expect(() => openSecret('p', 'asso-1:vendor', `v1.${raw.toString('base64url')}`)).toThrow(
       SecretBoxOpenError
     );
     process.env[SECRET_BOX_ENV] = 'another-throwaway-secret-0123456789abcdef';

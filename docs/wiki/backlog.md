@@ -1444,6 +1444,20 @@ A payer who leaves Lydia's page without paying or declining (tab closed, back bu
 
 A retry's `settleOpenRequest` cancels the old request BEFORE its transaction; until the transaction re-reads the row, the row still names that request. Lydia's cancel callback landing then was the one known trigger of a self-caused cancel (the take-back in `submit` re-checks capacity). Since #2210 a `confirm-payment` poll from a success page still open in another tab is a second one: it reads the old request `cancelled-or-expired` and releases the row (`releaseSettledRefusedRow`), so the seat is free from that write to the take-back, and a single-seat form filled in between answers "Form is full" to the payer who was retrying. Same outcome as the callback race, a wider trigger. **Owed:** a decision whether the retry should mark the row as being settled (durable state the release honours) rather than rely on the take-back, and a seat-hold test interleaving the poll with `duringCancel`.
 
+### P2 - a crash between a top-up's purchase commit and its Cercle dispatch loses the top-up silently (review of #2218, 2026-10-21)
+
+`settlePaidCheckout` (and `completePaidWithoutRequestId`) commit the purchase record, THEN `dispatchCercleWebhook` saves the `webhook_deliveries` row, outside that transaction. A process killed between the two leaves a paid top-up with no delivery row: the `*/5` scheduler (`retryDueWebhookDeliveries`) only retries `failed` rows that carry `nextAttemptAt`, so nothing retries it, and nothing logs it. **Why it was not built in #2218:** writing the row `pending` inside the settle transaction (an outbox) is not enough by itself - the scheduler would then have to tell "a dispatch is running" from "a dispatch died", and today only a clock could say which. Using a clock for that risks crediting the Cercle twice. The outbox needs a durable claim on the row (who is sending it), which is its own change. **Recovery query, until then** (read-only; each row is a paid top-up the Cercle may never have received):
+
+```sql
+SELECT pr.id, pr."userId", pr."amountCents", pr."stripePaymentIntentId", pr."createdAt"
+FROM purchase_records pr
+JOIN association_products p ON p.id = pr."productId" AND p.type = 'balance_topup'
+WHERE pr.status = 'paid' AND pr."paymentMethod" = 'online'
+  AND NOT EXISTS (SELECT 1 FROM webhook_deliveries d WHERE d."paymentIntentId" = pr."stripePaymentIntentId");
+```
+
+**Owed:** the outbox with a claim, and a report that runs this query - a mechanism with no report is found by hand. A row with a NULL `stripePaymentIntentId` is the id-less case that Lydia's confirm callback completes ([payments](frontend/modules/payments.md#a-product-checkout-is-a-row-one-per-attempt-2026-10-21)).
+
 ### A PAID PUBLIC FORM (user, 2026-09-30) - the paid half waits for Lydia
 
 The free half is shipped (`/f/:id`, migration 068, [forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)). **Owed:** one guest answer sent from a private window on `dev.canari-emse.fr`, with the `canari-dev-frontend-1` log showing a real client address rather than the Docker gateway (the `real_ip` change it carries); the paid half is scoped on [forms](frontend/modules/forms.md#the-paid-half-what-it-needs-scoped-2026-09-30) and needs WP-LYDIA-1.

@@ -589,7 +589,8 @@ order_ref.
 3. **The row is written `open`**; a second open row for one product and buyer loses on the partial
    unique index `product_checkouts_one_open` (a double click) and is answered `CHECKOUT_IN_PROGRESS`.
 4. **The request is issued.** A 4xx from core is an ANSWER (nothing was issued) and releases the row
-   `cancelled`. A LOST call - a timeout, a 5xx, a 2xx without the ids - leaves it `open` with no ids,
+   `cancelled` - an HTTP 4xx from Lydia itself included, which core answers as the same typed
+   `PAYMENT_PROVIDER_REFUSED` 400 as an `error` code. A LOST call - a timeout, a 5xx, a 2xx without the ids - leaves it `open` with no ids,
    logged at ERROR. Core bounds its own call to Lydia at 60 s (`LYDIA_CALL_TIMEOUT_MS`, under the
    120 s social waits), so core always answers - a 5xx - before social gives up on it;
    Lydia may hold the request all the same, so it is read by its order_ref at the
@@ -612,7 +613,9 @@ leaves the row without it, so a verified callback STORES its `request_id` on the
 settled (`storeCallbackRequestId`, conditional on the column being NULL; a row holding another id is
 refused at ERROR). An attempt the payer's return settled first, with no id yet, is recorded with none
 and - for a top-up - logged at ERROR, "top-up NOT dispatched"; the callback then completes it
-(`completePaidWithoutRequestId`): the record takes the id while it is still NULL, and only the call
+(`completePaidWithoutRequestId`, run on EVERY paid outcome of a callback: its row read is unlocked,
+so the return may settle the attempt between that read and the callback's own settlement, which then
+finds it paid and records nothing - a real-PostgreSQL test drives exactly that interleaving): the record takes the id while it is still NULL, and only the call
 that wrote it dispatches the top-up - eight racing completions against a real PostgreSQL write it
 once (the control without `IS NULL` wrote it eight times). The tag's `manualGrant` says how the
 purchase was PAID (cash or online), never inferred from a missing id.
@@ -640,5 +643,6 @@ confirm callback of a PAID boutique request end to end, the 81-character order_r
 here:** a request/do that reaches Lydia after core's 60 s bound (Lydia's own processing, not
 Canari's wait) may still create a request after the 3-minute window; if that attempt was meanwhile
 read `not-found` and closed, a payment for it is still recorded by its callback (paid over a closed
-row, at ERROR). Concurrent
-attempts of DIFFERENT buyers can still oversell `maxPurchasesTotal`, as before this lot.
+row, at ERROR). A crash between a top-up's commit and its Cercle dispatch loses the dispatch with no
+line ([backlog](../../backlog.md#p2---a-crash-between-a-top-ups-purchase-commit-and-its-cercle-dispatch-loses-the-top-up-silently-review-of-2218-2026-10-21)).
+Concurrent attempts of DIFFERENT buyers can still oversell `maxPurchasesTotal`, as before this lot.

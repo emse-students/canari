@@ -2186,6 +2186,30 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         expect(dispatch).toHaveBeenCalledWith(expect.anything(), 'user1', 1000, '1001');
       });
 
+      it('credits a top-up the RETURN settled while the callback held a stale open snapshot', async () => {
+        const { t, dispatch } = topUp();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const row = t.checkouts.rows[0];
+        age(row, 4 * 60_000);
+        t.setState('paid');
+        // The callback's unlocked read sees the attempt OPEN; the return then settles it, no id.
+        const stale = { ...row };
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        await t.service.confirmCheckout('asso1', 'prod1', row.id, 'user1');
+        expect(row.status).toBe('paid');
+        t.checkouts.repo.findOne.mockResolvedValueOnce(stale);
+
+        await expect(callback(t, row.id, '1001')).resolves.toEqual({ outcome: 'paid' });
+        // The control: the snapshot said open, so the callback went through the settlement, which
+        // found the row paid and recorded nothing - and the record was never completed.
+        expect(t.records).toHaveLength(1);
+        expect(t.records[0].stripePaymentIntentId).toBe('1001');
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith(expect.anything(), 'user1', 1000, '1001');
+        error.mockRestore();
+      });
+
       it('refuses a callback naming ANOTHER request than the one a racing write stored', async () => {
         const t = setup();
         lostOnce(t);

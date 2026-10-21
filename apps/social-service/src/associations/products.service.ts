@@ -2008,24 +2008,30 @@ export class ProductsService {
     }
     const stored = await this.storeCallbackRequestId(row, requestId);
     if (!stored) return { outcome: 'refused' };
+    let status: ProductCheckoutStatus;
     if (row.status === 'paid') {
       this.logger.log(`[SHOP] purchase callback for checkout ${row.id.slice(0, 8)}: already paid`);
-      await this.completePaidWithoutRequestId(row.id, requestId);
-      return { outcome: 'paid' };
-    }
-    try {
-      const status = await this.readAndApplyRequestState(row);
+      status = 'paid';
+    } else {
+      try {
+        status = await this.readAndApplyRequestState(row);
+      } catch (err: unknown) {
+        this.logger.error(
+          `[SHOP] purchase callback for checkout ${row.id.slice(0, 8)}: its request could not be read ` +
+            `at Lydia (${err instanceof Error ? err.message : String(err)}) - nothing recorded, Lydia may retry`
+        );
+        return { outcome: 'unreadable' };
+      }
       this.logger.log(
         `[SHOP] purchase callback for checkout ${row.id.slice(0, 8)} settled as ${status}`
       );
-      return { outcome: status };
-    } catch (err: unknown) {
-      this.logger.error(
-        `[SHOP] purchase callback for checkout ${row.id.slice(0, 8)}: its request could not be read ` +
-          `at Lydia (${err instanceof Error ? err.message : String(err)}) - nothing recorded, Lydia may retry`
-      );
-      return { outcome: 'unreadable' };
     }
+    // ALWAYS on a paid outcome, not only when this unlocked snapshot already said paid: the payer's
+    // return may have settled the attempt with no id between that read and this settlement, which
+    // then finds it paid and records nothing. A no-op once the record carries an id. A failure here
+    // throws, so core answers Lydia a 5xx and the callback is retried.
+    if (status === 'paid') await this.completePaidWithoutRequestId(row.id, requestId);
+    return { outcome: status };
   }
 
   /**

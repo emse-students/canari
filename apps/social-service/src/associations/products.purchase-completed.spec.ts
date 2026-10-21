@@ -33,6 +33,7 @@ describe('ProductsService.handlePurchaseCompleted - the verified Business must b
         findOne: jest.fn(() => Promise.resolve({ id: 'asso-b', lydiaAccountId: 'vendor-b-new' })),
       },
       readAndApplyRequestState: read,
+      completePaidWithoutRequestId: jest.fn(() => Promise.resolve()),
     }) as unknown as ProductsService;
     return { service, read };
   }
