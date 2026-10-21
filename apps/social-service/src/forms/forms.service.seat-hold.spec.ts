@@ -1202,9 +1202,12 @@ describe('FormsService - the seat a pending payment holds', () => {
           [live, settled],
         ]) {
           const { service } = makeStore({ maxSubmissions: null, basePrice: 1500, rows });
+          // `submissionId` is the SHOWN row's: the page asks `confirm-payment` about it, so a
+          // newest-row id beside an older row's status would poll the wrong answer.
           await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
             hasSubmitted: true,
             paymentStatus: status,
+            submissionId: 'old',
           });
         }
       }
@@ -1215,6 +1218,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
         hasSubmitted: true,
         paymentStatus: 'pending',
+        submissionId: 'mine',
       });
     });
 
