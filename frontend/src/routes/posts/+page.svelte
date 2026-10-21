@@ -98,6 +98,15 @@
   /** The live the viewer is open on, or null. */
   let openLive = $state<LiveListItem | null>(null);
 
+  // A CLOSED SWITCH CLOSES THE VIEWER FOR GOOD. Hiding it alone kept `openLive` set, so when lives
+  // reopened in the same session the viewer came back on a live nobody had asked to see again.
+  $effect(() => {
+    if (!livesShown && openLive) {
+      Log.d('POSTS', `live ${openLive.id} viewer closed: lives are not available any more`);
+      openLive = null;
+    }
+  });
+
   let postsOverride = $state<PostEntity[] | null>(null);
   /** Resolved value of data.posts - used as fallback when postsOverride is still null. */
   let initialPostsResolved = $state<PostEntity[] | null>(null);

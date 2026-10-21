@@ -3,8 +3,9 @@
  * SQL the guard runs, the column it names and the values the CHECK lets an admin write - none of
  * which a scripted `query` mock can vouch for.
  *
- * GATED ON `SOCIAL_IT_DATABASE_URL`, like `lives.integration.spec.ts`: CI provides no database here,
- * so the file reports as skipped rather than passing. Everything happens in a throwaway schema.
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like `lives.integration.spec.ts`: CI's
+ * `test-social-integration` job sets it and runs every `*.integration.spec.ts`, failing on a skip;
+ * without it (a plain local run) the file reports as skipped. Everything happens in a throwaway schema.
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/postgres bun run test -- lives-mode.integration
  */

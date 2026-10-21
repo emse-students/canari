@@ -56,7 +56,11 @@ manifest, no key, no chat, no ingest - an on-air broadcaster's next segment is a
 route too), and the live is ended by the sweep after 60 s without a segment. **A segment nginx ALREADY cached stays servable for up to its two minutes**
 (`proxy_cache_valid 200 2m`) to a caller holding its URL: ciphertext under a key no new viewer can be
 handed, learned only from a manifest that now answers 404. A flip to `on` waits out at most the
-10 s of a cached refusal on a segment URL fetched while closed.
+10 s of a cached refusal on a segment URL fetched while closed. **The staff routes close with it**
+(cut, withdrawal, chat hide sit behind the same guard): a live on air at the flip ends through the
+60 s sweep, but staff cannot cut it until lives reopen. Intended, as the simplest consistent
+behaviour - one guard, nothing live answers while closed, and nothing is left on air to cut - and
+open to revisiting if a closed estate ever needs a staff path.
 
 **The client hides what the server would refuse.** `GET /api/version` carries `lives: { mode }`;
 the client's `livesAvailable(serverLivesMode())` (`utils/livesAvailability.ts`) is the build's
