@@ -2140,8 +2140,13 @@ export async function createProductCheckout(
   customAmountCents?: number,
   callbacks?: { successUrl?: string; cancelUrl?: string },
   payerEmail?: string
-): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
-  return request<{ checkoutUrl: string; amountCents: number; currency: string }>(
+): Promise<{ checkoutUrl: string; amountCents: number; currency: string; checkoutId: string }> {
+  return request<{
+    checkoutUrl: string;
+    amountCents: number;
+    currency: string;
+    checkoutId: string;
+  }>(
     `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/checkout`,
     {
       method: 'POST',
@@ -2152,6 +2157,24 @@ export async function createProductCheckout(
         ...(payerEmail ? { payerEmail } : {}),
       }),
     }
+  );
+}
+
+/** Where one boutique checkout attempt stands (social-service `product_checkouts.status`). */
+export type ProductCheckoutStatus = 'open' | 'paid' | 'declined' | 'expired' | 'cancelled';
+
+/**
+ * The payer's return for ONE checkout attempt: the server asks Lydia about the attempt's own
+ * request, records it if paid, and answers its status. Only the buyer's own attempt is found.
+ */
+export async function confirmProductCheckout(
+  associationId: string,
+  productId: string,
+  checkoutId: string
+): Promise<{ checkoutId: string; productId: string; status: ProductCheckoutStatus }> {
+  return request<{ checkoutId: string; productId: string; status: ProductCheckoutStatus }>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/checkouts/${encodeURIComponent(checkoutId)}/confirm`,
+    { method: 'POST' }
   );
 }
 

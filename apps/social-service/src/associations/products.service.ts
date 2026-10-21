@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -7,13 +8,26 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import * as ExcelJS from 'exceljs';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
+import { ProductCheckout, type ProductCheckoutStatus } from './entities/product-checkout.entity';
+import {
+  CHECKOUT_EXPIRY_MARGIN_MS,
+  CHECKOUT_IN_PROGRESS,
+  CHECKOUT_ISSUE_WINDOW_MS,
+  PREVIOUS_CHECKOUT_OPEN,
+  PRODUCT_ALREADY_PURCHASED,
+  PRODUCT_REQUEST_LIFETIME_SECONDS,
+  productOrderRef,
+  withCheckoutReturnKey,
+} from './product-checkout';
+import { LYDIA_REQUEST_UUID_RE, toRequestState } from '../forms/seat-hold';
+import { isUniqueViolation } from '../common/pg-errors';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
 import { UserTagService } from '../users/user-tag.service';
@@ -34,7 +48,11 @@ import {
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
-import { amountOutOfRange, mapCorePaymentError } from '../common/core-payment-error';
+import {
+  amountOutOfRange,
+  coreRefusedRequest,
+  mapCorePaymentError,
+} from '../common/core-payment-error';
 import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
 import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
@@ -159,7 +177,9 @@ export class ProductsService {
     private readonly userTagService: UserTagService,
     private readonly purchaseRecordService: PurchaseRecordService,
     private readonly associationsService: AssociationsService,
-    private readonly pricingFacts: PricingFactsService
+    private readonly pricingFacts: PricingFactsService,
+    @InjectRepository(ProductCheckout)
+    private readonly checkoutRepo: Repository<ProductCheckout>
   ) {}
 
   /**
@@ -901,8 +921,16 @@ export class ProductsService {
   // ── Checkout ───────────────────────────────────────────────────────
 
   /**
-   * Creates a checkout session for purchasing a product.
-   * The association must have completed its payment onboarding.
+   * Opens ONE checkout attempt for a product: a `product_checkouts` row first, then the Lydia
+   * request it names (order_ref `product:<productId>:<checkoutId>`, unique per attempt).
+   *
+   * Before anything is issued, the buyer's previous OPEN attempt of the same product is settled at
+   * the provider (`settlePreviousOpenAttempt`): cancelled, or read paid / closed - so a request the
+   * buyer already paid is recorded instead of charged a second time, and "already purchased" is
+   * then decided by Canari from durable state (`assertCanPurchase`), before any request/do. A
+   * double click loses on the partial unique index `product_checkouts_one_open` and is answered
+   * `CHECKOUT_IN_PROGRESS`. The amount is resolved HERE and stored on the row: it is the only amount
+   * a settlement records.
    */
   async createCheckoutSession(
     associationId: string,
@@ -911,12 +939,49 @@ export class ProductsService {
     customAmountCents?: number,
     callbackUrls?: { successUrl?: string; cancelUrl?: string },
     payerEmail?: string
-  ): Promise<{ checkoutUrl: string; amountCents: number; currency: string }> {
-    const { product, amountCents, paymentTarget } = await this.resolvePurchase(
+  ): Promise<{ checkoutUrl: string; amountCents: number; currency: string; checkoutId: string }> {
+    await this.settlePreviousOpenAttempt(productId, userId);
+
+    const { product, amountCents, paymentTarget, vendorToken } = await this.resolvePurchase(
       associationId,
       productId,
       userId,
       customAmountCents
+    );
+
+    let checkout: ProductCheckout;
+    try {
+      checkout = await this.checkoutRepo.save(
+        this.checkoutRepo.create({
+          productId: product.id,
+          userId,
+          associationId: product.associationId,
+          paymentAssociationId: paymentTarget.targetAssociationId,
+          vendorToken,
+          amountCents,
+          currency: product.currency,
+          productName: product.name,
+          requestUuid: null,
+          requestId: null,
+          status: 'open',
+          expiresAt: new Date(Date.now() + PRODUCT_REQUEST_LIFETIME_SECONDS * 1000),
+          settledAt: null,
+          purchaseRecordId: null,
+        })
+      );
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw this.checkoutInProgress(
+          product.id,
+          userId,
+          'another attempt was opened at the same time'
+        );
+      }
+      throw err;
+    }
+    this.logger.log(
+      `[SHOP] checkout ${checkout.id.slice(0, 8)} opened: product=${product.id.slice(0, 8)} ` +
+        `user=${userId.slice(0, 8)} amount=${amountCents} payTo=${paymentTarget.targetAssociationId.slice(0, 8)}`
     );
 
     const frontendUrl = this.config.get<string>('FRONTEND_URL') ?? 'http://localhost';
@@ -928,17 +993,19 @@ export class ProductsService {
     );
     const cancelUrl = resolveCheckoutCallbackUrl(
       callbackUrls?.cancelUrl,
-      `${frontendUrl}/shop?purchase_cancel=1`,
+      `${frontendUrl}/shop?purchase_cancel=1&productId=${product.id}`,
       frontendUrl
     );
 
-    // order_ref for Lydia's request/do callback (see webhook.controller.ts).
-    const idempotencyKey = `product:${product.id}:${userId}`;
-
+    const returnKey = {
+      checkoutId: checkout.id,
+      associationId: product.associationId,
+      productId: product.id,
+    };
     let resp;
     try {
       resp = await firstValueFrom(
-        this.httpService.post<{ ok: boolean; url: string; id: string }>(
+        this.httpService.post<{ ok: boolean; url: string; id: string; requestId?: string | null }>(
           coreUrl('payments/create-checkout-session'),
           {
             lineItems: [
@@ -951,28 +1018,466 @@ export class ProductsService {
                 quantity: 1,
               },
             ],
-            successUrl,
-            cancelUrl,
-            metadata: { productId: product.id, userId },
-            connectAccountId: paymentTarget.connectAccountId,
-            idempotencyKey,
+            successUrl: withCheckoutReturnKey(successUrl, returnKey),
+            cancelUrl: withCheckoutReturnKey(cancelUrl, returnKey),
+            metadata: { productId: product.id, userId, checkoutId: checkout.id },
+            connectAccountId: vendorToken,
+            // Lydia's order_ref: unique per ATTEMPT, since Lydia refuses one it has seen (error 3).
+            idempotencyKey: productOrderRef(product.id, checkout.id),
             payerEmail,
+            expireAfterSeconds: PRODUCT_REQUEST_LIFETIME_SECONDS,
           },
           internalCoreRequestConfig()
         )
       );
     } catch (err) {
+      if (coreRefusedRequest(err)) {
+        // An ANSWER: core refused the request, so nothing was issued and nothing is payable.
+        await this.releaseUnissuedCheckout(checkout.id);
+      } else {
+        // LOST, not answered (a timeout, a 5xx): Lydia may hold a request all the same, so the
+        // attempt stays open and is read by its order_ref - at the buyer's next attempt, return or
+        // the confirm callback - rather than closed on a guess.
+        this.logger.error(
+          `[SHOP] checkout ${checkout.id.slice(0, 8)}: request/do was lost, not answered - left open, ` +
+            `to be read at Lydia by its order_ref`
+        );
+      }
       throw mapCorePaymentError(err, this.logger, 'SHOP');
     }
 
-    if (!resp.data?.url) {
+    const requestUuid = typeof resp.data?.id === 'string' ? resp.data.id : null;
+    const requestId = typeof resp.data?.requestId === 'string' ? resp.data.requestId : null;
+    if (!resp.data?.url || !requestUuid) {
+      // Core answered 2xx, so Lydia very probably holds the request: the attempt stays open and is
+      // read by its order_ref, never closed as if nothing had been issued.
+      this.logger.error(
+        `[SHOP] checkout ${checkout.id.slice(0, 8)}: the payment service answered without a ` +
+          `${resp.data?.url ? 'request id' : 'checkout URL'} - left open, to be read at Lydia by its order_ref`
+      );
       throw new BadRequestException('Payment service did not return a checkout URL');
     }
 
+    // Named columns: the request ids are the only thing this write may change.
+    await this.checkoutRepo.update({ id: checkout.id }, { requestUuid, requestId });
     this.logger.log(
-      `[SHOP] Checkout session created: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)}`
+      `[SHOP] checkout ${checkout.id.slice(0, 8)} issued: request ${requestId ?? 'without a numeric id'} ` +
+        `product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)}`
     );
-    return { checkoutUrl: resp.data.url, amountCents, currency: product.currency };
+    return {
+      checkoutUrl: resp.data.url,
+      amountCents,
+      currency: product.currency,
+      checkoutId: checkout.id,
+    };
+  }
+
+  /**
+   * Settles, at the provider, the buyer's OPEN attempt of this product before a new one is issued,
+   * so no buyer ever holds two payable requests for one product. Returns once that attempt is no
+   * longer open: cancelled at Lydia, or read closed / declined / not found / PAID (a paid one is
+   * recorded here, as the callback would, and the purchase rules that follow then see it). Throws
+   * `CHECKOUT_IN_PROGRESS` while the attempt's request is being issued, and `PREVIOUS_CHECKOUT_OPEN`
+   * while its fate cannot be established - refusing is the one answer that cannot double-charge.
+   *
+   * That refusal ENDS: past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS` the request was sent an
+   * `expire_time` that has run out, so an attempt still unproven (the read or the cancel fails, Lydia
+   * still answers open) is closed `expired` at ERROR and the buyer may
+   * retry. A payment Lydia took before then is still recorded by its confirm callback, which finds
+   * the attempt by id whatever its status.
+   *
+   * Lydia's cancel answers error 2 (`already-settled`) for a request already processed - measured on
+   * cancelled and expired ones, very probably the same for a paid one - so that answer is never read
+   * as "nobody paid": `request/state` tells paid from closed.
+   */
+  private async settlePreviousOpenAttempt(productId: string, userId: string): Promise<void> {
+    const open = await this.checkoutRepo.findOne({
+      where: { productId, userId, status: 'open' },
+    });
+    if (!open) {
+      this.logger.debug(
+        `[SHOP] no open attempt to settle: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)}`
+      );
+      return;
+    }
+    if (this.isBeingIssued(open)) {
+      throw this.checkoutInProgress(
+        productId,
+        userId,
+        `attempt ${open.id.slice(0, 8)} is being issued`
+      );
+    }
+    let unproven: string;
+    try {
+      const vendorToken = open.vendorToken;
+      if (open.requestId) {
+        const { data } = await firstValueFrom(
+          this.httpService.post<{ outcome?: string }>(
+            coreUrl('payments/cancel-request'),
+            { requestId: open.requestId, connectAccountId: vendorToken },
+            internalCoreRequestConfig()
+          )
+        );
+        if (data?.outcome === 'cancelled') {
+          this.logger.log(
+            `[SHOP] checkout ${open.id.slice(0, 8)}: request ${open.requestId} cancelled`
+          );
+          await this.closeCheckout(open, 'cancelled');
+          return;
+        }
+        if (data?.outcome !== 'already-settled') {
+          throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
+        }
+      }
+      const status = await this.readAndApplyRequestState(open);
+      if (status !== 'open') return;
+      unproven = 'the request is still open at the provider';
+    } catch (err: unknown) {
+      unproven = err instanceof Error ? err.message : String(err);
+    }
+    if (Date.now() >= open.expiresAt.getTime() + CHECKOUT_EXPIRY_MARGIN_MS) {
+      this.logger.error(
+        `[SHOP] checkout ${open.id.slice(0, 8)} is past its expire_time and still unproven ` +
+          `(${unproven}) - closed as expired so its buyer may retry; a payment taken before it ` +
+          `expired is still recorded by its confirm callback`
+      );
+      await this.closeCheckout(open, 'expired');
+      return;
+    }
+    throw this.previousCheckoutOpen(open.id, unproven);
+  }
+
+  /**
+   * Whether an open attempt naming no request is still inside the call that issues it: the issuing
+   * call to core gives up after 120 s, and `CHECKOUT_ISSUE_WINDOW_MS` covers it. Reading such an
+   * attempt at Lydia would race the request/do that is creating it.
+   */
+  private isBeingIssued(row: ProductCheckout): boolean {
+    return (
+      !row.requestUuid &&
+      !row.requestId &&
+      Date.now() < row.createdAt.getTime() + CHECKOUT_ISSUE_WINDOW_MS
+    );
+  }
+
+  /**
+   * The payer's return (`checkout_id` on the shop page, after Lydia's success OR fail URL): asks the
+   * provider about the attempt's OWN request and records it if paid, then answers where it stands.
+   * Nothing comes from the client but the attempt id - which must be the CALLER's attempt of this
+   * product of this association, or it is not found - and the payment is Lydia's answer about the
+   * request the row names, read server to server. Only an `open` attempt is asked about: every other
+   * status was either recorded from Lydia's own answer or names no request. A failed read is logged
+   * at WARN and answered with the row unchanged: this is a read the payer repeats.
+   */
+  async confirmCheckout(
+    associationId: string,
+    productId: string,
+    checkoutId: string,
+    userId: string
+  ): Promise<{ checkoutId: string; productId: string; status: ProductCheckoutStatus }> {
+    const row = await this.checkoutRepo.findOne({ where: { id: checkoutId } });
+    if (
+      !row ||
+      row.userId !== userId ||
+      row.productId !== productId ||
+      row.associationId !== associationId
+    ) {
+      this.logger.warn(
+        `[SHOP] confirm refused: checkout ${checkoutId.slice(0, 8)} is ${row ? "not this caller's attempt of this product" : 'unknown'}`
+      );
+      throw new NotFoundException('Checkout not found');
+    }
+    let status = row.status;
+    if (status !== 'open') {
+      this.logger.debug(`[SHOP] confirm ${row.id.slice(0, 8)}: already ${status}, nothing to ask`);
+    } else if (this.isBeingIssued(row)) {
+      this.logger.debug(`[SHOP] confirm ${row.id.slice(0, 8)}: its request is being issued`);
+    } else {
+      try {
+        status = await this.readAndApplyRequestState(row);
+      } catch (err: unknown) {
+        this.logger.warn(
+          `[SHOP] confirm ${row.id.slice(0, 8)}: could not read its request: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    }
+    return { checkoutId: row.id, productId: row.productId, status };
+  }
+
+  /**
+   * Reads the attempt's request at Lydia (`payments/request-state`) and writes what it says. The
+   * request is named by the row's own uuid, or - for an attempt whose issuing call never answered
+   * one - by its order_ref (`productOrderRef`), which Lydia's `request/state` also finds.
+   * `paid` is settled (`settlePaidCheckout`), `declined` (state 5) and `cancelled-or-expired`
+   * (state 6: `expired` past the row's `expiresAt`, `cancelled` before it - the state alone cannot
+   * tell them apart) close the row, `not-found` on an order_ref lookup (no request carries it:
+   * request/do never reached Lydia) closes it `cancelled`, `open` and `unknown` change nothing.
+   * Returns the status the row now has, as far as this call knows. A failed read throws. The read
+   * goes to the Business the request was issued to (the row's `vendorToken` snapshot).
+   */
+  private async readAndApplyRequestState(row: ProductCheckout): Promise<ProductCheckoutStatus> {
+    const byUuid = !!row.requestUuid && LYDIA_REQUEST_UUID_RE.test(row.requestUuid);
+    const { data } = await firstValueFrom(
+      this.httpService.post<{ state?: string; raw?: string }>(
+        coreUrl('payments/request-state'),
+        byUuid
+          ? { sessionId: row.requestUuid, connectAccountId: row.vendorToken }
+          : { orderRef: productOrderRef(row.productId, row.id), connectAccountId: row.vendorToken },
+        internalCoreRequestConfig()
+      )
+    );
+    this.logger.debug(
+      `[SHOP] checkout ${row.id.slice(0, 8)}: read by ${byUuid ? 'uuid' : 'order_ref'} -> ${data?.state}`
+    );
+    // `not-found` is not a request state but the answer of an order_ref LOOKUP that matched no
+    // request: request/do never reached Lydia. Read before the one typed mapping of the states.
+    if (data?.state === 'not-found' && !byUuid) {
+      this.logger.warn(
+        `[SHOP] checkout ${row.id.slice(0, 8)}: Lydia holds no request with order_ref ${productOrderRef(row.productId, row.id)} - never issued, closed cancelled`
+      );
+      return this.closeCheckout(row, 'cancelled');
+    }
+    const state = toRequestState(data?.state);
+    if (state === 'paid') {
+      this.logger.log(`[SHOP] checkout ${row.id.slice(0, 8)}: request is PAID at the provider`);
+      await this.settlePaidCheckout(row.id);
+      return 'paid';
+    }
+    if (state === 'declined') {
+      return this.closeCheckout(row, 'declined');
+    }
+    if (state === 'cancelled-or-expired') {
+      return this.closeCheckout(
+        row,
+        Date.now() >= row.expiresAt.getTime() ? 'expired' : 'cancelled'
+      );
+    }
+    if (state === 'open') {
+      this.logger.debug(`[SHOP] checkout ${row.id.slice(0, 8)}: request still open`);
+      return row.status;
+    }
+    this.logger.warn(
+      `[SHOP] checkout ${row.id.slice(0, 8)}: request in a state nothing here reads (${data?.raw ?? JSON.stringify(data?.state)}) - left ${row.status}`
+    );
+    return row.status;
+  }
+
+  /**
+   * Moves an OPEN attempt to a closed status, and answers the status the row now holds.
+   * Conditional on `status = 'open'`, so it can never overwrite a `paid` written meanwhile by the
+   * other path (the callback, or another return read) - which is then re-read and answered.
+   */
+  private async closeCheckout(
+    row: ProductCheckout,
+    status: Exclude<ProductCheckoutStatus, 'open' | 'paid'>
+  ): Promise<ProductCheckoutStatus> {
+    const { affected } = await this.checkoutRepo.update(
+      { id: row.id, status: 'open' },
+      { status, settledAt: new Date() }
+    );
+    if (affected) {
+      this.logger.log(`[SHOP] checkout ${row.id.slice(0, 8)} closed as ${status}`);
+      return status;
+    }
+    const now = await this.checkoutRepo.findOne({ where: { id: row.id } });
+    this.logger.log(
+      `[SHOP] checkout ${row.id.slice(0, 8)} not closed as ${status}: it is already ${now?.status ?? 'gone'}`
+    );
+    return now?.status ?? status;
+  }
+
+  /**
+   * An attempt core REFUSED to issue (a 4xx answer): nothing is payable, so it stops blocking a
+   * retry. Never called on a lost call, after which Lydia may hold the request all the same.
+   */
+  private async releaseUnissuedCheckout(checkoutId: string): Promise<void> {
+    const { affected } = await this.checkoutRepo.update(
+      { id: checkoutId, status: 'open' },
+      { status: 'cancelled', settledAt: new Date() }
+    );
+    this.logger.warn(
+      `[SHOP] checkout ${checkoutId.slice(0, 8)} ${affected ? 'released: the request was refused, none was issued' : 'not released: no longer open'}`
+    );
+  }
+
+  /**
+   * Records a PAID attempt, exactly once. The attempt row is locked (`FOR UPDATE`) and its
+   * transition to `paid`, the purchase record and the granted tag commit together, so two
+   * settlements racing on one payment (the callback and the payer's return, or two return reads)
+   * produce ONE record: the second finds `paid` under the lock and records nothing. Product, buyer
+   * and amount are the ROW's. A `paid` answer over a closed row is still recorded - the money was
+   * taken - and logged at ERROR: a request was paid after Canari saw it closed, so the buyer may
+   * have been charged twice for one product, which only a human can refund.
+   * The Cercle top-up is dispatched after the commit, by the settlement that wrote the record.
+   */
+  private async settlePaidCheckout(checkoutId: string): Promise<void> {
+    const outcome = await this.checkoutRepo.manager.transaction(async (manager) => {
+      const row = await manager.findOne(ProductCheckout, {
+        where: { id: checkoutId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row) throw new NotFoundException('Checkout not found');
+      if (row.status === 'paid') {
+        this.logger.log(
+          `[SHOP] checkout ${row.id.slice(0, 8)} already paid - nothing recorded twice`
+        );
+        return null;
+      }
+      if (row.status !== 'open') {
+        // Money taken over an attempt Canari had closed: the buyer may have paid a later attempt
+        // too, so for a non-repeatable product this is very probably a second charge to refund.
+        this.logger.error(
+          `[SHOP] checkout ${row.id.slice(0, 8)} was ${row.status} and the provider says PAID - ` +
+            `recorded; check the buyer's other attempts of product ${row.productId.slice(0, 8)} for a charge to refund`
+        );
+      }
+      // The numeric request id (what callbacks carry, and what core records a payment by), or the
+      // uuid. Null only for an attempt whose request/do answer was lost and no callback has stored
+      // its id yet: request/state never answers one. Lydia's confirm callback stores it and then
+      // completes the record (`completePaidWithoutRequestId`).
+      const paymentIntentId = row.requestId ?? row.requestUuid;
+      const product = await manager.findOne(AssociationProduct, { where: { id: row.productId } });
+      if (product) {
+        await this.grantPurchaseTag(manager, product, row.userId, 'system', paymentIntentId, false);
+      } else {
+        this.logger.error(
+          `[SHOP] checkout ${row.id.slice(0, 8)}: product ${row.productId.slice(0, 8)} no longer exists - the purchase is recorded, no tag granted`
+        );
+      }
+      const record = await this.purchaseRecordService.create(
+        {
+          userId: row.userId,
+          source: 'product',
+          productId: row.productId,
+          amountCents: row.amountCents,
+          paymentMethod: 'online',
+          status: 'paid',
+          stripePaymentIntentId: paymentIntentId,
+          associationId: row.associationId,
+          productName: row.productName,
+        },
+        manager
+      );
+      await manager.update(
+        ProductCheckout,
+        { id: row.id },
+        { status: 'paid', settledAt: new Date(), purchaseRecordId: record.id }
+      );
+      this.logger.log(
+        `[SHOP] purchase completed: checkout ${row.id.slice(0, 8)} product=${row.productId.slice(0, 8)} ` +
+          `user=${row.userId.slice(0, 8)} amount=${row.amountCents}`
+      );
+      return { row, product, paymentIntentId };
+    });
+
+    if (!outcome?.product) return;
+    const { row, product, paymentIntentId } = outcome;
+    if (!paymentIntentId) {
+      if (product.type === 'balance_topup') {
+        this.logger.error(
+          `[CERCLE] checkout ${row.id.slice(0, 8)}: paid balance top-up with NO Lydia request id yet - ` +
+            `top-up NOT dispatched; Lydia's confirm callback carries the id and dispatches it then`
+        );
+      }
+      return;
+    }
+    await this.dispatchTopUp(row, product, paymentIntentId);
+  }
+
+  /**
+   * Sends the Cercle top-up of a paid attempt, after its commit, when the product is a top-up with a
+   * webhook configured. A dispatch that could not even start is logged: the purchase stays recorded.
+   */
+  private async dispatchTopUp(
+    row: ProductCheckout,
+    product: AssociationProduct,
+    paymentIntentId: string
+  ): Promise<void> {
+    if (product.type !== 'balance_topup') return;
+    if (!product.webhookUrl || !product.webhookSecret) {
+      this.logger.warn(
+        `[CERCLE] checkout ${row.id.slice(0, 8)}: top-up product ${product.id.slice(0, 8)} has no webhook configured - nothing dispatched`
+      );
+      return;
+    }
+    try {
+      await this.dispatchCercleWebhook(product, row.userId, row.amountCents, paymentIntentId);
+    } catch (err: unknown) {
+      // The purchase is committed; a delivery that could not even be recorded must say so.
+      this.logger.error(
+        `[CERCLE] checkout ${row.id.slice(0, 8)}: top-up dispatch FAILED to start: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+
+  /**
+   * Completes a PAID attempt that was settled before any Lydia request id was known (a lost
+   * request/do, settled by its order_ref on the payer's return): its purchase record takes the
+   * request id the verified callback carried, and a top-up is dispatched with it. Exactly once: the
+   * record is updated only while its payment id is still NULL, and only the call that updated it
+   * dispatches. A no-op for every record that already carries an id.
+   */
+  private async completePaidWithoutRequestId(checkoutId: string, requestId: string): Promise<void> {
+    const outcome = await this.checkoutRepo.manager.transaction(async (manager) => {
+      const row = await manager.findOne(ProductCheckout, {
+        where: { id: checkoutId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row?.purchaseRecordId) {
+        this.logger.error(
+          `[SHOP] checkout ${checkoutId.slice(0, 8)} is paid but holds no purchase record to complete`
+        );
+        return null;
+      }
+      const { affected } = await manager.update(
+        PurchaseRecord,
+        { id: row.purchaseRecordId, stripePaymentIntentId: IsNull() },
+        { stripePaymentIntentId: requestId }
+      );
+      if (!affected) {
+        this.logger.debug(
+          `[SHOP] checkout ${row.id.slice(0, 8)}: its purchase record already carries its payment id`
+        );
+        return null;
+      }
+      this.logger.log(
+        `[SHOP] checkout ${row.id.slice(0, 8)}: purchase record completed with request ${requestId}`
+      );
+      const product = await manager.findOne(AssociationProduct, { where: { id: row.productId } });
+      return product ? { row, product } : null;
+    });
+    if (outcome) await this.dispatchTopUp(outcome.row, outcome.product, requestId);
+  }
+
+  /** The typed 409 of a double click, logged with its reason. */
+  private checkoutInProgress(productId: string, userId: string, reason: string): ConflictException {
+    this.logger.warn(
+      `[SHOP] checkout refused: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)} (${reason})`
+    );
+    return new ConflictException({
+      code: CHECKOUT_IN_PROGRESS,
+      message: 'A checkout of this product is already being opened.',
+    });
+  }
+
+  /**
+   * The typed 409 of a previous attempt whose fate could not be established, logged with its reason.
+   * Its sentence is TRUE: `settlePreviousOpenAttempt` stops refusing at `expiresAt` +
+   * `CHECKOUT_EXPIRY_MARGIN_MS`, 35 minutes after the attempt was opened.
+   */
+  private previousCheckoutOpen(checkoutId: string, reason: string): ConflictException {
+    this.logger.warn(
+      `[SHOP] checkout ${checkoutId.slice(0, 8)}: previous payment request still open (${reason}) - refused`
+    );
+    return new ConflictException({
+      code: PREVIOUS_CHECKOUT_OPEN,
+      message:
+        'The previous payment request for this product is still open. Try again once it has expired, at most 35 minutes after it was started.',
+    });
   }
 
   /**
@@ -1010,6 +1515,8 @@ export class ProductsService {
     product: AssociationProduct;
     amountCents: number;
     paymentTarget: PaymentTarget;
+    /** The paying Business's `vendor_token`: never null once the purchase is allowed. */
+    vendorToken: string;
   }> {
     const [asso, product] = await Promise.all([
       this.assoRepo.findOne({ where: { id: associationId } }),
@@ -1024,7 +1531,8 @@ export class ProductsService {
 
     // Route to the association's own account, or an approved parent's when delegating.
     const paymentTarget = await this.resolvePaymentTargetFor(asso);
-    if (!paymentTarget.ready || !paymentTarget.connectAccountId) {
+    const vendorToken = paymentTarget.connectAccountId;
+    if (!paymentTarget.ready || !vendorToken) {
       throw new BadRequestException(
         paymentTarget.delegated
           ? 'The parent association this club delegates payments to has not completed onboarding to receive payments'
@@ -1072,7 +1580,7 @@ export class ProductsService {
       throw new BadRequestException('No amount provided for this product');
     }
 
-    return { asso, product, amountCents, paymentTarget };
+    return { asso, product, amountCents, paymentTarget, vendorToken };
   }
 
   /**
@@ -1360,7 +1868,15 @@ export class ProductsService {
       }
     }
 
-    throw new BadRequestException('You have already purchased this product');
+    // Decided HERE, from the purchase records, before any request is issued: Lydia must never be
+    // the one to refuse a second purchase (it refused the reused order_ref instead, error 3).
+    this.logger.log(
+      `[SHOP] refused: product=${product.id.slice(0, 8)} already purchased by user=${userId.slice(0, 8)}`
+    );
+    throw new ConflictException({
+      code: PRODUCT_ALREADY_PURCHASED,
+      message: 'You have already purchased this product',
+    });
   }
 
   /**
@@ -1443,7 +1959,6 @@ export class ProductsService {
       paymentMethod: 'cash',
       stripePaymentIntentId: null,
       grantedBy,
-      dispatchWebhook: false,
     });
     const [enriched] = await this.enrichPurchaseRecords([record]);
     return enriched;
@@ -1452,57 +1967,104 @@ export class ProductsService {
   // ── Post-purchase ─────────────────────────────────────────────────────────
 
   /**
-   * Called by the payment callback (via core-service) after a successful product purchase.
-   * Grants membership tags, dispatches Cercle webhooks, and records the purchase.
-   * Idempotent: skips processing if payment intent was already recorded.
-   *
-   * `vendorToken` is the Business whose key verified the callback: unless it is the account the
-   * product's association is paid into (its own, or its approved parent's), nothing is granted -
-   * an authentic callback of one association never fulfils another's product. Not reached from a
-   * Lydia callback since 2026-10-16: a boutique checkout stores no row naming its request, so
-   * nothing of ours could settle it, and core-service refuses until one exists (lot B3, payments.md).
+   * Called by core-service when a VERIFIED Lydia callback reports a product request CONFIRMED. A
+   * TRIGGER ONLY: the order_ref names the ATTEMPT (`checkoutId`), found by its id - so an attempt
+   * whose issuing call never stored its request ids is found too - and it must be an attempt of
+   * THIS product. Two checks then refuse, at ERROR, before anything is read:
+   * - `vendorToken`, the Business whose key verified the callback, must be the account the attempt
+   *   was issued to (the row's `vendorToken` snapshot): an authentic callback of association A
+   *   never settles B's attempt, whatever its order_ref says;
+   * - `requestId` must not be ANOTHER request than the one the attempt stored. An attempt that
+   *   stored none (its request/do answer was lost) takes this one BEFORE it is settled
+   *   (`storeCallbackRequestId`), so the record, the tag and a top-up name the payment; one already
+   *   paid without it is completed (`completePaidWithoutRequestId`).
+   * The purchase is then settled exactly as the payer's return settles it - Lydia's state of the
+   * attempt's own request, read by its uuid or its order_ref - with the row's product, buyer and
+   * amount; nothing of the callback's amount crosses. Asked even of a CLOSED attempt: a payment
+   * Canari saw closed is still money taken. Answers the status read, or `refused`; a failed read
+   * answers `unreadable`, which core turns into the 503 Lydia retries.
    */
   async handlePurchaseCompleted(
     productId: string,
-    userId: string,
-    amountCents: number,
-    paymentIntentId: string,
+    checkoutId: string,
+    requestId: string,
     vendorToken: string
-  ): Promise<void> {
-    const existing = await this.purchaseRecordService.findByPaymentIntent(paymentIntentId);
-    if (existing) {
-      this.logger.log(`[SHOP] purchase ${paymentIntentId} already processed - skipping`);
-      return;
-    }
-
-    const product = await this.productRepo.findOne({ where: { id: productId } });
-    if (!product) {
-      this.logger.error(`[SHOP] product ${productId} not found for purchase ${paymentIntentId}`);
-      return;
-    }
-
-    const payee = await this.associationsService.getLydiaPayeeAccountId(product.associationId);
-    if (!payee || payee !== vendorToken) {
+  ): Promise<{ outcome: ProductCheckoutStatus | 'refused' | 'unreadable' }> {
+    const row = await this.checkoutRepo.findOne({ where: { id: checkoutId } });
+    if (!row || row.productId !== productId) {
       this.logger.error(
-        `[SHOP] purchase ${paymentIntentId} of product ${productId.slice(0, 8)} REFUSED: verified for a ` +
-          `Business that is not the product's payee (${payee ? 'another account' : 'no Lydia payee'}) - nothing granted`
+        `[SHOP] purchase callback for request ${requestId} REFUSED: ${
+          row ? 'its attempt is of another product' : 'no stored attempt has that id'
+        } (product=${productId.slice(0, 8)} checkout=${checkoutId.slice(0, 8)}) - nothing recorded`
       );
-      return;
+      return { outcome: 'refused' };
     }
+    if (row.vendorToken !== vendorToken) {
+      this.logger.error(
+        `[SHOP] purchase callback for checkout ${row.id.slice(0, 8)} REFUSED: verified for a Business ` +
+          `that is not the one it was issued to - nothing recorded`
+      );
+      return { outcome: 'refused' };
+    }
+    const stored = await this.storeCallbackRequestId(row, requestId);
+    if (!stored) return { outcome: 'refused' };
+    let status: ProductCheckoutStatus;
+    if (row.status === 'paid') {
+      this.logger.log(`[SHOP] purchase callback for checkout ${row.id.slice(0, 8)}: already paid`);
+      status = 'paid';
+    } else {
+      try {
+        status = await this.readAndApplyRequestState(row);
+      } catch (err: unknown) {
+        this.logger.error(
+          `[SHOP] purchase callback for checkout ${row.id.slice(0, 8)}: its request could not be read ` +
+            `at Lydia (${err instanceof Error ? err.message : String(err)}) - nothing recorded, Lydia may retry`
+        );
+        return { outcome: 'unreadable' };
+      }
+      this.logger.log(
+        `[SHOP] purchase callback for checkout ${row.id.slice(0, 8)} settled as ${status}`
+      );
+    }
+    // ALWAYS on a paid outcome, not only when this unlocked snapshot already said paid: the payer's
+    // return may have settled the attempt with no id between that read and this settlement, which
+    // then finds it paid and records nothing. A no-op once the record carries an id. A failure here
+    // throws, so core answers Lydia a 5xx and the callback is retried.
+    if (status === 'paid') await this.completePaidWithoutRequestId(row.id, requestId);
+    return { outcome: status };
+  }
 
-    await this.fulfillProductPurchase({
-      product,
-      userId,
-      amountCents,
-      paymentMethod: 'online',
-      stripePaymentIntentId: paymentIntentId,
-      grantedBy: 'system',
-      dispatchWebhook: true,
-    });
-
-    this.logger.log(
-      `[SHOP] purchase completed: product=${productId.slice(0, 8)} user=${userId.slice(0, 8)}`
+  /**
+   * Makes the attempt carry the numeric request id of a verified callback BEFORE it is settled, so
+   * the purchase record, the tag and a top-up all name the payment - an attempt whose request/do
+   * answer was lost holds none, and `request/state` never answers one. Conditional on the column
+   * being NULL, so it never overwrites the id request/do stored. Returns false - logged at ERROR -
+   * when the attempt carries ANOTHER request: an authentic callback of a request that is not this
+   * attempt's settles nothing. Updates `row` in place.
+   */
+  private async storeCallbackRequestId(row: ProductCheckout, requestId: string): Promise<boolean> {
+    if (row.requestId === requestId) return true;
+    if (!row.requestId) {
+      const { affected } = await this.checkoutRepo.update(
+        { id: row.id, requestId: IsNull() },
+        { requestId }
+      );
+      if (affected) {
+        this.logger.log(
+          `[SHOP] checkout ${row.id.slice(0, 8)}: request id ${requestId} stored from its verified callback`
+        );
+        row.requestId = requestId;
+        return true;
+      }
+      const now = await this.checkoutRepo.findOne({ where: { id: row.id } });
+      row.requestId = now?.requestId ?? null;
+      if (row.requestId === requestId) return true;
+    }
+    this.logger.error(
+      `[SHOP] purchase callback for request ${requestId} REFUSED: checkout ${row.id.slice(0, 8)} ` +
+        `was issued as request ${row.requestId ?? 'none'} - nothing recorded`
     );
+    return false;
   }
 
   /**
@@ -1525,7 +2087,51 @@ export class ProductsService {
     return { tagName: product.grantedTagName, expiresAt: product.tagExpiresAt ?? null };
   }
 
-  /** Grants tags, optionally dispatches webhooks, and persists the purchase record. */
+  /**
+   * Grants the tag a purchase of `product` carries, if any, inside the caller's transaction - the
+   * cash grant's and the online settlement's - and drops the buyer's sibling tiers in the same one
+   * (XOR), so a switch never leaves two forfaits held at once. `manualGrant` says how the purchase
+   * was paid (by hand, or online), never inferred from a missing payment id: an online payment
+   * settled before its request id was known is still an online payment.
+   */
+  private async grantPurchaseTag(
+    manager: EntityManager,
+    product: AssociationProduct,
+    userId: string,
+    grantedBy: string,
+    paymentIntentId: string | null,
+    manualGrant: boolean
+  ): Promise<void> {
+    const grant = await this.resolveGrantTag(product);
+    if (!grant) return;
+    await this.userTagService.grantOrRenew(
+      {
+        userId,
+        tagName: grant.tagName,
+        issuingAssocId: product.associationId,
+        grantedBy,
+        expiresAt: grant.expiresAt,
+        metadata: {
+          productId: product.id,
+          paymentIntentId,
+          manualGrant,
+        },
+      },
+      manager
+    );
+    this.logger.log(`[SHOP] tag "${grant.tagName}" granted to user=${userId.slice(0, 8)}`);
+    await this.userTagService.revokeSiblingTierTags(
+      product.associationId,
+      userId,
+      product.variantKey,
+      manager
+    );
+  }
+
+  /**
+   * A purchase recorded by hand (a cash grant): the tag and the purchase record in ONE transaction.
+   * The online path is `settlePaidCheckout`, which records from a stored attempt.
+   */
   private async fulfillProductPurchase(params: {
     product: AssociationProduct;
     userId: string;
@@ -1533,68 +2139,32 @@ export class ProductsService {
     paymentMethod: PurchasePaymentMethod;
     stripePaymentIntentId: string | null;
     grantedBy: string;
-    dispatchWebhook: boolean;
   }): Promise<PurchaseRecord> {
-    const {
-      product,
-      userId,
-      amountCents,
-      paymentMethod,
-      stripePaymentIntentId,
-      grantedBy,
-      dispatchWebhook,
-    } = params;
-
-    const grant = await this.resolveGrantTag(product);
-    if (grant) {
-      await this.productRepo.manager.transaction(async (manager) => {
-        await this.userTagService.grantOrRenew(
-          {
-            userId,
-            tagName: grant.tagName,
-            issuingAssocId: product.associationId,
-            grantedBy,
-            expiresAt: grant.expiresAt,
-            metadata: {
-              productId: product.id,
-              paymentIntentId: stripePaymentIntentId,
-              manualGrant: paymentMethod === 'cash',
-            },
-          },
-          manager
-        );
-        this.logger.log(`[SHOP] tag "${grant.tagName}" granted to user=${userId.slice(0, 8)}`);
-        // XOR: buying one tier drops the buyer's other tiers, in the same transaction as the
-        // grant so a switch is atomic and never leaves two forfaits held at once.
-        await this.userTagService.revokeSiblingTierTags(
-          product.associationId,
+    const { product, userId, amountCents, paymentMethod, stripePaymentIntentId, grantedBy } =
+      params;
+    return this.productRepo.manager.transaction(async (manager) => {
+      await this.grantPurchaseTag(
+        manager,
+        product,
+        userId,
+        grantedBy,
+        stripePaymentIntentId,
+        paymentMethod !== 'online'
+      );
+      return this.purchaseRecordService.create(
+        {
           userId,
-          product.variantKey,
-          manager
-        );
-      });
-    }
-
-    if (
-      dispatchWebhook &&
-      product.type === 'balance_topup' &&
-      product.webhookUrl &&
-      product.webhookSecret &&
-      stripePaymentIntentId
-    ) {
-      await this.dispatchCercleWebhook(product, userId, amountCents, stripePaymentIntentId);
-    }
-
-    return this.purchaseRecordService.create({
-      userId,
-      source: 'product',
-      productId: product.id,
-      amountCents,
-      paymentMethod,
-      status: 'paid',
-      stripePaymentIntentId,
-      associationId: product.associationId,
-      productName: product.name,
+          source: 'product',
+          productId: product.id,
+          amountCents,
+          paymentMethod,
+          status: 'paid',
+          stripePaymentIntentId,
+          associationId: product.associationId,
+          productName: product.name,
+        },
+        manager
+      );
     });
   }
 

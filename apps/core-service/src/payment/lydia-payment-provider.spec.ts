@@ -3,6 +3,7 @@ import { BadRequestException, Logger } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
+  LYDIA_CALL_TIMEOUT_MS,
   LYDIA_MAX_AMOUNT_CENTS,
   LYDIA_MIN_AMOUNT_CENTS,
   LydiaPaymentProvider,
@@ -21,6 +22,81 @@ function makeProvider() {
 
 describe('LydiaPaymentProvider.createCheckoutSession', () => {
   afterEach(() => jest.clearAllMocks());
+
+  /**
+   * Social-service waits 120 s on core. Without a bound of its own, core could still be waiting on
+   * Lydia when social gave up, and the two would disagree on whether the call was answered.
+   */
+  it('bounds request/do under the 120 s social waits, and rethrows a timeout as NOT an answer', async () => {
+    mockedAxios.post.mockRejectedValue(
+      Object.assign(new Error('timeout of 60000ms exceeded'), { code: 'ECONNABORTED' })
+    );
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const attempt = makeProvider().createCheckoutSession({
+      lineItems: [{ productName: 'Sweat', unitAmountCents: 1500, quantity: 1, currency: 'eur' }],
+      successUrl: 'https://canari.example/success',
+      cancelUrl: 'https://canari.example/cancel',
+      connectAccountId: 'vendor-token-abc',
+      payerRecipient: { value: 'user@example.com', type: 'email' },
+      idempotencyKey: 'product:a:b',
+    });
+    // A refusal would be a 400 social RELEASES the attempt on; a lost call must stay an error.
+    await expect(attempt).rejects.not.toBeInstanceOf(BadRequestException);
+    await expect(attempt).rejects.toThrow('timeout of 60000ms exceeded');
+    const [, , config] = mockedAxios.post.mock.calls[0];
+    expect(LYDIA_CALL_TIMEOUT_MS).toBeLessThan(120_000);
+    expect(config).toMatchObject({ timeout: LYDIA_CALL_TIMEOUT_MS });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no response within 60 s'));
+    error.mockRestore();
+  });
+
+  const anAttempt = () =>
+    makeProvider().createCheckoutSession({
+      lineItems: [{ productName: 'Sweat', unitAmountCents: 1500, quantity: 1, currency: 'eur' }],
+      successUrl: 'https://canari.example/success',
+      cancelUrl: 'https://canari.example/cancel',
+      connectAccountId: 'vendor-token-abc',
+      payerRecipient: { value: 'user@example.com', type: 'email' },
+      idempotencyKey: 'product:a:b',
+    });
+
+  const httpFailure = (status: number) =>
+    Object.assign(new Error(`Request failed with status code ${status}`), {
+      response: { status, data: {} },
+    });
+
+  it.each([400, 403, 404, 422])(
+    'answers an HTTP %i from Lydia as a typed REFUSAL, which releases the attempt',
+    async (status) => {
+      mockedAxios.post.mockRejectedValue(httpFailure(status));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      // The control: before, this came back as the raw axios error - a 5xx that left the attempt
+      // open until its expiry although Lydia had answered that nothing was created.
+      const refusal = await anAttempt().catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(BadRequestException);
+      expect((refusal as BadRequestException).getResponse()).toMatchObject({
+        code: PAYMENT_PROVIDER_REFUSED,
+        providerCode: `http-${status}`,
+      });
+      warn.mockRestore();
+    }
+  );
+
+  /**
+   * A 4xx that does not say "refused": Lydia may have created the request all the same, and an
+   * attempt released on it and then paid is recorded "closed but PAID" - a charge refunded by hand.
+   */
+  it.each([408, 409, 425, 429, 502])(
+    'keeps an HTTP %i from Lydia a LOST call, never the refusal that releases the attempt',
+    async (status) => {
+      mockedAxios.post.mockRejectedValue(httpFailure(status));
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const lost = await anAttempt().catch((e: unknown) => e);
+      expect(lost).not.toBeInstanceOf(BadRequestException);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(`HTTP ${status}`));
+      error.mockRestore();
+    }
+  );
 
   it('posts request/do as form-urlencoded with the summed amount and target vendor_token', async () => {
     mockedAxios.post.mockResolvedValue({
@@ -233,7 +309,7 @@ describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
   // The pair measured on the sandbox 2026-10-15: request_uuid AND vendor_token.
   it('posts request/state with the uuid and the vendor_token', async () => {
     mockedAxios.post.mockResolvedValue({ data: { state: '1', used_ease_of_payment: '0' } });
-    await makeProvider().getCheckoutRequestState('req-uuid-1', 'vendor-token-abc');
+    await makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, 'vendor-token-abc');
     const [url, body] = mockedAxios.post.mock.calls[0];
     expect(url).toBe('https://homologation.lydia-app.com/api/request/state.json');
     const sent = new URLSearchParams(body as string);
@@ -258,14 +334,43 @@ describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
   ])('reads state %p as %s, never guessing an unmeasured code', async (raw, state) => {
     mockedAxios.post.mockResolvedValue({ data: { state: raw } });
     await expect(
-      makeProvider().getCheckoutRequestState('req-uuid-1', 'vendor-token-abc')
+      makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, 'vendor-token-abc')
     ).resolves.toEqual({ state, raw: raw === undefined ? '' : String(raw) });
   });
 
+  // The pair measured on the sandbox 2026-10-15 to find the request too: order_ref + vendor_token.
+  it('reads an attempt by its order_ref when it has no uuid, and nothing else', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { state: '0' } });
+    await expect(
+      makeProvider().getCheckoutRequestState({ orderRef: 'product:p:c' }, 'vendor-token-abc')
+    ).resolves.toEqual({ state: 'open', raw: '0' });
+    const sent = new URLSearchParams(mockedAxios.post.mock.calls[0][1] as string);
+    expect(Object.fromEntries(sent)).toEqual({
+      order_ref: 'product:p:c',
+      vendor_token: 'vendor-token-abc',
+    });
+  });
+
+  it('answers not-found to an order_ref no request carries (error 2, "Requete introuvable")', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: '2', message: 'Requete introuvable' } });
+    await expect(
+      makeProvider().getCheckoutRequestState({ orderRef: 'product:p:c' }, 'vendor-token-abc')
+    ).resolves.toEqual({ state: 'not-found', raw: 'error 2' });
+  });
+
+  it('keeps error 2 a REFUSAL for a uuid, which Canari got from Lydia itself', async () => {
+    // The control: answering not-found here would close an attempt Lydia did issue.
+    mockedAxios.post.mockResolvedValue({ data: { error: '2', message: 'Requete introuvable' } });
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    await expect(
+      makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, 'vendor-token-abc')
+    ).rejects.toThrow('Requete introuvable');
+  });
+
   it('refuses without a vendor_token, before calling Lydia', async () => {
-    await expect(makeProvider().getCheckoutRequestState('req-uuid-1', '')).rejects.toThrow(
-      'vendor_token'
-    );
+    await expect(
+      makeProvider().getCheckoutRequestState({ requestUuid: 'req-uuid-1' }, '')
+    ).rejects.toThrow('vendor_token');
     expect(mockedAxios.post.mock.calls).toHaveLength(0);
   });
 });

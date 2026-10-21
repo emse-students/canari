@@ -1,17 +1,89 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { createHmac } from 'crypto';
-import { of } from 'rxjs';
-import { Repository } from 'typeorm';
+import { Subject, isObservable, of, throwError } from 'rxjs';
+import { FindOperator, Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { ProductsService } from './products.service';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
+import { ProductCheckout } from './entities/product-checkout.entity';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
+
+/**
+ * An in-memory `product_checkouts` keeping the two properties the service relies on: a conditional
+ * `update` touches only the rows matching EVERY criterion (the `status = 'open'` guard), and a
+ * second OPEN row for one product and buyer is refused with SQLSTATE 23505, as the partial unique
+ * index `product_checkouts_one_open` refuses it. The transaction manager reads the same rows.
+ */
+function makeCheckoutStore(productRepo: { findOne: jest.Mock }) {
+  const rows: any[] = [];
+  let next = 0;
+  const matches = (row: any, where: Record<string, unknown>) =>
+    Object.entries(where).every(([k, v]) =>
+      v instanceof FindOperator && v.type === 'isNull' ? row[k] == null : row[k] === v
+    );
+  /** The purchase records a settlement updates in its transaction; `setup` binds its own. */
+  const records: { rows: any[] } = { rows: [] };
+  const repo: any = {
+    create: jest.fn((x: any) => ({ ...x })),
+    save: jest.fn(async (x: any) => {
+      const clash = rows.some(
+        (r) =>
+          r !== x &&
+          r.status === 'open' &&
+          x.status === 'open' &&
+          r.productId === x.productId &&
+          r.userId === x.userId
+      );
+      if (clash) {
+        throw Object.assign(new Error('duplicate key value (product_checkouts_one_open)'), {
+          code: '23505',
+        });
+      }
+      if (!x.id) {
+        next += 1;
+        x.id = `00000000-0000-4000-8000-${String(next).padStart(12, '0')}`;
+        // The column's DEFAULT now().
+        x.createdAt = new Date();
+        rows.push(x);
+      }
+      return x;
+    }),
+    findOne: jest.fn(
+      async ({ where }: { where: Record<string, unknown> }) =>
+        rows.find((r) => matches(r, where)) ?? null
+    ),
+    update: jest.fn(async (where: Record<string, unknown>, patch: Record<string, unknown>) => {
+      const hit = rows.filter((r) => matches(r, where));
+      hit.forEach((r) => Object.assign(r, patch));
+      return { affected: hit.length };
+    }),
+  };
+  const tx = {
+    findOne: jest.fn((entity: unknown, { where }: { where: Record<string, unknown> }) =>
+      entity === ProductCheckout ? repo.findOne({ where }) : productRepo.findOne({ where })
+    ),
+    update: jest.fn((entity: unknown, where: Record<string, unknown>, patch: any) => {
+      if (entity === ProductCheckout) return repo.update(where, patch);
+      const hit = records.rows.filter((r) => matches(r, where));
+      hit.forEach((r) => Object.assign(r, patch));
+      return Promise.resolve({ affected: hit.length });
+    }),
+  };
+  repo.manager = { transaction: jest.fn((cb: (m: unknown) => unknown) => cb(tx)) };
+  return { repo, rows, tx, records };
+}
 
 describe('ProductsService cotisation gating/pricing and Cercle re-gating', () => {
   function makeService() {
@@ -103,6 +175,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       profileFor: jest.fn(() => Promise.resolve({ promo: null, formation: null })),
     };
 
+    const checkouts = makeCheckoutStore(productRepo);
+
     const service = new ProductsService(
       productRepo as unknown as Repository<AssociationProduct>,
       deliveryRepo as unknown as Repository<WebhookDelivery>,
@@ -112,7 +186,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       userTagService as unknown as UserTagService,
       purchaseRecordService as unknown as PurchaseRecordService,
       associationsService as unknown as AssociationsService,
-      pricingFacts as unknown as PricingFactsService
+      pricingFacts as unknown as PricingFactsService,
+      checkouts.repo as unknown as Repository<ProductCheckout>
     );
 
     return {
@@ -126,6 +201,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       purchaseRecordService,
       associationsService,
       manager,
+      checkouts,
     };
   }
 
@@ -640,7 +716,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         amountCents: 3000,
       });
       expect(purchaseRecordService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ paymentMethod: 'cash', amountCents: 3000 })
+        expect.objectContaining({ paymentMethod: 'cash', amountCents: 3000 }),
+        expect.anything()
       );
     });
   });
@@ -678,8 +755,10 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       });
 
       await service.grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1' });
+      // Written inside the grant's transaction (the manager), so the tag and the record commit together.
       expect(purchaseRecordService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ paymentMethod: 'cash', amountCents: 500 })
+        expect.objectContaining({ paymentMethod: 'cash', amountCents: 500 }),
+        expect.anything()
       );
     });
   });
@@ -1651,6 +1730,575 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       // Deliberately off sale from now on, so the next onboarding event must leave it alone.
       expect(saved.isActive).toBe(false);
       expect(saved.activationWithheld).toBe(false);
+    });
+  });
+
+  /**
+   * ONE ROW PER CHECKOUT ATTEMPT (migration 101). Before it, every attempt sent Lydia the same
+   * order_ref `product:<productId>:<userId>` and Lydia refuses one it has seen (error 3, dev
+   * 2026-10-21): after one declined attempt the product was unbuyable, and nothing on Canari's side
+   * could tie a payment to anything. Each `it` below fails on that code.
+   */
+  describe('a checkout is a stored attempt, settled from the row', () => {
+    const UUID = (n: number) => n.toString(16).padStart(32, '0');
+
+    /** Routes every core-service payment call to a scripted answer, and records it. */
+    function scriptCore(
+      httpService: HttpService,
+      answers: Record<string, (body: any) => unknown>
+    ): Array<{ route: string; body: any }> {
+      const calls: Array<{ route: string; body: any }> = [];
+      (httpService.post as jest.Mock).mockImplementation((url: string, body: any) => {
+        const route = url.split('/payments/')[1];
+        calls.push({ route, body });
+        const answer = answers[route];
+        if (!answer) throw new Error(`unexpected core route ${route}`);
+        const out = answer(body);
+        return out instanceof Error
+          ? throwError(() => out)
+          : isObservable(out)
+            ? out
+            : of({ data: out });
+      });
+      return calls;
+    }
+
+    function setup(overrides: Partial<AssociationProduct> = {}) {
+      const made = makeService();
+      made.assoRepo.findOne.mockResolvedValue(asso());
+      made.productRepo.findOne.mockResolvedValue(product(overrides));
+      made.userTagService.hasActiveTag.mockResolvedValue(false);
+      // The purchase records ARE the durable state "already purchased" is read from.
+      const records: any[] = [];
+      made.checkouts.records.rows = records;
+      made.purchaseRecordService.create.mockImplementation((x: any) => {
+        const rec = { ...x, id: `rec-${records.length + 1}` };
+        records.push(rec);
+        return Promise.resolve(rec);
+      });
+      (made.purchaseRecordService.countPaidByUserAndProduct as jest.Mock).mockImplementation(
+        (userId: string, productId: string) =>
+          Promise.resolve(
+            records.filter((r) => r.userId === userId && r.productId === productId).length
+          )
+      );
+      let issued = 0;
+      let state = 'open';
+      const calls = scriptCore(made.httpService, {
+        'create-checkout-session': () => {
+          issued += 1;
+          return {
+            ok: true,
+            url: `https://lydia.test/pay/${issued}`,
+            id: UUID(issued),
+            requestId: `${1000 + issued}`,
+          };
+        },
+        'cancel-request': () => ({ ok: true, outcome: 'cancelled' }),
+        'request-state': () => ({ ok: true, state, raw: '?' }),
+      });
+      return {
+        ...made,
+        records,
+        calls,
+        setState: (s: string) => {
+          state = s;
+        },
+        checkout: () => made.service.createCheckoutSession('asso1', 'prod1', 'user1'),
+      };
+    }
+
+    const orderRefs = (calls: Array<{ route: string; body: any }>) =>
+      calls.filter((c) => c.route === 'create-checkout-session').map((c) => c.body.idempotencyKey);
+
+    /** A VERIFIED confirm callback as core hands it over: the attempt, Lydia's id, the Business. */
+    const callback = (
+      t: ReturnType<typeof setup>,
+      checkoutId: string,
+      requestId = '1001',
+      vendorToken = 'acct_1',
+      productId = 'prod1'
+    ) => t.service.handlePurchaseCompleted(productId, checkoutId, requestId, vendorToken);
+
+    /** A request/do whose answer never came back: a timeout, no status. */
+    const lostOnce = (t: ReturnType<typeof setup>) =>
+      (t.httpService.post as jest.Mock).mockImplementationOnce((url: string, body: any) => {
+        t.calls.push({ route: url.split('/payments/')[1], body });
+        return throwError(() => Object.assign(new Error('timeout of 120000ms exceeded')));
+      });
+
+    /** Moves an attempt's clocks back, as if it had been opened `ms` ago. */
+    const age = (row: any, ms: number) => {
+      row.createdAt = new Date(row.createdAt.getTime() - ms);
+      row.expiresAt = new Date(row.expiresAt.getTime() - ms);
+    };
+
+    it('gives every attempt its own order_ref, so a retry after a DECLINED one is issued', async () => {
+      const t = setup();
+      const first = await t.checkout();
+      t.setState('declined');
+      await t.service.confirmCheckout('asso1', 'prod1', first.checkoutId, 'user1');
+      expect(t.checkouts.rows[0].status).toBe('declined');
+
+      const second = await t.checkout();
+      const [refA, refB] = orderRefs(t.calls);
+      // The control: the old code sent `product:prod1:user1` twice, and Lydia refused the second.
+      // The buyer is not in it: the row holds the buyer.
+      expect(refA).toBe(`product:prod1:${first.checkoutId}`);
+      expect(refB).toBe(`product:prod1:${second.checkoutId}`);
+      expect(refA).not.toBe(refB);
+      // A declined attempt is not a purchase.
+      expect(t.records).toHaveLength(0);
+    });
+
+    it('stores the attempt with the request ids, and names it in both return URLs', async () => {
+      const t = setup();
+      const { checkoutId } = await t.checkout();
+      expect(t.checkouts.rows[0]).toMatchObject({
+        id: checkoutId,
+        productId: 'prod1',
+        userId: 'user1',
+        associationId: 'asso1',
+        paymentAssociationId: 'asso1',
+        amountCents: 1000,
+        status: 'open',
+        requestUuid: UUID(1),
+        requestId: '1001',
+      });
+      const sent = t.calls[0].body;
+      expect(sent.successUrl).toContain(`checkout_id=${checkoutId}`);
+      expect(sent.cancelUrl).toContain(`checkout_id=${checkoutId}`);
+      // An abandoned attempt closes at Lydia instead of staying payable for ever.
+      expect(sent.expireAfterSeconds).toBe(30 * 60);
+    });
+
+    it('cancels the still-open attempt at Lydia before issuing the next one', async () => {
+      const t = setup({ allowRepeatPurchase: true });
+      await t.checkout();
+      await t.checkout();
+      expect(t.calls.map((c) => c.route)).toEqual([
+        'create-checkout-session',
+        'cancel-request',
+        'create-checkout-session',
+      ]);
+      expect(t.calls[1].body).toEqual({ requestId: '1001', connectAccountId: 'acct_1' });
+      expect(t.checkouts.rows.map((r) => r.status)).toEqual(['cancelled', 'open']);
+    });
+
+    it('records a PAID attempt once, from the row, and then refuses a second purchase before any request', async () => {
+      const t = setup();
+      const { checkoutId } = await t.checkout();
+      t.setState('paid');
+      await expect(
+        t.service.confirmCheckout('asso1', 'prod1', checkoutId, 'user1')
+      ).resolves.toMatchObject({ status: 'paid' });
+      // A second read, and the callback (a replay), find it paid: nothing is recorded twice.
+      await t.service.confirmCheckout('asso1', 'prod1', checkoutId, 'user1');
+      await expect(callback(t, checkoutId)).resolves.toEqual({ outcome: 'paid' });
+      await expect(callback(t, checkoutId)).resolves.toEqual({ outcome: 'paid' });
+      expect(t.records).toHaveLength(1);
+      expect(t.records[0]).toMatchObject({
+        amountCents: 1000,
+        productId: 'prod1',
+        stripePaymentIntentId: '1001',
+      });
+      expect(t.checkouts.rows[0]).toMatchObject({ status: 'paid', purchaseRecordId: 'rec-1' });
+
+      const before = t.calls.length;
+      const refusal = await t.checkout().catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: 'PRODUCT_ALREADY_PURCHASED',
+      });
+      // Decided by Canari: no request/do was sent for the refused purchase.
+      expect(t.calls.slice(before).map((c) => c.route)).not.toContain('create-checkout-session');
+    });
+
+    it('records the purchase found PAID while settling the previous attempt, and issues nothing more', async () => {
+      const t = setup();
+      await t.checkout();
+      // The buyer paid in another tab: the cancel answers "already settled", the state says paid.
+      t.calls.length = 0;
+      (t.httpService.post as jest.Mock).mockImplementation((url: string) => {
+        const route = url.split('/payments/')[1];
+        t.calls.push({ route, body: null });
+        if (route === 'cancel-request')
+          return of({ data: { ok: true, outcome: 'already-settled' } });
+        if (route === 'request-state') return of({ data: { ok: true, state: 'paid', raw: '1' } });
+        throw new Error(`unexpected ${route}`);
+      });
+      await expect(t.checkout()).rejects.toBeInstanceOf(ConflictException);
+      expect(t.records).toHaveLength(1);
+      expect(t.calls.map((c) => c.route)).toEqual(['cancel-request', 'request-state']);
+    });
+
+    it("records the ROW's amount, whatever the product costs by the time it is paid", async () => {
+      const t = setup();
+      const { checkoutId } = await t.checkout();
+      t.productRepo.findOne.mockResolvedValue(product({ amountCents: 1 }));
+      t.setState('paid');
+      await callback(t, checkoutId);
+      expect(t.records).toHaveLength(1);
+      expect(t.records[0].amountCents).toBe(1000);
+    });
+
+    it.each([
+      [
+        'no stored attempt',
+        (id: string) => [`00000000-0000-4000-8000-00000000ffff`, '1001', 'acct_1', 'prod1', id],
+      ],
+      ['an attempt of another product', (id: string) => [id, '1001', 'acct_1', 'prod2']],
+      [
+        'another request than the attempt stored',
+        (id: string) => [id, '999999', 'acct_1', 'prod1'],
+      ],
+      // An authentic callback of association A never settles B's attempt.
+      [
+        'a Business the attempt was not issued to',
+        (id: string) => [id, '1001', 'acct_other', 'prod1'],
+      ],
+    ])('records nothing, at ERROR, for a callback naming %s', async (_case, args) => {
+      const t = setup();
+      const { checkoutId } = await t.checkout();
+      t.setState('paid');
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const [id, requestId, vendor, productId] = args(checkoutId) as string[];
+      await expect(callback(t, id, requestId, vendor, productId)).resolves.toEqual({
+        outcome: 'refused',
+      });
+      expect(error).toHaveBeenCalled();
+      expect(t.records).toHaveLength(0);
+      expect(t.calls.map((c) => c.route)).not.toContain('request-state');
+      error.mockRestore();
+    });
+
+    it("answers another buyer's attempt as not found, without asking Lydia", async () => {
+      const t = setup();
+      const { checkoutId } = await t.checkout();
+      t.setState('paid');
+      for (const [assoc, prod, user] of [
+        ['asso1', 'prod1', 'intruder'],
+        ['asso2', 'prod1', 'user1'],
+        ['asso1', 'prod2', 'user1'],
+      ]) {
+        await expect(
+          t.service.confirmCheckout(assoc, prod, checkoutId, user)
+        ).rejects.toBeInstanceOf(NotFoundException);
+      }
+      expect(t.calls.map((c) => c.route)).not.toContain('request-state');
+      expect(t.records).toHaveLength(0);
+    });
+
+    it('closes a state-6 attempt as cancelled before its expiry and as expired after it', async () => {
+      const t = setup({ allowRepeatPurchase: true });
+      const a = await t.checkout();
+      t.setState('cancelled-or-expired');
+      await t.service.confirmCheckout('asso1', 'prod1', a.checkoutId, 'user1');
+      const b = await t.checkout();
+      t.checkouts.rows[1].expiresAt = new Date(Date.now() - 1000);
+      await t.service.confirmCheckout('asso1', 'prod1', b.checkoutId, 'user1');
+      expect(t.checkouts.rows.map((r) => r.status)).toEqual(['cancelled', 'expired']);
+    });
+
+    it('answers a double click CHECKOUT_IN_PROGRESS and issues ONE request', async () => {
+      const t = setup();
+      const pending = new Subject<{ data: unknown }>();
+      (t.httpService.post as jest.Mock).mockImplementation((url: string) => {
+        t.calls.push({ route: url.split('/payments/')[1], body: null });
+        return pending;
+      });
+      const first = t.checkout();
+      await new Promise((r) => setImmediate(r));
+      const second = await t.checkout().catch((e: unknown) => e);
+      expect((second as ConflictException).getResponse()).toMatchObject({
+        code: 'CHECKOUT_IN_PROGRESS',
+      });
+      pending.next({
+        data: { ok: true, url: 'https://lydia.test/pay/1', id: UUID(1), requestId: '1001' },
+      });
+      await expect(first).resolves.toMatchObject({ checkoutUrl: 'https://lydia.test/pay/1' });
+      expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
+    });
+
+    it('refuses a second OPEN row for one product and buyer, as the partial unique index does', async () => {
+      const t = setup();
+      t.checkouts.rows.push({
+        id: 'other',
+        productId: 'prod1',
+        userId: 'user1',
+        status: 'open',
+        requestUuid: null,
+        requestId: null,
+        // Written between this request's settle and its insert by a concurrent one.
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      // Hide it from the settle step only, so the insert is what meets it.
+      t.checkouts.repo.findOne.mockResolvedValueOnce(null);
+      const refusal = await t.checkout().catch((e: unknown) => e);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: 'CHECKOUT_IN_PROGRESS',
+      });
+      expect(t.calls).toHaveLength(0);
+    });
+
+    it('releases an attempt core REFUSED to issue (a 4xx answer), so the retry is not blocked', async () => {
+      const t = setup();
+      (t.httpService.post as jest.Mock).mockImplementationOnce(() =>
+        throwError(() =>
+          Object.assign(new Error('refused'), {
+            response: { status: 400, data: { message: 'Lydia accepts payments from 0.50' } },
+          })
+        )
+      );
+      await expect(t.checkout()).rejects.toThrow('Lydia accepts payments from 0.50');
+      expect(t.checkouts.rows[0].status).toBe('cancelled');
+      const retry = await t.checkout();
+      expect(retry.checkoutId).toBe(t.checkouts.rows[1].id);
+      expect(t.checkouts.rows[1].status).toBe('open');
+    });
+
+    describe('an attempt whose request/do was LOST (no answer) is read by its order_ref', () => {
+      it('is left OPEN, never closed on a guess, and answers the 502', async () => {
+        const t = setup();
+        lostOnce(t);
+        await expect(t.checkout()).rejects.toThrow(
+          'The payment service could not create the checkout session'
+        );
+        // The control: the first draft of #2218 closed it `cancelled` here, and a payment Lydia
+        // took for it afterwards found no attempt to settle.
+        expect(t.checkouts.rows[0]).toMatchObject({ status: 'open', requestUuid: null });
+      });
+
+      it('is SETTLED by its confirm callback, found by the attempt id and read at Lydia by order_ref', async () => {
+        const t = setup();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const checkoutId = t.checkouts.rows[0].id;
+        t.setState('paid');
+        await expect(callback(t, checkoutId)).resolves.toEqual({ outcome: 'paid' });
+        const read = t.calls.find((c) => c.route === 'request-state');
+        expect(read?.body).toEqual({
+          orderRef: `product:prod1:${checkoutId}`,
+          connectAccountId: 'acct_1',
+        });
+        expect(t.records).toHaveLength(1);
+        expect(t.records[0]).toMatchObject({ amountCents: 1000, userId: 'user1' });
+        expect(t.checkouts.rows[0].status).toBe('paid');
+      });
+
+      it('blocks a retry while it may still be in flight, then reads it: never issued, it closes', async () => {
+        const t = setup();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const inFlight = await t.checkout().catch((e: unknown) => e);
+        expect((inFlight as ConflictException).getResponse()).toMatchObject({
+          code: 'CHECKOUT_IN_PROGRESS',
+        });
+
+        age(t.checkouts.rows[0], 4 * 60_000);
+        t.setState('not-found');
+        const retry = await t.checkout();
+        expect(t.checkouts.rows[0].status).toBe('cancelled');
+        expect(retry.checkoutId).toBe(t.checkouts.rows[1].id);
+        expect(t.calls.filter((c) => c.route === 'request-state')[0].body).toMatchObject({
+          orderRef: `product:prod1:${t.checkouts.rows[0].id}`,
+        });
+      });
+
+      it('records it when the retry finds it PAID at Lydia, and issues nothing more', async () => {
+        const t = setup();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        age(t.checkouts.rows[0], 4 * 60_000);
+        t.setState('paid');
+        const refusal = await t.checkout().catch((e: unknown) => e);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({
+          code: 'PRODUCT_ALREADY_PURCHASED',
+        });
+        expect(t.records).toHaveLength(1);
+        expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
+      });
+
+      /** A Cercle top-up product, its dispatch observed rather than sent. */
+      const topUp = () => {
+        const t = setup({
+          type: 'balance_topup',
+          webhookUrl: 'https://cercle.test/hook',
+          webhookSecret: 'test-secret',
+        } as Partial<AssociationProduct>);
+        const dispatch = jest
+          .spyOn(t.service, 'dispatchCercleWebhook')
+          .mockResolvedValue(undefined as never);
+        return { t, dispatch };
+      };
+
+      it("settles a top-up under the CALLBACK's request id: the record names it, Cercle is credited", async () => {
+        const { t, dispatch } = topUp();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const checkoutId = t.checkouts.rows[0].id;
+        t.setState('paid');
+        await expect(callback(t, checkoutId, '1001')).resolves.toEqual({ outcome: 'paid' });
+        // The control: settled with no request id, the record named no payment and the top-up was
+        // skipped without a line - the buyer paid and the Cercle balance never moved.
+        expect(t.checkouts.rows[0].requestId).toBe('1001');
+        expect(t.records[0].stripePaymentIntentId).toBe('1001');
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith(expect.anything(), 'user1', 1000, '1001');
+      });
+
+      it('grants the tag of an online payment settled by order_ref as an ONLINE grant, not a manual one', async () => {
+        const t = setup({ type: 'membership', grantedTagName: 'cotisant:bde' } as any);
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        t.setState('paid');
+        await callback(t, t.checkouts.rows[0].id, '1001');
+        expect(t.userTagService.grantOrRenew).toHaveBeenCalledWith(
+          expect.objectContaining({
+            metadata: expect.objectContaining({ paymentIntentId: '1001', manualGrant: false }),
+          }),
+          expect.anything()
+        );
+      });
+
+      it('a top-up paid on the RETURN before any id is known is logged, then credited once by the callback', async () => {
+        const { t, dispatch } = topUp();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const row = t.checkouts.rows[0];
+        age(row, 4 * 60_000);
+        t.setState('paid');
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        await t.service.confirmCheckout('asso1', 'prod1', row.id, 'user1');
+        expect(row.status).toBe('paid');
+        expect(t.records[0].stripePaymentIntentId).toBeNull();
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(error).toHaveBeenCalledWith(expect.stringContaining('top-up NOT dispatched'));
+        error.mockRestore();
+
+        await expect(callback(t, row.id, '1001')).resolves.toEqual({ outcome: 'paid' });
+        await expect(callback(t, row.id, '1001')).resolves.toEqual({ outcome: 'paid' });
+        expect(t.records).toHaveLength(1);
+        expect(t.records[0].stripePaymentIntentId).toBe('1001');
+        // Lydia retries a callback: the second one completes nothing and credits nothing.
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith(expect.anything(), 'user1', 1000, '1001');
+      });
+
+      it('credits a top-up the RETURN settled while the callback held a stale open snapshot', async () => {
+        const { t, dispatch } = topUp();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const row = t.checkouts.rows[0];
+        age(row, 4 * 60_000);
+        t.setState('paid');
+        // The callback's unlocked read sees the attempt OPEN; the return then settles it, no id.
+        const stale = { ...row };
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        await t.service.confirmCheckout('asso1', 'prod1', row.id, 'user1');
+        expect(row.status).toBe('paid');
+        t.checkouts.repo.findOne.mockResolvedValueOnce(stale);
+
+        await expect(callback(t, row.id, '1001')).resolves.toEqual({ outcome: 'paid' });
+        // The control: the snapshot said open, so the callback went through the settlement, which
+        // found the row paid and recorded nothing - and the record was never completed.
+        expect(t.records).toHaveLength(1);
+        expect(t.records[0].stripePaymentIntentId).toBe('1001');
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith(expect.anything(), 'user1', 1000, '1001');
+        error.mockRestore();
+      });
+
+      it('refuses a callback naming ANOTHER request than the one a racing write stored', async () => {
+        const t = setup();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const row = t.checkouts.rows[0];
+        row.requestId = '2002';
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        await expect(callback(t, row.id, '1001')).resolves.toEqual({ outcome: 'refused' });
+        expect(t.records).toHaveLength(0);
+        error.mockRestore();
+      });
+    });
+
+    describe('an attempt whose fate cannot be shown stops blocking its buyer at its expiry', () => {
+      it.each([
+        ['Lydia still answers open', (t: ReturnType<typeof setup>) => t.setState('open')],
+        [
+          'its request cannot be read at Lydia',
+          (t: ReturnType<typeof setup>) =>
+            (t.httpService.post as jest.Mock).mockImplementation((url: string, body: any) => {
+              const route = url.split('/payments/')[1];
+              t.calls.push({ route, body });
+              return route === 'cancel-request'
+                ? of({ data: { ok: true, outcome: 'already-settled' } })
+                : throwError(() => new Error('socket hang up'));
+            }),
+        ],
+      ])(
+        'refuses before expiresAt + 5 min and closes it expired after, when %s',
+        async (_c, arrange) => {
+          const t = setup({ allowRepeatPurchase: true });
+          await t.checkout();
+          // The cancel cannot prove it dead: Lydia says processed, so the state must decide.
+          (t.httpService.post as jest.Mock).mockImplementation((url: string, body: any) => {
+            const route = url.split('/payments/')[1];
+            t.calls.push({ route, body });
+            if (route === 'cancel-request')
+              return of({ data: { ok: true, outcome: 'already-settled' } });
+            if (route === 'request-state')
+              return of({ data: { ok: true, state: 'open', raw: '0' } });
+            return of({
+              data: { ok: true, url: 'https://lydia.test/pay/2', id: UUID(2), requestId: '1002' },
+            });
+          });
+          arrange(t);
+          const refusal = await t.checkout().catch((e: unknown) => e);
+          expect((refusal as ConflictException).getResponse()).toMatchObject({
+            code: 'PREVIOUS_CHECKOUT_OPEN',
+            message: expect.stringContaining('35 minutes'),
+          });
+
+          // The control: without the expiry exit this attempt refused its buyer for ever.
+          const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+          age(t.checkouts.rows[0], 36 * 60_000);
+          t.assoRepo.findOne.mockResolvedValue(asso());
+          arrange(t);
+          const settled = await (t.service as any).settlePreviousOpenAttempt('prod1', 'user1');
+          expect(settled).toBeUndefined();
+          expect(t.checkouts.rows[0].status).toBe('expired');
+          expect(error).toHaveBeenCalledWith(expect.stringContaining('closed as expired'));
+          error.mockRestore();
+        }
+      );
+    });
+
+    it('records a PAID answer over a closed attempt, and logs it at ERROR as a charge to check', async () => {
+      const t = setup();
+      const { checkoutId } = await t.checkout();
+      t.setState('cancelled-or-expired');
+      await t.service.confirmCheckout('asso1', 'prod1', checkoutId, 'user1');
+      expect(t.checkouts.rows[0].status).toBe('cancelled');
+      t.setState('paid');
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      await expect(callback(t, checkoutId)).resolves.toEqual({ outcome: 'paid' });
+      expect(t.records).toHaveLength(1);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('charge to refund'));
+      error.mockRestore();
+    });
+
+    it('answers unreadable, recording nothing, when Lydia cannot be asked - so core answers the retryable 503', async () => {
+      const t = setup();
+      const { checkoutId } = await t.checkout();
+      (t.httpService.post as jest.Mock).mockImplementation(() =>
+        throwError(() => new Error('ECONNRESET'))
+      );
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      await expect(callback(t, checkoutId)).resolves.toEqual({ outcome: 'unreadable' });
+      expect(t.records).toHaveLength(0);
+      error.mockRestore();
     });
   });
 });

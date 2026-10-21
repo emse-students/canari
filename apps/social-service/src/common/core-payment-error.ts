@@ -63,6 +63,17 @@ interface CoreAnswer {
 }
 
 /**
+ * Whether a failed call to core-service was ANSWERED with a 4xx - a refusal about this request, so
+ * nothing was issued - rather than lost (no response, a timeout, a 5xx), after which a request may
+ * exist at the provider all the same. A status code is an answer; a transport failure is not.
+ */
+export function coreRefusedRequest(err: unknown): boolean {
+  if (err instanceof HttpException) return false;
+  const status = (err as CoreAnswer | null)?.response?.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+/**
  * Turns a failed call to core-service's `payments/create-checkout-session` into the ONE exception
  * every checkout route answers with - the product checkout and the paid form submit used to map the
  * same Lydia refusal two ways (500 "Internal server error" and 400 with Lydia's message).

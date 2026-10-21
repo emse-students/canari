@@ -16,7 +16,8 @@ found what it missed:
   `posts.comments` / `reactions` / `polls` JSONB, out of reach of any column statement); form
   submissions (`userId`, `email`, `answers`), `form_respondents`, `form_reminders`,
   `post_notifications`, the three minesweeper tables, `document_reviewer_grants`,
-  `webhook_deliveries.userId`, `legacy_cotisations.claimedByUserId`, and about twenty authorship
+  `webhook_deliveries.userId`, `product_checkouts.userId` (per row, `'[deleted]:' || id`, because
+  of its partial unique index), `legacy_cotisations.claimedByUserId`, and about twenty authorship
   columns (`createdBy`, `grantedBy`, `decidedBy`, ...);
 - **chat-delivery**: `device_signature_key`, `notification_preference`, `dm_user_dismissed_groups`,
   and the queued messages the account SENT;

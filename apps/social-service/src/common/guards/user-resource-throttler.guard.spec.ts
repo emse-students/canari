@@ -49,6 +49,19 @@ describe('UserResourceThrottlerGuard', () => {
     expect(await tracker('asso-2')).not.toBe(await tracker('asso-1'));
   });
 
+  it('gives one user two buckets on two boutique attempts of ONE association (`:checkoutId`)', async () => {
+    // The control: keyed on `:id` before `:checkoutId`, both attempts landed in ONE bucket
+    // ('user-a:asso-1'), because a checkout route names its association `:id` too.
+    const attempt = (checkoutId: string) => ({
+      ...req('user-a', ''),
+      params: { id: 'asso-1', productId: 'prod-1', checkoutId },
+    });
+    const one = await guard.getTracker(attempt('co-1'));
+    const two = await guard.getTracker(attempt('co-2'));
+    expect(one).toBe('user-a:co-1');
+    expect(two).toBe('user-a:co-2');
+  });
+
   it('falls to the socket, at ERROR, when no user was named', async () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     expect(await guard.getTracker(req(undefined, 'sub-1'))).toBe('172.25.0.1:sub-1');

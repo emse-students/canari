@@ -11,7 +11,7 @@
   [Association permissions](../../association-permissions.md); this module renders it.
 - Calendar of events.
 - Document storage (PDFs, files).
-- Boutique / shop (products, Stripe checkout).
+- Boutique / shop (products, online checkout - [payments](payments.md#a-product-checkout-is-a-row-one-per-attempt-2026-10-21)).
 - Forms with payment (see forms module for form execution; this module handles form management within an association).
 - Stripe Connect onboarding for receiving online payments.
 - Tag-based autocomplete for association tagging on posts.

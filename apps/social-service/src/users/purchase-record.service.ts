@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { PurchaseRecord, type PurchasePaymentMethod } from './entities/purchase-record.entity';
 
 export interface CreatePurchaseData {
@@ -24,9 +24,14 @@ export class PurchaseRecordService {
     private readonly repo: Repository<PurchaseRecord>
   ) {}
 
-  /** Records a completed or pending purchase. */
-  async create(data: CreatePurchaseData): Promise<PurchaseRecord> {
-    const record = this.repo.create({
+  /**
+   * Records a completed or pending purchase. `manager` writes it inside the caller's transaction,
+   * so a settlement that marks its attempt paid and the record it writes commit together or not at
+   * all (`ProductsService.settlePaidCheckout`).
+   */
+  async create(data: CreatePurchaseData, manager?: EntityManager): Promise<PurchaseRecord> {
+    const repo = manager ? manager.getRepository(PurchaseRecord) : this.repo;
+    const record = repo.create({
       userId: data.userId,
       source: data.source,
       formId: data.formId ?? null,
@@ -38,7 +43,7 @@ export class PurchaseRecordService {
       associationId: data.associationId,
       productName: data.productName,
     });
-    return this.repo.save(record);
+    return repo.save(record);
   }
 
   /** Returns all purchase records for a user, newest first. */

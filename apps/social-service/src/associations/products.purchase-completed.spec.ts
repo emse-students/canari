@@ -2,40 +2,62 @@ import { Logger } from '@nestjs/common';
 import { ProductsService } from './products.service';
 
 /**
- * A BOUTIQUE PURCHASE IS FULFILLED ONLY FOR THE BUSINESS THE PRODUCT IS PAID INTO. The callback
+ * A BOUTIQUE PURCHASE IS SETTLED ONLY FOR THE BUSINESS ITS ATTEMPT WAS ISSUED TO. The callback
  * reaching here was verified by core-service with the Business key of `vendorToken`; an authentic
- * callback of association A naming a product of association B in its `order_ref` grants nothing.
+ * callback of association A naming an attempt of association B in its `order_ref` reads nothing and
+ * records nothing. The payee is the attempt's OWN `vendorToken`, snapshotted when its request was
+ * issued: the association's CURRENT account decides nothing, so a Business relinked after the issue
+ * neither settles the old attempt nor stops the Business that holds the request from settling it.
  */
 describe('ProductsService.handlePurchaseCompleted - the verified Business must be the payee', () => {
-  function makeService(payee: string | null) {
-    const fulfil = jest.fn(() => Promise.resolve({}));
+  const CHECKOUT = '33333333-3333-4333-8333-333333333333';
+
+  function makeService(issuedTo: string) {
+    const read = jest.fn(() => Promise.resolve('paid'));
     const service = Object.assign(Object.create(ProductsService.prototype) as object, {
       logger: new Logger('ProductsService'),
-      purchaseRecordService: { findByPaymentIntent: jest.fn(() => Promise.resolve(null)) },
-      productRepo: {
-        findOne: jest.fn(() => Promise.resolve({ id: 'prod-1-uuid', associationId: 'asso-b' })),
+      checkoutRepo: {
+        findOne: jest.fn(() =>
+          Promise.resolve({
+            id: CHECKOUT,
+            productId: 'prod-1-uuid',
+            paymentAssociationId: 'asso-b',
+            vendorToken: issuedTo,
+            requestId: 'r1',
+            status: 'open',
+          })
+        ),
       },
-      associationsService: { getLydiaPayeeAccountId: jest.fn(() => Promise.resolve(payee)) },
-      fulfillProductPurchase: fulfil,
+      // The association has relinked ANOTHER Business since the attempt was issued.
+      assoRepo: {
+        findOne: jest.fn(() => Promise.resolve({ id: 'asso-b', lydiaAccountId: 'vendor-b-new' })),
+      },
+      readAndApplyRequestState: read,
+      completePaidWithoutRequestId: jest.fn(() => Promise.resolve()),
     }) as unknown as ProductsService;
-    return { service, fulfil };
+    return { service, read };
   }
 
   beforeEach(() => jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined));
   afterEach(() => jest.restoreAllMocks());
 
-  it('fulfils a purchase whose verified Business is the product payee', async () => {
-    const { service, fulfil } = makeService('vendor-b');
-    await service.handlePurchaseCompleted('prod-1-uuid', 'u1', 500, 'r1', 'vendor-b');
-    expect(fulfil).toHaveBeenCalledTimes(1);
+  it('settles an attempt verified by the Business it was issued to, even after a relink', async () => {
+    const { service, read } = makeService('vendor-b');
+    await expect(
+      service.handlePurchaseCompleted('prod-1-uuid', CHECKOUT, 'r1', 'vendor-b')
+    ).resolves.toEqual({ outcome: 'paid' });
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it.each([
-    ['another association', 'vendor-b'],
-    ['an association with no Lydia payee', null],
-  ])('grants nothing when the product is paid into %s', async (_case, payee) => {
-    const { service, fulfil } = makeService(payee);
-    await service.handlePurchaseCompleted('prod-1-uuid', 'u1', 500, 'r1', 'vendor-a');
-    expect(fulfil).not.toHaveBeenCalled();
+    ['another association', 'vendor-a'],
+    // CONTROL: read from the association's CURRENT account, this callback would be accepted.
+    ["the association's newly linked Business, not the one holding the request", 'vendor-b-new'],
+  ])('reads and records nothing when the callback is verified for %s', async (_case, verified) => {
+    const { service, read } = makeService('vendor-b');
+    await expect(
+      service.handlePurchaseCompleted('prod-1-uuid', CHECKOUT, 'r1', verified)
+    ).resolves.toEqual({ outcome: 'refused' });
+    expect(read).not.toHaveBeenCalled();
   });
 });
