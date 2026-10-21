@@ -7,7 +7,8 @@
   page (`frontend/src/lib/features.ts`): every pre-release, and a local build that sets it. A store
   build (stable) merges none of it, because a foreground-service type is a Play Console declaration
   and declaring one for a surface no user can reach is the Play twin of the `voip` mode App Review
-  refused (calls.md, the five switches). The day CALLS_COMPILED flips, these entries move into
+  refused (calls.md, the switches table). It is an IN-APP call's need, so it follows CALLS_COMPILED,
+  not the native ring's CALLS_NATIVE_RING_COMPILED. The day CALLS_COMPILED flips, these entries move into
   `src/main/AndroidManifest.xml` in the same commit: `androidCallServiceManifest.test.ts` asserts the
   main manifest declares them exactly when CALLS_COMPILED is true.
 

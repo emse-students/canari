@@ -328,14 +328,17 @@ calls would need MLS membership and is not proposed.
 | --- | --- |
 | App Store privacy label - Audio Data, Photos or Videos | media is E2E and never stored; whether that is "not collected" under Apple's definition is **(unverified)** |
 | Call metadata (who called whom, duration, IP to Cloudflare TURN) | the SFU and chat-delivery logs hold user ids, room ids, durations; Cloudflare sees IPs. Likely "Usage Data / Product Interaction" linked to identity - decide, and say it in the privacy policy ([store-listings](../../store-listings.md)) |
-| Google Play - `USE_FULL_SCREEN_INTENT` | Android 14+ grants it by default only to calling/alarm apps; Play asks for a declaration **(unverified: current form)**; `callsCompiled.test.ts` asserts it present exactly when `CALLS_COMPILED` is true |
+| Google Play - `USE_FULL_SCREEN_INTENT` | Android 14+ grants it by default only to calling/alarm apps; Play asks for a declaration **(unverified: current form)**; `callsCompiled.test.ts` asserts it present exactly when `CALLS_NATIVE_RING_COMPILED` is true (the native ring's own switch since 2026-10-21, B2') |
 | Google Play - foreground service `phoneCall`/`microphone` | needs a declaration and, per Play's form, a video **(unverified)** - record it from the Tier B Mi 9T cells like the Apple one |
 | Info.plist strings | microphone and camera strings must name calls; they are French literals in `Info.plist` today, not Paraglide |
 
 ## 9. Rollout - a server-side switch instead of five code switches (proposal)
 
-**Today** five switches move in one commit ([calls](calls.md)): two constants (TS, Kotlin), one ObjC
-constant, one plist key, one manifest permission. The two store declarations cannot be runtime
+**Written when** five switches moved in one commit. **Since 2026-10-21 (B2') they are two groups**
+([calls](calls.md)): `CALLS_COMPILED` carries the in-app call (the plist's `audio`, the microphone
+purpose strings, the Android microphone foreground service), and `CALLS_NATIVE_RING_COMPILED` carries
+the native ring (the Kotlin and ObjC constants, `voip`, `USE_FULL_SCREEN_INTENT`), which the first
+production calls ship WITHOUT. The two store declarations cannot be runtime
 switches - a store reads the binary - but everything ELSE can.
 
 **Proposal:**
