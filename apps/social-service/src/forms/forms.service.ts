@@ -1428,6 +1428,11 @@ export class FormsService {
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
+    return this.submitterAnswer(submission);
+  }
+
+  /** What a submitter is answered about a row already read (`toSubmitterView`, plus the currency). */
+  private async submitterAnswer(submission: Submission) {
     const form = await this.formRepo.findOne({ where: { id: submission.formId } });
     const { id, formId, totalPaid, paymentStatus } = toSubmitterView(submission);
     return { id, formId, totalPaid, currency: form?.currency ?? 'eur', paymentStatus };
@@ -1690,16 +1695,16 @@ export class FormsService {
     // page decides "declined, try again" from it. A retry that replaced the request between the
     // read and now (another tab, the success page polling while the payer retries) makes the state
     // read a stale one - answering it would offer a retry that cancels the request being paid.
-    if (requestState !== undefined) {
-      const current = await this.submissionRepo.findOne({ where: { id: submissionId } });
-      if (current?.stripeSessionId !== sessionId) {
-        this.logger.log(
-          `[Forms] confirmPayment ${submissionId}: request ${sessionId} read ${requestState}, but the row now names another request - state not answered`
-        );
-        requestState = undefined;
-      }
+    // The row is read ONCE here, and both the check and the answer come from that read.
+    const current = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!current) throw new NotFoundException('Submission not found');
+    if (requestState !== undefined && current.stripeSessionId !== sessionId) {
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: request ${sessionId} read ${requestState}, but the row now names another request - state not answered`
+      );
+      requestState = undefined;
     }
-    return { ...(await this.getSubmissionById(submissionId)), requestState };
+    return { ...(await this.submitterAnswer(current)), requestState };
   }
 
   /**

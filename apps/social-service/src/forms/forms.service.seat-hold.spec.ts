@@ -1011,7 +1011,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         maxSubmissions: 1,
         basePrice: 1500,
         provider: 'lydia',
-        // A real request uuid: the cancel callback reads it at Lydia (cancelled-or-expired) before it cancels.
+        // A real request uuid: the cancel callback reads it at Lydia (expired) before it cancels.
         rows: [mine({ stripeSessionId: LYDIA_UUID })],
       });
       core.duringCancel = () =>
