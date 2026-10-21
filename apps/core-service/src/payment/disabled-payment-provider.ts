@@ -18,7 +18,7 @@ export const PAYMENTS_DISABLED_MESSAGE = 'Payments are disabled on this platform
  * Reports itself as NOT configured, so every route that gates on `isConfigured()` answers exactly
  * as it does when no provider has credentials. Any operation that reaches it anyway fails CLOSED
  * with a 400 - it never falls through to Lydia. Payments already in flight are NOT
- * handled here: the Lydia callback verifies with its own secret, independent
+ * handled here: the Lydia callback verifies with the association's own Business key, independent
  * of the active provider (see PaymentService.verifyLydiaRequestCallback).
  */
 export class DisabledPaymentProvider implements PaymentProvider {

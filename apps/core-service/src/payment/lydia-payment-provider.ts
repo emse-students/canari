@@ -1,7 +1,5 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
-import { verifyLydiaSignature } from './lydia-signature';
-import { logSafeFieldName, matchLydiaSignature, observableFields } from './lydia-signature-match';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
   CancelRequestOutcome,
@@ -32,7 +30,7 @@ export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
 const LYDIA_CANCEL_ALREADY_SETTLED = '2';
 
 /**
- * Fields no log line may ever carry in the clear - `api_token_id` is the Business's own
+ * Fields no log line may ever carry in the clear - `api_token_id` may be the Business's own
  * private_token (see `createOnboarding`'s docblock on why it is never persisted either), and
  * `api_token` is the Business's vendor token, which `business/create` answers with and which was
  * logged in clear until 2026-10-07. `signature` is the value Lydia's `request/state` answers with
@@ -73,26 +71,13 @@ export class LydiaPaymentProvider implements PaymentProvider {
   private readonly logger = new Logger(LydiaPaymentProvider.name);
   private readonly baseUrl: string;
   private readonly providerToken: string | undefined;
-  private readonly providerPrivateToken: string | undefined;
-  private readonly observeKeys: string[];
 
-  constructor(env: {
-    LYDIA_ENV?: string;
-    LYDIA_PROVIDER_TOKEN?: string;
-    LYDIA_PROVIDER_PRIVATE_TOKEN?: string;
-    LYDIA_OBSERVE_KEYS?: string;
-  }) {
+  constructor(env: { LYDIA_ENV?: string; LYDIA_PROVIDER_TOKEN?: string }) {
     this.baseUrl =
       (env.LYDIA_ENV || '').trim().toLowerCase() === 'production'
         ? PRODUCTION_BASE_URL
         : HOMOLOGATION_BASE_URL;
     this.providerToken = env.LYDIA_PROVIDER_TOKEN;
-    this.providerPrivateToken = env.LYDIA_PROVIDER_PRIVATE_TOKEN;
-    // Second guard next to the compose wiring: a measurement variable never acts on production.
-    this.observeKeys = (this.baseUrl === PRODUCTION_BASE_URL ? '' : (env.LYDIA_OBSERVE_KEYS ?? ''))
-      .split(',')
-      .map((k) => k.trim())
-      .filter(Boolean);
     this.logger.log(`Lydia configured: ${this.isConfigured() ? 'yes' : 'no'} (${this.baseUrl})`);
   }
 
@@ -308,10 +293,12 @@ export class LydiaPaymentProvider implements PaymentProvider {
    * as `OnboardingResult.url` so the treasurer has somewhere to go manage the Business; there is no
    * separate "finish onboarding" redirect step like Stripe's, the Business exists immediately.
    *
-   * `api_token_id` (the Business's own private_token) is deliberately NOT returned/persisted:
-   * Canari calls Lydia as a provider, and provider-signed calls (`business/addcashier`, etc.) use
-   * Canari's OWN provider private_token, never the target Business's - confirmed by the
-   * `business/addcashier` signature spec ("cashier_phone + permissions + Provider private token").
+   * `api_token_id` is deliberately NOT returned/persisted. It MAY be the Business's private_token -
+   * the key that signs its `request/do` callbacks - but that is an unmeasured hypothesis (only a
+   * validated Business can settle it), and storing an unidentified secret is worse than storing
+   * none. The key that verifies callbacks is entered by the association's payout manager instead
+   * (`PUT /api/associations/:id/lydia-business-key`, payments.md). Provider-signed calls
+   * (`business/addcashier`, etc.) use Canari's OWN provider private_token.
    */
   async createOnboarding(params: OnboardingParams): Promise<OnboardingResult> {
     if (!this.providerToken) throw new BadRequestException('Lydia not configured');
@@ -379,32 +366,5 @@ export class LydiaPaymentProvider implements PaymentProvider {
     throw new BadRequestException(
       'Lydia Business dashboard access is via the dashboard_url returned once at business/create, not a re-issuable login link.'
     );
-  }
-
-  /** Verifies a `confirm_url`/`cancel_url`/`expire_url` callback signature from `request/do`. */
-  verifyRequestCallback(fields: Record<string, string>, signature: string): boolean {
-    if (!this.providerPrivateToken) return false;
-    return verifyLydiaSignature(fields, this.providerPrivateToken, signature);
-  }
-
-  /**
-   * Observation of a callback that failed verification: which candidate key (by index), field set
-   * and algorithm reproduces its signature. Candidates come from `LYDIA_OBSERVE_KEYS`, a dev-only
-   * measurement variable removed once the algorithm is known; the answer carries names, never a
-   * value. `null` when nothing is configured (production, or no variable), so a refusal there carries
-   * no suffix at all.
-   */
-  observeRequestCallback(body: Record<string, unknown>, signature: string): string | null {
-    if (this.observeKeys.length === 0) return null;
-    const observable = observableFields(body);
-    if ('skipped' in observable) return `observe: skipped, ${observable.skipped}`;
-    const matches = matchLydiaSignature(observable.fields, signature, this.observeKeys);
-    if (matches.length === 0) return `observe: no match over ${this.observeKeys.length} key(s)`;
-    return `observe: ${matches
-      .map(
-        (m) =>
-          `key#${m.keyIndex} fields=[${m.fields.map(logSafeFieldName).join(',')}] algorithm=${m.algorithm}`
-      )
-      .join('; ')}`;
   }
 }

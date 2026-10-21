@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import axios from 'axios';
 import * as bodyParser from 'body-parser';
 import { Logger, type INestApplication } from '@nestjs/common';
@@ -7,59 +9,76 @@ import {
   describeContentType,
   describeFieldNames,
 } from './webhook.controller';
-import { LydiaPaymentProvider } from './lydia-payment-provider';
 import { signLydiaParams } from './lydia-signature';
 import { PaymentService } from './payment.service';
+import type { LydiaCallbackVerdict } from './lydia-callback-verification';
+import type { PlatformService } from '../platform/platform.service';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 const PRODUCT_ID = '11111111-1111-1111-1111-111111111111';
 const USER_ID = '22222222-2222-2222-2222-222222222222';
+const VENDOR = 'vendor-token-of-asso-a';
 
-function makeController(verified: boolean) {
+function makeController(verdict: LydiaCallbackVerdict) {
   const paymentService = {
-    verifyLydiaRequestCallback: jest.fn().mockReturnValue(verified),
-    observeLydiaRequestCallback: jest.fn().mockReturnValue('observe: stub'),
+    verifyLydiaRequestCallback: jest.fn().mockResolvedValue(verdict),
   } as unknown as PaymentService;
   return new PaymentWebhookController(paymentService);
 }
+
+const VERIFIED: LydiaCallbackVerdict = { verified: true, vendorToken: VENDOR };
+const REFUSED: LydiaCallbackVerdict = { verified: false, reason: 'mismatch' };
 
 describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
   afterEach(() => jest.clearAllMocks());
 
   it('rejects an invalid outcome', async () => {
-    const controller = makeController(true);
+    const controller = makeController(VERIFIED);
     await expect(
       controller.handleLydiaRequestCallback('bogus', { request_id: 'r1', sig: 's1' })
     ).rejects.toThrow(/outcome/);
   });
 
   it('rejects a callback missing request_id or sig', async () => {
-    const controller = makeController(true);
+    const controller = makeController(VERIFIED);
     await expect(controller.handleLydiaRequestCallback('confirm', {})).rejects.toThrow(
       /request_id|sig/
     );
   });
 
   it('rejects a callback with an invalid signature, without touching social-service', async () => {
-    const controller = makeController(false);
+    const controller = makeController(REFUSED);
     await expect(
       controller.handleLydiaRequestCallback('confirm', {
         request_id: 'r1',
         order_ref: 'form:sub-1',
         sig: 'bad-sig',
       })
-    ).rejects.toThrow(/signature/);
+    ).rejects.toThrow(/Invalid signature/);
     expect(mockedAxios.post.mock.calls).toHaveLength(0);
   });
 
-  it('marks a form submission paid on a confirmed form order_ref', async () => {
-    mockedAxios.post.mockResolvedValue({ data: {} });
-    const controller = makeController(true);
+  it('answers 503, not a verdict, when the key cannot be read', async () => {
+    const paymentService = {
+      verifyLydiaRequestCallback: jest.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+    } as unknown as PaymentService;
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = new PaymentWebhookController(paymentService);
+    await expect(
+      controller.handleLydiaRequestCallback('confirm', { request_id: 'r1', sig: 's' })
+    ).rejects.toThrow(/verification unavailable/);
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+
+  it('hands a confirmed form to social-service as a TRIGGER naming the verified Business', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { outcome: 'paid' } });
+    const controller = makeController(VERIFIED);
 
     const result = await controller.handleLydiaRequestCallback('confirm', {
       request_id: 'r1',
+      amount: '999.00',
       order_ref: 'form:sub-1',
       sig: 'valid-sig',
     });
@@ -67,30 +86,60 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
     expect(result).toEqual({ received: true });
     expect(mockedAxios.post.mock.calls).toHaveLength(1);
     const [url, body] = mockedAxios.post.mock.calls[0];
-    expect(url).toContain('/submissions/sub-1/mark-paid');
-    expect(body).toEqual({ sessionId: 'r1' });
+    expect(url).toContain('/internal/forms/submissions/sub-1/provider-confirm');
+    // No amount crosses: the row settles from its own request, read at Lydia.
+    expect(body).toEqual({ vendorToken: VENDOR, requestId: 'r1' });
   });
 
-  it('fulfills a boutique purchase on a confirmed product order_ref', async () => {
-    mockedAxios.post.mockResolvedValue({ data: {} });
-    const controller = makeController(true);
+  it('answers a retryable 503 when social-service could not read the row request, so nothing claims it was handled', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { outcome: 'unreadable' } });
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = makeController(VERIFIED);
+    await expect(
+      controller.handleLydiaRequestCallback('confirm', {
+        request_id: 'r1',
+        order_ref: 'form:sub-1',
+        sig: 'valid-sig',
+      })
+    ).rejects.toMatchObject({ status: 503, message: 'Failed to process callback' });
+  });
 
-    await controller.handleLydiaRequestCallback('confirm', {
+  it('answers a retryable 503 when the fan-out to social-service fails', async () => {
+    mockedAxios.post.mockRejectedValue(new Error('ECONNREFUSED'));
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = makeController(VERIFIED);
+    await expect(
+      controller.handleLydiaRequestCallback('expire', {
+        request_id: 'r1',
+        order_ref: 'form:sub-1',
+        sig: 'valid-sig',
+      })
+    ).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('fulfils NOTHING on a verified product confirm, and logs why at ERROR (no stored checkout until B3)', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = makeController(VERIFIED);
+
+    const result = await controller.handleLydiaRequestCallback('confirm', {
       request_id: 'r1',
       amount: '12.34',
       order_ref: `product:${PRODUCT_ID}:${USER_ID}`,
       sig: 'valid-sig',
     });
 
-    expect(mockedAxios.post.mock.calls).toHaveLength(1);
-    const [url, body] = mockedAxios.post.mock.calls[0];
-    expect(url).toContain(`/products/${PRODUCT_ID}/purchase-completed`);
-    expect(body).toEqual({ userId: USER_ID, amountCents: 1234, paymentIntentId: 'r1' });
+    expect(result).toEqual({ received: true });
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+    const line = String(errorSpy.mock.calls[0]?.[0]);
+    expect(line).toContain(`product ${PRODUCT_ID}`);
+    expect(line).toContain('NOT fulfilled');
+    expect(line).toContain('stores no row');
+    errorSpy.mockRestore();
   });
 
-  it('cancels a pending submission on a cancelled/expired form order_ref', async () => {
+  it('cancels a pending submission naming its request and the verified Business', async () => {
     mockedAxios.post.mockResolvedValue({ data: {} });
-    const controller = makeController(true);
+    const controller = makeController(VERIFIED);
 
     await controller.handleLydiaRequestCallback('expire', {
       request_id: 'r1',
@@ -101,12 +150,29 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
     expect(mockedAxios.post.mock.calls).toHaveLength(1);
     const [url, body] = mockedAxios.post.mock.calls[0];
     expect(url).toContain('/submissions/sub-1/cancel-pending');
-    // The report names Lydia's request, so social-service can ignore one a retry replaced.
-    expect(body).toEqual({ requestId: 'r1' });
+    expect(body).toEqual({ requestId: 'r1', vendorToken: VENDOR });
   });
 
+  // A cancel is a trigger too: social-service reads the row's request at Lydia before releasing
+  // the seat, and a read that failed decided nothing - Lydia must be told to retry.
+  it.each(['cancel', 'expire'])(
+    'answers a retryable 503 when a %s could not read the row request at Lydia',
+    async (outcome) => {
+      mockedAxios.post.mockResolvedValue({ data: { ok: false, outcome: 'unreadable' } });
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const controller = makeController(VERIFIED);
+      await expect(
+        controller.handleLydiaRequestCallback(outcome, {
+          request_id: 'r1',
+          order_ref: 'form:sub-1',
+          sig: 'valid-sig',
+        })
+      ).rejects.toMatchObject({ status: 503, message: 'Failed to process callback' });
+    }
+  );
+
   it('does nothing on a cancelled/expired product order_ref - no pending row exists to undo', async () => {
-    const controller = makeController(true);
+    const controller = makeController(VERIFIED);
 
     const result = await controller.handleLydiaRequestCallback('cancel', {
       request_id: 'r1',
@@ -119,7 +185,7 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
   });
 
   it('acknowledges but does not act on an unrecognized order_ref', async () => {
-    const controller = makeController(true);
+    const controller = makeController(VERIFIED);
 
     const result = await controller.handleLydiaRequestCallback('confirm', {
       request_id: 'r1',
@@ -137,7 +203,7 @@ describe('PaymentWebhookController.handleLydiaRequestCallback - what a refusal s
 
   it('names the content type and the FIELD NAMES of a body with no request_id, never a value', async () => {
     const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const controller = makeController(true);
+    const controller = makeController(VERIFIED);
 
     await expect(
       controller.handleLydiaRequestCallback(
@@ -153,71 +219,25 @@ describe('PaymentWebhookController.handleLydiaRequestCallback - what a refusal s
     expect(line).toContain('2 field(s)=[amount,note]');
     expect(line).not.toContain('secret-value');
   });
-});
 
-describe('POST /api/payments/lydia-request-callback - the body types it reads', () => {
-  let app: INestApplication;
-  let verify: jest.Mock;
-  let baseUrl: string;
+  it('logs the reason and the received field names of a failed verification, never a value', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = makeController({ verified: false, reason: 'no-key' });
 
-  beforeAll(async () => {
-    verify = jest.fn().mockReturnValue(false);
-    const moduleRef = await Test.createTestingModule({
-      controllers: [PaymentWebhookController],
-      providers: [
-        {
-          provide: PaymentService,
-          useValue: {
-            verifyLydiaRequestCallback: verify,
-            observeLydiaRequestCallback: () => 'observe: stub',
-          },
-        },
-      ],
-    }).compile();
-    app = moduleRef.createNestApplication();
-    app.use(bodyParser.json());
-    app.use(bodyParser.urlencoded({ extended: true }));
-    await app.listen(0);
-    baseUrl = (await app.getUrl()).replace('[::1]', 'localhost');
-  });
-  afterAll(() => app.close());
-  beforeEach(() => verify.mockClear());
+    await expect(
+      controller.handleLydiaRequestCallback(
+        'cancel',
+        { request_id: '9', sig: 'abc', order_ref: 'form:secret-ref', amount: '5.00' },
+        'multipart/form-data; boundary=x'
+      )
+    ).rejects.toThrow(/Invalid signature/);
 
-  const url = () => `${baseUrl}/payments/lydia-request-callback?outcome=expire`;
-  const fields = {
-    request_id: '9',
-    amount: '5.00',
-    currency: 'EUR',
-    order_ref: 'form:x',
-    vendor_token: 'v',
-    sig: 'bad',
-  };
-
-  it('reads a multipart/form-data body (the type the global parsers drop)', async () => {
-    const form = new FormData();
-    for (const [k, v] of Object.entries(fields)) form.append(k, v);
-
-    const res = await fetch(url(), { method: 'POST', body: form });
-
-    expect(await res.json()).toMatchObject({ message: 'Invalid signature' });
-    expect(verify).toHaveBeenCalledWith(expect.objectContaining({ request_id: '9' }), 'bad');
-  });
-
-  it('still reads urlencoded and JSON bodies', async () => {
-    const encoded = await fetch(url(), {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(fields).toString(),
-    });
-    const json = await fetch(url(), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(fields),
-    });
-
-    expect((await encoded.json()).message).toBe('Invalid signature');
-    expect((await json.json()).message).toBe('Invalid signature');
-    expect(verify).toHaveBeenCalledTimes(2);
+    const line = String(errorSpy.mock.calls[0]?.[0]);
+    expect(line).toContain('outcome=cancel');
+    expect(line).toContain('reason=no-key');
+    expect(line).toContain('4 field(s)=[request_id,sig,order_ref,amount]');
+    expect(line).not.toContain('secret-ref');
+    expect(line).not.toContain('abc');
   });
 });
 
@@ -244,26 +264,37 @@ describe('what a refused callback may put in the log', () => {
   });
 });
 
-describe('a multipart callback through the REAL signature check', () => {
-  const PRIVATE = 'test-provider-private-token';
+/**
+ * THE MEASURED SHAPE, THROUGH A REAL NEST APP AND THE REAL VERIFIER. Lydia's sandbox callback of
+ * 2026-10-16 carried these seven fields as multipart/form-data, and `sig` verified with the Business
+ * private token over all six others, `signed` included (payments.md). The keys here are throwaway
+ * strings; social-service's key route is the only thing stubbed, and it is stubbed BY ADDRESS.
+ */
+describe('POST /api/payments/lydia-request-callback - the Business key, measured shape', () => {
+  const BUSINESS_KEY = 'throwaway-business-key-a';
+  const PROVIDER_KEY = 'throwaway-provider-key';
+  const KNOWN_VENDOR = 'vendor-a';
+  const NO_KEY_VENDOR = 'vendor-without-key';
   let app: INestApplication;
   let baseUrl: string;
+  let keyLookups: string[];
+
+  const callback = {
+    currency: 'EUR',
+    request_id: '12115504',
+    amount: '5.00',
+    signed: '0',
+    vendor_token: KNOWN_VENDOR,
+    order_ref: 'form:sub-1',
+  };
 
   beforeAll(async () => {
-    const provider = new LydiaPaymentProvider({ LYDIA_PROVIDER_PRIVATE_TOKEN: PRIVATE });
+    const platformService = {
+      getConfig: jest.fn().mockResolvedValue({ paymentProvider: 'disabled' }),
+    } as unknown as PlatformService;
     const moduleRef = await Test.createTestingModule({
       controllers: [PaymentWebhookController],
-      providers: [
-        {
-          provide: PaymentService,
-          useValue: {
-            verifyLydiaRequestCallback: (f: Record<string, string>, sig: string) =>
-              provider.verifyRequestCallback(f, sig),
-            observeLydiaRequestCallback: (f: Record<string, string>, sig: string) =>
-              provider.observeRequestCallback(f, sig),
-          },
-        },
-      ],
+      providers: [{ provide: PaymentService, useValue: new PaymentService(platformService) }],
     }).compile();
     app = moduleRef.createNestApplication();
     app.use(bodyParser.json());
@@ -273,99 +304,154 @@ describe('a multipart callback through the REAL signature check', () => {
   });
   afterAll(() => app.close());
 
-  const signed = {
-    request_id: '12115504',
-    amount: '5.00',
-    currency: 'EUR',
-    order_ref: 'unknown-ref',
-    vendor_token: '6ac36045f16e4830718291',
-  };
-  const post = (fields: Record<string, string>) => {
+  beforeEach(() => {
+    keyLookups = [];
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    mockedAxios.post.mockReset();
+    mockedAxios.post.mockImplementation(async (url: string, data?: unknown) => {
+      if (url.endsWith('/api/internal/associations/lydia-callback-key')) {
+        const vendorToken = (data as { vendorToken: string }).vendorToken;
+        keyLookups.push(vendorToken);
+        // Unknown association and no-key association answer the same, as social-service does.
+        return {
+          data: { businessPrivateToken: vendorToken === KNOWN_VENDOR ? BUSINESS_KEY : null },
+        };
+      }
+      return { data: { outcome: 'paid' } };
+    });
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  const post = (outcome: string, fields: Record<string, string>) => {
     const form = new FormData();
     for (const [k, v] of Object.entries(fields)) form.append(k, v);
-    return fetch(`${baseUrl}/payments/lydia-request-callback?outcome=expire`, {
+    return fetch(`${baseUrl}/payments/lydia-request-callback?outcome=${outcome}`, {
       method: 'POST',
       body: form,
     });
   };
+  const fanOutCalls = () =>
+    mockedAxios.post.mock.calls.filter(([url]) => !String(url).includes('lydia-callback-key'));
 
-  it('accepts a correctly signed multipart body with the fields Lydia sends', async () => {
-    const res = await post({
-      ...signed,
-      sig: signLydiaParams(signed, PRIVATE),
-      state: '3',
-      request_uuid: 'abcdef',
-    });
-    expect(await res.json()).toEqual({ received: true });
+  it.each(['cancel', 'expire'])(
+    'accepts a %s signed with the Business key over all received fields, signed included',
+    async (outcome) => {
+      const res = await post(outcome, {
+        ...callback,
+        sig: signLydiaParams(callback, BUSINESS_KEY),
+      });
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual({ received: true });
+      expect(keyLookups).toEqual([KNOWN_VENDOR]);
+      expect(fanOutCalls()).toHaveLength(1);
+    }
+  );
+
+  it('refuses the same body signed with the wrong key - the Provider key included', async () => {
+    for (const key of ['another-throwaway-key', PROVIDER_KEY]) {
+      const res = await post('expire', { ...callback, sig: signLydiaParams(callback, key) });
+      expect(res.status).toBe(400);
+      expect((await res.json()).message).toBe('Invalid signature');
+    }
+    expect(fanOutCalls()).toHaveLength(0);
   });
 
-  it('refuses the same body with a wrong signature', async () => {
-    const res = await post({ ...signed, sig: signLydiaParams(signed, 'another-token') });
+  it('refuses a signature over another field set (the five fields assumed before the measure)', async () => {
+    const { signed: _signed, currency: _currency, ...five } = callback;
+    const res = await post('expire', {
+      ...callback,
+      sig: signLydiaParams({ ...five, currency: callback.currency }, BUSINESS_KEY),
+    });
+    expect((await res.json()).message).toBe('Invalid signature');
+    expect(fanOutCalls()).toHaveLength(0);
+  });
+
+  it('refuses a body that dropped `signed` while its sig covered it', async () => {
+    const sig = signLydiaParams(callback, BUSINESS_KEY);
+    const { signed: _signed, ...withoutSigned } = callback;
+    const res = await post('cancel', { ...withoutSigned, sig });
+    expect((await res.json()).message).toBe('Invalid signature');
+    expect(fanOutCalls()).toHaveLength(0);
+  });
+
+  it('refuses a body with an added field the sender slipped in', async () => {
+    const sig = signLydiaParams(callback, BUSINESS_KEY);
+    const res = await post('cancel', { ...callback, extra: '1', sig });
     expect((await res.json()).message).toBe('Invalid signature');
   });
 
-  it('refuses a body with more fields than the route allows, before any verification', async () => {
-    const many: Record<string, string> = { ...signed, sig: 'x' };
+  it('answers an unknown association and a no-key association with the SAME 400 as a bad signature', async () => {
+    const unknown = { ...callback, vendor_token: 'vendor-nobody-holds' };
+    const noKey = { ...callback, vendor_token: NO_KEY_VENDOR };
+    const answers = await Promise.all([
+      post('expire', { ...unknown, sig: signLydiaParams(unknown, BUSINESS_KEY) }),
+      post('expire', { ...noKey, sig: signLydiaParams(noKey, BUSINESS_KEY) }),
+      post('expire', { ...callback, sig: signLydiaParams(callback, 'wrong') }),
+    ]);
+    const shapes = await Promise.all(
+      answers.map(async (r) => ({ status: r.status, body: await r.text() }))
+    );
+    expect(shapes[0]).toEqual(shapes[1]);
+    expect(shapes[1]).toEqual(shapes[2]);
+    expect(shapes[0].status).toBe(400);
+    expect(fanOutCalls()).toHaveLength(0);
+  });
+
+  it('never sends the Business key back, whatever the outcome', async () => {
+    const ok = await post('expire', { ...callback, sig: signLydiaParams(callback, BUSINESS_KEY) });
+    const ko = await post('expire', { ...callback, sig: signLydiaParams(callback, 'wrong') });
+    expect(await ok.text()).not.toContain(BUSINESS_KEY);
+    expect(await ko.text()).not.toContain(BUSINESS_KEY);
+  });
+
+  it('still reads urlencoded and JSON bodies the same way', async () => {
+    const fields = { ...callback, sig: signLydiaParams(callback, BUSINESS_KEY) };
+    const url = `${baseUrl}/payments/lydia-request-callback?outcome=expire`;
+    const encoded = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields).toString(),
+    });
+    const json = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(fields),
+    });
+    expect(await encoded.json()).toEqual({ received: true });
+    expect(await json.json()).toEqual({ received: true });
+  });
+
+  it('refuses a JSON body whose value is not a string, with the same 400 and no key lookup', async () => {
+    const res = await fetch(`${baseUrl}/payments/lydia-request-callback?outcome=expire`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...callback, amount: { toString: 1 }, sig: 'x' }),
+    });
+    expect((await res.json()).message).toBe('Invalid signature');
+    expect(keyLookups).toEqual([]);
+  });
+
+  it('refuses a multipart body with more fields than the route allows, before any verification', async () => {
+    const many: Record<string, string> = { ...callback, sig: 'x' };
     for (let i = 0; i < 30; i++) many[`extra${i}`] = '1';
-    const res = await post(many);
+    const res = await post('expire', many);
     expect(res.status).toBe(400);
+    expect(keyLookups).toEqual([]);
   });
 });
 
-describe('a callback that fails verification says which fields it carried', () => {
-  afterEach(() => jest.restoreAllMocks());
-
-  it('logs the received and the verified field names, never a value', async () => {
-    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const controller = makeController(false);
-
-    await expect(
-      controller.handleLydiaRequestCallback(
-        'cancel',
-        { request_id: '9', sig: 'abc', order_ref: 'form:secret-ref', amount: '5.00', state: '3' },
-        'multipart/form-data; boundary=x'
-      )
-    ).rejects.toThrow(/Invalid signature/);
-
-    const line = String(errorSpy.mock.calls[0]?.[0]);
-    expect(line).toContain('outcome=cancel');
-    expect(line).toContain('5 field(s)=[request_id,sig,order_ref,amount,state]');
-    expect(line).toContain('verified-over=[request_id,amount,currency,order_ref,vendor_token]');
-    expect(line).not.toContain('secret-ref');
-    expect(line).not.toContain('abc');
-  });
-});
-
-describe('a refused callback while observing', () => {
-  afterEach(() => jest.restoreAllMocks());
-
-  it('stays a 400 even when an observe key matches, and a hostile body still logs', async () => {
-    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    const KEY = 'observe-key';
-    const body = { request_id: '9', amount: '5.00', currency: 'EUR' };
-    const provider = new LydiaPaymentProvider({ LYDIA_OBSERVE_KEYS: KEY });
-    const paymentService = {
-      verifyLydiaRequestCallback: () => false,
-      observeLydiaRequestCallback: (b: Record<string, unknown>, sig: string) =>
-        provider.observeRequestCallback(b, sig),
-    } as unknown as PaymentService;
-    const controller = new PaymentWebhookController(paymentService);
-
-    await expect(
-      controller.handleLydiaRequestCallback('cancel', {
-        ...body,
-        sig: signLydiaParams(body, KEY),
-      })
-    ).rejects.toThrow(/Invalid signature/);
-    expect(String(errorSpy.mock.calls[0]?.[0])).toContain('observe: key#0');
-
-    await expect(
-      controller.handleLydiaRequestCallback('cancel', {
-        request_id: '9',
-        sig: 'x',
-        foo: { toString: 1 },
-      })
-    ).rejects.toThrow(/Invalid signature/);
-    expect(errorSpy).toHaveBeenCalledTimes(2);
+describe('the cancel-pending answer core reads from social-service', () => {
+  // The two halves meet over HTTP, so a test of each against its own mock stays green when one
+  // renames what the other reads (the rebase of 2026-10-21 shipped social answering `{ ok }` while
+  // core waited for `outcome: 'unreadable'`). This pins the word on BOTH sides to the same source.
+  it('is the outcome word social-service really answers when Lydia cannot be read', () => {
+    const social = readFileSync(
+      join(__dirname, '..', '..', '..', 'social-service', 'src', 'forms', 'forms.service.ts'),
+      'utf8'
+    );
+    expect(social).toContain("return { ok: state !== 'unreadable', outcome: state }");
+    const core = readFileSync(join(__dirname, 'webhook.controller.ts'), 'utf8');
+    expect(core).toContain("read === 'unreadable'");
   });
 });
