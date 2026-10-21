@@ -221,10 +221,18 @@ export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collisi
  * change throws it (a dropped re-seal leaves the stored state under the OLD key), and so does a web
  * checkpoint, whose waiters would otherwise declare that state durable. The guard has already said
  * it in one line; a catcher that only re-reports it adds noise.
+ *
+ * `ended` is not the guard's: the document itself refused the write, because a rotation it ran was
+ * refused and what it holds in memory is on no disk (`BaseMlsService.persistCheckpoint`'s latch).
+ * That refusal, too, has already been said once, where it was decided.
  */
 export class MlsStateWriteRefusedError extends Error {
-  constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'>) {
-    super(`the MLS state write was refused by the version guard (${outcome})`);
+  constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'> | 'ended') {
+    super(
+      outcome === 'ended'
+        ? 'the MLS state write was refused: this document ended after a refused rotation'
+        : `the MLS state write was refused by the version guard (${outcome})`
+    );
     this.name = 'MlsStateWriteRefusedError';
   }
 }

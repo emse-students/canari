@@ -222,6 +222,38 @@ function assertResolvedIdentity(seam: string, userId: string, deviceId: string):
   }
 }
 
+/**
+ * How many reloads IN A ROW, per tab, a refused rotation may cost before the page stops reloading
+ * (`BaseMlsService.endDocumentAfterRefusedRotation`). Two: the first is the ordinary cure, the
+ * second covers a peer that was still mid-write; a third would be the loop.
+ */
+export const MAX_REFUSED_ROTATION_RELOADS = 2;
+/** The `sessionStorage` key of that count - per tab, kept across a reload, gone with the tab. */
+export const REFUSED_ROTATION_RELOADS_KEY = 'canari.mls.refusedRotationReloads';
+
+/**
+ * The write latch's one check (`BaseMlsService.stateWritesEnded`), at the two seams every MLS state
+ * write of a live client goes through: the persister, the watchdog, the burn, the registry fallback
+ * and the rotation all reach `persistCheckpoint`, and the re-seal is `changeDeviceKey`. Each refused
+ * write is a write that would have landed, so each gets its line.
+ */
+function refuseIfStateWritesEnded(ended: boolean, what: string): void {
+  if (!ended) return;
+  console.warn(
+    `[MLS] ${what} REFUSED: this document ended after a refused rotation - its client is on no disk and must not reach one`
+  );
+  throw new MlsStateWriteRefusedError('ended');
+}
+
+/** Resets the count once a rotation has landed. Best-effort: a stale count only shortens the bound. */
+function forgetRefusedRotationReloads(): void {
+  try {
+    sessionStorage.removeItem(REFUSED_ROTATION_RELOADS_KEY);
+  } catch (e) {
+    console.warn('[MLS] could not reset the refused-rotation reload count:', e);
+  }
+}
+
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
   protected readonly platform: 'web' | 'tauri';
@@ -2320,6 +2352,21 @@ export abstract class BaseMlsService implements IMlsService {
   protected stateWasExpected = false;
 
   /**
+   * Set when a rotation's checkpoint was REFUSED ({@link rotateDeviceIdentity}): from then on this
+   * document writes no MLS state, ever, and {@link persistCheckpoint} and {@link changeDeviceKey}
+   * refuse typed (`MlsStateWriteRefusedError('ended')`).
+   *
+   * THE VERSION GUARD IS NOT A SUBSTITUTE. It orders by counter alone and does not know whose blob
+   * it holds: a rotation refused as a `collision` (same version) has its very next capture tagged
+   * one above the stored one, and that capture is WRITTEN - the fresh, groupless client over the
+   * other document's good state, next to the old stored id. A reload does not stop the page either:
+   * it runs until the next response commits, and a persister flight, the session watchdog or a burn
+   * checkpoint can land in between. A latch on the one write path is what makes that window inert.
+   * Never cleared: a document that set it is ended, and the next one is a new instance.
+   */
+  private stateWritesEnded = false;
+
+  /**
    * Resolves (or generates and persists) this device's stable per-user id WITHOUT
    * touching the encrypted MLS state. Safe to call before {@link init}, so the PIN
    * can be verified against the real deviceId before any state decryption /
@@ -2632,7 +2679,9 @@ export abstract class BaseMlsService implements IMlsService {
    * WHAT IS LEFT IN MEMORY IS NOT RESTORED, IT IS ENDED. The old client is gone (the fresh load
    * replaced it), so rolling the ids back would leave a fresh, groupless client under the old id - a
    * session that publishes nothing, rotates again on every round, and once its counter passes the
-   * other document's writes the fresh state next to the old id. The ids stay the fresh ones, which at
+   * other document's writes the fresh state next to the old id. So the refusal first LATCHES this
+   * document's writes ({@link stateWritesEnded}): nothing it captures afterwards reaches the disk,
+   * whatever the version guard would have said. The ids stay the fresh ones, which at
    * least agree with the client, and each caller ends what holds them: init fails and the login
    * releases its client (`savedStateFailure`), and the revocation path reloads the document
    * ({@link endDocumentAfterRefusedRotation}) so it starts again from what the disk now holds.
@@ -2652,12 +2701,16 @@ export abstract class BaseMlsService implements IMlsService {
       await this.persistCheckpoint();
     } catch (e) {
       if (!(e instanceof MlsStateWriteRefusedError)) throw e;
+      // FIRST, before anything can yield: no later capture of this fresh client may reach the disk.
+      this.stateWritesEnded = true;
       console.error(
         `[MLS] Device identity rotation ABORTED: another document wrote this account's state (${e.outcome}), so ${this.deviceId} is on no disk - ${oldDeviceId} stays the stored id and keeps its server row, and this document must end`
       );
       throw e;
     }
     localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
+    // A rotation that landed is the proof that any run of refused ones is over.
+    forgetRefusedRotationReloads();
     // The counters describe the ratchets of the device being abandoned, whose state was discarded
     // for a fresh one starting at generation zero. Carried over, they would burn against sends
     // that, from the peers' side, this device has never made.
@@ -2675,11 +2728,49 @@ export abstract class BaseMlsService implements IMlsService {
    * Ends this document after a rotation whose checkpoint another document refused
    * ({@link rotateDeviceIdentity}): a reload is the one thing that provably replaces the live client
    * with the state as the disk now holds it - the same answer the tab-leader promotion gives
-   * (`useChatSession`). Only web refuses a checkpoint, so only web reaches it. Overridable so a test
-   * can observe it.
+   * (`useChatSession`). Only web refuses a checkpoint, so only web reaches it. The write latch
+   * ({@link stateWritesEnded}) is already set, so nothing this page does before it unloads is
+   * written.
+   *
+   * BOUNDED, BY A COUNT AND NO CLOCK. The page it starts logs in again, and every login path asks the
+   * server whether the stored id is revoked and wipes it if so, so a reload normally ends the story.
+   * That question answers `false` when the server is unreachable, though, and a page that then
+   * reaches the server and meets another document still writing would rotate, be refused and reload
+   * again, for as long as the other one writes. So at most {@link MAX_REFUSED_ROTATION_RELOADS}
+   * reloads in a row per tab (`sessionStorage`, which a reload keeps); a rotation that lands resets
+   * the count. Past it the page is NOT reloaded: it stays latched - it writes nothing - and says so
+   * at `error`, where the member's remedy is to close the other tabs.
    */
   protected endDocumentAfterRefusedRotation(): void {
     if (typeof window === 'undefined') return;
+    let done: number;
+    try {
+      done = Number(sessionStorage.getItem(REFUSED_ROTATION_RELOADS_KEY) ?? '0') || 0;
+      if (done < MAX_REFUSED_ROTATION_RELOADS) {
+        sessionStorage.setItem(REFUSED_ROTATION_RELOADS_KEY, String(done + 1));
+      }
+    } catch (e) {
+      // Uncounted, a reload could be the loop this bound exists to stop: the page stays latched.
+      console.error(
+        `[MLS] refused rotation: the reload count is unreadable, so this page is NOT reloaded and writes no state - close the other tabs of this account:`,
+        e
+      );
+      return;
+    }
+    if (done >= MAX_REFUSED_ROTATION_RELOADS) {
+      console.error(
+        `[MLS] refused rotation: ${done} reloads in a row met another document writing this account's state, so this page is NOT reloaded again and writes no state - close the other tabs of this account`
+      );
+      return;
+    }
+    console.warn(
+      `[MLS] refused rotation: reloading (${done + 1}/${MAX_REFUSED_ROTATION_RELOADS}) to start again from the state on disk`
+    );
+    this.reloadDocument();
+  }
+
+  /** The reload itself, apart so a test can observe it without unloading its runner. */
+  protected reloadDocument(): void {
     window.location.reload();
   }
 
@@ -3125,6 +3216,7 @@ export abstract class BaseMlsService implements IMlsService {
    * of `sendMessage`, re-learnt on the seam that guards the ratchet instead of the one that moves it.
    */
   async persistCheckpoint(): Promise<void> {
+    refuseIfStateWritesEnded(this.stateWritesEnded, 'checkpoint');
     const emitted = snapshotEmitted(this.userId);
     // The replay marks are captured BEFORE the write for the same reason as `emitted`: a page
     // decrypted while the seal runs is marked in memory, and this write does not hold its advance.
@@ -3155,6 +3247,7 @@ export abstract class BaseMlsService implements IMlsService {
    * the old key, so the old key is what still describes it.
    */
   async changeDeviceKey(newDeviceKeyB64: string): Promise<void> {
+    refuseIfStateWritesEnded(this.stateWritesEnded, 'device key re-seal');
     await this.changeDeviceKeyImpl(newDeviceKeyB64);
     this.currentDeviceKeyB64 = newDeviceKeyB64;
   }

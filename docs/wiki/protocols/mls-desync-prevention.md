@@ -623,13 +623,43 @@ agreeing with the client, and each caller ends the holder:
 - **the revocation round** reloads the document (`endDocumentAfterRefusedRotation`), the same proof
   the tab promotion relies on: a reload is what provably re-reads the disk.
 
-One window is left: a checkpoint scheduled before the reload unloads the page could still write the
-fresh state. It needs this tab's counter to pass the other tab's within that window; the other tab
-just wrote, so it is ahead.
+**The refusal first LATCHES this document's writes** (`stateWritesEnded`). The version guard cannot
+do it: it orders by counter alone and does not know whose blob it holds. A rotation refused as a
+`collision` (same version) has its very next capture tagged one above the stored one, and that
+capture is written; refused stale by one, the next collides and the one after is written. A reload
+does not stop the page either - it runs until the next response commits, seconds on a slow
+network - and a persister flight (which raises its dirty flag again after each failure), the
+session watchdog's checkpoint or the burn's can land in between. So from the refusal on,
+`persistCheckpoint` and `changeDeviceKey` - the two seams every write of a live client passes -
+refuse typed (`MlsStateWriteRefusedError('ended')`), each with its own `warn` line, since each is a
+write that would have landed. The latch is never cleared: the document is ended, and the next login
+builds a new client (`mlsHolder.reset`).
+
+**The reload is bounded by a count, never a clock.** The page it starts logs in again, and every
+login path asks the server whether the stored id is revoked and wipes it if so, so one reload
+normally ends it. That question answers `false` when the server is unreachable, though, and a page
+that then reaches the server while another document keeps writing would rotate, be refused and
+reload again. So at most two reloads in a row per tab (`sessionStorage`, which a reload keeps); a
+rotation that lands resets the count. Past it the page is not reloaded: it stays latched, writes
+nothing, and says so at `error`.
+
+**One accusation per event.** The init path printed three lines for one refusal: the guard's `warn`,
+the rotation's `error`, and the login's `[INIT] Login failed` at `error`. The rotation's line is the
+one that knows which id stayed stored and that nothing shared moved, so it keeps `error`; the guard
+keeps its `warn` (it names both versions); `state_written_by_another_tab` joined
+`isExpectedLoginOutcome`, so the login narrates it at `warn` instead of accusing it a second time.
+
+**What the reload costs the member.** The chat composer's text is plain component state
+(`MainChatPage.svelte`, `messageText`) and is lost, exactly as on the tab-leader promotion and
+demotion reloads, which already accept it. A message already sent is in the durable outbox and is not
+lost. A post or a comment being written is not lost: their drafts persist in `localStorage`
+(`postComposerDraft.ts`, `postCommentDraft.ts`).
 
 Pinned by `hex.mlsVersion.test.ts` (superseded versus stale, untagged writes), `WebMlsService.changeDeviceKey.test.ts`
 ("WebMlsService.writeCheckpoint"), `mlsStatePersister.test.ts` (a refused checkpoint adds no line),
 `BaseMlsService.externalJoin.test.ts` (no fork accusation for an own-document stale write, one for a
 foreign one), `BaseMlsService.deviceRevoked.test.ts` and `WebMlsService.legacyMigration.test.ts`
-(the refused rotation ends the document on the revocation path, and only for a refusal),
-`savedStateFailure.test.ts` (the typed login failure). Each was mutation-checked.
+(the refused rotation ends the document on the revocation path, and only for a refusal; after a
+refusal as `collision` and as stale by one, no later checkpoint, persister flight or re-seal is
+written; the reload bound and its reset), `savedStateFailure.test.ts` (the typed login failure),
+`loginErrors.test.ts` (narrated, not accused). Each was mutation-checked.

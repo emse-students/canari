@@ -3,7 +3,13 @@
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
-import { BaseMlsService } from './BaseMlsService';
+import {
+  BaseMlsService,
+  MAX_REFUSED_ROTATION_RELOADS,
+  REFUSED_ROTATION_RELOADS_KEY,
+} from './BaseMlsService';
+import { createMlsStatePersister } from '$lib/mls-client/mlsStatePersister';
+import type { IMlsService } from '$lib/mls-client';
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
 import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
@@ -105,6 +111,113 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
 
     await expect(generateKeyPackage(ctx)).rejects.toThrow('quota exceeded');
     expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE VERSION GUARD ORDERS BY COUNTER ALONE, so it cannot end this document on its own. Modelled
+   * here exactly as `hex.ts` decides: a capture is tagged with this document's next version, and
+   * stored only when it is above the stored one. Refused as a COLLISION, the very next capture is
+   * one above and lands; refused STALE BY ONE, the next collides and the one after lands - each time
+   * the fresh, groupless client over the other document's good state, next to the old stored id.
+   */
+  describe.each([
+    ['collision', 10, 10],
+    ['stale', 10, 9],
+  ] as const)('after a rotation refused as %s', (outcome, storedByOther, ourFirstVersion) => {
+    function guardedCtx() {
+      let next = ourFirstVersion;
+      const written: number[] = [];
+      const writeCheckpoint = vi.fn(async () => {
+        const v = next++;
+        if (v === storedByOther) throw new MlsStateWriteRefusedError('collision');
+        if (v < storedByOther) throw new MlsStateWriteRefusedError('stale');
+        written.push(v);
+      });
+      const changeDeviceKeyImpl = vi.fn().mockResolvedValue(undefined);
+      // The real seams: the latch is checked where every write of a live client passes.
+      const seams = {
+        persistCheckpoint: BaseMlsService.prototype.persistCheckpoint,
+        changeDeviceKey: BaseMlsService.prototype.changeDeviceKey,
+      };
+      const ctx = makeCtx({
+        generateKeyPackageImpl: vi.fn().mockRejectedValue(new DeviceRevokedError('d-revoked')),
+        writeCheckpoint,
+        changeDeviceKeyImpl,
+        currentDeviceKeyB64: 'key-b64',
+        ...seams,
+      }) as ReturnType<typeof makeCtx> & typeof seams;
+      return { ctx, written, writeCheckpoint, changeDeviceKeyImpl };
+    }
+
+    it('no later checkpoint, persister flight or re-seal of this document is ever written', async () => {
+      const { ctx, written, writeCheckpoint, changeDeviceKeyImpl } = guardedCtx();
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await expect(generateKeyPackage(ctx)).rejects.toMatchObject({ outcome });
+      expect(ctx.endDocumentAfterRefusedRotation).toHaveBeenCalledTimes(1);
+
+      // What runs between the reload and the unload: a watchdog's direct checkpoint, the
+      // persister's flights (each failure re-raises its dirty flag, so it tries again), a re-seal.
+      const persister = createMlsStatePersister({
+        mlsService: ctx as unknown as IMlsService,
+      });
+      for (let i = 0; i < 3; i++) {
+        await expect(ctx.persistCheckpoint()).rejects.toMatchObject({ outcome: 'ended' });
+        persister.scheduleDeferred();
+        await expect(persister.flushEncrypted()).rejects.toMatchObject({ outcome: 'ended' });
+      }
+      await expect(ctx.changeDeviceKey('new-key')).rejects.toMatchObject({ outcome: 'ended' });
+
+      expect(written).toEqual([]);
+      // Only the rotation's own capture ever reached the guard.
+      expect(writeCheckpoint).toHaveBeenCalledTimes(1);
+      expect(changeDeviceKeyImpl).not.toHaveBeenCalled();
+      error.mockRestore();
+      warn.mockRestore();
+    });
+  });
+
+  describe('the reload a refused rotation costs is bounded per tab', () => {
+    beforeEach(() => sessionStorage.clear());
+
+    function endingCtx() {
+      return {
+        reloadDocument: vi.fn(),
+        endDocumentAfterRefusedRotation:
+          BaseMlsService.prototype['endDocumentAfterRefusedRotation'],
+      };
+    }
+
+    it(`reloads ${MAX_REFUSED_ROTATION_RELOADS} times in a row, then stops and says so`, () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      // Each call is one page: a reload keeps `sessionStorage`, so the count carries across them.
+      for (let page = 0; page < MAX_REFUSED_ROTATION_RELOADS + 2; page++) {
+        const ctx = endingCtx();
+        ctx.endDocumentAfterRefusedRotation();
+        expect(ctx.reloadDocument).toHaveBeenCalledTimes(
+          page < MAX_REFUSED_ROTATION_RELOADS ? 1 : 0
+        );
+      }
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT reloaded again'));
+      error.mockRestore();
+      warn.mockRestore();
+    });
+
+    it('a rotation that lands resets the count', async () => {
+      sessionStorage.setItem(REFUSED_ROTATION_RELOADS_KEY, String(MAX_REFUSED_ROTATION_RELOADS));
+      const ctx = makeCtx({
+        generateKeyPackageImpl: vi
+          .fn()
+          .mockRejectedValueOnce(new DeviceRevokedError('d-revoked'))
+          .mockResolvedValueOnce(new Uint8Array([1])),
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await generateKeyPackage(ctx);
+      warn.mockRestore();
+      expect(sessionStorage.getItem(REFUSED_ROTATION_RELOADS_KEY)).toBeNull();
+    });
   });
 
   it('leaves any other failure alone, identity untouched', async () => {
