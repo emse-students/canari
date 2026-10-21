@@ -303,3 +303,201 @@ describe('persistMlsStructuralCheckpoint', () => {
     expect(persistCheckpoint).toHaveBeenCalledWith();
   });
 });
+
+describe('createMlsStatePersister - receive-skip measurement switch', () => {
+  const live = { bufferUi: true, showOverlay: false };
+  const replay = { bufferUi: false, showOverlay: false };
+
+  function make(receiveSkipBudget?: number, persistImpl?: () => Promise<void>) {
+    const persistCheckpoint = vi.fn(persistImpl ?? (() => Promise.resolve()));
+    const persister = createMlsStatePersister({
+      mlsService: { persistCheckpoint } as any,
+      receiveSkipBudget,
+    });
+    return { persistCheckpoint, persister };
+  }
+
+  async function drain(persister: ReturnType<typeof make>['persister'], frames = 1, phase = live) {
+    persister.onBulkIngestStart();
+    for (let i = 0; i < frames; i++) persister.scheduleDeferred();
+    await persister.onBulkIngestEnd(phase);
+    await flushMacrotask();
+  }
+
+  it('OFF (default) checkpoints after every drain, exactly as before', async () => {
+    for (const budget of [undefined, 0]) {
+      const { persistCheckpoint, persister } = make(budget);
+      for (let i = 0; i < 5; i++) await drain(persister);
+      await drain(persister, 1, replay);
+      expect(persistCheckpoint).toHaveBeenCalledTimes(6);
+    }
+  });
+
+  it('ON skips live receive-only drains while fewer than the budget of FRAMES are unsaved', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { persistCheckpoint, persister } = make(3);
+    await drain(persister);
+    await drain(persister);
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+    await drain(persister);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+    await drain(persister);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('ON counts frames, not drains: one catch-up drain past the budget checkpoints at once', async () => {
+    const { persistCheckpoint, persister } = make(50);
+    await drain(persister, 400);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('ON never skips a drain that asked for durability (commit, Welcome, structural change)', async () => {
+    const { persistCheckpoint, persister } = make(10);
+    persister.onBulkIngestStart();
+    persister.persistNow();
+    await persister.onBulkIngestEnd(live);
+    await flushMacrotask();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('ON never skips a history-replay window, which saves a cursor of its own', async () => {
+    const { persistCheckpoint, persister } = make(10);
+    await drain(persister, 1, replay);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('ON: a replay window closing inside a live drain makes the outermost close checkpoint', async () => {
+    const { persistCheckpoint, persister } = make(10);
+    persister.onBulkIngestStart();
+    persister.onBulkIngestStart();
+    persister.scheduleDeferred();
+    await persister.onBulkIngestEnd(replay);
+    await persister.onBulkIngestEnd(live);
+    await flushMacrotask();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('ON: after a failed write the owed urgency survives, so the retry is not skipped', async () => {
+    let fail = true;
+    const { persistCheckpoint, persister } = make(10, () =>
+      fail ? Promise.reject(new Error('disk')) : Promise.resolve()
+    );
+    persister.persistNow();
+    await flushMacrotask();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+    fail = false;
+    await drain(persister);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(2);
+  });
+
+  it('ON still writes the skipped state on an explicit flush (background, logout, send)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { persistCheckpoint, persister } = make(10);
+    await drain(persister);
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+    await persister.flush();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createMlsStatePersister - frames read outside the conversation path', () => {
+  const live = { bufferUi: true, showOverlay: false };
+
+  function make(budget: number, persistImpl?: () => Promise<void>) {
+    const persistCheckpoint = vi.fn(persistImpl ?? (() => Promise.resolve()));
+    const persister = createMlsStatePersister({
+      mlsService: { persistCheckpoint } as any,
+      receiveSkipBudget: budget,
+    });
+    return { persistCheckpoint, persister };
+  }
+
+  it('a structural note (a key-group commit) makes the drain checkpoint instead of skip', async () => {
+    const { persistCheckpoint, persister } = make(10);
+    persister.onBulkIngestStart();
+    persister.noteReceivedFrame(true);
+    await persister.onBulkIngestEnd(live);
+    await flushMacrotask();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('counted notes spend the budget: a drain of key-group seeds cannot skip for ever', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { persistCheckpoint, persister } = make(3);
+    persister.onBulkIngestStart();
+    for (let i = 0; i < 3; i++) persister.noteReceivedFrame(false);
+    await persister.onBulkIngestEnd(live);
+    await flushMacrotask();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('notes change nothing while the switch is OFF: no write, no dirty flag', async () => {
+    const { persistCheckpoint, persister } = make(0);
+    persister.noteReceivedFrame(true);
+    persister.noteReceivedFrame(false);
+    await flushMacrotask();
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+    await persister.flush();
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('ON does not skip while an URGENT checkpoint is in flight, so its failure is retried', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let rejectWrite: (e: Error) => void = () => {};
+    let calls = 0;
+    const { persistCheckpoint, persister } = make(10, () => {
+      calls += 1;
+      return calls === 1
+        ? new Promise<void>((_, reject) => {
+            rejectWrite = reject;
+          })
+        : Promise.resolve();
+    });
+    persister.persistNow();
+    await flushMacrotask();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+    // A receive-only drain ends while the urgent write is still running.
+    persister.onBulkIngestStart();
+    persister.scheduleDeferred();
+    await persister.onBulkIngestEnd(live);
+    rejectWrite(new Error('disk'));
+    await flushMacrotask();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('persistMlsStructuralCheckpoint and the measurement switch', () => {
+  const live = { bufferUi: true, showOverlay: false };
+
+  afterEach(() => unregisterMlsStatePersister());
+
+  async function run(budget: number) {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    const persistCheckpoint = vi.fn(() => {
+      calls += 1;
+      return calls === 1 ? Promise.reject(new Error('disk')) : Promise.resolve();
+    });
+    const persister = createMlsStatePersister({
+      mlsService: { persistCheckpoint } as any,
+      receiveSkipBudget: budget,
+    });
+    registerMlsStatePersister(persister);
+    await persistMlsStructuralCheckpoint().catch(() => {});
+    // The next live receive-only drain.
+    persister.onBulkIngestStart();
+    persister.scheduleDeferred();
+    await persister.onBulkIngestEnd(live);
+    await flushMacrotask();
+    return persistCheckpoint;
+  }
+
+  it('OFF retries a failed structural checkpoint on the next drain', async () => {
+    expect(await run(0)).toHaveBeenCalledTimes(2);
+  });
+
+  it('ON retries it too: a structural write that failed is still owed, so the drain never skips', async () => {
+    expect(await run(10)).toHaveBeenCalledTimes(2);
+  });
+});

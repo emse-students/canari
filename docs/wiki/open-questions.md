@@ -101,6 +101,31 @@ three app-level consequences are not measured:
 - push frames while it is dead;
 - resume, and read the log for `live-ahead`, duplicates and `unreadable for good`.
 
+**The measurement switch (2026-10-18, inert).** No build holds a state ahead of the disk, so the
+protocol above cannot be run as written. `mlsStatePersister` takes a `receiveSkipBudget` (default 0 =
+today's behaviour, pinned by a test), read by `receiveCheckpointSkipBudget`
+(`mls-client/receiveCheckpointSkip.ts`) only on a development-estate build AND with an explicit
+`canari_dev_checkpoint_skip_k` key:
+
+- It skips ONLY a LIVE drain (`bufferUi`) that never called `persistNow` (so never a commit, a
+  Welcome or a structural change) and whose window overlapped no history replay or restore, which
+  save a stream cursor and seen hashes of their own and must never get ahead of the MLS state.
+- The budget counts application FRAMES (ratchet generations, one `scheduleDeferred` each), not
+  drains: a catch-up drain of hundreds of frames reaches it and checkpoints at once. The cap (500)
+  stays under `maximum_forward_distance` (2000).
+- A failed write restores the urgency it was covering, so the retry is not skipped, and no skip is
+  decided while an urgent checkpoint is still in flight.
+- Frames read outside the conversation path report themselves (`noteReceivedFrame`): a key-group
+  commit is structural (never skipped), a key-group seed or a frame refused for its sender spends a
+  counted generation, and a partial gap replay (`applied > 0`, not healed) asks for a checkpoint.
+- **The real worst case** is K-1 skipped frames plus the size of the drain that reaches the budget
+  (that drain checkpoints, but a kill during it loses it): with the cap of 500 that stays under
+  `maximum_forward_distance` (2000) while a drain stays under ~1500 frames.
+- It logs at warn on every skip. An explicit `flush` (background, logout, send) writes as before.
+- **To use it on the Mi 9T:** `VITE_DEPLOY_ENVIRONMENT=development` must be set before
+  `bun a1apk.mjs --debug` (the bench build does not set it, and a store tester WebView is not
+  inspectable), then set `localStorage.canari_dev_checkpoint_skip_k` through the devtools socket.
+
 ### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
 
 Since the sender coalescing, a DM or group watermark is sent when the 2 s window after reading ends,

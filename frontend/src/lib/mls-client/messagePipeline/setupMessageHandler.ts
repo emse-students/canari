@@ -41,6 +41,7 @@ import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { SenderMismatchError } from '../verifiedSender';
 import { createMlsStatePersister } from '../mlsStatePersister';
+import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import type { MessageHandlerDeps } from './deps';
@@ -114,12 +115,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Same rationale for the recovery cooldowns: a re-login must not inherit a stale throttle.
   resetReAddCooldowns();
 
-  const statePersister = createMlsStatePersister({ mlsService, log });
+  const receiveSkipBudget = receiveCheckpointSkipBudget();
+  if (receiveSkipBudget > 0) {
+    console.warn(
+      `[MLS] MEASUREMENT SWITCH ON (non-production build): live receive-only drains skip their checkpoint while fewer than ${receiveSkipBudget} frames are unsaved`
+    );
+  }
+  const statePersister = createMlsStatePersister({ mlsService, log, receiveSkipBudget });
   registerMlsStatePersister(statePersister);
   installMlsStatePersisterLifecycle(statePersister);
 
   // The persister satisfies BulkIngestObserver (onBulkIngestStart/End): it defers the encrypted
-  // MLS checkpoint to one flush per drain. The UI render buffer registers its own observer in
+  // MLS checkpoint to one flush per window (per drain, per history replay). The UI render buffer registers its own observer in
   // sessionAuth; the two are independent subscribers, no longer multiplexed over one hook.
   mlsService.addBulkIngestObserver(statePersister);
 
@@ -1149,6 +1156,7 @@ async function handleKnownGroup({
     // `assertVerifiedSender` already said so at ERROR and reported it; nothing here is a heal.
     if (kind === 'sender-mismatch') {
       noteConsumed();
+      statePersister.noteReceivedFrame(false);
       return true;
     }
     // EVICTED - and this arm is the whole reason the kind exists. The frame is for a group whose
@@ -1219,9 +1227,10 @@ async function handleKnownGroup({
       let rungOneIsExhausted = false;
       try {
         const replay = await attemptCommitReplay(mlsService, groupId, userId, log);
+        // Healed or not, applied commits moved the epoch: a partial replay is as durable-worthy.
+        if (replay.healed || replay.applied > 0) statePersister.persistNow();
         if (replay.healed) {
           clearEpochGap(groupId);
-          statePersister.persistNow();
           return true;
         }
         rungOneIsExhausted = replay.belowFloor || replay.gapAt !== undefined;

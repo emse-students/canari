@@ -36,6 +36,7 @@ import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
   persistMlsStructuralCheckpoint,
   scheduleOutboundMlsPersist,
+  noteInboundMlsFrame,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import {
   MAX_BURN_GENERATIONS,
@@ -3362,9 +3363,11 @@ export abstract class BaseMlsService implements IMlsService {
     let exhausted: string | undefined;
     try {
       const replay = await attemptCommitReplay(this, groupId, this.userId, log);
+      // Applied commits moved the epoch whether or not the gap closed: a partial replay is as
+      // durable-worthy as a healed one.
+      if (replay.healed || replay.applied > 0) scheduleOutboundMlsPersist();
       if (replay.healed) {
         clearEpochGap(groupId);
-        scheduleOutboundMlsPersist();
         return;
       }
       // "Still behind" merges two futures: one where the next frame closes the gap, and one where
@@ -3604,6 +3607,8 @@ export abstract class BaseMlsService implements IMlsService {
     let verdict: DistributionGapVerdict = 'replay-failed';
     try {
       const replay = await attemptCommitReplay(this, groupId, this.userId, log);
+      // Applied commits moved the epoch whatever verdict follows (caught up, evicted, partial).
+      if (replay.applied > 0) scheduleOutboundMlsPersist();
       if (replay.activeEpoch !== undefined) {
         this.distributionGapTarget.set(
           groupId,
@@ -3616,7 +3621,9 @@ export abstract class BaseMlsService implements IMlsService {
       if (!(await this.isGroupActive(groupId))) {
         verdict = 'evicted';
       } else if (this.getEpoch(groupId) >= (this.distributionGapTarget.get(groupId) ?? target)) {
-        scheduleOutboundMlsPersist();
+        // Already asked above when commits applied; a second call after the `await` there would
+        // split the microtask merge and queue a SECOND full checkpoint.
+        if (replay.applied === 0) scheduleOutboundMlsPersist();
         verdict = 'caught-up';
       } else if (replay.belowFloor || replay.gapAt !== undefined) {
         verdict = 'replay-exhausted';
@@ -3982,9 +3989,16 @@ export abstract class BaseMlsService implements IMlsService {
       });
     } catch (e) {
       // REFUSED FOR ITS SENDER, BUT DECRYPTED: the generation is spent all the same (WP-G2-1b).
-      if (e instanceof SenderMismatchError) noteFrameConsumed(this.userId, groupId, ciphertext);
+      if (e instanceof SenderMismatchError) {
+        noteFrameConsumed(this.userId, groupId, ciphertext);
+        noteInboundMlsFrame(false);
+      }
       throw e;
     }
+    // A key-group commit (null plaintext) is structural, and a seed or application frame spends a
+    // generation: neither goes through the conversation path, so the persister is told here or a
+    // live drain of them would look receive-only and empty to the measurement switch.
+    noteInboundMlsFrame(plaintext === null);
     // A DISTRIBUTION FRAME SPENDS A GENERATION LIKE ANY OTHER, so it is recorded like any other.
     // This group's frames are not what a conversation replay walks, so the mark is cheap insurance
     // rather than a known fix - and the direction it can be wrong in is the safe one: a recorded
