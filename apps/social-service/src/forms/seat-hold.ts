@@ -36,6 +36,14 @@ export const PAYMENT_REQUEST_LIFETIME_SECONDS =
 export const PREVIOUS_PAYMENT_OPEN = 'PREVIOUS_PAYMENT_OPEN';
 
 /**
+ * The `code` of the 409 a SECOND submit gets on a single-answer form once the person already has an
+ * answer that counts (`answerHoldingWhere`): paid, free, waiting for cash, paid over capacity, or
+ * an online one still within its hold. Read from the submissions table under the form lock, never
+ * from a client flag. The client words it through Paraglide (`paymentRefusal.ts`).
+ */
+export const ALREADY_ANSWERED = 'ALREADY_ANSWERED';
+
+/**
  * The instant before which a `pending` row no longer holds a seat, as SQL on the DATABASE clock.
  *
  * The database clock, not the service's: `paymentRequestedAt` is written by the database's own `now()` into
@@ -118,6 +126,39 @@ export function seatHoldingWhere(
     livePendingWhere(formId, extra),
     { ...extra, formId, paymentStatus: 'pending_cash' },
   ];
+}
+
+/**
+ * The submissions that ARE a person's answer on a single-answer form: every seat-holding row, plus
+ * `paid_over_capacity` - the money landed, so a second submit would be a second charge for one
+ * answer even though no seat was given. A `cancelled` or `expired` row (a request declined,
+ * cancelled or expired) is not an answer: the person may answer again.
+ */
+export function answerHoldingWhere(
+  formId: string,
+  extra: FindOptionsWhere<Submission> = {}
+): FindOptionsWhere<Submission>[] {
+  return [
+    ...seatHoldingWhere(formId, extra),
+    { ...extra, formId, paymentStatus: 'paid_over_capacity' },
+  ];
+}
+
+/**
+ * The one answer the form page shows among a person's answer rows (`answerHoldingWhere`, newest
+ * first): money landed (`SETTLED_PAYMENT_STATUSES`) first, then any other decided status (`free`,
+ * `pending_cash`), and an online `pending` last - it is the only one a retry may replace, so
+ * showing it over a paid row offers a retry the server refuses. Newest first within each rank.
+ */
+export function pickShownAnswer<T extends { paymentStatus: string }>(
+  newestFirst: readonly T[]
+): T | undefined {
+  const rank = (row: T) =>
+    SETTLED_PAYMENT_STATUSES.has(row.paymentStatus) ? 0 : row.paymentStatus === 'pending' ? 2 : 1;
+  return newestFirst.reduce<T | undefined>(
+    (best, row) => (best === undefined || rank(row) < rank(best) ? row : best),
+    undefined
+  );
 }
 
 /** An online `pending` submission still younger than the hold: the one branch with a clock in it. */

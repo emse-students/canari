@@ -89,6 +89,11 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(new SocialApiError('x', 'AMOUNT_OUT_OF_RANGE', 400))).toBeNull();
   });
 
+  it('words a second answer on a single-answer form from its code', () => {
+    const err = new SocialApiError('You have already answered this form.', 'ALREADY_ANSWERED', 409);
+    expect(providerRefusalMessage(err)).toBe(m.form_already_answered());
+  });
+
   it('is null for any other failure, so each surface keeps its own generic line', () => {
     expect(providerRefusalMessage(new SocialApiError('boom', null, 500))).toBeNull();
     expect(providerRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();

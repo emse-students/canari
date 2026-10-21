@@ -2449,6 +2449,7 @@
   "form_view_error_answer": "Veuillez répondre à \"{label}\"",
   "form_view_error_payment_failed": "Le paiement a échoué. Vous pouvez soumettre à nouveau le formulaire.",
   "form_previous_payment_open": "Votre demande de paiement précédente est encore ouverte. Réessayez quand elle aura expiré, au plus tard 30 minutes après son lancement.",
+  "form_already_answered": "Vous avez déjà répondu à ce formulaire : aucun nouveau paiement n'a été demandé.",
   "form_view_submission_already_paid": "Votre paiement précédent a bien été reçu : votre réponse est enregistrée, rien de plus à payer.",
   "form_view_submission_success": "Réponse envoyée !",
   "legal_eyebrow": "Mentions légales",

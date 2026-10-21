@@ -12,6 +12,7 @@ import {
   PAYMENT_REQUEST_LIFETIME_SECONDS,
   PENDING_PAYMENT_HOLD_SECONDS,
   PREVIOUS_PAYMENT_OPEN,
+  ALREADY_ANSWERED,
   overCapacityFirst,
   seatHoldingWhere,
 } from './seat-hold';
@@ -144,6 +145,15 @@ describe('FormsService - the seat a pending payment holds', () => {
         async ({ where }: { where: Record<string, unknown>[] }) =>
           rows.filter((r) => matches(r, where)).length
       ),
+      find: jest.fn(
+        async ({ where, order }: { where: Record<string, unknown>[]; order?: object }) => {
+          expect(order).toEqual({ createdAt: 'DESC' });
+          return rows
+            .filter((r) => matches(r, where))
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+            .map((r) => ({ ...r }));
+        }
+      ),
       update: jest.fn(async (id: string, values: Partial<Row>) => {
         Object.assign(byId(id), values);
       }),
@@ -170,6 +180,9 @@ describe('FormsService - the seat a pending payment holds', () => {
         return builder;
       },
       manager: {
+        find: jest.fn(async (_entity: unknown, { where }: { where: Record<string, unknown>[] }) =>
+          rows.filter((r) => matches(r, where)).map((r) => ({ ...r }))
+        ),
         transaction: jest.fn(async (level: string, run: (manager: unknown) => Promise<unknown>) => {
           // REPEATABLE READ takes its snapshot BEFORE the lock wait, so the count after it would not
           // see the previous holder's commit: the seat lock is only sound in READ COMMITTED.
@@ -193,6 +206,10 @@ describe('FormsService - the seat a pending payment holds', () => {
               expect(entity).toBe(Submission);
               const row = rows.find((r) => matches(r, where));
               return row ? { ...row } : null;
+            },
+            find: async (_entity: unknown, { where }: { where: Record<string, unknown>[] }) => {
+              await roundTrip();
+              return rows.filter((r) => matches(r, where)).map((r) => ({ ...r }));
             },
             count: async (_entity: unknown, { where }: { where: Record<string, unknown>[] }) => {
               await roundTrip();
@@ -1045,6 +1062,177 @@ describe('FormsService - the seat a pending payment holds', () => {
       ]);
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ paymentStatus: 'pending', stripeSessionId: 'uuid-1' });
+    });
+
+    // P1-b (2026-10-21): a submit after a PAID answer issued a new request/do, and a second paid
+    // purchase was recorded for one answer. Control: with BOTH ALREADY_ANSWERED checks removed from
+    // `submit`, these fail on the request issued and the second row written.
+    it.each([['paid'], ['paid_over_capacity'], ['free'], ['pending_cash']])(
+      'refuses a second submit once a %s answer exists, issuing NO request',
+      async (status) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: null,
+          basePrice: 1500,
+          provider: 'lydia',
+          rows: [mine({ paymentStatus: status })],
+        });
+        const log = jest.spyOn((service as any).logger, 'log');
+        const refusal = await retry(service).catch((e: unknown) => e);
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({
+          code: ALREADY_ANSWERED,
+        });
+        expect(core.calls).toEqual([]);
+        expect(rows).toHaveLength(1);
+        expect(rows[0].paymentStatus).toBe(status);
+        // Expected (a second tab), so INFO and not an accusation.
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('already answers'));
+      }
+    );
+
+    // Control for the guard: a released answer (declined / cancelled / expired request) is no
+    // answer, and a live pending row is the one a retry reuses - both still go through.
+    it.each([['cancelled'], ['expired']])(
+      'still lets the person answer again after a %s answer',
+      async (status) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: null,
+          basePrice: 1500,
+          provider: 'lydia',
+          rows: [mine({ paymentStatus: status })],
+        });
+        await expect(retry(service)).resolves.toMatchObject({
+          checkoutUrl: 'https://lydia.example/pay/1',
+        });
+        expect(core.calls.map((c) => c.route)).toEqual(['create-checkout-session']);
+        expect(rows).toHaveLength(2);
+      }
+    );
+
+    it('still reuses the live pending row on a retry, and a first submit still issues', async () => {
+      const first = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [],
+      });
+      await expect(retry(first.service)).resolves.toMatchObject({
+        checkoutUrl: 'https://lydia.example/pay/1',
+      });
+      const { service, rows, core } = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [mine()],
+      });
+      await expect(retry(service)).resolves.toMatchObject({
+        checkoutUrl: 'https://lydia.example/pay/1',
+      });
+      expect(core.calls.map((c) => c.route)).toEqual(['cancel-request', 'create-checkout-session']);
+      expect(rows).toHaveLength(1);
+    });
+
+    it('lets a multiple-answer form take a second paid answer', async () => {
+      const { service, rows } = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        provider: 'lydia',
+        allowMultipleSubmissions: true,
+        rows: [mine({ paymentStatus: 'paid' })],
+      });
+      await expect(retry(service)).resolves.toMatchObject({ checkoutUrl: expect.any(String) });
+      expect(rows).toHaveLength(2);
+    });
+
+    // Review of #2215: an OLDER paid answer hidden behind a NEWER live pending row. The guard read
+    // the newest row only, saw the reused one and let a second request out. Order-independent:
+    // both insertion orders, and the refusal comes BEFORE the settle cancels anything at Lydia.
+    it.each([['paid first'], ['pending first']])(
+      'refuses a retry on a live pending row while an older paid answer exists (%s)',
+      async (order) => {
+        const paid = row({
+          id: 'old-paid',
+          paymentStatus: 'paid_over_capacity',
+          createdAt: ago(3_600_000),
+        });
+        const live = mine({ createdAt: ago(60_000) });
+        const { service, rows, core } = makeStore({
+          maxSubmissions: null,
+          basePrice: 1500,
+          provider: 'lydia',
+          rows: order === 'paid first' ? [paid, live] : [live, paid],
+        });
+        const refusal = await retry(service).catch((e: unknown) => e);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({
+          code: ALREADY_ANSWERED,
+        });
+        expect(core.calls).toEqual([]);
+        expect(rows.find((r) => r.id === 'mine')).toMatchObject({
+          paymentStatus: 'pending',
+          stripeSessionId: 'uuid-old',
+        });
+      }
+    );
+
+    // The guard UNDER THE LOCK is the authoritative one: two submits of the same person in parallel
+    // both pass the early guard (neither row exists yet) and queue on the form lock. A FREE form
+    // has no live pending row for the second to trip on, so only the lock-held check stops it from
+    // inserting a second answer. Control: with that check removed, two `free` rows are written.
+    it('refuses the second of two simultaneous answers by the same person, under the lock', async () => {
+      const { service, rows } = makeStore({ maxSubmissions: null, rows: [] });
+      const results = await Promise.allSettled([retry(service), retry(service)]);
+      expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+      const refusal = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      expect((refusal.reason as ConflictException).getResponse()).toMatchObject({
+        code: ALREADY_ANSWERED,
+      });
+      expect(rows.map((r) => r.paymentStatus)).toEqual(['free']);
+    });
+
+    // Review of #2215: a legacy OLDER paid row behind a NEWER live pending one. The page took the
+    // newest and showed "pending", offering a retry the guard refuses with ALREADY_ANSWERED.
+    // Control: with the newest row picked again, both orders show `pending`.
+    it.each([['paid'], ['paid_over_capacity'], ['free']])(
+      'shows an older %s answer over a newer live pending row, in either insertion order',
+      async (status) => {
+        const settled = row({ id: 'old', paymentStatus: status, createdAt: ago(3_600_000) });
+        const live = mine({ createdAt: ago(60_000) });
+        for (const rows of [
+          [settled, live],
+          [live, settled],
+        ]) {
+          const { service } = makeStore({ maxSubmissions: null, basePrice: 1500, rows });
+          // `submissionId` is the SHOWN row's: the page asks `confirm-payment` about it, so a
+          // newest-row id beside an older row's status would poll the wrong answer.
+          await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
+            hasSubmitted: true,
+            paymentStatus: status,
+            submissionId: 'old',
+          });
+        }
+      }
+    );
+
+    it('shows the live pending row when it is the only answer', async () => {
+      const { service } = makeStore({ maxSubmissions: null, basePrice: 1500, rows: [mine()] });
+      await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
+        hasSubmitted: true,
+        paymentStatus: 'pending',
+        submissionId: 'mine',
+      });
+    });
+
+    // The page reads the same predicate as the guard: a paid-over-capacity answer is answered.
+    it('shows a paid-over-capacity answer as answered, as the guard refuses it', async () => {
+      const { service } = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        rows: [mine({ paymentStatus: 'paid_over_capacity' })],
+      });
+      await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
+        hasSubmitted: true,
+        paymentStatus: 'paid_over_capacity',
+      });
     });
 
     // A row naming no request is one whose request is being issued right now: a second request
