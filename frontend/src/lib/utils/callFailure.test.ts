@@ -53,6 +53,25 @@ describe('describeCallFailure', () => {
     }
   );
 
+  it.each([['initiate'], ['ring'], ['room-token'], ['ice-servers']] as const)(
+    'reads the kill switch (CALLS_DISABLED) from %s as "calls are unavailable", not as a failure',
+    (step) => {
+      const out = describeCallFailure(
+        new CallInitiateError(step, 403, 'calls failed (403)', 'CALLS_DISABLED')
+      );
+
+      expect(out).toBe(m.call_calls_disabled());
+    }
+  );
+
+  it('reads an audio-only server refusing a video ring (CALLS_VIDEO_DISABLED) as such', () => {
+    const out = describeCallFailure(
+      new CallInitiateError('ring', 403, 'calls/ring failed (403)', 'CALLS_VIDEO_DISABLED')
+    );
+
+    expect(out).toBe(m.call_video_disabled());
+  });
+
   it('a 403 with no code keeps the generic refusal line', () => {
     const out = describeCallFailure(new CallInitiateError('initiate', 403, SERVER_SENTENCE));
 

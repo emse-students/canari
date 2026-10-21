@@ -29,6 +29,7 @@ const CONFIG = {
   maintenanceMessage: null,
   minClientVersion: '1.2.7',
   paymentProvider: 'disabled',
+  callsMode: 'audio',
 };
 const CEILING_REFUSAL =
   "minClientVersion 9.9.9 is above this server's own version 1.3.0: no client that can satisfy it has been built, so every client would be locked out.";
@@ -133,6 +134,20 @@ describe('admin/platform minClientVersion', () => {
     );
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the calls kill switch back as loaded: an unrelated save never reopens or closes calls', async () => {
+    route(
+      () => new Response(JSON.stringify({ ...CONFIG, minClientVersion: '1.2.8' }), { status: 200 })
+    );
+    await render();
+    await submitWith('1.2.8');
+
+    const body = JSON.parse((patchCalls()[0][1] as { body: string }).body) as {
+      callsMode: string;
+    };
+    expect(body.callsMode).toBe('audio');
+    expect(document.body.textContent).toContain(m.admin_platform_calls_mode_label());
   });
 
   it('sends a non-admin away before any request is made', async () => {

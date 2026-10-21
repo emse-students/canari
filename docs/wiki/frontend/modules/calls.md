@@ -267,9 +267,11 @@ Then, on each side:
    (`CALL_ICE_TRANSPORT_POLICY`): host, then server-reflexive, then the Cloudflare relay. The trade:
    each party can learn the other's public IP.
 5. On `connected` the client logs `[Call] selected path pair=<local>/<proto>-><remote>/<proto>
-   relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the only place
-   that says whether a call was billed. From then on a `[CALL_REPORT]` line every 10 s and one at
-   the end carries the same pair plus rates, loss, audio levels and the E2E worker's frame counts
+   relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the client's own
+   reading of its path, a DIAGNOSTIC. The TURN budget never reads it: it reads what Cloudflare
+   metered ([the kill switch and the metered budget](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
+   From then on a `[CALL_REPORT]` line every 10 s and one at the end carries the same pair plus
+   rates, loss, audio levels and the E2E worker's frame counts
    ([calls-revival-plan section 6](calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence)).
 6. `PeerLeft` (the other party hung up, its away seat expired, or this device was replaced by a
    sibling) ends the call; a second `PeerReady` (the other party's device was replaced) rebuilds the
@@ -329,9 +331,81 @@ dev serves lot 1, the ring window (#2010) and the call permission (#2048). Unset
 STUN only. The phone procedure is
 [check CALL-L1](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both).
 
-**Still open from the plan:** the TURN budget estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts EVERY
-call as relayed; in P2P only `relayed=yes` calls cost, so it over-counts (harmless on dev). (A
-conversation at `none` ringing an OPEN app was closed on 2026-10-18 by the call permission below.)
+**The TURN budget estimator is gone (B7, 2026-10-21):** it counted EVERY call as relayed at
+3000 kbps; the budget now reads Cloudflare's own meter
+([below](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)). (A conversation at
+`none` ringing an OPEN app was closed on 2026-10-18 by the call permission below.)
+
+## The server's kill switch and the metered TURN budget (B12, B7, 2026-10-21)
+
+Two server-side controls the owner asked for before calls reach production (2026-10-21: a server
+kill switch, YES; the TURN budget fixed before its production value is touched). Neither flips
+anything: production's switch defaults to `off`, and `CALLS_COMPILED` is untouched.
+
+### The kill switch - `platform_config.calls_mode`
+
+| Value | What the server allows |
+|---|---|
+| `off` (the default, migration 014) | nothing starts: `initiate`, `ring`, `room-token` and `ice-servers` answer 403 `CALLS_DISABLED` |
+| `audio` | every call, except a ring that asks for video: 403 `CALLS_VIDEO_DISABLED` |
+| `audio_video` | everything |
+
+- **Where it lives.** One column on core-service's singleton row (`014_platform_config_calls_mode.sql`,
+  a CHECK constraint holds the three values), set by a global admin at `/admin/platform` through the
+  existing `PATCH /api/users/admin/platform` (`callsMode`). A change is logged at `warn`
+  (`callsMode off -> audio`). The plan's `testers` value was not built: pre-release builds talk to
+  the dev estate, whose OWN row is its own switch.
+- **Who enforces it.** chat-delivery-service reads the row with plain SQL on EVERY call request that
+  starts or joins a call (`utils/calls-mode.ts`, `CallsService.assertCallsOpen`), never cached, so a
+  kill holds from the next request. A missing row reads as `off`; a value outside the three THROWS
+  (a switch that cannot be read is not read as open). `ring-end` and `presence` are never gated: they
+  stop or record a call.
+- **What it cannot do.** A call already connected is peer to peer and never touches the server
+  again: it runs to its end. The switch stops every new call, every callee still to answer, and
+  every new TURN credential. A modified client could still turn its camera on inside an `audio`
+  call (renegotiation goes through the relay, which reads no mode); it costs the server nothing, and
+  relayed bytes are on the meter below.
+- **What the client does.** `GET /api/version` publishes `calls: { mode }`; `serverCallsMode()`
+  (`stores/appVersionCheck.svelte.ts`) reads it, `off` until an answer came - absent or unknown
+  reads as `off`, the closed direction. `utils/callsAvailability.ts` joins it to the build switches:
+  the audio button needs `CALLS_ENABLED` and a mode other than `off`; the video button and the
+  in-call camera control need `CALLS_VIDEO_ENABLED` and `audio_video`. A refusal at any setup step
+  carries its code (`CallInitiateError`, now also for `ring` and `ice-servers`) and
+  `describeCallFailure` words it (`call_calls_disabled`, `call_video_disabled`) - the call ends as a
+  refused setup, with no missed-call line when it failed before the invite.
+- **Dev** seeds `audio_video` (`tools/dev-seed/seed.ts`). An EXISTING dev database gets the
+  migration's `off` and must be opened once at `/admin/platform` after the deploy that carries
+  migration 014 ([backlog](../../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
+### The TURN budget reads Cloudflare's meter (B7)
+
+**What was wrong.** `getIceServers` refused credentials once a Redis counter reached
+`CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` (950), and the counter was an ESTIMATE: call duration x
+`CALL_RELAY_KBPS_PER_DEVICE` (3000), added when a device cleared its presence. Every call counted
+as relayed, at a video rate - in P2P only a call whose selected pair is a relay candidate costs, and
+an audio call is tens of kbps. 950 GB read as ~350 call-hours a month, after which every call of
+the month would have been refused.
+
+**Why not the client's path.** Counting `relayed=yes` calls from the client's final path (B6) is a
+claim the server cannot verify, and CALL-PATH-LINE showed the client's line can be wrong without
+any malice; a client that lies under-counts with no bound.
+
+**What it reads instead** (`services/turn-usage-meter.service.ts`): Cloudflare's GraphQL analytics,
+dataset `callsTurnUsageAdaptiveGroups`, `sum { egressBytes }` for the WHOLE ACCOUNT from the first of
+the UTC month to today. Egress is what Cloudflare bills and its free allowance is per account, so
+another key on the account spends the same allowance. Direct calls put nothing on the meter by
+construction; no client says anything. Configuration: `CLOUDFLARE_ACCOUNT_ID` (32 hex) and
+`CLOUDFLARE_TURN_ANALYTICS_TOKEN` (a token with Account Analytics read), `env-manifest.tsv` `warn`
+on both estates. One reading is reused for 60 s (`turn:metered:<YYYY-MM>`): a member hammering
+`ice-servers` must not spend the GraphQL quota, whose exhaustion would refuse every call.
+
+**No fallback.** Unconfigured, unreachable, a GraphQL error, no visible account or a non-number:
+503 and NO credential is minted - the estimator is deleted, not kept behind it. The limits, named:
+credentials already issued stay valid for `CLOUDFLARE_TURN_TTL_SECONDS` (2 h), so the overshoot past
+the budget is what the credentials outstanding at that moment relay, plus the meter's lag (minutes).
+**Unverified:** the query shape against the live API (read from Cloudflare's docs, 2026-10-21) and
+whether a calendar month is within the dataset's query window - the first dev deploy with the two
+secrets answers both; a refusal names itself in the `[ICE]` error line.
 
 ## A network blip does not end the call (CALL-WIFI, 2026-10-19)
 
@@ -1616,12 +1690,12 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, bind the new room ID to the group (Redis `call:room:<id>`), return a room token + room ID + `ringTimeoutMs`. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET` (`room_id`, `sub`, `group_id`), valid 5 minutes |
+| POST | `/api/calls/initiate` | 403 `CALLS_DISABLED` when the [kill switch](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) is `off` (as are `room-token`, `ring` and `ice-servers`). Verify membership, bind the new room ID to the group (Redis `call:room:<id>`), return a room token + room ID + `ringTimeoutMs`. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET` (`room_id`, `sub`, `group_id`), valid 5 minutes |
 | GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window |
-| GET | `/api/calls/ice-servers` | Get ICE server configuration (Cloudflare TURN) |
+| GET | `/api/calls/ice-servers` | Get ICE server configuration (Cloudflare TURN); 503 once Cloudflare's metered egress for the month reaches the budget, or when the meter cannot be read |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
-| POST | `/api/calls/ring` | Fan out incoming-call ring to the group members whose [call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18) allows it |
+| POST | `/api/calls/ring` | 403 `CALLS_VIDEO_DISABLED` for a video ring when the mode is `audio`. Fan out incoming-call ring to the group members whose [call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18) allows it |
 | PATCH | `/api/mls/groups/:groupId/calls` | Set the caller's call permission for one conversation (`{ allowed: boolean }`) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere |
 

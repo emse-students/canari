@@ -14,12 +14,15 @@
   import type { PickerOption } from '$lib/components/ui/picker';
 
   type PaymentProviderChoice = 'lydia' | 'disabled';
+  /** The server's kill switch for calls (`platform_config.calls_mode`, migration 014). */
+  type CallsModeChoice = 'off' | 'audio' | 'audio_video';
 
   type PlatformConfig = {
     maintenanceEnabled: boolean;
     maintenanceMessage: string | null;
     minClientVersion: string;
     paymentProvider: PaymentProviderChoice;
+    callsMode: CallsModeChoice;
   };
 
   let loading = $state(true);
@@ -31,6 +34,12 @@
   let maintenanceMessage = $state('');
   let minClientVersion = $state('0.0.0');
   let paymentProvider = $state<PaymentProviderChoice>('disabled');
+  let callsMode = $state<CallsModeChoice>('off');
+  const CALLS_MODE_OPTIONS: PickerOption[] = $derived([
+    { value: 'off', label: m.admin_platform_calls_mode_off() },
+    { value: 'audio', label: m.admin_platform_calls_mode_audio() },
+    { value: 'audio_video', label: m.admin_platform_calls_mode_audio_video() },
+  ]);
   /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
     { value: 'lydia', label: 'Lydia' },
@@ -166,6 +175,7 @@
       maintenanceMessage = data.maintenanceMessage ?? '';
       minClientVersion = data.minClientVersion;
       paymentProvider = data.paymentProvider;
+      callsMode = data.callsMode;
     } catch (e) {
       Log.d('admin.platform.loadConfig failed', e);
       error = m.admin_platform_load_error();
@@ -187,6 +197,7 @@
           maintenanceMessage: maintenanceMessage.trim() || null,
           minClientVersion: minClientVersion.trim(),
           paymentProvider,
+          callsMode,
         }),
       });
       if (!res.ok) {
@@ -198,6 +209,7 @@
       maintenanceMessage = data.maintenanceMessage ?? '';
       minClientVersion = data.minClientVersion;
       paymentProvider = data.paymentProvider;
+      callsMode = data.callsMode;
       savedMessage = m.admin_platform_saved_label();
       void refreshAppVersionCheck();
     } catch (e) {
@@ -311,6 +323,25 @@
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_payment_provider_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="calls-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_calls_mode_label()}
+        </label>
+        <Picker
+          id="calls-mode"
+          value={callsMode}
+          options={CALLS_MODE_OPTIONS}
+          label={m.admin_platform_calls_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            if (v === 'off' || v === 'audio' || v === 'audio_video') callsMode = v;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_calls_mode_hint()}
         </p>
       </div>
 

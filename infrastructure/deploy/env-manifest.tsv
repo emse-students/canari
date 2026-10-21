@@ -79,6 +79,8 @@ CERCLE_API_KEY	warn	skip	secret:CERCLE_API_KEY	/api/public/cotisant-status rejec
 FIREBASE_SERVICE_ACCOUNT_JSON	warn	warn	secret:FIREBASE_SERVICE_ACCOUNT_JSON	push notifications are disabled
 CLOUDFLARE_CALLS_API_TOKEN	warn	warn	secret:CLOUDFLARE_CALLS_API_TOKEN	calls fail - ice-servers answers 503
 CLOUDFLARE_TURN_KEY_ID	warn	warn	secret:CLOUDFLARE_TURN_KEY_ID	calls fail - ice-servers answers 503
+CLOUDFLARE_ACCOUNT_ID	warn	warn	secret:CLOUDFLARE_ACCOUNT_ID	calls fail - ice-servers answers 503, the TURN budget's meter cannot be read
+CLOUDFLARE_TURN_ANALYTICS_TOKEN	warn	warn	secret:CLOUDFLARE_TURN_ANALYTICS_TOKEN	calls fail - ice-servers answers 503, the TURN budget's meter cannot be read
 MIGALLERY_API_KEY	warn	warn	secret:MIGALLERY_API_KEY	the avatar service does not work
 MICONNECT_EDITOR_TOKEN	warn	skip	secret:MICONNECT_EDITOR_TOKEN	an admin's profile edit is refused (typed: not configured) - production only, because dev and production share ONE MiConnect
 GOOGLE_SAFE_BROWSING_API_KEY	warn	warn	secret:GOOGLE_SAFE_BROWSING_API_KEY	links are not checked against Safe Browsing

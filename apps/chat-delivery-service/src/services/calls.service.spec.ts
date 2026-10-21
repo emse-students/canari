@@ -11,6 +11,7 @@ import {
 import { getApps } from 'firebase-admin/app';
 import { CALL_RING_TIMEOUT_SEC, CallsService } from './calls.service';
 import { ApnsVoipService } from './apns-voip.service';
+import { TurnUsageMeter } from './turn-usage-meter.service';
 import { GroupMember } from '../entities/group-member.entity';
 import { PushToken } from '../entities/push-token.entity';
 
@@ -39,13 +40,21 @@ async function ringAndSettle(
 
 describe('CallsService', () => {
   let service: CallsService;
+  /** What `platform_config.calls_mode` holds for the test; open by default so the call paths run. */
+  let callsMode: string | undefined = 'audio_video';
+  /**
+   * The database as the service reads it with plain SQL: the kill switch's row, and nothing else
+   * (no block, no group name) unless a test says otherwise. `undefined` = no platform_config row.
+   */
+  const baseQuery = (sql: string): Promise<unknown[]> =>
+    Promise.resolve(
+      sql.includes('platform_config') && callsMode !== undefined ? [{ calls_mode: callsMode }] : []
+    );
   const groupMemberRepo = {
     findOne: jest.fn(),
     find: jest.fn(),
     manager: {
-      query: jest.fn((_sql: string, _params?: unknown[]): Promise<unknown[]> =>
-        Promise.resolve([])
-      ),
+      query: jest.fn((sql: string, _params?: unknown[]): Promise<unknown[]> => baseQuery(sql)),
     },
   };
   const pushTokenRepo = {
@@ -74,27 +83,21 @@ describe('CallsService', () => {
       redisStore.delete(key);
       return Promise.resolve(1);
     }),
-    incrbyfloat: jest.fn((key: string, n: number) => {
-      const cur = parseFloat(redisStore.get(key) ?? '0') || 0;
-      const next = cur + Number(n);
-      redisStore.set(key, String(next));
-      return Promise.resolve(String(next));
-    }),
-    expire: jest.fn(() => Promise.resolve(1)),
   };
-
-  /** Current month's TURN-usage Redis key (matches the service's bucket). */
-  const turnUsageKey = `turn:usage:${new Date().toISOString().slice(0, 7)}`;
+  /** Cloudflare's metered egress for the month, in bytes - the TURN budget's only evidence (B7). */
+  const turnMeter = { monthEgressBytes: jest.fn(() => Promise.resolve(0)) };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     redisStore.clear();
+    callsMode = 'audio_video';
+    groupMemberRepo.manager.query.mockImplementation((sql: string) => baseQuery(sql));
+    turnMeter.monthEgressBytes.mockImplementation(() => Promise.resolve(0));
     // The room every ring test rings: opened by `caller` in `group-1`, its window not yet open.
     redisStore.set('call:room:call-1', JSON.stringify({ groupId: 'group-1', callerId: 'caller' }));
     delete process.env.CLOUDFLARE_CALLS_API_TOKEN;
     delete process.env.CLOUDFLARE_TURN_KEY_ID;
     delete process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB;
-    delete process.env.CALL_RELAY_KBPS_PER_DEVICE;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -114,6 +117,10 @@ describe('CallsService', () => {
         {
           provide: ApnsVoipService,
           useValue: apnsVoip,
+        },
+        {
+          provide: TurnUsageMeter,
+          useValue: turnMeter,
         },
       ],
     }).compile();
@@ -137,44 +144,190 @@ describe('CallsService', () => {
       groupId: 'group-1',
       userId: 'user-1',
     });
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
     await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
       ServiceUnavailableException
     );
+    expect(captured(error)).toContain('[ICE] Cloudflare TURN is not configured');
+    error.mockRestore();
   });
 
-  it('refuses TURN credentials once the monthly budget is reached', async () => {
-    groupMemberRepo.findOne.mockResolvedValue({
-      groupId: 'group-1',
-      userId: 'user-1',
+  /**
+   * B7: the budget is what Cloudflare METERED, never an estimate from call durations - so a month of
+   * direct calls (zero relayed bytes) never closes it, and relayed bytes past it always do.
+   */
+  describe('the TURN budget reads the metered egress', () => {
+    beforeEach(() => {
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'user-1' });
+      process.env.CLOUDFLARE_CALLS_API_TOKEN = 'token';
+      process.env.CLOUDFLARE_TURN_KEY_ID = 'key';
+      process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB = '10';
     });
-    process.env.CLOUDFLARE_CALLS_API_TOKEN = 'token';
-    process.env.CLOUDFLARE_TURN_KEY_ID = 'key';
-    process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB = '10';
-    // 10 GB budget = 10000 MB; seed just over it.
-    redisStore.set(turnUsageKey, '10001');
+    afterEach(() => jest.restoreAllMocks());
 
-    await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
-      ServiceUnavailableException
-    );
+    it('refuses TURN credentials once the metered egress reaches the budget', async () => {
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      turnMeter.monthEgressBytes.mockResolvedValue(10e9);
+      const fetchSpy = jest.spyOn(global, 'fetch');
+
+      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
+        ServiceUnavailableException
+      );
+      // Refused BEFORE asking Cloudflare for a credential.
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('mints credentials below the budget, however long the calls of the month lasted', async () => {
+      turnMeter.monthEgressBytes.mockResolvedValue(10e9 - 1);
+      const fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({ iceServers: [{ urls: ['turn:turn.example:3478?transport=udp'] }] }),
+            { status: 200 }
+          )
+        );
+
+      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).resolves.toEqual({
+        iceServers: [{ urls: 'turn:turn.example:3478?transport=udp' }],
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('mints nothing when the meter cannot be read - no credential without a budget', async () => {
+      turnMeter.monthEgressBytes.mockRejectedValue(
+        new ServiceUnavailableException('The call relay budget cannot be read on this server')
+      );
+      const fetchSpy = jest.spyOn(global, 'fetch');
+
+      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).rejects.toThrow(
+        ServiceUnavailableException
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('no longer estimates usage when a call ends - a presence clear writes no counter', async () => {
+      redisStore.set(
+        'call:user_active:user-1',
+        JSON.stringify({ deviceId: 'device-a', updatedAt: Date.now() - 10 * 60 * 1000 })
+      );
+
+      await service.reportCallPresence('user-1', 'device-a', { active: false });
+
+      expect([...redisStore.keys()].filter((k) => k.startsWith('turn:'))).toEqual([]);
+    });
   });
 
-  it('accumulates estimated TURN usage when a call ends', async () => {
-    process.env.CALL_RELAY_KBPS_PER_DEVICE = '3000';
-    // Seed an active presence that started 10 minutes ago.
-    redisStore.set(
-      'call:user_active:user-1',
-      JSON.stringify({
-        deviceId: 'device-a',
-        updatedAt: Date.now() - 10 * 60 * 1000,
-      })
-    );
+  /**
+   * B12: the server's kill switch, `platform_config.calls_mode`. Every request that starts or joins
+   * a call asks it; the ones that stop or record a call do not.
+   */
+  describe('the calls kill switch', () => {
+    beforeEach(() => {
+      process.env.CALL_ROOM_SECRET = 'test-secret';
+      process.env.CLOUDFLARE_CALLS_API_TOKEN = 'token';
+      process.env.CLOUDFLARE_TURN_KEY_ID = 'key';
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+      groupMemberRepo.find.mockResolvedValue([{ userId: 'caller' }, { userId: 'callee' }]);
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      delete process.env.CALL_ROOM_SECRET;
+      jest.restoreAllMocks();
+    });
 
-    await service.reportCallPresence('user-1', 'device-a', { active: false });
+    const disabled = { code: 'CALLS_DISABLED', message: 'Calls are not available on this server.' };
 
-    // 3000 kbps * 600 s / 8000 = 225 MB.
-    const used = parseFloat(redisStore.get(turnUsageKey) ?? '0');
-    expect(used).toBeGreaterThan(200);
-    expect(used).toBeLessThan(250);
+    it.each([
+      ['initiate', (s: CallsService) => s.initiateCall('caller', 'group-1')],
+      ['ring', (s: CallsService) => s.ringGroup('caller', 'group-1', 'call-1', false)],
+      ['room-token', (s: CallsService) => s.requestRoomToken('caller', 'group-1', 'call-1')],
+      ['ice-servers', (s: CallsService) => s.getIceServers('caller', 'group-1', 'call-1')],
+    ])('off refuses %s with CALLS_DISABLED, writing and minting nothing', async (_name, run) => {
+      callsMode = 'off';
+      const fetchSpy = jest.spyOn(global, 'fetch');
+
+      const refusal = await run(service).catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toEqual(disabled);
+      expect(redis.set).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(turnMeter.monthEgressBytes).not.toHaveBeenCalled();
+      expect(fcmSend).not.toHaveBeenCalled();
+    });
+
+    it('reads a missing row as off - a database core has not set up never calls', async () => {
+      callsMode = undefined;
+
+      await expect(service.initiateCall('caller', 'group-1')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('refuses rather than guesses when the column holds a value nobody understands', async () => {
+      callsMode = 'on';
+
+      await expect(service.initiateCall('caller', 'group-1')).rejects.toThrow(/unknown value: on/);
+      expect(redis.set).not.toHaveBeenCalled();
+    });
+
+    it('audio places and rings an audio call', async () => {
+      callsMode = 'audio';
+      pushTokenRepo.find.mockResolvedValue([]);
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+
+      await expect(ringAndSettle(service, 'caller', 'group-1', roomId, false)).resolves.toEqual({
+        rang: 0,
+      });
+      expect(redisStore.has(`call:room:${roomId}:answer_by`)).toBe(true);
+    });
+
+    it('audio refuses a ring asking for video with CALLS_VIDEO_DISABLED, and opens no window', async () => {
+      callsMode = 'audio';
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+
+      const refusal = await service
+        .ringGroup('caller', 'group-1', roomId, true)
+        .catch((e: unknown) => e);
+
+      expect((refusal as ForbiddenException).getResponse()).toEqual({
+        code: 'CALLS_VIDEO_DISABLED',
+        message: 'Video calls are not available on this server.',
+      });
+      expect([...redisStore.keys()].some((k) => k.endsWith(':answer_by'))).toBe(false);
+      expect(pushTokenRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('audio_video rings a video call', async () => {
+      callsMode = 'audio_video';
+      pushTokenRepo.find.mockResolvedValue([]);
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+
+      await expect(ringAndSettle(service, 'caller', 'group-1', roomId, true)).resolves.toEqual({
+        rang: 0,
+      });
+      expect(redisStore.has(`call:room:${roomId}:answer_by`)).toBe(true);
+    });
+
+    it('never gates what stops or records a call: ring-end and presence work when off', async () => {
+      callsMode = 'off';
+      (getApps as jest.Mock).mockReturnValueOnce([]);
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await expect(service.endRing('caller', 'group-1', 'call-1', 'ended')).resolves.toEqual({
+        notified: 0,
+      });
+      await expect(
+        service.reportCallPresence('caller', 'device-a', { active: false })
+      ).resolves.toEqual({ ok: true });
+    });
+
+    it('reads the switch on every request - a kill holds from the next one', async () => {
+      callsMode = 'audio_video';
+      await service.initiateCall('caller', 'group-1');
+      callsMode = 'off';
+
+      await expect(service.initiateCall('caller', 'group-1')).rejects.toThrow(ForbiddenException);
+    });
   });
 
   it('stores and clears call presence per device', async () => {
@@ -640,11 +793,9 @@ describe('CallsService', () => {
     /** `user_blocks` holds a row between `caller` and `callee`, whoever set it. */
     const blockBetweenCallerAndCallee = () =>
       groupMemberRepo.manager.query.mockImplementation((sql: string, params?: unknown[]) =>
-        Promise.resolve(
-          sql.includes('user_blocks') && params?.includes('caller') && params?.includes('callee')
-            ? [{ '?column?': 1 }]
-            : []
-        )
+        sql.includes('user_blocks') && params?.includes('caller') && params?.includes('callee')
+          ? Promise.resolve([{ '?column?': 1 }])
+          : baseQuery(sql)
       );
 
     beforeEach(() => {
@@ -659,7 +810,7 @@ describe('CallsService', () => {
     });
     afterEach(() => {
       delete process.env.CALL_ROOM_SECRET;
-      groupMemberRepo.manager.query.mockImplementation(() => Promise.resolve([]));
+      groupMemberRepo.manager.query.mockImplementation((sql: string) => baseQuery(sql));
       jest.restoreAllMocks();
     });
 

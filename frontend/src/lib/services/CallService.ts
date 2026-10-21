@@ -1067,7 +1067,8 @@ export class CallService {
       throw new CallInitiateError(
         'ring',
         res.status,
-        `calls/ring failed (${res.status})${detail ? `: ${detail}` : ''}`
+        `calls/ring failed (${res.status})${detail ? `: ${detail}` : ''}`,
+        refusalCodeOf(detail)
       );
     }
     appendLog('[Call] server ring sent - answer window open');
@@ -1186,7 +1187,14 @@ export class CallService {
         /* ignore */
       }
       appendLog(`[Call] ICE servers HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
-      throw new Error(`Failed to fetch ICE servers: ${res.status}${detail ? ` - ${detail}` : ''}`);
+      // Typed like the other setup steps: the kill switch (`CALLS_DISABLED`) and the spent relay
+      // budget (503) are answers the reader is told as such, read from the code and the status.
+      throw new CallInitiateError(
+        'ice-servers',
+        res.status,
+        `Failed to fetch ICE servers: ${res.status}${detail ? ` - ${detail}` : ''}`,
+        refusalCodeOf(detail)
+      );
     }
 
     const data = (await res.json()) as { iceServers?: IceServerConfig[] };

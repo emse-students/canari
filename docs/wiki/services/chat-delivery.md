@@ -1951,11 +1951,16 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 |---|---|---|
 | POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group and its caller (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service`. The answer window is NOT open yet: `/api/calls/ring` opens it. 403 `USER_BLOCKED` when a block stands between the caller and the other member - no room is bound ([calls](../frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)) |
 | GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 403 `USER_BLOCKED` for a block set while it rang, 410 for an unknown/expired room or after the ring window ([calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
-| GET | `/api/calls/ice-servers` | Get ICE server configuration |
+| GET | `/api/calls/ice-servers` | Get ICE server configuration. 503 once the month's egress METERED by Cloudflare (GraphQL analytics, account-wide, `TurnUsageMeter`) reaches `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB`, or when that meter is unconfigured or unreadable - no credential without a budget ([calls](../frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)) |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
 | POST | `/api/calls/ring` | Open the room's 60 s answer window (`call:room:<id>:answer_by`, one `SET NX` expiring with the binding; once, from its caller only; 403 otherwise, 410 for an unknown or expired room), then fan out an incoming-call ring to all group members (WP-XP-5) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere (reason: answered/cancelled/ended) |
+
+**The kill switch.** `initiate`, `room-token`, `ring` and `ice-servers` first read
+`platform_config.calls_mode` (core-service's row, plain SQL, every request): `off` answers 403
+`CALLS_DISABLED`, `audio` answers a video ring 403 `CALLS_VIDEO_DISABLED`. `ring-end`, `presence`
+and `sibling-status` are never gated ([calls](../frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
 
 The room id returned by `/api/calls/initiate` **is** the `callId` used by every other call route and
 by the SFU, so this service's `[call] invite` / `[ring] call=` lines and call-service's

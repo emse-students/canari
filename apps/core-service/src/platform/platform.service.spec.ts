@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { PlatformService } from './platform.service';
 import type { PlatformConfig } from './entities/platform-config.entity';
 import type { Repository } from 'typeorm';
@@ -26,6 +27,7 @@ describe('PlatformService', () => {
       maintenanceMessage: 'Pause',
       minClientVersion: '1.0.0',
       paymentProvider: 'lydia' as const,
+      callsMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -37,6 +39,7 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: '0.0.0',
       paymentProvider: 'lydia' as const,
+      callsMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -50,6 +53,7 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: '0.0.0',
       paymentProvider: 'lydia',
+      callsMode: 'off',
     });
 
     await service.ensureDefaults();
@@ -57,6 +61,15 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(
       expect.objectContaining({ id: 1, maintenanceEnabled: false })
     );
+  });
+
+  it('ensureDefaults creates the row with calls OFF - a fresh estate never opens calls by itself', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ callsMode: 'off' }));
   });
 
   /** A config row with `minClientVersion` at `min`, wired into the repo mock. */
@@ -67,6 +80,7 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: min,
       paymentProvider: 'lydia',
+      callsMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -112,6 +126,7 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: '0.13.0',
       paymentProvider: 'lydia',
+      callsMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -130,6 +145,7 @@ describe('PlatformService', () => {
       maintenanceMessage: null,
       minClientVersion: '0.13.0',
       paymentProvider: 'lydia',
+      callsMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -139,5 +155,27 @@ describe('PlatformService', () => {
 
     expect(result.paymentProvider).toBe('disabled');
     expect(result.minClientVersion).toBe('0.13.0');
+  });
+
+  it('updateConfig moves the calls kill switch, logs it at warn, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ callsMode: 'audio' });
+
+    expect(result.callsMode).toBe('audio');
+    expect(result.minClientVersion).toBe('0.13.0');
+    expect(result.paymentProvider).toBe(existing.paymentProvider);
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain('callsMode off -> audio');
+    warn.mockRestore();
+  });
+
+  it('updateConfig leaves the calls mode alone when the update does not name it', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.callsMode = 'audio_video';
+
+    const result = await service.updateConfig({ maintenanceEnabled: true });
+
+    expect(result.callsMode).toBe('audio_video');
   });
 });

@@ -22,6 +22,9 @@ vi.mock('$lib/features', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/features')>()),
   CALLS_VIDEO_ENABLED: true,
 }));
+// ...and the server's kill switch open to video (B12): `audio` hides the camera, tested below.
+const callsMode = vi.hoisted(() => ({ value: 'audio_video' as 'off' | 'audio' | 'audio_video' }));
+vi.mock('$lib/stores/appVersionCheck.svelte', () => ({ serverCallsMode: () => callsMode.value }));
 const logs = vi.hoisted(() => [] as string[]);
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: (l: string) => logs.push(l) }));
 
@@ -399,5 +402,15 @@ describe('a video call (lot 2)', () => {
     const camera = document.querySelector('[data-testid="call-camera"]');
     expect(camera).not.toBeNull();
     expect(camera!.closest('.gap-2')).not.toBeNull();
+  });
+
+  it('draws no camera control when the server allows audio only (calls_mode=audio)', async () => {
+    callsMode.value = 'audio';
+    try {
+      await render(fakeService('incall'));
+      expect(document.querySelector('[data-testid="call-camera"]')).toBeNull();
+    } finally {
+      callsMode.value = 'audio_video';
+    }
   });
 });

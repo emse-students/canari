@@ -7,6 +7,10 @@ import {
   refusalStatus,
 } from '$lib/utils/apiRefusal';
 import { USER_BLOCKED_CODE } from '$lib/users/blocks';
+import { describeRefusalCode } from '$lib/utils/refusalCodes';
+
+/** The server's kill switch refused (`platform_config.calls_mode`): every call, or video only. */
+const CALLS_CLOSED_CODES: readonly string[] = ['CALLS_DISABLED', 'CALLS_VIDEO_DISABLED'];
 
 /**
  * A refusal from `POST /api/calls/initiate`, carrying the STATUS instead of spelling it.
@@ -51,8 +55,8 @@ export class CallInitiateError extends ApiRefusalError {
   }
 }
 
-/** The three call-setup requests whose refusal reaches the reader. */
-export type CallSetupStep = 'initiate' | 'ring' | 'room-token';
+/** The call-setup requests whose refusal reaches the reader. */
+export type CallSetupStep = 'initiate' | 'ring' | 'room-token' | 'ice-servers';
 
 /**
  * The signalling relay answered a `Join` with `Refused { reason }`. An ANSWER, not a transport
@@ -150,6 +154,11 @@ export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eSetupError) return m.call_e2e_setup_failed();
   // A block, on either side: neutral, as every block refusal is - never who blocked whom.
   if (refusalCode(error) === USER_BLOCKED_CODE) return m.call_unavailable();
+  // The kill switch, at whichever step it answered: said as such, never as a failure to retry.
+  const code = refusalCode(error);
+  if (code && CALLS_CLOSED_CODES.includes(code)) {
+    return describeRefusalCode(code) ?? m.call_calls_disabled();
+  }
   const status = refusalStatus(error);
   if (status === 404) return m.chat_call_group_desynced();
   if (error instanceof CallInitiateError) {

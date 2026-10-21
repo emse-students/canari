@@ -67,7 +67,8 @@ ring/invite: MLS SystemMsg over chat-gateway + POST /api/calls/ring (FCM data / 
 - **Every media byte crosses the host's uplink once per subscribed stream**, and Cloudflare TURN once
   per leg on each side. TURN spend is capped by `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` (950) against an
   ESTIMATE (`CALL_RELAY_KBPS_PER_DEVICE`, 3000 kbps x duration, counted on presence clear) - an
-  estimate, not Cloudflare's byte count.
+  estimate, not Cloudflare's byte count. **Replaced 2026-10-21 (B7):** the budget now reads
+  Cloudflare's metered egress ([calls](calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
 - **Signalling to the SFU rides the existing HTTPS origin** (`/api/call` in
   `infrastructure/local/Dockerfile.frontend`, rewritten to `/ws`), so it adds no port; whether a
   30-minute WebSocket survives the edge (Cloudflare tunnel, the DSI's CrowdSec) is **F4**.
@@ -434,7 +435,8 @@ the only copy. What it changes here:
   `main.rs`; WP-C1's Tier A then runs on it. **Two decisions for the user** (the first taken 2026-10-18: `'all'` stays): `iceTransportPolicy:
   'all'` (a contact learns your public IP; direct calls cost nothing) or `'relay'` (every call through
   Cloudflare, IP hidden, billed); and whether the TURN estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts
-  only calls whose `[CALL_REPORT]` `pair=` says `relay`.
+  only calls whose `[CALL_REPORT]` `pair=` says `relay` - answered 2026-10-21 by neither: the
+  estimator is deleted and the budget reads Cloudflare's meter ([calls](calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
 - **WP-C4 narrows to the GROUP question**: Cloudflare Realtime SFU (no DSI, no host uplink, TURN
   free with it, 1 000 GB/month free shared, a new app + two secrets) versus keeping the Rust SFU on
   the old `canari` VM (its UDP reaches Cloudflare, measured; but it is the documented rollback VM)

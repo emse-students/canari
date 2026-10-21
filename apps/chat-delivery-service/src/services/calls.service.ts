@@ -21,6 +21,8 @@ import { ApnsVoipService } from './apns-voip.service';
 import { resolveUserDisplayName } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { RefusalCode } from '../utils/refusal-codes';
+import { readCallsMode } from '../utils/calls-mode';
+import { TurnUsageMeter } from './turn-usage-meter.service';
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -84,10 +86,8 @@ export interface SiblingCallStatusResponse {
 }
 
 const USER_CALL_PRESENCE_TTL_SEC = 2 * 60 * 60;
-/** Retain the monthly TURN-usage counter ~45 days so a slow month rollover never loses it early. */
-const TURN_USAGE_TTL_SEC = 45 * 24 * 60 * 60;
-/** Hard cap on counted call duration so a stale presence record can't inflate the estimate. */
-const MAX_COUNTED_CALL_SEC = 4 * 60 * 60;
+/** The longest call a room binding outlives: past it the room id names nothing. */
+const MAX_CALL_SEC = 4 * 60 * 60;
 
 /**
  * THE ring window: how long a callee may answer. The single source - the caller's timer, the
@@ -96,10 +96,10 @@ const MAX_COUNTED_CALL_SEC = 4 * 60 * 60;
 export const CALL_RING_TIMEOUT_SEC = 60;
 
 /**
- * How long a room's binding to its group lives: the ring window plus the longest call this
- * service counts. Past it the room id names nothing and `room-token` answers 410.
+ * How long a room's binding to its group lives: the ring window plus the longest call. Past it the
+ * room id names nothing and `room-token` answers 410.
  */
-const CALL_ROOM_BINDING_TTL_SEC = CALL_RING_TIMEOUT_SEC + MAX_COUNTED_CALL_SEC;
+const CALL_ROOM_BINDING_TTL_SEC = CALL_RING_TIMEOUT_SEC + MAX_CALL_SEC;
 
 function userCallPresenceKey(userId: string): string {
   return `call:user_active:${userId}`;
@@ -111,11 +111,6 @@ function callRoomKey(roomId: string): string {
 
 function callAnswerByKey(roomId: string): string {
   return `call:room:${roomId}:answer_by`;
-}
-
-/** Monthly bucket (e.g. `turn:usage:2026-06`) accumulating estimated relayed megabytes. */
-function monthlyTurnUsageKey(now: Date = new Date()): string {
-  return `turn:usage:${now.toISOString().slice(0, 7)}`;
 }
 
 /**
@@ -141,8 +136,42 @@ export class CallsService {
     @InjectRepository(PushToken)
     private readonly pushTokenRepo: Repository<PushToken>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
-    private readonly apnsVoip: ApnsVoipService
+    private readonly apnsVoip: ApnsVoipService,
+    private readonly turnMeter: TurnUsageMeter
   ) {}
+
+  /**
+   * THE SERVER'S KILL SWITCH, asked on every request that STARTS or JOINS a call (B12): `initiate`,
+   * `ring`, `room-token` and `ice-servers`. Not on `ring-end` or `presence`, which stop or record a
+   * call and must keep working while one winds down. Read from the database each time, so a staff
+   * member closing calls at `/admin/platform` holds from the next request.
+   *
+   * What it cannot do: a call already connected is peer to peer, its media never touches this server,
+   * so it runs to its end; the switch stops every NEW call, every callee still to answer, and every
+   * new TURN credential. The answer is a coded 403 the client words itself (`CALLS_DISABLED`,
+   * `CALLS_VIDEO_DISABLED`), never who or why.
+   *
+   * @param wantsVideo True only for a ring that asks for video - the one request that names it.
+   */
+  private async assertCallsOpen(scope: string, userId: string, wantsVideo = false): Promise<void> {
+    const mode = await readCallsMode(this.groupMemberRepo.manager);
+    if (mode === 'off') {
+      this.logger.log(`[call] ${scope} REFUSED user=${userId}: calls are closed (calls_mode=off)`);
+      throw new ForbiddenException({
+        code: RefusalCode.CALLS_DISABLED,
+        message: 'Calls are not available on this server.',
+      });
+    }
+    if (wantsVideo && mode !== 'audio_video') {
+      this.logger.log(
+        `[call] ${scope} REFUSED user=${userId}: video asked, calls_mode=${mode} allows audio only`
+      );
+      throw new ForbiddenException({
+        code: RefusalCode.CALLS_VIDEO_DISABLED,
+        message: 'Video calls are not available on this server.',
+      });
+    }
+  }
 
   /**
    * Verifies group membership, generates a UUID room ID, and returns a signed
@@ -156,6 +185,7 @@ export class CallsService {
    */
   async initiateCall(userId: string, groupId: string): Promise<InitiateCallResponse> {
     this.logger.debug(`[calls] initiateCall user=${userId} group=${groupId}`);
+    await this.assertCallsOpen(`initiate group=${groupId}`, userId);
 
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId },
@@ -210,6 +240,7 @@ export class CallsService {
     roomId: string
   ): Promise<{ roomToken: string }> {
     this.logger.debug(`[calls] requestRoomToken user=${userId} group=${groupId} room=${roomId}`);
+    await this.assertCallsOpen(`join-token room=${roomId}`, userId);
 
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId },
@@ -348,6 +379,7 @@ export class CallsService {
     callId: string
   ): Promise<IceServersResponse> {
     this.logger.debug(`[ICE] getIceServers user=${userId} group=${groupId} call=${callId}`);
+    await this.assertCallsOpen(`ice-servers call=${callId}`, userId);
 
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId },
@@ -368,14 +400,15 @@ export class CallsService {
       throw new ServiceUnavailableException('WebRTC TURN is not configured on this server');
     }
 
-    // Refuse new TURN credentials once the monthly relay budget is reached, so we
-    // never exceed Cloudflare's free tier and incur overage. All call media is
-    // relay-only (the SFU has no public media path), so every call counts.
-    const budgetMb = this.turnBudgetGb() * 1000;
-    const usedMb = await this.getMonthlyTurnUsageMb();
-    if (usedMb >= budgetMb) {
+    // Refuse new TURN credentials once the month's METERED relay egress reaches the budget, so the
+    // account never runs past Cloudflare's free allowance into overage. Only relayed bytes are on the
+    // meter: a direct (host or server-reflexive) call costs nothing and counts nothing
+    // (`TurnUsageMeter`, B7).
+    const budgetBytes = this.turnBudgetGb() * 1e9;
+    const usedBytes = await this.turnMeter.monthEgressBytes();
+    if (usedBytes >= budgetBytes) {
       this.logger.error(
-        `[ICE] Monthly TURN budget reached (${usedMb.toFixed(0)}/${budgetMb} MB) - refusing credentials`
+        `[ICE] Monthly TURN budget reached (${(usedBytes / 1e9).toFixed(1)}/${this.turnBudgetGb()} GB metered egress) - refusing credentials`
       );
       throw new ServiceUnavailableException(
         'Monthly call quota reached on this server. Try again next month.'
@@ -385,42 +418,13 @@ export class CallsService {
     return this.fetchCloudflareIceServers(turnKeyId, cloudflareToken);
   }
 
-  /** Monthly TURN relay budget in GB (Cloudflare free tier is ~1000 GB; default leaves a margin). */
+  /**
+   * Monthly TURN relay budget in decimal GB of metered egress (Cloudflare's free allowance is 1000 GB
+   * per account; the default leaves a margin).
+   */
   private turnBudgetGb(): number {
     const v = parseInt(process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB || '950', 10);
     return Number.isFinite(v) && v > 0 ? v : 950;
-  }
-
-  /** Conservative per-device relay bitrate (kbps, up+down) used to estimate usage. */
-  private relayKbpsPerDevice(): number {
-    const v = parseInt(process.env.CALL_RELAY_KBPS_PER_DEVICE || '3000', 10);
-    return Number.isFinite(v) && v > 0 ? v : 3000;
-  }
-
-  /** Estimated relayed MB accumulated this month (0 when unset). */
-  private async getMonthlyTurnUsageMb(): Promise<number> {
-    const raw = await this.redis.get(monthlyTurnUsageKey());
-    const v = raw ? parseFloat(raw) : 0;
-    return Number.isFinite(v) ? v : 0;
-  }
-
-  /**
-   * Adds a call's estimated relayed traffic to the monthly counter. Estimated from
-   * the device's call duration × a conservative per-device bitrate (we can't read
-   * Cloudflare's exact byte count, so we overestimate to stay safely under budget).
-   */
-  private async accumulateTurnUsage(callStartMs: number): Promise<void> {
-    if (!callStartMs) return;
-    const durationSec = Math.min(
-      Math.max(0, (Date.now() - callStartMs) / 1000),
-      MAX_COUNTED_CALL_SEC
-    );
-    if (durationSec < 1) return;
-    const mb = (this.relayKbpsPerDevice() * durationSec) / 8000;
-    const key = monthlyTurnUsageKey();
-    await this.redis.incrbyfloat(key, mb);
-    await this.redis.expire(key, TURN_USAGE_TTL_SEC);
-    this.logger.debug(`[ICE] TURN usage +${mb.toFixed(1)} MB (call ${Math.round(durationSec)}s)`);
   }
 
   /**
@@ -444,7 +448,6 @@ export class CallsService {
         try {
           const parsed = JSON.parse(raw) as UserCallPresence;
           if (parsed.deviceId === deviceId) {
-            await this.accumulateTurnUsage(parsed.updatedAt);
             await this.redis.del(key);
             this.logger.debug(`[calls] cleared presence for user=${userId} device=${deviceId}`);
           }
@@ -580,6 +583,7 @@ export class CallsService {
     hasVideo: boolean
   ): Promise<RingPlan | null> {
     this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
+    await this.assertCallsOpen(`ring call=${callId}`, callerId, hasVideo);
     await this.assertMembership(callerId, groupId, 'ring');
     const calleeIds = await this.otherMemberIds(groupId, callerId);
     // Re-checked here and not only at `initiate`: between the two the caller's client waits on the

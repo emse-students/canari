@@ -38,10 +38,18 @@ export type PlatformMaintenanceInfo = {
   message: string | null;
 };
 
+/**
+ * The server's kill switch for calls (`platform_config.calls_mode`, published by `/api/version`):
+ * `off` - no call may start; `audio` - audio only; `audio_video` - both. The server refuses what it
+ * forbids on every call request; the client reads it only to HIDE what would be refused.
+ */
+export type CallsMode = 'off' | 'audio' | 'audio_video';
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
+  callsMode: CallsMode;
 };
 
 export type AppVersionCheckResult = {
@@ -52,6 +60,8 @@ export type AppVersionCheckResult = {
   /** True when the client is older than the server-enforced minimum. */
   belowMinVersion: boolean;
   maintenance: PlatformMaintenanceInfo;
+  /** What the server lets calls do; `off` until a server has said otherwise. */
+  callsMode: CallsMode;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -65,10 +75,26 @@ function normalizeMaintenance(raw: unknown): PlatformMaintenanceInfo {
   };
 }
 
+/**
+ * The calls mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`: a server that does
+ * not publish the switch is one this client cannot ask, and the failure of a kill switch must be
+ * the closed direction - the server would refuse anyway, so showing a call button would only buy a
+ * refusal toast.
+ */
+function normalizeCallsMode(raw: unknown): CallsMode {
+  const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
+  return mode === 'audio' || mode === 'audio_video' ? mode : 'off';
+}
+
 /** Parses `/api/version` JSON into a normalized {@link ServerVersionInfo}. */
 export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null {
   if (!data || typeof data !== 'object') return null;
-  const obj = data as { version?: unknown; minClientVersion?: unknown; maintenance?: unknown };
+  const obj = data as {
+    version?: unknown;
+    minClientVersion?: unknown;
+    maintenance?: unknown;
+    calls?: unknown;
+  };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
   const minRaw = typeof obj.minClientVersion === 'string' ? obj.minClientVersion.trim() : '';
@@ -76,6 +102,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     version,
     minClientVersion: minRaw || '0.0.0',
     maintenance: normalizeMaintenance(obj.maintenance),
+    callsMode: normalizeCallsMode(obj.calls),
   };
 }
 /**
@@ -238,6 +265,7 @@ export function buildAppVersionCheckResult(
     upToDate,
     belowMinVersion,
     maintenance,
+    callsMode: serverInfo?.callsMode ?? 'off',
   };
 }
 

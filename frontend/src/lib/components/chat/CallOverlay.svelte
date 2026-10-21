@@ -52,7 +52,8 @@
     ongoingCallSpec,
     openAndroidCallSession,
   } from '$lib/mobile/androidCallService';
-  import { CALLS_VIDEO_ENABLED } from '$lib/features';
+  import { callVideoAvailable } from '$lib/utils/callsAvailability';
+  import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import { useCallModel } from '$lib/composables/useCallModel.svelte';
   import { callView } from '$lib/stores/callView.svelte';
   import { callMicNotice, callStatusText } from '$lib/utils/callStatusText';
@@ -720,7 +721,7 @@
               speakerDisabled
             )}
           {/if}
-          {#if CALLS_VIDEO_ENABLED}
+          {#if callVideoAvailable(serverCallsMode())}
             {#snippet videoIcon()}
               {#if call.isVideoOff}<VideoOff size={26} />{:else}<Video size={26} />{/if}
             {/snippet}
