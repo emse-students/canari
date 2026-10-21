@@ -532,18 +532,33 @@ Principle 1 of section 4, applied to each one - the class the copy caught, and t
 
 | Deleted | Cases (run) | What the copy imported beyond node | Still caught by |
 | --- | --- | --- | --- |
-| `cors-origins.spec.ts` in core, media, social | 3 x 9 | `@nestjs/common` `Logger` (log only) | chat-delivery's spec + the `exact` module group |
-| `drain-on-sigterm.spec.ts` in core, media, social | 3 x 4 | `@nestjs/common` `Logger` (log only) | same |
-| `internal-token.spec.ts` in core, social | 2 x 6 | `UnauthorizedException`, node `crypto` | same; each service's `framework-boot.spec.ts` asserts its own `@nestjs/*` tree |
-| `presence-audience.spec.ts` in social | 5 | `BadRequestException`, `Logger` | chat-delivery's spec (it reads the same `libs/contracts` file) + the group |
-| `user-display-name.spec.ts` in social | 4 | nothing | chat-delivery's spec (same contract file) + the group |
+| `cors-origins.spec.ts` in core, media, social | 3 x 9 = 27 | `@nestjs/common` `Logger` (log only) | chat-delivery's spec + the `exact` module group |
+| `drain-on-sigterm.spec.ts` in core, media, social | 3 x 4 = 12 | `@nestjs/common` `Logger` (log only) | same |
+| `internal-token.spec.ts` in core, social | 2 x 6 = 12 | `UnauthorizedException`, node `crypto` | same; each service's `framework-boot.spec.ts` asserts its own `@nestjs/*` tree |
+| `presence-audience.spec.ts` in social | 10 (5 static; an `it.each` over the `libs/contracts` cases) | `BadRequestException`, `Logger` | chat-delivery's spec (it reads the same `libs/contracts` file) + the group |
+| `user-display-name.spec.ts` in social | 20 (4 static; an `it.each` over the `libs/contracts` cases) | nothing | chat-delivery's spec (same contract file) + the group |
+| **Total** | **81** = core 19 + media 13 + social 49 | | |
 
 **Kept: `http-error-log.spec.ts` in BOTH core and social.** The module is duck-typed (no `axios`
 import), but its spec builds an `AxiosError` from the `axios` THAT service resolved, and each service
-has its own `bun.lock`: a minor `axios` bump in one service only (Dependabot groups only patches) could
-change the error's shape under that service's copy, and the other service's spec would not see it. The
-property is a secret not reaching a log, so the copy earns its place. Its group carries `keepEachCopy:
-true`, which `tools/test-inventory` reads so the row stops being proposed.
+has its own `bun.lock`: an `axios` bump in one service only could change the error's shape under that
+service's copy, and the other service's spec would not see it. The property is a secret not reaching a
+log, so the copy earns its place. Its group carries `keepEachCopy: true`, which `tools/test-inventory`
+reads so the row stops being proposed.
+
+**Why `@nestjs/common` did not keep the others, said honestly.** Version skew is NOT what separates
+them: Dependabot's `nestjs` group also moves per service directory, so one service's Nest can differ
+from another's exactly as its `axios` can. What differs is what the spec feeds the module. The
+`http-error-log` spec hands the duck-typed renderer an OBJECT BUILT BY THE DEPENDENCY (`config`,
+`headers`, `response`), whose shape is the very thing the renderer reads, and it guards a secret leak.
+The deleted specs use `@nestjs/common` only for a `Logger` and the CLASS an exception is thrown as -
+the module and its spec import that class from the same package, so the assertion cannot diverge
+between services unless Nest changes what `new UnauthorizedException()` / `new BadRequestException()`
+is. **That is the residual risk, named:** a Nest major landing in one service that changed those
+exception classes or `Logger` would no longer be seen by a spec in THAT service. What still stands in
+front of it is that service's `framework-boot.spec.ts` (the `@nestjs/*` tree coheres and boots), its
+other specs that throw the same classes, and the human review the auto-merge ceiling forces on every
+major. Judged implausible enough not to keep nine copies for it.
 
 **Counts.** Jest, same machine, before then after (`bun run test` in each service):
 
