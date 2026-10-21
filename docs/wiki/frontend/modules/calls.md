@@ -64,6 +64,150 @@
 > outbound rule, and it belongs in the revival commit's preconditions
 > ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md)).
 
+## Turning calls on in production - audio 1:1 only (owner, 2026-10-21)
+
+**The decision.** The first public build with calls enabled in production is **AUDIO 1:1 ONLY**,
+with the call kept alive in the background on Android and on the iPhone; video follows later.
+Calls stay held off (`CALLS_COMPILED = false`) until every blocker below is lifted. This section is
+the only copy of the blocker list and of the order; [revival plan](calls-revival-plan.md) keeps the
+2026-10-15 design and the test matrix (section 7), the [backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)
+row points here. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
+
+**The owner's answers, 2026-10-21** - not to be re-opened:
+
+| # | Question | Answer |
+| --- | --- | --- |
+| Q1 | Does the first release ring an app that is closed or in the background (CallKit / PushKit on the iPhone, the full-screen `call_ring` on Android)? | **No.** The native ring comes later. A call rings an app that is OPEN; it is then KEPT in the background (B8, B9) |
+| Q2 | A server-side kill switch (WP-C13, one data migration on `platform_config`) before the flip? | **Yes** - a hard pre-flip blocker (B12) |
+| Q3 | `minClientVersion` raised to the first calls stable once both stores serve it? | **Yes** |
+| Q4 | The iPhone `audio` mode is app-wide: may reels and voice messages keep playing with the screen locked? | **Accepted** |
+| Q5 | The privacy-policy and register wording of #2013 | **Presented to the owner later, and settled BEFORE calls ship** (B5 stays a blocker) |
+| Q6 | An audio rate for `CALL_RELAY_KBPS_PER_DEVICE` on production as a stopgap? | **No.** B7 is fixed first; the production budget variable is left as it is |
+
+### The blockers, each with its evidence
+
+`built` = merged on `main` or in the PR named; `draft` = an open draft PR; `read` = observed on
+hardware; `owed` = not done. A blocker closes only when its last column is true.
+
+| # | Blocker | State (2026-10-21) | Closed by |
+| --- | --- | --- | --- |
+| B0 | **No video in production.** `CALLS_VIDEO_ENABLED` was `CALLS_ENABLED`, so the flip would have shipped it; and the flag only hid the buttons - an invite with `hasVideo: true` (a modified client, or a later build) made `acceptCall` open the camera with no control on screen to close it | **built in #2171**: `CALLS_VIDEO_ENABLED = deployEnvironment() === 'development'` (`features.test.ts`), and `CallService` holds it at every boundary - the invite rings as audio (`incomingHasVideo`), `startCall` and `acceptCall` never ask for video, `cameraOn` (every camera open) refuses, and a peer's video m-line is answered `recvonly`, decrypted (so the E2E path check still judges it) and never shown. `inactive` would be possible (either side may renegotiate after the first remote description) and would spare the peer's video bandwidth and CPU; it is not taken because the path check's treatment of a negotiated m-line carrying nothing is unmeasured on a phone, and until video ships only a modified client sends one - when video ships, the floor rises past the audio-only stable or `inactive` is built. Pinned by `CallService.p2p.test.ts` ("an audio-only build", and "judges the peer's HIDDEN video": frames -> conclusive, packets with no frame -> ended) | code done; **owed on a phone**: that a receiver transform whose track has NO SINK is still fed frames (unproven on WebKit) - CALL-L1 row 13, no false `CallE2eBypassedError` on the iPhone and the Mi 9T |
+| B1 | The scope of the native ring | **decided** (Q1): not in the first release | B2' |
+| B2 | The native ring: WP-C5 (Android: names from the phone's local copy, out of the `call_ring` payload; `canUseFullScreenIntent`; decision 7 natively) and WP-C6 (iOS: no PushKit token was ever registered; every VoIP push must report a CallKit call; the answer with MLS behind the PIN). **Also to gate in the SAME commit as the native-ring switches**: both rings still ANNOUNCE a video call for a `hasVideo` invite (Android `CanariFirebaseMessagingService.kt` `setIsVideo` / `notif_incoming_video_call`, iOS `canari_push.mm` CallKit `update.hasVideo`) - on an audio-only build they must announce audio | **later - not the first release** | its own chantier, with video or after |
+| B2' | **Two facts instead of one**: `CALLS_COMPILED` for in-app calls and background continuation (`audio`, the microphone foreground service, the microphone purpose strings), a second constant for the native ring (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`), each set asserted by `callsCompiled.test.ts`. **And the iOS FCM ALERT**: no iPhone has a `voipToken`, so `CallsService.ringViaFcm` would send EVERY iPhone callee a visible alert titled with the caller's name in clear (against decision 6), opening an app that may not answer in time - removed, or decided. That branch IS reachable in the first release (unlike the native ring), and its body says "Appel entrant" whatever `hasVideo` is - if kept, it must never announce video | **owed** | a draft |
+| B3 | **The review of #1997, crypto half**: one key per direction + AAD on every frame, the key-mismatch toast (F5) | **draft #2013** predates #2158 and #2166; its PORT onto `main` is in progress (another agent) | the port, adversarially reviewed; CALL-L1 rows 1-4 re-read on it |
+| B4 | **The `fp=` log line printed 4 bytes of the call key** | **built in #2171**: a SHA-256 fingerprint (`utils/callKeys.ts`) | done |
+| B5 | **F4 - say who sees what**: each party learns the other's IP; Cloudflare TURN relays some calls (IPs, time, volume, never audio). Into `compliance/register-of-processing.md` and `/legal/privacy`, together | **draft #2013** carries both texts; presented to the owner later (Q5) | the owner's yes on the wording, merged BEFORE the flip ships |
+| B6 | **A call report** (`[CALL_REPORT]`, WP-C2): without it a failing production call is found by hand, and B7 cannot tell relayed from direct | **draft #2011**, being ported (another agent) | the port; one reading from a phone's exported log |
+| B7 | **The TURN budget counts every call as relayed at 3000 kbps per device** (`accumulateTurnUsage`): 950 GB is ~700 device-hours, ~350 call-hours a month, after which `ice-servers` answers 503 to EVERY call. Only `relayed=yes` costs in P2P, and CALL-PATH-LINE (P3) showed `relayed=` can be wrong | **being built** (another agent); the production variable stays alone (Q6) | relayed calls only, at what they cost |
+| B8 | **Background, Android (WP-C-BG-A)** | **built** (#2162, in `1.3.1-alpha.5`), pre-releases only; Play FGS declaration FILLED by the owner 2026-10-21; **twelve readings owed** on the Mi 9T ([below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)) | the readings; at the flip the declaration moves into `src/main/AndroidManifest.xml` |
+| B9 | **Background, iPhone (WP-C-BG-I)**: the `audio` mode, pre-release only today | **built** (#2164, in `1.3.1-alpha.5`); the failure was read before the fix; **after-fix reading owed** (CALL-L1 row 12); the app-wide side effect ACCEPTED (Q4) | row 12 `PASS` |
+| B10 | **The hardware readings of the audio path**: CALL-L1 rows 0-12 on the current build; the Tier B audio cells (K1, K9, K12 on Mi 9T / iPhone / desktop; K6 both phones) of [the matrix](calls-revival-plan.md#7-the-test-matrix) | **partly read**: audio clean both ways and both transforms fed on `1.3.1-alpha.4` (#2161); forced TURN relay over UDP, TCP and TLS 443 clean on all three engines (#2165, readings PR open on 2026-10-21); row 8 `PASS` on alpha.2. **Owed**: row 0, rows 9-12 on the build carrying their fixes, cellular and campus Wi-Fi (no SIM on the bench), CALL-WS-V6's fix (#2167) on an IPv6-broken Wi-Fi | the board rows `PASS`, never `PASS-DIRTY` |
+| B11 | **Two P2 defects met on the bench**: CALL-PAIR-STALL and CALL-LATE-RING ([backlog](../../backlog.md#p2---a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20)) | **owed**: the dev `call-service` log of that minute and the iPhone's exported log, before any cause is named | diagnosis, then a fix or a refutation |
+| B12 | **A kill that is not two store releases** (WP-C13, `platform_config.calls_mode` = `off/testers/on`, enforced at `initiate`/`ring`/`room-token`) | **decided yes (Q2), a HARD PRE-FLIP BLOCKER; being built** (another agent) | merged and its `off` read refusing a ring, before the first alpha with the flip |
+| B13 | **The production server preflight** (read-only, below) | **owed** | every line of the preflight read |
+| B14 | **The store answers** (below): Apple review notes + demo accounts + video, privacy labels; Play Data safety | **owed** (Play FGS declaration: DONE 2026-10-21) | WP-C9 |
+
+### The order
+
+1. ~~The owner's answers~~ - taken 2026-10-21 (above), except the wording of Q5, which comes later.
+2. **Code, every piece dev-only, none flips anything** - each its own draft PR: B3 + B5 (the port of
+   #2013), B6 (the port of #2011), B7, B12, B2'. B0 and B4 are #2171.
+3. **Pre-releases and readings**: each piece reaches the bench through an ordinary `vX.Y.Z-alpha.N`
+   (dev + testers); B8, B9, B10, B11 are read there. **The App Review video and the Play video are
+   recorded FROM these runs**, never staged afterwards (revival plan section 8).
+4. **The production preflight** (B13), read-only, from a signed-in production session and the host.
+5. **THE FLIP, ONE COMMIT, ONE PR** (draft #2039 is the 2026-10-18 rehearsal of a flip WITH the
+   ring: rebuild it on `main` after B2', do not rebase it). With Q1 = no, it moves:
+
+   | Moves | File | Asserted by |
+   | --- | --- | --- |
+   | `CALLS_COMPILED = true` | `frontend/src/lib/features.ts` | `features.test.ts` |
+   | `audio` in `UIBackgroundModes` | `canari_iOS/Info.plist` | `callsCompiled.test.ts` |
+   | the microphone purpose string names calls | `Info.plist`, `fr.lproj` and `en.lproj` `InfoPlist.strings` | `callsCompiled.test.ts` |
+   | the microphone foreground service moves from `src/calls/` into `src/main/AndroidManifest.xml`, and `build.gradle.kts` stops merging it on `VITE_DEPLOY_ENVIRONMENT` | Android | `androidCallServiceManifest.test.ts`, `android.yml`'s built-manifest step |
+   | `ios.yml`'s pre-release `audio` patch is deleted with its two cases in `callsCompiled.test.ts` (dead code once the committed plist carries `audio`) | `.github/workflows/ios.yml` | `callsCompiled.test.ts` |
+   | **does NOT move**: the native ring's four (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`) under their own constant (B2'), and `CALLS_VIDEO_ENABLED` | | `callsCompiled.test.ts`, `features.test.ts` |
+
+6. **`vX.Y.Z-alpha.1` with the flip** -> dev and the store testers, `calls_mode` at `testers`. Tier B
+   audio cells re-read on it, the review build's notes and video checked. **Beta App Review**: an
+   external TestFlight group reviews the declared modes; keep the flip to internal testers or have
+   the notes ready ([mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)).
+7. **The stable** `vX.Y.Z` (it ships the alpha above) -> production web, Play, the App Store; then
+   `calls_mode` `on`.
+8. **After both stores serve it**: `minClientVersion` raised to it (Q3); the first week's `[ring]`,
+   `session end` and TURN usage read on production.
+
+### The production server preflight (B13) - what must be checked, read-only
+
+Production HAS Cloudflare TURN and has never used it: the `canari-calls` key carried 0 bytes in the
+30 days to 2026-10-16 ([revival plan](calls-revival-plan.md#14-probes-of-2026-10-16-clients), Q4).
+
+- **The secrets reach the container**: the production deploy log of `chat-delivery-service` raises no
+  "not set" warning for `CLOUDFLARE_CALLS_API_TOKEN` / `CLOUDFLARE_TURN_KEY_ID`
+  (`env-manifest.tsv`: `warn`), and `CALL_ROOM_SECRET` is set (`required`).
+- **The key answers**: from a signed-in production session, `GET /api/calls/ice-servers` answers 200
+  with `turn:` URLs over udp, tcp and `turns:` 443 (the endpoint is not behind the client switch), and
+  the key id it uses is the `canari-calls` key of the Cloudflare account.
+- **The budget**: the Redis monthly counter at 0, and B7's counting in the deployed image; the
+  production budget variables are not touched (Q6).
+- **The kill switch**: `calls_mode` reads `off` on production before the stable deploys (B12).
+- **The relay**: `call-service` runs on production with the p2p mode (the image of the release), and
+  `wss://canari.emse.fr/api/call` upgrades through the host nginx. **The production path differs
+  from dev's**, so CALL-L1 row 0 (an idle call's keepalive Pong across the public path, no
+  `held dead`) read on dev does not answer for production: it is read once on the production path,
+  from a local build carrying the flip pointed at production, or as the first reading after the
+  stable deploys and before `calls_mode` goes `on`.
+- **Push**: Firebase is initialised on production (the `call_ring_end` and missed-call paths). The
+  APNs VoIP key is NOT needed for the first release (Q1).
+- **No UDP from the host is needed**: 1:1 is peer to peer, the host carries signalling only
+  ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md#8-what-works-with-no-port-opened-by-the-dsi-measured-2026-10-16)).
+  Nothing is asked of the DSI.
+
+### minClientVersion
+
+- **No wire compatibility is owed to an older production client**: every stable so far has
+  `CALLS_ENABLED = false`, so none ever placed or answered a call. The wire changes of B3 matter
+  between dev builds only.
+- **The first calls stable must ignore `hasVideo`** (B0): a later build with video will send video
+  invites to it, and it answers them as audio.
+- **A callee on an older stable cannot answer, and sees this**: the in-app invite is dropped and
+  logged (`calls disabled - ignoring signal`); an older Android logs `calls disabled` and rings
+  nothing; an older iPhone gets the FCM ALERT of B2' unless B2' removes it. The caller sees the call
+  go unanswered, then the missed-call line. The push token row carries no app version, so the server
+  cannot ring "only the devices that can answer".
+- **Decided (Q3)**: `minClientVersion` is raised to the first calls stable once BOTH stores serve it.
+
+### The store answers (B14)
+
+**Apple, for the stable** (the pre-release half is on [mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)):
+
+- The committed `Info.plist` carries `audio`, NOT `voip` (Q1); the pre-release patch goes (step 5).
+  `audio` is the mode Apple names for a call's audio in the background; 2.5.4 asks that the reviewer
+  can SEE it used - the refusal of 2026-08-31 was a `voip` mode it could not locate.
+- `NSMicrophoneUsageDescription` names calls (base, `fr`, `en`), asserted by `callsCompiled.test.ts`.
+  `NSCameraUsageDescription` does not change (no video).
+- **Review notes and demo accounts**: two PRODUCTION accounts sharing a direct conversation, call
+  permission allowed, no block. A reviewer has one device: a team member answers the second account
+  in a stated window, and the notes say how to reach the call screen. They say what `audio` is for:
+  "an ongoing call keeps its microphone when the screen locks".
+- **The video**: recorded on the iPhone during the Tier B runs - a call placed from a DM, the
+  microphone prompt naming calls, both parties heard, the screen locked mid-call and the voice still
+  carried, hang-up.
+- **Privacy nutrition labels** (App Store Connect, not in this repository): the call audio is E2E
+  and never stored or readable by the server - whether that is "not collected" under Apple's
+  definition is **(unverified)**; the call METADATA (who called whom, when, how long - server logs)
+  and the IP seen by the peer and by Cloudflare are new. Read the current labels first, then decide.
+
+**Google Play**:
+
+- **Foreground service declaration** (`FOREGROUND_SERVICE_MICROPHONE`): FILLED by the owner
+  2026-10-21.
+- **`USE_FULL_SCREEN_INTENT`**: not declared in the first release (Q1).
+- **Data safety form**: the same facts as Apple's labels - audio E2E, never stored; call metadata;
+  IPs to the peer and to Cloudflare as a relay. Whether E2E audio must be declared as collected under
+  Play's definition is **(unverified)**; update the form in the same week as the stable.
+
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
 **What it is.** The user's 2026-10-16 decision made concrete: a 1:1 call goes DIRECT between the
@@ -78,7 +222,7 @@ Nothing in this lot needs the DSI.
 |---|---|---|
 | `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `audio` (since 2026-10-20), `USE_FULL_SCREEN_INTENT`. Once it flips, the committed plist carries `audio` and `ios.yml`'s pre-release patch finds it there and adds nothing (it is idempotent; it can then be deleted). Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all six switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
-| `CALLS_VIDEO_ENABLED` | `CALLS_ENABLED` (since 2026-10-20) | the video-call button and the camera controls; on wherever calls are, so dev builds only ([video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
+| `CALLS_VIDEO_ENABLED` | `deployEnvironment() === 'development'` (since 2026-10-21; `CALLS_ENABLED` from 2026-10-20) | the video-call button and the camera controls; dev builds only, and it does NOT follow `CALLS_COMPILED`: the first production calls are audio only ([the audio enablement](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
 
 `VITE_DEPLOY_ENVIRONMENT=development` is written by `build.yml` for the dev web estate and by
 `android.yml` / `ios.yml` for every pre-release - and those pipelines refuse a pre-release whose
@@ -411,8 +555,9 @@ build, all of it blocks production):
 - **One key, both directions, no AAD.** The same AES-GCM key encrypts both parties' frames and the
   frame header is not bound as additional data; a per-direction key (or the sender's leaf index in
   the IV/AAD) closes the nonce-collision and reflection questions.
-- **The `fp=` log line prints the first 4 BYTES OF THE KEY** (`CallService.setupEncryption`). Log a
-  hash of the key instead (e.g. the first bytes of SHA-256), never key material.
+- ~~**The `fp=` log line prints the first 4 BYTES OF THE KEY**~~ - FIXED 2026-10-21: the line is
+  `fp=<first 4 bytes of SHA-256(key)>, sha256` (`utils/callKeys.ts` `keyFingerprint`, pinned by
+  `callKeys.test.ts`). A build older than that still prints key bytes: never paste its line.
 
 ## The switches agree, and a silent frame stays unread
 
@@ -1247,7 +1392,9 @@ declares it exactly when `CALLS_COMPILED` is true - so the revival commit moves 
 **Google Play.** Since API 34 every foreground service declares a type, and Play asks the developer
 to declare each foreground-service permission in the Play Console (App content, "Foreground service
 permissions"): per permission, which feature uses it, a description, and a video showing it in use.
-**Not verified against this app's console, and two things are unknown:** whether an upload to the
+**The owner FILLED that declaration on 2026-10-21** (`FOREGROUND_SERVICE_MICROPHONE`, in-app 1:1
+calls); what Play's review answers is not known yet. Written before it was filled, and kept for the
+record - **two things were unknown:** whether an upload to the
 `internal` track (where every pre-release goes, `android.yml`) is refused while the declaration is
 missing, and what the review says of `microphone` for in-app calls. **The first pre-release carrying
 this is where it shows** - if the Play step of `android.yml` is refused, the GitHub release APK is
