@@ -14,6 +14,258 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-21
+
+### Changed - "Mes institutions" and "Mes listes" sit in their own tab
+
+The Associations tab keeps only "Mes associations"; each of the Institutions and Listes tabs now opens on the reader's own memberships of that kind ([associations](docs/wiki/frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07)).
+
+### Added - drag across the booking grid to pick several slots at once
+
+Press a free slot and drag along a resource's column (hold first, on a phone): the range follows the pointer, stops before anything taken or past the booking maximum, and opens the booking sheet with its length already chosen ([bookings](docs/wiki/bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)).
+
+### Changed - the booking grid is about a third shorter
+
+Rows are 32 px, touching free slots and the slots of one booking read as one block with its label said once, and the time column bolds only the full hours ([bookings](docs/wiki/bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)).
+
+### Fixed - bookings: the same "Indisponible" is no longer written twice
+
+The server refuses a block that overlaps a block of the same resource (`block-overlap`), so a retry after a lost answer is idempotent; the sheet says the range is already unavailable ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-b3-as-built-2026-10-17)).
+
+### Added - an Android call keeps going when the app leaves the screen (dev builds)
+
+A `microphone` foreground service with an ongoing `CallStyle` notification (name, timer, hang-up) holds the network, the microphone and the audio route while a call is up; it is merged only into builds that place calls, and `CALLS_COMPILED` stays false ([calls](docs/wiki/frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)).
+
+### Added - a call-audio fidelity rig, and a call log that names the side handing the decoder non-Opus bytes
+
+`tools/call-audio-fidelity` measures what a call does to a known sound between two Chromes; it puts the phones' "formless noise" on bytes that are not Opus reaching the decoder, never on the app's Chromium path. The E2E worker now logs which side first holds such a payload, and proves a double encryption ([calls](docs/wiki/frontend/modules/calls.md#audio-quality-measured-2026-10-19)).
+
+### Fixed
+
+- A minimised call's bar stays above the new-post composer, its camera and every other covering layer, and an in-app ring no longer also posts an OS notification while the app is on screen ([calls](docs/wiki/frontend/modules/calls.md#the-bar-is-never-under-a-layer-call-bar-covered-2026-10-19)).
+
+### Fixed - a call's E2E path check could pass trivially on a camera still negotiating, or end a healthy call on a peer camera's first frame (dev builds only)
+
+A bypass is now judged against the previous check's packets, never a frame still in flight; media the check cannot judge is re-checked, then the claim is withdrawn until media starts; a pending check keeps its earliest deadline; a worker that stops answering withdraws the "encrypted end to end" claim until an answered check returns it ([calls](docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).
+
+### Fixed - calls on Chromium were not end-to-end encrypted, and the screen said they were (dev builds only)
+
+The E2E transforms were assigned one task after `addTrack`, which Chromium short-circuits: clear audio left every Chromium client and the iPhone's ciphertext reached its decoder (the "noise"). They are now assigned in the same task, the screen claims encryption only from frames the worker encrypted and decrypted, and a call whose media flows around the worker ends ([calls](docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).
+
+### Added - a call asks its E2E worker how many frames each side saw, and logs it twice
+
+A Mi 9T logged no worker line in five calls; the worker is now asked 5 s after `connected` and at the end, through the path its key handshake already proves, and the answer names a transform that is off, unfed or unheard. A desktop Chrome counterpart for phone calls is one command (`callpeer.mjs`). [calls](docs/wiki/frontend/modules/calls.md#the-mi-9t-logged-no-worker-line-at-all-131-alpha2---the-worker-is-now-asked)
+
+### Changed - the call noise is isolated to the iPhone's sender
+
+A desktop Chrome called each bench phone: the Mi 9T is clean both ways, the iPhone's audio is 58-68 % concealed at a Chromium receiver ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Fixed - a call test left on the real clock could fail an unrelated neighbour
+
+`CallService.p2p.test.ts` now runs every test on a fake clock, so the 5 s path check of a call a test leaves up can no longer fire seconds later inside another test and write a stray "call end" report into its log (about 1 run in 15 failed 'owes no report for a call that never connected'). Test-only, no app change ([test-suite-reform](docs/wiki/test-suite-reform.md)).
+
+### Fixed - a resumed call gets its audio back, and the partner of a phone that never returns is told
+
+On the `1.3.1-alpha.2` bench a 14 s Wi-Fi outage resumed but left both phones silent on "Reconnexion...", and after 90 s the partner never ended. The relay now holds a socket dead when it stops answering keepalive pings, the restart is an explicit, numbered offer made on the same queue as the negotiation frames (`Joined` and `Refused` are handled outside it), rolling back one lost in a dead socket,, and the resume ladder is capped at 4 s. A phone app the OS suspends mid-call now leaves the call within about 90 s ([calls](docs/wiki/frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix)).
+
+### Changed - a call is the whole screen or a bar at the top, and its hang-up is always reachable
+
+The docked call card (under the iPhone's native tab bar, its hang-up unreachable) is replaced by
+Messenger's two shapes: a full-screen call, and a bar in the layout's banner column that pushes the
+page down; Back minimises, the timer is derived from timestamps, and the native background work is
+in the backlog ([calls](docs/wiki/frontend/modules/calls.md#the-call-ui-the-whole-screen-or-a-bar-at-the-top-2026-10-19)).
+
+### Added - call diagnostics for the iPhone's noisy sender (cause unknown)
+
+The iPhone's call audio reaches every receiver as noise and the cause is not known; the call log now names each E2E transformer, the shape of what the sender transform is handed (not-Opus, repeated timestamps, its own output handed back) and the audio codec each direction uses, so the next phone call separates the hypotheses ([calls](docs/wiki/frontend/modules/calls.md#the-iphones-sender-read-from-the-code-2026-10-19)).
+
+### Fixed - a network blip no longer ends a 1:1 call (CALL-WIFI)
+
+A dropped signalling socket now resumes its seat and the initiator restarts ICE; only a hangup, a refused resume or a spent attempt budget ends the call ([calls](docs/wiki/frontend/modules/calls.md#a-network-blip-does-not-end-the-call-call-wifi-2026-10-19)).
+
+### Changed - a pre-release iPhone should keep its microphone in a call when locked or backgrounded (unproven until its hardware reading), and the other side is told when a phone takes its microphone
+
+Pre-release iPhone builds declare the `audio` background mode WKWebView needs to keep a hidden page's microphone, and a new `MicSuspended` relay frame shows the partner why the voice stopped ([calls](docs/wiki/frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)).
+
+### Added - video in 1:1 calls, dev builds only
+
+A call can carry both cameras: VP8 only, its payload header left in clear and bound to the encrypted rest, camera on/off and front/back switch, end-to-end proven per kind in the desktop rig; phone readings are owed ([calls](docs/wiki/frontend/modules/calls.md#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)).
+
+### Fixed - opening the camera no longer turns the iOS app dark
+
+The camera's light status-bar icons set the iOS window's style, and the theme store took the echo for the phone switching to dark, then kept it after the camera closed; it now ignores its own echo ([reels](docs/wiki/frontend/modules/reels.md#the-tab-c5)).
+
+### Fixed - a repeated `u`/`sig` on a booking's `.ics` link is a 400, and a booking's answers keep only declared questions
+
+The calendar route took a repeated query key as an array (a 500 on `sig`); a `__proto__` answer key became the prototype of the map a booking judged. Both are refused where they enter, the forms' rule now shared by both ([bookings](docs/wiki/bookings-chantier.md#wp-b5-as-built---the-bookers-api-2026-10-18)).
+
+### Changed - a video filmed with the new-post composer's camera is a CanaReel, as from the camera tab
+
+One camera, one behaviour: the reel publish step takes it, says before "Publier" that it is deleted after 30 days, starts from the composer's text, and "Garder comme post" keeps the old outcome; photos, gallery videos and the post editor are unchanged ([reels](docs/wiki/frontend/modules/reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)).
+
+### Changed - the live console no longer prints message text
+
+The devtools console redacts prose fields (`text=`, `contact=`) like the stored log, and the send log lines carry a length instead of the first 40 characters ([mobile](docs/wiki/frontend/mobile.md#the-in-app-log)).
+
+### Changed - dependency lockfiles refreshed on every service
+
+The four NestJS services, the frontend and the Rust crates moved to the newest versions their ranges allow (no majors); `svelte-check` 4.7.7 refuses `$props<T>()`, so its two uses became `}: T = $props()` ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them)).
+
+### Fixed - dev's call-service and media-service are proven healthy at deploy, like production's
+
+The dev deploy read both as `none` (started, never proven to answer) on the estate where calls and lives are tested; they now carry production's healthcheck. The phone procedure for a dev call is [check CALL-L1](docs/wiki/device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both).
+
+### Added - a double tap likes a post or a CanaReel
+
+A double tap (or a mouse double click) on any post card, and on a reel in the full-screen viewer, gives the heart through the reaction button's own path; it never unlikes and never replaces a chosen reaction. A picture, a video or a reel card in the feed now opens its viewer once the 250 ms double-tap window has passed ([posts](docs/wiki/frontend/modules/posts.md#a-double-tap-likes-the-post-and-never-unlikes-it-2026-10-19)).
+
+### Added - lives: the broadcaster, on dev builds only
+
+The post composer's "En direct" chip opens a pre-live screen with the rules, then broadcasts from the in-app camera: 2 s self-contained segments sealed and uploaded in order, a quiet reconnecting badge, the camera given back in the background and re-acquired on the same live, End behind a confirmation. Behind `LIVE_ENABLED` (dev builds only) until moderation (WP-L8) and the phone readings ([live](docs/wiki/frontend/modules/live.md#the-broadcaster-as-built)).
+
+### Added - live chat and floating reactions, client half (WP-L6, dev builds only)
+
+The viewer's chat panel and reaction bar ride its manifest poll (one loop, no second timer), messages sealed with the live key; the broadcaster's screen shows it on air with a hide button, staff hide from the viewer, and a chat `410` shows the player's own end screen ([live](docs/wiki/frontend/modules/live.md#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft)).
+
+### Added - live chat and floating reactions, server half (WP-L6, off on production)
+
+Messages sealed with the live key and reaction taps summed per 2 s window, carried by the manifest poll, ordered under the live's row lock, erased with the live; the broadcaster or staff can hide a message ([lives](docs/wiki/services/lives.md#live-chat-and-floating-reactions-wp-l6)).
+
+### Added - lives: the client foundation (wire types, typed API client, v1 parameters)
+
+`frontend/src/lib/live/` types every `/api/lives` answer, calls every route with each refusal classified at the throw (`LIVE_FULL`, `LIVE_SEATS_UNAVAILABLE` and `429` never confusable), and sends segments in index order through ONE index counter (`enqueue(index, sealed)` refuses any index but `nextIndex`); no UI yet ([live](docs/wiki/frontend/modules/live.md#the-client-foundation-2026-10-19)).
+
+### Documented - the live moderation decisions of 2026-10-20 and the plan for an uncapped audience
+
+Strike ladder, 90-day cut retention, 24 h answers, a reported chat line kept until handled (reverses C2), the five reactions, and the plan for lifting the viewer cap: [lives](docs/wiki/services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience), [live](docs/wiki/frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20). Documentation only, nothing is built.
+
+### Added - live moderation, client half (dev builds)
+
+A cut live has its own screen for the viewer and the broadcaster, the bell shows a `live_cut` row, and a moderator can cut a reported live from the admin queue ([live](docs/wiki/frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
+
+### Added - live moderation, server half (WP-L8): report a live, staff cut, first-live rules
+
+A live is reported through `content_reports` like a post, staff cut it for everyone (`POST /api/lives/:id/cut`, a `410` with `endReason: 'cut'`), and a member must accept the live rules before a first broadcast; dev-only behind `LIVE_ENABLED` ([lives](docs/wiki/services/lives.md#moderation-wp-l8-server-half), [store answers](docs/wiki/store-ugc-answers.md)).
+The broadcaster's pre-live screen shows the first-live rules until the member accepts them, and the start then records the acceptance ([lives](docs/wiki/services/lives.md#the-first-live-rules-l11)).
+
+### Added - lives: the segment seal, format v1
+
+`frontend/src/lib/live/liveCrypto.ts` seals each live segment with AES-256-GCM under the live key, a fresh IV per segment, and the live id, index and format version bound in the AAD; a segment that does not open is a typed `LiveSegmentOpenError`. It protects against the media store, the cache and a leaked URL, not against social-service, which serves the key ([live](docs/wiki/frontend/modules/live.md#the-segment-seal-format-v1)).
+
+### Added - live segments served from Canari's nginx cache, and a 24-viewer cap for the host (off on production)
+
+A sealed live segment is now fetched without a token and answered by nginx from the second viewer on; only the canonical lower-case path is served (nginx owns the whole prefix), one address is bounded in bytes as well as requests, and a viewer past the host's uplink cap gets a typed `LIVE_FULL` ([lives](docs/wiki/services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4)).
+
+### Added - "X est en live": a live's start is pushed to its broadcaster's followers (server half, off on production)
+
+One push per live, at its first stored segment, to the member's or the association's followers who can see it (spaces respected as for a post, on the watch routes too), in the reader's app language; a tap opens the feed, and the client's LIVE card and viewer route are still owed ([lives](docs/wiki/services/lives.md#the-push-to-the-followers-wp-l7-server-half)).
+
+### Added - a viewer can report a live and block its broadcaster (dev builds)
+
+A Flag button in the live viewer's top bar opens the posts' report dialog; a filed report offers to block the broadcaster and leaves the live if so ([live](docs/wiki/frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
+
+### Added - lives: the viewer (LIVE card on the feed, full-screen player), dev builds only
+
+A LIVE card at the top of the feed and a full-screen viewer playing the growing fMP4 source through MSE, with a screen for every refusal ("live complet", the end, "indisponible", reconnecting); behind `LIVE_ENABLED`, on for dev builds only; segments open with the v1 seal of #2111 ([live](docs/wiki/frontend/modules/live.md#the-viewer-as-built-2026-10-19)).
+
+### Added - the mechanism audit re-read, and two specs for what it found unwatched
+
+What gained a watcher since 2026-08-21 is named in [mechanism-audit](docs/wiki/mechanism-audit.md); new specs hold the deleted public `mark-paid` route deleted and moderation's 403 for a non-moderator.
+
+### Changed - a salon mention banner names its author from the phone's own names
+
+A native salon notification that mentions you now says who wrote it ("Alice vous a mentionné", "Quelqu'un" for a name this device never knew), and names the people mentioned in the text, from the names the app already resolved and mirrored into `display_names.json` as they change; a deleted account is dropped from it, and no name rides the push ([mobile](docs/wiki/frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18)).
+
+### Fixed - the MLS delivery client's last status-only failures are typed
+
+Twelve refused calls threw a sentence with the status spelt in; they now carry status and code ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - the native chat socket races IPv6 and IPv4, and closes a connect it abandoned
+
+On a Wi-Fi handing out an IPv6 that routes nowhere, the phone app's chat socket waited 20 s on IPv6 and never connected within 15 s, so no message or call invite arrived live; it now connects by Happy Eyeballs, and a socket that completes after the deadline is closed instead of left open. The `no TURN relay candidate` call WARN now fires only when no direct pair works ([mobile](docs/wiki/frontend/mobile.md#the-native-socket-races-ipv6-and-ipv4)).
+
+### Added - an association may republish a person's post, with the author's consent
+
+An association asks the author, who accepts or refuses from `/notifications/requests`; nothing shows before the author accepts, and either side can withdraw it later (D38b, migration 096, [profiles-and-access](docs/wiki/profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
+
+### Fixed - small P3s: one reconcile line per sweep, every organiser in the calendar, Back swipe over a sheet, socket released on page leave
+
+The cold-start sweep reports its already-asked groups as one count instead of one line each; the month grid tooltip, calendar entries (ICS feed and export) and share title name every organiser; on iOS a left-edge swipe closes a dismissible sheet; the native socket is released at `pagehide` ([backlog](docs/wiki/backlog.md)).
+
+### Added - the agenda sheet saves as PNG beside the PDF, and reads better printed
+
+A PNG button sits next to the PDF one on `/calendar/export`, through the same render path; each day gets a dark frame, stacked events a clear rule and every number an outline, with nothing moved; the frame's width and colour are a setting ([calendar](docs/wiki/frontend/modules/calendar.md#the-november-2026-sheet-outlines-and-a-png-nothing-moved-2026-10-18)).
+
+### Fixed - four more list keys built from user text in the posts surfaces
+
+The composer's file strip, a post's media cells and a poll's voter list can no longer throw `each_key_duplicate`; a voter id stored twice is counted and drawn once.
+
+### Added - the privacy policy covers bookings
+
+Data, readers, retention and account deletion of reservations, matching register row C17 ([register-of-processing](docs/wiki/compliance/register-of-processing.md)).
+
+### Changed - readings of v1.3.1-alpha.1 on both bench phones
+
+Both phones read, the first 1:1 call read with its audio numbers: six defects, the worst a decoder rejecting 30 % of the packets ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Changed - readings of v1.3.1-alpha.2 on both bench phones
+
+The call UI read on both phones (the iPhone hang-up is reachable), CALL-WIFI recovers a 6 s outage but not 14 s or 90 s, the noise is unchanged and the new diagnostics could not be read on the iPhone ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Changed - the alpha.3 bench reading: the Mi 9T's call audio never crosses its E2E worker
+
+Both phones' worker reports read: the iPhone encrypts clean Opus, the Mi 9T's transforms receive no frame and the iPhone fails to decrypt everything from it; CALL-WIFI passes on both phones ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Changed - the alpha.4 bench reading: the call audio is clean on both phones
+
+Both phones' E2E transforms carry every frame (~245 per side at 5 s, 0 decrypt failures), the Mi 9T conceals 0.2-0.6 % of the iPhone's audio with 0 decode errors, and the desktop pairings are clean; CALL-AUDIO-1 and CALL-E2E-BYPASS-MI9T close ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Added - a CanaReel sent in a conversation is announced as one in its push
+
+The push scanner reads the reel declaration of a chat video and announces it as a CanaReel in the app language, with no thumbnail, on Android and iOS; inert until the reel writer ships ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#12-what-the-push-package-rc-7-built-2026-10-19)).
+
+### Fixed - a Back during a reel's upload can no longer publish it twice, and an anonymous post lands in the personal feed
+
+The publish step now refuses a Back once the upload has begun, so the same take cannot be published a second time, and an anonymous post or reel no longer lands in the associations feed ([reels](docs/wiki/frontend/modules/reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)).
+
+### Added - CanaReels gets Instagram's rail, a comments sheet and photo pages
+
+Each CanaReels page carries a heart, comments and send rail; the comments open in a sheet over the playing reel; posts of exactly one photo join the feed as pages (`GET /api/posts?kind=reel&singlePhotos=true`); on a desktop one mouse-wheel gesture turns one reel ([reels](docs/wiki/frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)).
+
+### Fixed - forms: deleting an association or a form works again
+
+Both failed since `1.2.4`: the SQL that archives or removes a form was missing parentheses, a syntax error no unit test saw. A PostgreSQL test now runs it ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Changed - a Dependabot Rust bump that leaves two lockfiles stale is completed and merged by a machine
+
+A daily job refreshes the committed `Cargo.lock` files on a new pull request opened by the `canari-auto-merge` App, and `arm-auto-merge.yml` arms it only when it carries Dependabot's own commits patch for patch plus lockfiles that gain only crates.io sources (an unreadable answer disarms); refusals land in one issue ([cicd](docs/wiki/cicd.md#a-dependabot-cargo-bump-that-is-incomplete-by-construction-is-completed-and-merged-wp-rust-lock-automerge-2026-10-18)).
+
+### Fixed - a salon message whose process died before its broadcast is broadcast and pushed at the next boot
+
+The broadcast and the push now come from an outbox entry written in the send's transaction ([social-service](docs/wiki/services/social-service.md)).
+
+### Changed - refusals a member can act on carry one stable code each
+
+The delivery and core services name PIN, invitation, membership, block-list and directory refusals with a `code` the client words through Paraglide, never the server's English ([chat-delivery](docs/wiki/services/chat-delivery.md#refusal-codes---one-stable-name-per-refusal-a-member-can-act-on-2026-10-19)). Old message texts are unchanged.
+
+### Changed - no test sleeps for a duration
+
+The suite's real sleeps are gone: a queue yield (`flushMacrotask`), an awaited condition (`vi.waitFor`), a quiet (`settleUntilStable`) or fake timers, and `noRealSleeps.test.ts` refuses any non-zero `setTimeout` delay (literal, variable or field, any number of lines) in a file that does not really call `vi.useFakeTimers(` ([test-suite-reform](docs/wiki/test-suite-reform.md), WP-T6).
+
+`outbox.test.ts` now disposes every controller it creates after each case: the ones left alive still flushed after the file ended, and vitest failed the run with an `EnvironmentTeardownError`, intermittently, on `main` too.
+
+### Changed - the source-scan tests read one shared snapshot of the tree instead of walking it 19 times
+
+A vitest `globalSetup` snapshots `src` once per run and `src/test/sourceTree.ts` replaces the nine copied walkers, so the scans no longer time out under full-suite load (89 timeouts in 20 loaded runs, none after); `ChatArea.entryWindow` mounts 80 rows instead of 300. No app byte changes ([test-suite-reform](docs/wiki/test-suite-reform.md#wp-t9-s---one-walk-of-the-source-tree-for-every-scan-2026-10-19)).
+
+### Changed - an icon button's tooltip and accessible name are one string when they say the same thing
+
+Three buttons (unpin, record a voice message, manage communities and roles) kept the same text under two keys; they share one now, and a test refuses the next one ([design-reference](docs/wiki/frontend/design-reference.md#tooltips-one-convention-audited-2026-10-08)).
+
+### Fixed - a cold start asks for the unread counts once
+
+The community load and the live-stream reconnect shared no request, so `unread-counts` went out twice; a caller that owes no read mark now joins the one in flight, and a test counts the requests of a recorded boot ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#19-wp-w4-second-part-unread-counts-is-one-request-per-boot-ordered-after-the-read-mark-flush-2026-10-19)).
+
 ## [1.3.0] - 2026-10-19
 
 ### Fixed - a group joined in the background gets its conversation row at cold start, and its queued messages are no longer lost
