@@ -88,6 +88,12 @@ they were not there at those epochs. It answers a different question.
 
 **MLS keeps a job here, and it is the right one:** carrying the seeds. See §5.
 
+**Re-measured 2026-10-21: the table above is the 2026-08-17 premise, and it no longer holds.** A
+community key group now has 199 device seats and a group conversation 109, the latter carrying its
+messages over MLS. The argument from the commit rate (point 2) still stands, and production measures
+it: the 199-seat key group took 204 commits in two days. The numbers and what follows from them are on
+[dm-vs-community-encryption](dm-vs-community-encryption.md#group-sizes---the-never-above-a-pair-premise-no-longer-holds).
+
 ## 4. The design
 
 ### 4.1 A seed per sender, per channel
@@ -102,6 +108,11 @@ design does not have:
 - **When?** Rotation is lazy: on the next send after the membership it was shared with changed.
   Nothing must happen at the moment somebody leaves, and nothing is owed by a member who never
   speaks again.
+
+  **"Changed" is implemented as "the key group's epoch moved", which a device JOINING also does.**
+  On production that makes adds the dominant trigger: 845 sessions for 1 698 messages, and 69-98 %
+  of a sender's messages more than an hour apart open a new session (measured 2026-10-21,
+  [dm-vs-community-encryption](dm-vs-community-encryption.md#rotation---one-seed-per-two-messages-not-one-per-sender-per-week)).
 
 A message key is `HKDF-SHA256(ikm = seed, salt = sessionId, info = "canari-graine-v1" || be32(index))`.
 **It is DERIVED from the seed, not ratcheted** - the difference from megolm is deliberate and argued
@@ -150,6 +161,11 @@ so pairwise sealing would put 300 conversations in the sidebar and cost O(N) sen
 only and never a message body.** A seed is distributed as a single MLS application message to that
 group: **O(1) traffic per session, not O(N)** - which is the constraint that killed pairwise.
 
+That O(1) is the SENDER's. The server still queues one row per recipient device seat, about 31 per
+payload on 2026-10-21, and the key-group frames hold 883 MB of the 1.5 GB `queued_message` table,
+against 1.5 MB for every channel message ever written
+([dm-vs-community-encryption](dm-vs-community-encryption.md#o1-per-seed-is-true-of-the-client-not-of-the-server)).
+
 This is not a return to §3. The distinction is total: the group carries SEEDS, not messages. A
 device behind on commits misses a distribution and **requests the seeds it lacks** (§4.5) - a
 lookup, bounded, repairable - where a device behind in a message-carrying MLS group loses the
@@ -171,6 +187,11 @@ today** - and that is the whole reason channel history is cheap where DM history
 keeps every channel ciphertext durably, so nothing is replayed peer to peer. Order of magnitude for
 a one-year community with 30 active senders rotating weekly: ~1 500 seeds x ~50 bytes ~= **80 KB, in
 one message.**
+
+**Both factors of that estimate were wrong by 2026-10-21.** A v2 seed is about 330 bytes on the wire,
+not 50. The largest community minted 458 seeds in its first 8 days, because adds rotate (§4.1). Its
+bundle is about 150 KB today, and the 8 000-seed cap is about 2.6 MB in one MLS message
+([dm-vs-community-encryption](dm-vs-community-encryption.md#the-history-bundle---6x-heavier-per-seed-and-sized-for-the-wrong-rotation-rate)).
 
 `history_visibility` is per community, **`shared` by default** (a newcomer receives the past),
 `joined` available for a sensitive salon. Two consequences to carry deliberately:

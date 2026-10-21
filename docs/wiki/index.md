@@ -25,6 +25,7 @@
 - [MLS recovery ladder](protocols/mls-recovery-ladder.md) — Step-by-step recovery (commit replay → external join → welcome_request)
 - [MLS + Graine state machine](protocols/mls-graine-state-machine.md) — **Every path, drawn from the code.** Mermaid diagrams with `file:line` on every transition, the duplicate-path table, the dead ends, and the P1/P2/P3 triage
 - [Channel encryption](protocols/channel-encryption.md) — **Graine, PHASES 1-5 ARE IN.** Why a salon is not an MLS group, the per-sender seed the server has never held, and the cut that is still owed
+- [DMs and communities, compared](protocols/dm-vs-community-encryption.md) — What MLS-carried DMs and Graine-carried communities each do well, re-measured on production 2026-10-21: group sizes, the rotation rate, the bundle, the queue, and where each can improve
 - [WebSocket binary protocol](protocols/websocket-protocol.md) — protobuf wire format, AppMessage, MlsFrame
 - [API surface](protocols/api-surface.md) — Full endpoint list across all services
 

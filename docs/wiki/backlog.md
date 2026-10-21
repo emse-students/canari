@@ -27,6 +27,36 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
+
+Every device joining a community's key group commits, and `shouldRotateGraineSession` rotates on any
+epoch change. Production: 845 sessions for 1 698 messages, and 458 seeds in the largest community's
+first 8 days. The history bundle carries every seed, about 330 bytes each in v2, so its 8 000-seed cap
+is about 2.6 MB in one MLS message. Owed, in order:
+(1) rotate on a REMOVAL only, by comparing the leaf identities recorded at mint with the current tree,
+with no durable marker; (2) bound the bundle in bytes and page it, after measuring what the gateway and
+the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
+payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
+[dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
+
+## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
+
+A QUESTION first: measure that group's unreadable-frame rate against the communities' and decide
+whether a group conversation above some size should be backed by Graine. Leaves never self-update
+either, so MLS post-compromise security is never exercised. A periodic update commit would heal a
+stolen leaf, at the price of more commits, which is the desync class itself
+([dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#dms-and-group-conversations)).
+
+## P3 - Names in the clear: conversation, community and salon names (user, 2026-10-21, not designed)
+
+`dm_groups.name`, `channel_workspaces.name` and `slug`, and `channels.name` are plaintext, and pushes
+carry sender and group names in the clear to FCM and APNs ([DSO dossier](compliance/dso-dossier.md)).
+The user wants them encrypted "later". Constraints to design against before anything is built: an
+invite link's preview shows the community name to a non-member; the `slug` is a unique public
+identifier; a push decrypted natively needs the name key on the device before any WebView runs (the
+native mirror path, [channel-encryption §4.9](protocols/channel-encryption.md#49-notifications-keep-working-and-the-mirror-gets-a-bound));
+server-side admin and moderation screens list communities by name.
+
 ## P1 - Live moderation (WP-L8): the server half is BUILT, the client half is BUILT, the decisions of 2026-10-20 are taken and their server work is owed (2026-10-19)
 
 A RELEASE BLOCKER (D3): no stable carries lives before it. **The production gate list, the order of the switch and the viewer-cap steps: [live-production](frontend/modules/live-production.md)** (2026-10-21); the signing secrets of both estates are SET (2026-10-21). **The RUNTIME kill switch the owner asked for on 2026-10-21 is BUILT (draft PR): `platform_config.lives_mode` (`off`/`on`, core migration 015, default `off` on every row), set at `/admin/platform`, ANDed with `LIVE_ENABLED` on every live route and both media segment routes, published by `/api/version` so clients hide the card and the chip** ([lives](services/lives.md#the-two-switches-live_enabled-and-lives_mode)). Owed: dev's row reads `off` after the deploy that applies 015, so a global admin opens it there before the next live reading; then one reading that closing it on dev takes the card away at the next version refresh. Built on the server, draft PR: a live is
