@@ -131,9 +131,15 @@ export function submitterName(sub: {
   firstName: string | null;
   lastName: string | null;
   userId: string | null;
+  reference?: string | null;
 }): string {
   const real = [sub.firstName, sub.lastName].filter(Boolean).join(' ');
+  if (real) return real;
+  if (sub.userId) return getUserDisplayNameSync(sub.userId);
   // An anonymous answer has no author to name; callers branch on the form before asking. So a row
-  // with no account HERE is a guest's, from a public form's link: said, rather than left blank.
-  return real || (sub.userId ? getUserDisplayNameSync(sub.userId) : m.form_submitter_guest());
+  // with no account HERE is a guest's, from a public form's link: said, rather than left blank -
+  // and a guest who PAID is filed under the reference they were given, which is what they quote.
+  return sub.reference
+    ? m.form_submitter_guest_reference({ reference: sub.reference })
+    : m.form_submitter_guest();
 }

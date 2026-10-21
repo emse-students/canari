@@ -312,6 +312,17 @@ export class GuestSubmitFormDto {
   website?: string;
 }
 
+/**
+ * The guest return page's proof (`guest-receipt.ts`). In the BODY, never the path, so it stays out
+ * of the access logs. Only its length is checked here: a wrong shape is answered like an unknown
+ * receipt by the service, so a guess learns nothing from a 400.
+ */
+export class GuestReceiptDto {
+  @IsString()
+  @MaxLength(64)
+  receipt: string;
+}
+
 export class SubmitFormDto {
   @IsString()
   @IsOptional()

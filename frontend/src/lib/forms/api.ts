@@ -330,6 +330,8 @@ export interface Submission {
   totalPaid: number;
   paymentStatus: string;
   createdAt: string;
+  /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
+  reference?: string | null;
   /** The file answers of this submission whose file the retention purge has deleted. */
   deletedFileIds?: string[];
   /** The live files of this submission, by id: the name a manager's download is saved under. */
@@ -610,6 +612,39 @@ export interface PublicSubmitReply {
   ok: true;
   checkoutUrl?: string;
   cashPayment?: true;
+  /** With `cashPayment`: the reference the guest gives the organiser. */
+  reference?: string;
+}
+
+/**
+ * What the guest return page reads about a paid answer, for whoever holds its receipt (WP-P2): the
+ * reference to give the organiser, the amount, and where the payment stands. Never an id.
+ */
+export interface GuestReceipt {
+  reference: string;
+  formId: string;
+  totalPaid: number;
+  currency: string;
+  paymentStatus: string;
+  /** The provider state the server read on THIS call; absent when none was. */
+  requestState?: PaymentRequestState;
+}
+
+/**
+ * Confirms a guest's payment from its RECEIPT - the proof Lydia's return URL carries instead of a
+ * session. The server reads the answer's own request at Lydia; nothing else from the URL is sent.
+ * The receipt goes in the body, so it stays out of access logs. Plain `fetch`: a guest has no
+ * session. A refusal is a `SocialApiError` (404: no answer has this receipt; 429: the per-receipt
+ * limit on asking Lydia).
+ */
+export async function confirmGuestReceipt(receipt: string): Promise<GuestReceipt> {
+  const res = await fetch(`${socialUrl()}/api/public/forms/receipts/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ receipt }),
+  });
+  if (!res.ok) throw await refusal(res, 'Receipt could not be read');
+  return res.json();
 }
 
 /** Why a public form could not be read: it is not there (or not public), or the call failed. */

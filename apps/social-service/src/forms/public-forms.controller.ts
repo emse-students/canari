@@ -12,8 +12,11 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
-import { GuestSubmitFormDto } from './dto/form.dto';
+import { GuestReceiptDto, GuestSubmitFormDto } from './dto/form.dto';
+import { CONFIRM_PAYMENT_PER_MINUTE } from './forms.controller';
 import { FormsService } from './forms.service';
+import type { GuestReceiptView } from './guest-receipt';
+import { GuestReceiptThrottlerGuard } from './guest-receipt-throttler.guard';
 
 /**
  * A PUBLIC FORM, ANSWERED WITHOUT AN ACCOUNT (user, 2026-09-30) - the two routes a guest on a
@@ -64,6 +67,22 @@ export class PublicFormsController {
     );
     return reply;
   }
+
+  /**
+   * THE GUEST RETURN PAGE (WP-P2): where a paid guest answer stands, confirmed at Lydia server to
+   * server, for whoever holds its RECEIPT - the proof a guest has instead of a session
+   * (`guest-receipt.ts`). The receipt travels in the body, so it stays out of the access logs. An
+   * unknown receipt and a malformed one are the same 404. Throttled per receipt
+   * (`GuestReceiptThrottlerGuard`) at the member's own confirmation rate: the page polls ten times,
+   * three seconds apart, and each read of a pending answer spends one Lydia call.
+   */
+  @UseGuards(GuestReceiptThrottlerGuard)
+  @Throttle({ default: { limit: CONFIRM_PAYMENT_PER_MINUTE, ttl: 60_000 } })
+  @Post('receipts/confirm')
+  @HttpCode(200)
+  confirmReceipt(@Body() dto: GuestReceiptDto): Promise<GuestReceiptView> {
+    return this.service.confirmGuestReceipt(dto.receipt);
+  }
 }
 
 /** What a guest is answered after a submit: these fields and nothing else. */
@@ -73,6 +92,8 @@ export interface GuestSubmitReply {
   checkoutUrl?: string;
   /** The answer is recorded and its price is owed in cash to the organiser. */
   cashPayment?: true;
+  /** With `cashPayment`: the reference the guest gives the organiser (`guestReference`). */
+  reference?: string;
 }
 
 /**
@@ -85,6 +106,7 @@ export function toGuestSubmitReply(result: {
   submissionId?: string;
   checkoutUrl?: string;
   cashPayment?: boolean;
+  reference?: string;
   message?: string;
 }): GuestSubmitReply {
   if (result.message && !result.checkoutUrl) {
@@ -93,6 +115,8 @@ export function toGuestSubmitReply(result: {
   return {
     ok: true,
     ...(result.checkoutUrl ? { checkoutUrl: result.checkoutUrl } : {}),
-    ...(result.cashPayment ? { cashPayment: true as const } : {}),
+    ...(result.cashPayment
+      ? { cashPayment: true as const, ...(result.reference ? { reference: result.reference } : {}) }
+      : {}),
   };
 }

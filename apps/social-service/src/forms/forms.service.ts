@@ -49,6 +49,15 @@ import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { withSubmissionReturnKey } from './return-url-key';
+import {
+  GUEST_RECEIPT_NOT_FOUND,
+  guestReference,
+  hashGuestReceipt,
+  isGuestReceiptShape,
+  newGuestReceipt,
+  toGuestReceiptView,
+  type GuestReceiptView,
+} from './guest-receipt';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
@@ -1172,6 +1181,14 @@ export class FormsService {
       if (settled === 'paid') return { submissionId: previous.id, alreadyPaid: true };
     }
 
+    // A guest who pays ONLINE leaves for Lydia and comes back with no session: the receipt, minted
+    // here and stored hashed on the row, is what its return page shows instead (`guest-receipt.ts`).
+    // Cash needs none - the guest reads the reference at once, on the page that sent the answer.
+    const receipt =
+      guest && totalCents > 0 && !(form.allowCashPayment && input.paymentMethod === 'cash')
+        ? newGuestReceipt()
+        : null;
+
     let savedSubmission!: Submission;
     await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       await lockFormSeats(manager, id);
@@ -1302,6 +1319,7 @@ export class FormsService {
           paymentStatus: totalCents > 0 ? 'pending' : 'free',
           paymentMethod: null,
           cashExpiresAt: null,
+          guestReceiptHash: receipt?.hash ?? null,
         });
         savedSubmission = await manager.save(submission);
       }
@@ -1327,7 +1345,11 @@ export class FormsService {
         cashExpiresAt,
       });
       this.logger.log(`[Forms] Cash payment pending for submission ${savedSubmission.id}`);
-      return { submissionId: savedSubmission.id, cashPayment: true };
+      return {
+        submissionId: savedSubmission.id,
+        cashPayment: true,
+        ...(guest ? { reference: guestReference(savedSubmission.id) } : {}),
+      };
     }
 
     if (totalCents > 0) {
@@ -1382,18 +1404,22 @@ export class FormsService {
         const idempotencyKey = `form:${savedSubmission.id}`;
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
-        // A guest is sent back to the public form's own address, never to `/forms/success`: that
-        // page reads the answer through a session the guest has not got. The server chooses it;
-        // a guest names no return URL (`GuestSubmitFormDto` carries none).
-        const guestReturn = `${frontendUrl}/f/${encodeURIComponent(id)}`;
-        const successUrl = guest
+        // A guest is sent back to the public form's RECEIPT page, never to `/forms/success`: that
+        // page reads the answer through a session the guest has not got. The URL carries the
+        // receipt and nothing that decides anything: the page only asks the server, which asks
+        // Lydia. The server chooses it; a guest names no return URL (`GuestSubmitFormDto`).
+        // `receipt` is minted for exactly this case (a guest paying online), above the transaction.
+        const guestReturn = guest
+          ? `${frontendUrl}/f/${encodeURIComponent(id)}/receipt?receipt=${receipt!.token}`
+          : null;
+        const successUrl = guestReturn
           ? guestReturn
           : resolveCheckoutCallbackUrl(
               input.successUrl,
               `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
               frontendUrl
             );
-        const cancelUrl = guest
+        const cancelUrl = guestReturn
           ? guestReturn
           : resolveCheckoutCallbackUrl(
               input.cancelUrl,
@@ -1899,6 +1925,39 @@ export class FormsService {
       requestState = undefined;
     }
     return { ...(await this.submitterAnswer(current)), requestState };
+  }
+
+  /**
+   * THE GUEST RETURN PAGE'S ONE CALL (WP-P2): the answer a receipt proves, confirmed exactly as a
+   * member's return confirms it (`confirmPayment`: Lydia read server to server about the row's OWN
+   * request), and answered as a `GuestReceiptView` - an allowlist that carries no id.
+   *
+   * THE RECEIPT IS THE ONLY KEY. The row is found by the receipt's HASH and by nothing else. A
+   * malformed receipt, an unknown one, a submission id, or a stored hash handed back as a receipt
+   * all answer the same 404 (`GUEST_RECEIPT_NOT_FOUND`): nothing tells a guess that reached a row
+   * from one that did not. A receipt replayed after settlement only reads - `confirmPayment` asks
+   * the provider nothing about a settled row, and `markPaid` repeats nothing - and nothing the
+   * return URL carries besides the receipt is read at all: only Lydia's answer marks a row paid.
+   */
+  async confirmGuestReceipt(token: unknown): Promise<GuestReceiptView> {
+    const row = isGuestReceiptShape(token)
+      ? await this.submissionRepo.findOne({
+          where: { guestReceiptHash: hashGuestReceipt(token) },
+          select: { id: true },
+        })
+      : null;
+    if (!row) {
+      // A real guest's receipt never expires, so this is a mistyped link, a deleted answer or a
+      // guess. Nothing of the receipt is logged: it is the credential.
+      this.logger.warn('[Forms] guest receipt refused: it matches no answer');
+      throw new NotFoundException(GUEST_RECEIPT_NOT_FOUND);
+    }
+    const view = toGuestReceiptView(await this.confirmPayment(row.id));
+    this.logger.log(
+      `[Forms] guest receipt read: submission ${row.id} is ${view.paymentStatus}` +
+        (view.requestState ? ` (provider ${view.requestState})` : '')
+    );
+    return view;
   }
 
   /**
