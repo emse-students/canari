@@ -6,8 +6,8 @@
    *
    * Mounted by the broadcaster screen (`LiveBroadcaster.svelte`) while on air, with the live's id
    * and key. Every verdict that the live is over - the loop's, or one answering the broadcaster's own
-   * write - goes to `onEnded`, which hands it to the broadcast machine. It fills the positioned box
-   * it is placed in.
+   * write - goes to `onEnded`, which hands it to the broadcast machine. The viewer count rides the
+   * same loop and goes to `onViewers`. It fills the positioned box it is placed in.
    */
   import { onMount } from 'svelte';
   import LiveChatPanel from './LiveChatPanel.svelte';
@@ -29,6 +29,11 @@
     keyHex: string;
     /** Told when the server says the live is over, with its verdict (`endReason` in the body). */
     onEnded?: (verdict: LiveRefusalError) => void;
+    /**
+     * Told the live's viewer count at each poll of this loop, `null` on a failed poll and when this
+     * component goes (off air, or a new live): none to show, never a stale or another live's number.
+     */
+    onViewers?: (count: number | null) => void;
     /** Replace the outside world - for tests. */
     chatDeps?: Partial<LiveChatDeps>;
     pollerDeps?: Partial<LiveBroadcasterChatPollerDeps>;
@@ -39,6 +44,7 @@
     liveId,
     keyHex,
     onEnded,
+    onViewers,
     chatDeps,
     pollerDeps,
     fetchLimits = fetchLiveLimits,
@@ -75,15 +81,24 @@
         console.warn(`[LIVE_CHAT] the live limits could not be read (${String(e)})`);
       }
     );
-    const poller = new LiveBroadcasterChatPoller(liveId, s, pollerDeps, (verdict) => {
-      ended = true;
-      onEnded?.(verdict);
-    });
+    const poller = new LiveBroadcasterChatPoller(
+      liveId,
+      s,
+      pollerDeps,
+      (verdict) => {
+        ended = true;
+        onEnded?.(verdict);
+      },
+      (count) => onViewers?.(count)
+    );
     poller.start();
     return () => {
       poller.stop();
       s.stop();
       session = null;
+      // The count was THIS live's while on air: off air, or remounted for a new live (the screen
+      // keys this component on the live id), the screen must not keep it.
+      onViewers?.(null);
     };
   });
 

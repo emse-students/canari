@@ -55,6 +55,12 @@ export interface LiveManifest {
   lastSegmentAt: string | null;
   serverNow: string;
   segments: LiveManifestSegment[];
+  /**
+   * How many accounts watch the live: the seats it holds on the host's cap, the caller's own
+   * included, the broadcaster never. A COUNT ONLY - no answer of the API names a viewer. `null` when
+   * the broadcaster's count did not answer: show no number, never a guessed one.
+   */
+  viewers: number | null;
   /** The live chat (WP-L6), present only when the poll asked for it (`chat=1`). */
   chat?: LiveChatBlock;
 }

@@ -66,7 +66,7 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | `GET /api/lives/standing` | any member | the CALLER's own `{ cutsOnRecord, suspendedUntil, withdrawnAt }` ([the ladder](#the-strike-ladder-wp-l8b)), so the pre-live screen can say why a start would be refused before it is pressed |
 | `POST /api/lives` `{ key, associationId?, acceptedRulesVersion? }` | any member (L1) | `201` the live with its key. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `403 LIVE_RULES_NOT_ACCEPTED` (with `rulesVersion`), `403 LIVE_BROADCAST_WITHDRAWN`, `403 LIVE_BROADCAST_SUSPENDED` (with `suspendedUntil`), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour) |
 | `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }`, `no-store`. Takes a SEAT ([below](#the-viewer-cap-wp-l4)): `503 LIVE_FULL` (with `viewerCap`) past the cap, `503 LIVE_SEATS_UNAVAILABLE` when the seat count does not answer |
-| `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }] }` - the newest 10, or from `from` on; `no-store` (the live edge: the shortest cache is none, and the answer is per viewer); renews the seat, same two 503s |
+| `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }], viewers }` - the newest 10, or from `from` on; `viewers` is [how many watch](#the-viewer-count-2026-10-21), a number and never a name; `no-store` (the live edge: the shortest cache is none, and the answer is per viewer); renews the seat, same two 503s |
 | `DELETE /api/lives/:id/seat` | any member | `204`: the caller's seat on that live goes back to the cap now. Idempotent, no watch check (a viewer may always give back what it holds); `503 LIVE_SEATS_UNAVAILABLE` |
 | `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `409 LIVE_SEGMENT_IN_PROGRESS` (that index is still storing: retry, the repeat then answers), `409 LIVE_SEGMENT_RESERVATION_LOST` (its reservation was taken over as abandoned), `413` over 4 MiB, `413 LIVE_BUDGET_EXHAUSTED`, `429 LIVE_SEGMENT_TOO_FAST`, `429` from nginx (no `code`), `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded, the index released), `503 LIVE_INGEST_BUSY` |
 | `POST /api/lives/:id/end` | the broadcaster | `{ id, endedAt, endReason }`, idempotent while the row exists; once the end's purge deleted it, a repeat is `404 LIVE_NOT_FOUND`, which the client reads as "ended and deleted" - nothing keeps a deleted live's end to answer with (no replay, L3) |
@@ -220,6 +220,13 @@ which is what the cap below is for.
 
 ## The viewer cap (WP-L4)
 
+**THE OWNER'S STANDING WISH (2026-10-20, restated 2026-10-21): NO VISIBLE AUDIENCE CEILING FOR A
+LIVE - "the technique must follow".** The cap of 24 below is a TEMPORARY TECHNICAL BOUND (the host's
+uplink, as measured), never a product rule. The "live complet" screen is not a product feature: it
+exists only until the cap goes ([the plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)),
+and nothing may be built on it or around it (no waiting list, no "full" badge, no messaging that
+treats a ceiling as intended). Lifting the cap is a separate design.
+
 L8 asked for no cap; the plan's answer was "a cap set by the host's uplink, to be MEASURED". The
 measurement exists ([realtime-media-feasibility](../infrastructure/realtime-media-feasibility.md)
 section 4 and 2a: ~90-107 Mb/s out of production on 443, two separate hours, one outside client),
@@ -246,7 +253,8 @@ all, and nobody has measured that path.
   the cap. The check and the write cannot interleave across instances (a rolling deploy runs two),
   and the clock is Redis's own (`TIME`), so no instance's clock is compared with another's. Proven
   against a real Redis: 40 simultaneous takes at a cap of 5 grant exactly 5
-  (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`).
+  (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`, run in CI by `test-social-integration`
+  since 2026-10-21 - [cicd](../cicd.md)).
 - The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
   "full"; the broadcaster takes none.
 - **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
@@ -317,6 +325,64 @@ times four ever passes a quarter of 1 500.
 polling a manifest and fetching a segment every few seconds is ~10-20 requests a second from that
 address, which a crawl scenario could read as abuse. **Unknown, and a question for the DSI before
 the first public live** (not a change: a question).
+
+## The viewer count (2026-10-21)
+
+**The owner's decision (2026-10-21): the viewers of a live see HOW MANY watch it, like Instagram,
+and so does its broadcaster.** The number is EXACT, not rounded - confirmed by the owner
+2026-10-21 ([below](#exact-not-rounded---confirmed-by-the-owner-2026-10-21)). Before it, nobody saw a number and the broadcaster had no list
+either: no route answers viewer ids (the broadcaster learns an account id only from a chat line's
+author, which is how a removal names one). That stays true - **a COUNT, never an identity and never a
+list, to anybody: the broadcaster, a viewer, staff.**
+
+**A viewer is a SEAT** - an account holding one on this live (above): taken by the key read, renewed
+by every manifest poll, gone on `DELETE .../seat`, a removal, the live's end, or 30 s without a poll.
+So the count is accounts, not devices (a seat is the account's), the broadcaster is never counted (it
+takes none), and the caller is counted in its own answer. **A blocked account is counted**: a block
+between the broadcaster and a member keeps that member from watching (no seat, so not counted), but a
+block between two VIEWERS hides neither from the other's count - the same stance as online presence,
+which a block does not hide either (register C18, [moderation-and-blocking](../moderation-and-blocking.md#what-a-block-does-not-do)).
+A number names nobody, so there is nothing for a block to withhold. **No second tracker and no new state**: the
+count is read from `live:seats`, in Redis, by the scripts of `live-seats.ts`:
+
+- **a viewer's poll**: `TAKE_SEAT_LUA` answers `{1, seated, watching}`, `watching` counted in the
+  SAME script as the grant, after the sweep - so it never disagrees with the cap, and a lapsed seat is
+  gone from it before it is counted;
+- **the broadcaster's poll** (its chat loop, `chat=1`, the one request it already makes):
+  `COUNT_LIVE_SEATS_LUA`, read-only, the seats renewed within the lease on Redis's clock - exactly
+  the ones the next sweep keeps. Its KEY read (`GET /:id`, on a return from the background) shows no
+  count and runs none (`viewerCount` is asked by the manifest only).
+
+**The members are read INSIDE the script** and only a number leaves Redis, so no viewer's id reaches
+social-service for this, let alone a response. `lives.integration.spec.ts` asserts that neither a
+viewer's nor the broadcaster's manifest carries another viewer's id; `live-seats.spec.ts` proves the
+count against a real Redis (two lives, a renewal not counted twice, a leave, a lapsed lease, a
+refusal carrying no count).
+
+**It rides the poll both sides already make** - the manifest, once a second; no new loop, no new
+route, and the cost per viewer is the one script it already ran, now also walking the set. That walk is
+linear in the set, which the cap bounds (24 members across every live). **When the cap goes** ([the
+plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)), a poll walking every
+seat of the estate is N x N: the seats move to one set PER LIVE (`ZCARD`), which is that plan's own
+"the set only COUNTS" step.
+
+**If the count does not answer.** A viewer's take fails closed as it always did (`503
+LIVE_SEATS_UNAVAILABLE`; no count is ever made up). The broadcaster's read is its CHAT poll too, which
+a display number must not take down: `watching` answers `null`, logged as an `error` (`[LIVE_SEAT]
+... the viewer count did not answer`), and the screen shows no number. Every viewer's poll is failing
+on the same outage at that moment, so the line is not alone.
+
+### Exact, not rounded - confirmed by the owner 2026-10-21
+
+**EXACT, CONFIRMED BY THE OWNER 2026-10-21.** The implementer proposed it from the "like Instagram"
+reference, and the owner accepted it on being asked. The reasoning, kept so it is not re-opened: the
+plan had proposed a rounded count for viewers. With at most 24 seats an exact small number can tell someone who already suspects it that a
+particular person just arrived (the count went from 3 to 4 when a friend said "I'm opening it"). Rounding
+was weighed and refused: at this size any bucket wide enough to hide one arrival (say 1-5, 6-10)
+makes the number useless as "how many are here", and it only moves the tell to the bucket's edge. The
+count carries no identity, the chat already shows its writers' names to the same audience, and an
+arrival is otherwise invisible. So "like Instagram" was taken literally: the exact number, to the
+broadcaster and the viewers alike, with no asymmetry between them.
 
 ## The key (Q4): served like a post CEK, removal enforced by the server
 

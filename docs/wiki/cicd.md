@@ -31,6 +31,11 @@ was written, the migration 082 spec turned out to have failed on EVERY run since
 The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
 carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
 none: a jest run that selects nothing is no longer a pass (the `test` scripts lost `--passWithNoTests` in WP-T2), but a gate that selects by name still needs its own count of what ran.
+**Since 2026-10-21 the same job runs a REDIS too** (production's digest; `SOCIAL_IT_REDIS_URL`), for
+`lives/live-seats.spec.ts`, selected by name and counted by the same check: its real-Redis half (the
+viewer cap's atomicity, a live's viewer count, a seat's expiry) had been skipped on every run before.
+`ci-passed-gate.test.mjs` asserts the image, the variable and the selection, and that every Redis
+`ci.yml` runs is production's.
 **ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
 which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
 in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the

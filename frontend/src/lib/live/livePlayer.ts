@@ -37,6 +37,7 @@ import {
 } from './api';
 import { LiveSegmentOpenError, openLiveSegment } from './liveCrypto';
 import { Fmp4ParseError, initSegmentEnd } from './fmp4Segments';
+import { liveViewerCount } from './liveViewerCount';
 import {
   LIVE_BROADCASTER_QUIET_MS,
   LIVE_MANIFEST_POLL_MS,
@@ -124,6 +125,11 @@ export interface LivePlayerOptions {
   onState(state: LiveViewerState): void;
   /** Told the live's age at each manifest (the database's clock on both ends), in ms. */
   onElapsed?(ms: number): void;
+  /**
+   * Told the manifest's viewer count at each poll, and `null` on every failed step (none to show:
+   * a number on screen is always the last answered poll's). A number, never a name.
+   */
+  onViewers?(count: number | null): void;
   /**
    * The live chat (WP-L6), riding THIS poll: asked for its cursors before each manifest request and
    * handed the answer's `chat` block - one request a tick, no second timer. Absent: no chat asked.
@@ -424,6 +430,8 @@ export class LivePlayer {
   /** Every failure of a step, decided once: stop on a state, or retry `step` after a backoff. */
   private fail(gen: number, error: unknown, step: (gen: number) => Promise<void>): void {
     if (!this.alive(gen)) return;
+    // No stale count: until a poll answers again, the last number is no longer known to be true.
+    this.opts.onViewers?.(null);
     const outcome =
       error instanceof StopOn
         ? { stop: error.state }
@@ -745,8 +753,12 @@ export class LivePlayer {
     });
   }
 
-  /** The manifest's two database times: the live's age, and whether the broadcaster went quiet. */
+  /**
+   * The manifest's two database times - the live's age, and whether the broadcaster went quiet -
+   * and its viewer count, read at the same two places every manifest is.
+   */
   private readClock(manifest: LiveManifest): void {
+    this.opts.onViewers?.(liveViewerCount(manifest));
     const now = Date.parse(manifest.serverNow);
     if (Number.isFinite(now) && Number.isFinite(this.startedAtMs)) {
       this.opts.onElapsed?.(Math.max(0, now - this.startedAtMs));

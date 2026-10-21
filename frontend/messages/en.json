@@ -4142,6 +4142,16 @@
       }
     }
   ],
+  "live_viewer_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} viewer",
+        "countPlural=other": "{count} viewers"
+      }
+    }
+  ],
   "live_end_button": "End",
   "live_end_confirm": "End the live? It disappears for every viewer.",
   "live_end_confirm_button": "End the live",

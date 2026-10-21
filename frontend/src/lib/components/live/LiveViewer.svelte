@@ -33,6 +33,7 @@
   import LiveChatPanel from './LiveChatPanel.svelte';
   import LiveReactionBar from './LiveReactionBar.svelte';
   import LiveReactionsLayer from './LiveReactionsLayer.svelte';
+  import LiveViewerCount from './LiveViewerCount.svelte';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { followVideoSound } from '$lib/actions/playWhileVisible';
@@ -82,6 +83,8 @@
   let closeButton = $state<HTMLButtonElement | null>(null);
   let viewerState = $state<LiveViewerState>({ kind: 'connecting' });
   let elapsedMs = $state<number | null>(null);
+  /** How many watch, from each manifest poll - a number, never who (null: nothing to show). */
+  let viewers = $state<number | null>(null);
   let name = $state('');
   let player: LivePlayer | null = null;
   // The live chat (WP-L6): one session riding the player's poll, drawn by the panel and the layer.
@@ -197,6 +200,9 @@
       },
       onElapsed: (ms) => {
         elapsedMs = ms;
+      },
+      onViewers: (count) => {
+        viewers = count;
       },
       chat: {
         onKey: (key) => {
@@ -314,6 +320,9 @@
         >
           {formatLiveElapsed(elapsedMs)}
         </span>
+      {/if}
+      {#if !terminal}
+        <LiveViewerCount count={viewers} />
       {/if}
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
       <button
