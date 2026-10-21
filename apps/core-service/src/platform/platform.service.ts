@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { PlatformConfig } from './entities/platform-config.entity';
+import { PlatformConfig, type CallsMode } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
@@ -12,6 +12,7 @@ export type PlatformConfigPublic = {
   maintenanceMessage: string | null;
   minClientVersion: string;
   paymentProvider: PaymentProviderId;
+  callsMode: CallsMode;
 };
 
 const DEFAULT_ROW: PlatformConfig = {
@@ -20,6 +21,7 @@ const DEFAULT_ROW: PlatformConfig = {
   maintenanceMessage: null,
   minClientVersion: '0.0.0',
   paymentProvider: 'disabled',
+  callsMode: 'off',
 };
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */
@@ -52,8 +54,14 @@ export class PlatformService implements OnModuleInit {
     return toPublic(row);
   }
 
-  /** Applies a partial update from a global admin and returns the new config. */
-  async updateConfig(dto: UpdatePlatformConfigDto): Promise<PlatformConfigPublic> {
+  /**
+   * Applies a partial update from a global admin and returns the new config. `actor` is the
+   * administrator's user id: the two switches that can shut every client out (the min-version raise
+   * and the calls kill switch) name who moved them, shortened to 8 characters like the other audit
+   * lines - enough to find the account, not a full id copied into every log line.
+   */
+  async updateConfig(dto: UpdatePlatformConfigDto, actor: string): Promise<PlatformConfigPublic> {
+    const by = actor.slice(0, 8);
     await this.ensureDefaults();
     const row = await this.repo.findOneOrFail({ where: { id: 1 } });
 
@@ -100,7 +108,7 @@ export class PlatformService implements OnModuleInit {
       // to be found afterwards.
       if (wanted !== row.minClientVersion) {
         this.logger.warn(
-          `minClientVersion ${row.minClientVersion} -> ${wanted} (deployed ${deployed ?? 'unknown'})`
+          `minClientVersion ${row.minClientVersion} -> ${wanted} (deployed ${deployed ?? 'unknown'}) by=${by}`
         );
       }
       row.minClientVersion = wanted;
@@ -108,9 +116,18 @@ export class PlatformService implements OnModuleInit {
     if (dto.paymentProvider !== undefined) {
       row.paymentProvider = dto.paymentProvider;
     }
+    if (dto.callsMode !== undefined) {
+      // THE KILL SWITCH MOVING IS WORTH A LINE OF ITS OWN, at warn like the min-version raise: every
+      // call on the estate turns on it, and "who closed calls, when" must be in the log without
+      // debug logging having been on.
+      if (dto.callsMode !== row.callsMode) {
+        this.logger.warn(`callsMode ${row.callsMode} -> ${dto.callsMode} by=${by}`);
+      }
+      row.callsMode = dto.callsMode;
+    }
 
     this.logger.debug(
-      `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion} paymentProvider=${row.paymentProvider}`
+      `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion} paymentProvider=${row.paymentProvider} callsMode=${row.callsMode}`
     );
     const saved = await this.repo.save(row);
     return toPublic(saved);
@@ -128,5 +145,6 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     maintenanceMessage: row.maintenanceMessage,
     minClientVersion: row.minClientVersion,
     paymentProvider: row.paymentProvider,
+    callsMode: row.callsMode,
   };
 }

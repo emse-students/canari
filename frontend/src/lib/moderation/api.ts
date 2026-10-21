@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
+import type { LiveStanding } from '$lib/live/types';
 
 /**
  * A refusal from the moderation API, carrying the machine-readable discriminator the server sent.
@@ -70,6 +71,8 @@ export interface ReportedLive {
   endReason: string | null;
   cutReason: string | null;
   broadcasterCuts: number;
+  /** The broadcaster's place on the strike ladder; null when the live has no known broadcaster. */
+  broadcasterStanding: LiveStanding | null;
 }
 
 /** A content report filed by a user. */

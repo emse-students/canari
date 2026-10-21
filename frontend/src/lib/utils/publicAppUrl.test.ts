@@ -50,6 +50,29 @@ describe('publicAppUrl', () => {
     expect(inAppPathFromPublicUrl('https://canari.emse.fr/posts/abc')).toBe('/posts/abc');
   });
 
+  it('treats a sibling subdomain as an external site, text and href untouched', () => {
+    const archive = 'https://archives.canari-emse.fr/s/memoires-des-mines/item/16';
+    expect(isPublicAppUrl(archive)).toBe(false);
+    expect(inAppPathFromPublicUrl(archive)).toBeNull();
+    expect(inAppPathFromHref(archive)).toBeNull();
+    expect(publicAppLinkLabel(archive)).toBeNull();
+    expect(isPublicAppUrl('https://archives.canari.emse.fr/x')).toBe(false);
+    expect(isPublicAppUrl('https://cercle.canari-emse.fr/x')).toBe(false);
+  });
+
+  it('treats lookalike hosts as external', () => {
+    expect(isPublicAppUrl('https://canari.emse.fr.evil.example/posts/x')).toBe(false);
+    expect(isPublicAppUrl('https://evilcanari-emse.fr/posts/x')).toBe(false);
+    expect(isPublicAppUrl('https://evil.canari-emse.fr.example/posts/x')).toBe(false);
+  });
+
+  it('keeps the dev estate host in-app only when this build advertises it', () => {
+    expect(isPublicAppUrl('https://dev.canari-emse.fr/posts/x')).toBe(false);
+    vi.stubEnv('VITE_FRONTEND_URL', 'https://dev.canari-emse.fr');
+    expect(isPublicAppUrl('https://dev.canari-emse.fr/posts/x')).toBe(true);
+    expect(inAppPathFromPublicUrl('https://dev.canari-emse.fr/posts/x')).toBe('/posts/x');
+  });
+
   it('maps public URLs to in-app paths', () => {
     expect(inAppPathFromPublicUrl('https://canari-emse.fr/posts/abc?q=1')).toBe('/posts/abc?q=1');
     expect(inAppPathFromPublicUrl('https://canari-emse.fr/post/legacy')).toBe('/posts/legacy');

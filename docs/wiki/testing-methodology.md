@@ -1299,6 +1299,17 @@ edited, read the reported file and case COUNT and compare it to what is on disk.
 answers the general form of the question: a check that never ran and a check that passed are the same
 colour, and only the count separates them.
 
+#### 44. A TEST COPIED BESIDE A PINNED COPY OF ITS SUBJECT ADDS A CASE, NOT A CATCH - unless its INPUT is per-copy
+
+The converse of rule 22: a case that runs and can never fail differently from another is count without
+coverage. Ten byte-identical specs sat beside byte-identical modules in the NestJS services, which an
+`exact` group in `declared-duplicates.mjs` already pins to the same bytes; each re-ran the same
+assertions on the same text (deleted 2026-10-21, -81 cases). **The test of a copy is whether anything
+it reads differs per copy.** `http-error-log.spec.ts` builds its `AxiosError` from the `axios` its own
+service resolved, so its two copies ask two questions and both stay, declared `keepEachCopy`; the same
+reasoning keeps `framework-boot.spec.ts` in all four services. Before deleting a copy, name what it
+reads beyond the shared bytes ([test-suite-reform](test-suite-reform.md#72-the-declared-copies-deleted-2026-10-21)).
+
 #### 23. CODE THAT LEAVES THIS PROCESS IS DATA WHILE IT IS HERE - and its escapes are read on the way out
 
 Every expression this rig runs in a browser is built as a template literal and handed to CDP as a
@@ -3066,6 +3077,10 @@ had been opened. Each one took under a minute and each refuted a load-bearing cl
 `docker logs --since/--until` with a bare timestamp misparses and returns nothing here; strip the ANSI
 codes and grep the embedded ISO timestamps instead. A client console describes what the client
 believes. It is evidence about the client, and it is never evidence about the peer.
+
+## ONE DRIVER PER BENCH PHONE AT A TIME (BENCH-SHARED-2, 2026-10-21)
+
+Two agents drove the same bench phone at once: one sent CDP swipes and `location.href` recoveries while the other read, a system back finished the activity, and three reloads spoiled the other's logs. **One driver per bench phone at a time, assigned by the lead.** Before a reading, look for other CDP or adb clients of the serial; before believing a reload in a log, check nobody else was driving. The rig owes a device lock ([device-readings-2026-10](device-readings-2026-10.md)); until then the lead's assignment is the lock.
 
 ## Where a result goes
 

@@ -164,6 +164,14 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_coorganise_proposed": composed = actorTitled("coorganise_proposed")
     // A live started (WP-L7): the broadcaster names the title, the body is the fixed sentence.
     case "social_live_started": composed = actorTitled("live_started")
+    // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
+    // no fragment.
+    case "social_live_cut", "social_live_suspended", "social_live_withdrawn":
+      let stem = String(key.dropFirst("social_".count))
+      composed = (
+        Self.localized("notif.social.\(stem).title", locale: locale),
+        Self.localized("notif.social.\(stem).body", locale: locale)
+      )
     case "social_reaction":
       composed = (
         Self.localized("notif.social.reaction.title", locale: locale),

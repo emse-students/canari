@@ -24,6 +24,8 @@ const SERVER_HOSTS = [
   'live',
   // D38b: the author's inbox of republication requests.
   'republication-requests',
+  // WP-L8b: a cut live, a suspension, a withdrawal - the notifications list, where their row is.
+  'notifications',
 ];
 
 /** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */

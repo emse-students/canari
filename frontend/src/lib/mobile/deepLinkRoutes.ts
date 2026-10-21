@@ -13,7 +13,7 @@ export const POST_COMMENT_PARAM = 'comment';
  *
  * The hosts are the ones the server writes into a social push (`socialDeepLink` in social-service)
  * and the ones Android and iOS build natively: `post/<id>`, `form/<id>`, `posts`, `calendar`,
- * `admin-agenda`, `live/<id>` and `republication-requests` (D38b). `posts` is what a payload
+ * `admin-agenda`, `live/<id>`, `republication-requests` (D38b) and `notifications` (WP-L8b). `posts` is what a payload
  * naming nothing falls back to on the server, and it has no id; the two agenda hosts and
  * `republication-requests` mirror `notificationHref` (the in-app bell).
  *
@@ -47,6 +47,10 @@ export function appRouteForDeepLink(u: URL): string | null {
     // D38b: a request to let an association carry a personal post - the author's inbox.
     case 'republication-requests':
       return REPUBLICATION_REQUESTS_ROUTE;
+    // WP-L8b: a notice whose subject has no page - a live moderators cut (deleted at its end), a
+    // suspension or a withdrawal of the right to broadcast. Its row on the list says it.
+    case 'notifications':
+      return '/notifications';
     default:
       return null;
   }

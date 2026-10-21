@@ -12,6 +12,7 @@
   import { m } from '$lib/paraglide/messages';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
+  import { CALLS_MODES, type CallsMode } from '$lib/utils/appVersion';
 
   type PaymentProviderChoice = 'lydia' | 'disabled';
 
@@ -20,7 +21,15 @@
     maintenanceMessage: string | null;
     minClientVersion: string;
     paymentProvider: PaymentProviderChoice;
+    callsMode: CallsMode;
   };
+
+  /**
+   * The config as the server last answered it. A save sends ONLY the fields that differ from it: a
+   * form left open while another admin closed calls (or raised the floor) used to PATCH every field
+   * back as it was loaded, silently re-opening what the other admin had just shut.
+   */
+  let loaded: PlatformConfig | null = null;
 
   let loading = $state(true);
   let saving = $state(false);
@@ -31,6 +40,16 @@
   let maintenanceMessage = $state('');
   let minClientVersion = $state('0.0.0');
   let paymentProvider = $state<PaymentProviderChoice>('disabled');
+  let callsMode = $state<CallsMode>('off');
+  /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
+  const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
+    off: m.admin_platform_calls_mode_off,
+    audio: m.admin_platform_calls_mode_audio,
+    audio_video: m.admin_platform_calls_mode_audio_video,
+  };
+  const CALLS_MODE_OPTIONS: PickerOption[] = $derived(
+    CALLS_MODES.map((mode) => ({ value: mode, label: CALLS_MODE_LABELS[mode]() }))
+  );
   /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
     { value: 'lydia', label: 'Lydia' },
@@ -154,6 +173,36 @@
     }
   }
 
+  /** Shows a server answer in the form and makes it the snapshot the next save is diffed against. */
+  function applyConfig(data: PlatformConfig) {
+    loaded = data;
+    maintenanceEnabled = data.maintenanceEnabled;
+    maintenanceMessage = data.maintenanceMessage ?? '';
+    minClientVersion = data.minClientVersion;
+    paymentProvider = data.paymentProvider;
+    callsMode = data.callsMode;
+  }
+
+  /**
+   * The fields this admin changed since the snapshot - and nothing they merely left as loaded.
+   * Only called with a snapshot: without one, every field would count as changed and a save after
+   * a failed load would write the form's placeholders (calls `off`, floor `0.0.0`) over the server.
+   */
+  function changedFields(snapshot: PlatformConfig): Partial<PlatformConfig> {
+    const form: PlatformConfig = {
+      maintenanceEnabled,
+      maintenanceMessage: maintenanceMessage.trim() || null,
+      minClientVersion: minClientVersion.trim(),
+      paymentProvider,
+      callsMode,
+    };
+    return Object.fromEntries(
+      (Object.keys(form) as (keyof PlatformConfig)[])
+        .filter((key) => form[key] !== snapshot[key])
+        .map((key) => [key, form[key]])
+    ) as Partial<PlatformConfig>;
+  }
+
   async function loadConfig() {
     loading = true;
     error = null;
@@ -161,11 +210,7 @@
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/admin/platform`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as PlatformConfig;
-      maintenanceEnabled = data.maintenanceEnabled;
-      maintenanceMessage = data.maintenanceMessage ?? '';
-      minClientVersion = data.minClientVersion;
-      paymentProvider = data.paymentProvider;
+      applyConfig((await res.json()) as PlatformConfig);
     } catch (e) {
       Log.d('admin.platform.loadConfig failed', e);
       error = m.admin_platform_load_error();
@@ -175,6 +220,13 @@
   }
 
   async function saveConfig() {
+    const snapshot = loaded;
+    if (!snapshot) {
+      // NOTHING WAS LOADED, SO NOTHING CAN BE DIFFED: refused rather than sent whole.
+      Log.d('admin.platform.saveConfig refused: no config was loaded to compare against');
+      error = m.admin_platform_save_needs_load();
+      return;
+    }
     saving = true;
     error = null;
     savedMessage = '';
@@ -182,22 +234,13 @@
       const res = await apiFetch(`${coreUrl()}/api/users/admin/platform`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          maintenanceEnabled,
-          maintenanceMessage: maintenanceMessage.trim() || null,
-          minClientVersion: minClientVersion.trim(),
-          paymentProvider,
-        }),
+        body: JSON.stringify(changedFields(snapshot)),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(text || `HTTP ${res.status}`);
       }
-      const data = (await res.json()) as PlatformConfig;
-      maintenanceEnabled = data.maintenanceEnabled;
-      maintenanceMessage = data.maintenanceMessage ?? '';
-      minClientVersion = data.minClientVersion;
-      paymentProvider = data.paymentProvider;
+      applyConfig((await res.json()) as PlatformConfig);
       savedMessage = m.admin_platform_saved_label();
       void refreshAppVersionCheck();
     } catch (e) {
@@ -311,6 +354,26 @@
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_payment_provider_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="calls-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_calls_mode_label()}
+        </label>
+        <Picker
+          id="calls-mode"
+          value={callsMode}
+          options={CALLS_MODE_OPTIONS}
+          label={m.admin_platform_calls_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const mode = CALLS_MODES.find((known) => known === v);
+            if (mode) callsMode = mode;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_calls_mode_hint()}
         </p>
       </div>
 

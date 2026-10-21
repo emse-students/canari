@@ -19,7 +19,7 @@
   import ModerationPostPreviewModal from '$lib/components/moderation/ModerationPostPreviewModal.svelte';
   import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
   import ModerationLiveBlock from '$lib/components/moderation/ModerationLiveBlock.svelte';
-  import type { LiveCutResult } from '$lib/live/types';
+  import type { LiveCutResult, LiveWithdrawalResult } from '$lib/live/types';
   import { liveStateLabels } from '$lib/moderation/liveState';
   import { createLatestOnly } from '$lib/utils/latestOnly';
   import {
@@ -376,6 +376,20 @@
     await loadReports();
   }
 
+  /** A broadcaster's right was withdrawn from a report row: say what the server did, then re-read. */
+  async function handleLiveWithdrawn(result: LiveWithdrawalResult) {
+    Log.d(
+      'admin.moderation.handleLiveWithdrawn',
+      `${result.newlyWithdrawn ? 'withdrawn' : 'already withdrawn'} (${result.cutsOnRecord} cuts)`
+    );
+    showToast(
+      result.newlyWithdrawn
+        ? m.moderation_live_withdraw_done()
+        : m.moderation_live_withdraw_already()
+    );
+    await loadReports();
+  }
+
   const pendingReports = $derived(reports.filter((r) => r.status === 'pending'));
   const resolvedReports = $derived(reports.filter((r) => r.status !== 'pending'));
 </script>
@@ -518,6 +532,8 @@
                 {formatDate}
                 reasonLabel={(code) => reasonLabel[code] ?? code}
                 onCut={handleLiveCut}
+                onWithdrawn={handleLiveWithdrawn}
+                onStale={() => void loadReports()}
               />
             {/if}
 

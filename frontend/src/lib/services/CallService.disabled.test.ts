@@ -14,7 +14,7 @@ import { CallService } from './CallService';
  * read so the pair keeps its meaning after the constant is flipped back for real.
  */
 
-vi.mock('$lib/features', () => ({ CALLS_ENABLED: false }));
+vi.mock('$lib/features', () => ({ CALLS_ENABLED: false, CALLS_VIDEO_ENABLED: false }));
 vi.mock('../workers/encryption.worker?worker', () => ({ default: class {} }));
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));

@@ -35,7 +35,7 @@ describe('Android window layout (anti-regression)', () => {
     expect(store).toContain('canariTheme?.set?.(theme)');
   });
 
-  it('declares the right-edge gesture exclusion through the canariGestures bridge', () => {
+  it('declares the gesture exclusions of both edges through the canariGestures bridge', () => {
     // Both ends pinned: a regenerated activity dropping the interface would silently bring back the
     // reply swipe that closes the conversation (Mi 9T, 2026-10-14), and no other gate sees it.
     expect(mainActivity).toContain('addJavascriptInterface(GestureBridge(), "canariGestures")');
@@ -43,6 +43,11 @@ describe('Android window layout (anti-regression)', () => {
     const page = readFileSync(resolve(here, './edgeGestureExclusion.ts'), 'utf8');
     expect(page).toContain('setRightBand');
     expect(page).toContain('clearRightBand');
+    // The feed's left edge (camera swipe, Mi 9T 2026-10-21) rides the same interface.
+    expect(mainActivity).toContain('fun setLeftBand(topPx: Int, bottomPx: Int)');
+    expect(mainActivity).toContain('fun clearLeftBand()');
+    expect(page).toContain('setLeftBand');
+    expect(page).toContain('clearLeftBand');
   });
 
   it('asks for edge-to-edge rather than inheriting it', () => {
