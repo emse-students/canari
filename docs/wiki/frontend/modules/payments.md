@@ -165,6 +165,7 @@ dashboard or balance.
 
 ## See also
 
+- [../../lydia-api.md](../../lydia-api.md) - the Lydia API reference: credentials, calls, states, callbacks, what is measured and what is not.
 - [associations.md](associations.md) - association model, permission flags, admin panel tabs.
 - [../../cotisations.md](../../cotisations.md) - membership dues (also routed through the online payment).
 - [admin.md](admin.md) - platform admin surfaces (Cercle top-ups).
