@@ -30,6 +30,31 @@ import {
   TurnUsageMeter,
 } from './turn-usage-meter.service';
 
+/** The TURN budget when `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` is unset, in GB (Cloudflare's free tier is ~1000 GB). */
+export const DEFAULT_TURN_BUDGET_GB = 950;
+
+/**
+ * The month's TURN budget as configured. `default`: the variable is unset or empty. `configured`:
+ * a whole number of GB, `0` INCLUDED - the owner's decision of 2026-10-21: `0` means calls stay
+ * open but are STUN only, never relayed. `invalid`: anything else, read as 0 (the closed direction:
+ * a value nobody can read must not spend money) and logged at error wherever it is used.
+ */
+export type TurnBudget =
+  | { gb: number; source: 'default' | 'configured' }
+  | { gb: 0; source: 'invalid'; raw: string };
+
+/** Reads `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB`; see {@link TurnBudget}. */
+export function readTurnBudget(raw: string | undefined): TurnBudget {
+  const value = raw?.trim() ?? '';
+  if (value === '') return { gb: DEFAULT_TURN_BUDGET_GB, source: 'default' };
+  // Digits AND a safe integer: 400 digits pass the pattern and read as Infinity, a budget no
+  // reading can reach.
+  if (/^\d+$/.test(value) && Number.isSafeInteger(Number(value))) {
+    return { gb: Number(value), source: 'configured' };
+  }
+  return { gb: 0, source: 'invalid', raw: value };
+}
+
 /** How often the TURN meter report runs while calls are open: hourly, like the service's others. */
 const TURN_METER_REPORT_MS = 60 * 60 * 1000;
 
@@ -49,7 +74,14 @@ export interface IceServerConfig {
  * - `TURN_BUDGET_REACHED`: the month's metered relay egress reached the budget.
  * - `TURN_METER_UNAVAILABLE`: the meter could not be read, so no budget stands behind a credential.
  */
-export type TurnUnavailableCode = 'TURN_BUDGET_REACHED' | 'TURN_METER_UNAVAILABLE';
+/**
+ * Why TURN was withheld. `TURN_DISABLED` is CONFIGURATION (a budget of 0, or a value read as 0),
+ * never a passing state: the client must not word it as "unavailable right now".
+ */
+export type TurnUnavailableCode =
+  | 'TURN_BUDGET_REACHED'
+  | 'TURN_METER_UNAVAILABLE'
+  | 'TURN_DISABLED';
 
 /** Response shape for `GET /api/calls/ice-servers`. */
 export interface IceServersResponse {
@@ -202,7 +234,20 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       this.logger.debug('[TURN-METER] calls are off - the meter is not read');
       return;
     }
-    const budgetGb = this.turnBudgetGb();
+    const budget = this.turnBudget();
+    if (budget.source === 'invalid') {
+      this.logger.error(
+        `[TURN-METER] CLOUDFLARE_TURN_MONTHLY_BUDGET_GB="${budget.raw}" is not a whole number of GB - read as 0, TURN is withheld from every call`
+      );
+      return;
+    }
+    if (budget.gb === 0) {
+      this.logger.log(
+        `[TURN-METER] the budget is 0 GB (calls_mode=${mode}) - calls are STUN only by configuration, the meter is not read`
+      );
+      return;
+    }
+    const budgetGb = budget.gb;
     let usedBytes: number;
     try {
       usedBytes = await this.turnMeter.monthEgressBytes(now);
@@ -474,6 +519,13 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       throw new ForbiddenException('Not a member of this group');
     }
 
+    // TURN OFF BY CONFIGURATION is decided BEFORE TURN's own configuration is checked: an estate set
+    // to a budget of 0 needs no TURN secrets, and must answer STUN only rather than 503.
+    const disabled = this.turnDisabled(callId);
+    if (disabled) {
+      return { iceServers: STUN_ONLY, turn: { status: 'unavailable', code: disabled } };
+    }
+
     const cloudflareToken = process.env.CLOUDFLARE_CALLS_API_TOKEN?.trim();
     const turnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID?.trim();
 
@@ -504,7 +556,32 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Why TURN must be withheld for this call, or null when a credential may be minted. */
+  /**
+   * `TURN_DISABLED` when the budget turns TURN off by configuration (0, or a value read as 0), else
+   * null. The meter is not asked: nothing it could say would change the answer.
+   */
+  private turnDisabled(callId: string): 'TURN_DISABLED' | null {
+    const budget = this.turnBudget();
+    if (budget.source === 'invalid') {
+      // A configuration nobody can read IS a fault: at error, every call, until someone fixes it.
+      this.logger.error(
+        `[ICE] call=${callId} TURN withheld (TURN_DISABLED): CLOUDFLARE_TURN_MONTHLY_BUDGET_GB="${budget.raw}" is not a whole number of GB - read as 0, STUN only`
+      );
+      return 'TURN_DISABLED';
+    }
+    if (budget.gb === 0) {
+      // A DECISION, NOT A FAULT: the owner set the budget to 0 to keep calls STUN only. Said per call
+      // at `log` (the call's own trail), never at error.
+      this.logger.log(
+        `[ICE] call=${callId} TURN withheld (TURN_DISABLED): the budget is 0 GB - STUN only by configuration`
+      );
+      return 'TURN_DISABLED';
+    }
+    return null;
+  }
+
   private async turnWithheld(callId: string): Promise<TurnUnavailableCode | null> {
+    const budget = this.turnBudget();
     let usedBytes: number;
     try {
       usedBytes = await this.turnMeter.monthEgressBytes();
@@ -515,10 +592,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       );
       return 'TURN_METER_UNAVAILABLE';
     }
-    const budgetBytes = this.turnBudgetGb() * 1e9;
-    if (usedBytes < budgetBytes) return null;
+    if (usedBytes < budget.gb * 1e9) return null;
     this.logger.error(
-      `[ICE] call=${callId} TURN withheld (TURN_BUDGET_REACHED): ${(usedBytes / 1e9).toFixed(1)}/${this.turnBudgetGb()} GB metered egress this month - STUN only`
+      `[ICE] call=${callId} TURN withheld (TURN_BUDGET_REACHED): ${(usedBytes / 1e9).toFixed(1)}/${budget.gb} GB metered egress this month - STUN only`
     );
     return 'TURN_BUDGET_REACHED';
   }
@@ -527,9 +603,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * Monthly TURN relay budget in decimal GB of metered egress (Cloudflare's free allowance is 1000 GB
    * per account; the default leaves a margin).
    */
-  private turnBudgetGb(): number {
-    const v = parseInt(process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB || '950', 10);
-    return Number.isFinite(v) && v > 0 ? v : 950;
+  private turnBudget(): TurnBudget {
+    return readTurnBudget(process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB);
   }
 
   /**

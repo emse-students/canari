@@ -161,4 +161,10 @@ describe('describeCallFailure', () => {
       expect(describeCallFailure(new CallRelayWithheldError(code))).toBe(m.call_relay_withheld());
     }
   );
+
+  it('reads TURN off by configuration as permanent, not as a passing outage', () => {
+    expect(describeCallFailure(new CallRelayWithheldError('TURN_DISABLED'))).toBe(
+      m.call_relay_disabled()
+    );
+  });
 });

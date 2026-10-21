@@ -9,7 +9,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { getApps } from 'firebase-admin/app';
-import { CALL_RING_TIMEOUT_SEC, CallsService } from './calls.service';
+import { CALL_RING_TIMEOUT_SEC, CallsService, readTurnBudget } from './calls.service';
 import { ApnsVoipService } from './apns-voip.service';
 import { TurnMeterUnavailableError, TurnUsageMeter } from './turn-usage-meter.service';
 import { GroupMember } from '../entities/group-member.entity';
@@ -179,6 +179,39 @@ describe('CallsService', () => {
       expect(captured(error)).toContain('call=call-1 TURN withheld (TURN_BUDGET_REACHED)');
     });
 
+    // THE OWNER'S DECISION OF 2026-10-21: an explicit 0 keeps calls open and never relays them.
+    it('withholds TURN with a budget of 0, asks no meter, and says it at log, not error', async () => {
+      process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB = '0';
+      // No TURN secrets at all: an estate set to 0 needs none, and still answers STUN only.
+      delete process.env.CLOUDFLARE_CALLS_API_TOKEN;
+      delete process.env.CLOUDFLARE_TURN_KEY_ID;
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const fetchSpy = jest.spyOn(global, 'fetch');
+
+      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).resolves.toEqual({
+        iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }],
+        turn: { status: 'unavailable', code: 'TURN_DISABLED' },
+      });
+      expect(turnMeter.monthEgressBytes).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(captured(log)).toContain('the budget is 0 GB - STUN only by configuration');
+      expect(error).not.toHaveBeenCalled();
+    });
+
+    it('withholds TURN, at error, when the budget is not a whole number', async () => {
+      process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB = '1.5e3';
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      const fetchSpy = jest.spyOn(global, 'fetch');
+
+      await expect(service.getIceServers('user-1', 'group-1', 'call-1')).resolves.toMatchObject({
+        turn: { status: 'unavailable', code: 'TURN_DISABLED' },
+      });
+      expect(turnMeter.monthEgressBytes).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(captured(error)).toContain('"1.5e3" is not a whole number of GB');
+    });
+
     it('mints credentials below the budget, however long the calls of the month lasted', async () => {
       turnMeter.monthEgressBytes.mockResolvedValue(10e9 - 1);
       const fetchSpy = jest
@@ -259,6 +292,22 @@ describe('CallsService', () => {
     });
   });
 
+  describe('readTurnBudget', () => {
+    it.each([
+      [undefined, { gb: 950, source: 'default' }],
+      ['', { gb: 950, source: 'default' }],
+      ['  ', { gb: 950, source: 'default' }],
+      ['0', { gb: 0, source: 'configured' }],
+      [' 120 ', { gb: 120, source: 'configured' }],
+      ['-1', { gb: 0, source: 'invalid', raw: '-1' }],
+      ['abc', { gb: 0, source: 'invalid', raw: 'abc' }],
+      // Digits, but past Number.MAX_SAFE_INTEGER: would read as an unreachable budget.
+      ['9'.repeat(400), { gb: 0, source: 'invalid', raw: '9'.repeat(400) }],
+    ])('reads %p as %p - unset is the default, 0 is a budget of 0', (raw, expected) => {
+      expect(readTurnBudget(raw)).toEqual(expected);
+    });
+  });
+
   /**
    * B7's report: a token that is missing or refused withholds TURN from every call, so the meter's
    * state is said hourly - at ERROR when calls are open and TURN is withheld, and not at all while
@@ -304,6 +353,27 @@ describe('CallsService', () => {
 
       expect(captured(error)).toContain(
         '[TURN-METER] calls are open (calls_mode=audio_video) and the meter is UNAVAILABLE: HTTP 403'
+      );
+    });
+
+    it('says a budget of 0 at log and reads no meter', async () => {
+      process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB = '0';
+
+      await service.reportTurnMeter(now);
+
+      expect(turnMeter.monthEgressBytes).not.toHaveBeenCalled();
+      expect(captured(log)).toContain('the budget is 0 GB (calls_mode=audio_video)');
+      expect(error).not.toHaveBeenCalled();
+    });
+
+    it('accuses a budget nobody can read, and reads no meter', async () => {
+      process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB = 'lots';
+
+      await service.reportTurnMeter(now);
+
+      expect(turnMeter.monthEgressBytes).not.toHaveBeenCalled();
+      expect(captured(error)).toContain(
+        'CLOUDFLARE_TURN_MONTHLY_BUDGET_GB="lots" is not a whole number'
       );
     });
 

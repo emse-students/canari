@@ -27,6 +27,7 @@ import {
   CallRelayWithheldError,
   CallSignallingRefusedError,
   describeCallFailure,
+  TURN_DISABLED_CODE,
 } from '$lib/utils/callFailure';
 import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -1226,8 +1227,12 @@ export class CallService {
     this.turnWithheldCode = null;
     if (data.turn?.status === 'unavailable') {
       this.turnWithheldCode = data.turn.code ?? 'no code';
+      // TURN OFF BY CONFIGURATION is the owner's choice and said at info; any other withheld relay
+      // is an outage the server is already accusing, and said as one.
       appendLog(
-        `[Call] ERROR: TURN relay withheld by the server (${data.turn.code ?? 'no code'}) - direct path only`
+        this.turnWithheldCode === TURN_DISABLED_CODE
+          ? '[Call] TURN relay disabled by the server (TURN_DISABLED) - direct path only'
+          : `[Call] ERROR: TURN relay withheld by the server (${this.turnWithheldCode}) - direct path only`
       );
     }
 

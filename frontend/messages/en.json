@@ -534,6 +534,7 @@
   "call_pip_label": "Picture-in-Picture player",
   "call_open_pip_label": "Open video in floating player",
   "call_connection_lost": "Call dropped: connection lost.",
+  "call_relay_disabled": "Call failed: no direct connection, and this server does not use a call relay.",
   "call_relay_withheld": "Call failed: no direct connection, and the server's call relay is unavailable right now.",
   "call_reconnecting": "Reconnecting...",
   "call_minimize_label": "Minimize call",

@@ -139,6 +139,9 @@ export class CallE2eSetupError extends Error {
  * there was none. `code` is the server's (`TURN_BUDGET_REACHED`, `TURN_METER_UNAVAILABLE`), kept
  * for the log; the reader gets one sentence for both, since neither is theirs to fix.
  */
+/** The server's code for TURN off BY CONFIGURATION (a budget of 0): permanent, not a passing outage. */
+export const TURN_DISABLED_CODE = 'TURN_DISABLED';
+
 export class CallRelayWithheldError extends Error {
   constructor(public readonly code: string) {
     super(`no direct path, and the server withheld the TURN relay (${code})`);
@@ -166,7 +169,10 @@ export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
   if (error instanceof CallE2eBypassedError) return m.call_e2e_bypassed();
   if (error instanceof CallE2eSetupError) return m.call_e2e_setup_failed();
-  if (error instanceof CallRelayWithheldError) return m.call_relay_withheld();
+  if (error instanceof CallRelayWithheldError) {
+    // Off by configuration is not "unavailable right now": it will be the same on the next try.
+    return error.code === TURN_DISABLED_CODE ? m.call_relay_disabled() : m.call_relay_withheld();
+  }
   // A block, on either side: neutral, as every block refusal is - never who blocked whom.
   if (refusalCode(error) === USER_BLOCKED_CODE) return m.call_unavailable();
   // The kill switch, at whichever step it answered: said as such, never as a failure to retry.
