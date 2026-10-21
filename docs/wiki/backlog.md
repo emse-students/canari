@@ -1715,6 +1715,19 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 
 Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come BEFORE the calls revival (calls stay dev-only; supersedes L7). v1 bitrate (720p or 480p) is fixed at launch by the server from the total live load: no transcoding, no mid-live change. Any member may start a live, so **WP-L8 moderation (like posts: `content_reports`, "cut the live" in place of "delete the post", posts code reused) and the per-account limits are a RELEASE BLOCKER before any stable, and the Apple 1.2 / Play UGC answers precede store submission.** Comments and floating reactions are wanted (WP-L6). The "X est en live" notification: server half WP-L7 in progress (draft PR), **owed: the client LIVE card and deep link.** **Open question from the user:** why ask the school IT department - only for raising the shared host nginx connection budget (about 1500 across its sites), not needed until an audience would exceed it.
 
+## Decided by the user on 2026-10-22 - a 48-hour autonomy window, and what it covers
+
+1. **Autonomy window, 2026-10-22 to 2026-10-24 (48 hours).** The lead may cut pre-releases AND STABLE releases (production plus both stores) without asking, once the alpha has been read on both bench phones and nothing blocks. The user is told AFTER each release. This extends the release authority of [durable-rules](durable-rules.md#release-and-ci---cicd) for the window only.
+2. **Kill switches for calls and lives.** The lead may switch them on in dev, and in production if ALL device readings pass (a reversible kill switch). **Payments stay OFF in production.**
+3. **Migrations.** 100 (Lydia Business key per association) and 101 (product checkout attempts) may ride the next stable.
+4. **Cleanup authority.** The stale draft pull requests #2117, #2098, #2127, #2109, #2090, #2074, #2065, #2041, #2039, #2013 and #2011 may be closed, each ONLY after verifying that its content is already in `main` or that it is abandoned, and with a comment saying which. A local branch holding unique commits is archived as a tag before it is deleted.
+5. **Priorities for the window, in order:** lives and calls; payments and reservations; MLS robustness (replay markers, group history, Graine); the backlog and the test-tooling reform ([WP-TEST-TOOLING-REFORM](#decided-by-the-user-on-2026-10-18---every-design-question-answered)).
+6. **Organiser alert (#2228).** Recipients stay the owner plus the holders of `MANAGE_FORMS`; super-admins are excluded. The lead may raise `minClientVersion` on both fleets AFTER verifying that Play AND the App Store both serve the carrying version, then flip the alert constant (see the organiser-alert item under [2026-10-15](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open)).
+7. **Store text.** The lead writes the stable's `store/whats-new.txt` in plain French from the merged changelog fragments and checks it with `--check-notes` before tagging.
+8. **Contact.** This conversation only; no push notification.
+9. **Incoming share (Android)** is erased at sign-out and at account switch. This REVERSES the earlier documented decision, which kept it. **iOS share lot S4 is left aside** until an App ID and a provisioning profile exist.
+10. **The local estate was stopped.**
+
 ## P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167
 
 All four are upstream behaviour kept by the vendored copy (`frontend/src-tauri/patches/tauri-plugin-websocket/src/lib.rs`), none introduced by the happy-eyeballs patch.
