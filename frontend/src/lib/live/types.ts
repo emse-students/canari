@@ -139,6 +139,28 @@ export interface LiveCutResult {
   priorCuts: number;
 }
 
+/**
+ * A broadcaster's place on the strike ladder, as the moderation queue states it (the server's
+ * `LiveStanding`, dates as ISO strings). `withdrawalDue`: enough cuts are on record and the right is
+ * not withdrawn - the decision is a moderator's.
+ */
+export interface LiveStanding {
+  cutsOnRecord: number;
+  suspendedUntil: string | null;
+  withdrawnAt: string | null;
+  withdrawalDue: boolean;
+}
+
+/** `POST /api/lives/broadcasters/:userId/withdrawal` (200, idempotent). */
+export interface LiveWithdrawalResult {
+  userId: string;
+  reason: LiveCutReason;
+  withdrawnAt: string;
+  /** False when the right had already been withdrawn: the answer is the first withdrawal's. */
+  newlyWithdrawn: boolean;
+  cutsOnRecord: number;
+}
+
 /** `POST /api/lives/:id/removed-viewers`. */
 export interface LiveRemovedViewer {
   liveId: string;

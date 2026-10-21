@@ -15,13 +15,17 @@ import { initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
 import { LIVE_CUT_DETAILS_MAX } from '$lib/live/constants';
 import type { ReportedLive } from '$lib/moderation/api';
-import type { LiveCutResult } from '$lib/live/types';
+import type { LiveCutResult, LiveStanding, LiveWithdrawalResult } from '$lib/live/types';
 
-const { cutLive } = vi.hoisted(() => ({ cutLive: vi.fn() }));
+const { cutLive, withdrawBroadcaster } = vi.hoisted(() => ({
+  cutLive: vi.fn(),
+  withdrawBroadcaster: vi.fn(),
+}));
 
 vi.mock('$lib/live/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/live/api')>()),
   cutLive,
+  withdrawBroadcaster,
 }));
 vi.mock('$lib/utils/copyId', () => ({ copyId: vi.fn() }));
 
@@ -41,6 +45,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   cutLive.mockReset();
+  withdrawBroadcaster.mockReset();
   // happy-dom's `Animation.cancel()` rejects the animation it is asked to cancel, which Svelte's
   // transition teardown does not expect (the modal's open/close transition is not this test's
   // subject): stubbed so closing the dialog never throws an unhandled rejection.
@@ -74,11 +79,21 @@ const openLive = (over: Partial<ReportedLive> = {}): ReportedLive => ({
   endReason: null,
   cutReason: null,
   broadcasterCuts: 0,
+  broadcasterStanding: null,
+  ...over,
+});
+
+const standingOf = (over: Partial<LiveStanding> = {}): LiveStanding => ({
+  cutsOnRecord: 3,
+  suspendedUntil: '2026-11-18T10:00:00.000Z',
+  withdrawnAt: null,
+  withdrawalDue: true,
   ...over,
 });
 
 function render(live: ReportedLive) {
   const onCut = vi.fn<(r: LiveCutResult) => void>();
+  const onWithdrawn = vi.fn<(r: LiveWithdrawalResult) => void>();
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(ModerationLiveBlock, {
@@ -89,11 +104,12 @@ function render(live: ReportedLive) {
       formatDate: (iso: string) => `d(${iso})`,
       reasonLabel: (code: string) => `reason(${code})`,
       onCut,
+      onWithdrawn,
     },
   });
   mounted.push(() => void unmount(app));
   flushSync();
-  return { onCut, target };
+  return { onCut, onWithdrawn, target };
 }
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
@@ -260,4 +276,123 @@ describe('the cut', () => {
       expect(q('[data-live-cut-step]')!.dataset.liveCutStep).toBe('pick');
     }
   );
+});
+
+describe("the broadcaster's standing and the withdrawal", () => {
+  const withdrawal = (over: Partial<LiveWithdrawalResult> = {}): LiveWithdrawalResult => ({
+    userId: 'u9',
+    reason: 'harassment',
+    withdrawnAt: '2026-10-21T10:00:00.000Z',
+    newlyWithdrawn: true,
+    cutsOnRecord: 3,
+    ...over,
+  });
+
+  /** Opens the withdrawal dialog and picks a reason. */
+  function toWithdrawForm(reason = 'harassment') {
+    q('[data-moderation-live-withdraw]')!.click();
+    flushSync();
+    q(`[data-live-withdraw-reason="${reason}"]`)!.click();
+    flushSync();
+  }
+
+  it('draws no standing without one', () => {
+    const { target } = render(openLive());
+    expect(target.querySelector('[data-moderation-live-standing]')).toBeNull();
+    expect(target.querySelector('[data-moderation-live-withdraw]')).toBeNull();
+  });
+
+  it('states the ladder position, the suspension end and that the withdrawal is due', () => {
+    const { target } = render(openLive({ broadcasterStanding: standingOf() }));
+    expect(target.querySelector('[data-moderation-live-standing-cuts]')!.textContent).toContain(
+      m.moderation_live_standing_cuts({ count: 3, required: 3, days: 90 })
+    );
+    expect(target.querySelector('[data-moderation-live-suspended]')!.textContent).toContain(
+      m.moderation_live_standing_suspended({ date: 'd(2026-11-18T10:00:00.000Z)' })
+    );
+    expect(target.querySelector('[data-moderation-live-due]')).not.toBeNull();
+    expect(target.querySelector('[data-moderation-live-withdraw]')).not.toBeNull();
+  });
+
+  it('offers no withdrawal below the cuts it needs', () => {
+    const { target } = render(
+      openLive({ broadcasterStanding: standingOf({ cutsOnRecord: 2, withdrawalDue: false }) })
+    );
+    expect(target.querySelector('[data-moderation-live-withdraw]')).toBeNull();
+    expect(target.querySelector('[data-moderation-live-due]')).toBeNull();
+  });
+
+  it('shows a withdrawn right and no button to withdraw it again', () => {
+    const { target } = render(
+      openLive({
+        broadcasterStanding: standingOf({
+          withdrawnAt: '2026-10-20T08:00:00.000Z',
+          withdrawalDue: false,
+        }),
+      })
+    );
+    expect(target.querySelector('[data-moderation-live-withdrawn]')!.textContent).toContain(
+      m.moderation_live_standing_withdrawn({ date: 'd(2026-10-20T08:00:00.000Z)' })
+    );
+    expect(target.querySelector('[data-moderation-live-suspended]')).toBeNull();
+    expect(target.querySelector('[data-moderation-live-withdraw]')).toBeNull();
+  });
+
+  it('is offered on a live that is gone: only the broadcaster is left to restrict', () => {
+    const { target } = render(openLive({ state: 'gone', broadcasterStanding: standingOf() }));
+    expect(target.querySelector('[data-moderation-live-withdraw]')).not.toBeNull();
+    expect(target.querySelector('[data-moderation-live-cut]')).toBeNull();
+  });
+
+  it('sends nothing until a reason is picked, then the broadcaster, reason and details once', async () => {
+    withdrawBroadcaster.mockResolvedValue(withdrawal());
+    const { onWithdrawn } = render(openLive({ broadcasterStanding: standingOf() }));
+    q('[data-moderation-live-withdraw]')!.click();
+    flushSync();
+    expect(q<HTMLButtonElement>('[data-live-withdraw-confirm-button]')!.disabled).toBe(true);
+    q('[data-live-withdraw-reason="other"]')!.click();
+    const details = q<HTMLTextAreaElement>('[data-live-withdraw-details]')!;
+    details.value = ' third cut ';
+    details.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    expect(withdrawBroadcaster).not.toHaveBeenCalled();
+    q('[data-live-withdraw-confirm-button]')!.click();
+    await settle();
+    expect(withdrawBroadcaster).toHaveBeenCalledTimes(1);
+    expect(withdrawBroadcaster).toHaveBeenCalledWith('u9', 'other', 'third cut');
+    expect(onWithdrawn).toHaveBeenCalledWith(withdrawal());
+  });
+
+  it('hands a repeat back like a first withdrawal', async () => {
+    withdrawBroadcaster.mockResolvedValue(withdrawal({ newlyWithdrawn: false }));
+    const { onWithdrawn } = render(openLive({ broadcasterStanding: standingOf() }));
+    toWithdrawForm();
+    q('[data-live-withdraw-confirm-button]')!.click();
+    await settle();
+    expect(onWithdrawn).toHaveBeenCalledWith(expect.objectContaining({ newlyWithdrawn: false }));
+  });
+
+  it.each([
+    [
+      '403 forbidden',
+      403,
+      'LIVE_WITHDRAWAL_FORBIDDEN',
+      'refused',
+      'moderation_live_withdraw_forbidden',
+    ],
+    ['409 not due', 409, 'LIVE_WITHDRAWAL_NOT_DUE', 'refused', 'moderation_live_withdraw_not_due'],
+    ['400 reason', 400, 'LIVE_CUT_REASON_INVALID', 'refused', 'moderation_live_withdraw_invalid'],
+    ['500 no code', 500, null, 'unavailable', 'moderation_live_withdraw_error'],
+  ] as const)('%s says its own sentence and stays open', async (_n, status, code, kind, key) => {
+    withdrawBroadcaster.mockRejectedValue(
+      new LiveRefusalError(status, code, '', kind, null, null, null)
+    );
+    const { onWithdrawn } = render(openLive({ broadcasterStanding: standingOf() }));
+    toWithdrawForm();
+    q('[data-live-withdraw-confirm-button]')!.click();
+    await settle();
+    expect(q('[data-live-withdraw-error]')!.textContent).toContain(m[key]());
+    expect(onWithdrawn).not.toHaveBeenCalled();
+    expect(q('[data-live-withdraw-dialog]')).not.toBeNull();
+  });
 });

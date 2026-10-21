@@ -128,3 +128,13 @@ export const LIVE_PLAYER_KEEP_BEHIND_MS = 10_000;
  * `400 LIVE_CUT_DETAILS_INVALID` of the server is never how a moderator learns the limit.
  */
 export const LIVE_CUT_DETAILS_MAX = 500;
+
+/**
+ * The cuts on record from which staff MAY withdraw a broadcaster's right. MIRRORS
+ * `LIVE_WITHDRAWAL_FROM_CUTS` of social-service: it is only the "N of M" the standing line draws,
+ * the server alone decides (`409 LIVE_WITHDRAWAL_NOT_DUE`) and says `withdrawalDue` itself.
+ */
+export const LIVE_WITHDRAWAL_FROM_CUTS = 3;
+
+/** The rolling window of the strike ladder, in days. MIRRORS `LIVE_STRIKE_WINDOW_MS` (90 days). */
+export const LIVE_STRIKE_WINDOW_DAYS = 90;
