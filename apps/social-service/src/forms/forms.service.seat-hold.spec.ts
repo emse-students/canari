@@ -12,6 +12,7 @@ import {
   PAYMENT_REQUEST_LIFETIME_SECONDS,
   PENDING_PAYMENT_HOLD_SECONDS,
   PREVIOUS_PAYMENT_OPEN,
+  ALREADY_ANSWERED,
   overCapacityFirst,
   seatHoldingWhere,
 } from './seat-hold';
@@ -1049,6 +1050,86 @@ describe('FormsService - the seat a pending payment holds', () => {
 
     // A row naming no request is one whose request is being issued right now: a second request
     // would be the double charge, so the retry is refused.
+    // P1-b (2026-10-21): a submit after a PAID answer issued a new request/do, and a second paid
+    // purchase was recorded for one answer. Control: with the ALREADY_ANSWERED guard removed from
+    // `submit`, these fail on the request issued and the second row written.
+    it.each([['paid'], ['paid_over_capacity'], ['free'], ['pending_cash']])(
+      'refuses a second submit once a %s answer exists, issuing NO request',
+      async (status) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: null,
+          basePrice: 1500,
+          provider: 'lydia',
+          rows: [mine({ paymentStatus: status })],
+        });
+        const log = jest.spyOn((service as any).logger, 'log');
+        const refusal = await retry(service).catch((e: unknown) => e);
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({
+          code: ALREADY_ANSWERED,
+        });
+        expect(core.calls).toEqual([]);
+        expect(rows).toHaveLength(1);
+        expect(rows[0].paymentStatus).toBe(status);
+        // Expected (a second tab), so INFO and not an accusation.
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('already answers'));
+      }
+    );
+
+    // Control for the guard: a released answer (declined / cancelled / expired request) is no
+    // answer, and a live pending row is the one a retry reuses - both still go through.
+    it.each([['cancelled'], ['expired']])(
+      'still lets the person answer again after a %s answer',
+      async (status) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: null,
+          basePrice: 1500,
+          provider: 'lydia',
+          rows: [mine({ paymentStatus: status })],
+        });
+        await expect(retry(service)).resolves.toMatchObject({
+          checkoutUrl: 'https://lydia.example/pay/1',
+        });
+        expect(core.calls.map((c) => c.route)).toEqual(['create-checkout-session']);
+        expect(rows).toHaveLength(2);
+      }
+    );
+
+    it('still reuses the live pending row on a retry, and a first submit still issues', async () => {
+      const first = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [],
+      });
+      await expect(retry(first.service)).resolves.toMatchObject({
+        checkoutUrl: 'https://lydia.example/pay/1',
+      });
+      const { service, rows, core } = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [mine()],
+      });
+      await expect(retry(service)).resolves.toMatchObject({
+        checkoutUrl: 'https://lydia.example/pay/1',
+      });
+      expect(core.calls.map((c) => c.route)).toEqual(['cancel-request', 'create-checkout-session']);
+      expect(rows).toHaveLength(1);
+    });
+
+    it('lets a multiple-answer form take a second paid answer', async () => {
+      const { service, rows } = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        provider: 'lydia',
+        allowMultipleSubmissions: true,
+        rows: [mine({ paymentStatus: 'paid' })],
+      });
+      await expect(retry(service)).resolves.toMatchObject({ checkoutUrl: expect.any(String) });
+      expect(rows).toHaveLength(2);
+    });
+
     it('refuses a retry while the row request is being issued', async () => {
       const { service, core } = makeStore({
         maxSubmissions: 1,

@@ -17,6 +17,8 @@ import {
   PENDING_HOLD_CUTOFF_SQL,
   PAYMENT_REQUEST_LIFETIME_SECONDS,
   PREVIOUS_PAYMENT_OPEN,
+  ALREADY_ANSWERED,
+  answerHoldingWhere,
   SETTLED_PAYMENT_STATUSES,
   CONFIRMABLE_PAYMENT_STATUSES,
   LYDIA_REQUEST_UUID_RE,
@@ -1074,6 +1076,28 @@ export class FormsService {
           );
         }
       }
+      // ONE ANSWER PER PERSON, read from the table under the form lock: a submit after a PAID
+      // answer used to insert a new row and issue a new request/do - a second charge for one
+      // answer. The row this retry reuses is not "another answer"; a cancelled or expired one
+      // (declined, cancelled, expired request) is no answer at all, so a retry after it goes on.
+      if (!form.anonymous && !guest && !form.allowMultipleSubmissions && input.userId) {
+        const answered = await manager.findOne(Submission, {
+          where: answerHoldingWhere(id, { userId: input.userId }),
+          order: { createdAt: 'DESC' },
+        });
+        if (answered && answered.id !== existingPending?.id) {
+          // Expected (a second tab, a back button, a double tap past the page's own guard), and
+          // refused before anything is issued: INFO, with the row that answers for the person.
+          this.logger.log(
+            `[Forms] submit refused on form ${id}: submission ${answered.id} (${answered.paymentStatus}) already answers for this person - no request issued`
+          );
+          throw new ConflictException({
+            code: ALREADY_ANSWERED,
+            message: 'You have already answered this form.',
+          });
+        }
+      }
+
       const holdsSeat =
         !!existingPending &&
         (await manager.count(Submission, {

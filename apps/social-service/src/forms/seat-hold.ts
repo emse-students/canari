@@ -36,6 +36,14 @@ export const PAYMENT_REQUEST_LIFETIME_SECONDS =
 export const PREVIOUS_PAYMENT_OPEN = 'PREVIOUS_PAYMENT_OPEN';
 
 /**
+ * The `code` of the 409 a SECOND submit gets on a single-answer form once the person already has an
+ * answer that counts (`answerHoldingWhere`): paid, free, waiting for cash, paid over capacity, or
+ * an online one still within its hold. Read from the submissions table under the form lock, never
+ * from a client flag. The client words it through Paraglide (`paymentRefusal.ts`).
+ */
+export const ALREADY_ANSWERED = 'ALREADY_ANSWERED';
+
+/**
  * The instant before which a `pending` row no longer holds a seat, as SQL on the DATABASE clock.
  *
  * The database clock, not the service's: `paymentRequestedAt` is written by the database's own `now()` into
@@ -117,6 +125,22 @@ export function seatHoldingWhere(
     { ...extra, formId, paymentStatus: 'free' },
     livePendingWhere(formId, extra),
     { ...extra, formId, paymentStatus: 'pending_cash' },
+  ];
+}
+
+/**
+ * The submissions that ARE a person's answer on a single-answer form: every seat-holding row, plus
+ * `paid_over_capacity` - the money landed, so a second submit would be a second charge for one
+ * answer even though no seat was given. A `cancelled` or `expired` row (a request declined,
+ * cancelled or expired) is not an answer: the person may answer again.
+ */
+export function answerHoldingWhere(
+  formId: string,
+  extra: FindOptionsWhere<Submission> = {}
+): FindOptionsWhere<Submission>[] {
+  return [
+    ...seatHoldingWhere(formId, extra),
+    { ...extra, formId, paymentStatus: 'paid_over_capacity' },
   ];
 }
 

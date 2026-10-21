@@ -29,6 +29,9 @@ export function providerRefusalMessage(err: unknown): string | null {
       ? m.shop_payment_amount_min({ min })
       : m.shop_payment_amount_range({ min, max: formatAmount(maxCents) });
   }
+  if (err instanceof SocialApiError && err.code === ALREADY_ANSWERED) {
+    return m.form_already_answered();
+  }
   return null;
 }
 
@@ -38,6 +41,13 @@ export function providerRefusalMessage(err: unknown): string | null {
  * `minCents` / `maxCents` ride beside it and become {@link SocialApiError.amountBounds}.
  */
 export const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
+
+/**
+ * The body `code` of social-service's 409 when a single-answer form already holds an answer for
+ * this person (paid, free, cash, or an online one still pending): no second answer is written and
+ * no payment is requested (`seat-hold.ts`).
+ */
+export const ALREADY_ANSWERED = 'ALREADY_ANSWERED';
 
 /**
  * The body `code` of social-service's 409 when a form answer's previous payment request could not
