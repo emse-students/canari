@@ -99,6 +99,31 @@ describe('LiveBroadcast - preview and start', () => {
     expect(deps.wakeLock.hold).toHaveBeenCalled();
   });
 
+  it('a suspension keeps its end date, a withdrawal has its own reason', async () => {
+    const { b, deps } = await ready();
+    deps.startLive.mockRejectedValueOnce(
+      new LiveRefusalError(
+        403,
+        'LIVE_BROADCAST_SUSPENDED',
+        '',
+        'suspended',
+        null,
+        null,
+        null,
+        null,
+        '2026-11-20T10:00:00.000Z'
+      )
+    );
+    await b.start();
+    expect(b.startProblem).toBe('suspended');
+    expect(b.startSuspendedUntil).toBe('2026-11-20T10:00:00.000Z');
+    expect(
+      startProblemOf(
+        new LiveRefusalError(403, 'LIVE_BROADCAST_WITHDRAWN', '', 'withdrawn', null, null, null)
+      )
+    ).toBe('withdrawn');
+  });
+
   it('a refused start returns to the preview with its reason, read from the code', async () => {
     const { b, deps } = await ready();
     deps.startLive.mockRejectedValueOnce(refused('LIVE_ALREADY_OPEN'));

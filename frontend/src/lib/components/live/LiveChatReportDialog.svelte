@@ -49,6 +49,37 @@
       } else if (err instanceof ModerationApiError && err.isLiveNotFound) {
         console.warn(`[LIVE] chat report: ${liveId} is gone (404 LIVE_NOT_FOUND)`);
         showToast(m.live_chat_report_gone(), 'info');
+      } else if (err instanceof ModerationApiError && err.code === 'LIVE_CHAT_REPORT_MISMATCH') {
+        // The server compared the plaintext with the encrypted line it holds and they differ.
+        console.warn(`[LIVE] chat report: message ${line.id} refused (LIVE_CHAT_REPORT_MISMATCH)`);
+        showToast(m.live_chat_report_mismatch(), 'error');
+        // The dialog stays open: the person can read why, and close it or retry.
+        submitting = false;
+        return;
+      } else if (
+        err instanceof ModerationApiError &&
+        err.code === 'LIVE_CHAT_REPORT_MESSAGE_INVALID'
+      ) {
+        // Over the server's 900 UTF-8 bytes. The client sets no bound of its own: a line another client sent can exceed the composer's 300 characters and is still reportable.
+        console.warn(
+          `[LIVE] chat report: message ${line.id} refused (LIVE_CHAT_REPORT_MESSAGE_INVALID)`
+        );
+        showToast(m.live_chat_report_too_long(), 'error');
+        // The dialog stays open: the person can read why, and close it or retry.
+        submitting = false;
+        return;
+      } else if (
+        err instanceof ModerationApiError &&
+        err.code === 'LIVE_REPORT_SIGNING_UNAVAILABLE'
+      ) {
+        // 503: the server cannot sign right now - the evidence cannot be kept, so it is not filed.
+        console.error(
+          `[LIVE] chat report: message ${line.id} refused (LIVE_REPORT_SIGNING_UNAVAILABLE)`
+        );
+        showToast(m.live_chat_report_unavailable(), 'error');
+        // The dialog stays open: the person can read why, and close it or retry.
+        submitting = false;
+        return;
       } else {
         console.error(`[LIVE] chat report: message ${line.id} failed`, err);
         showToast(m.live_chat_report_failed(), 'error');

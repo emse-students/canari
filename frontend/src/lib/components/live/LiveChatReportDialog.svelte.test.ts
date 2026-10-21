@@ -122,6 +122,33 @@ describe('LiveChatReportDialog', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it('keeps the dialog open with its own sentence for each typed 400/503 refusal', async () => {
+    for (const [status, code, text] of [
+      [400, 'LIVE_CHAT_REPORT_MISMATCH', m.live_chat_report_mismatch()],
+      [400, 'LIVE_CHAT_REPORT_MESSAGE_INVALID', m.live_chat_report_too_long()],
+      [503, 'LIVE_REPORT_SIGNING_UNAVAILABLE', m.live_chat_report_unavailable()],
+    ] as const) {
+      h.showToast.mockReset();
+      h.createLiveChatReport.mockRejectedValue(refusal(status, code));
+      await fileReport();
+      expect(h.showToast).toHaveBeenCalledWith(text, 'error');
+      expect(onClose).not.toHaveBeenCalled();
+      unmount(mounted.pop()!);
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('hands over a 400-character line whole: the client sets no bound below the server', async () => {
+    const long = 'é'.repeat(400);
+    await render({ ...LINE, text: long });
+    await click(button(m.post_spam()));
+    await click(button(m.report_dialog_submit_button()));
+    expect(h.createLiveChatReport).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ message: long })
+    );
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it('keeps the dialog open on any other failure, so the person can retry', async () => {
     h.createLiveChatReport.mockRejectedValue(refusal(500, null));
     await fileReport();

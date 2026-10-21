@@ -283,6 +283,8 @@ export type LiveRefusalKind =
   | 'not-found'
   | 'ended'
   | 'removed'
+  | 'suspended'
+  | 'withdrawn'
   | 'disabled'
   | 'out-of-order'
   | 'retry-segment'
