@@ -7,7 +7,8 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
-  import { Wrench, Save, RefreshCw, Megaphone, Trash2 } from '@lucide/svelte';
+  import { Wrench, Save, RefreshCw, Megaphone, Trash2, PackageCheck } from '@lucide/svelte';
+  import { PLATFORM_ERROR_CODES, readPlatformRefusal } from '$lib/admin/platformRefusal';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import Picker from '$lib/components/ui/Picker.svelte';
@@ -34,6 +35,9 @@
 
   let loading = $state(true);
   let saving = $state(false);
+  let releasing = $state(false);
+  /** The provider the SERVER holds - not the form's pick - which is what the release button reads. */
+  let savedProvider = $state<PaymentProviderChoice>('disabled');
   let error = $state<string | null>(null);
   let savedMessage = $state('');
 
@@ -186,6 +190,7 @@
   /** Shows a server answer in the form and makes it the snapshot the next save is diffed against. */
   function applyConfig(data: PlatformConfig) {
     loaded = data;
+    savedProvider = data.paymentProvider;
     maintenanceEnabled = data.maintenanceEnabled;
     maintenanceMessage = data.maintenanceMessage ?? '';
     minClientVersion = data.minClientVersion;
@@ -250,8 +255,18 @@
         body: JSON.stringify(changedFields(snapshot)),
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(text || `HTTP ${res.status}`);
+        const refusal = await readPlatformRefusal<PlatformConfig>(res);
+        if (refusal.code === PLATFORM_ERROR_CODES.WITHHELD_RELEASE_INCOMPLETE && refusal.config) {
+          // THE PROVIDER IS SAVED: only the release behind it failed. Saying "could not save" here
+          // was false, and the snapshot must become what the server holds, or the next save diffs
+          // against a provider that is no longer there. The retry is the release button.
+          Log.d('admin.platform.saveConfig: provider saved, withheld-product release incomplete');
+          applyConfig(refusal.config);
+          error = m.admin_platform_release_incomplete();
+          void refreshAppVersionCheck();
+          return;
+        }
+        throw new Error(`HTTP ${res.status} code=${refusal.code ?? 'none'}`);
       }
       applyConfig((await res.json()) as PlatformConfig);
       savedMessage = m.admin_platform_saved_label();
@@ -261,6 +276,35 @@
       error = m.admin_platform_save_error();
     } finally {
       saving = false;
+    }
+  }
+
+  /**
+   * The explicit, idempotent release of the products withheld while payments were disabled. It is
+   * the retry for a save answered `WITHHELD_RELEASE_INCOMPLETE`, and it never depends on the form's
+   * diff - after a reload the form sends no provider at all, so re-saving could never re-run it.
+   */
+  async function releaseWithheld() {
+    releasing = true;
+    error = null;
+    savedMessage = '';
+    try {
+      const res = await apiFetch(
+        `${coreUrl()}/api/users/admin/platform/release-withheld-products`,
+        { method: 'POST' }
+      );
+      if (!res.ok) {
+        const refusal = await readPlatformRefusal<PlatformConfig>(res);
+        throw new Error(`HTTP ${res.status} code=${refusal.code ?? 'none'}`);
+      }
+      const { released } = (await res.json()) as { released: number; failed: number };
+      Log.d(`admin.platform.releaseWithheld released=${released}`);
+      savedMessage = m.admin_platform_released_count({ count: released });
+    } catch (e) {
+      Log.d('admin.platform.releaseWithheld failed', e);
+      error = m.admin_platform_release_error();
+    } finally {
+      releasing = false;
     }
   }
 
@@ -368,6 +412,19 @@
         <p class="text-text-muted text-xs">
           {m.admin_platform_payment_provider_hint()}
         </p>
+        {#if savedProvider !== 'disabled'}
+          <button
+            type="button"
+            id="release-withheld"
+            disabled={saving || releasing}
+            onclick={() => void releaseWithheld()}
+            class="border-cn-border text-text-main hover:bg-cn-yellow/10 mt-1 inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
+          >
+            <PackageCheck size={16} />
+            {m.admin_platform_release_button()}
+          </button>
+          <p class="text-text-muted text-xs">{m.admin_platform_release_hint()}</p>
+        {/if}
       </div>
 
       <div class="space-y-1.5">

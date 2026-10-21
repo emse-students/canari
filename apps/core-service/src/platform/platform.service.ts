@@ -1,10 +1,22 @@
-import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import axios from 'axios';
+import {
+  BadGatewayException,
+  BadRequestException,
+  Injectable,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PlatformConfig, type CallsMode, type LivesMode } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
 import { compareSemver } from './semver';
 import { deployedVersion } from './deployed-version';
+import { describeHttpError } from '../common/http-error-log';
+import {
+  internalSocialRequestConfig,
+  providerActivatedUrl,
+} from '../payment/social-internal-client';
 import type { PaymentProviderId } from '../payment/payment-provider.interface';
 
 export type PlatformConfigPublic = {
@@ -15,6 +27,26 @@ export type PlatformConfigPublic = {
   callsMode: CallsMode;
   livesMode: LivesMode;
 };
+
+/**
+ * Typed codes in the body of the platform-admin refusals, so the admin screen maps a refusal by
+ * CODE and never by its English prose.
+ *
+ * `WITHHELD_RELEASE_INCOMPLETE` (502): the payment provider IS saved, but social-service did not
+ * release every withheld product. The body also carries the saved `config`, so the screen can show
+ * the truth rather than "nothing was saved", and the dedicated release action repeats the sweep.
+ * `PAYMENTS_DISABLED` (400): the release action was asked while the provider is `disabled`.
+ */
+export const PLATFORM_ERROR_CODES = {
+  WITHHELD_RELEASE_INCOMPLETE: 'WITHHELD_RELEASE_INCOMPLETE',
+  PAYMENTS_DISABLED: 'PAYMENTS_DISABLED',
+} as const;
+
+/** How many withheld products social-service put on sale, and how many associations it missed. */
+export type WithheldReleaseResult = { released: number; failed: number };
+
+/** Same budget as the sibling core -> social-service calls (see payment/webhook.controller.ts). */
+const SOCIAL_RELEASE_TIMEOUT_MS = 15_000;
 
 const DEFAULT_ROW: PlatformConfig = {
   id: 1,
@@ -140,7 +172,78 @@ export class PlatformService implements OnModuleInit {
       `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion} paymentProvider=${row.paymentProvider} callsMode=${row.callsMode} livesMode=${row.livesMode}`
     );
     const saved = await this.repo.save(row);
+    if (dto.paymentProvider !== undefined) {
+      if (dto.paymentProvider === 'disabled') {
+        this.logger.warn(`paymentProvider -> disabled by=${by}`);
+      } else {
+        this.logger.warn(`paymentProvider -> ${dto.paymentProvider} by=${by}`);
+        // EVERY PATCH THAT SETS AN ACTIVE PROVIDER ASKS, NOT ONLY A CHANGE: the release is idempotent.
+        // A failure here is NOT repeated through this form (it only sends what changed, so a reload
+        // sends no provider at all): `releaseWithheldProducts` is the explicit retry.
+        await this.sweepWithheldProducts(toPublic(saved));
+      }
+    }
     return toPublic(saved);
+  }
+
+  /**
+   * The administrator's explicit, idempotent "release withheld products" action: the retry for a
+   * sweep that failed after the provider was saved, which never depends on the settings form's
+   * diff. Refused with `PAYMENTS_DISABLED` while payments are off - nothing could be released then.
+   */
+  async releaseWithheldProducts(actor: string): Promise<WithheldReleaseResult> {
+    const by = actor.slice(0, 8);
+    const config = await this.getConfig();
+    if (config.paymentProvider === 'disabled') {
+      this.logger.warn(`withheld-products release refused: payments are disabled by=${by}`);
+      throw new BadRequestException({
+        statusCode: 400,
+        code: PLATFORM_ERROR_CODES.PAYMENTS_DISABLED,
+        message: 'Payments are disabled platform-wide; nothing can be released.',
+      });
+    }
+    this.logger.warn(
+      `withheld-products release asked by=${by} (provider=${config.paymentProvider})`
+    );
+    return this.sweepWithheldProducts(config);
+  }
+
+  /**
+   * Tells social-service payments are on, so the boutique products withheld while they were
+   * disabled go on sale (an event at the point the state changes, not a timer). Runs AFTER the save,
+   * because social-service re-reads the provider from `payments/provider`. A failure is surfaced to
+   * the administrator rather than swallowed, as a 502 carrying `WITHHELD_RELEASE_INCOMPLETE` and the
+   * saved `config`: the provider IS switched, the release is what is missing.
+   */
+  private async sweepWithheldProducts(
+    config: PlatformConfigPublic
+  ): Promise<WithheldReleaseResult> {
+    let result: WithheldReleaseResult;
+    try {
+      const { data } = await axios.post<WithheldReleaseResult>(providerActivatedUrl(), undefined, {
+        ...internalSocialRequestConfig(),
+        timeout: SOCIAL_RELEASE_TIMEOUT_MS,
+      });
+      this.logger.log(
+        `provider activated: social-service released=${data.released} failed=${data.failed}`
+      );
+      if (data.failed > 0) {
+        throw new Error(`${data.failed} association(s) could not be released`);
+      }
+      result = data;
+    } catch (err: unknown) {
+      this.logger.error(
+        `provider active but the withheld products were NOT all released: ${describeHttpError(err)}`
+      );
+      throw new BadGatewayException({
+        statusCode: 502,
+        code: PLATFORM_ERROR_CODES.WITHHELD_RELEASE_INCOMPLETE,
+        message:
+          'Payment provider saved, but withheld products could not all be released; use the release action to retry.',
+        config,
+      });
+    }
+    return result;
   }
 
   /** True when maintenance is on and the caller is not a global admin. */

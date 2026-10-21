@@ -1227,6 +1227,20 @@
   "admin_platform_payment_provider_label": "Fournisseur de paiement",
   "admin_platform_payment_provider_disabled": "Paiements désactivés",
   "admin_platform_payment_provider_hint": "Bascule immédiatement, sans redémarrage - tous les paiements en cours d'écriture (formulaires, boutique) passeront par ce fournisseur dès l'enregistrement.",
+  "admin_platform_release_incomplete": "Fournisseur enregistré, mais les produits retenus n'ont pas tous été remis en vente. Relancez la remise en vente ci-dessous.",
+  "admin_platform_release_button": "Remettre en vente les produits retenus",
+  "admin_platform_release_hint": "Remet en vente les produits de la boutique retenus pendant que les paiements étaient désactivés, pour chaque association prête à encaisser. Sans effet sur un produit retiré de la vente à la main ; peut être relancé sans risque.",
+  "admin_platform_release_error": "La remise en vente des produits retenus a échoué",
+  "admin_platform_released_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} produit remis en vente",
+        "countPlural=other": "{count} produits remis en vente"
+      }
+    }
+  ],
   "admin_platform_calls_mode_label": "Appels",
   "admin_platform_calls_mode_off": "Fermés",
   "admin_platform_calls_mode_audio": "Audio seulement",

@@ -1195,6 +1195,20 @@
   "admin_platform_payment_provider_label": "Payment provider",
   "admin_platform_payment_provider_disabled": "Payments disabled",
   "admin_platform_payment_provider_hint": "Switches immediately, no restart needed - every payment written from now on (forms, shop) will go through this provider as soon as you save.",
+  "admin_platform_release_incomplete": "Provider saved, but the withheld products were not all put back on sale. Run the release below again.",
+  "admin_platform_release_button": "Release withheld products",
+  "admin_platform_release_hint": "Puts back on sale the shop products withheld while payments were disabled, for every association able to take payments. Never touches a product taken off sale by hand; safe to run again.",
+  "admin_platform_release_error": "Releasing the withheld products failed",
+  "admin_platform_released_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} product released",
+        "countPlural=other": "{count} products released"
+      }
+    }
+  ],
   "admin_platform_calls_mode_label": "Calls",
   "admin_platform_calls_mode_off": "Closed",
   "admin_platform_calls_mode_audio": "Audio only",
