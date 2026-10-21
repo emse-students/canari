@@ -19,10 +19,20 @@ import type {
  */
 export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
 
+/**
+ * The `code` of a refusal because the amount is outside the payable range. Mirrored in
+ * social-service's `core-payment-error.ts` and the frontend's `paymentRefusal.ts`.
+ */
+export const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
+
 const HOMOLOGATION_BASE_URL = 'https://homologation.lydia-app.com';
 const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 
-/** Lydia's payable range per request, confirmed by Lydia 2026-10-04: 0,50 EUR to 1000 EUR. */
+/**
+ * Lydia's payable range per request, confirmed by Lydia 2026-10-04: 0,50 EUR to 1000 EUR. Shared
+ * with social-service's mirror through `libs/contracts/payment-amount-range.json`, whose specs on
+ * both sides fail the day the two disagree.
+ */
 export const LYDIA_MIN_AMOUNT_CENTS = 50;
 export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
 
@@ -175,9 +185,16 @@ export class LydiaPaymentProvider implements PaymentProvider {
     );
     if (totalCents < LYDIA_MIN_AMOUNT_CENTS || totalCents > LYDIA_MAX_AMOUNT_CENTS) {
       this.logger.warn(`Lydia checkout refused: ${totalCents} cents is outside the payable range`);
-      throw new BadRequestException(
-        `Lydia accepts payments from 0.50 to 1000.00 EUR (got ${(totalCents / 100).toFixed(2)})`
-      );
+      // TYPED, with the bounds: social-service and the UI read `code` and the two numbers, never the
+      // sentence, to show the payer the allowed range in their own language.
+      throw new BadRequestException({
+        code: AMOUNT_OUT_OF_RANGE,
+        message:
+          `Lydia accepts payments from ${(LYDIA_MIN_AMOUNT_CENTS / 100).toFixed(2)} to ` +
+          `${(LYDIA_MAX_AMOUNT_CENTS / 100).toFixed(2)} EUR (got ${(totalCents / 100).toFixed(2)})`,
+        minCents: LYDIA_MIN_AMOUNT_CENTS,
+        maxCents: LYDIA_MAX_AMOUNT_CENTS,
+      });
     }
     const currency = params.lineItems[0]?.currency?.toUpperCase() ?? 'EUR';
     const description = params.lineItems.map((i) => i.productName).join(', ');

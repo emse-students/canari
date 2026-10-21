@@ -69,6 +69,7 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
+import { wholeCentsOf } from '../common/core-payment-error';
 import {
   AGENDA_SELECTION_REQUIRED,
   assertAgendaAccess,
@@ -1465,17 +1466,20 @@ export class AssociationsController {
     @Headers('x-user-id') userId: string,
     @Body()
     body?: {
-      customAmountCents?: number;
+      customAmountCents?: unknown;
       successUrl?: string;
       cancelUrl?: string;
       payerEmail?: string;
     }
   ) {
+    // Read as `unknown` and checked HERE: an inline body type is never validated, so a fraction or
+    // a string reached the bounds check (NaN passes it) and the charge (rounded by `toFixed(2)`).
+    const customAmountCents = wholeCentsOf(body?.customAmountCents, this.logger, 'SHOP');
     return this.productsService.createCheckoutSession(
       id,
       productId,
       userId,
-      body?.customAmountCents,
+      customAmountCents,
       { successUrl: body?.successUrl, cancelUrl: body?.cancelUrl },
       body?.payerEmail
     );

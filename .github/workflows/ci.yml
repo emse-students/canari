@@ -235,14 +235,15 @@ jobs:
 
           # ── TypeScript backend matrix ──
           #
-          # `libs/contracts/` IS IN TWO OF THESE ENTRIES BECAUSE THEIR SUITES READ IT. A contract
+          # `libs/contracts/` IS IN THREE OF THESE ENTRIES BECAUSE THEIR SUITES READ IT (core-service
+          # since 2026-10-21: `payment-amount-range.json`, the range social mirrors). A contract
           # there is a rule several estates must agree on, shared as DATA because no TypeScript
           # package crosses this repository (see `docs/wiki/libs.md`), and it is honoured by one
           # test per implementation reading the JSON from disk. A case added to that file with no
           # job running is the same silent hole the frontend filter below already paid for once:
           # ASK WHAT THE GATE READS.
           ts=()
-          if has '^apps/core-service/'; then
+          if has '^apps/core-service/' || has '^libs/contracts/'; then
             ts+=('"apps/core-service"')
           fi
           if has '^apps/social-service/' || has '^libs/contracts/'; then

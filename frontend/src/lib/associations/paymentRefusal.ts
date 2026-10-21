@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from '$lib/associations/api';
+import { formatAmount } from '$lib/forms/fillAnswers';
 
 /** The body `code` social-service sets when the payment provider itself declined a payment. */
 export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
@@ -20,8 +21,23 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PREVIOUS_PAYMENT_OPEN) {
     return m.form_previous_payment_open();
   }
+  if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
+    const { minCents, maxCents } = err.amountBounds;
+    // In the reader's locale: `formatPriceCents` is pinned to fr-FR, so English read '0,50 EUR'.
+    const min = formatAmount(minCents);
+    return maxCents === null
+      ? m.shop_payment_amount_min({ min })
+      : m.shop_payment_amount_range({ min, max: formatAmount(maxCents) });
+  }
   return null;
 }
+
+/**
+ * The body `code` of a refusal because the amount is outside what can be paid (the provider's
+ * range, or a product's own bounds). Mirrors social-service's `core-payment-error.ts`; its
+ * `minCents` / `maxCents` ride beside it and become {@link SocialApiError.amountBounds}.
+ */
+export const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
 
 /**
  * The body `code` of social-service's 409 when a form answer's previous payment request could not
