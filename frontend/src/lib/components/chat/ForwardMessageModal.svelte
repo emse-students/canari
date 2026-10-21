@@ -1,7 +1,7 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { Search, Forward, Hash } from '@lucide/svelte';
+  import { Search, Forward, Hash, Send } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
@@ -34,6 +34,11 @@
      * for a DM is the peer's raw user id.
      */
     onSelect: (key: string, conversation: Conversation, label: string) => void;
+    /**
+     * What the pick is for: relaying a message (`forward`, the default) or sending content another
+     * app shared into Canari (`share`). Only the title and the row icon differ.
+     */
+    variant?: 'forward' | 'share';
   }
 
   let {
@@ -44,6 +49,7 @@
     channelWorkspaces = [],
     onClose,
     onSelect,
+    variant = 'forward',
   }: Props = $props();
 
   let query = $state('');
@@ -138,7 +144,11 @@
   }
 </script>
 
-<Modal {open} title={m.chat_forward_modal_title()} {onClose}>
+<Modal
+  {open}
+  title={variant === 'share' ? m.share_modal_title() : m.chat_forward_modal_title()}
+  {onClose}
+>
   <div class="flex flex-col gap-3">
     <div class="relative">
       <Search size={16} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
@@ -188,7 +198,11 @@
                 </span>
               {/if}
             </span>
-            <Forward size={16} class="text-text-muted shrink-0" />
+            {#if variant === 'share'}
+              <Send size={16} class="text-text-muted shrink-0" />
+            {:else}
+              <Forward size={16} class="text-text-muted shrink-0" />
+            {/if}
           </button>
         {/each}
       {/if}

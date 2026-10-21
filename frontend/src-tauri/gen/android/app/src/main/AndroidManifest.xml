@@ -22,7 +22,9 @@
   build.gradle.kts -> merge failure). fullBackupContent stays out; dataExtractionRules
   is IN, and the merge conflict it used to cause is what tools:replace answers.
     - FCM meta-data default_notification_icon / _channel_id (= CHANNEL_MESSAGES in Kotlin)
-  CI guardrail: src/lib/mobile/androidFcmManifest.test.ts fails if any of these is dropped.
+    - the SEND / SEND_MULTIPLE intent-filter on MainActivity (share into Canari)
+  CI guardrail: src/lib/mobile/androidFcmManifest.test.ts fails if any of these is dropped,
+  src/lib/mobile/androidShareManifest.test.ts if the share filter is.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -91,6 +93,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <!-- SHARE INTO CANARI ("Partager -> Canari"): text, links, pictures, videos and files from
+                 any app. MainActivity copies the content and the page asks where to send it
+                 (IncomingShare.kt, docs/wiki/frontend/sharing.md). Hand-maintained, outside the
+                 deep-link plugin's generated block below. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/*" />
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
             <intent-filter >

@@ -33,6 +33,7 @@ use crate::state::{AppState, PendingDb};
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
+use crate::commands::handoff::read_and_clear_pending_share;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
     creer_groupe, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
@@ -1125,6 +1126,7 @@ pub fn run() {
             read_outbox_mirror,
             read_and_clear_outbox_sent,
             read_and_clear_pending_call_accept,
+            read_and_clear_pending_share,
             get_voip_token,
             store_graine_seed,
             forget_graine_channel,

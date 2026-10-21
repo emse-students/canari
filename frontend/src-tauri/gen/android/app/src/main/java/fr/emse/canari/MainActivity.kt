@@ -95,6 +95,12 @@ class MainActivity : TauriActivity() {
             }
         super.onCreate(savedInstanceState)
         applyKeyboardInsets()
+        // A relaunch after a configuration change, or from the recents list, re-delivers the intent
+        // that STARTED the task: taking it again would offer the same share twice.
+        val fromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        if (savedInstanceState == null && !fromHistory && IncomingShare.isShare(intent)) {
+            IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
+        }
 
         // Request the notification permission natively on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -343,6 +349,25 @@ class MainActivity : TauriActivity() {
         super.onNewIntent(intent)
         // Keep getIntent()/deep-link getCurrent() aligned with the notification tap intent.
         setIntent(intent)
+        if (IncomingShare.isShare(intent)) {
+            IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
+        }
+    }
+
+    /**
+     * Tells a page that is already alive that a share is waiting in `pending_share.json`. A page
+     * that is not loaded yet misses this and drains the file at mount instead - see `IncomingShare`.
+     */
+    private fun pushIncomingShare() {
+        val webView = liveWebView ?: run {
+            Log.d("MainActivity", "share ready before the WebView: the page drains it at mount")
+            return
+        }
+        try {
+            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('canari:incoming-share'));", null)
+        } catch (e: Exception) {
+            Log.w("MainActivity", "pushIncomingShare failed, the page drains at its next resume: ${e.message}")
+        }
     }
 
     override fun onResume() {

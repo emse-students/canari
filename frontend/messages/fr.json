@@ -1359,6 +1359,8 @@
     }
   ],
   "chat_forward_modal_title": "Transférer à…",
+  "share_modal_title": "Envoyer à…",
+  "share_items_lost": "{count} élément(s) partagé(s) n'ont pas pu être repris",
   "chat_search_discussion_placeholder": "Rechercher une discussion…",
   "chat_search_discussion_label": "Rechercher une discussion",
   "chat_no_discussion_found": "Aucune discussion trouvée.",

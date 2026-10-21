@@ -1,0 +1,87 @@
+const invoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
+
+import { drainNativeShare, parseSharedManifest } from './incomingShareDrain';
+import { incomingShare } from '$lib/stores/incomingShare.svelte';
+
+/**
+ * The native share manifest is written by another layer (`IncomingShare.kt`) and read here: a
+ * malformed one must be dropped rather than half-offered, and every item that does not reach the
+ * composer must be COUNTED, because the member was shown nothing else that would say so.
+ */
+describe('parseSharedManifest', () => {
+  it('reads text, files and the refused count', () => {
+    const parsed = parseSharedManifest(
+      JSON.stringify({
+        id: 'x',
+        text: 'hi',
+        files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png' }],
+        refused: 2,
+      })
+    );
+    expect(parsed).toEqual({
+      text: 'hi',
+      files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png' }],
+      refused: 2,
+    });
+  });
+
+  it('keeps only well-formed file entries', () => {
+    const parsed = parseSharedManifest(
+      JSON.stringify({
+        files: [{ path: '/c/a' }, null, 'x', { path: '/c/b', name: 'b', mime: 'text/plain' }],
+      })
+    );
+    expect(parsed?.files.map((f) => f.name)).toEqual(['b']);
+    expect(parsed?.text).toBe('');
+    expect(parsed?.refused).toBe(0);
+  });
+
+  it('drops unreadable JSON and non-objects', () => {
+    expect(parseSharedManifest('{')).toBeNull();
+    expect(parseSharedManifest('null')).toBeNull();
+    expect(parseSharedManifest('3')).toBeNull();
+  });
+});
+
+describe('drainNativeShare', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    incomingShare.cancel();
+  });
+
+  it('answers null and offers nothing when no share waits', async () => {
+    invoke.mockResolvedValueOnce(null);
+    expect(await drainNativeShare()).toBeNull();
+    expect(incomingShare.pending).toBeNull();
+  });
+
+  it('reads each copy through take_picked_file and counts the ones lost', async () => {
+    invoke.mockImplementation(async (cmd: string, args?: { path: string }) => {
+      if (cmd === 'read_and_clear_pending_share') {
+        return JSON.stringify({
+          text: 'look',
+          files: [
+            { path: '/c/0_a.png', name: 'a.png', mime: 'image/png' },
+            { path: '/c/1_b.pdf', name: 'b.pdf', mime: 'application/pdf' },
+          ],
+          refused: 1,
+        });
+      }
+      if (cmd === 'take_picked_file' && args?.path === '/c/0_a.png') return new ArrayBuffer(3);
+      throw new Error('path outside the picker directories');
+    });
+    expect(await drainNativeShare()).toEqual({ lost: 2 });
+    const pending = incomingShare.pending;
+    expect(pending?.text).toBe('look');
+    expect(pending?.files.map((f) => [f.name, f.type, f.size])).toEqual([
+      ['a.png', 'image/png', 3],
+    ]);
+  });
+
+  it('counts a corrupt manifest as one lost share', async () => {
+    invoke.mockResolvedValueOnce('{not json');
+    expect(await drainNativeShare()).toEqual({ lost: 1 });
+    expect(incomingShare.pending).toBeNull();
+  });
+});

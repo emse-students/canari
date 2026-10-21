@@ -1327,6 +1327,8 @@
     }
   ],
   "chat_forward_modal_title": "Forward to…",
+  "share_modal_title": "Send to…",
+  "share_items_lost": "{count} shared item(s) could not be taken",
   "chat_search_discussion_placeholder": "Search a conversation…",
   "chat_search_discussion_label": "Search a conversation",
   "chat_no_discussion_found": "No conversation found.",

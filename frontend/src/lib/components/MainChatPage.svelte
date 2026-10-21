@@ -67,6 +67,8 @@
   } from '$lib/stores/globalChatSingleton.svelte';
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
+  import { incomingShare } from '$lib/stores/incomingShare.svelte';
+  import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
@@ -1130,6 +1132,27 @@
       appendLog(`[keyboard-media] failed to handle committed content - ${e}`);
     }
   }
+
+  // ─── A share from another app lands in the composer of the conversation it was sent to ────────
+  // `IncomingShareHost` asked where it goes and landed on that conversation; once it is the one on
+  // screen, its text joins the draft and its files the pending queue - through the same preparation
+  // as a picked file (size ceiling, compression, video re-encode). The member sends it with Send:
+  // a share is never sent on its own.
+  $effect(() => {
+    const target = incomingShare.target;
+    const selected = convs.selectedContact;
+    if (!target || !selected) return;
+    if (resolveConversationKey(convs.conversations, target) !== selected) return;
+    untrack(() => {
+      const share = incomingShare.takeFor(target);
+      if (!share) return;
+      log(
+        `[SHARE] staged in ${selected.slice(0, 16)}: ${share.text.length} chars, ${share.files.length} file(s)`
+      );
+      if (share.text) messageText = restoreFailedDraft(messageText, share.text);
+      if (share.files.length > 0) handleFilesSelected(share.files);
+    });
+  });
 
   /** Opens the forward picker for a given message. */
   function handleForward(message: ChatMessage) {
