@@ -252,7 +252,7 @@ which stores nothing; same method as [section 9.2 of the upload design](../servi
 
 **Why the override exists, and why this is safe to narrow.** `ad405e190` (2026-04-05) installed it when the
 Tauri origins were not yet in the services' CORS allowlists. They all are now (`TAURI_WEBVIEW_ORIGINS`, three
-spellings, asserted by name in each `cors-origins.spec.ts`), and every credentialed call already goes native
+spellings, asserted by name in chat-delivery's `cors-origins.spec.ts`, which proves the four byte-identical copies), and every credentialed call already goes native
 (`shouldUseNativeFetch`), so the WebView's `fetch` already talks to every service from `tauri.localhost` in
 production. Checked from the Android origin against dev: an `Authorization`-bearing POST with a `FormData`,
 `Blob` or `Uint8Array` body, so a real preflight, answers 401 readably on `/api/media/upload`,
@@ -356,6 +356,48 @@ taken for a "not there", with a destructive branch behind it.
 
 Always take a base from `utils/apiUrl.ts` (`coreUrl` / `socialUrl` / `gatewayUrl` / `deliveryUrl`)
 or `historyBaseUrl`. `apiUrl.absolute.test.ts` is the guard.
+
+## The native socket races IPv6 and IPv4
+
+**The chat socket on a native build is a THIRD network stack**, beside the WebView and the HTTP
+plugin: `tauri-plugin-websocket`, Rust `tokio-tungstenite`. Until 2026-10-20 it connected with
+`TcpStream::connect("host:port")`, which tries the resolved addresses IN TURN and waits for each to
+fail. On a Wi-Fi that hands out IPv6 addresses but routes no IPv6 traffic, the IPv6 attempt hung for
+the OS connect timeout (20-21 s on the Mi 9T) before IPv4 was tried, past the page's 15 s deadline
+every time: the phone sent, fetched and dialled (HTTP is `reqwest`/`hyper-util`, which falls back to
+IPv4 after 300 ms; call signalling is the WebView's own socket), and received NO live frame and NO
+call invite for as long as it stayed on that network (CALL-WS-V6,
+[readings](../device-readings-2026-10.md)).
+
+- **The connect is Happy Eyeballs (RFC 8305)**, in [happy_eyeballs.rs](../../../frontend/src-tauri/src/happy_eyeballs.rs):
+  addresses interleaved by family, the next attempt started 250 ms after the previous one (at once if
+  it fails), first to connect wins, the others are dropped. The plugin is PATCHED to take it
+  (`patches/tauri-plugin-websocket`, the `CANARI PATCH` hunks): `Builder::new` REQUIRES the connector
+  and upstream's `init()` is gone, so no build can reach the sequential connect, `ws://` or `wss://`;
+  TLS and the WebSocket handshake are upstream's. The dependency is pinned EXACT, and an unpatched
+  version's `Builder::new` takes no argument, so it fails to compile rather than install silently. A
+  vendored fork: Dependabot does not move it, an upstream release is rebased by hand.
+- **The line says what the race PROVES, not who won.** The preferred address won: `debug`. Another
+  address won while the preferred attempt was still PENDING: `INFO` (`... while the preferred address
+  was still pending - lost: ...`) - one lost SYN on a healthy link looks exactly like this, and the
+  attempt is dropped before it could fail, so it accuses nothing. The preferred attempt FAILED with an
+  error: `WARN` (`... the preferred address FAILED - lost: ...`). A blackholed IPv6, the CALL-WS-V6
+  network, therefore shows as one INFO line per connect, and a WARN appears only where the preferred
+  path refused or errored. Every address failing is a WARN; a name that does not resolve (offline) is
+  `debug`, since the page already reports the rejection with its retry.
+- **A connect the page abandoned is CLOSED when it completes** ([nativeSocketConnect.ts](../../../frontend/src/lib/services/nativeSocketConnect.ts)).
+  The plugin's `connect` cannot be cancelled: before this, each late completion left an open,
+  authenticated socket whose frames reached a listener set nobody would ever add to, and the gateway
+  counts every socket of a device as a session, so the ghost kept the device "online" while what it
+  received went nowhere. Logged at WARN, because a late socket means the connect was slower than the
+  deadline. The patch registers a connection's writer BEFORE the id reaches the page (upstream did it
+  in the spawned task), so that `disconnect()` cannot meet `ConnectionNotFound`.
+- **Closing a late socket is necessary, not harmless.** Whatever the gateway sent it before the close
+  is lost to this device: on connect the gateway drains `pending_welcome_notify:{user}` into the new
+  socket and deletes the key once the send succeeded (`apps/chat-gateway/src/handlers.rs`), so a late
+  socket can consume those signals; the delivery service's FCM resend of a still-pending
+  `welcome_request` is what covers them. The cure is the connect being fast, which is what the race is
+  for; the close only stops the ghost from going on consuming.
 
 ## Rules that hold across both platforms
 
@@ -860,6 +902,7 @@ destination column is what the app opens, the coverage column is what a test or 
 | `event_proposed` | FCM + APNs | `associationId`, `action` | `/admin/agenda` | same | routes (iOS read on hardware 2026-10-05) |
 | `event_validated/rejected/updated/deleted/pending` | FCM + APNs | same | `/calendar` | same | routes |
 | `profile_correction_applied/refused` | none (`skipPush`) | `requestId` | in-app row only, `/profile` | `notificationTarget.test` | no push by design |
+| `live_cut`, `live_suspended`, `live_withdrawn` (WP-L8b, 2026-10-21) | FCM + APNs | `target: 'notifications'` (wins over `postId`, the live's or the member's id) | `/notifications`, where the inert row says it | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test` | never run on a phone; never muted by a category ([lives](../services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)) |
 | Incoming call | FCM silent frame | `groupId`, `callId` | `/chat`, accept recorded | NOTIF rows | HELD: `CALLS_ENABLED = false` |
 | Browser (web) notification | `new Notification` from a WebSocket frame, **no service worker, no web push** | `conversationId` | `chatDeepLinkRoute` | `useNotifications.webClick.test` | **was `/chat` for a salon, fixed on the branch**; a closed tab gets nothing |
 
@@ -1620,9 +1663,9 @@ User decision 2026-10-14: declare exclusion rects.
   `canariGestures` JavaScript interface of `MainActivity` (`setRightBand` / `clearRightBand`, the
   twin of `canariTheme`), re-reported by a `ResizeObserver`, cleared on unmount. Everywhere else the
   system right-edge back swipe is untouched.
-- **Native:** `MainActivity.applyRightEdgeExclusion` sets ONE rect on the WebView
+- **Native:** `MainActivity.applyEdgeExclusions` sets the right rect on the WebView
   (`ViewCompat.setSystemGestureExclusionRects`, API 29+, no-op below) on each report and on each
-  WebView layout change, skipping an unchanged result. The arithmetic is `rightEdgeExclusion`
+  WebView layout change, skipping an unchanged result. The arithmetic is `edgeExclusion(Edge.RIGHT, ..., CapAnchor.BOTTOM)`
   (`gesture/EdgeGestureExclusion.kt`, pure, tested by `EdgeGestureExclusionTest` in `android-tests`):
   width = the REAL `systemGestures` inset (74 px here) + 8 dp margin, not a constant; a 0 inset
   (3-button navigation) means no rect.
@@ -1636,13 +1679,62 @@ User decision 2026-10-14: declare exclusion rects.
   list continuously); native logs and re-sets only on change.
 - **Known gap:** an overlay drawn over a mounted list (side panel on a phone, modal, media viewer)
   keeps the band; the right-edge Back swipe is unavailable there too.
-- **Unaffected:** the system Back button / 3-button Back, and the LEFT edge gesture (no rect there);
+- **Unaffected:** the system Back button / 3-button Back, and the LEFT edge gesture (no rect there, except over the feed - next section);
   the history stepping of "The hardware Back press had no owner" is unchanged.
 - **The 74 px comes from `dumpsys`** (`EdgeBackGestureHandler`), not from the code: the first thing to
-  read on the Mi 9T is the log line `right-edge gesture exclusion: span=... -> ...` (a null band
-  there means the inset read 0).
+  read on the Mi 9T is the log line `gesture exclusion: spans={RIGHT=...} -> [...]` (an empty
+  list there means the inset read 0; `API < 29: not applied` means the OS has no exclusion API).
 - **Owed:** a reading on the Mi 9T through the next pre-release (own bubble, x >= 406.5 CSS px,
   keyboard closed and open; then the right-edge back swipe on the list screen must still work).
+
+### The left-edge back gesture is excluded over the feed, and only there (2026-10-21)
+
+A swipe from the feed to the camera (the tab swipe's `prev` from `/posts`) started in the left
+74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74` on the Mi 9T) was taken by the
+system as Back: the page saw only `touchstart > touchcancel`, 8 of 8 (class B of the 2026-10-21
+camera-swipe matrix, `<harness-dir>/a1-bench/camera-swipe-r1021/`). Owner decision 2026-10-21:
+exclude the left edge over the feed, with the mechanism of the right edge above.
+
+- **One mechanism, two edges.** The `canariGestures` bridge gained `setLeftBand` / `clearLeftBand`;
+  `MainActivity.applyEdgeExclusions` holds one span per edge and hands BOTH bands to
+  `ViewCompat.setSystemGestureExclusionRects` in one list (the call replaces the view's list, so a
+  single-edge call would erase the other). That list is composed by the pure `bandsFor`, and
+  `EdgeGestureExclusionTest` asserts that a LEFT span leaves the RIGHT band intact and the reverse -
+  `MainActivity` itself is compiled by no pull-request gate. The arithmetic is
+  `edgeExclusion(edge, ..., anchor)` in `gesture/EdgeGestureExclusion.kt`, the right edge's function
+  generalised, not a copy. Below API 29 nothing is applied and the log line says `API < 29: not
+  applied`. The page side is `excludeEdgeOver` in `lib/mobile/edgeGestureExclusion.ts`,
+  with `excludeRightEdgeOver` (ChatArea) and `excludeLeftEdgeOver` (root layout) as its two callers.
+- **Scope:** `wantsFeedLeftEdgeExclusion` (pure, tested) - exactly `/posts`, the swipe armed on this
+  layout, the camera being the feed's `prev`, the keyboard down, and NOTHING COVERING THE SCREEN
+  (`screenCover.covered`: the reel viewer, a full-screen media viewer, a modal, the composer's
+  camera) - each of those is closed by Back, so a band left under it would make a left-edge Back
+  do nothing. A post page (`/posts/<id>`), the
+  camera, a conversation and every other route keep the left-edge Back. The root layout's `$effect`
+  reports `.page-scroll-wrap` (the page area, the bottom bar's `padding-bottom` removed) and its
+  cleanup clears the band on every route change, keyboard rise or viewport change.
+- **Width:** the REAL left `systemGestures` inset + 8 dp, as on the right - 74 + 22 = 96 px on the
+  Mi 9T, which covers the measured 30 CSS px band and widens with the user's back-sensitivity
+  setting. A 0 inset (3-button navigation) declares nothing. **A dead zone remains inside the
+  band:** a start on a horizontally scrollable strip (the feed's chip rows) is refused by
+  `shouldIgnoreSwipeTarget`, so there the touch reaches neither the camera swipe nor Back. The span is CSS px x
+  `devicePixelRatio`; dp come from native `density`.
+- **The budget:** Android honours 200 dp of exclusion PER EDGE (and Android 10 caps the vertical
+  extent at 200 dp), and ignores the excess silently. Each edge has its own budget, so the two bands
+  never compete. The feed is taller than 200 dp (550 px on the Mi 9T), so the band is cut to 200 dp
+  around the MIDDLE of the feed (`CapAnchor.CENTER`), where a thumb starts that swipe and where the
+  matrix started every cell (y = 1300 of 2340); the right edge keeps its BOTTOM anchor. Above and
+  below the band a swipe from the left edge is still Back - the declared cost.
+- **No leak:** native re-applies on every WebView layout change (rotation is a `configChanges`, not
+  a recreation) and the page's `ResizeObserver` re-reports the span; the rects live on the view, so
+  a pause and resume keeps them. A `location.reload()` keeps the activity and its native spans, so
+  the root layout calls `clearEdgeExclusionsForNewDocument` once per document before any surface
+  reports - this also closes the same leak for the right edge.
+- **iOS: nothing to do.** There is no system back gesture on the left edge of a WKWebView app here
+  (no back-forward swipe), the iOS Back is the app's own `swipeBack`, only in a conversation, so the
+  feed's left edge already belongs to the page. The bridge is absent there and the call is a no-op.
+- **Owed:** a Mi 9T reading on the next pre-release
+  ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
 
 ### One Back with the message sheet open closed the sheet AND the conversation, and ten more surfaces shared the cause (2026-10-13)
 
@@ -2590,6 +2682,17 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
 - **WorkManager** (`OutboxRetryWorker`): exponential backoff retry for unsent outbox messages
 - **BootReceiver** (`CanariBootReceiver`): re-registers FCM token + drains outbox on boot
 - **Foreground guard**: retry is deferred when the TS outbox flusher is active
+- **The ongoing-call foreground service** (`CallForegroundService`, type `microphone`, WP-C-BG-A,
+  2026-10-20): the ONLY foreground service this app declares, and only in builds that place calls
+  (`src/calls/AndroidManifest.xml`, merged by `app/build.gradle.kts` when `VITE_DEPLOY_ENVIRONMENT`
+  is `development`). A backgrounded or locked app lost its call socket and its microphone 5 s in
+  while its JavaScript kept running; the service keeps both for the call's life, draws the
+  `CallStyle` notification and owns the audio OUTPUT (the mode is Chromium's when Chromium set it).
+  Started by the page through `window.canariCall` (`CallBridge.kt`) with a plain `startService`
+  while the activity is resumed, never from the background; every end path (hang-up, page reload,
+  Recents, activity destroyed) releases it without waiting on the page. `android.yml` fails a stable
+  whose built manifest carries it. Design, Play declaration and the readings owed:
+  [calls](modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20).
 
 **THE WORKER LOOKS AT THE QUEUE FIRST, AND ONLY A DRAIN THAT RAN IS AN ATTEMPT (2026-10-01).** It
 used to test WorkManager's `runAttemptCount` before anything else, and that counts every
@@ -3436,6 +3539,23 @@ owed.**
 
 **0.14.15 also carries `48d31eaa` itself**, which is owed regardless of calls: it is why an iPad
 could not obtain an FCM token either, and therefore received no message notification of any kind.
+
+**The `audio` background mode follows the same rule as `voip`, and is in PRE-RELEASE builds only
+(2026-10-20, WP-C-BG-I).** WKWebView mutes a page's microphone the moment the app is hidden or the
+screen locks unless `UIBackgroundModes` holds `audio` (measured on the iPhone: the process and its
+WebRTC stack kept running, only the capture stopped -
+[calls](modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)). A
+pre-release can call, so `ios.yml` patches `audio` into that build's `Info.plist`, in the branch
+that writes `VITE_DEPLOY_ENVIRONMENT=development`; a stable cannot, so the committed plist does not
+declare it until `CALLS_COMPILED` flips (`callsCompiled.test.ts`). **A TestFlight build for EXTERNAL
+testers goes through Beta App Review, and that is the same risk as the 2.5.4 `voip` refusal.** A
+reviewer probably cannot place a call on it: calling needs two accounts on the DEV estate and a
+direct conversation between them, so the reviewer may again find a declared mode whose feature it
+cannot locate. Internal testers are not reviewed. If an external group is ever added, the answer
+must be ready before submission: a demo pair of dev accounts in the review notes, or the mode left
+out of that group's build. Such a build also carries the stable's microphone purpose string, which
+does not name calls; the stable's notes and string are drafted in
+[calls, B14](modules/calls.md#the-drafts-still-owed-2026-10-21).
 
 ### Where the three channels actually are - READ THEM, NEVER READ THIS
 

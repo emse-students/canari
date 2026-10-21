@@ -511,3 +511,402 @@ fake-device flags has no deterministic microphone, relaunch it with `--use-fake-
 --use-file-for-fake-audio-capture`; `startCall failed: Error: WC not initialized` on a desktop right after the PIN
 is cured by a reload plus the PIN again; on the iPhone the ring is a native banner (tap it, then "Accepter l'appel
 entrant"); an accept done by a DOM `click()` over CDP is enough on both the desktop and the Mi 9T.
+
+## 2026-10-20 - `v1.3.1-alpha.3` on both bench phones: the E2E worker report, CALL-WIFI, a suspended app
+
+Pre-release run 39375779687 (commit `4cb14cfb7`, dev estate deployed, dev `call-service` restarted with it).
+**Mi 9T**: release APK of the GitHub release, `versionCode` 100300103, `adb install -r` over alpha.2 (data kept;
+Play Protect asked to scan an unknown app: "Ne pas envoyer"), account `delta`; "A propos" reads "Version de Canari
+1.3.1-alpha.3". Read over CDP (the console streamed to a file for the whole session) plus `logcat`. **iPhone 12**:
+TestFlight offered `1.3.1 (100300103)` about 6 min after the run ended ("Mettre a jour"), account `gamma`, PIN
+screen then the feed; "A propos" reads "Version de Canari 1.3.1-alpha.3". Both on the bench Wi-Fi, no SIM, both apps
+in the foreground in their shared direct conversation. Five calls, about 25 min of call time; the server side is
+the dev `call-service` log, read only.
+
+**The iPhone's log was read this time.** The exported file (1.4 MB, 16,876 lines) was attached from the iPhone
+("+" > "Tous les fichiers") to the bench conversation; on the Mi 9T, a hook on `URL.createObjectURL` installed over
+CDP kept the decrypted `Blob` when "Telecharger le fichier" was pressed, and its text was read from the page (the
+native save picker that follows was cancelled). That is the way off the phone that LOG-IOS-SIZE asked for, with
+no new code. Lines quoted below never include the `fp=` key line.
+
+| Row ([CALL-L1](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)) | Verdict | What was read |
+| --- | --- | --- |
+| 0. idle call > 60 s | **`PASS`** | Mi 9T called, iPhone accepted; nobody spoke, no network change, 96 s paired. Server: `p2p paired`, then only the two `sent Close` at the hang-up (`disposition=client-close` both). **No `held dead`, `keepalive-lost` or `not taken within` line.** Neither app logged a `[Call]` line during the idle minute |
+| 1. E2E worker report | **read on both phones** | see the next table: the iPhone's transforms carry every frame; **the Mi 9T's carry none, in every call** |
+| 8. Mi 9T Wi-Fi off 6 s (Mi 9T polite) | **`PASS`** | `closed code=1006 - resuming`, attempts 1-3 failed, `signalling resumed on attempt 4` 11 s after the drop, `pair resumed: ... audio packets 627 -> 727`, `the media path carried audio across the outage - no ICE restart`; the iPhone's audio back at the Mi 9T 9 s after the drop (NetEq lines resume); no "Reconnexion..." on the iPhone afterwards. The iPhone (initiator) had sent `ICE restart 1/3` at its own ICE `disconnected`, and on the resume `rolling back unanswered offer #2` then a new restart offer |
+| 9. Mi 9T Wi-Fi off 14 s, Mi 9T polite | **`PASS`** | `signalling resumed on attempt 6` (+19 s; the radio needs ~5 s to rejoin after it is switched on), `ICE disconnected (signalling resumed: path down) - asking the initiator to restart (1/3)`, the iPhone's restart offer answered, `media path restored after 1 ICE restart(s)`, audio back. Expected attempt 5 at +15 s; the extra attempt is the radio's rejoin time |
+| 9. the same, Mi 9T initiator | **`PASS`** | `signalling resumed on attempt 6` (+19 s), `ICE restart decided (signalling resumed: no packet since the break, path down, ice=disconnected)`, `ICE restart 1/3`, `media path restored after 1 ICE restart(s)`, audio back |
+| 10. Mi 9T Wi-Fi off 90 s | **`PASS`** | Mi 9T: 15 attempts, `terminal failure: signalling not restored after 15 resume attempts - ending call` at +55 s. Server: `answered none of 2 keepalive pings - held dead (half-open socket)` at +28 s, `p2p seat EXPIRED ... after 60 s away` at +88 s. iPhone: `the other party lost its signalling connection` at +28 s, `the other party left the call room` at +88.7 s, and the call left its screen. **CALL-WIFI-GHOST is closed** |
+| 8-9 on the iPhone (Control Center Wi-Fi toggle, ~26-28 s: the toggles through WDA are slow, a 14 s outage was not reachable) | **`PASS`** | iPhone: `closed code=[redacted] - resuming`, attempts 1-7 failed, `signalling resumed on attempt 8` +28 s, `the media path carried audio across the outage - no ICE restart`. Mi 9T (initiator): `ICE restart 1/3` at ICE `disconnected`, its offer unanswered; on the iPhone's resume `rolling back unanswered offer #3 - its answer can no longer come`, `ICE restart offer #4`, answered; the iPhone's audio back at the Mi 9T. Server held the iPhone's socket dead at +27 s |
+| 10 on the iPhone, Wi-Fi off 90 s | **`PASS`** | iPhone: 15 attempts, `terminal failure ... ending call` at +56 s. Server: held dead +26 s, seat EXPIRED +86 s. Mi 9T: `the other party lost its signalling connection` +26 s, `the other party left the call room` +85 s, call ended |
+| 11. Mi 9T screen locked 40 s | **`PARTIAL`: the call survives, no audio while locked** | `[Call] app hidden state=incall mic=live voice=playing`; the call socket reset 5 s after the lock (server `Connection reset without closing handshake`, `seat away ... kept for a resume`); the iPhone's audio stopped at the Mi 9T within 4 s; resume attempts 1-4 failed while locked; on unlock `signalling resumed on attempt 5`, `asking the initiator to restart (1/3)`, `media path restored after 1 ICE restart(s)`, audio back. alpha.2 ended the call at +54 s; the 40 s lock is now inside the seat grace. The audio while locked is CALL-LOCK-ANDROID, as expected |
+| 11. Mi 9T app backgrounded 40 s (HOME) | **`PARTIAL`, same shape** | `app hidden`, call socket `1006` 5 s later, the iPhone's audio stopped at the same moment; resume attempts kept RUNNING in the background (the app's JavaScript ran: a `connection failed` every 4 s), so the process was not frozen but its sockets could not connect; back in the foreground `signalling resumed on attempt 10`, one ICE restart, audio back |
+| 11. iPhone screen locked 40 s (WDA lock) | **`PARTIAL`: the call survives, the iPhone sends no audio while locked** | the app kept running: no server line, no signalling fault on either side (the Pong kept answering). iPhone: `app hidden state=incall mic=live voice=playing`, then `WARN the system took the microphone (track muted)`; its sender stopped encrypting (no frame counted between 08:24:01 and 08:24:49) and the Mi 9T received nothing from it; on unlock `app visible ... mic=live/os-muted`, `the system gave the microphone back`, audio back |
+| 11. iPhone backgrounded 40 s (HOME, app state 3) | **`PARTIAL`, same shape** | same lines (`the system took the microphone`), no signalling fault, no iPhone audio for the 40 s, back on return |
+| CALL-BAR-COVERED (#2147) | **`PASS` for the chat camera** | call minimised, the chat composer's "+" > "Ouvrir la camera": `elementFromPoint` at the bar's centre is "Revenir a l'appel avec ...", at its right edge the hang-up; the bar is drawn over the camera preview (screenshot), and "Raccrocher" from the bar ended the call (`[Call] hung up from the top banner`). The post composer's camera was not opened this time |
+| CALL-OS-BANNER (#2147) | **`PASS`, one ring** | iPhone ringing in the foreground: the WDA tree 1 s into the ring holds only the in-app screen (reduce, "Appel entrant", refuse, accept), no OS notification; the screenshot matches. One ring read, the Mi 9T calling |
+
+### The E2E worker report (#2149), verbatim
+
+**Mi 9T (`engine=Chrome/152`), ten lines, five calls, both roles, all the same shape.** The first and the last:
+
+```
+[Call] ERROR E2E worker report (5 s after connected): transformers sender=1 receiver=1 | frames in sender=0 receiver=0 | encrypted audio=0 video=0 | decrypted audio=0 video=0 | decrypt-failed=0 short=0 (empty 0) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=Chrome/152 attr sender=native receiver=native - no frame reached either transform
+[Call] ERROR E2E worker report (call end, call=...): transformers sender=1 receiver=1 | frames in sender=0 receiver=0 | encrypted audio=0 video=0 | decrypted audio=0 video=0 | decrypt-failed=0 short=0 (empty 0) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=Chrome/152 attr sender=native receiver=native - no frame reached either transform
+```
+
+The worker answered every time (no `did not answer` line). Its transformers exist on both sides, the `transform`
+attribute is native, and **neither transform was handed one frame**, at 5 s and at the end of calls of 50 s to 6 min,
+while media flowed both ways (NetEq decoding, inbound packet counts rising). In the table of
+[calls](frontend/modules/calls.md#the-mi-9t-logged-no-worker-line-at-all-131-alpha2---the-worker-is-now-asked) this
+is the row "transformers 1, `frames in` 0 on a side: the transformer exists and is never fed: media flows around it",
+on BOTH sides.
+
+**iPhone 12 (`engine=iOS/18`, the WKWebView's user agent), one call shown in full, then the totals.**
+
+```
+[Call] E2E sender transformer #1 (1 sender in this worker): first frame audio mime=audio/opus pt=111
+[Call] E2E encrypting audio (1 frame(s))
+[Call] E2E receiver transformer #2 (1 receiver in this worker): first frame audio mime=audio/opus pt=111
+[Call] E2E decrypt failed (1): OperationError: The operation failed for an operation-specific reason
+[Call] E2E sender audio #1: 50 frame(s), not-opus=0 repeated-ts=0 own-iv=0 len=65..135 avg=108 toc=config15/code0 (100%)
+[Call] audio send=audio/opus pt=111 ch=2 [minptime=10;useinbandfec=1] recv=? | local m=audio opus/111,red/63,g722/9,pcmu/0,pcma/8,cn/13,telephone-event/110,telephone-event/126 | remote m=audio opus/111,red/63,g722/9,pcmu/0,pcma/8,cn/13,telephone-event/110,telephone-event/126
+[Call] E2E worker report (5 s after connected): transformers sender=1 receiver=1 | frames in sender=238 receiver=242 | encrypted audio=238 video=0 | decrypted audio=0 video=0 | decrypt-failed=242 short=0 (empty 0) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=iOS/18 attr sender=native receiver=native
+[Call] E2E worker report (call end, call=...): transformers sender=1 receiver=1 | frames in sender=4764 receiver=4818 | encrypted audio=4764 video=0 | decrypted audio=0 video=0 | decrypt-failed=4764 short=54 (empty 54) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=iOS/18 attr sender=native receiver=native
+```
+
+| Call (caller -> callee) | iPhone at 5 s: frames in sender / receiver, encrypted, decrypted, decrypt-failed | iPhone at the end: the same | not-opus / double | Mi 9T at 5 s and end |
+| --- | --- | --- | --- | --- |
+| 1. Mi 9T -> iPhone, 96 s | 238 / 242, 238, 0, 242 | 4764 / 4818, 4764, 0, 4764 (short 54, all empty) | 0 0 / 0 | 0 / 0 both |
+| 2. iPhone -> Mi 9T, 3 min 45 (rows 8-10) | 237 / 246, 237, 0, 246 | 11119 / 5278, 11119, 0, 5216 (short 62, empty) | 0 0 / 0 | 0 / 0 both |
+| 3. Mi 9T -> iPhone, 5 min 30 (iPhone outages) | 241 / 240, 241, 0, 240 | 15086 / 10028, 15086, 0, 9757 (short 271, empty) | 0 0 / 0 | 0 / 0 both |
+| 4. iPhone -> Mi 9T, 6 min (row 11) | 242 / 248, 242, 0, 248 | 14249 / 14742, 14249, 0, 14572 (short 170, empty) | 0 0 / 0 | 0 / 0 both |
+| 5. iPhone -> Mi 9T, 50 s (stats) | 235 / 245, 235, 0, 245 | 2501 / 2536, 2501, 0, 2510 (short 26, empty) | 0 0 / 0 | 0 / 0 both |
+
+The iPhone's sender shape line, one per call: `not-opus=0 repeated-ts=0 own-iv=0`, `len` 65-147 bytes, average
+100-110, `toc=config15/code0 (100%)`; no `ERROR E2E sender` line in any call. On the iPhone **every non-empty frame
+received from the Mi 9T failed to decrypt** (`decrypted audio=0`, 381 `E2E decrypt failed` lines in the log, the
+counter at 14,572 in call 4), and no `no-key` drop. The iPhone's `audio send=` line reads `recv=?` (the receive codec is
+not reported by WebKit).
+
+**The receiving side of the iPhone's audio, Mi 9T (call 5, `getStats` on a peer connection captured by a constructor
+hook installed over CDP before the call):** per 5 s interval 55.7, 58.8, 63.5, 63.8, 64.4, 66.6, 67.7, 69.6 %
+concealed; cumulative 64.4 % at 45 s; 1 packet lost, jitter 3-4 ms, 835 packets discarded by the jitter buffer, codec
+`audio/opus`, 253-256 packets per 5 s. NetEq `Decode error` lines per call: 1,409 / 1,492 / 2,803 / 3,003 / 759
+(about 14.5 a second in every call), plus 637 `samples_per_channel_` lines. The iPhone as receiver has no stats line.
+
+**What these numbers say, and no further.** The iPhone's sender transform sees one Opus packet per frame (config 15,
+code 0) and encrypts each once (`double=0`, `own-iv=0`). The Mi 9T's transforms receive no frame in either direction.
+The iPhone's receiver fails to decrypt every frame that comes from the Mi 9T. The Mi 9T's decoder rejects about 30 %
+of the iPhone's packets and conceals ~64 % of the audio. The reading does not show what the Mi 9T puts on the wire,
+nor why its worker is never fed, and it sits against the 2026-10-19 desktop rows above (Mi 9T paired with desktop
+Chrome, clean both ways), which these counters do not explain: that pairing was on `1.3.1-alpha.1`, without the
+report.
+
+### Findings
+
+| Id | Severity | What | Evidence |
+| --- | --- | --- | --- |
+| CALL-E2E-BYPASS-MI9T | **P1** | On the Mi 9T (Android WebView `Chrome/152`) both E2E transforms are attached (`transformers sender=1 receiver=1`, `attr native`) and receive **0 frames** in 10 reports over 5 calls, while audio flows both ways; the iPhone fails to decrypt every frame it receives from the Mi 9T; the call screen says "Appel chiffre de bout en bout" | the report table above; the iPhone's `decrypt-failed` counters |
+| CALL-AUDIO-1 | **P1, unchanged, now with both ends' counters** | the Mi 9T conceals 56-70 % of the iPhone's audio, ~14.5 decode errors a second; the iPhone's sender counters are clean | above |
+| CALL-LOCK-ANDROID | **P1, already in the backlog** | a locked or backgrounded Mi 9T loses its call socket and all audio 5 s in; the call now survives a 40 s lock or background through the resume | row 11 |
+| CALL-IOS-MIC-HIDDEN | **P2** | a locked or backgrounded iPhone keeps the call (its process answers the keepalive) but the system takes its microphone: the partner hears nothing for as long as it lasts, with nothing on the partner's screen saying so | row 11, `WARN the system took the microphone (track muted)` |
+| CALL-RESTART-BUDGET | **P3** | after a resume that rolled back an unanswered offer and restarted on a path already `connected`, the next loss starts at `ICE restart 2/3`, on both engines (iPhone in call 2 at 08:10:31, Mi 9T in call 3 at 08:18:49), although inbound packets rose in between: the refund-on-evidence did not apply. The iPhone in call 2 counted 1/3, 1/3 (after the rollback), then 2/3 at the next loss and 1/3, then 2/3 again | the iPhone's log 08:08:18-08:10:31; the Mi 9T's 08:16:47-08:18:49 |
+| LOG-REDACT-CODE | **P3** | the iPhone's in-app log writes the WebSocket close code as `code=[redacted]` (the Mi 9T's live console shows `code=1006`) | the iPhone's export |
+| CALL-GATHER-0 | **P3** | one call (Mi 9T polite, call 4) logged `ICE gathering complete (host=2 srflx=0 relay=0)` then `WARN no TURN relay candidate - a call that cannot go direct will fail` 50 ms after `connected`; the same device gathered srflx and relay candidates in every other call | the Mi 9T console, 08:21:17 |
+| WS-PAUSE-NOISE | **P3** | at the Mi 9T's lock: `[WS] pauseSocket: native disconnect failed: Trying to work with closed connection` (WARN); on the iPhone, a `signalling WebSocket error` after a call had ended | both logs |
+
+**Cause of CALL-E2E-BYPASS-MI9T, measured afterwards on this Mi 9T over CDP (2026-10-20):** Chromium short-circuits a
+transform assigned one task after its sender or transceiver was created, and the app awaited the worker's `keyReady`
+in between, so EVERY Chromium client sent clear audio and fed the iPhone's ciphertext to its decoder - which is
+CALL-AUDIO-1 too, and why the 2026-10-19 Mi 9T to desktop pairing was clean (clear both ways). See
+[calls](frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late).
+
+CALL-WIFI-14 and CALL-WIFI-GHOST of `1.3.1-alpha.2` are **closed** by rows 9 and 10 on both phones and both roles.
+CALL-BAR-COVERED is closed for the chat camera; CALL-OS-BANNER is closed on one ring.
+
+**Owed:** why the Mi 9T's worker is never fed (a worker-side CDP target, or the fidelity rig on an Android WebView);
+the same report from a desktop Chrome paired with each phone (`callpeer.mjs`) to place the bypass; the post composer's
+camera under the call bar; the iPhone as callee for the OS banner on more than one ring.
+
+Rig lessons: the Mi 9T's call button is in the conversation's "..." menu on the phone layout; the iPhone's Control
+Center opens on its media page, swipe down once to reach the Wi-Fi toggle, and WDA taps there take several seconds;
+`svc wifi disable` on the Mi 9T over the USB serial keeps `adb` alive (a second, Wi-Fi `adb` transport of the same
+phone drops).
+
+## 2026-10-20 - `v1.3.1-alpha.4` on both bench phones: the call audio is clean, both transforms carry every frame
+
+Pre-release run 39390044969 (commit `2299baeea`, carrying #2158: the transforms attached in the task that creates the
+sender or receiver, "Verification du chiffrement..." until the worker proves the path, a typed error for a call whose
+media flows around a transform). **Mi 9T**: release APK of the GitHub release, `versionCode` 100300104, `adb install
+-r` over alpha.3 (Play Protect: "Ne pas envoyer"), account `delta`; "A propos" reads "Version de Canari
+1.3.1-alpha.4". **iPhone 12**: TestFlight `1.3.1 (100300104)`, "Mettre a jour", account `gamma`, PIN then the feed;
+"A propos" reads "Version de Canari 1.3.1-alpha.4". Same method as alpha.3: the Mi 9T's console streamed over CDP for
+the whole session, a constructor hook on `RTCPeerConnection` reading `getStats()` every 5 s, `logcat` beside it; the
+iPhone's in-app log exported after the calls (1.4 MB, 17,441 lines) and carried off through the bench conversation;
+the dev `call-service` log read only. Both phones on the bench Wi-Fi, no SIM, in their shared direct conversation.
+Nobody spoke near them (the Mi 9T's received `audioLevel` stayed 0.00003-0.0013), so the rows with speech are the
+desktop ones, whose fake microphone plays a looped speech-like wav. Five phone calls and two desktop calls.
+
+| Row ([CALL-L1](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)) | Verdict | What was read |
+| --- | --- | --- |
+| 1. E2E worker report, Mi 9T <-> iPhone, both callers | **`PASS`** | 238-249 frames per side at 5 s on BOTH phones, `decrypt-failed=0`, no `ERROR`, `E2E path check ... no media around the transform` on both, in every call (table below) |
+| 1. Mi 9T hearing the iPhone | **`PASS`** | concealed 0.2-0.6 % cumulative over 60-90 s (alpha.3: 56-70 %), 0-1 lost, 0 discarded, 226-254 packets per 5 s; **0 NetEq `Decode error` lines in `logcat` over the whole session** (alpha.3: about 14.5 a second) |
+| 1. iPhone hearing the Mi 9T | **`PASS` on the counters** | `decrypted audio` grows with `frames in receiver` (3784 of 3842 in call 3, the rest `short` empty frames), `decrypt-failed=0` in every call (alpha.3: every frame failed). Concealment NOT-READ: the TestFlight build is not inspectable |
+| 1. Screen text | **`PASS`** | Mi 9T: "Verification du chiffrement..." from the dial or the ring, "Appel chiffre de bout en bout" 6-9 ms after `E2E proven`, itself 0.3-0.4 s after the transforms attach. iPhone (WDA tree polled every 0.5-1 s): "Verification du chiffrement..." on the ring, "Appel chiffre de bout en bout" 1.2-3.5 s after the accept tap; its log's `E2E proven` is 1.8 s after the tap in call 1 |
+| 2. Mi 9T -> desktop Chrome (`callpeer.mjs`, profile w2 = `gamma` on dev, fake microphone), desktop accepts | **`PASS`** | desktop: 2128 packets in 45 s, 0 lost, **0 % concealed**, `relay->srflx`; Mi 9T hearing the desktop: 0.1 % concealed cumulative at `audioLevel` 0.12-0.41; both reports clean (below) |
+| 2. desktop -> Mi 9T, Mi 9T accepts | **`PASS`** | Mi 9T hearing the desktop: 0.1 % cumulative at `audioLevel` 0.11-0.95; desktop hearing the Mi 9T: 0.0-0.1 %; both reports clean. Dialled from the page directly (the same stats hook), since `callpeer.mjs` reloads the page, which re-locks the PIN |
+| 3. idle call > 60 s | **`PASS`** | call 2, about 85 s paired with nobody speaking before the outage below: no `held dead`, `keepalive-lost` or `not taken within` line on the server; call 1 (63 s paired) closed with two `disposition=client-close` |
+| 3. Mi 9T Wi-Fi off 14 s (Mi 9T polite) | **`PASS`** | `closed code=1006 - resuming`, `signalling resumed on attempt 6` (+19.5 s), `pair resumed: ... audio packets 4699 -> 4808`, `the media path carried audio across the outage - no ICE restart`. The iPhone had restarted ICE at its own `disconnected` (`ICE restart 1/3`, offer #2, `media path restored after 1 ICE restart(s)` +17.7 s) and, on the resume, `rolling back unanswered offer #2`, offer #3 answered. Concealed back to 0.0 % per interval 10 s after the resume |
+| 3. Mi 9T Wi-Fi off 90 s | **`PASS`** | Mi 9T: `terminal failure: signalling not restored after 15 resume attempts - ending call` at +55 s. Server: `held dead (half-open socket)` +29.5 s, `p2p seat EXPIRED ... after 60 s away` +89.5 s. iPhone: `the other party lost its signalling connection` +29.6 s, `the other party left the call room` +89.6 s, call screen gone |
+| 3. Hang-up from each phone | **`PASS`** | Mi 9T "Raccrocher" (call 1): both ends' `call end` reports, server `client-close` twice. iPhone "Raccrocher" (call 3): `hung up from the full screen`; the Mi 9T logged `remote track ended` and its end report 1.5 s later |
+| 3. Call bar above the composer camera (Mi 9T, call 3) | **`PASS`** | call minimised, "+" > "Ouvrir la camera": `elementFromPoint` at the bar's centre is "Revenir a l'appel avec ...", at the hang-up's centre "Raccrocher"; the screenshot shows the green bar over the live preview |
+| 4. Video | not read | calls are audio-only on dev |
+
+### The E2E worker report, verbatim
+
+**Mi 9T (`engine=Chrome/152`), call 1 (the Mi 9T calls the iPhone):**
+
+```
+[Call] E2E sender transform attached (audio)
+[Call] E2E receiver transform attached (audio)
+[Call] E2E receiver transformer #2 (1 receiver in this worker): first frame audio mime=audio/opus pt=111
+[Call] E2E sender transformer #1 (1 sender in this worker): first frame audio mime=audio/opus pt=111
+[Call] E2E proven: this device encrypted a frame and decrypted one from the peer
+[Call] E2E sender audio #1: 50 frame(s), not-opus=0 repeated-ts=0 own-iv=0 len=54..140 avg=105 toc=config15/code0 (100%)
+[Call] E2E worker report (5 s after connected): transformers sender=1 receiver=1 | frames in sender=243 receiver=243 | encrypted audio=243 video=0 | decrypted audio=243 video=0 | decrypt-failed=0 short=0 (empty 0) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=Chrome/152 attr sender=native receiver=native
+[Call] E2E path check (5 s after connected): no media around the transform (packets sent audio=260 video=0 received audio=242 video=0)
+[Call] E2E worker report (call end, call=...): transformers sender=1 receiver=1 | frames in sender=3125 receiver=3173 | encrypted audio=3125 video=0 | decrypted audio=3125 video=0 | decrypt-failed=0 short=48 (empty 48) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=Chrome/152 attr sender=native receiver=native
+```
+
+**iPhone 12 (`engine=iOS/18`), the same call:**
+
+```
+[Call] E2E worker report (5 s after connected): transformers sender=1 receiver=1 | frames in sender=241 receiver=258 | encrypted audio=241 video=0 | decrypted audio=241 video=0 | decrypt-failed=0 short=17 (empty 17) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=iOS/18 attr sender=native receiver=native
+[Call] E2E path check (5 s after connected): no media around the transform (packets sent audio=241 video=0 received audio=258 video=0)
+[Call] E2E worker report (call end, call=...): transformers sender=1 receiver=1 | frames in sender=3143 receiver=3175 | encrypted audio=3143 video=0 | decrypted audio=3123 video=0 | decrypt-failed=0 short=52 (empty 52) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=iOS/18 attr sender=native receiver=native
+```
+
+| Call (caller -> callee) | Mi 9T at 5 s: frames in sender / receiver, encrypted, decrypted, decrypt-failed | Mi 9T at the end | The other end at 5 s | The other end at the end |
+| --- | --- | --- | --- | --- |
+| 1. Mi 9T -> iPhone, 63 s | 243 / 243, 243, 243, 0 | 3125 / 3173, 3125, 3125, 0 (short 48) | 241 / 258, 241, 241, 0 (short 17) | 3143 / 3175, 3143, 3123, 0 (short 52) |
+| 2. iPhone -> Mi 9T, 4 min 25 (the row 3 outages) | 249 / 238, 249, 238, 0 | not logged: the call ended in the 90 s outage | 238 / 266, 238, 248, 0 (short 18) | 13183 / 7852, 13183, 7744, 0 (short 108) |
+| 3. Mi 9T -> iPhone, 77 s (call bar, the iPhone hangs up) | 246 / 244, 246, 244, 0 | 3801 / 3841, 3801, 3785, 0 (short 56) | 242 / 260, 242, 242, 0 (short 18) | 3786 / 3842, 3786, 3784, 0 (short 58) |
+| A. Mi 9T -> desktop (`Chrome/155`), 47 s | 251 / 275, 251, 253, 0 (short 22) | 2366 / 2408, 2366, 2359, 0 (short 49) | 250 / 248, 250, 248, 0 | 2359 / 2382, 2359, 2356, 0 (short 26) |
+| B. desktop -> Mi 9T, 57 s | 249 / 260, 249, 250, 0 (short 10) | 2844 / 2874, 2844, 2836, 0 (short 38) | 250 / 272, 250, 248, 0 (short 24) | 2836 / 2887, 2836, 2834, 0 (short 53) |
+
+`not-opus`, `double` and `no-key` read 0 everywhere. The iPhone's sender shape line: `len` 54-125 bytes, average
+80-90, `toc=config15/code0 (100%)`; the Mi 9T's 52-140, average 101-105; the desktop's 105-148, average 126 (it
+carries the wav). **CALL-E2E-BYPASS-MI9T and CALL-AUDIO-1 of alpha.3 are closed by these rows**: the Mi 9T's
+transforms carry every frame, the iPhone decrypts all of them, and the Mi 9T's decoder no longer rejects the iPhone's
+packets. The noise was the Mi 9T's clear audio reaching the iPhone's decrypt and the iPhone's ciphertext reaching the
+Mi 9T's decoder, as #2158 found.
+
+### Findings
+
+| Id | Severity | What | Evidence |
+| --- | --- | --- | --- |
+| CALL-GATHER-0 | **P3, more frequent than alpha.3 said** | the CALLEE logged `ICE gathering complete (host=2 srflx=0 relay=0)` (once `srflx=1 relay=0`) then `WARN no TURN relay candidate` at `connected`, in 3 of the 4 calls where a phone answered: the iPhone in calls 1 and 3, the Mi 9T in call 2 (the Mi 9T in call B gathered `relay=12`); the callers always gathered relays (1-12). These calls connected over host pairs on the shared Wi-Fi, so nothing failed, but a callee that cannot go direct would. The Mi 9T's `logcat` also carries 52 `Received TURN CreatePermission error response, code=600; pruned connection` lines | both logs, 11:20:11, 11:21:44, 11:26:38 local |
+| CALL-RESTART-BUDGET | **P3, unchanged** | the iPhone in call 2: `ICE restart 1/3` at the 14 s outage, `ICE restart 1/3` again on the resume (rollback of offer #2), then `ICE restart 2/3` at the next loss (the 90 s outage), although the call had been `connected` for 65 s in between | the iPhone's log 11:23:26-11:24:54 local |
+| CALL-E2E-CLAIM-OUTAGE | **a question, not filed** | the Mi 9T's screen kept "Appel chiffre de bout en bout" through both outages (no packet received for about 15 s, then 55 s up to the terminal failure). The claim rests on frames, which kept being encrypted, and [calls](frontend/modules/calls.md) withdraws it only for an unreadable worker or unreadable stats, so this is the documented behaviour; whether an outage should show something else is a UI decision | the screen-text watcher, 11:23:17-11:23:37 and 11:24:37-11:25:34 local |
+
+**Owed:** the iPhone's concealment as a receiver (an inspectable iPhone build, or an ear); the iPhone paired with a
+desktop (`callpeer.mjs`), to read its receiver against a known-good sender; the iPhone-side outage rows were not
+repeated on this build.
+
+Rig lessons: `callpeer.mjs` reloads the page to install its tracker, and on a profile whose PIN gate comes back on
+reload the `--dial` role needs the PIN again (`pin.mjs --port 9223 --account third`) after the reload, so the dial was
+done from the live page; with the conversation open on both a desktop and the iPhone signed in as `gamma`, a Mi 9T
+call rings both, and the desktop's accept stops the iPhone's ring.
+
+## 2026-10-20 (afternoon) - `v1.3.1-alpha.4`: what a locked iPhone keeps, measured for WP-C-BG-I
+
+Same builds and accounts as the morning (Mi 9T `delta`, iPhone 12 `gamma`, iOS 27.0.1), same Wi-Fi. The Mi 9T's
+console and a `getStats()` poll every 5 s over CDP (a constructor hook on `RTCPeerConnection` installed before the
+dial); the iPhone's app state and lock through WDA every 15 s. Mi 9T called, the iPhone accepted, then WDA locked the
+iPhone for 3 min 20 s.
+
+| Observable | Verdict |
+| --- | --- |
+| iPhone process during the lock | **alive**: the same pid before and after, app state `3` (background, running) at all 12 polls, never `2` |
+| iPhone WebRTC during the lock | **alive**: its RTCP kept arriving at the Mi 9T (`remote-inbound-rtp` round-trip measurements 4 -> 39, `remote-outbound-rtp` reports 3 -> 42) |
+| iPhone microphone during the lock | **muted within 3 s**: the Mi 9T's inbound audio packets froze at 1020 for the whole lock, concealment +240 000 samples per 5 s |
+| After unlock | packets again within 10 s (1020 -> 1614), audio level back; the call never left `connected` |
+
+So CALL-IOS-MIC-HIDDEN is the capture alone - the reasoning and the fix are
+[calls, WP-C-BG-I](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20).
+
+### Found on the way (not filed against WP-C-BG-I)
+
+| Id | What | Evidence |
+| --- | --- | --- |
+| CALL-PAIR-STALL | the first call of the session never paired: the iPhone accepted and showed "Connexion..." for the whole window, the Mi 9T (caller) logged `call_answered` (`signal from ...`) but no `PeerReady`, then its call socket closed `1006` at exactly +60 s (`signalling pair broken`) and the ring window closed. The Mi 9T's CHAT socket had logged `4 pings without server response - closing zombie connection` before it. Neither the dev `call-service` log nor the iPhone's log was read | Mi 9T console 15:16:33-15:17:35 local |
+| CALL-LATE-RING | after the Mi 9T's chat socket reconnected (15:18:50), it rang for the iPhone's call `87214182...` that the iPhone had ALREADY hung up: the invite and the hangup arrived together, the full-screen ring stayed up, and a new outgoing call was then refused locally as `busy (state=incoming ...)` | Mi 9T console 15:18:50-15:19:11 |
+| BENCH-SHARED | during the measured call the Mi 9T received invites from `gamma` and from another `delta` device (`ignoring invite from own account on another device`): another client of both accounts was calling at the same time. The measurement is unaffected (one peer connection, its counters above), but a run on these accounts is not isolated | Mi 9T console 15:20:35-15:22:38 |
+
+## 2026-10-21 - `v1.3.1-alpha.5` - the stable gate
+
+What a stable `v1.3.1` owes, read on both bench phones with `v1.3.1-alpha.5` as installed.
+
+- **Mi 9T**: release APK, `versionCode` 100300105, account `delta`. Console over CDP, logcat by pid.
+- **iPhone 12**: TestFlight `1.3.1-alpha.5`, account `gamma`. Driven through WDA, syslog through `pymobiledevice3`.
+
+Both sign in to `dev.canari-emse.fr`, which was reset to the fictional seed the same day
+([dev-environment](infrastructure/dev-environment.md)). The seed has no communities, no conversations and no reels.
+
+| Item | Mi 9T | iPhone 12 |
+| --- | --- | --- |
+| 1a. double tap likes a POST | **`PASS`** | **`PASS` with W3C taps**, see DT-IOS |
+| 1b. double tap likes a REEL | **`PASS`** | **`PASS` with W3C taps**, see DT-IOS |
+| 2. the camera no longer turns the app dark | **`PASS`** | **`PASS`** |
+| 3. delete a form, then an association | **`PASS`** | nothing to delete: `gamma` is not admin and the UI offers no management |
+| 4. five-minute smoke | **partial**: sign-in, DM receive and DM send `PASS`; background/foreground not read | **partial**: sign-in, DM send and receive, background/foreground `PASS`; the push banner not read |
+| 5. calls and lives are a pre-release thing | gated off in a stable, by code and tests | same build flag |
+
+### 1. Double tap to like
+
+**Mi 9T posts** (CDP touch events on the WebView):
+
+- A single tap on a post logs nothing and sends nothing.
+- A double tap logs `[doubleTapLike] double tap`, then `[PostCard.doubleTap] 08697804...: like`. It sends `POST .../reactions`, which answers `201`, and the heart shows 1.
+- A double tap on a liked post logs `already reacted, heart only` and sends no request, so it never unlikes.
+- Two taps 450 ms apart are outside the 250 ms window and do not like.
+- A triple tap gives ONE like and ONE `POST`.
+- After a reaction picked in the picker (😂), a double tap is `heart only`, with no request.
+- A single tap on the reaction button still opens the picker.
+
+**Mi 9T reel**: reel `e9b08462` was filmed with the composer camera (4 s, long press) and published as `delta`.
+
+- A single tap logs nothing.
+- A double tap logs `[reel-viewer] double tap on e9b08462...: like`, sends a `POST` that answers `201`, and the label reads `J'aime, 1 réaction`.
+- A second double tap sends no request.
+
+**DT-IOS: reported as a P1, then NOT REPRODUCED.** The follow-up PR, which logs what reached the card, is
+[#2175](https://github.com/emse-students/canari/pull/2175).
+
+- **First attempts, all missed.** They ran right after the PIN-reset sign-in, on a feed still showing its stale pre-sign-in page:
+  - a W3C double tap with 100 ms between taps on the "Liste Fictive" post;
+  - a W3C double tap with 200 ms on "BDE Fictif";
+  - three native `/wda/doubleTap` calls.
+- **The same W3C gesture later liked.** It is one pointer, 40 ms holds:
+  - 120 ms on "Alice Fictif" gave `❤️ 1`;
+  - 200 ms on "Tournoi" gave `❤️ 1`;
+  - on reel `e9b08462`, `J'aime, 1 réaction` became `J'aime, 2 réactions`.
+- **XCUITest's own `doubleTap` never likes.** It was tried on "Repetition" and on the reel. Its two taps are not what a finger sends, so it is no evidence about WebKit.
+
+So a real double tap likes on iOS. The first misses are unexplained, and #2175's log is what would explain them next
+time. The single-tap and never-unlike sub-checks were read on the Mi 9T only. The reading left two of `gamma`'s
+reactions on the dev seed:
+
+- a 😊 on "Liste Fictive", from a stray tap;
+- a ❤️ on "BDE Fictif", whose moment is uncertain.
+
+### 2. The camera and the theme (#2123)
+
+**iPhone, with the system in light mode.** The app stayed light after every close (screenshots):
+
+- the composer camera, opened and closed 3 times, then 2 more times with the keyboard up;
+- the swipe-to-camera tab, opened and closed 3 times.
+
+**Mi 9T:**
+
+- With the system in light mode, `data-theme` read `light` and the body background read `rgb(240, 242, 245)` during and after every cycle, keyboard up included.
+- With the system in dark mode, the app stays dark.
+
+Landscape does not apply: both apps are portrait-only.
+
+- The iPhone's `Info.plist` declares Portrait only.
+- A forced Android rotation leaves the viewport at 436x945.
+
+The Mi 9T's rotation and night-mode settings were restored after the reading.
+
+### 3. Deleting a form and an association (#2133)
+
+Admin was granted and revoked on the dev test account for this reading, with the owner's approval. The route was
+[dev-environment](infrastructure/dev-environment.md) section 3, on the dev database only:
+
+1. A read-only `SELECT` first.
+2. One `UPDATE users SET admin = true` on `delta`, which answered `UPDATE 1`.
+3. After the deletes, `admin = false`, which answered `UPDATE 1`.
+4. A final `SELECT`: `delta` reads `f`, and 0 of the 13 users are admins.
+
+**On the Mi 9T, as `delta`**, after a cold start that carried the claim:
+
+1. "Asso Lecture 1.3.1" was created through the UI: `POST /api/associations` answered `201`.
+2. A form was created in it through Gestion > Formulaires > Nouveau formulaire: `POST /api/forms` answered `201`.
+3. The form was deleted from the list: `DELETE /api/forms/65e2d181...` answered `200`, and the list emptied.
+4. The association was deleted through Gestion > Danger > Supprimer l'association: `DELETE /api/associations/329017de...` answered `200`, followed by the directory reload.
+
+There was no 4xx or 5xx in the window. **`PASS`.**
+
+**On the iPhone, as `gamma` (not admin)**, the association showed in the directory. Its page offers Suivre, Agenda and
+Membres, and no management link: the intended refusal.
+
+### 4. The smoke
+
+- **Sign-in**: both phones signed in again after the reset (artefacts below).
+- **Communities**: none exist on the reset seed, so opening one was not read.
+- **DM, iPhone to Mi 9T.** `gamma` created the DM.
+  - The Mi 9T processed the Welcome: `[WELCOME] Group 192834c7... ready`.
+  - It decrypted the message.
+  - The native builder raised a notification while the app was open on `/posts`, titled with the sender and carrying the text.
+- **DM, Mi 9T to iPhone.** The Mi 9T logged `[OUTBOX] 79fa14fa... sent`, the bubble showed on the iPhone, and the iPhone's `read_watermark` came back.
+- **iPhone background and foreground.**
+  - The app was sent home (state `3`, running in the background) and a message was sent to it from the Mi 9T.
+  - On foreground the app resumed in the conversation (state `4`, the same process since 07:55) with the message shown.
+  - The push BANNER itself was not observed: the syslog capture had stopped, and the swipe did not open Notification Center. The push is **not read**.
+  - On foreground, the app process's only error lines were UIKit keyboard, RemoteTextInput and AudioAnalytics lines. These are frameworks restoring the keyboard, not app code.
+- **Mi 9T background and foreground: not read** (see BENCH-SHARED-2).
+
+### 5. Calls and lives in a stable
+
+"En direct" and the `/api/lives` and `/api/calls/*` requests appear in alpha.5 only because it is a development
+build. `frontend/src/lib/features.ts` sets four flags:
+
+- `CALLS_COMPILED = false`;
+- `CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'development'`;
+- `CALLS_VIDEO_ENABLED = false`;
+- `LIVE_ENABLED = deployEnvironment() === 'development'`.
+
+`deployEnvironment()` returns `null` unless `VITE_DEPLOY_ENVIRONMENT` names dev, and a production build leaves it
+unset. `features.test.ts` pins three things:
+
+- `CALLS_ENABLED` is true for `development`, and false for `''` and for `staging`;
+- `CALLS_COMPILED` is false;
+- `CALLS_VIDEO_ENABLED` is false.
+
+On the server, `LIVE_ENABLED` makes `/api/lives` answer `404` in production. **A stable build shows neither feature.**
+
+### Filed as dev-reset artefacts (dev only, not product defects)
+
+- **`local_state_sealed_under_old_pin` on both phones** after the reset. Each phone's saved MLS state was sealed under
+  the PIN of the pre-reset account. It was cleared through the product's own "PIN oublié ?" > "Réinitialiser".
+- **The sentence on that screen misleads after a server reset.** "Si vous avez changé votre PIN sur un autre appareil,
+  saisissez l'ancien ci-dessous pour les garder" - but no PIN was changed, the server was reset. Only dev does that.
+- **On the Mi 9T, `delta` was then refused `pin_mismatch`**: the reset dev verifier differs from the rig's PIN.
+  `delta`'s PIN was reset to the rig's value, so a client that signs in as `delta` on dev with another PIN is now
+  refused.
+
+### Found on the way
+
+| Id | What | Evidence |
+| --- | --- | --- |
+| BENCH-SHARED-2 | **The Mi 9T was driven by another session from 08:03.** That session's camera-swipe investigation sent CDP swipes and `location.href = '/posts'` recoveries, and a system back finished the activity at 08:21:37.<ul><li>Full reloads at 08:21:19, 08:21:28 and 08:28:10 (`[nav] allowing navigation to .../posts`).</li><li>Two `[TAURI] Couldn't find callback id` warnings: Tauri's own line for a reload while a Rust call is pending.</li><li>The Mi 9T background/foreground and a second push attempt could not run.</li></ul>Item 3's `DELETE`s answered before the first reload. **Two sessions on one bench phone invalidate each other's logs: the rig owes a device lock** | Mi 9T logcat 08:21:19-08:21:38, console 08:28:10 |
+| EXIT-FORTIFY | **When the activity finished, the process logged a native abort**: `F libc: FORTIFY: pthread_mutex_lock called on a destroyed mutex` at 08:21:37.731, just after `onDestroy: destroying the WebView (... finishing=true)`.<ul><li>`dumpsys activity exit-info` records `EXIT_SELF` with status 0: `exit()` won the race and no crash was reported.</li><li>One of the morning's two finishing exits logged it; the 08:10:47 exit did not.</li></ul>A thread still locks a mutex that the exit's destructors already tore down. **Not filed yet** | Mi 9T logcat, pid 31452 |
+| (known) absent-conversation at reload | After the 08:28:10 reload, the drain read a DM frame before the restore had seeded its conversation row: `Message for absent conversation`, then `[PENDING] 1 frame(s) left unacknowledged ... absent-conversation: 1`. The re-fetch on seeding delivered the frame 20 ms later. This is the cold-start P2 in [backlog](backlog.md) ("an absent conversation at cold start"), now on alpha.5. The warning's "re-fetched on every reconnect" overstates a frame recovered at once | Mi 9T console 08:28:11.7-08:28:12.2 |
+| (open) overnight zombie sockets | `[WS] 4 pings without server response - closing zombie connection` at 04:36, 04:45, 04:55 and 06:12 local, with the Mi 9T idle overnight. The same line preceded CALL-PAIR-STALL above. Not investigated | Mi 9T console |
+| (rig) sign-in warning | `[auth] redirect loop to /posts broken - staying on /login` at 08:05:17, during the Mi 9T sign-in. BENCH-SHARED-2 was forcing navigations to `/posts` in the same minutes, and the cause is not separated | Mi 9T console |
+| (incident) | One failed login on a personal account via the iOS autofill sheet; the owner was informed | - |
+
+### Rig lessons
+
+- **The iOS autofill sheet sits over the keyboard's Go key.** "Remplir le nom d'utilisateur" covers the spot a scripted
+  submit taps. Close it first (its X), and take a screenshot before every submit on a credential form.
+- **XCUITest's `doubleTap` is no double tap for WebKit.** Read a double tap on the iPhone with a W3C sequence: one
+  pointer, two 40 ms holds, and the gap under test.
+- **`login.mjs` defaults to the `owner` account.** A device holding another account answers
+  `device_holds_other_account`, so pass `--account`.
+- **Stale Custom Tabs block `login.mjs`.** It fails with "Custom Tab never rendered a credential form". Tap
+  "Connexion externe" once by hand, then re-run it, and it answers the open form.
+- **A bench phone needs ONE driver.** Look for other CDP or adb clients of the serial before a reading, and again
+  before believing a reload in its log (BENCH-SHARED-2).

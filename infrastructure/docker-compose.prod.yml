@@ -132,7 +132,7 @@ services:
     # PINNED BY DIGEST, not `:latest` - and `:latest` was the worst of the three floating tags, on a
     # database admin UI, in PRODUCTION. The image carries no version label, so the digest is the only
     # name it has.
-    image: adminer@sha256:74f29c416e148b98305e84446a18db7cd2c1038264dec464359d36774ef080ce
+    image: adminer@sha256:49a7d30e71de97fb18933ffe7d46cc2b343c49fd7a63a7791c8be2548eb65115
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"
@@ -240,6 +240,12 @@ services:
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
+      # The TURN budget's meter (B7): Cloudflare's own count of relayed egress, read with an
+      # Account Analytics token. Unset: ice-servers answers STUN only (TURN_METER_UNAVAILABLE) - no relay without a budget.
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
+      # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
+      CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
       TURN_URL: ${TURN_URL:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
@@ -488,6 +494,9 @@ services:
       # Signs the calendar subscription URLs; unset, the signing route answers 503 and every
       # selection feed is refused (fails closed). Rotating it ends every saved subscription URL.
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
+      # Signs a reported live chat line kept for staff (WP-L8b, docs/wiki/services/lives.md);
+      # unset, every chat-line report is refused 503 and nothing is kept.
+      LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
     healthcheck:
       # `/api/health` since 2026-09-24, like the other three services. It probed
       # `/api/channels/health` - a route that belongs to ChannelsController and answers about the
@@ -587,7 +596,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.30.6-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
+    image: nginx:1.31.7-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
     restart: always
     command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
     # The DIRECTORY, not the file: `git reset --hard` replaces a file by a new inode, and a bind mount

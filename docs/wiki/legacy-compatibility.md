@@ -467,6 +467,24 @@ signs every row.
   DTO field go together - and if it does not read 0, the salons keeping the old rows are named, not
   the date.
 
+## Nothing to remove - a call media frame is v2 only (2026-10-21)
+
+**A wire BREAK, and no shim, because no production client ever placed a call.** Call media is now
+sealed under one key PER DIRECTION, `exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>|<sender
+role>', 32)` (`frontend/src/lib/utils/callKeys.ts`), and every frame's AES-GCM additional data starts
+with `canari-call-v2|<audio|video>` (`frontend/src/lib/utils/callFrameAad.ts`). Before it, both
+directions shared one `mls-webrtc-media` key and audio carried no additional data
+([calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+
+- **Who is affected:** a call between a build carrying this change and one older than it - only dev
+  builds and tester pre-releases, since `CALLS_COMPILED` is still `false` on production. Neither end
+  decrypts the other: after 100 failed frames the newer end logs `ERROR E2E key mismatch` and shows
+  the `call_e2e_key_mismatch` notice; the older end hears silence. Both phones updated cures it.
+- **Why nothing is removed later:** no reader of the old frame was kept, so there is nothing to
+  retire. **The constraint it adds:** the day `CALLS_COMPILED` flips, the `minClientVersion` raise the
+  owner decided (both stores serving the release) is what keeps a pre-v2 tester build out of a
+  production call.
+
 ## No date - `GET /api/mls/history/:groupId` answering with a bare array
 
 **The gate does not reach this one, and the page used to claim it did.** Retiring it is not a matter

@@ -15,6 +15,7 @@
 import { addReaction, removeReaction } from '$lib/posts/api';
 import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
 import type { ReactionType } from '$lib/posts/reactions';
+import { PostListeners } from '$lib/posts/postListeners';
 
 /**
  * The reaction a double tap gives: "J'aime", drawn as the heart. A double tap only ever ADDS it,
@@ -66,36 +67,21 @@ export async function sendPostReaction(
   return result.reactions;
 }
 
-type ReactionsListener = (reactions: PostReactions) => void;
 /** Cards listening for reactions given elsewhere, by post id. */
-const listeners = new Map<string, Set<ReactionsListener>>();
+const listeners = new PostListeners<[reactions: PostReactions]>('post-reaction', 'reactions');
 
 /**
  * Tells every card showing `postId` the reactions the server answered to a reaction given outside
  * it (the reel viewer). A listener that throws is logged and does not stop the others.
  */
 export function publishPostReactions(postId: string, reactions: PostReactions): void {
-  for (const listener of listeners.get(postId) ?? []) {
-    try {
-      listener(reactions);
-    } catch (err) {
-      console.error(`[post-reaction] a card failed to take the reactions of ${postId}`, err);
-    }
-  }
+  listeners.publish(postId, reactions);
 }
 
 /** Listens for {@link publishPostReactions} on `postId`. Returns the unsubscribe. */
-export function onPostReactions(postId: string, listener: ReactionsListener): () => void {
-  let set = listeners.get(postId);
-  if (!set) {
-    set = new Set();
-    listeners.set(postId, set);
-  }
-  set.add(listener);
-  return () => {
-    const current = listeners.get(postId);
-    if (!current) return;
-    current.delete(listener);
-    if (current.size === 0) listeners.delete(postId);
-  };
+export function onPostReactions(
+  postId: string,
+  listener: (reactions: PostReactions) => void
+): () => void {
+  return listeners.on(postId, listener);
 }

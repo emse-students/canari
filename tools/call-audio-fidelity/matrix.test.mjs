@@ -4,7 +4,7 @@
  * Run: `bun test tools/call-audio-fidelity`.
  */
 import { describe, expect, it } from 'bun:test';
-import { transformInPath, verdict, witnessLines } from './matrix.mjs';
+import { transformInPath, verdict, videoChecks, witnessLines } from './matrix.mjs';
 
 /** A result shaped like `rig.mjs` writes one, every metric clean. */
 function clean(log = []) {
@@ -51,5 +51,58 @@ describe('verdict', () => {
     expect(verdict(r)).toMatchObject({ pass: false, failed: ['transform-in-path'] });
     r.transformPath = { e2e: false, senderFrames: 0, receiverFrames: 0 };
     expect(transformInPath(r)).toBe(true);
+  });
+});
+
+/** A video row's measurement, as `rig.mjs` writes it (the numbers of the 2026-10-20 run). */
+function cleanVideo() {
+  const r = clean();
+  r.videoPath = {
+    senderFrames: 1084,
+    receiverFrames: 1077,
+    decrypted: 1077,
+    decryptFailed: 0,
+    codec: 'video/VP8',
+    fps: 29.9,
+    freezes: 0,
+    keyFramesDecoded: 3,
+    pictures: { local: { rgb: [6, 147, 2] }, remote: { rgb: [4, 148, 1] } },
+    remoteEvents: ['unmute'],
+  };
+  return r;
+}
+
+describe('the video checks (lot 2)', () => {
+  it('passes the measured clean video row', () => {
+    expect(verdict(cleanVideo())).toMatchObject({ pass: true, failed: [] });
+  });
+
+  it('adds nothing to an audio row', () => {
+    expect(videoChecks(clean())).toEqual([]);
+  });
+
+  it('fails a bare video sender: no frame in the sender transform, every receiver frame failing', () => {
+    const r = cleanVideo();
+    r.videoPath.senderFrames = 0;
+    r.videoPath.decrypted = 0;
+    r.videoPath.decryptFailed = 1103;
+    expect(verdict(r).failed).toEqual(['video-in-path', 'video-decrypted']);
+  });
+
+  it('fails a whole-frame VP8 (a key frame storm) and an H.264 call', () => {
+    const storm = cleanVideo();
+    storm.videoPath.keyFramesDecoded = 509;
+    expect(verdict(storm).failed).toEqual(['video-keyframes']);
+    const h264 = cleanVideo();
+    h264.videoPath.codec = 'video/H264';
+    expect(verdict(h264).failed).toEqual(['video-codec']);
+  });
+
+  it('fails a picture that is not the one sent, and a camera-off that never muted the peer', () => {
+    const r = cleanVideo();
+    r.videoPath.pictures.remote.rgb = [120, 30, 200];
+    r.videoPath.offState = { muted: false };
+    r.videoPath.remoteEvents = ['unmute'];
+    expect(verdict(r).failed).toEqual(['video-picture', 'video-mute-when-off']);
   });
 });

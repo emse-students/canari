@@ -247,6 +247,12 @@ services:
       # Unset: the endpoint answers 503 and a call fails before it rings.
       CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
       CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
+      # The TURN budget's meter (B7): Cloudflare's own count of relayed egress, read with an
+      # Account Analytics token. Unset: ice-servers answers STUN only (TURN_METER_UNAVAILABLE) - no relay without a budget.
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${CLOUDFLARE_TURN_ANALYTICS_TOKEN:-}
+      # GB of metered relay egress per UTC calendar month. Unset: 950. 0: calls are STUN only.
+      CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${CLOUDFLARE_TURN_MONTHLY_BUDGET_GB:-}
       # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
       # fails open: unset means no check, never a blocked link.
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
@@ -486,6 +492,8 @@ services:
       # and this defect still ship: the check existed and was pointed at the wrong file.
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
+      # Signs a reported live chat line kept for staff (WP-L8b, docs/wiki/services/lives.md).
+      LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
       # PRESENT ON PROD AND LOCAL AND MISSING HERE UNTIL 2026-09-09, which is the whole of the
       # defect: `RedisService` falls back to `redis://localhost:6379`, so this service dialled
       # itself, failed, and retried for ever - 3 657 error lines in one hour, and `POST /api/posts`
@@ -605,7 +613,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.30.6-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
+    image: nginx:1.31.7-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
     restart: always
     <<: *dev-limits
     command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]

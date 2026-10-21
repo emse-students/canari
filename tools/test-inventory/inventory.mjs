@@ -435,7 +435,8 @@ function findCandidates(entries, t5Keep, t5Dirs) {
   }
   // 1b. Declared copies: the repository itself lists the groups of files that are kept byte-identical
   // on purpose, and a gate pins them. A test of such a copy is covered by its sibling's - UNLESS it reads
-  // what is installed next to it (a framework-boot spec asserts ITS service's node_modules).
+  // what is installed next to it (a framework-boot spec asserts ITS service's node_modules), or its group
+  // says `keepEachCopy` (a spec that builds its input with a package each service resolves for itself).
   const byPath = new Map(entries.map((e) => [e.path, e]));
   const declaredSources = new Set(DECLARED_GROUPS.flatMap((g) => g.files));
   const declaredHandled = new Set();
@@ -444,6 +445,7 @@ function findCandidates(entries, t5Keep, t5Dirs) {
     if (members.length < 2) continue;
     const [kept, ...rest] = members;
     for (const p of members) declaredHandled.add(p);
+    if (g.keepEachCopy) continue;
     for (const p of rest) {
       const e = byPath.get(p);
       if (/node_modules|installed here|require\.resolve/.test(e._text)) continue;

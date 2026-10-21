@@ -101,6 +101,15 @@ export const LIMITS: LiveLimits = {
   startsPerHour: 6,
   viewerCap: 24,
   seatLeaseMs: 30_000,
+  chatMessageMaxChars: 300,
+  chatSealedMaxBytes: 928,
+  chatMessagesPerWindow: 3,
+  chatRateWindowMs: 5_000,
+  chatBacklog: 50,
+  reactionKinds: ['like', 'love', 'laugh', 'happy', 'canari'],
+  reactionWindowMs: 2_000,
+  reactionBurstsPerWindow: 2,
+  reactionTapsPerWindow: 10,
 };
 
 export const LIVE_ID = '0b6f3a2e-9c1d-4e5f-8a7b-1c2d3e4f5a6b';

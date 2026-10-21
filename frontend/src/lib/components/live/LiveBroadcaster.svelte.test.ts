@@ -1,7 +1,8 @@
 /**
  * THE BROADCASTER'S SCREEN, mounted over a fake camera and server: the one-screen rules with the
  * server's numbers, the battery warning, Start, the on-air badge and the quiet reconnecting state,
- * End behind a confirmation, the end screen's cause, and Back on air asking instead of ending.
+ * End behind a confirmation, the end screen's cause, and Back on air asking instead of ending - and
+ * the chat on air (WP-L6): its own loop, the broadcaster's hide, and its 410 ending the screen.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -17,9 +18,40 @@ import {
   initHistoryOverlayStack,
 } from '$lib/utils/historyOverlayStack';
 import { LiveRefusalError } from '$lib/live/api';
+import * as liveApi from '$lib/live/api';
+import { sealLiveChatMessage } from '$lib/live/liveChatCrypto';
+import { KEY, LIMITS, LIVE_ID } from '$lib/live/liveBroadcast.test-helper';
+import type { LiveChatBlock, LiveManifest } from '$lib/live/types';
 import { flushMacrotask } from '../../../test/flush';
 
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn(() => Promise.resolve(true)) }));
+// The chat panel names each line's author.
+vi.mock('$lib/utils/users/displayName', () => ({
+  getUserDisplayNameSync: () => '',
+  resolveUserDisplayName: async () => 'Bob',
+}));
+// The on-air chat's network: no request leaves a test.
+vi.mock('$lib/live/api', async (orig) => ({
+  ...(await orig<typeof import('$lib/live/api')>()),
+  fetchLiveManifest: vi.fn(),
+  fetchLiveLimits: vi.fn(),
+  hideLiveMessage: vi.fn(),
+}));
+
+const BOB = 'b'.repeat(64);
+const CLIENT = '33333333-3333-4333-8333-333333333333';
+
+/** A manifest whose chat block carries `messages` (sealed with the live's key). */
+function chatManifest(messages: LiveChatBlock['messages']): LiveManifest {
+  return {
+    liveId: LIVE_ID,
+    nextIndex: 0,
+    lastSegmentAt: null,
+    serverNow: '2026-10-19T10:00:00.000Z',
+    segments: [],
+    chat: { messages, messagesCursor: messages.length, reactions: [], reactionsCursor: 0 },
+  };
+}
 
 async function settle() {
   for (let i = 0; i < 6; i++) {
@@ -33,6 +65,15 @@ let teardown: () => void = () => {};
 const mounted: Record<string, unknown>[] = [];
 
 beforeEach(() => {
+  vi.mocked(liveApi.fetchLiveManifest).mockReset().mockResolvedValue(chatManifest([]));
+  vi.mocked(liveApi.fetchLiveLimits).mockReset().mockResolvedValue(LIMITS);
+  vi.mocked(liveApi.hideLiveMessage)
+    .mockReset()
+    .mockImplementation(async (liveId, messageId) => ({
+      liveId,
+      messageId,
+      hidden: true as const,
+    }));
   for (const level of ['debug', 'log', 'warn'] as const) {
     vi.spyOn(console, level).mockImplementation(() => {});
   }
@@ -336,5 +377,67 @@ describe('LiveOverlay', () => {
     expect(onclose).not.toHaveBeenCalled();
     expect(broadcast.phase).toBe('live');
     expect(historyOverlayStackDepth()).toBe(1);
+  });
+
+  it('on air the chat runs its own loop, and the broadcaster hides a line', async () => {
+    const sealed = await sealLiveChatMessage(KEY, LIVE_ID, CLIENT, BOB, 'bonjour');
+    vi.mocked(liveApi.fetchLiveManifest).mockResolvedValueOnce(
+      chatManifest([
+        {
+          id: 'm-1',
+          seq: 1,
+          authorId: BOB,
+          clientId: CLIENT,
+          sealed,
+          createdAt: '2026-10-19T10:00:00.000Z',
+        },
+      ])
+    );
+    screen();
+    await settle();
+    expect(q('[data-live-broadcaster-chat]')).toBeNull();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(q('[data-live-broadcaster-chat-box]')).not.toBeNull();
+    await vi.waitFor(() =>
+      expect(q('[data-live-chat-line="m-1"]')?.textContent).toContain('bonjour')
+    );
+    expect(liveApi.fetchLiveManifest).toHaveBeenCalledWith(LIVE_ID, undefined, {
+      messagesAfter: undefined,
+      reactionsAfter: undefined,
+    });
+    q<HTMLButtonElement>('[data-live-chat-line="m-1"] [data-live-chat-hide]')!.click();
+    await settle();
+    expect(liveApi.hideLiveMessage).toHaveBeenCalledWith(LIVE_ID, 'm-1');
+    expect(q('[data-live-chat-line="m-1"]')).toBeNull();
+  });
+
+  it("the chat's 410 with endReason 'cut' shows the broadcaster's cut screen", async () => {
+    vi.mocked(liveApi.fetchLiveManifest).mockRejectedValue(
+      new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null, 'cut')
+    );
+    const { broadcast, deps } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('ended'));
+    await settle();
+    expect(broadcast.endCause).toBe('cut');
+    expect(q('[data-live-ended]')!.dataset.liveEnded).toBe('cut');
+    expect(document.body.textContent).toContain(m.live_broadcast_cut_title());
+    expect(deps.endLive).not.toHaveBeenCalled();
+  });
+
+  it("the chat's 410 ends the screen as the uploader's would, with the server's sentence", async () => {
+    vi.mocked(liveApi.fetchLiveManifest).mockRejectedValue(
+      new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null)
+    );
+    const { broadcast } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('ended'));
+    await settle();
+    expect(broadcast.endCause).toBe('server');
+    expect(document.body.textContent).toContain(m.live_ended_server());
+    expect(q('[data-live-broadcaster-chat-box]')).toBeNull();
   });
 });

@@ -71,7 +71,69 @@ impl RoomMode {
 /// proxied socket after 60 s without a read from upstream (no `proxy_read_timeout` is set there,
 /// realtime-media-feasibility section 9, 4a), and a peer-to-peer call sends NO signalling once ICE
 /// has connected - so without this, every 1:1 call would lose its socket a minute in.
-const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(25);
+///
+/// IT IS ALSO THE LIVENESS PROOF (CALL-WIFI, 2026-10-19). A phone whose Wi-Fi goes off leaves a
+/// HALF-OPEN socket: the server's ping write lands in the kernel buffer and "succeeds" for minutes,
+/// so a write error never came and the seat was never marked away. Measured on the bench: the
+/// partner's ICE restart offer was relayed into that dead socket, and after a 90 s outage the
+/// partner sat on "Reconnexion..." until its own hang-up. Now the peer must ANSWER: a socket that
+/// let [`MISSED_PONGS_LIMIT`] pings go by without sending a single frame is ended as
+/// `keepalive-lost`, which keeps a p2p seat for a resume like any network failure. Overridden by
+/// `CALL_KEEPALIVE_MS` (the tests' only use).
+///
+/// A browser answers a Ping from its network stack while its process RUNS - a throttled background
+/// tab included. A SUSPENDED process (a phone app the OS froze, screen locked or backgrounded)
+/// answers nothing: such a call now becomes `keepalive-lost` 20-30 s in and `PeerLeft` for the
+/// partner a grace later - a behaviour change owed a reading on both phones (CALL-L1).
+const DEFAULT_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Pings in a row a socket may leave unanswered before it is held dead: one can cross a slow
+/// moment, two in a row is a peer that is gone. A COUNT of ticks, so detection takes at most
+/// `(MISSED_PONGS_LIMIT + 1) x keepalive` (30 s by default) after the peer's last frame.
+const MISSED_PONGS_LIMIT: u32 = 2;
+
+/// What one bounded write of the socket loop came to.
+#[derive(Debug, PartialEq)]
+enum WriteOutcome<E> {
+    Sent,
+    Failed(E),
+    /// Not taken within the bound: the peer reads nothing and the TCP window is full.
+    NotTaken,
+}
+
+/// Bounds one write of the socket loop by `bound` (one keepalive period). A peer that stops
+/// READING fills the TCP window, and an unbounded write then parks the loop - and with it the
+/// keepalive tick that would have held the peer dead - for as long as the kernel keeps the
+/// connection. Every write the loop makes goes through here.
+async fn bounded_write<E>(
+    bound: std::time::Duration,
+    write: impl std::future::Future<Output = Result<(), E>>,
+) -> WriteOutcome<E> {
+    match tokio::time::timeout(bound, write).await {
+        Ok(Ok(())) => WriteOutcome::Sent,
+        Ok(Err(e)) => WriteOutcome::Failed(e),
+        Err(_) => WriteOutcome::NotTaken,
+    }
+}
+
+/// Reads the keepalive period from `CALL_KEEPALIVE_MS`; absent or not a positive number of
+/// milliseconds, the default stands (a bad value is logged).
+fn keepalive_from(raw: Option<String>) -> std::time::Duration {
+    match raw.as_deref().map(str::trim) {
+        None | Some("") => DEFAULT_KEEPALIVE,
+        Some(v) => match v.parse::<u64>() {
+            Ok(ms) if ms > 0 => std::time::Duration::from_millis(ms),
+            _ => {
+                error!(
+                    "CALL_KEEPALIVE_MS={:?} is not a positive number of milliseconds - using the default {} s",
+                    v,
+                    DEFAULT_KEEPALIVE.as_secs()
+                );
+                DEFAULT_KEEPALIVE
+            }
+        },
+    }
+}
 
 /// The largest signalling frame accepted. The biggest legitimate one is an SDP offer, a few KiB
 /// for audio and well under 16 KiB with video; the library default (64 MiB) would let one socket
@@ -159,6 +221,8 @@ struct AppState {
     call_room_secret: String,
     /// How long an away p2p seat waits for its device - see [`DEFAULT_P2P_SEAT_GRACE`].
     p2p_seat_grace: std::time::Duration,
+    /// Ping period, and the unit of the liveness proof - see [`DEFAULT_KEEPALIVE`].
+    keepalive: std::time::Duration,
 }
 
 struct Room {
@@ -215,6 +279,8 @@ enum Disposition {
     RoomReaped,
     /// P2P: the same device took its seat back on a new socket before this one was seen to die.
     Resumed,
+    /// The peer answered none of the last keepalive pings: a half-open socket, the network gone.
+    KeepaliveLost,
 }
 
 impl Disposition {
@@ -229,6 +295,7 @@ impl Disposition {
             Disposition::SiblingEvicted => "sibling-evicted",
             Disposition::RoomReaped => "room-reaped",
             Disposition::Resumed => "resumed",
+            Disposition::KeepaliveLost => "keepalive-lost",
         }
     }
 
@@ -247,7 +314,10 @@ impl Disposition {
     fn keeps_p2p_seat(self) -> bool {
         matches!(
             self,
-            Disposition::TransportError | Disposition::StreamEnded | Disposition::SendFailed
+            Disposition::TransportError
+                | Disposition::StreamEnded
+                | Disposition::SendFailed
+                | Disposition::KeepaliveLost
         )
     }
 }
@@ -664,6 +734,14 @@ enum SignalMessage {
     /// down and it cannot restart ICE itself (only the initiator offers), so it asks the initiator
     /// to. Bounded by the asker's own restart budget.
     IceRestartRequest,
+    /// P2P only, client -> server -> partner, relayed verbatim: the SENDER's operating system took
+    /// its microphone (`suspended: true`: the capture track went `muted`, which is not the user's
+    /// mute button) or gave it back (`false`). The partner hears nothing in between and has no
+    /// other way to tell that from a silent speaker or a lost path; only the sender knows, so the
+    /// sender says it (WP-C-BG-I, calls.md).
+    MicSuspended {
+        suspended: bool,
+    },
     /// Server-internal, never on the wire: tells a socket loop to send a Close frame and end -
     /// the seat it held was resumed by the same device on a new socket.
     #[serde(skip)]
@@ -693,6 +771,7 @@ impl SignalMessage {
             SignalMessage::PeerLeft => "peer-left",
             SignalMessage::PeerAway => "peer-away",
             SignalMessage::IceRestartRequest => "ice-restart-request",
+            SignalMessage::MicSuspended { .. } => "mic-suspended",
             SignalMessage::Shutdown => "shutdown",
             SignalMessage::Refused { .. } => "refused",
         }
@@ -743,18 +822,22 @@ fn resolve_peer<'a>(
     if let Some(ctx) = room.peers.get(peer_id) {
         return Some(ctx);
     }
-    let already_explained = session
-        .ledger
-        .as_ref()
-        .map(|l| l.disposition().is_some())
-        .unwrap_or(false);
-    if !already_explained {
+    if !session_ended(session) {
         warn!(
             "[call] {} sent {} in room {} but is not registered in it - dropped",
             peer_id, frame, room_id
         );
     }
     None
+}
+
+/// The session's record already names why it ended (a resume, an eviction): later events of the
+/// same socket are consequences, and must not be logged as fresh accusations.
+fn session_ended(session: &PeerSession) -> bool {
+    session
+        .ledger
+        .as_ref()
+        .is_some_and(|l| l.disposition().is_some())
 }
 
 /// Records why a session ended on its ledger, when it has one. A socket that never completed a
@@ -802,6 +885,7 @@ async fn main() -> anyhow::Result<()> {
         jwt_secret,
         call_room_secret,
         p2p_seat_grace: seat_grace_from(std::env::var("CALL_P2P_SEAT_GRACE_SEC").ok()),
+        keepalive: keepalive_from(std::env::var("CALL_KEEPALIVE_MS").ok()),
     });
 
     // Background task: evict rooms idle for more than 30 minutes.
@@ -892,8 +976,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
         mode: RoomMode::Sfu,
     };
     // `interval` fires at once on its first tick; skip it so the first ping goes out one period in.
-    let mut keepalive =
-        tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
+    let period = state.keepalive;
+    let mut keepalive = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    // A loop held up (a slow write) must not fire the missed ticks back to back: each would count
+    // as one more unanswered ping without the peer having had a period to answer it.
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Pings sent since the peer's last frame of ANY kind (a Pong, a signal, its own Ping).
+    let mut unanswered_pings: u32 = 0;
 
     let (tx, mut rx) = mpsc::channel::<SignalMessage>(100);
 
@@ -906,8 +995,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
     let mut writer_socket = socket;
 
     loop {
+        // `biased`: the arms are polled IN ORDER. A frame already readable (a Pong) is taken before
+        // a keepalive tick that would count it missing, and an outbound frame - `Shutdown` above
+        // all - before a tick that would accuse a socket whose seat already moved.
         tokio::select! {
+            biased;
             msg = writer_socket.recv() => {
+                if matches!(msg, Some(Ok(_))) {
+                    unanswered_pings = 0;
+                }
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         // Rate limiting: reset window every second, reject if over 50 msg/s.
@@ -958,20 +1054,24 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                     _ => {}
                 }
             }
-            _ = keepalive.tick() => {
-                // A Ping frame, answered by the browser's own Pong; nothing in the page sees it.
-                if let Err(e) = writer_socket.send(Message::Ping(Default::default())).await {
-                    warn!("[call] {} keepalive ping failed: {}", peer_id, e);
-                    end_session(&session, Disposition::SendFailed);
-                    break;
-                }
-            }
             Some(msg) = rx.recv() => {
                 if matches!(msg, SignalMessage::Shutdown) {
                     // Our seat was resumed on another socket: this one is the same device's stale
                     // connection. Its record already says `resumed`.
                     info!("[call] {} closing - its seat was resumed on a new socket", peer_id);
-                    let _ = writer_socket.send(Message::Close(None)).await;
+                    // Bounded like every write: a stale socket the peer no longer reads must not
+                    // hold this loop.
+                    match bounded_write(period, writer_socket.send(Message::Close(None))).await {
+                        WriteOutcome::Sent => {}
+                        WriteOutcome::Failed(e) => {
+                            info!("[call] {} Close to the replaced socket failed: {}", peer_id, e)
+                        }
+                        WriteOutcome::NotTaken => info!(
+                            "[call] {} Close to the replaced socket not taken within {} ms - dropped unsent",
+                            peer_id,
+                            period.as_millis()
+                        ),
+                    }
                     end_session(&session, Disposition::Resumed);
                     break;
                 }
@@ -984,11 +1084,61 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                         continue;
                     }
                 };
-                // `.into()`: axum 0.8 carries text frames as `Utf8Bytes`, not `String`.
-                if let Err(e) = writer_socket.send(Message::Text(text.into())).await {
-                    error!("[call] {} socket write failed on {}: {}", peer_id, msg.kind(), e);
-                    end_session(&session, Disposition::SendFailed);
+                // `.into()`: axum 0.8 carries text frames as `Utf8Bytes`, not `String`. Bounded
+                // by one keepalive period: a peer that reads nothing fills the TCP window, and an
+                // unbounded write would park this loop - and its liveness tick - for good.
+                match bounded_write(period, writer_socket.send(Message::Text(text.into()))).await {
+                    WriteOutcome::Sent => {}
+                    WriteOutcome::Failed(e) => {
+                        error!("[call] {} socket write failed on {}: {}", peer_id, msg.kind(), e);
+                        end_session(&session, Disposition::SendFailed);
+                        break;
+                    }
+                    WriteOutcome::NotTaken => {
+                        warn!(
+                            "[call] {} write of {} not taken within {} ms - the peer reads nothing (TCP backpressure), held dead",
+                            peer_id,
+                            msg.kind(),
+                            period.as_millis()
+                        );
+                        end_session(&session, Disposition::SendFailed);
+                        break;
+                    }
+                }
+            }
+            _ = keepalive.tick() => {
+                if session_ended(&session) {
+                    // The record already names the end (a resume moved the seat): no accusation.
+                    info!("[call] {} keepalive stopped - session already ended", peer_id);
                     break;
+                }
+                if unanswered_pings >= MISSED_PONGS_LIMIT {
+                    warn!(
+                        "[call] {} answered none of {} keepalive pings - held dead (half-open socket)",
+                        peer_id, unanswered_pings
+                    );
+                    end_session(&session, Disposition::KeepaliveLost);
+                    break;
+                }
+                unanswered_pings += 1;
+                // A Ping frame, answered by the browser's own Pong; nothing in the page sees it.
+                // Bounded like every write (see the frame writer above).
+                match bounded_write(period, writer_socket.send(Message::Ping(Default::default()))).await {
+                    WriteOutcome::Sent => {}
+                    WriteOutcome::Failed(e) => {
+                        warn!("[call] {} keepalive ping failed: {}", peer_id, e);
+                        end_session(&session, Disposition::SendFailed);
+                        break;
+                    }
+                    WriteOutcome::NotTaken => {
+                        warn!(
+                            "[call] {} keepalive ping not taken within {} ms - the peer reads nothing (TCP backpressure), held dead",
+                            peer_id,
+                            period.as_millis()
+                        );
+                        end_session(&session, Disposition::KeepaliveLost);
+                        break;
+                    }
                 }
             }
         }
@@ -1483,6 +1633,16 @@ async fn handle_signal(
             )
             .await;
         }
+        SignalMessage::MicSuspended { suspended } if session.mode == RoomMode::P2p => {
+            p2p_relay(
+                state,
+                session,
+                peer_id,
+                RelayedKind::MicSuspended,
+                SignalMessage::MicSuspended { suspended },
+            )
+            .await;
+        }
         SignalMessage::Offer { sdp } => {
             let Some((room_id, room)) = resolve_room(state, session, peer_id, "offer") else {
                 return;
@@ -1612,14 +1772,31 @@ async fn handle_signal(
         | SignalMessage::PeerLeft
         | SignalMessage::PeerAway
         | SignalMessage::Shutdown
-        | SignalMessage::IceRestartRequest
         | SignalMessage::Refused { .. } => {
-            // Server -> client only (and an ICE restart request outside p2p mode). A client sending one is confused, and the line says which.
+            // Server -> client only. A client sending one is confused, and the line says which.
             warn!(
                 "[call] {} sent server-only frame {} - dropped",
                 peer_id,
                 signal.kind()
             );
+        }
+        SignalMessage::IceRestartRequest | SignalMessage::MicSuspended { .. } => {
+            // Peer-to-peer frames that reached this arm because the session is not in a p2p room:
+            // either nothing is joined yet, or the room is an SFU one, where there is no partner
+            // to relay them to. The two are told apart, since only the first is a timing matter.
+            if session.room_id.is_none() {
+                warn!(
+                    "[call] {} sent {} before Join completed - dropped",
+                    peer_id,
+                    signal.kind()
+                );
+            } else {
+                warn!(
+                    "[call] {} sent p2p-only frame {} in an SFU room - dropped",
+                    peer_id,
+                    signal.kind()
+                );
+            }
         }
     }
 }
@@ -2088,8 +2265,12 @@ async fn p2p_relay(
         // and the pair renegotiates on its resume), and a peer alone in the room - which the
         // client should never produce, since it offers only on `PeerReady`.
         if room.contains(peer_id) {
-            if let Some(ledger) = &session.ledger {
-                bump(&ledger.ice_in_failed);
+            // The column counts ICE that went nowhere, the one kind it was written for: an offer,
+            // a restart request or a microphone state dropped here is carried by the line below.
+            if kind == RelayedKind::Ice {
+                if let Some(ledger) = &session.ledger {
+                    bump(&ledger.ice_in_failed);
+                }
             }
             if room.partner_is_away(peer_id) {
                 info!(
@@ -2699,6 +2880,7 @@ mod tests {
         assert_eq!(Disposition::SiblingEvicted.as_str(), "sibling-evicted");
         assert_eq!(Disposition::RoomReaped.as_str(), "room-reaped");
         assert_eq!(Disposition::Resumed.as_str(), "resumed");
+        assert_eq!(Disposition::KeepaliveLost.as_str(), "keepalive-lost");
     }
 
     /// Only the network failing keeps a p2p seat for a resume: a Close frame is a hangup and a
@@ -2709,6 +2891,7 @@ mod tests {
             Disposition::TransportError,
             Disposition::StreamEnded,
             Disposition::SendFailed,
+            Disposition::KeepaliveLost,
         ] {
             assert!(d.keeps_p2p_seat(), "{} must keep the seat", d.as_str());
         }
@@ -2721,6 +2904,38 @@ mod tests {
         ] {
             assert!(!d.keeps_p2p_seat(), "{} must free the seat", d.as_str());
         }
+    }
+
+    /// A write the peer never takes (a pending future: a full TCP window) ends at its bound instead
+    /// of parking the loop; a write taken at once, or refused, is reported as such. Deterministic:
+    /// a pending future never completes, so the bound is the only way out whatever the clock does.
+    #[tokio::test]
+    async fn a_write_the_peer_never_takes_ends_at_its_bound() {
+        let bound = std::time::Duration::from_millis(10);
+        assert_eq!(
+            bounded_write(bound, std::future::pending::<Result<(), ()>>()).await,
+            WriteOutcome::NotTaken
+        );
+        assert_eq!(
+            bounded_write(bound, async { Ok::<(), ()>(()) }).await,
+            WriteOutcome::Sent
+        );
+        assert_eq!(
+            bounded_write(bound, async { Err::<(), &str>("reset") }).await,
+            WriteOutcome::Failed("reset")
+        );
+    }
+
+    /// The keepalive period is read from the environment; zero or not a number keeps the default.
+    #[test]
+    fn the_keepalive_defaults_and_refuses_a_bad_value() {
+        assert_eq!(keepalive_from(None), DEFAULT_KEEPALIVE);
+        assert_eq!(
+            keepalive_from(Some("150".into())),
+            std::time::Duration::from_millis(150)
+        );
+        assert_eq!(keepalive_from(Some("0".into())), DEFAULT_KEEPALIVE);
+        assert_eq!(keepalive_from(Some("10s".into())), DEFAULT_KEEPALIVE);
     }
 
     /// The grace is read from the environment; a value that is not a number is refused and the
@@ -2750,6 +2965,7 @@ mod tests {
             Disposition::RateLimited,
             Disposition::SendFailed,
             Disposition::RoomReaped,
+            Disposition::KeepaliveLost,
         ] {
             assert!(!d.is_expected(), "{} must accuse", d.as_str());
         }

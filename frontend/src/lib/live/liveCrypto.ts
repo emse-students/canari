@@ -58,19 +58,27 @@ function checkArgs(keyHex: string, liveId: string, index: number): void {
   }
 }
 
+/** A uuid's 16 raw bytes (the caller checked its shape). Shared with the chat seal. */
+export function uuidBytes(uuid: string): Uint8Array<ArrayBuffer> {
+  return hexDecode(uuid.replaceAll('-', ''));
+}
+
 /** The v1 AAD: label || 0x00 || the uuid's 16 raw bytes || index as u32 big-endian. */
 function buildAad(liveId: string, index: number): Uint8Array<ArrayBuffer> {
   const label = new TextEncoder().encode(FORMAT_LABEL);
   const aad = new Uint8Array(label.length + 1 + UUID_BYTES + 4);
   aad.set(label, 0);
   aad[label.length] = 0x00;
-  aad.set(hexDecode(liveId.replaceAll('-', '')), label.length + 1);
+  aad.set(uuidBytes(liveId), label.length + 1);
   new DataView(aad.buffer).setUint32(label.length + 1 + UUID_BYTES, index, false);
   return aad;
 }
 
-/** Imports the live key for one operation; non-extractable, so nothing can read it back out. */
-function importLiveKey(keyHex: string, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
+/**
+ * Imports the live key for one operation; non-extractable, so nothing can read it back out. Shared
+ * with the chat seal (`liveChatCrypto.ts`): one key, one import path.
+ */
+export function importLiveKey(keyHex: string, usage: 'encrypt' | 'decrypt'): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
     hexDecode(keyHex),

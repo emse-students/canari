@@ -150,21 +150,72 @@ export type LiveCutReason = (typeof LIVE_CUT_REASONS)[number];
 /** The longest free text a moderator may attach to a cut (the mute reason's bound). */
 export const LIVE_CUT_DETAILS_MAX = 500;
 
+/** One day, the unit the moderation durations below are decided in. */
+const DAY_MS = 24 * 60 * 60_000;
+
 /**
- * How long a cut is KEPT (`live_cuts`), and so the window a moderator's count of a broadcaster's
- * earlier cuts covers. A PLANNING FIGURE, NOT A POLICY THE USER TOOK: no strike rule exists yet
- * (backlog, "repeat offenders"), and a year is the longest horizon such a rule would plausibly read.
- * Deleted by the live sweep past it; an account erasure deletes the account's at once.
+ * How long a cut is KEPT (`live_cuts`): 90 days, the owner's decision of 2026-10-20 (register row
+ * C20). Deleted by the live sweep past it; an account erasure deletes the account's at once.
  */
-export const LIVE_CUT_RETENTION_MS = 365 * 24 * 60 * 60_000;
+export const LIVE_CUT_RETENTION_MS = 90 * DAY_MS;
+
+/**
+ * THE STRIKE LADDER COUNTS THE CUTS STILL ON RECORD (owner, 2026-10-20): a rolling window equal to
+ * the cut's retention, so an abuse older than it is forgotten. ONE number, not two that agree today:
+ * a cut the ladder still counts is a cut that is still kept. Every count reads `"cutAt"` against the
+ * database clock with this window, so a prune running late never makes a forgotten cut count.
+ */
+export const LIVE_STRIKE_WINDOW_MS = LIVE_CUT_RETENTION_MS;
+
+/**
+ * The strike from which a cut SUSPENDS the right to broadcast (owner, 2026-10-20: the 1st abuse is a
+ * warning and the cut, the 2nd a suspension). A cut's strike is fixed when it is recorded
+ * (`live_cuts.strike`, 1 + the other cuts on record then), so a later prune of an older cut never
+ * lifts a suspension it caused.
+ */
+export const LIVE_SUSPENSION_FROM_STRIKE = 2;
+
+/** How long a suspension lasts, from the cut that caused it: 30 days (owner, 2026-10-20). */
+export const LIVE_SUSPENSION_MS = 30 * DAY_MS;
+
+/**
+ * The cuts on record from which STAFF MAY WITHDRAW the right to broadcast (owner, 2026-10-20: the
+ * 3rd abuse, "decided by staff"). Never automatic: the 3rd cut suspends, as the 2nd does, and
+ * `withdrawalDue` tells a moderator the decision is theirs to take.
+ */
+export const LIVE_WITHDRAWAL_FROM_CUTS = 3;
+
+/**
+ * THE HARD BOUND ON A REPORTED CHAT LINE (owner, 2026-10-20, WP-L8b): kept until its report is
+ * handled, and NEVER longer than this, handled or not - an unhandled report would otherwise keep a
+ * member's words for ever. Erased by the live sweep, from `keptAt` (the report's time).
+ */
+export const LIVE_CHAT_REPORT_MAX_KEEP_MS = 90 * DAY_MS;
+
+/**
+ * THE RESPONSE COMMITMENT TO THE STORES (owner, 2026-10-20): a live report (`live` or `live_chat`)
+ * is answered within 24 hours ON WORKING DAYS. A pending report whose WORKING age passes this is
+ * named at `error` by the hourly `[LIVE_REPORT_AGE]` report (`LiveReportAgeScheduler`).
+ */
+export const LIVE_REPORT_RESPONSE_WORKING_MS = DAY_MS;
+
+/**
+ * The zone whose Saturdays and Sundays are not working days for {@link LIVE_REPORT_RESPONSE_WORKING_MS}:
+ * the school's. Public holidays are NOT left out (no calendar of them exists here), so the alarm can
+ * fire on a bank holiday a day early - early, never late.
+ */
+export const LIVE_REPORT_WORKING_ZONE = 'Europe/Paris';
 
 /**
  * THE VERSION OF THE RULES A MEMBER ACCEPTS BEFORE BROADCASTING (L11). A start is refused 403
  * `LIVE_RULES_NOT_ACCEPTED` unless the member's recorded acceptance (`live_rules_acceptances`) is at
  * least this version, or the start itself carries `acceptedRulesVersion` equal to it - which records
- * it. Raise it when the rules' TEXT changes, so every member accepts the new text once.
+ * it. Raise it when the rules' TEXT changes, so every member accepts the new text once. Version 2
+ * (2026-10-21): the sheet shows the posts' publication rules (owner, 2026-10-20), not the four
+ * live-specific lines of version 1.
  */
-export const LIVE_RULES_VERSION = 1;
+export const LIVE_RULES_VERSION = 2;
+
 /**
  * THE LONGEST CHAT MESSAGE, in UTF-16 code units of plain text (WP-L6, C11). The server never sees
  * the text - it is sealed with the live key - so this is the CLIENT's bound, published here so an
@@ -181,6 +232,15 @@ export const LIVE_CHAT_SEAL_OVERHEAD_BYTES = 12 + 16;
  */
 export const LIVE_CHAT_SEALED_MAX_BYTES =
   LIVE_CHAT_SEAL_OVERHEAD_BYTES + 3 * LIVE_CHAT_MESSAGE_MAX_CHARS;
+
+/**
+ * THE LONGEST TEXT A CHAT-LINE REPORT MAY HAND OVER, in UTF-8 bytes (WP-L8b): whatever the largest
+ * sealed line the server STORES can hold, so every line a viewer can see is reportable - not the
+ * client composer's 300 characters, which an older or another client need not have applied
+ * (review of #2172). A UTF-16 unit is at least one UTF-8 byte, so it bounds the units too.
+ */
+export const LIVE_CHAT_REPORT_TEXT_MAX_BYTES =
+  LIVE_CHAT_SEALED_MAX_BYTES - LIVE_CHAT_SEAL_OVERHEAD_BYTES;
 
 /** The smallest: the overhead and one byte of text - an empty message is not a message. */
 export const LIVE_CHAT_SEALED_MIN_BYTES = LIVE_CHAT_SEAL_OVERHEAD_BYTES + 1;
@@ -201,10 +261,12 @@ export const LIVE_CHAT_BACKLOG = 50;
 export const LIVE_CHAT_PAGE = 100;
 
 /**
- * THE FIVE FLOATING REACTIONS (C8), five of the post reaction set (frontend `posts/reactions.ts`):
- * ❤️ like, 😍 love, 😂 laugh, 😊 happy, 🐤 canari. ASCII wire names; the client draws the Noto picture.
+ * THE FIVE FLOATING REACTIONS (owner, 2026-10-20, superseding C8): ❤️ like (heart), 😂 laugh,
+ * 👏 clap (bravo), 🔥 fire, 🐤 canari (the canary chick). No sad, no angry. ASCII wire names; the
+ * client draws the Noto picture. A burst naming an older kind (`love`, `happy`) is 400
+ * `LIVE_REACTION_INVALID` - dev builds only, so nothing in the field breaks.
  */
-export const LIVE_REACTION_KINDS = ['like', 'love', 'laugh', 'happy', 'canari'] as const;
+export const LIVE_REACTION_KINDS = ['like', 'laugh', 'clap', 'fire', 'canari'] as const;
 
 /** One of {@link LIVE_REACTION_KINDS}. */
 export type LiveReactionKind = (typeof LIVE_REACTION_KINDS)[number];
@@ -246,6 +308,8 @@ export function liveLimits(): {
   reactionWindowMs: number;
   reactionBurstsPerWindow: number;
   reactionTapsPerWindow: number;
+  strikeWindowMs: number;
+  suspensionMs: number;
 } {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
@@ -268,5 +332,7 @@ export function liveLimits(): {
     reactionWindowMs: LIVE_REACTION_WINDOW_MS,
     reactionBurstsPerWindow: LIVE_REACTION_BURSTS_PER_WINDOW,
     reactionTapsPerWindow: LIVE_REACTION_TAPS_PER_WINDOW,
+    strikeWindowMs: LIVE_STRIKE_WINDOW_MS,
+    suspensionMs: LIVE_SUSPENSION_MS,
   };
 }

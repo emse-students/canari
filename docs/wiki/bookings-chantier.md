@@ -537,7 +537,7 @@ What the booker's screens need and WP-B3 did not serve. Three additions, no migr
 |---|---|---|
 | `GET spaces` | anyone signed in: every LISTED association space (D31) of a live association whose audience (D6) admits them, or that they manage, and their OWN listed personal spaces (D43), by name, at most 200 (the limit is in SQL) - with its entity's name and its resource count; never a private text | - |
 | `GET :id/calendar-link` | the booking's PEOPLE (holder, participant still in, the account linked to its resource) and its organiser: `{ path }` of a `.ics` signed FOR THEM | `not-yours` (also for an id that names nothing, and for a global admin who is not of the booking), then `already-cancelled` |
-| `GET :id/calendar.ics?u=&sig=` | NO SESSION - a calendar app; authorised by `sig` over the booking AND the recipient `u` | 400 for a malformed id, `calendar-signature` (checked before anything is read), `booking-not-found`, `calendar-revoked`, 410 `booking-cancelled` |
+| `GET :id/calendar.ics?u=&sig=` | NO SESSION - a calendar app; authorised by `sig` over the booking AND the recipient `u` | 400 for a malformed id, 400 `query-not-a-string` for a repeated `u` or `sig` (Express would hand it over as an array; `OptionalStringPipe`), `calendar-signature` (checked before anything is read), `booking-not-found`, `calendar-revoked`, 410 `booking-cancelled` |
 
 `GET spaces/:id` now names `hiddenItemIds`: the questions the reader's PROFILE hides (promo,
 formation, cotisation), decided by `profileHiddenItemIds` in `forms/visibility.ts` - the one rule

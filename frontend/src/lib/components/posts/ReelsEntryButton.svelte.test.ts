@@ -107,7 +107,13 @@ it('the icon opens the viewer at the newest reel, across every tab', async () =>
   const { icon } = renderRow();
   icon.click();
   await settle();
-  expect(listPosts).toHaveBeenCalledWith({ kind: 'reel', feed: 'all', offset: 0, limit: 10 });
+  expect(listPosts).toHaveBeenCalledWith({
+    kind: 'reel',
+    singlePhotos: true,
+    feed: 'all',
+    offset: 0,
+    limit: 10,
+  });
   expect(
     document.querySelector('[data-reel-viewer-stub]')?.getAttribute('data-reel-viewer-stub')
   ).toBe('newest');

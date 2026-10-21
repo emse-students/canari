@@ -510,9 +510,15 @@
   "chat_leave_channel_confirm": "Leave channel #{channel}?",
   "call_e2e_encrypted_title": "End-to-end encrypted call",
   "call_e2e_unsupported": "This browser cannot encrypt a call end to end, so the call was not started. Update it or use the app.",
+  "call_e2e_verifying": "Checking encryption...",
+  "call_e2e_bypassed": "Call ended: end-to-end encryption could not be applied to this call, so nothing more was sent.",
+  "call_e2e_setup_failed": "Call ended: end-to-end encryption could not be set up, so nothing was sent unencrypted.",
   "call_over": "This call is over.",
   "call_unavailable": "This call cannot be placed.",
+  "call_calls_disabled": "Calls are unavailable for the moment.",
+  "call_video_disabled": "Video calls are not available for now. Place an audio call instead.",
   "call_setup_failed": "The call could not start. Try again in a moment.",
+  "call_e2e_key_mismatch": "The call's sound or video cannot be decrypted: your device and the other person's are out of sync. Hang up, make sure both of you have the latest version of the app, open the conversation, then call again.",
   "call_label": "Call",
   "call_audio_only_label": "Audio call",
   "call_connecting_label": "Connecting…",
@@ -528,10 +534,13 @@
   "call_pip_label": "Picture-in-Picture player",
   "call_open_pip_label": "Open video in floating player",
   "call_connection_lost": "Call dropped: connection lost.",
+  "call_relay_disabled": "Call failed: no direct connection, and this server does not use a call relay.",
+  "call_relay_withheld": "Call failed: no direct connection, and the server's call relay is unavailable right now.",
   "call_reconnecting": "Reconnecting...",
   "call_minimize_label": "Minimize call",
   "call_speaker_label": "Speaker",
   "call_earpiece_label": "Earpiece",
+  "call_route_unavailable_label": "Audio output unavailable for now",
   "call_ringing_label": "Ringing…",
   "call_ended_with_duration": "Call ended · {duration}",
   "call_accept_short_label": "Accept",
@@ -539,9 +548,19 @@
   "call_banner_return_label": "Return to the call with {name}",
   "call_banner_return_hint": "Return to call",
   "call_live_announcement": "Call connected",
+  "call_mic_restored_peer": "You can hear {name} again",
+  "call_mic_restored_peer_unnamed": "You can hear the other person again",
+  "call_mic_suspended_local": "Your phone turned your microphone off: you cannot be heard",
+  "call_mic_suspended_peer": "{name}'s phone turned their microphone off: you cannot hear them",
+  "call_mic_suspended_peer_unnamed": "The other person's phone turned their microphone off: you cannot hear them",
+  "call_mic_was_suspended": "Your phone turned your microphone off for {seconds} s: the other person could not hear you",
   "call_tap_to_hear": "Tap to hear",
   "call_mute_short_label": "Mute",
   "call_camera_short_label": "Camera",
+  "call_incoming_video_label": "Incoming video call",
+  "call_switch_camera_label": "Switch camera",
+  "call_camera_unavailable": "The camera could not open: the call goes on without video.",
+  "call_camera_switch_failed": "The other camera could not open: the camera is off.",
   "chat_record_voice_message_label": "Record voice message",
   "chat_stop_recording_label": "Stop recording",
   "chat_stop_and_send_title": "Stop and send",
@@ -1149,6 +1168,7 @@
   "admin_users_revoke_action_label": "Revoke admin",
   "admin_users_grant_action_label": "Grant admin",
   "admin_platform_load_error": "Unable to load the configuration",
+  "admin_platform_save_needs_load": "The configuration could not be loaded: reload it before saving.",
   "admin_platform_save_error": "Could not save",
   "admin_platform_saved_label": "Configuration saved.",
   "admin_platform_subtitle": "Maintenance and minimum version required client-side (checked before the PIN).",
@@ -1162,6 +1182,11 @@
   "admin_platform_payment_provider_label": "Payment provider",
   "admin_platform_payment_provider_disabled": "Payments disabled",
   "admin_platform_payment_provider_hint": "Switches immediately, no restart needed - every payment written from now on (forms, shop) will go through this provider as soon as you save.",
+  "admin_platform_calls_mode_label": "Calls",
+  "admin_platform_calls_mode_off": "Closed",
+  "admin_platform_calls_mode_audio": "Audio only",
+  "admin_platform_calls_mode_audio_video": "Audio and video",
+  "admin_platform_calls_mode_hint": "Takes effect as soon as you save: closed, no call can start or be answered, and the call buttons disappear. A call already in progress runs to its end.",
   "admin_spaces_label": "Spaces",
   "admin_spaces_title": "Spaces & audiences",
   "admin_spaces_subtitle": "Every formation × campus combination is a space. Each club, list or institution chooses who it reaches: everyone, a whole campus or one formation.",
@@ -3506,6 +3531,49 @@
   "reels_viewer_prev": "Previous CanaReel",
   "reels_viewer_next": "Next CanaReel",
   "reels_viewer_load_error": "The next CanaReels could not be loaded.",
+  "reels_rail_label": "CanaReel actions",
+  "reels_rail_like": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Like, {count} reaction",
+        "countPlural=other": "Like, {count} reactions"
+      }
+    }
+  ],
+  "reels_rail_mine": [
+    {
+      "declarations": ["input count", "input reaction", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Your reaction: {reaction}, remove it. {count} reaction",
+        "countPlural=other": "Your reaction: {reaction}, remove it. {count} reactions"
+      }
+    }
+  ],
+  "reels_rail_mine_unknown": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Your reaction, remove it. {count} reaction",
+        "countPlural=other": "Your reaction, remove it. {count} reactions"
+      }
+    }
+  ],
+  "reels_rail_comments": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Comments, {count} comment",
+        "countPlural=other": "Comments, {count} comments"
+      }
+    }
+  ],
+  "reels_comments_title": "Comments",
+  "reels_comments_close": "Close the comments",
   "reels_save": "Save to the gallery",
   "reels_save_done": "CanaReel saved to your gallery",
   "reels_save_denied": "Canari cannot reach your gallery: allow it in the phone's settings.",
@@ -4080,6 +4148,8 @@
   "live_viewer_cut_title": "This live was stopped by moderators",
   "live_broadcast_cut_title": "Your live was stopped by moderators",
   "notif_live_cut_text": "Your live was stopped by moderators",
+  "notif_live_suspended_text": "Your right to start a live is suspended after another cut by moderators",
+  "notif_live_withdrawn_text": "Moderators have withdrawn your right to start a live",
   "moderation_type_live": "Live",
   "moderation_live_state_open": "On air",
   "moderation_live_state_ended": "Ended",
@@ -4105,6 +4175,26 @@
   "moderation_live_cut_not_found": "This live no longer exists: there is nothing left to cut.",
   "moderation_live_cut_invalid": "The server refused the reason or the details.",
   "moderation_live_cut_error": "The live could not be cut. Try again.",
+  "moderation_live_standing_title": "Right to broadcast",
+  "moderation_live_standing_cuts": "Cuts on record: {count} of {required} (rolling {days} days)",
+  "moderation_live_standing_clean": "No restriction in force.",
+  "moderation_live_standing_suspended": "Suspended until {date}.",
+  "moderation_live_standing_withdrawn": "Right withdrawn on {date}.",
+  "moderation_live_standing_due": "The withdrawal is due: the decision is yours.",
+  "moderation_live_withdraw_button": "Withdraw the right",
+  "moderation_live_withdraw_title": "Withdraw the right to broadcast?",
+  "moderation_live_withdraw_reason_prompt": "Reason for the withdrawal",
+  "moderation_live_withdraw_body": "{name} will no longer be able to start a live, and will be told.",
+  "moderation_live_withdraw_confirm_button": "Withdraw",
+  "moderation_live_withdraw_in_progress": "Withdrawing…",
+  "moderation_live_withdraw_done": "The right to broadcast was withdrawn.",
+  "moderation_live_withdraw_already": "The right to broadcast had already been withdrawn.",
+  "moderation_live_withdraw_forbidden": "You are not allowed to withdraw the right to broadcast.",
+  "moderation_live_withdraw_not_due": "Not enough cuts are on record to withdraw the right yet.",
+  "moderation_live_withdraw_this_account": "This account",
+  "moderation_live_withdraw_account_invalid": "The server does not recognise this account.",
+  "moderation_live_withdraw_invalid": "The server refused the reason or the details.",
+  "moderation_live_withdraw_error": "The right could not be withdrawn. Try again.",
   "moderation_live_prior_cuts": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -4114,5 +4204,29 @@
         "countPlural=other": "{count} previous cuts"
       }
     }
-  ]
+  ],
+  "live_chat_label": "Live chat",
+  "live_chat_placeholder": "Say something...",
+  "live_chat_input_label": "Message to the live",
+  "live_chat_send": "Send",
+  "live_chat_pending": "Sending...",
+  "live_chat_you": "You",
+  "live_chat_someone": "A member",
+  "live_chat_retry": "Send again",
+  "live_chat_discard": "Remove",
+  "live_chat_hide": "Hide this message",
+  "live_chat_toggle_show": "Show the chat",
+  "live_chat_toggle_hide": "Hide the chat",
+  "live_chat_failed_empty": "Write something first.",
+  "live_chat_failed_too_long": "Too long: {max} characters at most.",
+  "live_chat_failed_too_fast": "Slow down: wait a few seconds.",
+  "live_chat_failed_network": "Not sent: no connection.",
+  "live_chat_failed_muted": "You cannot write right now.",
+  "live_chat_failed_removed": "You were removed from this live.",
+  "live_chat_failed_ended": "The live has ended.",
+  "live_chat_failed_refused": "Not sent.",
+  "live_chat_failed_unreadable": "The others cannot read this message.",
+  "live_reactions_label": "Reactions",
+  "live_reaction_send": "Send {name}",
+  "live_reaction_count": "{name}: {count}"
 }

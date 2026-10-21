@@ -250,6 +250,11 @@
   --z-modal-popover: 290;
   /* A full-screen media viewer. Above a modal because it opens from one. */
   --z-viewer: 300;
+  /* A dialog opened from INSIDE a full-screen viewer (the reel comments' GIF picker and report
+     dialog): its own rung, sheet or modal, is under the viewer it opens from. `ModalOverlay` and
+     `Modal` take this one when `utils/viewerLayer.ts` says they are inside a viewer. Under the
+     toast, which answers whatever was done in it. */
+  --z-viewer-dialog: 305;
 
   /* The answer to something the reader just did, readable over WHATEVER they did it in - including a
      full-screen viewer. It sat at 60 and "CanaReel enregistre dans votre galerie" was painted

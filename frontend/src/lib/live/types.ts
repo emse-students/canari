@@ -55,6 +55,58 @@ export interface LiveManifest {
   lastSegmentAt: string | null;
   serverNow: string;
   segments: LiveManifestSegment[];
+  /** The live chat (WP-L6), present only when the poll asked for it (`chat=1`). */
+  chat?: LiveChatBlock;
+}
+
+/** The five floating reactions (C8), the server's `LIVE_REACTION_KINDS`. */
+export type LiveReactionKind = 'like' | 'love' | 'laugh' | 'happy' | 'canari';
+
+/** One message of the chat as the poll serves it: ciphertext under the live key, base64 (C12). */
+export interface LiveChatMessageWire {
+  id: string;
+  seq: number;
+  authorId: string;
+  clientId: string;
+  sealed: string;
+  createdAt: string;
+}
+
+/** A hidden message: the line drawn for `id` goes (C14). */
+export interface LiveChatTombstoneWire {
+  id: string;
+  seq: number;
+  hidden: true;
+}
+
+/** The sums of every reaction burst of one 2 s window of the live (C7). */
+export interface LiveReactionWindow {
+  window: number;
+  counts: Partial<Record<LiveReactionKind, number>>;
+}
+
+/**
+ * The `chat` block of a manifest poll (`?chat=1&messagesAfter=&reactionsAfter=`). Each cursor is
+ * passed back as is at the next poll; the server's sequence never skips (lives.md, C4).
+ */
+export interface LiveChatBlock {
+  messages: (LiveChatMessageWire | LiveChatTombstoneWire)[];
+  messagesCursor: number;
+  reactions: LiveReactionWindow[];
+  reactionsCursor: number;
+}
+
+/** What a poll asks of the chat: absent cursors on the first poll (the newest 50, no reaction backlog). */
+export interface LiveChatQuery {
+  messagesAfter?: number;
+  reactionsAfter?: number;
+}
+
+/** `POST /api/lives/:id/messages/:messageId/hide`. */
+export interface LiveChatHidden {
+  liveId: string;
+  messageId: string;
+  hidden: true;
 }
 
 /** `PUT /api/lives/:id/segments/:index` - and its idempotent repeat with the same bytes. */
@@ -87,6 +139,28 @@ export interface LiveCutResult {
   priorCuts: number;
 }
 
+/**
+ * A broadcaster's place on the strike ladder, as the moderation queue states it (the server's
+ * `LiveStanding`, dates as ISO strings). `withdrawalDue`: enough cuts are on record and the right is
+ * not withdrawn - the decision is a moderator's.
+ */
+export interface LiveStanding {
+  cutsOnRecord: number;
+  suspendedUntil: string | null;
+  withdrawnAt: string | null;
+  withdrawalDue: boolean;
+}
+
+/** `POST /api/lives/broadcasters/:userId/withdrawal` (200, idempotent). */
+export interface LiveWithdrawalResult {
+  userId: string;
+  reason: LiveCutReason;
+  withdrawnAt: string;
+  /** False when the right had already been withdrawn: the answer is the first withdrawal's. */
+  newlyWithdrawn: boolean;
+  cutsOnRecord: number;
+}
+
 /** `POST /api/lives/:id/removed-viewers`. */
 export interface LiveRemovedViewer {
   liveId: string;
@@ -108,6 +182,16 @@ export interface LiveLimits {
   startsPerHour: number;
   viewerCap: number;
   seatLeaseMs: number;
+  /** WP-L6: the longest message, in UTF-16 units of plain text - the client's to enforce. */
+  chatMessageMaxChars: number;
+  chatSealedMaxBytes: number;
+  chatMessagesPerWindow: number;
+  chatRateWindowMs: number;
+  chatBacklog: number;
+  reactionKinds: LiveReactionKind[];
+  reactionWindowMs: number;
+  reactionBurstsPerWindow: number;
+  reactionTapsPerWindow: number;
 }
 
 /**
@@ -132,6 +216,9 @@ export type LiveRefusalCode =
   | 'LIVE_RULES_NOT_ACCEPTED'
   | 'LIVE_ASSOCIATION_FORBIDDEN'
   | 'LIVE_ALREADY_OPEN'
+  | 'LIVE_WITHDRAWAL_FORBIDDEN'
+  | 'LIVE_WITHDRAWAL_NOT_DUE'
+  | 'LIVE_ACCOUNT_INVALID'
   | 'LIVE_START_RATE'
   | 'LIVE_NOT_FOUND'
   | 'LIVE_ENDED'
@@ -153,7 +240,16 @@ export type LiveRefusalCode =
   | 'LIVE_VIEWER_IS_SELF'
   | 'LIVE_CUT_FORBIDDEN'
   | 'LIVE_CUT_REASON_INVALID'
-  | 'LIVE_CUT_DETAILS_INVALID';
+  | 'LIVE_CUT_DETAILS_INVALID'
+  | 'LIVE_MESSAGE_INVALID'
+  | 'LIVE_MESSAGE_CONFLICT'
+  | 'LIVE_MESSAGE_TOO_FAST'
+  | 'LIVE_MESSAGE_NOT_FOUND'
+  | 'LIVE_REACTION_INVALID'
+  | 'LIVE_REACTION_CONFLICT'
+  | 'LIVE_REACTION_TOO_FAST'
+  | 'LIVE_MESSAGES_AFTER_INVALID'
+  | 'LIVE_REACTIONS_AFTER_INVALID';
 
 /**
  * WHAT A SCREEN DOES WITH A REFUSAL - decided once, at the throw ({@link classifyLiveRefusal}), so

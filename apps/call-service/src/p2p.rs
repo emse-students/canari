@@ -11,8 +11,9 @@
 //! this mode touches webrtc-rs or needs a port. See
 //! `docs/wiki/infrastructure/realtime-media-feasibility.md` section 8.2 (A).
 //!
-//! WHAT IT DOES NOT CHANGE. The SDP carries no secret the media key depends on: the frame key is
-//! `exportSecret(groupId, 'mls-webrtc-media', callId)` on each client, so forwarding SDP in clear
+//! WHAT IT DOES NOT CHANGE. The SDP carries no secret the media keys depend on: each direction's
+//! frame key is an MLS export on each client (`frontend/src/lib/utils/callKeys.ts`, label
+//! `mls-webrtc-media-v2`, context `<callId>|<sender role>`), so forwarding SDP in clear
 //! over the authenticated socket is the same exposure the SFU path already had.
 //!
 //! THE ROLES. The first peer in the room (the caller, who joins before ringing) is told
@@ -352,6 +353,9 @@ pub(crate) enum RelayedKind {
     /// The polite side asking the initiator to restart ICE. Rare (a few per lost path at most), so
     /// it has no counter: its relay line is the record.
     IceRestartRequest,
+    /// The sender's operating system took or gave back its microphone. Rare (one per background
+    /// transition), so it has no counter either: its relay line is the record.
+    MicSuspended,
 }
 
 /// Counts a frame on both ledgers: received from the sender, handed to the partner. Kept in one
@@ -370,7 +374,7 @@ pub(crate) fn count_relayed(kind: RelayedKind, from: &CallLedger, to: &CallLedge
             bump(&from.ice_in);
             bump(&to.ice_out);
         }
-        RelayedKind::IceRestartRequest => {}
+        RelayedKind::IceRestartRequest | RelayedKind::MicSuspended => {}
     }
 }
 

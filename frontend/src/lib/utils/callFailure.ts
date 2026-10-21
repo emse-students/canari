@@ -1,4 +1,5 @@
 import { m } from '$lib/paraglide/messages';
+import type { E2eBypass } from './callE2eReport';
 import {
   ApiRefusalError,
   describeApiRefusal,
@@ -6,6 +7,10 @@ import {
   refusalStatus,
 } from '$lib/utils/apiRefusal';
 import { USER_BLOCKED_CODE } from '$lib/users/blocks';
+import { describeRefusalCode } from '$lib/utils/refusalCodes';
+
+/** The server's kill switch refused (`platform_config.calls_mode`): every call, or video only. */
+const CALLS_CLOSED_CODES: readonly string[] = ['CALLS_DISABLED', 'CALLS_VIDEO_DISABLED'];
 
 /**
  * A refusal from `POST /api/calls/initiate`, carrying the STATUS instead of spelling it.
@@ -50,8 +55,8 @@ export class CallInitiateError extends ApiRefusalError {
   }
 }
 
-/** The three call-setup requests whose refusal reaches the reader. */
-export type CallSetupStep = 'initiate' | 'ring' | 'room-token';
+/** The call-setup requests whose refusal reaches the reader. */
+export type CallSetupStep = 'initiate' | 'ring' | 'room-token' | 'ice-servers';
 
 /**
  * The signalling relay answered a `Join` with `Refused { reason }`. An ANSWER, not a transport
@@ -82,6 +87,69 @@ export class CallE2eUnsupportedError extends Error {
 }
 
 /**
+ * The call a setup step was working for ENDED while the step awaited (a hangup during the
+ * microphone prompt, a declined or cancelled ring): nothing failed, and the step's result belongs to
+ * nobody. Thrown by `CallService.assertSetupLive` after every await of `startCall`/`acceptCall`,
+ * so a late step never keys a worker, holds a microphone or joins a room for a call that is over -
+ * and caught there without a toast or a second hangup, the call having already ended.
+ */
+export class CallSetupAbandonedError extends Error {
+  constructor(public readonly step: string) {
+    super(`the call ended during its setup (${step})`);
+    this.name = 'CallSetupAbandonedError';
+  }
+}
+
+/**
+ * Media crossed the network AROUND this device's E2E transform: RTP packets were sent (or received)
+ * while the worker was never handed one frame on that side, so the engine sent clear media (or fed
+ * the other party's ciphertext to the decoder). Proven from two counters (`e2eBypassedSides`), never
+ * inferred, and the call ENDS: carrying it on would be the transport-only call the app refuses.
+ *
+ * WHY (CALL-E2E-BYPASS-MI9T, 2026-10-20): Chromium short-circuits a transform assigned one task after
+ * its sender or transceiver was created, for good, and every Chromium client of `1.3.1-alpha.*` did
+ * exactly that while its screen said "end-to-end encrypted".
+ */
+export class CallE2eBypassedError extends Error {
+  constructor(public readonly sides: readonly E2eBypass[]) {
+    super(`media flowed around the E2E transform (${sides.join(' and ')})`);
+    this.name = 'CallE2eBypassedError';
+  }
+}
+
+/**
+ * A transform could not be ATTACHED (the worker holds no call key, or the engine refused the
+ * assignment), so the call ENDS rather than carry that track unencrypted. Distinct from
+ * {@link CallE2eBypassedError}, which is a transform attached and then bypassed.
+ */
+export class CallE2eSetupError extends Error {
+  constructor(
+    public readonly what: string,
+    options?: { cause?: unknown }
+  ) {
+    super(`E2E transform could not be attached: ${what}`, options);
+    this.name = 'CallE2eSetupError';
+  }
+}
+
+/**
+ * The call never connected AND the server had withheld its TURN relay (`ice-servers` answered
+ * `turn: { status: 'unavailable', code }`: the month's relay budget is spent, or its meter cannot
+ * be read). The two facts together are the explanation: a direct path was the only one left, and
+ * there was none. `code` is the server's (`TURN_BUDGET_REACHED`, `TURN_METER_UNAVAILABLE`), kept
+ * for the log; the reader gets one sentence for both, since neither is theirs to fix.
+ */
+/** The server's code for TURN off BY CONFIGURATION (a budget of 0): permanent, not a passing outage. */
+export const TURN_DISABLED_CODE = 'TURN_DISABLED';
+
+export class CallRelayWithheldError extends Error {
+  constructor(public readonly code: string) {
+    super(`no direct path, and the server withheld the TURN relay (${code})`);
+    this.name = 'CallRelayWithheldError';
+  }
+}
+
+/**
  * THE SENTENCE A FAILED CALL SETUP READS AS, chosen from the status and nothing else.
  *
  * 404 is answered BEFORE `describeApiRefusal`, and that is the one deliberate departure: the
@@ -99,8 +167,19 @@ export class CallE2eUnsupportedError extends Error {
  */
 export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
+  if (error instanceof CallE2eBypassedError) return m.call_e2e_bypassed();
+  if (error instanceof CallE2eSetupError) return m.call_e2e_setup_failed();
+  if (error instanceof CallRelayWithheldError) {
+    // Off by configuration is not "unavailable right now": it will be the same on the next try.
+    return error.code === TURN_DISABLED_CODE ? m.call_relay_disabled() : m.call_relay_withheld();
+  }
   // A block, on either side: neutral, as every block refusal is - never who blocked whom.
   if (refusalCode(error) === USER_BLOCKED_CODE) return m.call_unavailable();
+  // The kill switch, at whichever step it answered: said as such, never as a failure to retry.
+  const code = refusalCode(error);
+  if (code && CALLS_CLOSED_CODES.includes(code)) {
+    return describeRefusalCode(code) ?? m.call_calls_disabled();
+  }
   const status = refusalStatus(error);
   if (status === 404) return m.chat_call_group_desynced();
   if (error instanceof CallInitiateError) {

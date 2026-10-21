@@ -27,12 +27,16 @@ import {
   fetchLiveManifest,
   fetchLiveSegment,
   isLiveCut,
+  hideLiveMessage,
   isLiveRefusal,
   leaveLiveSeat,
   listOpenLives,
   LiveRefusalError,
   LiveSegmentUploader,
   liveSegmentUrl,
+  manifestQuery,
+  postLiveMessage,
+  postLiveReactions,
   putLiveSegment,
   removeLiveViewer,
   startLive,
@@ -420,5 +424,58 @@ describe('LiveSegmentUploader', () => {
     up.stop();
     await up.idle();
     expect(apiFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the chat routes (WP-L6)', () => {
+  const CLIENT = '33333333-3333-4333-8333-333333333333';
+
+  it('the manifest asks the chat with its cursors, and nothing when not given one', () => {
+    expect(manifestQuery()).toBe('');
+    expect(manifestQuery(4)).toBe('?from=4');
+    expect(manifestQuery(undefined, {})).toBe('?chat=1');
+    expect(manifestQuery(4, { messagesAfter: 0, reactionsAfter: 12 })).toBe(
+      '?from=4&chat=1&messagesAfter=0&reactionsAfter=12'
+    );
+  });
+
+  it('a message POSTs its clientId and sealed bytes, a burst its counts, a hide nothing', async () => {
+    apiFetch.mockResolvedValueOnce(json(201, { id: 'm1', seq: 1 }));
+    await postLiveMessage(LIVE, CLIENT, 'c2VhbGVk');
+    expect(apiFetch).toHaveBeenLastCalledWith(`https://social.test/api/lives/${LIVE}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ clientId: CLIENT, sealed: 'c2VhbGVk' }),
+    });
+
+    apiFetch.mockResolvedValueOnce(json(201, { burstId: CLIENT, seq: 3 }));
+    await postLiveReactions(LIVE, CLIENT, { like: 2 });
+    expect(apiFetch).toHaveBeenLastCalledWith(`https://social.test/api/lives/${LIVE}/reactions`, {
+      method: 'POST',
+      body: JSON.stringify({ burstId: CLIENT, counts: { like: 2 } }),
+    });
+
+    apiFetch.mockResolvedValueOnce(json(200, { liveId: LIVE, messageId: 'm1', hidden: true }));
+    await hideLiveMessage(LIVE, 'm1');
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      `https://social.test/api/lives/${LIVE}/messages/m1/hide`,
+      { method: 'POST' }
+    );
+  });
+
+  it('a too fast message is rate-limited, a removed viewer removed - typed at the throw', async () => {
+    apiFetch.mockResolvedValueOnce(json(429, { code: 'LIVE_MESSAGE_TOO_FAST', retryAfterMs: 900 }));
+    const fast = await refusal(postLiveMessage(LIVE, CLIENT, 'x'));
+    expect([fast.kind, fast.code]).toEqual(['rate-limited', 'LIVE_MESSAGE_TOO_FAST']);
+    apiFetch.mockResolvedValueOnce(json(403, { code: 'LIVE_VIEWER_REMOVED' }));
+    expect((await refusal(postLiveMessage(LIVE, CLIENT, 'x'))).kind).toBe('removed');
+  });
+
+  it('never logs the sealed bytes', async () => {
+    apiFetch.mockResolvedValueOnce(json(201, { id: 'm1', seq: 1 }));
+    await postLiveMessage(LIVE, CLIENT, 'U0VDUkVUU0VBTEVE');
+    const logged = [console.debug, console.log, console.warn]
+      .flatMap((f) => vi.mocked(f).mock.calls.flat())
+      .join(' ');
+    expect(logged).not.toContain('U0VDUkVUU0VBTEVE');
   });
 });

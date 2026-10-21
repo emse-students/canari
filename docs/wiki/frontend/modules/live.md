@@ -30,7 +30,7 @@ reached by API, and is unaffected.
 | L5 | How is a live announced? | **A LIVE card at the top of the feed for everyone**, plus a **push ONLY to the followers** of the member or association broadcasting. |
 | L6 | How is a live moderated? | **The broadcaster hides chat messages and removes viewers; any viewer can report; staff can cut a live remotely.** |
 | L7 | In what order? | **SUPERSEDED 2026-10-19 by [D1](#decisions-of-2026-10-19): lives come BEFORE the calls revival.** Was: revive calls first, then live. The user added that what mostly blocked calls is that **Apple App Review needs a VIDEO recording showing everything works** (still to do), on top of our own tests. |
-| L8 | Is there a viewer cap? | **No cap** - *"pas de plafond, mais la qualité du live ne sera pas si grande si ? quelle techno utilisent Twitch ou Facebook ?"*. **This CONFLICTS with what exists**: the call path sends one stream per viewer through Cloudflare TURN against a ~950 GB monthly budget ([below](#what-exists-read-from-the-code-on-2026-10-15)), and any other path still leaves through the host's own uplink, which is unknown and shared with the DSI. It is what forces the [architecture choice](#architecture-options-for-an-uncapped-audience), and the honest answer is **a cap set by the host's uplink, to be MEASURED**. |
+| L8 | Is there a viewer cap? | **No cap, CONFIRMED again 2026-10-20 ("Je ne veux pas de plafond"); the plan is [below](#uncapped-audience---the-plan-2026-10-20)** and the cap of 24 stays in code until it is measured. **No cap** - *"pas de plafond, mais la qualité du live ne sera pas si grande si ? quelle techno utilisent Twitch ou Facebook ?"*. **This CONFLICTS with what exists**: the call path sends one stream per viewer through Cloudflare TURN against a ~950 GB monthly budget ([below](#what-exists-read-from-the-code-on-2026-10-15)), and any other path still leaves through the host's own uplink, which is unknown and shared with the DSI. It is what forces the [architecture choice](#architecture-options-for-an-uncapped-audience), and the honest answer is **a cap set by the host's uplink, to be MEASURED**. |
 | L9 | How many lives at the same time? | **No cap.** |
 | L10 | Who is a follower, for the push? | **The existing relations**: `user_follows` for a member, `association_follows` for an association, minus `association_push_mutes`. |
 | L11 | Safety rules? | **Report, block, staff cut-off, and rules accepted before a member's first live.** Canari users are all adults (an engineering school, admission after prépa at the earliest), so **no age gate**. |
@@ -43,7 +43,7 @@ reached by API, and is unaffected.
 | Simulcast | **None.** One encoding per track, forwarded as received; no layer selection. A slow viewer gets the same bitrate as a fast one, and its PLIs reach the publisher. | `main.rs` (no simulcast/RID handling) |
 | Keyframes | Subscriber PLI/FIR is relayed to the publisher, plus a coalesced 3 s recovery timer. With N viewers, every viewer's PLI lands on the broadcaster's encoder. | `forward_pli_from_subscriber`, `periodic_keyframe_recovery` |
 | Room access | `Join { room_id, room_token }`; the token is an HS256 JWT minted by chat-delivery `POST /api/calls/initiate` after a **group membership** check, valid 5 min. A live has no group, so this gate does not fit as is. | [call-service](../../services/call-service.md#websocket-protocol), [calls](calls.md#api-endpoints-chat-delivery-service) |
-| Frame E2E | `CallService.ts` derives the key with `mlsService.exportSecret(groupId, 'mls-webrtc-media', callId, 32)` and applies AES-GCM in a worker through `RTCRtpScriptTransform` (or `createEncodedStreams`). **An MLS exporter needs an MLS group, and the network is not one**, so a live needs a different key source (L2: the key in the row). | `frontend/src/lib/services/CallService.ts` `setupEncryption`, `workers/encryption.worker.ts` |
+| Frame E2E | `CallService.ts` derives one key per direction with `mlsService.exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>|<sender role>', 32)` (`utils/callKeys.ts`) and applies AES-GCM in a worker through `RTCRtpScriptTransform` (or `createEncodedStreams`). **An MLS exporter needs an MLS group, and the network is not one**, so a live needs a different key source (L2: the key in the row). | `frontend/src/lib/services/CallService.ts` `setupEncryption`, `workers/encryption.worker.ts` |
 | A silent cleartext path | When `RTCRtpScriptTransform` is missing or `VITE_CALL_E2E_ENCRYPTION=false`, the client logs and sends media **unencrypted** through the SFU. Under the project's no-fallback rule this must not carry over to live: no transform, no broadcast. | `CallService.ts` `attachMediaTransforms` |
 | TURN provider | **Cloudflare TURN (the Calls/Realtime TURN service), a SaaS reached by API**, not the Cloudflare proxy: both `call-service` and chat-delivery mint credentials at `https://rtc.live.cloudflare.com/v1/turn/keys/{id}/credentials/generate-ice-servers`, and the production compose passes `CLOUDFLARE_CALLS_API_TOKEN` / `CLOUDFLARE_TURN_KEY_ID` to both. **No TURN server runs on the host** (`coturn` is in the LOCAL compose only). Whether the production secrets are set today is _(unverified: read from the compose, not the box)_. | `main.rs` `fetch_cloudflare_ice_servers`, `calls.service.ts`, `infrastructure/docker-compose.prod.yml` |
 | TURN path | **Both ends are relay-only**: the client sets `iceTransportPolicy: 'relay'`, the SFU selects `RTCIceTransportPolicy::Relay` when a TURN server is configured. So **every media byte, broadcaster in and each viewer out, crosses Cloudflare TURN** - viewers do not pull from the SFU directly. Whether the host may reach Cloudflare TURN over UDP at all is _(unverified)_: its outbound traffic is filtered upstream (TCP 7844 to Cloudflare was found blocked, [estate-migration](../../infrastructure/estate-migration.md)). | `CallService.ts`, `main.rs` `create_peer_connection` |
@@ -52,7 +52,7 @@ reached by API, and is unaffected.
 | Host capacity | 4 vCPU, 11 G RAM shared with prod, dev, Le Cercle, Authentik and the DSI's co-tenant sites. **The uplink speed and any egress cap are not documented anywhere** _(unverified)_. | [estate-migration](../../infrastructure/estate-migration.md), [storage-and-retention](../../infrastructure/storage-and-retention.md) |
 | Followers | Both relations exist: `user_follows` and `association_follows`, plus `association_push_mutes`. | `apps/social-service/src/follows/entities/` |
 | Reports | `content_reports` (social-service) is the only report store. | [moderation-and-blocking](../../moderation-and-blocking.md) |
-| State of calls | `CALLS_ENABLED = false` since 0.14.15; five switches move together; the SFU has never placed a real call; webrtc 0.20 is a port, not a bump. | [calls](calls.md) |
+| State of calls | `CALLS_ENABLED = false` since 0.14.15; the switches move in two groups since 2026-10-21 (`CALLS_COMPILED` for in-app calls, `CALLS_NATIVE_RING_COMPILED` for the native ring, which the first production calls ship without); the SFU has never placed a real call; webrtc 0.20 is a port, not a bump. | [calls](calls.md) |
 
 **The egress arithmetic, which is an ESTIMATE until a bench measures it.** The ~1.5 Mb/s per viewer
 of C9 is a planning figure, not a measurement. Whatever the path, **the host sends one copy per
@@ -139,6 +139,120 @@ Three shapes, compared honestly.
   which contradicts C3 (*"il faut que la charge serveur soit minimale"*), unless the phone encodes two
   tiers itself, which doubles its uplink and its battery cost. So **one tier in v1**.
 
+## Uncapped audience - the plan (2026-10-20)
+
+The user, 2026-10-20: *"Je ne veux pas de plafond."* Nothing here is built and no infrastructure is
+touched; this is the work an uncapped audience needs, in the order it should be measured. **What the
+cap protects.** The cap of 24 ([the viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)) exists because every
+viewer's copy of every segment leaves the school host's uplink (~90 Mb/s measured, 3 Mb/s a viewer) from
+Canari's own nginx. Removing the number without removing that cost makes the host the victim: 1 000
+viewers are 3 Gb/s, 1.35 TB per live-hour (3 Mb/s x 3 600 s = 1.35 GB a copy), against a link shared
+with production, dev and the school's other sites.
+
+### What makes it possible: the segments are identical for every viewer
+
+A segment is ciphertext under the live key; its URL is two uuids, the second chosen at random by the
+server and learned only from the manifest; the public route checks nothing per viewer
+([lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4)). The content is protected by the KEY and
+the MANIFEST, never by the fetch, so a cache anywhere may hold the bytes without learning anything:
+**delivery can be offloaded without touching the seal, the key route or the removal rule.** What an
+edge copy adds to the threat model is retention outside the host: an ended live's ciphertext may
+outlive the live, harmless without a key (deleted with the row) but to be said in the register (C19)
+and bounded by a short edge TTL.
+
+### The delivery: sealed segments from a Cloudflare cache
+
+| Question | Reading |
+| --- | --- |
+| Can Canari put Cloudflare in front of `canari.emse.fr`? | **No.** The school owns that zone and refused to delegate it ([estate-migration](../../infrastructure/estate-migration.md)); production answers from the host's nginx with no `cf-ray` ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md) 1b). A CNAME-only setup of a subdomain is a paid-plan feature _(unverified, not read)_ and still needs the school's DNS record |
+| What can? | **A hostname on the `canari-emse.fr` zone, which is ours** and already proxied to a Cloudflare Tunnel: a name dedicated to segments, with a Cache Rule on `starts_with(http.request.uri.path, "/api/media/public/live/")` (the field is the PATH and the wildcard matches the whole path, [cloudflare-edge](../../infrastructure/cloudflare-edge.md#the-edge-caches-by-file-extension-not-by-what-the-origin-asks-for): a segment has no extension, so the default extension list never caches it) |
+| Who chooses the host? | **The server, in the manifest**, as a single `segmentBase` per estate: no client-side fallback to the origin (a fallback is a signal, never a path). Dev, where the edge is the only path, and a local estate answer their own value. The web app's CSP `connect-src 'self'` then needs that host added, and CORS must stop varying (below) |
+| Cache key | The path and nothing else: two uuids, so already unique per segment, immutable once written. The origin route already 404s any query and any non-canonical spelling, so no query can fan out keys |
+| Headers the origin must send | `Cache-Control: public, max-age=<short>` on a 200 only; **`no-store` on every other status** (a 404 for a not-yet-visible segment or a 410 for an ended live must never be cached); today media-service sets none and nginx's own cache decides locally. **No `Vary: Origin`**: the segment location echoes the caller's origin for CORS, and a shared cache holds ONE variant per key, so the first origin to fill it would be served to every other. A segment fetch needs no credentials, so a fixed `Access-Control-Allow-Origin: *` on that one location is the shape to measure |
+| TTL | Short, minutes: a viewer lags the live by 5-10 s and a manifest lists 10 segments, so a segment is useful for about a minute. Short TTL is also the bound on retention outside the host. A single-file purge by URL at the end is possible but is not the control (the key is) |
+| The path from edge to host | **The tunnel, which measured ~19 Mb/s on a MISS whatever the parallelism**, and it also carries dev and the SSH path ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md) 2b, 3d). Only MISSES cross it: one fetch per segment per edge location. At 3 Mb/s a live that one location fills costs the tunnel 3 Mb/s, so **about six lives whose segments are all missed**, whatever the audience - this is the number that replaces the cap, and it moves with how many edge locations the audience spans (**tiered caching** collapses them to one upper tier; its availability on this plan is _unverified_) |
+| The tunnel's weakness | It dropped in a 22h band in September and was not re-observed since ([cloudflare-edge](../../infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it)); a 1033 stops every live's segments at once. Viewers already past the cache would keep playing for the TTL. An accepted, stated failure mode, not one to hide behind a second path |
+| Cloudflare's terms | **The risk to settle FIRST.** The self-serve terms have restricted serving video or a disproportionate share of non-HTML content through the CDN unless a Cloudflare video or storage product carries it _(from memory of the published text, unverified against today's)_. Segments are exactly that content. Read the current terms and, if in doubt, ask Cloudflare before building: an account action would take the whole zone, production's old name included |
+| Cost | No per-GB charge for CDN traffic on the plans in use _(unverified)_; the alternatives that the terms bless are **R2** (an object store with no egress fee: sealed segments written there instead of Garage - a second store, a second erase path, and a change to the ingest) and **Stream** (transcodes, sees plaintext, per-minute price: refused by the E2E design). R2 is the one to price if the terms refuse the cache |
+| What it does NOT remove | Everything that is not a segment: the manifest, the key, the chat, the seats, below |
+
+### The manifest poll grows with the audience too
+
+Every viewer polls once a second, and each poll costs an `auth_request` sub-request, the watch-rule
+query, a Redis script renewing the seat and, with `chat=1`, the chat reads. **N viewers are N
+requests a second into social-service and Postgres, whose pool is 10 connections** (ingest alone may
+hold 4). At 24 that is invisible; at 1 000 it is the next wall, and the edge does nothing for it
+because the manifest is per-viewer by design (the segment names are the capability).
+
+- **Split the gate from the tail.** The decision "may this account watch" (spaces, blocks, removal,
+  seat) changes rarely; the tail (the last segments, the chat after a cursor, the reactions sums) is
+  the same for every viewer of a live. Check the gate on a lease (the 30 s seat lease already is one:
+  a poll inside it need not re-run the watch rule) and answer the tail from a one-second micro-cache
+  of Canari's nginx or a per-live in-process snapshot, keyed by the live id. One database read a second
+  per LIVE, not per viewer.
+- **What the tail may not carry per viewer today** and must stop carrying: the chat filtered by the
+  viewer's blocks (C10) and the viewer's own reaction bursts removed (C7). Both become the CLIENT's
+  job (it knows its blocks and its burst ids), which changes a statement: a blocked author's sealed
+  lines are then SERVED to the blocker's client and dropped there. Ciphertext the viewer holds the
+  key to, but it is a decision of the user's, not a refactor.
+- **Poll interval.** The picture is 5-10 s behind; a 2 s poll costs a second of chat latency and halves
+  the load. A server-told `pollAfterMs` (as `retryAfterMs` is told, never a constant in the client)
+  lets load shape itself without a deploy.
+- **Connections, the ceiling that remains.** A seated viewer holds up to four connections, three once
+  its segments come from the edge (app, WebSocket and its upstream leg). The shared host's proxy has
+  about 1 500 across ALL its sites and raising it is the school IT department's decision. **So even
+  with the edge, "no cap" is an audience of several hundred, not unbounded**, until the manifest too
+  stops reaching the host. That figure goes to the user as it is.
+
+### The viewer count is a signal, not a gate
+
+The seat sorted set (`live:seats`, one Lua script a poll) already knows who is watching within the
+30 s lease. Uncapped, the grant stops refusing and the set only COUNTS: `ZCARD` per live, shown to the
+broadcaster and, rounded, to viewers (**a decision**: whether viewers see a count at all). It stays
+the removal point (a removed viewer's seat is freed and its key refused) and the load figure the
+bitrate choice of D2 reads. A seat renewed every poll is N Redis scripts a second: renew once per
+lease interval, as the gate-on-a-lease change above does. `LIVE_FULL`, its screen and
+`LIVE_SEATS_UNAVAILABLE` (Redis down refused everyone, to protect a cap that no longer exists) change
+meaning: with no cap, a Redis outage should not stop playback - **a decision to state when the cap
+goes, not before**.
+
+### Abuse limits that are not a viewer cap
+
+A cap refuses a person; these refuse a behaviour and keep the door open to the next honest viewer.
+
+| Limit | Shape | Why it is not a cap |
+| --- | --- | --- |
+| Segment fetches per address | nginx `limit_req` exists (30 r/s burst 60). **`limit_conn ... 24` per address is the cap in disguise**: a lecture hall behind one campus address with 24+ viewers is refused. It must become a rate, or rise to a figure measured against the campus NAT | The same address may host a whole room |
+| Manifest polls per account per live | a floor on the interval (a poll faster than the told `pollAfterMs` / 2 answers `429` with `retryAfterMs` from the rows' clock, as the chat limits do) | Per account, so one viewer cannot cost a thousand |
+| Key reads per account per live | a count in durable state per rolling minute | A key is read once; a script reading it in a loop is the abuse |
+| Admission RATE per live | at most R new viewers a second per live, over that a `429` with a jittered `retryAfterMs` | **The push to the followers is a thundering herd**: a hundred notifications open the live in the same second. A rate smooths it and refuses nobody for good |
+| Chat and reactions | already per account per live (C6) | unchanged |
+| A global ceiling on the HOST's egress | a measured alarm, never a gate: when the origin's egress passes a threshold, a person decides | The alarm says "the plan failed", the cap said "no" |
+
+### Measurements before anything is activated
+
+Run on the LOCAL estate with headless viewers first (Q3 of the plan; **a load test on the shared host
+is not ours to run unasked**), then on dev behind its real edge, then one announced reading on
+production.
+
+1. **Cloudflare's current terms for video through the cache**: read, and the answer written here.
+2. **Edge hit ratio** on segments (`cf-cache-status`: HIT, MISS, DYNAMIC; the first request of a path
+   with no extension is DYNAMIC until the Cache Rule exists), per live, over 10 and 100 headless viewers.
+3. **Origin egress per live-hour** on the tunnel and on the host's interface: the MISS bytes. It
+   should be ~1.35 GB a live-hour per edge location filling it, independent of N.
+4. **Tunnel ceiling with several lives**: segments of 2, 4, 6 simultaneous lives through the tunnel
+   against its ~19 Mb/s, with dev's traffic running.
+5. **Manifest QPS and its cost**: requests a second at N, social-service CPU, Postgres pool wait and
+   Redis scripts a second, before and after the gate/tail split.
+6. **Host connections held** at N viewers (`ss` on the host: the 1 500 budget, read, never raised by us).
+7. **Latency to the live edge** with the edge in the path: does the cache add to the 5-10 s?
+8. **The admission spike**: the real size of a follower fan-out at the moment of a push.
+9. **A 1033 during a live**: what a viewer sees, and for how long the cache covers it.
+
+**Order of work once the user says go**: the terms (1), then the manifest split (it helps at 24 too and
+needs no edge), then the cache headers and the segment host, then the abuse rates, and the cap goes
+only when 2-6 hold.
+
 ## Decisions of 2026-10-19
 
 User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede L7 and change what blocks a stable.
@@ -151,6 +265,10 @@ User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede
 - **D6 - moderation works like posts.** A live is reported through the same `content_reports` path as a post ([moderation-and-blocking](../../moderation-and-blocking.md)); where a post's action is "delete the post", a live's is "cut the live" (staff remote cut, WP-L8). The broadcaster's own remove-viewer and message hiding stay. The posts moderation code is REUSED, not duplicated.
 
 **Open question (user, 2026-10-19): "why ask the school IT department for agreement?"** Only raising the SHARED HOST's nginx connection budget (about 1500 across all the host's sites, a host-level setting owned by the school IT department) needs it, under the standing rule of CLAUDE.md. Canari's own edge container is ours. Not needed until an audience would exceed the current budget.
+
+## Decisions of 2026-10-20
+
+The user's answers to the moderation questions, in full on [lives](../../services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience) (**the server half of the ladder, the 90 days, the reported chat line, the five reactions and the rules version 2 are BUILT 2026-10-21, WP-L8b** - [the ladder](../../services/lives.md#the-strike-ladder-wp-l8b), [the reported line](../../services/lives.md#a-reported-chat-line-wp-l8b); the 24 h alarm and the viewer cap are not): **strike policy** warning, then suspension of the right to broadcast, then withdrawal by staff; a cut is kept **90 days**; **no automatic cut** on N reports; live reports answered within **24 h**; **a reported chat line is kept (encrypted, for staff) until handled - this REVERSES C2** ([the consequences](../../services/lives.md#a-reported-chat-line-is-kept-until-handled-reverses-c2)); the **floating reactions** are heart, laugh, bravo, fire and the canary chick; the **first-live rules are the posts' rules**, no live-specific clause; **no viewer cap** ([the plan](#uncapped-audience---the-plan-2026-10-20)).
 
 ## The client foundation (2026-10-19)
 
@@ -240,8 +358,8 @@ not end-to-end encryption against the server, and no page may call it that.
 
 WP-L5's VIEWER half, **behind `LIVE_ENABLED` (`frontend/src/lib/features.ts`): on for dev builds only**,
 by the same `deployEnvironment() === 'development'` test as `CALLS_ENABLED`. A production binary asks
-`/api/lives` nothing and draws nothing; the server answers `404` there anyway. Not built: the
-chat and reactions (WP-L6), moderation (WP-L8).
+`/api/lives` nothing and draws nothing; the server answers `404` there anyway. The
+chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); moderation (WP-L8) is merged.
 
 | File | What it holds |
 | --- | --- |
@@ -454,6 +572,23 @@ only then `POST /api/lives/:id/cut` through `cutLive`. A repeat (`newlyCut: fals
 success and the page says "already cut"; a refusal gets its own sentence by `code` and returns to
 the form.
 
+**The strike ladder's staff half (2026-10-21, built; server #2172).** A `live` report row also carries
+the broadcaster's standing (`ReportedLive.broadcasterStanding`, the server's `LiveStanding`: cuts on
+record over the rolling 90 days, `suspendedUntil`, `withdrawnAt`, `withdrawalDue`), drawn by
+`ModerationLiveBlock` as "N of 3 cuts on record", the suspension's end or the withdrawal's date, and
+"the withdrawal is due" - a standing view that needs NO new endpoint, because the queue already reads
+it per broadcaster. The "Retirer le droit" button exists ONLY while the server says `withdrawalDue`
+(never from a client-side count; `LIVE_WITHDRAWAL_FROM_CUTS` and `LIVE_STRIKE_WINDOW_DAYS` in
+`live/constants.ts` only draw the "N of M") and stays offered on a `gone` live, where the broadcaster
+is all that is left to restrict. It opens `ModerationLiveWithdrawDialog` (reason, details, one red
+confirm) and calls `withdrawBroadcaster` = `POST /api/lives/broadcasters/:userId/withdrawal`; refusals
+are sentenced by `code` (`LIVE_WITHDRAWAL_FORBIDDEN`, `LIVE_WITHDRAWAL_NOT_DUE`, the two invalid-input
+codes); a repeat (`newlyWithdrawn: false`) is a success the page words "already withdrawn". **Not
+built:** lifting a withdrawal (`DELETE` of the same path exists, no control yet) and a standing view
+for a broadcaster with no reported live (there is no per-account staff read; the caller's own
+`GET /api/lives/standing` is not for staff). Tests: the standing and withdrawal blocks of
+`ModerationLiveBlock.svelte.test.ts`.
+
 **The viewer's report control (2026-10-19, built).** `LiveReportControl` sits in the viewer's TOP BAR
 (the strip above the picture: it never covers the video, a double-tap region or the chat panel), a
 `Flag` icon button named `live_report_button`, hidden on the broadcaster's own copy
@@ -478,6 +613,91 @@ phones**: [LIVE-B1](../../device-verification.md#live-b1-the-broadcaster-on-both
 ten minutes on air watched, background and return, past the window, a network cut, the end, battery
 unplugged, the screen kept on; and whether the iOS app's WKWebView honours
 `videoKeyFrameIntervalDuration` (WP-L1 read Safari only).
+
+## The chat and the floating reactions, client half (WP-L6, 2026-10-19, draft)
+
+The server half and its sixteen decisions (C1-C16) are on
+[lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6); this is what the client
+does with them. Behind `LIVE_ENABLED` like the rest: the chat exists only inside the viewer.
+
+| File | What it holds |
+| --- | --- |
+| `lib/live/liveChatCrypto.ts` | The chat seal (C12): `sealLiveChatMessage` / `openLiveChatMessage`, AES-256-GCM under the live key, AAD `canari-live-chat-v1` 0x00 + live id + clientId (16 raw bytes each) + author id; `LiveChatOpenError` (`malformed`, `unauthentic`, `not-text`). A label distinct from the segments', so a segment never opens as a message |
+| `lib/live/liveChat.ts` | `LiveChatSession` (no timer of its own), `liveChatSendFailure` (the ONE classification of a failed send), `LiveBroadcasterChatPoller` (the broadcaster's one loop), the five kinds mapped onto the post reactions' emoji and names |
+| `lib/live/livePlayer.ts` | The `chat` hook (`LivePlayerChatHook`): `onKey` at the open, `query()` before each manifest request, `receive(block)` after it |
+| `components/live/LiveChatPanel.svelte` | The lines (a `log` live region) and the composer; a hide button per line for a moderator |
+| `components/live/LiveReactionBar.svelte`, `LiveReactionsLayer.svelte` | The five buttons; the rising floats, at most 24 on screen |
+| `components/live/LiveBroadcasterChat.svelte` | The broadcaster's view with hide buttons, mounted by `LiveBroadcaster.svelte` while on air with the live's id and `LiveBroadcast.chatKey` |
+
+**One loop, not two (C3).** The viewer's chat rides the player's manifest poll: the player asks the
+session for its cursors before each request (`?chat=1&messagesAfter=&reactionsAfter=`) and hands it
+the answer's `chat` block. The session owns no timer, so a stopped player (closed, ended, removed,
+full) stops the chat with it; the catch-up's second fetch of the newest window asks no chat, so one
+tick never answers a cursor twice. A broadcaster plays nothing, so `LiveBroadcasterChatPoller` is ITS
+one loop: the same request once a tick, stopped for good by the server's `410` (or the `404` of a
+live deleted at its end), any other failure retried after the player's backoff. The broadcaster
+screen mounts it while on air (live or away: the away layer paints over it, and its lines and cursors
+survive the camera being taken away), between the top third and the End button.
+
+**A chat refusal that ends the live goes to the screen's OWN decision, never a second rule.** A
+write (a message, a hide, a burst) answered `410`, `404` or `403 LIVE_VIEWER_REMOVED`
+(`isLiveOverRefusal`) is handed by the session to `onLiveOver`: the viewer passes it to
+`LivePlayer.refusedElsewhere`, which runs `liveFailureOutcome` - the player's one decision - and
+stops on the screen its own next poll would have shown; the broadcaster's loop and writes pass it to
+`LiveBroadcast.chatHeardEnd`, which ends exactly as an uploader `410` does. So a chat `410` whose
+`endReason` is `cut` (`isLiveCut`) shows the cut screens - `live_viewer_cut_title` for a viewer,
+`live_broadcast_cut_title` for the broadcaster - and any other `410`
+the ordinary end, through the same decision the player's poll and the uploader use. A refusal that
+is only a retry (`429`, no answer) is the one write's, never the live's.
+
+**Order and idempotence.** **The cursors move when a block ARRIVES** (`receive`, synchronously), not
+when its asynchronous opening ends: the next tick's `query()` can run first, and asking from the old
+cursors would bring the same rows back - the same reactions floating twice. The rows are then drawn
+in arrival order (a promise chain), **each in its own try**: a malformed row (a `null` author, a
+missing field) is dropped and logged, and the rest of the block and every later one are still
+drawn - one bad row never freezes the chat. A block that arrives before the key is NOT applied and
+its cursors do not move (logged at `error`: a wiring defect). A message that does not open is
+dropped and logged, never drawn. **Rows are deduped on `author:clientId`**, the server's idempotence
+key, not only on the server's id, so a replay under a new id is not drawn twice. My message is drawn
+at once as `pending` and replaced by the server's copy matched on its `clientId`, whichever of the
+answer and the poll comes first - never drawn twice. **My own echo from the poll is OPENED once**, as
+every other viewer opens it; if it does not open, or the server's answer names another author than
+the one the seal bound (the account id the client holds differs from the gateway's), the line says
+`unreadable` ("Les autres ne peuvent pas lire ce message") and an `error` is logged - never "sent".
+A failed send keeps its line with its reason; **a retry re-sends the SAME sealed string**, because
+the server's repeat is idempotent for identical bytes only and a re-seal (a fresh IV) would be a
+`409 LIVE_MESSAGE_CONFLICT`. Retry is offered for `too-fast` and `network` only; the other failures
+offer discard. The list keeps the newest 200 lines. **The account is read at each use**, and the
+composer's `canWrite` reactively, so an account that loads after the screen opened enables it then.
+
+**Reactions.** A tap floats at once and is summed; the sums leave as ONE burst on the next `query()`
+(one per tick at most, C7), fire and forget - a refused or lost burst is dropped and logged, never
+retried (a moment). Past the server's `reactionTapsPerWindow` a tap still floats but is not sent,
+since the server would refuse the whole burst. Everyone else's sums float with their counts as each
+poll brings them; the server already left my own out (C10). **The layer draws at most 24 floats**
+and drops the rest; **with reduced motion nothing moves** - one static counter per kind, the total
+since the viewer opened.
+
+**What a line is (C11, C15).** Text, through `EmojiText` (Noto SVG for each emoji): never markup,
+never a link, never a mention; the name and the text are each a `<bdi>` (the text `dir="auto"`), so a U+202E in a message cannot reverse the line around it. The composer's `maxlength` is the server's `chatMessageMaxChars`
+(read once from `GET /api/lives/limits`), and `send` refuses an empty or longer message before
+sealing. Every string is Paraglide (`live_chat_*`, `live_reaction*`).
+
+**Hiding (C14).** The broadcaster's view (`LiveBroadcasterChat`) has a hide button on every line;
+the line goes at once on the server's answer, and every viewer's next poll carries the tombstone.
+**Staff hide from the viewer** draws the button for the tier the moderation page opens to: a platform
+admin, or a member whose BDE holds `MODERATE` (`ensureContentModerator`, probed once at the
+viewer's open, cached for the session, read reactively) - the client mirror of the server's
+`isContentModerator`, which the hide route checks. A failed probe draws no button and is logged.
+
+**Logs** (`[LIVE_CHAT]`, `LiveChat`): entry and decisions at `debug`, a dropped message, a dropped
+burst and a failed send at `warn`, a wiring defect at `error`; lengths and ids only, never the key,
+a text or a ciphertext.
+
+**Verified by tests only** (`liveChatCrypto.test.ts` against real WebCrypto, `liveChat.test.ts`,
+`livePlayer.test.ts`'s chat block, `api.test.ts`'s chat routes, `LiveChatPanel.svelte.test.ts`,
+`LiveViewer.svelte.test.ts`'s chat cases, `LiveBroadcaster.svelte.test.ts`'s on-air chat, `liveBroadcast.svelte.test.ts`'s `chatHeardEnd`). **Owed**: the crypto review of the chat seal, and a phone
+reading of the panel, the bar and the floats on the Mi 9T and the iPhone 12 ([backlog](../../backlog.md)).
 
 ## Open questions for the user, each with a recommendation
 
@@ -504,13 +724,13 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 
 | WP | What | Starting point | Done when |
 | --- | --- | --- | --- |
-| **WP-L0** | **Calls revival**: the five switches in one commit, the SIXTH (no names in a silent invite) and the SEVENTH (`none` level vs. a ring) decided, rung 15 CALL + CALL-13 on real hardware, the by-hand relay-path call, then **the screen recording App Review asks for**. | `frontend/src/lib/features.ts` `CALLS_ENABLED` and the switch table in [calls](calls.md) | the board rows `PASS`; the video recorded; a build accepted with calls on |
+| **WP-L0** | **Calls revival**: `CALLS_COMPILED`'s switches in one commit (the native ring's `CALLS_NATIVE_RING_COMPILED` later, on its own readings), the SIXTH (no names in a silent invite) and the SEVENTH (`none` level vs. a ring) decided, rung 15 CALL + CALL-13 on real hardware, the by-hand relay-path call, then **the screen recording App Review asks for**. | `frontend/src/lib/features.ts` `CALLS_ENABLED` and the switch table in [calls](calls.md) | the board rows `PASS`; the video recorded; a build accepted with calls on |
 | **WP-L1** | **The C feasibility bench, before any product code**: on both phones, record 720p into short fMP4 segments for 30-60 min, seal and upload them, and play a growing source through MSE in the WebView. **And the host's usable uplink**, from the DSI's answer first (Q3), which sets the viewer cap L8 turns into. | `frontend/src/lib/mediaSegmented.ts`, the camera of [reels](reels.md), the segmented reader | latency, phone uplink, battery and heat measured on Mi 9T and iPhone 12, and the host's usable uplink, written here; or a refutation of C |
 | **WP-L2** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
 | **WP-L3** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
 | **WP-L4** (**built 2026-10-19, server and nginx, [lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4); cap 24 viewers from the measured ~90 Mb/s, [viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)**) | **Segments served by nginx**: an unauthenticated route for sealed live segments answered by Canari's own nginx (cache or static files), never reaching media-service or the database; the per-host viewer cap from WP-L1's uplink figure, refused with a clear "live full" screen. | `infrastructure/local/Dockerfile.frontend` (Canari's nginx), `GET /api/media/public/:id` as the model | a second viewer's fetch is served without a media-service log line; viewer N+1 past the cap is refused |
 | **WP-L5** (**viewer and broadcaster built 2026-10-19 behind `LIVE_ENABLED`, dev builds only, [viewer](#the-viewer-as-built-2026-10-19), [broadcaster](#the-broadcaster-as-built); the phone readings are owed**) | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
-| **WP-L6** (**server half built 2026-10-19, draft; the 16 decisions C1-C16 are on [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6): PostgreSQL rows erased with the live, carried by the manifest poll, NOT the WS gateway**) | **Live comments and floating reactions ARE wanted (user, 2026-10-19, D5)**, encrypted with the live key, ephemeral. | the manifest poll (`lives.controller.ts`), the segment seal (`liveCrypto.ts`) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
+| **WP-L6** (**server half MERGED (#2131), client half in review (#2136), 2026-10-19 - the client is [here](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); the 16 decisions C1-C16 are on [lives](../../services/lives.md#live-chat-and-floating-reactions-wp-l6): PostgreSQL rows erased with the live, carried by the manifest poll, NOT the WS gateway**) | **Live comments and floating reactions ARE wanted (user, 2026-10-19, D5)**, encrypted with the live key, ephemeral. | the manifest poll (`lives.controller.ts`), the segment seal (`liveCrypto.ts`) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
 | **WP-L7** (**server half built 2026-10-19, [lives](../../services/lives.md#the-push-to-the-followers-wp-l7-server-half); a tap lands on the feed (`appRouteForDeepLink` owns the `live` host), where the LIVE card is (dev builds only, [viewer](#the-viewer-as-built-2026-10-19)); the live's own viewer route is still owed**) | **Announcement**: LIVE card at the top of the feed; push to followers (L10), sent at the first stored segment. | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
 | **WP-L8** (**RELEASE BLOCKER before any stable, D3; moderation works like posts, D6: reuse the posts code path, no parallel mechanism. SERVER HALF BUILT 2026-10-19** ([lives](../../services/lives.md#moderation-wp-l8-server-half)): a live reported through `content_reports`, the staff cut `POST /api/lives/:id/cut` (410 `endReason: 'cut'`), the first-live rules acceptance recorded (L11), remove-viewer and blocks as built in WP-L2; **client half built 2026-10-19, the viewer's report control included** (cut screens, bell row, admin cut button: [the moderation client](#the-moderation-client-wp-l8s-client-half-2026-10-19); the broadcaster's rules sheet is built), chat hiding inside WP-L6 by the contract written there, and the strike policy and cut retention, the user's) | **Moderation**: hide message, remove viewer, block, report a live through `content_reports` like a post, staff remote cut (the live equivalent of "delete the post"). | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
 | **WP-L9** (Q2 answers precede any store submission, D3; **the answers and what is missing: [store-ugc-answers](../../store-ugc-answers.md)**) | **Store review**: UGC answers (Q2), the review video for live, then a pre-release to testers. | [mobile](../mobile.md) submission notes | accepted builds on both stores |

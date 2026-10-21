@@ -1269,6 +1269,38 @@ account, the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[
    choosing "Anonyme" in the step: the composer shows the edited text and "Anonyme"; publishing it
    lands on the "Tout" feed.
 
+## RR. The CanaReels rail, the comments sheet and the photo pages - owed on BOTH phones
+
+**Proves** [the rail, the sheet and the photo pages](frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)
+on real fingers and a real keyboard: every gate here is jsdom, which has no layout, no keyboard
+and no WebView. **Precondition:** a build carrying `ReelActionRail` against a social-service
+carrying `singlePhotos`, a bench account, at least two reels and one post of exactly one photo;
+the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-viewer]` and
+`[reel-comments]` lines.
+
+1. **The rail**: open CanaReels. Expect heart, comments and send bottom-right over every page, with
+   their numbers, clear of the caption and of the player's bar, at 1x and at 200 % text.
+2. **The heart**: tap it - filled, the count +1, one `heart ... like` line; tap again - empty, a
+   `take back` line. A double tap on the rail likes nothing more (no burst at the finger). On a
+   post the account reacted to with 😂 (from the card's picker), the rail shows 😂, not a heart.
+   Two fast taps on a slow network send one request (`in flight, ignored` line).
+   The comments number matches the card's on a post of more than twenty comments.
+3. **The sheet**: tap comments - the sheet rises over the lower ~60 %, the reel keeps playing above.
+   Type a comment: the keyboard does not cover the field. Send it; close the viewer - the card shows
+   it. Close the sheet each way: drag the grabber down, Back (the viewer stays open), tap the reel
+   above, the X. A swipe over the list scrolls it and does not close the sheet.
+4. **Report a comment from the sheet**: the reason dialog is drawn ABOVE the viewer.
+5. **Send**: a toast says the link is copied; the clipboard holds `/posts/<id>`.
+6. **Photo pages**: the one-photo post appears among the reels as a page, its picture whole, no
+   player bar, the caption lower, the same rail. A post of two photos never appears.
+7. **VoiceOver / TalkBack**: the rail reads "J'aime, N réactions", "Commentaires, N commentaires",
+   "Partager"; the sheet takes the focus on open and gives it back to the comments button on close.
+8. **Desktop wheel** (a browser on a desktop, a mouse, then a trackpad): one wheel notch down is
+   the next reel, up the previous; a hard spin of a free-spinning wheel and a trackpad flick each
+   turn ONE page (`[reel-viewer] wheel` once per gesture); ctrl+wheel zooms the page and does not
+   turn it; with the comments sheet open the wheel scrolls the list; over an unfolded caption it
+   scrolls the caption.
+
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 
 Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11
@@ -1579,12 +1611,15 @@ run on a phone ([2026-10-18 bench](device-readings-calls-live-2026-10-18.md): `B
 
 **The log.** A store build is not inspectable: Settings > A propos > "Enregistrer le journal" saves
 the in-app log after each call. **Never paste the `[Call] encryption key derived from MLS (fp=...)`
-line into this public repository** - it prints key bytes (owed fix, [calls](frontend/modules/calls.md)).
+line of a build older than 2026-10-21 into this public repository** - it printed key bytes. From
+then on the line reads `media keys derived from MLS (role= send_fp= recv_fp=, sha256)`, a hash of
+each direction's key, safe to quote ([calls](frontend/modules/calls.md)).
 
 **Steps:**
 
 | # | Action | Expected on screen | Expected in the log |
 | --- | --- | --- | --- |
+| 0 | **FIRST, before any other row, on the build carrying #2148**: one p2p call on dev, connected, then left IDLE (nobody speaks, no network change, both apps in the foreground, screens on) for **more than 60 s** | the call goes on: no "Reconnexion...", no end | server (dev `call-service`): `[call] p2p paired ...` and **NO `held dead`, `keepalive-lost` or `not taken within` line** for either peer over the whole idle minute. It proves the keepalive's Pong crosses the PUBLIC path (Cloudflare tunnel + host nginx) - which no local test covers; a `held dead` line here means the path eats Pongs, and every other row would read the keepalive, not the network |
 | 1 | Mi 9T opens the DM, taps "Appel audio" | the call screen; the iPhone rings IN-APP within seconds | caller: `[Call] fetching ICE servers for group=...`, `[Call] server ring sent - answer window open`, `[Call] signalling connected, joining p2p room...`, `[Call] p2p room ready (...)`; callee: `[Call] signal from <id> in <group> call=<id>` |
 | 2 | iPhone answers | both show the call in progress; each hears the other, both ways, for at least 30 s | caller `[Call] peer ready - this side is initiator`, callee `... is polite`; `[Call] offer (...) -> peer` / `[Call] answer (...) -> peer`; `[Call] connectionState=connected`; `[Call] selected path pair=<local>/<proto>-><remote>/<proto> relayed=yes\|no`; `[Call] E2E encrypting audio` and `[Call] E2E decrypting audio`; `[Call] remote track unmuted kind=audio` |
 | 3 | iPhone hangs up | both screens leave the call; the conversation shows the call line | no `[Call] terminal failure` |
@@ -1592,9 +1627,12 @@ line into this public repository** - it prints key bytes (owed fix, [calls](fron
 | 5 | Mi 9T calls, nobody answers | after 60 s the ring stops; a missed-call line on both | caller `[Call] ring window (60000 ms) closed unanswered - call=<id>` |
 | 6 | The callee app KILLED, then called | **nothing rings - EXPECTED in lot 1**, not a `FAIL` | caller as step 5 |
 | 7 | Callee sets "Appels" to "Non autorises", then is called; then back to "Autorises" | refused: no ring, a missed-call line at once; allowed again: it rings | callee: `[Call] invite <id> in <group> not rung - calls are not allowed in this conversation` |
-| 8 | **CALL-WIFI** (owed on a build carrying the resume, both phones on it). In a connected call, Wi-Fi OFF on the Mi 9T for **6 s**, then on | the call does NOT end; both screens show "Reconnexion..." only on a build that also carries the call UI of #2138 (it reads `callService.reconnecting`); audio comes back both ways | Mi 9T: `[Call] signalling WebSocket closed code=1006 - resuming`, `[Call] signalling resume attempt N/5`, `[Call] signalling resumed on attempt N`, `[Call] peer ready - ... (resumed)`; on the INITIATOR `[Call] ICE restart 1/3 (...)` then `[Call] media path restored after 1 ICE restart(s)`; NO `[Call] terminal failure`. Server: `[call] p2p seat away ...` then `[call] p2p paired ... resumed=true` |
-| 9 | **CALL-WIFI**, the same with a **14 s** outage; then once more as callee (the iPhone calls) | as step 8 | as step 8; record the attempt number that resumed |
-| 10 | **CALL-WIFI**, Wi-Fi OFF on the Mi 9T for **90 s** (longer than the 60 s seat grace) | the call ENDS on both phones, within a few seconds of the grace on the iPhone | iPhone `[Call] the other party left the call room`; Mi 9T `[Call] signalling resume refused (call-over)` or `... not restored after 5 resume attempts` |
+| 8 | **CALL-WIFI** (owed on a build carrying the resume, both phones on it). In a connected call, Wi-Fi OFF on the Mi 9T for **6 s**, then on | the call does NOT end; both screens show "Reconnexion..." only on a build that also carries the call UI of #2138 (it reads `callService.reconnecting`); audio comes back both ways | Mi 9T: `[Call] signalling WebSocket closed code=1006 - resuming`, `[Call] signalling resume attempt N/15`, `[Call] signalling resumed on attempt N`, `[Call] peer ready - ... (resumed)`, `[Call] pair resumed: ... audio packets A -> B`; either `the media path carried audio across the outage - no ICE restart`, or on the INITIATOR `[Call] ICE restart 1/3 (...)` + `[Call] ICE restart offer (...) -> peer` then `[Call] media path restored after 1 ICE restart(s)`; NO `[Call] terminal failure`. Server: `[call] p2p seat away ...` then `[call] p2p paired ... resumed=true`. **`1.3.1-alpha.2`: `PASS`** (2026-10-19, [readings](device-readings-2026-10.md)) |
+| 9 | **CALL-WIFI**, the same with a **14 s** outage; then once more as callee (the iPhone calls) | as step 8 | as step 8; record the attempt number that resumed (expected 5, at +15 s on the capped ladder). If the initiator's first restart offer was lost: `rolling back an unanswered offer - its answer can no longer come`. **`1.3.1-alpha.2`: `FAIL`** - resumed at attempt 5 (+32 s), the restart request was dropped as "already in flight", both phones stayed on "Reconnexion..." with no audio; cause and fix (explicit restart offer, rollback, per-pairing guard, capped ladder) on [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix); **re-read owed on the build carrying it** |
+| 10 | **CALL-WIFI**, Wi-Fi OFF on the Mi 9T for **90 s** (longer than the 60 s seat grace) | the call ENDS on both phones: the Mi 9T by its attempt budget (~+55 s), the iPhone at most ~90 s after the loss | iPhone `[Call] the other party lost its signalling connection` within ~30 s, then `[Call] the other party left the call room`; server `... held dead (half-open socket)` / `disposition=keepalive-lost`, then `p2p seat EXPIRED`; Mi 9T `[Call] signalling resume refused (call-over)` or `... not restored after 15 resume attempts`. **`1.3.1-alpha.2`: `FAIL`** - the Mi 9T ended at +30 s, the iPhone sat on "Reconnexion..." for 100+ s: the server never held the half-open socket dead, so no grace and no `PeerLeft`; fixed by the keepalive liveness proof; **re-read owed** |
+| 11 | **CALL-WIFI keepalive, a SUSPENDED app** (owed on the build carrying #2148): in a connected call, lock the screen on ONE phone for **more than 30 s**, then unlock; again with the app sent to the background instead; each phone in turn | EITHER the call goes on (the app kept running: its process answered the keepalive) OR, if the OS suspended the app, the partner shows "Reconnexion..." about 20-30 s in, then the call ENDS on it ~60 s later; on unlock the suspended phone resumes if it is back before that end, else it is told the call is over. NEVER a partner stuck on "Reconnexion..." past ~90 s | server: no `held dead` line while the app runs; if suspended, `... answered none of 2 keepalive pings - held dead (half-open socket)`, `disposition=keepalive-lost`, then `p2p seat EXPIRED` or `paired ... resumed=true`. Record per phone and per gesture whether the app was suspended: the change of behaviour (a suspended app used to keep its seat "present" indefinitely) is the thing measured. Android's background microphone is CALL-LOCK-ANDROID, not this row |
+| 12 | **WP-C-BG-I, the iPhone's microphone in the background** (owed on the first pre-release carrying it, in this order). (a) The iOS job's `UIBackgroundModes of this pre-release build:` line lists `audio`. (b) In a connected call: lock the iPhone 60 s, then send it to the background 60 s. (c) Out of a call - **the mode is APP-WIDE**: play a reel with sound, then a voice message, and lock then background the iPhone during each. (d) In a call: an audio ROUTE change (AirPods connected then removed, a wired headset in and out) and a short interruption (an alarm or a Siri press of about 2 s). (e) A call ACCEPTED from the lock screen (the track can be handed over already muted). Record every `mute`/`unmute` pair with its duration BEFORE any debounce is written | (b) the Mi 9T keeps HEARING the iPhone through the lock and the background (its inbound audio packets keep rising - `getStats()` over CDP every 5 s) and the iPhone keeps playing the Mi 9T's voice. (c) RECORD whether playback continues while locked or in the background - it did not before this build, and now may: that is a behaviour change to accept or refuse, not a defect by itself. (d) a route change should NOT produce a `the system took the microphone` line; if it does, how often and for how long - a flicker would put false "Le telephone de ... a coupe son micro" notices on the partner's screen. (e) the call connects, and if the track starts muted the notice shows until it is given back | iPhone log: NO `the system took the microphone` in (b); in (d)/(e), each `WARN the system took the microphone (track muted, page visible\|hidden) - telling the other party` and `gave the microphone back after N s` with N; Mi 9T log: `the other party's system took its microphone` / `gave its microphone back` for each; server: one `p2p mic-suspended relayed` per transition. If (b) still mutes the capture, read the iPhone's syslog (`WebKit`, `mediaserverd`) before any native audio-session code ([calls](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)) |
+| 13 | **B0 of the audio-only plan - a hidden peer video is still under its transform** (owed on the first pre-release carrying #2171). A dev build WITH video calls a build with video FORCED OFF (`CALLS_VIDEO_ENABLED` false: a local build, or the first audio-only alpha), the video side turns its camera on; once with the iPhone as the audio-only side, once with the Mi 9T | the audio-only side shows NO video and the call goes on past 30 s with the camera on; the video side still hears and is heard | audio-only side: `[Call] the peer sends video - this build is audio only, it is received and not shown`, then `E2E path check ...: no media around the transform` with `received ... video=` rising; NEVER `media flowed AROUND the transform on receiver:video` nor a `CallE2eBypassedError` end. A false END here means the engine does not feed a receiver transform whose track has no sink - then the `inactive` route of B0 is owed ([calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21)) |
 
 **Record per direction:** the verdict, the `relayed=` value (only `relayed=yes` is billed TURN), the
 network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the build on each phone.
@@ -1606,8 +1644,11 @@ network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the b
 - `[Call] startCall refused - RTCRtpScriptTransform unavailable` (or `acceptCall refused ...`): that
   WebView has no E2E transform - a finding about the engine, P1 for lot 1, never a reason to degrade.
 - `[Call] WARN remote audio still muted after 5s`, or `[Call] E2E decrypt failed`: media arrives
-  but cannot be heard or decrypted - the per-side key derivation (F5 on
-  [calls](frontend/modules/calls.md)); note both phones' MLS state.
+  but cannot be heard or decrypted; note both phones' MLS state.
+- `[Call] ERROR E2E key mismatch` and the "ne peut pas être déchiffré" notice (builds carrying the 2026-10-21 port
+  of #2013): no receiver decrypted anything after 100 failures - compare one phone's `send_fp` with
+  the other's `recv_fp` (`media keys derived from MLS` line); unequal means the two devices derived
+  different keys (different MLS epochs, or one build older than the v2 wire) ([calls](frontend/modules/calls.md)).
 - `[Call] signalling refused: <reason>`: the relay refused the room (`room-full`, `group-mismatch`,
   `token-refused`; `call-over` on a resume means the seat expired or the other party hung up).
 - `[Call] terminal failure: ... the relay gave no resume token`: the call-service on that estate
@@ -1615,8 +1656,8 @@ network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the b
 - `[Call] connectionState=failed` with no `selected path`: no candidate pair, not even TURN - read
   `iceConnectionState` and the network.
 
-**`[CALL_REPORT]` IS NOT IN ANY BUILD YET**: it is #2011, an open draft. Once a pre-release carries it,
-each device logs one line per call every 10 s and once at the end
+**`[CALL_REPORT]` reaches a build with the first pre-release carrying the 2026-10-21 port of #2011**
+(check the release notes; no build before it has the line). From then on each device logs one line per call every 10 s and once at the end
 (`[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms= engine= ice= pair= relayed= ...
 e2e=on enc_frames= dec_frames= dec_fail=`); record `setup_ms`, `relayed`, `rtt_ms`, `loss_in_pct` and
 `dec_fail` per direction, which is the plan's exit criterion

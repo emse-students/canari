@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
@@ -12,6 +12,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   Validate,
@@ -21,6 +22,7 @@ import {
   type ValidationArguments,
   type ValidatorConstraintInterface,
 } from 'class-validator';
+import { COMMENT_MAX_LENGTH, COMMENT_PAGE_MAX, type CommentOrder } from '../comment-page';
 
 /**
  * A post needs a body OR a media entry - the rule the composer's Publier button already applies
@@ -340,6 +342,16 @@ export class ListPostsQueryDto {
   @IsIn(['post', 'reel'])
   kind?: 'post' | 'reel';
 
+  /**
+   * With `kind=reel`: the posts whose only content is ONE picture come too - the CanaReels list
+   * (user, 2026-10-19: photos in CanaReels, as on Instagram). Ignored without `kind=reel`. A query
+   * string carries text, so only the literal `true` turns it on.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  singlePhotos?: boolean;
+
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()
   @Type(() => Number)
@@ -350,6 +362,26 @@ export class ListPostsQueryDto {
   @IsOptional()
   @IsString()
   formation?: string;
+}
+
+/** Query of `GET :postId/comments`: one page of whole threads. See `pageComments`. */
+export class ListCommentsQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  cursor?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(COMMENT_PAGE_MAX)
+  limit?: number;
+
+  @IsOptional()
+  @IsIn(['recent', 'oldest'])
+  order?: CommentOrder;
 }
 
 export class VotePollDto {
@@ -370,6 +402,7 @@ export class AddCommentDto {
 
   @IsString()
   @IsOptional()
+  @MaxLength(COMMENT_MAX_LENGTH)
   text?: string;
 
   @IsString()
@@ -398,6 +431,7 @@ export class AddReactionDto {
 export class EditCommentDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(COMMENT_MAX_LENGTH)
   text: string;
 }
 

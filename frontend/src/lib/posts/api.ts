@@ -90,8 +90,37 @@ export interface PostComment {
   parentId?: string | null;
   likes: string[];
   createdAt: string;
+  /** Set by the server when the text was edited; absent on a comment never touched. */
+  editedAt?: string | null;
   /** Encrypted media attached to this comment (GIF, screenshot, etc.). */
   media?: PostMediaRef;
+}
+
+/** The longest comment, in characters. The server copy is `COMMENT_MAX_LENGTH` in `apps/social-service/src/posts/comment-page.ts`. */
+export const COMMENT_MAX_LENGTH = 2000;
+
+/** One page of whole comment threads (a head and all its replies), as `GET /posts/:id/comments` serves it. */
+export interface CommentPage {
+  comments: PostComment[];
+  /** Pass back as `cursor` for the next page; `null` when the page was empty. */
+  nextCursor: number | null;
+  hasMore: boolean;
+}
+
+export interface FetchCommentsOptions {
+  cursor?: number | null;
+  limit?: number;
+  order?: 'recent' | 'oldest';
+}
+
+/** Query string of `fetchComments`; only the options actually given are sent. */
+export function buildCommentsSearchParams(opts: FetchCommentsOptions): string {
+  const params = new URLSearchParams();
+  if (opts.cursor !== undefined && opts.cursor !== null) params.set('cursor', String(opts.cursor));
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+  if (opts.order) params.set('order', opts.order);
+  const q = params.toString();
+  return q ? `?${q}` : '';
 }
 
 /** Display payload for posts published as an association (author identity hidden). */
@@ -193,6 +222,12 @@ export interface PostEntity {
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
   comments?: PostComment[];
+  /**
+   * The post's comments in all, as the server counted them for this reader (blocked authors left
+   * out). A list row carries only the newest twenty in `comments`, so the number shown is this one
+   * (`posts/commentChange.ts`, `commentCountOf`); absent from a server older than the field.
+   */
+  commentCount?: number | null;
   pinned?: boolean;
   scheduledAt?: string | null;
   createdAt: string;
@@ -273,6 +308,12 @@ export interface ListPostsOptions {
   formation?: string;
   /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
   kind?: PostKind;
+  /**
+   * With `kind: 'reel'`: the posts whose only content is ONE picture come too - the CanaReels list
+   * (`reels/fullScreenPost.ts`). A server older than it drops the unknown parameter and answers
+   * the reels alone.
+   */
+  singlePhotos?: boolean;
 }
 
 export interface ScheduledPost {
@@ -346,6 +387,7 @@ function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
+  if (options.singlePhotos) p.set('singlePhotos', 'true');
   const s = p.toString();
   return s ? `?${s}` : '';
 }
@@ -451,6 +493,14 @@ export async function addComment(
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+/** One page of a post's comments, as whole threads - see `CommentPage`. */
+export async function fetchComments(
+  postId: string,
+  opts: FetchCommentsOptions = {}
+): Promise<CommentPage> {
+  return request<CommentPage>(`/api/posts/${postId}/comments${buildCommentsSearchParams(opts)}`);
 }
 
 export async function likeComment(

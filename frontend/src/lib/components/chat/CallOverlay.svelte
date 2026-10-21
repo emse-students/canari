@@ -35,8 +35,10 @@
     Phone,
     PhoneOff,
     PictureInPicture2,
+    Shield,
     ShieldCheck,
     Speaker,
+    SwitchCamera,
     Video,
     VideoOff,
     Volume2,
@@ -44,15 +46,22 @@
   import { fade } from 'svelte/transition';
   import type { Snippet } from 'svelte';
   import { m } from '$lib/paraglide/messages';
-  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
-  import { CALLS_VIDEO_ENABLED } from '$lib/features';
+  import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+  import {
+    hasAndroidCallService,
+    ongoingCallSpec,
+    openAndroidCallSession,
+  } from '$lib/mobile/androidCallService';
+  import { callVideoAvailable } from '$lib/utils/callsAvailability';
+  import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import { useCallModel } from '$lib/composables/useCallModel.svelte';
   import { callView } from '$lib/stores/callView.svelte';
-  import { callStatusText } from '$lib/utils/callStatusText';
+  import { callMicNotice, callStatusText } from '$lib/utils/callStatusText';
   import { applyCallMediaSession, clearCallMediaSession } from '$lib/utils/callMediaSession';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { appendLog } from '$lib/utils/sessionLog';
   import { startCallVoice } from '$lib/utils/callVoice';
+  import { ScreenWakeLock } from '$lib/live/liveDevice';
 
   let {
     callService,
@@ -88,33 +97,33 @@
   $effect(() => () => callView.reset());
 
   let primary = $derived(participants[0]);
-  let statusText = $derived(callStatusText(call.kind, call.duration));
   let isIncoming = $derived(call.callState === 'incoming');
+  // The ring says WHICH call rings: a video call is answered with the camera on.
+  let statusText = $derived(
+    isIncoming && callService.incomingHasVideo
+      ? m.call_incoming_video_label()
+      : callStatusText(call.kind, call.duration)
+  );
   let isEnded = $derived(call.callState === 'ended');
 
-  /** Prefer a live, unmuted video track (renegotiation can leave older tracks in the stream). */
-  function pickActiveVideoTrack(stream: MediaStream): MediaStreamTrack | undefined {
-    const tracks = stream.getVideoTracks();
-    return (
-      tracks.find((t) => t.readyState === 'live' && !t.muted) ??
-      tracks.find((t) => t.readyState === 'live') ??
-      tracks[tracks.length - 1]
-    );
-  }
-
-  /** The remote stream carrying a live video track, if any (video waits for WP-C3). */
+  /** The remote stream carrying the peer's picture (`call.remoteVideoTrack`), if any. */
   let remoteVideoStream = $derived.by(() => {
+    const track = call.remoteVideoTrack;
+    if (!track) return null;
     for (const [, stream] of call.remoteStreams) {
-      if (pickActiveVideoTrack(stream)) return stream;
+      if (stream.getVideoTracks().some((t) => t === track)) return stream;
     }
     return null;
   });
-  /** Any remote stream: the one the audio sink plays. */
+  /** Any remote stream: the one the audio sink plays (the same object whatever the video does). */
   let remoteAudioStream = $derived.by(() => {
-    if (remoteVideoStream) return remoteVideoStream;
     for (const [, stream] of call.remoteStreams) return stream;
     return call.remoteStream;
   });
+  /** Whether this side is sending its camera: the self view shows, and the screen stays on. */
+  let cameraOn = $derived(!call.isVideoOff && !!call.localVideoTrack);
+  /** Either picture on screen makes this a video call for the OS and for the screen lock. */
+  let videoShowing = $derived(cameraOn || !!call.remoteVideoTrack);
 
   // -- The one audio output of the call ------------------------------------------------------
   let remoteAudioSink: HTMLAudioElement | undefined = $state();
@@ -180,12 +189,26 @@
       'mediaDevices' in navigator &&
       typeof AudioContext !== 'undefined'
   );
-  let isMobileRtc = $derived(isMobileTauriRuntime());
+  /**
+   * Whether the speaker toggle can route anything: on iOS the page's `setSinkId`; on Android the
+   * ongoing-call service's output, so a build without the service shows no toggle that does nothing.
+   */
+  let speakerRoutable = $derived(
+    isIosTauriRuntime() || (isAndroidTauriRuntime() && hasAndroidCallService(window))
+  );
+  /**
+   * Android: whether the service can route the audio NOW - false while its start waits for the app
+   * to come back on screen, and once it was refused or left for this call. The toggle is then shown
+   * disabled and says why, rather than taking a tap that would do nothing.
+   */
+  let androidRouteAvailable = $state(true);
+  let speakerDisabled = $derived(isAndroidTauriRuntime() && !androidRouteAvailable);
 
   /**
-   * Routes remote audio to speaker or earpiece on mobile, by output-device LABEL. Best-effort and
+   * Routes remote audio to speaker or earpiece on iOS, by output-device LABEL. Best-effort and
    * unverified on hardware: a WebView may list no labelled outputs at all, and the real route is a
-   * native call (`AudioManager` / `AVAudioSession`) - calls.md, "the call in the background".
+   * native call (`AVAudioSession`, WP-C-BG-I) - calls.md, "the call in the background". On Android
+   * the route is the ongoing-call service's (`AudioManager.setCommunicationDevice`, below).
    */
   async function applySpeakerRouting(sink: HTMLAudioElement, speaker: boolean) {
     try {
@@ -209,7 +232,7 @@
 
   $effect(() => {
     const sink = remoteAudioSink;
-    if (!sink || !speakerSupported || !isMobileRtc) return;
+    if (!sink || !speakerSupported || !isIosTauriRuntime()) return;
     void applySpeakerRouting(sink, isSpeakerOn);
   });
 
@@ -219,7 +242,7 @@
     const title = primary?.displayName || m.call_label();
     applyCallMediaSession(navigator, {
       title,
-      artist: m.call_audio_only_label(),
+      artist: videoShowing ? m.chat_video_call_label() : m.call_audio_only_label(),
       muted: call.isMuted,
       onHangup: () => {
         appendLog('[Call] hang-up from the OS media controls');
@@ -232,6 +255,27 @@
     });
   });
   $effect(() => () => clearCallMediaSession(navigator));
+
+  // -- Android: the ongoing-call foreground service (WP-C-BG-A) -------------------------------
+  // It keeps the process's network and microphone while the app is off screen, draws the CallStyle
+  // notification and owns the audio route. Opened once per call (this component lives exactly as
+  // long as one call); its hang-up ends the call like the in-app button.
+  const androidCall = isAndroidTauriRuntime()
+    ? openAndroidCallSession(
+        window,
+        () => callService.endCall(),
+        (available) => (androidRouteAvailable = available)
+      )
+    : null;
+  $effect(() => () => androidCall?.dispose());
+  $effect(() => {
+    if (!androidCall) return;
+    const title = primary?.displayName || m.call_label();
+    androidCall.publish(
+      ongoingCallSpec(call.kind, !!call.localStream, title, call.connectedAt, isSpeakerOn),
+      `kind=${call.kind}`
+    );
+  });
 
   /**
    * What a device reading needs to say what the background did to the call: whether the page was
@@ -258,50 +302,134 @@
     return () => document.removeEventListener('visibilitychange', onVisibility);
   });
 
+  // The OS taking the microphone (`mute` on the track) is watched by the SERVICE, which tells the
+  // other party over the relay - `CallService.watchSystemMicrophone`.
+
+  /** Why a voice is not getting through, when an operating system is the reason (either side). */
+  let micNotice = $derived(
+    callMicNotice(call.kind, call.localMicSuspended, call.peerMicSuspended, primary?.displayName)
+  );
+
+  /**
+   * What the live region says once a notice ENDS, so it never falls back to "connected" - a state
+   * that did not change. The other party's microphone coming back is said ONCE; this device's is
+   * said by the toast (`call_mic_was_suspended`), so the region says nothing new rather than say it
+   * twice. `null` = no notice ended since the call was last live: the ordinary announcement.
+   */
+  let micRecovery = $state<string | null>(null);
+  /** Whose notice was SHOWN last ('local', 'peer') - a notice never shown ends with no recovery. */
+  let micShown: 'local' | 'peer' | null = null;
   $effect(() => {
-    const mic = call.localStream?.getAudioTracks()[0];
-    if (!mic) return;
-    const onMute = () => appendLog('[Call] WARN the system took the microphone (track muted)');
-    const onUnmute = () => appendLog('[Call] the system gave the microphone back');
-    const onEnded = () => appendLog('[Call] WARN the microphone track ended');
-    mic.addEventListener('mute', onMute);
-    mic.addEventListener('unmute', onUnmute);
-    mic.addEventListener('ended', onEnded);
-    return () => {
-      mic.removeEventListener('mute', onMute);
-      mic.removeEventListener('unmute', onUnmute);
-      mic.removeEventListener('ended', onEnded);
-    };
+    const live = call.kind === 'live';
+    const shown = !live
+      ? null
+      : call.localMicSuspended
+        ? 'local'
+        : call.peerMicSuspended
+          ? 'peer'
+          : null;
+    if (!live || shown) {
+      // Leaving `live` is a new state with its own announcement; a notice up says itself.
+      micRecovery = null;
+    } else if (micShown === 'local') {
+      micRecovery = '';
+    } else if (micShown === 'peer') {
+      const name = primary?.displayName;
+      micRecovery = name ? m.call_mic_restored_peer({ name }) : m.call_mic_restored_peer_unnamed();
+    }
+    micShown = shown;
   });
 
-  // -- Video (off until WP-C3; kept working so the switch does not reopen this file) -----------
+  // -- Video (lot 2) --------------------------------------------------------------------------
   let remoteVideo: HTMLVideoElement | undefined = $state();
   let localVideo: HTMLVideoElement | undefined = $state();
 
+  // Bound to the TRACK: a new remote track (renegotiation) or the peer's camera back after a mute
+  // re-binds; the element never plays a stream whose picture is gone.
   $effect(() => {
     const el = remoteVideo;
-    const stream = remoteVideoStream;
-    if (!el || !stream) return;
-    const display = new MediaStream();
-    const track = pickActiveVideoTrack(stream);
-    if (track) display.addTrack(track);
-    el.srcObject = display;
+    const track = call.remoteVideoTrack;
+    if (!el || !track) return;
+    el.srcObject = new MediaStream([track]);
     el.play().catch((e: unknown) => appendLog(`[Call] remote video did not start: ${String(e)}`));
     return () => {
       el.srcObject = null;
     };
   });
 
+  // Video only in the self view: the microphone is never played back to its owner.
   $effect(() => {
     const el = localVideo;
-    if (!el || !call.localStream || call.isVideoOff) return;
-    el.srcObject = call.localStream;
+    const track = call.localVideoTrack;
+    if (!el || !track || call.isVideoOff) return;
+    el.srcObject = new MediaStream([track]);
     el.play().catch((e: unknown) => appendLog(`[Call] self view did not start: ${String(e)}`));
+    return () => {
+      el.srcObject = null;
+    };
   });
+
+  /**
+   * ORIENTATION. The peer's picture fills the screen (`cover`) when it is held the same way as this
+   * screen, and is shown WHOLE (`contain`) when it is not - a landscape picture cropped to a
+   * portrait screen loses two thirds of it. Read from the picture's own size (`resize` fires when
+   * the peer turns its phone) against this screen's.
+   */
+  let remoteLandscape = $state<boolean | null>(null);
+  let screenLandscape = $state(false);
+  $effect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const query = window.matchMedia('(orientation: landscape)');
+    screenLandscape = query.matches;
+    const onChange = () => (screenLandscape = query.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  });
+  function readRemoteShape() {
+    const el = remoteVideo;
+    if (!el || !el.videoWidth || !el.videoHeight) return;
+    const landscape = el.videoWidth > el.videoHeight;
+    if (landscape !== remoteLandscape) {
+      appendLog(`[Call] remote picture ${el.videoWidth}x${el.videoHeight}`);
+      remoteLandscape = landscape;
+    }
+  }
+  let remoteFit = $derived(
+    remoteLandscape === null || remoteLandscape === screenLandscape
+      ? 'object-cover'
+      : 'object-contain'
+  );
+
+  /**
+   * The screen stays on while a picture is on it - a video call is watched, not held to the ear
+   * (calls.md: an audio call takes no lock). Taken again when the app comes back: the system
+   * releases it on every hide.
+   */
+  const wakeLock = new ScreenWakeLock(undefined, 'CALL-WAKE');
+  $effect(() => {
+    if (!videoShowing || isEnded) return;
+    void wakeLock.hold();
+    const again = () => {
+      if (!document.hidden) void wakeLock.hold();
+    };
+    document.addEventListener('visibilitychange', again);
+    return () => {
+      document.removeEventListener('visibilitychange', again);
+      wakeLock.release();
+    };
+  });
+
+  let showSwitch = $derived(cameraOn && call.canSwitchCamera && !isEnded);
+
+  function switchCamera() {
+    appendLog('[Call] switch camera tapped');
+    void callService.switchCamera();
+  }
 
   let pipSupported = $derived(
     typeof document !== 'undefined' && !!document.pictureInPictureEnabled
   );
+  let showPip = $derived(!!remoteVideoStream && pipSupported);
 
   async function togglePictureInPicture() {
     try {
@@ -330,7 +458,9 @@
 
   /** The live line: a change of STATE is announced, never the timer's every second. */
   let announcement = $derived(
-    call.kind === 'live' ? m.call_live_announcement() : callStatusText(call.kind, call.duration)
+    call.kind === 'live'
+      ? (micNotice ?? micRecovery ?? m.call_live_announcement())
+      : callStatusText(call.kind, call.duration)
   );
 
   function hangUp() {
@@ -345,12 +475,14 @@
   caption: string,
   onclick: () => void,
   tone: 'neutral' | 'on' | 'danger' | 'accept',
-  icon: Snippet
+  icon: Snippet,
+  disabled: boolean = false
 )}
   <div class="flex w-20 flex-col items-center gap-2">
     <button
       type="button"
-      class="call-control flex size-16 items-center justify-center rounded-full transition-transform active:scale-95 {tone ===
+      {disabled}
+      class="call-control flex size-16 items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40 disabled:active:scale-100 {tone ===
       'danger'
         ? 'bg-red-500 text-white hover:bg-red-400'
         : tone === 'accept'
@@ -395,7 +527,26 @@
         autoplay
         playsinline
         muted
-        class="absolute inset-0 h-full w-full object-cover"
+        onresize={readRemoteShape}
+        onloadedmetadata={readRemoteShape}
+        data-testid="call-remote-video"
+        class="absolute inset-0 h-full w-full bg-black {remoteFit}"
+      ></video>
+    {/if}
+    {#if cameraOn}
+      <!-- The self view: the whole screen while there is no picture of the peer (ringing, or the
+           peer's camera off), a corner once there is. ONE element, so the move is a class change
+           and not a new binding. Mirrored for the front camera only, as every phone does. -->
+      <video
+        bind:this={localVideo}
+        autoplay
+        playsinline
+        muted
+        data-testid="call-self-view"
+        data-mirrored={call.cameraFacing === 'user'}
+        class="{call.cameraFacing === 'user' ? '-scale-x-100' : ''} {remoteVideoStream
+          ? 'absolute right-4 bottom-36 z-10 h-40 w-28 rounded-2xl shadow-xl ring-1 ring-white/20 landscape:bottom-28 landscape:h-28 landscape:w-40'
+          : 'absolute inset-0 h-full w-full'} object-cover"
       ></video>
     {/if}
 
@@ -410,34 +561,60 @@
       >
         <ChevronDown size={26} />
       </button>
+      <!-- Claimed on EVIDENCE only (CallService.e2eProven): a frame encrypted and one decrypted
+           by this call's worker. A transform merely attached proved nothing on Chromium. -->
       <span
         class="inline-flex min-w-0 items-center gap-1.5 truncate text-xs text-white/70"
-        title={m.call_e2e_encrypted_title()}
+        title={call.e2eProven ? m.call_e2e_encrypted_title() : m.call_e2e_verifying()}
+        data-testid="call-e2e-line"
       >
-        <ShieldCheck size={14} class="shrink-0" />
-        <span class="truncate">{m.call_e2e_encrypted_title()}</span>
+        {#if call.e2eProven}
+          <ShieldCheck size={14} class="shrink-0" />
+          <span class="truncate">{m.call_e2e_encrypted_title()}</span>
+        {:else}
+          <Shield size={14} class="shrink-0" />
+          <span class="truncate">{m.call_e2e_verifying()}</span>
+        {/if}
       </span>
-      {#if remoteVideoStream && pipSupported}
-        <button
-          type="button"
-          class="ui-icon-button rounded-full text-white hover:bg-white/10"
-          aria-label={m.call_open_pip_label()}
-          title={m.call_pip_label()}
-          onclick={() => void togglePictureInPicture()}
-        >
-          <PictureInPicture2 size={22} />
-        </button>
-      {:else}
-        <!-- Keeps the encryption line centred against the chevron. -->
-        <span class="ui-icon-button" aria-hidden="true"></span>
-      {/if}
+      <div class="flex shrink-0 items-center">
+        {#if showSwitch}
+          <button
+            type="button"
+            class="ui-icon-button rounded-full text-white hover:bg-white/10"
+            aria-label={m.call_switch_camera_label()}
+            title={m.call_switch_camera_label()}
+            data-testid="call-switch-camera"
+            onclick={switchCamera}
+          >
+            <SwitchCamera size={22} />
+          </button>
+        {/if}
+        {#if showPip}
+          <button
+            type="button"
+            class="ui-icon-button rounded-full text-white hover:bg-white/10"
+            aria-label={m.call_open_pip_label()}
+            title={m.call_pip_label()}
+            onclick={() => void togglePictureInPicture()}
+          >
+            <PictureInPicture2 size={22} />
+          </button>
+        {/if}
+        {#if !showSwitch && !showPip}
+          <!-- Keeps the encryption line centred against the chevron. -->
+          <span class="ui-icon-button" aria-hidden="true"></span>
+        {/if}
+      </div>
     </div>
 
     <!-- Who, and where the call stands. -->
+    <!-- Over a picture the name moves to the top and gets smaller: the picture is the call. -->
     <div
-      class="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center"
+      class="relative z-10 flex min-h-0 flex-1 flex-col items-center gap-4 px-6 text-center {videoShowing
+        ? 'justify-start pt-2 drop-shadow-md'
+        : 'justify-center'}"
     >
-      {#if !remoteVideoStream}
+      {#if !videoShowing}
         <div class="relative size-28 md:size-36">
           {#if isIncoming || call.kind === 'ringing'}
             <!-- The ring: a halo that breathes while the call rings, on either side. -->
@@ -463,17 +640,29 @@
             userId={primary.userId}
             fallback={primary.displayName}
             link={false}
-            class="block max-w-full truncate text-2xl font-bold"
+            class="block max-w-full truncate font-bold {videoShowing ? 'text-lg' : 'text-2xl'}"
           />
         {:else}
-          <p class="text-2xl font-bold">{m.call_label()}</p>
+          <p class="font-bold {videoShowing ? 'text-lg' : 'text-2xl'}">{m.call_label()}</p>
         {/if}
         <p
-          class="text-base text-white/75 tabular-nums {call.kind === 'live' ? '' : 'animate-pulse'}"
+          class="text-white/75 tabular-nums {videoShowing ? 'text-sm' : 'text-base'} {call.kind ===
+          'live'
+            ? ''
+            : 'animate-pulse'}"
           data-testid="call-status"
         >
           {statusText}
         </p>
+        {#if micNotice}
+          <p
+            class="mt-1 inline-flex max-w-full items-center gap-2 text-sm text-amber-200"
+            data-testid="call-mic-notice"
+          >
+            <MicOff size={16} class="shrink-0" />
+            <span>{micNotice}</span>
+          </p>
+        {/if}
         {#if callView.audioBlocked}
           <button
             type="button"
@@ -487,16 +676,6 @@
         {/if}
       </div>
     </div>
-
-    {#if call.localStream && !call.isVideoOff}
-      <video
-        bind:this={localVideo}
-        autoplay
-        playsinline
-        muted
-        class="absolute right-4 bottom-36 z-10 h-40 w-28 -scale-x-100 rounded-2xl object-cover shadow-xl ring-1 ring-white/20"
-      ></video>
-    {/if}
 
     <!-- The controls, under the thumb. -->
     <div class="relative z-10 flex justify-center px-4 pt-4 pb-8 md:pb-12">
@@ -522,21 +701,29 @@
           )}
         </div>
       {:else if !isEnded}
-        <div class="flex items-start justify-center gap-4 sm:gap-6">
-          {#if isMobileRtc && speakerSupported}
+        <!-- Four controls at 390 px: 4 x 80 + 3 x 8 fits the 358 px between the gutters. -->
+        <div class="flex items-start justify-center gap-2 sm:gap-6">
+          {#if speakerRoutable && speakerSupported}
             {#snippet speakerIcon()}
               {#if isSpeakerOn}<Volume2 size={26} />{:else}<Speaker size={26} />{/if}
             {/snippet}
             {@render control(
               'call-speaker',
-              isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
+              speakerDisabled
+                ? m.call_route_unavailable_label()
+                : isSpeakerOn
+                  ? m.call_speaker_label()
+                  : m.call_earpiece_label(),
               isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label(),
               () => (isSpeakerOn = !isSpeakerOn),
               isSpeakerOn ? 'on' : 'neutral',
-              speakerIcon
+              speakerIcon,
+              speakerDisabled
             )}
           {/if}
-          {#if CALLS_VIDEO_ENABLED}
+          <!-- The switch gates turning the camera ON, never OFF: the mode can drop to audio mid-call,
+               and a control that vanished then would leave a running camera nobody can stop. -->
+          {#if callVideoAvailable(serverCallsMode()) || !call.isVideoOff}
             {#snippet videoIcon()}
               {#if call.isVideoOff}<VideoOff size={26} />{:else}<Video size={26} />{/if}
             {/snippet}

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PlatformService } from '../platform/platform.service';
 import { deployedVersion } from '../platform/deployed-version';
 import { deployBuild } from '../platform/deploy-build';
+import type { CallsMode } from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
   version: string;
@@ -18,6 +19,14 @@ export type AppVersionResponse = {
   maintenance: {
     enabled: boolean;
     message: string | null;
+  };
+  /**
+   * The server's kill switch for calls (`platform_config.calls_mode`). Clients hide every call
+   * entry point the server would refuse; the refusal itself is chat-delivery-service's, on every
+   * call request, so a client that ignores this field is refused rather than obeyed.
+   */
+  calls: {
+    mode: CallsMode;
   };
 };
 
@@ -38,6 +47,7 @@ export class VersionService {
         enabled: platform.maintenanceEnabled,
         message: platform.maintenanceMessage,
       },
+      calls: { mode: platform.callsMode },
     };
   }
 }

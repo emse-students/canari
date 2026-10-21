@@ -29,6 +29,7 @@ import {
   ListPostsQueryDto,
   VotePollDto,
   AddCommentDto,
+  ListCommentsQueryDto,
   AddReactionDto,
   EditCommentDto,
   UpdatePostDto,
@@ -169,6 +170,7 @@ export class PostsController {
       promo: query.promo,
       formation: query.formation?.trim() || undefined,
       kind: query.kind,
+      singlePhotos: query.singlePhotos === true,
     });
   }
 
@@ -336,6 +338,17 @@ export class PostsController {
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
     return this.interactions.removeReaction(postId, xUserId);
+  }
+
+  /** One page of comments as whole threads: `?cursor=<position>&limit=20&order=recent|oldest`. */
+  @UseGuards(NginxAuthGuard, FeedAudienceGuard)
+  @Get(':postId/comments')
+  listComments(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
+    @Query() query: ListCommentsQueryDto
+  ) {
+    return this.service.listComments(postId, xUserId, query);
   }
 
   /** Adds a comment from the calling user to a post. */

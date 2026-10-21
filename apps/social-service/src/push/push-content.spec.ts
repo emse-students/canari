@@ -22,6 +22,9 @@ import {
   repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
+  liveCutContent,
+  liveSuspendedContent,
+  liveWithdrawnContent,
   previewOf,
   markdownToPreviewText,
   publicMediaIconId,
@@ -61,6 +64,9 @@ describe('push content', () => {
     ['repostPersonalRequested', repostPersonalRequestedContent('BDE', 'hello')],
     ['coorganiseProposed', coorganiseProposedContent('BDE', 'Gala')],
     ['liveStarted', liveStartedContent('Claire')],
+    ['liveCut', liveCutContent()],
+    ['liveSuspended', liveSuspendedContent()],
+    ['liveWithdrawn', liveWithdrawnContent()],
   ];
 
   it.each(ALL)('%s carries a key, not only a sentence', (_name, content) => {
@@ -353,6 +359,9 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_repost_personal_requested', repostPersonalRequestedContent(ACTOR, '')],
     ['social_coorganise_proposed', coorganiseProposedContent(ACTOR, '')],
     ['social_live_started', liveStartedContent(ACTOR)],
+    ['social_live_cut', liveCutContent()],
+    ['social_live_suspended', liveSuspendedContent()],
+    ['social_live_withdrawn', liveWithdrawnContent()],
   ];
 
   /**

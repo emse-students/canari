@@ -1,0 +1,22 @@
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
+import { UpdatePlatformConfigDto } from './update-platform-config.dto';
+
+/**
+ * The calls kill switch takes exactly the three values the column's CHECK constraint allows
+ * (migration 014): a fourth would pass the DTO and be refused by Postgres as a 500, so it is
+ * refused here as a 400 instead.
+ */
+describe('UpdatePlatformConfigDto.callsMode', () => {
+  const errorsFor = (callsMode: unknown) =>
+    validate(plainToInstance(UpdatePlatformConfigDto, { callsMode }));
+
+  it.each(['off', 'audio', 'audio_video'])('accepts %s', async (mode) => {
+    expect(await errorsFor(mode)).toHaveLength(0);
+  });
+
+  it.each(['on', 'testers', 'video', '', 'AUDIO'])('refuses %s', async (mode) => {
+    const errors = await errorsFor(mode);
+    expect(errors.map((e) => e.property)).toEqual(['callsMode']);
+  });
+});

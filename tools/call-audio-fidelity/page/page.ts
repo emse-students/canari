@@ -16,6 +16,11 @@ import {
   configureCallAudioSenders,
 } from '../../../frontend/src/lib/utils/callAudio';
 import { transformAttribute } from '../../../frontend/src/lib/utils/callE2eReport';
+import {
+  applyCallVideoSenderLimits,
+  callVideoConstraints,
+  preferVp8,
+} from '../../../frontend/src/lib/utils/callVideo';
 
 interface Impair {
   loss?: number;
@@ -37,12 +42,42 @@ interface RigConfig {
   codecOrder?: string[];
   /** SCENARIO: send nothing at first; `addLateTrack()` later puts the audio on a NEW m-line. */
   lateTrack?: boolean;
+  /**
+   * SCENARIO with `lateTrack`: the late audio goes on the transceiver the OTHER side's offer created
+   * (`addTrack` reuses it) instead of a fresh one - its sender got its transform in `ontrack`, as
+   * `CallService.handleRemoteTrack` does since 2026-10-20.
+   */
+  reuseRemoteTransceiver?: boolean;
+  /**
+   * FAULT ROW with `reuseRemoteTransceiver`: `ontrack` attaches the RECEIVER only (the app before
+   * 2026-10-20), so the reused sender was bare at its creation and Chromium short-circuited it -
+   * a transform assigned at `addTrack`, even in the same task, is never fed.
+   */
+  bareSenderInOntrack?: boolean;
   /** FAULT ROW: this side's sender applies the app transform twice. */
   doubleEncrypt?: boolean;
   /** FAULT ROW: this side derives a DIFFERENT key (two MLS epochs - review item F5). */
   wrongKey?: boolean;
   /** FAULT ROW: this side encrypts but attaches NO receiver transform (ciphertext to the decoder). */
   noReceiverTransform?: boolean;
+  /**
+   * FAULT ROW: both transforms are assigned ONE TASK after `addTrack` - the app's order until
+   * 2026-10-20 (an await of the worker's `keyReady` in between). Chromium short-circuits them: the
+   * transformers exist and are never fed (CALL-E2E-BYPASS-MI9T).
+   */
+  transformOneTaskLate?: boolean;
+  /** VIDEO: the fake camera from the start, on its own `addTrack` transceiver, VP8 required. */
+  video?: boolean;
+  /**
+   * VIDEO, after the first negotiation: `fresh` = the camera on a NEW transceiver with both
+   * transforms in its task (`CallService.toggleVideo`); `reuse-bare` = FAULT, `addTrack` reuses the
+   * video transceiver the other side's offer created, whose sender `ontrack` left bare.
+   */
+  lateCamera?: 'fresh' | 'reuse-bare';
+  /** EXPERIMENT: the video m-lines held to H.264 instead of VP8 (the app's worker unchanged). */
+  videoCodec?: 'vp8' | 'h264';
+  /** EXPERIMENT: video frames encrypted WHOLE, VP8 header included (the worker before 2026-10-20). */
+  wholeFrameVideo?: boolean;
 }
 
 const KEY = Uint8Array.from({ length: 32 }, (_, i) => i * 7 + 3);
@@ -53,6 +88,13 @@ let cfg: RigConfig;
 let worker: Worker | null = null;
 let remote: MediaStream | null = null;
 let localStream: MediaStream | null = null;
+/** The camera's transceiver on this side (from the start, or added late). */
+let cameraTransceiver: RTCRtpTransceiver | null = null;
+/** The remote video track and the element rendering it, as the call screen renders it. */
+let remoteVideoTrack: MediaStreamTrack | null = null;
+let remoteVideoEl: HTMLVideoElement | null = null;
+/** Mute/unmute events of the remote video track, in order. */
+const remoteVideoEvents: string[] = [];
 let recorder: { chunks: Float32Array[]; ctx: AudioContext } | null = null;
 const statsLog: unknown[] = [];
 const log: string[] = [];
@@ -103,9 +145,11 @@ async function keyWorker(): Promise<Worker> {
   return w;
 }
 
-function transformOptions(side: 'sender' | 'receiver') {
+function transformOptions(side: 'sender' | 'receiver', kind: 'audio' | 'video' = 'audio') {
   return {
     side,
+    kind,
+    wholeFrameVideo: !!cfg.wholeFrameVideo,
     passthrough: !cfg.e2e,
     doubleEncrypt: !!cfg.doubleEncrypt,
     ...(side === 'receiver' ? (cfg.impair ?? {}) : {}),
@@ -145,27 +189,52 @@ function outgoing(sdp: string): string {
 
 async function setup(config: RigConfig) {
   cfg = config;
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints(), video: false });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: constraints(),
+    video: cfg.video ? callVideoConstraints('user') : false,
+  });
   const settings = stream.getAudioTracks()[0].getSettings();
   pc = new RTCPeerConnection({ iceServers: [], iceTransportPolicy: 'all' });
   pc.ontrack = (e) => {
-    remote = e.streams[0] ?? new MediaStream([e.track]);
+    const kind = e.track.kind as 'audio' | 'video';
+    if (kind === 'audio') remote = e.streams[0] ?? new MediaStream([e.track]);
     // As CallService.handleRemoteTrack: a receiver without its transform gets one HERE (late).
     const late = !!worker && !e.receiver.transform && !cfg.noReceiverTransform;
     if (late)
-      e.receiver.transform = new RTCRtpScriptTransform(worker!, transformOptions('receiver'));
+      e.receiver.transform = new RTCRtpScriptTransform(worker!, transformOptions('receiver', kind));
+    // As CallService.handleRemoteTrack: the SENDER of a transceiver the offer created, in the same
+    // task - a bare one is short-circuited for good if `addTrack` reuses it later.
+    if (late && !cfg.bareSenderInOntrack && !e.transceiver.sender.transform)
+      e.transceiver.sender.transform = new RTCRtpScriptTransform(
+        worker!,
+        transformOptions('sender', kind)
+      );
+    if (kind === 'video') {
+      requireVideoCodec(e.transceiver);
+      watchRemoteVideo(e.track);
+    }
     note(`ontrack ${e.track.kind}${late ? ' - receiver transform attached LATE, in ontrack' : ''}`);
   };
   pc.onconnectionstatechange = () => note(`connectionState=${pc.connectionState}`);
   if (needsTransform()) worker = await keyWorker();
   localStream = stream;
-  for (const track of cfg.lateTrack ? [] : stream.getTracks()) {
+  for (const track of cfg.lateTrack ? stream.getVideoTracks() : stream.getTracks()) {
     const sender = pc.addTrack(track, stream);
+    if (worker && cfg.transformOneTaskLate) await new Promise((r) => setTimeout(r, 0));
+    const t = pc.getTransceivers().find((x) => x.sender === sender)!;
+    const kind = track.kind as 'audio' | 'video';
     if (worker) {
-      sender.transform = new RTCRtpScriptTransform(worker, transformOptions('sender'));
-      const t = pc.getTransceivers().find((x) => x.sender === sender)!;
+      sender.transform = new RTCRtpScriptTransform(worker, transformOptions('sender', kind));
       if (!cfg.noReceiverTransform)
-        t.receiver.transform = new RTCRtpScriptTransform(worker, transformOptions('receiver'));
+        t.receiver.transform = new RTCRtpScriptTransform(
+          worker,
+          transformOptions('receiver', kind)
+        );
+    }
+    if (kind === 'video') {
+      cameraTransceiver = t;
+      requireVideoCodec(t);
+      void applyCallVideoSenderLimits(sender, note);
     }
   }
   if (cfg.codecOrder) {
@@ -175,11 +244,181 @@ async function setup(config: RigConfig) {
       return i < 0 ? 99 : i;
     };
     const ordered = [...caps].sort((a, b) => rank(a) - rank(b));
-    for (const t of pc.getTransceivers()) t.setCodecPreferences(ordered);
+    for (const t of pc.getTransceivers())
+      if ((t.sender.track ?? t.receiver.track)?.kind === 'audio') t.setCodecPreferences(ordered);
     note(`codec order ${ordered.map((c) => c.mimeType).join(',')}`);
   }
-  await configureCallAudioSenders(pc, false);
+  await configureCallAudioSenders(pc, false, note);
   return { settings, constraints: constraints() };
+}
+
+/**
+ * The video codec a transceiver is held to: VP8 through the app's own `preferVp8`, or H.264 for the
+ * experiment row (the app's worker then encrypts it whole and says so).
+ */
+function requireVideoCodec(t: RTCRtpTransceiver) {
+  if (cfg.videoCodec !== 'h264') {
+    if (!preferVp8(t, note)) throw new Error('VP8 cannot be required');
+    return;
+  }
+  const caps = RTCRtpReceiver.getCapabilities('video')?.codecs ?? [];
+  const h264 = caps.filter((c) => /video\/(h264|rtx)/i.test(c.mimeType));
+  t.setCodecPreferences(h264);
+  note(`video held to ${h264.filter((c) => /h264/i.test(c.mimeType)).length} H.264 profile(s)`);
+}
+
+/** Renders the remote video as the call screen does, and records its mute/unmute events. */
+function watchRemoteVideo(track: MediaStreamTrack) {
+  remoteVideoTrack = track;
+  track.onmute = () => remoteVideoEvents.push('mute');
+  track.onunmute = () => remoteVideoEvents.push('unmute');
+  if (!remoteVideoEl) {
+    remoteVideoEl = document.createElement('video');
+    remoteVideoEl.muted = true;
+    remoteVideoEl.playsInline = true;
+    remoteVideoEl.autoplay = true;
+    document.body.append(remoteVideoEl);
+  }
+  remoteVideoEl.srcObject = new MediaStream([track]);
+  void remoteVideoEl.play().catch((e: unknown) => note(`remote video play failed: ${String(e)}`));
+}
+
+/**
+ * VIDEO SCENARIO: the camera goes on after the first negotiation. `fresh` is the app's
+ * `toggleVideo` (a new transceiver, both transforms in its task); `reuse-bare` is the FAULT the app
+ * avoided on 2026-10-20 (`addTrack` reusing the peer's offer-created transceiver, its sender bare).
+ * Returns the renegotiation offer.
+ */
+async function addLateCamera() {
+  const cam = await navigator.mediaDevices.getUserMedia({ video: callVideoConstraints('user') });
+  const track = cam.getVideoTracks()[0];
+  if (cfg.lateCamera === 'reuse-bare') {
+    const sender = pc.addTrack(track, cam);
+    const t = pc.getTransceivers().find((x) => x.sender === sender)!;
+    // In the same task as `addTrack`: what the app did, and not enough on a sender left bare.
+    if (worker && !sender.transform)
+      sender.transform = new RTCRtpScriptTransform(worker, transformOptions('sender', 'video'));
+    note(`late camera on transceiver mid=${t.mid} (${t.mid === null ? 'NEW' : 'REUSED'})`);
+    cameraTransceiver = t;
+  } else {
+    const t = pc.addTransceiver(track, { direction: 'sendrecv', streams: [cam] });
+    if (worker) {
+      t.sender.transform = new RTCRtpScriptTransform(worker, transformOptions('sender', 'video'));
+      t.receiver.transform = new RTCRtpScriptTransform(
+        worker,
+        transformOptions('receiver', 'video')
+      );
+    }
+    requireVideoCodec(t);
+    cameraTransceiver = t;
+  }
+  void applyCallVideoSenderLimits(cameraTransceiver.sender, note);
+  await pc.setLocalDescription();
+  return gathered();
+}
+
+/** VIDEO: a camera switch - a NEW capture handed to the SAME sender (`replaceTrack`), no negotiation. */
+async function switchCamera() {
+  const sender = cameraTransceiver!.sender;
+  sender.track?.stop();
+  const cam = await navigator.mediaDevices.getUserMedia({ video: callVideoConstraints('user') });
+  await sender.replaceTrack(cam.getVideoTracks()[0]);
+  note('camera switched (replaceTrack on the same sender)');
+}
+
+/** VIDEO: the camera OFF as the app does it - capture stopped, sender emptied, direction recvonly. */
+async function cameraOff() {
+  const t = cameraTransceiver!;
+  t.sender.track?.stop();
+  await t.sender.replaceTrack(null);
+  t.direction = 'recvonly';
+  note('camera off (replaceTrack(null), recvonly)');
+  await pc.setLocalDescription();
+  return gathered();
+}
+
+/** VIDEO: the camera back ON - a new capture on the same sender, direction sendrecv again. */
+async function cameraOn() {
+  const t = cameraTransceiver!;
+  const cam = await navigator.mediaDevices.getUserMedia({ video: callVideoConstraints('user') });
+  await t.sender.replaceTrack(cam.getVideoTracks()[0]);
+  t.direction = 'sendrecv';
+  note('camera on (replaceTrack(track), sendrecv)');
+  await pc.setLocalDescription();
+  return gathered();
+}
+
+/**
+ * Both pictures - this side's camera and the remote video - read WHILE both peers still send:
+ * the driver asks both pages before either finishes (a closed peer leaves a frozen remote).
+ */
+async function pictures() {
+  return {
+    local: await pictureOf(cameraTransceiver?.sender.track),
+    remote: await pictureOf(remoteVideoTrack),
+  };
+}
+
+/** The app worker's report mid-call (frames so far), asked as `finish` asks it. */
+async function report() {
+  return worker ? askWorker(worker, { type: 'report', tag: 'mid' }, 'report') : null;
+}
+
+/** What the receiver knows of the remote video track right now. */
+function remoteVideoState() {
+  return {
+    present: !!remoteVideoTrack,
+    muted: remoteVideoTrack?.muted ?? null,
+    readyState: remoteVideoTrack?.readyState ?? null,
+    events: [...remoteVideoEvents],
+  };
+}
+
+/**
+ * The mean colour and the luma spread of a video track, read from a 32x24 canvas: enough to tell
+ * the fake camera's picture from black, a frozen grey or decoded garbage, compared across the two
+ * processes (the remote picture against the sender's own capture).
+ */
+async function pictureOf(track: MediaStreamTrack | null | undefined) {
+  if (!track || track.readyState !== 'live') return null;
+  const el = document.createElement('video');
+  el.muted = true;
+  el.playsInline = true;
+  el.autoplay = true;
+  document.body.append(el);
+  el.srcObject = new MediaStream([track]);
+  // Bounded: a `play()` on a stream that never yields a frame never settles.
+  await Promise.race([
+    el.play().catch((e: unknown) => note(`picture play failed: ${String(e)}`)),
+    new Promise((r) => setTimeout(r, 2_000)),
+  ]);
+  await new Promise((r) => setTimeout(r, 300));
+  if (!el.videoWidth) {
+    el.remove();
+    note(`picture of ${track.kind} track ${track.id.slice(0, 8)}: no frame`);
+    return null;
+  }
+  const c = document.createElement('canvas');
+  c.width = 32;
+  c.height = 24;
+  const g = c.getContext('2d')!;
+  g.drawImage(el, 0, 0, 32, 24);
+  const px = g.getImageData(0, 0, 32, 24).data;
+  const sum = [0, 0, 0];
+  const lumas: number[] = [];
+  for (let i = 0; i < px.length; i += 4) {
+    sum[0] += px[i];
+    sum[1] += px[i + 1];
+    sum[2] += px[i + 2];
+    lumas.push(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
+  }
+  const n = px.length / 4;
+  const mean = lumas.reduce((a, x) => a + x, 0) / n;
+  const sd = Math.sqrt(lumas.reduce((a, x) => a + (x - mean) ** 2, 0) / n);
+  const size = { w: el.videoWidth, h: el.videoHeight };
+  el.srcObject = null;
+  el.remove();
+  return { ...size, rgb: sum.map((x) => Math.round(x / n)), lumaSd: Math.round(sd * 10) / 10 };
 }
 
 /**
@@ -189,6 +428,16 @@ async function setup(config: RigConfig) {
  */
 async function addLateTrack() {
   const track = localStream!.getAudioTracks()[0];
+  if (cfg.reuseRemoteTransceiver) {
+    const sender = pc.addTrack(track, localStream!);
+    const reused = pc.getTransceivers().length === 1;
+    // In the same task as `addTrack`: what the app did, and still not enough on a bare sender.
+    if (worker && !sender.transform)
+      sender.transform = new RTCRtpScriptTransform(worker, transformOptions('sender'));
+    note(`late track on ${reused ? 'the transceiver the offer created' : 'a NEW transceiver'}`);
+    await pc.setLocalDescription();
+    return gathered();
+  }
   const t = pc.addTransceiver(track, { direction: 'sendrecv', streams: [localStream!] });
   if (worker) {
     t.sender.transform = new RTCRtpScriptTransform(worker, transformOptions('sender'));
@@ -295,6 +544,37 @@ async function sampleStats() {
         out_fmtp: (byId.get(v.codecId as string) ?? {}).sdpFmtpLine,
       });
     }
+    if (v.type === 'inbound-rtp' && v.kind === 'video') {
+      Object.assign(s, {
+        vin_packetsReceived: v.packetsReceived,
+        vin_framesDecoded: v.framesDecoded,
+        vin_framesDropped: v.framesDropped,
+        vin_keyFramesDecoded: v.keyFramesDecoded,
+        vin_freezeCount: v.freezeCount,
+        vin_totalFreezesDuration: v.totalFreezesDuration,
+        vin_pliCount: v.pliCount,
+        vin_nackCount: v.nackCount,
+        vin_fps: v.framesPerSecond,
+        vin_w: v.frameWidth,
+        vin_h: v.frameHeight,
+        vin_codec: (byId.get(v.codecId as string) ?? {}).mimeType,
+        vin_decoder: v.decoderImplementation,
+        vin_bytes: v.bytesReceived,
+      });
+    }
+    if (v.type === 'outbound-rtp' && v.kind === 'video') {
+      Object.assign(s, {
+        vout_packetsSent: v.packetsSent,
+        vout_framesEncoded: v.framesEncoded,
+        vout_keyFramesEncoded: v.keyFramesEncoded,
+        vout_fps: v.framesPerSecond,
+        vout_w: v.frameWidth,
+        vout_h: v.frameHeight,
+        vout_limit: v.qualityLimitationReason,
+        vout_codec: (byId.get(v.codecId as string) ?? {}).mimeType,
+        vout_bytes: v.bytesSent,
+      });
+    }
     if (v.type === 'media-source' && v.kind === 'audio') {
       Object.assign(s, { src_audioLevel: v.audioLevel, src_erl: v.echoReturnLoss });
     }
@@ -381,6 +661,7 @@ async function finish() {
     report = await askWorker(worker, { type: 'report', tag: 'rig' }, 'report');
     tap = (await askWorker(worker, { type: 'dumpTap' }, 'tap')) as unknown as typeof tap;
   }
+  const remoteVideo = remoteVideoState();
   pc.close();
   worker?.terminate();
   const engine = {
@@ -388,13 +669,30 @@ async function finish() {
     senderAttr: transformAttribute(RTCRtpSender.prototype),
     receiverAttr: transformAttribute(RTCRtpReceiver.prototype),
   };
-  return { b64, sampleRate, stats: statsLog, senderParams, log, tap, report, engine };
+  return {
+    b64,
+    sampleRate,
+    stats: statsLog,
+    senderParams,
+    log,
+    tap,
+    report,
+    engine,
+    remoteVideo,
+  };
 }
 
 Object.assign(window, {
   rig: {
     setup,
     addLateTrack,
+    addLateCamera,
+    switchCamera,
+    cameraOff,
+    cameraOn,
+    remoteVideoState,
+    report,
+    pictures,
     offer,
     answer,
     accept,

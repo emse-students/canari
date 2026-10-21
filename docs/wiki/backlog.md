@@ -27,7 +27,7 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
-## P1 - Live moderation (WP-L8): the server half is BUILT, the client half and four decisions are owed (2026-10-19)
+## P1 - Live moderation (WP-L8): the server half is BUILT, the client half is BUILT, the decisions of 2026-10-20 are taken and their server work is owed (2026-10-19)
 
 A RELEASE BLOCKER (D3): no stable carries lives before it. Built on the server, draft PR: a live is
 reported through `content_reports`, staff cut it (`POST /api/lives/:id/cut`, 410 `endReason: 'cut'`),
@@ -35,13 +35,28 @@ the first-live rules acceptance is recorded and required ([lives](services/lives
 **Built 2026-10-19, dev builds, draft PR:** the viewer's and the broadcaster's cut screens, the
 `live_cut` bell row and the admin queue's live row with its cut button
 ([live](frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
-**Built 2026-10-19, draft PR:** the viewer's report control (a Flag in the top bar, the report dialog, the block offer; reporting one chat line stays impossible by the server's contract). **Owed, code:** the chat-line hiding inside WP-L6, by the contract written there; a push for the cut
-once `notif_social_live_cut_*` exist in both native apps. **Owed, the user:** (1) the STRIKE POLICY -
-what N cuts trigger (a mute, a broadcasting ban, nothing), today only recorded and counted;
-(2) how long a cut is kept (365 days, a planning figure); (3) whether a live past N pending reports is
-cut automatically (today never: a person cuts); (4) the store answers that only the user can give
-- the response-time commitment, the filtering statement, the terms' lives paragraph
-([store-ugc-answers](store-ugc-answers.md)).
+**Built 2026-10-19, draft PR:** the viewer's report control (a Flag in the top bar, the report dialog, the block offer; reporting one chat line stays impossible by the server's contract). **Owed, code:** the chat-line hiding inside WP-L6, by the contract written there. **DECIDED BY THE USER, 2026-10-20** (substance and contradictions with what exists:
+[lives](services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience)): strike policy =
+warning, then suspension, then withdrawal by staff; a cut is kept **90 days**; **no automatic cut on N
+reports**; live reports answered within **24 hours on working days**; **a reported chat message is kept (encrypted,
+for staff) until handled** - this REVERSES C2's "no grace period"; floating reactions = heart, laugh,
+bravo, fire, the canary chick; the first-live rules reuse the posts' publication rules; **no viewer cap
+wanted** (the plan: [live](frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)).
+**WP-L8b, server half BUILT 2026-10-21 (draft PR):** the strike ladder, the 90-day retention, the
+reported chat line (checked, signed, kept until handled and 90 days at most, the author's erasure
+included), the five reaction kinds and `LIVE_RULES_VERSION` 2 ([lives](services/lives.md#the-strike-ladder-wp-l8b)).
+**Owed before it ships:** the GitHub secrets `LIVE_REPORT_SIGNING_KEY` and `DEV_LIVE_REPORT_SIGNING_KEY`
+(the user, one-off: REQUIRED in both estates, so a deploy is refused without them). **Owed, code:**
+(c) the client set of five kinds and (d) the rules sheet showing the posts' rules, both in #2170;
+the client half of the ladder (the three pushes - cut, suspension, withdrawal - and the two new bell
+rows are BUILT 2026-10-21, draft PR, owed a reading on both phones once a store build carries the
+strings: [lives](services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)) - the two start
+refusals and `GET /api/lives/standing` on the pre-live screen, the admin standing, withdraw / lift
+buttons and the `live_chat` row with its integrity ([lives](services/lives.md#what-the-client-still-owes-strings-for-paraglide));
+(e) BUILT 2026-10-21: the hourly `[LIVE_REPORT_AGE]` alarm, `error` past 24 working hours
+([lives](services/lives.md#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e)), owed one reading of
+the line on dev; (f) the viewer cap lifted, after the plan's measurements. **Owed, the
+user:** the filtering statement and the terms' lives paragraph ([store-ugc-answers](store-ugc-answers.md)).
 
 **P3, found by the review of the server half: a seat taken AFTER an end's release outlives the end
 by up to its 30 s lease.** A viewer whose key read began before an end (a cut, the broadcaster's end,
@@ -155,6 +170,23 @@ On a key-group frame `openDistributionFrame` compares only the envelope's USER w
 
 One id, repeated at 15 s, from the previous page's callback. Suspect, unproven: the `plugin-websocket` listener of `TauriMlsService` outliving the page (no `pagehide` release). Evidence and next step: [device-verification](device-verification.md#2026-10-17-follow-up-the-sort-row-fixed-and-the-stale-tauri-callback-open-cause-not-proven). 2026-10-17: `TauriMlsService` now releases the native socket (listener and connection) on `pagehide` through `pauseSocket`. OWED: one Mi 9T reading after a text-size reload that the repeating id is gone; delete this item then, and if it repeats the cause is elsewhere.
 
+## P3 - EXIT-FORTIFY: closing the app logs a native abort `pthread_mutex_lock called on a destroyed mutex` (Mi 9T, `v1.3.1-alpha.5`, 2026-10-21)
+
+On app close Android logged `FORTIFY: pthread_mutex_lock called on a destroyed mutex`, recorded as a normal exit. Suspect, unproven: a thread still locking after shutdown destroyed the mutex. It could surface in Play crash reports. Owed: the thread's name from logcat on a second close. Evidence: [device-readings-2026-10](device-readings-2026-10.md), section "2026-10-21 - `v1.3.1-alpha.5` - the stable gate" (#2178).
+
+## P3 - `[WS] 4 pings without server response - closing zombie connection`, repeatedly overnight on an idle Mi 9T (2026-10-21)
+
+Seen at 04:36, 04:45, 04:55 and 06:12 on a phone left idle. Not investigated: whether the phone's network slept, the server stopped answering, or the ping budget is too tight for Doze.
+
+## P3 - Dev bench notes: a dev push cannot be read, and a PIN reset through the rig purges the iPhone (2026-10-21)
+
+- **Dev sends no FCM**: `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` does not exist, so `push_text.rs` / `proto_fields.rs` behaviour and the banner on a locked phone cannot be read on dev. A dev push reading needs that secret: the owner line "set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret" in [owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
+- **The rig's W2 Chrome profile is the same account as the iPhone's test account**, so a PIN reset through W2 purges the iPhone's footprint. Check which devices share the account before resetting a PIN.
+
+## Idea (owner, 2026-10-21): store videos and screenshots from the bench phones
+
+Reuse the bench phones with screen recording to make demo videos and screenshots for the stores and for communication, from the fictional dev seed (never production). Personal data blurred frame by frame and the result reviewed before delivery; Apple and Google formats. Capture and sizes: [store-listings](store-listings.md#6-capture). Not built.
+
 ## Owed a VERIFICATION, and nothing else
 
 Each of these is fixed in the tree; what is left is the measurement that would prove it. **Nothing
@@ -167,6 +199,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 | a video filmed with the new-post composer's camera is a CanaReel, with a deletion notice and "Garder comme post" (user, 2026-10-19: one camera, one behaviour; component tests only) | check CR on the Mi 9T and the iPhone 12, next pre-release ([device-verification](device-verification.md#cr-the-composers-camera-films-a-canareel---owed-on-both-phones)) |
 | calls lot 1 (#1997, #2010): 1:1 audio peer to peer on dev builds, never placed on a phone - BLOCKED 2026-10-18, no tag carries it ([bench readings](device-readings-calls-live-2026-10-18.md#1-calls---blocked-no-build-within-reach-carries-lot-1)) | after the next pre-release: a call PC <-> Mi 9T and Mi 9T <-> iPhone 12 on dev - setup time, the selected pair (direct or Cloudflare TURN), audio heard both ways, the ring on a throttled uplink, and a key mismatch on a build with #2013 |
 | CALL-WIFI: a network blip no longer ends a 1:1 call - the signalling seat is resumed and the initiator restarts ICE (2026-10-19, fake-socket and real-binary tests only, [calls](frontend/modules/calls.md#a-network-blip-does-not-end-the-call-call-wifi-2026-10-19)) | on a pre-release carrying it, both bench phones: CALL-L1 steps 8-10 - Wi-Fi off on the Mi 9T for 6 s and 14 s mid-call, the call survives with audio back both ways; 90 s ends it ([device-verification](device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)) |
+| the feed's LEFT edge is excluded from the Android back gesture, so the swipe to the camera started in the left 30 CSS px opens the camera (owner decision 2026-10-21; Kotlin and unit tests only, `MainActivity` compiled by no PR gate, [mobile](frontend/mobile.md#the-left-edge-back-gesture-is-excluded-over-the-feed-and-only-there-2026-10-21)) | on the Mi 9T, next pre-release, gesture navigation: (1) logcat `gesture exclusion: spans={LEFT=...} -> [ExclusionBand(left=0, ...)]` and the same rect in `dumpsys window`; (2) on `/posts`, swipes from x = 20, 50 and 60 physical px at y = 1300 AND at the band's top and bottom rows open the camera, 0 Back; (3) just above and just below the band the left-edge Back still works; (4) the right edge is intact: a reply swipe on an own bubble at x >= 406 CSS px still replies, keyboard closed and open; (5) after a reload (MLS recovery) then `/posts`, both edges' Back behave as specified; (6) leaving the feed clears the band (`/posts/<id>`, `/chat`, `/communities`, `/camera`: left-edge Back works), as do the keyboard up, a rotation and a resume; (7) with an overlay over the feed (reel viewer, media viewer, a modal, the composer's camera) a mid-screen left-edge Back closes it; (8) 3-button navigation: no rect, empty list in the log; (9) back-sensitivity slider at max: the band widens with the inset and still covers the start. Note the dead zone: a start on a horizontal chip strip inside the band does nothing (`shouldIgnoreSwipeTarget`), by design. Recipe: `<harness-dir>/a1-bench/camera-swipe-r1021/`, `gen1.mjs` straight cells |
 | a reply swipe along a thumb's arc (45-70 px of vertical drift) replies once the bubble shows armed (2026-10-14; 0 of 14 before, unit and component tests since) | on the Mi 9T, next pre-release: the class-A cells of the matrix (`<harness-dir>/swipe-reply-r1014/`), 110 px across with 45 and 60 px drift, own and received; on the iPhone 12, the same arc by finger, its swipe never having been read on WebKit ([design-reference](frontend/design-reference.md#the-reply-swipe-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-14)) |
 | an Android relaunch (navigation-mode switch, WebView update) destroys the old WebView, so its Web Locks no longer withhold refused salon texts (2026-10-14; compiled and source-gated, never run) | on the Mi 9T, next pre-release: switch the navigation mode twice, CDP lists ONE page, a salon text refused before the switch comes back to its composer; restore gestural ([mobile](frontend/mobile.md#a-relaunched-activity-left-its-webview-alive-and-the-orphan-kept-its-web-locks-2026-10-14)) |
 | a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
@@ -221,7 +254,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **decide the live strike policy, the cut retention, an automatic cut on N reports, and the store answers only you can give** (a response-time commitment, the filtering statement, the terms' lives paragraph) | 4 decisions, 1 text | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-and-four-decisions-are-owed-2026-10-19) |
+| **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
+| **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
 | **send the DPO dossier to the school's DPO** and bring back the answers to its three questions (the school's role, the hosting agreement with the DSI, the MiGallery DPIA); MiTV keeps the proof of each member's face-recognition consent | 1 e-mail, 1 conversation | [the GDPR entry](#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16), [dso-dossier](compliance/dso-dossier.md) |
 | **wipe the real-data copy dev still holds, once the fictional seed has merged and a pre-release has moved `dev-deployed`, and BEFORE the next stable - that stable ships the privacy page and dev banner saying dev holds no production data, which is false until this wipe has run and verified** (owner, 2026-10-16, GDPR): run `scheduled.yml` `job=dev-reset` with `dry_run=true`, then `false`; delete any leftover copy dump (`/tmp/canari-copy.*`) and the copy-era dev log archives on the host; grant your own dev row `admin` after signing in. A production-estate write, the owner's | 1 dispatch, 1 ssh session | [dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16) |
 | **decide the LOCAL copy of production** (`pull-prod-dump.sh` + `restore-into-local.sh`, PII included onto a developer's machine) - the one copy of production left after the dev copy was deleted on 2026-10-16 | 1 decision | [dev-environment](infrastructure/dev-environment.md#what-the-copy-was-kept-so-nobody-rebuilds-it), [databases](infrastructure/databases.md) |
@@ -243,7 +277,9 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
+| **review the calls privacy wording (#2013's `/legal/privacy` and register texts: each party sees the other's IP, Cloudflare relays some calls) before calls ship** - presented to you later, decided 2026-10-21 | 1 review | [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21) (B5) |
 | **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
+| **decide the camera swipe's cause B: a swipe starting in Android's left edge (30 CSS px) is a system Back - add a gesture exclusion rect on the feed's left edge, as was done for the conversations' right edge?** (investigation: PR #2177) | 1 decision | [the right-edge entry](#android-back-gesture-zone-on-the-right-edge-own-bubbles---decided-by-the-user-2026-10-14-draft-pr-in-progress) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
 
@@ -321,17 +357,36 @@ searches), `HEAD` content-length.
 
 **User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Budget: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1 (saved workspace list), F2, F3, F4 (a salon's last page kept locally), F5 and F6 are built and measured; the tab is 2-4x faster and works offline, but still short of 200 ms (first mount cut, see the page). **Left:** F7's second half (one native call for a page's signatures; native, so a lead review), a re-measure against the budget on the Mi 9T, a CPU profile of the warm resume at 4x, the history head/body split, iOS. State and numbers: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`.
 
+## P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)
+
+- **F6 - the POLITE side's own pending offer, lost with a dead socket, is never rolled back.** Only the initiator rolls back an unanswered offer on a resume (`restartIfMediaDidNotSurvive` checks `have-local-offer` on the initiator alone). A polite side that had renegotiated (a track added) and lost that offer stays in `have-local-offer`; the initiator's next restart offer then collides and the polite side wins by an implicit rollback - so it heals, but by the collision path, not by design. Fix when a polite-side renegotiation ships (none does today: audio only).
+- **F7 - a resume whose `Joined` and `PeerReady { resumed }` straddle an ICE `failed` charges TWO restart units.** ICE `failed` between the two frames restarts on the OLD pairing (offer charged, then lost when `PeerReady` opens a new pairing), and the resume restarts again. Bounded (the budget still ends it) and refunded on packet evidence once audio flows; the cost is one unit of three. Fix: defer an ICE-triggered restart while a resume is joined but not yet paired.
+
+Mechanism of both: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix). Delete each with its fix.
+
+## P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)
+
+The client's path line ([calls](frontend/modules/calls.md); a diagnostic since 2026-10-21 - the TURN budget reads Cloudflare's meter, never this line) is written ONCE, at `connected`; ICE may move to a better pair afterwards. Bench P1 logged `relayed=yes` on both ends while `getStats` read `host/udp -> host/udp` at the end ([readings](device-readings-2026-10.md)). Fix: log the pair again when the selected pair changes (or at hang-up), so the last line names the path the call ended on. Delete with its fix.
+
+## P1 - CALL-WS-V6 is fixed on a branch and owed ONE phone reading (2026-10-20)
+
+The native chat socket now races IPv6 and IPv4 and closes a connect it abandoned ([mobile](frontend/mobile.md#the-native-socket-races-ipv6-and-ipv4)). Owed on the Mi 9T, on the alpha that carries it: the PC's mobile hotspot with broken IPv6 (bench P6), `Connected to Chat Gateway` within a second, one `[WS-NET] ... while the preferred address was still pending` INFO line per connect in `logcat` (a WARN `... the preferred address FAILED` instead means the IPv6 attempt errored rather than hung - record which), no `[WS] native socket completed ... closing it` WARN, and the iPhone's call RINGING the phone; back on the bench Wi-Fi, no `[WS-NET]` line above debug. Delete with that reading.
+
+## P3 - Nothing reports an upstream `tauri-plugin-websocket` release past the vendored 2.5.0 (2026-10-20, not built)
+
+The plugin is a vendored fork (`frontend/src-tauri/patches/tauri-plugin-websocket`, pinned `=2.5.0`), Dependabot does not watch `src-tauri`, and whether `cargo audit` matches advisories against a PATH package was not verified (rustsec's query is believed to scope to crates.io sources - read nowhere here). So an upstream fix, security included, would reach nobody. Wanted: a scheduled check (on `scheduled.yml`, no new workflow) that compares crates.io's latest version with the pinned one and reports a newer one, naming the rebase it asks for. Delete when it exists.
+
+## P3 - The call resume ladder has no jitter (review of #2148, 2026-10-19, not built)
+
+`CallService`'s signalling resume retries at fixed moments (1, 2, 4, 4, 4... s, `cappedReconnectDelayMs`), so two clients that lost the same Wi-Fi at the same instant reconnect in lockstep - harmless at two phones, a burst on `call-service` once many share a network. Jitter must not become a clock that decides anything: it spreads WHEN an attempt starts, the budget stays a count. Mechanism: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix). Delete this item when jitter ships or the burst is measured as irrelevant.
+
 ## P3 - ChatArea's mount cost grows with the whole thread, not with the 60-row window (measured 2026-10-19)
 
 Mounting `ChatArea` on 300 messages costs 2.0 s in happy-dom, on 70 messages 0.5 s, although the entry window mounts 60 rows either way, so something walks or derives from every message before the window cuts it. Found while making `ChatArea.entryWindow` stop timing out under load ([test-suite-reform](test-suite-reform.md#wp-t9-s---one-walk-of-the-source-tree-for-every-scan-2026-10-19), which now mounts 80 rows). Not read in the component; profile a long real thread on the Mi 9T before assuming it matters there. Delete this item with the cause or the measurement that refutes it.
 
-## P3 - The reel viewer has no like control: a keyboard or screen-reader member cannot like a reel there (#2113, 2026-10-19, a decision for the user)
+## P2 - Live chat and floating reactions (WP-L6): the server is MERGED (#2131), the client in review (#2136), five things are owed (2026-10-19)
 
-The double tap that likes a reel (#2113) is a pointer gesture only; the viewer draws no heart or reaction button, so a keyboard or VoiceOver/TalkBack member must close it and use the card's picker, and a like given there is also taken back only from the card. Decide whether the viewer gets a reaction control (Instagram's right-hand rail) or stays as it is. [reels](frontend/modules/reels.md#a-double-tap-on-a-reel-likes-it-2026-10-19)
-
-## P2 - Live chat and floating reactions (WP-L6): the server half is a DRAFT, five things are owed (2026-10-19)
-
-The sixteen decisions (C1-C16: PostgreSQL rows erased with the live, the manifest poll as transport, a sequence under the live's row lock, server-side reaction sums) are on [lives](services/lives.md#live-chat-and-floating-reactions-wp-l6), taken by the lead on the user's instruction, each reversible. **Owed before any stable carries it:** (a) the adversarial crypto review of the chat seal (C12, `liveChatCrypto.ts`), as for the segment seal; (b) a dev reading with several viewers chatting while a broadcaster sends segments - the chat writes now share the live's row lock with the ingest, and nothing has measured that contention; (c) the user's ruling on two of the lead's choices: NO grace period after the end (C2 - a reported message is gone with its live), and five reaction kinds without sad or angry (C8); (d) **reporting ONE chat message is not possible**: WP-L8 (merged, #2134) reports through `content_reports` with `contentType: 'live'` only, so a report names the live, never a message - a message report needs its own content type AND a decision on what it keeps, since the server cannot read the text (the reporter's client would have to hand the plaintext over, which C12 does not give the server today); (e) a phone reading of the panel and the floating layer on the Mi 9T and the iPhone 12. Accepted, stated: a viewer refused `LIVE_FULL` sees no chat either (the chat rides the manifest, C3); a message whose transaction commits after its author's erasure survives until its live ends (at most an hour); an erased account's messages leave no tombstone, so a screen that drew them keeps them until it closes ([lives](services/lives.md#an-erased-account-and-a-single-message-reported)).
+The sixteen decisions (C1-C16: PostgreSQL rows erased with the live, the manifest poll as transport, a sequence under the live's row lock, server-side reaction sums) are on [lives](services/lives.md#live-chat-and-floating-reactions-wp-l6), taken by the lead on the user's instruction, each reversible. **Owed before any stable carries it:** (a) the adversarial crypto review of the chat seal (C12, `liveChatCrypto.ts`), as for the segment seal; (b) a dev reading with several viewers chatting while a broadcaster sends segments - the chat writes now share the live's row lock with the ingest, and nothing has measured that contention; (c) the user's ruling on two of the lead's choices, GIVEN 2026-10-20: C2's "no grace period" is REVERSED for a reported message, and the reactions are heart, laugh, bravo, fire and the canary chick (no sad or angry holds) - [lives](services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience); (d) reporting ONE chat message: server built in WP-L8b (`contentType: 'live_chat'`, [lives](services/lives.md#a-reported-chat-line-wp-l8b)), the client control is #2170; (e) a phone reading of the panel, the reaction bar and the floating layer on the Mi 9T and the iPhone 12, the broadcaster's on-air chat included ([live](frontend/modules/live.md#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft)). Accepted, stated: a viewer refused `LIVE_FULL` sees no chat either (the chat rides the manifest, C3); a message whose transaction commits after its author's erasure survives until its live ends (at most an hour); an erased account's messages leave no tombstone, so a screen that drew them keeps them until it closes ([lives](services/lives.md#an-erased-account-and-a-single-message-reported)).
 
 ## P3 - iOS: the system theme does not follow a live switch of the phone's theme (2026-10-19)
 
@@ -1046,12 +1101,19 @@ relay-path call, two peers, audio and video, TURN as production configures it, t
 
 ### P1 (blocks `CALLS_COMPILED`, not dev) - four things owed before production calls (review of #1997, 2026-10-17)
 
+**The owner decided on 2026-10-21: the first production calls are AUDIO 1:1 ONLY, kept alive in the
+background on both phones; video later.** The fifteen blockers (B0-B14) with their evidence, the
+order, the one flip commit, the production preflight, the store answers and the owner's answers
+of 2026-10-21 (no native ring in the first release; a server kill switch before the flip) are on [calls](frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21),
+the only copy. Built 2026-10-21: B0 (no video in production: the flag no longer follows `CALLS_COMPILED`, and `CallService` refuses every camera open and never shows a peer's video) and B4 (the `fp=`
+line is a SHA-256 fingerprint). Of the review's four items below, F4, F5 and the per-direction key +
+AAD are in draft #2013, which must be PORTED onto `main` (it predates #2158 and #2166).
+
 Lot 1 calls dev builds only. Before the production switch flips: F4, the IP exposure of
 `iceTransportPolicy: 'all'` and Cloudflare TURN as a recipient, written into
 `compliance/register-of-processing.md` and `/legal/privacy`; F5, a key-epoch/fingerprint agreement
 between the two ends, or a visible "decrypt failing" toast; one AES-GCM key used in both directions
-with no AAD; and the `fp=` log line printing 4 bytes of the key, to become a hash
-([calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+with no AAD ([calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
 
 P3, owed by WP-C11 (group calls): `refuseIfBlocked` (`calls.service.ts`) lets ANY block between the
 caller and ANY other member refuse the whole call, at `initiate`, `ring` and `room-token`, and 1:1 is
@@ -1065,23 +1127,36 @@ The web half is done (full screen + top banner, timer from timestamps, Media Ses
 sink, a log line per background transition). What only native code can do, each a work package of
 its own ([calls](frontend/modules/calls.md#the-call-in-the-background-2026-10-19)):
 
-- **WP-C-BG-A (Android)**: a foreground service of type `phoneCall` (Android 14: plus
-  `FOREGROUND_SERVICE_PHONE_CALL`, or `microphone` + `FOREGROUND_SERVICE_MICROPHONE`), started from
-  the web when the call reaches `incall` and stopped at `idle`, carrying the ONGOING `CallStyle`
-  notification (name, chronometer from `connectedAt`, hang-up action). Without it Android 9+ hands a
-  backgrounded app's microphone SILENCE and the WebView's timers are throttled. Plus the real audio
-  route (`AudioManager.MODE_IN_COMMUNICATION`, `setCommunicationDevice` for speaker/earpiece/Bluetooth)
-  in place of the label-matched `setSinkId`.
-- **WP-C-BG-I (iOS)**: report every call (outgoing and answered in-app, not only rung) to CallKit
-  (`CXProvider` / `CXCallController`) and configure `AVAudioSession` `.playAndRecord` / `.voiceChat`,
-  with an `audio` (or `voip`) background mode. With none of it, as today, the app is suspended
-  seconds after it leaves the screen and WKWebView stops capture when the page is hidden: the call
-  goes silent, then the peer connection drops. The `voip` mode is one of the five switches and
-  App Review refused it once (2.5.4), so this rides the revival commit.
-- **Owed on hardware before either is written**: the readings the new log lines make possible -
-  `[Call] app hidden ... mic=... voice=...`, `the system took the microphone`, `the voice was paused
-  while hidden` - on the Mi 9T and the iPhone with the screen locked for 60 s, so the native work
-  starts from what each engine actually did.
+- **WP-C-BG-A (Android): BUILT 2026-10-20, draft PR, OWED THE Mi 9T READING** - a `microphone`
+  foreground service (not `phoneCall`: that needs a `ConnectionService`), the ongoing `CallStyle`
+  notification, `setCommunicationDevice` in place of `setSinkId` (the mode left to Chromium when
+  Chromium set it), merged only into builds that place calls and checked absent from a stable's
+  built manifest; started at the caller's `ringing` / the callee's `connecting` once the microphone
+  is held. Twelve readings owed (the API 28-30 paths have no bench device); the Play declaration was
+  filled by the owner on 2026-10-21: [calls](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20).
+- **P3 - `canariCall` is an `addJavascriptInterface` bridge, reachable from ANY frame the WebView
+  loads**, not only the app's origin. `WebViewCompat.addWebMessageListener` takes an origin
+  allowlist and would bound it to the app's own origin. Today the WebView loads only the embedded
+  frontend, and the methods can do no more than start, update or stop a call notification the app
+  itself could, so this is hardening, not an open hole; it applies to every bridge `MainActivity`
+  registers, not to this one alone, and would move them together.
+- **WP-C-BG-I (iOS) - BUILT 2026-10-20, owed its hardware reading.** Measured first: a locked
+  iPhone is NOT suspended (same pid, WebRTC stack alive, the partner's audio received) - only its
+  microphone is muted, by WKWebView, for want of the `audio` background mode. So the fix is that
+  mode on every pre-release build (`ios.yml`), the sixth switch for the stable, plus the partner
+  told over the relay (`MicSuspended`) - no CallKit and no native audio session, neither shown
+  missing ([calls](frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20),
+  which carries the owed steps). CallKit for every call stays with the `voip` revival.
+- **Read on both phones before either was written** (`1.3.1-alpha.3` and `-alpha.4`, 2026-10-20,
+  [device readings](device-readings-2026-10.md)): the Mi 9T loses its call socket and all audio 5 s
+  into a lock (WP-C-BG-A's case); the iPhone keeps the call and loses only its microphone (WP-C-BG-I's).
+
+### P2 - a call that never paired, and a ring for a call already hung up (2026-10-20)
+
+CALL-PAIR-STALL and CALL-LATE-RING, met on the bench while measuring WP-C-BG-I, both after the
+Mi 9T's chat socket had gone zombie ([device readings](device-readings-2026-10.md#found-on-the-way-not-filed-against-wp-c-bg-i)).
+Owed first: the dev `call-service` log of that minute (did the callee's `Join` arrive?) and the
+iPhone's exported log, before any cause is named.
 
 ### P3 - an OS incoming-call banner over the in-app ring, if it outlives the web fix (2026-10-19)
 
@@ -1351,9 +1426,7 @@ The principle is accepted (user, 2026-08-26) and **DECIDED 2026-10-18: planned N
 
 ### P2 - a cargo bump in `mls-core` leaves two committed lockfiles Dependabot will never fix
 
-`mls-wasm` and `src-tauri` carry committed locks and depend on `mls-core` by path, so Dependabot's single pull request (against `mls-core/Cargo.toml`) is incomplete by construction and fails CI's lockfile step - the one dependency update that cannot merge unattended. **Remedy, not done:** one cargo workspace with ONE `Cargo.lock` for `frontend/`, which restructures a Tauri build this workstation can only compile. Until then such a bump is done by hand in one commit refreshing all three locks ([cicd](cicd.md#dependency-updates-and-the-auto-merge-that-ships-them)).
-
-**A mechanism was designed and tested 2026-10-09, and is PARKED on a decision (nothing of it is in the repository).** A scheduled job takes each Dependabot pull request whose only failure is the lock guard, opens a NEW pull request (never a push onto Dependabot's branch, which [cicd](cicd.md) records as refused for good) carrying Dependabot's cherry-picked commits plus `cargo update --precise` refreshes of the locks, closes the original with a pointer, and lets `CI passed` decide. It refuses, once and with a comment, a plugin whose crate drags `tauri`/`wry`/`tao`, a lock still failing `cargo metadata --locked`, and anything `lib/ceiling.sh` has no gate for; it runs only when every commit is Dependabot's and every changed file a manifest or lockfile. Tested with fake `cargo`/`gh` and a local bare remote (29 assertions). **Was blocked on a decision, DECIDED 2026-10-18: YES** - `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App, limited to dependency files and a green `CI passed` ([WP-RUST-LOCK-AUTOMERGE](#decided-by-the-user-on-2026-10-18---every-design-question-answered)); the design is rebuilt from this paragraph in about a day.
+`mls-wasm` and `src-tauri` carry committed locks and depend on `mls-core` by path, so Dependabot's single pull request (against `mls-core/Cargo.toml`) is incomplete by construction. **BUILT 2026-10-19 (WP-RUST-LOCK-AUTOMERGE), owed what only a live run can show:** `cargo-lock-refresh.sh` completes it on a new branch opened by the `canari-auto-merge` App, and `arm-auto-merge.yml` arms only that, against a closed allowlist ([cicd](cicd.md#a-dependabot-cargo-bump-that-is-incomplete-by-construction-is-completed-and-merged-wp-rust-lock-automerge-2026-10-18), with the threat model). **Owed:** the first real run on a Dependabot `mls-core` pull request (or a dispatch while one is open), read end to end - the refresh pull request opened, ARMED (the one unmeasured fact: that the API resolves the App's commits to `canari-auto-merge[bot]`; if not, it is refused, the safe direction), and merged on `CI passed`. **The structural remedy is still not done:** one cargo workspace with ONE `Cargo.lock` for `frontend/`, which restructures a Tauri build this workstation can only compile.
 
 ### P3 - MiGallery's `resolve()` bypasses, and an inherited disable is the only reason nobody sees them
 
@@ -1493,7 +1566,6 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **WP-CHECKPOINT-SKIP (M, native + MLS, OPUS): skip the full checkpoint after a drain that only received application frames**, forced after K deferred receive generations (K about 200, a COUNT never a clock). Blocks: the Mi 9T crash measurement of [the question](open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13) (kill, push while dead, resume, read `live-ahead`, duplicates, `unreadable for good`); nothing changes before it. The v2 seal (writer off) is a separate lever.
 - **WP-RESTORE-1 is planned NOW, independent of the campaign** (Play enforcement April 2027): [mobile](frontend/mobile.md#wp-restore-1---zero-tap-sign-in-restoration-accepted-2026-08-26-planned-now-built-on-draft-2065); BUILT on draft PR #2065 (not merged, out of any stable until read on a phone). Size L, native and a new server WebAuthn component, OPUS. First task: the design and the server piece; Mi 9T test before the deadline.
 - **WP-MIGALLERY-OFFSITE (M, ops + a MiGallery PR, no native): MiGallery's offsite backup goes to Canari's own offsite server**, then the old Canari VM can be wound down. Needs the offsite server's access arranged (private notes); a restore test.
-- **WP-RUST-LOCK-AUTOMERGE (M, CI): `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App, limited to dependency files (manifests and lockfiles, every commit Dependabot's) and a green `CI passed`.** The refresh mechanism is the one parked in [the Tooling P2](#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix), rebuilt from its paragraph (about a day). Never auto-merge anything else from that App.
 - **WP-MENTION-DELETED (S, server, no MLS): the lookup of a deleted account answers "deleted account" with NO name** (200, no browser-level 404); no name snapshot anywhere.
 - **WP-MENTION-NAME (M, native Android and iOS, OPUS): a mention notification names its author from the phone's local copy of names**, "someone" if unknown; the name never rides the push. Owed: one look on each phone, and on the Mi 9T whether the COLLAPSED shade shows only the first line of a mention (the author line is line 1 of the message and may hide the text). **BUILT 2026-10-18**: the author on a salon banner (an MLS banner already names its sender), and the mentioned person inside the text from the same copy.
 - **WP-PUSH-I18N (M, Rust + native readings, OPUS): the 16 notification sentences of `mobile/proto_fields.rs` are translated in Rust from the app language, and a voice note stops being announced as an audio file.** One implementation for Android and iOS; a reading on each. **BUILT 2026-10-18** (`mobile/push_text.rs`), owed the two readings.
@@ -1503,7 +1575,7 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **DECIDED, NO WORK: iOS keeps its native stacking of post reactions** under `post_reaction_<postId>`; no NSE merge.
 - **WP-REELS-MENU (S, client, no native): a "CanaReels" entry in the + menu**, beside the already decided "Ouvrir la camera" entries; measure afterwards how many users opened the camera.
 - **WP-SECOND-CAMPAIGN-VENUE (M-L, harness): the second campaign (posts, forms, calendar) runs on a TEST association on the DEV estate only**, so no real member is notified. Design page: [cross-client-campaign](cross-client-campaign.md#the-second-campaign-for-everything-that-is-not-chat---asked-2026-08-16); its three open items (venue, observer, what a verdict rests on) lose "venue".
-- **WP-TEST-TOOLING-REFORM (L, harness, no native; NOT "after the campaign"): the whole test tooling is reformed NOW** (user: "on est a un nombre de test aberrant"). It covers the shared helpers (the `mut.mjs` helpers, the eight hand-opened IndexedDB runners, the local database access), the starting-point contract, and the number of tests itself - cut what does not earn its keep. It re-validates the controls it touches (rule 33), so a revalidation session is part of it, and it supersedes the "wait for a wholesale rig change" lines of [the harness section](#the-harness-itself) and [cicd](cicd.md). Start with an inventory: which tests exist, what each guards, what its last failure caught; delete the rest.
+- **WP-TEST-TOOLING-REFORM (L, harness, no native; NOT "after the campaign"): the whole test tooling is reformed NOW** (user: "on est a un nombre de test aberrant"). It covers the shared helpers (the `mut.mjs` helpers, the eight hand-opened IndexedDB runners, the local database access), the starting-point contract, and the number of tests itself - cut what does not earn its keep. It re-validates the controls it touches (rule 33), so a revalidation session is part of it, and it supersedes the "wait for a wholesale rig change" lines of [the harness section](#the-harness-itself) and [cicd](cicd.md). Start with an inventory: which tests exist, what each guards, what its last failure caught; delete the rest. **Done so far**: the inventory (#2129) and the deletion of ten byte-identical spec copies in the NestJS services (-81 jest cases; `http-error-log.spec.ts` kept in both, with its reason) - [test-suite-reform](test-suite-reform.md#72-the-declared-copies-deleted-2026-10-21). **Left**: merge `customTabsCommands`/`keystoreCommands`, read `features.test.ts` and the two `no-assertion` files, then WP-T7 (the rig change, one campaign session with its re-runs).
 
 ## Chantiers in planning (opened 2026-10-15)
 
@@ -1518,3 +1590,9 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 ## Decided by the user on 2026-10-19 - lives before calls, and what a live owes before a stable
 
 Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come BEFORE the calls revival (calls stay dev-only; supersedes L7). v1 bitrate (720p or 480p) is fixed at launch by the server from the total live load: no transcoding, no mid-live change. Any member may start a live, so **WP-L8 moderation (like posts: `content_reports`, "cut the live" in place of "delete the post", posts code reused) and the per-account limits are a RELEASE BLOCKER before any stable, and the Apple 1.2 / Play UGC answers precede store submission.** Comments and floating reactions are wanted (WP-L6). The "X est en live" notification: server half WP-L7 in progress (draft PR), **owed: the client LIVE card and deep link.** **Open question from the user:** why ask the school IT department - only for raising the shared host nginx connection budget (about 1500 across its sites), not needed until an audience would exceed it.
+
+### P3 - Android lint crashes on the Gradle build script, and no CI gate runs Android lint (found 2026-10-20)
+
+`./gradlew :app:lintUniversalDebug` (in `frontend/src-tauri/gen/android`) crashes inside Android lint's `UastGradleVisitor.visitBuildScript` on `main` as well, so it is not a regression of one branch. Nothing in CI runs Android lint, which is why nobody saw it. Owed: find which build-script construct the visitor cannot read (or the lint version that fixes it), then decide whether lint belongs in a gate.
+
+**What is known (2026-10-21, not reproduced).** `frontend/src-tauri/gen/android/app/build.gradle.kts` already carries a comment on its `lint {}` block naming the same family of crash (`KotlinScriptUClass` / `findFirCompiledSymbol`, an Android Gradle Plugin bug) and works around it for the RELEASE gate only (`checkReleaseBuilds = false`); an explicit `lintUniversalDebug` still reaches the analyzer. The pins are AGP `9.0.1` (`buildSrc/build.gradle.kts`) and Gradle `9.1.0`; the lint version is AGP's own. **Why it was not reproduced:** the Android SDK is present on the dev box, but a bare `./gradlew` stops at `settings.gradle` line 11 (`tauri.settings.gradle` does not exist), so reproducing needs the project generated by the Tauri Android tooling and the Rust Android targets first. **What is needed:** (1) generate the project, run `./gradlew :app:lintUniversalDebug --stacktrace` and keep the full trace: the frame under `UastGradleVisitor.visitBuildScript` names the construct; (2) bisect the root `build.gradle.kts` and `app/build.gradle.kts` (the `run { ... }` cargo-registry block in the root script is the likeliest non-declarative construct); (3) try a newer AGP patch release. Nothing in CI runs Android lint, so no gate is affected meanwhile.
