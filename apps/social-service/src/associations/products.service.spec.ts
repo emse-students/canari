@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { createHmac } from 'crypto';
 import { Subject, isObservable, of, throwError } from 'rxjs';
-import { Repository } from 'typeorm';
+import { FindOperator, Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { ProductsService } from './products.service';
@@ -30,7 +30,11 @@ function makeCheckoutStore(productRepo: { findOne: jest.Mock }) {
   const rows: any[] = [];
   let next = 0;
   const matches = (row: any, where: Record<string, unknown>) =>
-    Object.entries(where).every(([k, v]) => row[k] === v);
+    Object.entries(where).every(([k, v]) =>
+      v instanceof FindOperator && v.type === 'isNull' ? row[k] == null : row[k] === v
+    );
+  /** The purchase records a settlement updates in its transaction; `setup` binds its own. */
+  const records: { rows: any[] } = { rows: [] };
   const repo: any = {
     create: jest.fn((x: any) => ({ ...x })),
     save: jest.fn(async (x: any) => {
@@ -70,12 +74,15 @@ function makeCheckoutStore(productRepo: { findOne: jest.Mock }) {
     findOne: jest.fn((entity: unknown, { where }: { where: Record<string, unknown> }) =>
       entity === ProductCheckout ? repo.findOne({ where }) : productRepo.findOne({ where })
     ),
-    update: jest.fn((_entity: unknown, where: Record<string, unknown>, patch: any) =>
-      repo.update(where, patch)
-    ),
+    update: jest.fn((entity: unknown, where: Record<string, unknown>, patch: any) => {
+      if (entity === ProductCheckout) return repo.update(where, patch);
+      const hit = records.rows.filter((r) => matches(r, where));
+      hit.forEach((r) => Object.assign(r, patch));
+      return Promise.resolve({ affected: hit.length });
+    }),
   };
   repo.manager = { transaction: jest.fn((cb: (m: unknown) => unknown) => cb(tx)) };
-  return { repo, rows, tx };
+  return { repo, rows, tx, records };
 }
 
 describe('ProductsService cotisation gating/pricing and Cercle re-gating', () => {
@@ -709,7 +716,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         amountCents: 3000,
       });
       expect(purchaseRecordService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ paymentMethod: 'cash', amountCents: 3000 })
+        expect.objectContaining({ paymentMethod: 'cash', amountCents: 3000 }),
+        expect.anything()
       );
     });
   });
@@ -1762,6 +1770,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       made.userTagService.hasActiveTag.mockResolvedValue(false);
       // The purchase records ARE the durable state "already purchased" is read from.
       const records: any[] = [];
+      made.checkouts.records.rows = records;
       made.purchaseRecordService.create.mockImplementation((x: any) => {
         const rec = { ...x, id: `rec-${records.length + 1}` };
         records.push(rec);
@@ -2110,17 +2119,99 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         expect(t.records).toHaveLength(1);
         expect(t.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
       });
+
+      /** A Cercle top-up product, its dispatch observed rather than sent. */
+      const topUp = () => {
+        const t = setup({
+          type: 'balance_topup',
+          webhookUrl: 'https://cercle.test/hook',
+          webhookSecret: 'test-secret',
+        } as Partial<AssociationProduct>);
+        const dispatch = jest
+          .spyOn(t.service, 'dispatchCercleWebhook')
+          .mockResolvedValue(undefined as never);
+        return { t, dispatch };
+      };
+
+      it("settles a top-up under the CALLBACK's request id: the record names it, Cercle is credited", async () => {
+        const { t, dispatch } = topUp();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const checkoutId = t.checkouts.rows[0].id;
+        t.setState('paid');
+        await expect(callback(t, checkoutId, '1001')).resolves.toEqual({ outcome: 'paid' });
+        // The control: settled with no request id, the record named no payment and the top-up was
+        // skipped without a line - the buyer paid and the Cercle balance never moved.
+        expect(t.checkouts.rows[0].requestId).toBe('1001');
+        expect(t.records[0].stripePaymentIntentId).toBe('1001');
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith(expect.anything(), 'user1', 1000, '1001');
+      });
+
+      it('grants the tag of an online payment settled by order_ref as an ONLINE grant, not a manual one', async () => {
+        const t = setup({ type: 'membership', grantedTagName: 'cotisant:bde' } as any);
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        t.setState('paid');
+        await callback(t, t.checkouts.rows[0].id, '1001');
+        expect(t.userTagService.grantOrRenew).toHaveBeenCalledWith(
+          expect.objectContaining({
+            metadata: expect.objectContaining({ paymentIntentId: '1001', manualGrant: false }),
+          }),
+          expect.anything()
+        );
+      });
+
+      it('a top-up paid on the RETURN before any id is known is logged, then credited once by the callback', async () => {
+        const { t, dispatch } = topUp();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const row = t.checkouts.rows[0];
+        age(row, 4 * 60_000);
+        t.setState('paid');
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        await t.service.confirmCheckout('asso1', 'prod1', row.id, 'user1');
+        expect(row.status).toBe('paid');
+        expect(t.records[0].stripePaymentIntentId).toBeNull();
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(error).toHaveBeenCalledWith(expect.stringContaining('top-up NOT dispatched'));
+        error.mockRestore();
+
+        await expect(callback(t, row.id, '1001')).resolves.toEqual({ outcome: 'paid' });
+        await expect(callback(t, row.id, '1001')).resolves.toEqual({ outcome: 'paid' });
+        expect(t.records).toHaveLength(1);
+        expect(t.records[0].stripePaymentIntentId).toBe('1001');
+        // Lydia retries a callback: the second one completes nothing and credits nothing.
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith(expect.anything(), 'user1', 1000, '1001');
+      });
+
+      it('refuses a callback naming ANOTHER request than the one a racing write stored', async () => {
+        const t = setup();
+        lostOnce(t);
+        await t.checkout().catch(() => undefined);
+        const row = t.checkouts.rows[0];
+        row.requestId = '2002';
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        await expect(callback(t, row.id, '1001')).resolves.toEqual({ outcome: 'refused' });
+        expect(t.records).toHaveLength(0);
+        error.mockRestore();
+      });
     });
 
     describe('an attempt whose fate cannot be shown stops blocking its buyer at its expiry', () => {
       it.each([
         ['Lydia still answers open', (t: ReturnType<typeof setup>) => t.setState('open')],
         [
-          'the paying account lost its vendor token',
+          'its request cannot be read at Lydia',
           (t: ReturnType<typeof setup>) =>
-            t.assoRepo.findOne.mockImplementation(({ where }: any) =>
-              Promise.resolve(where?.id === 'asso1' ? asso({ lydiaAccountId: null }) : null)
-            ),
+            (t.httpService.post as jest.Mock).mockImplementation((url: string, body: any) => {
+              const route = url.split('/payments/')[1];
+              t.calls.push({ route, body });
+              return route === 'cancel-request'
+                ? of({ data: { ok: true, outcome: 'already-settled' } })
+                : throwError(() => new Error('socket hang up'));
+            }),
         ],
       ])(
         'refuses before expiresAt + 5 min and closes it expired after, when %s',

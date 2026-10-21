@@ -544,7 +544,9 @@ also why a verified product callback fulfilled nothing (above).
 
 **The attempt row** (`product_checkouts`, social-service migration `101`): product, buyer, the
 product's association, the association whose account the request was issued to
-(`paymentAssociationId` - itself, or its approved parent at the time), the amount in cents resolved
+(`paymentAssociationId` - itself, or its approved parent at the time) and that account's Lydia
+Business (`vendorToken`, a snapshot: the request is read, cancelled and its callback checked with the
+Business that HOLDS it, even after the association relinks another one), the amount in cents resolved
 at checkout, a name snapshot, Lydia's `request_uuid` and numeric `request_id` (NULL until the issuing
 call answers them), `expiresAt`, and `status` `open | paid | declined | expired | cancelled`. Only
 `paid` counts as a purchase.
@@ -564,8 +566,10 @@ Only a lookup by order_ref may answer `not-found` (Lydia's error 2 "Requete intr
 an unknown order_ref): that attempt's request/do never reached Lydia, and it closes `cancelled`.
 `request-state` accepts only Canari's own product grammar there, never a free string. `paid` is
 settled, state 5 closes `declined` (measured 2026-10-21), state 6 `expired` past `expiresAt` and
-`cancelled` before it (the state alone cannot tell them apart), `open` and an unmeasured code change
-nothing.
+`cancelled` before it (the state alone cannot tell them apart), `open` and `unknown` change nothing.
+The states are #2210's ONE typed mapping (`toRequestState` in `forms/seat-hold.ts`); `not-found` is
+read before it because it answers a lookup, not a request. That closure is logged at WARN with the
+order_ref.
 
 **Opening an attempt** (`ProductsService.createCheckoutSession`), in this order:
 
@@ -574,8 +578,8 @@ nothing.
    there is no numeric id, read: paid is RECORDED (no second request is issued), closed / declined /
    not found closes the row. An open row naming no request and written less than 3 minutes ago
    (`CHECKOUT_ISSUE_WINDOW_MS`, over social's 120 s call timeout) is being issued right now:
-   `CHECKOUT_IN_PROGRESS` (409). Anything still unproven - Lydia answers open, the read fails, the
-   paying account lost its vendor token - refuses `PREVIOUS_CHECKOUT_OPEN` (409, "at most 35
+   `CHECKOUT_IN_PROGRESS` (409). Anything still unproven - Lydia answers open, the cancel or the read
+   fails - refuses `PREVIOUS_CHECKOUT_OPEN` (409, "at most 35
    minutes"), and **that refusal ends**: past `expiresAt` + 5 min (`CHECKOUT_EXPIRY_MARGIN_MS`) the
    request was sent an `expire_time` that has run out, so the attempt is closed `expired` at ERROR and
    the buyer may retry. The margin covers Lydia's expiry being counted from the request's creation,
@@ -586,7 +590,9 @@ nothing.
    unique index `product_checkouts_one_open` (a double click) and is answered `CHECKOUT_IN_PROGRESS`.
 4. **The request is issued.** A 4xx from core is an ANSWER (nothing was issued) and releases the row
    `cancelled`. A LOST call - a timeout, a 5xx, a 2xx without the ids - leaves it `open` with no ids,
-   logged at ERROR: Lydia may hold the request all the same, so it is read by its order_ref at the
+   logged at ERROR. Core bounds its own call to Lydia at 60 s (`LYDIA_CALL_TIMEOUT_MS`, under the
+   120 s social waits), so core always answers - a 5xx - before social gives up on it;
+   Lydia may hold the request all the same, so it is read by its order_ref at the
    buyer's next attempt, return or confirm callback, never closed on a guess. The return URLs carry
    `checkout_id`, `association_id` and `productId`.
 
@@ -600,6 +606,17 @@ or the return query's. A `paid` answer over a CLOSED row is still recorded (the 
 logged at ERROR: the buyer may have paid a later attempt too, so for a non-repeatable product it is
 very probably a second charge for a human to refund. The Cercle top-up is dispatched after the commit.
 
+**The payment id** recorded (`purchase_records.stripePaymentIntentId`, the tag's `paymentIntentId`,
+the top-up's) is the numeric `request_id`, which `request/state` never answers. A lost request/do
+leaves the row without it, so a verified callback STORES its `request_id` on the row before the row is
+settled (`storeCallbackRequestId`, conditional on the column being NULL; a row holding another id is
+refused at ERROR). An attempt the payer's return settled first, with no id yet, is recorded with none
+and - for a top-up - logged at ERROR, "top-up NOT dispatched"; the callback then completes it
+(`completePaidWithoutRequestId`): the record takes the id while it is still NULL, and only the call
+that wrote it dispatches the top-up - eight racing completions against a real PostgreSQL write it
+once (the control without `IS NULL` wrote it eight times). The tag's `manualGrant` says how the
+purchase was PAID (cash or online), never inferred from a missing id.
+
 **Who triggers it.** The payer's return: the shop page polls
 `POST /api/associations/:id/products/:productId/checkouts/:checkoutId/confirm` while the attempt
 is open (at most 10 reads, 3 s apart, throttled per user and attempt like the form's
@@ -610,17 +627,18 @@ the product branch that logged "NOT fulfilled" now hands the attempt over) - cor
 `{ checkoutId, requestId, vendorToken }` to social's internal `products/:productId/purchase-completed`.
 A TRIGGER ONLY: the attempt is found by the id its order_ref carries, so one whose ids were never
 stored is found too; it must be of that product, the verified Business must be the account the
-attempt was issued to (`vendorTokenFor(row)`, the row's paying association - an authentic callback of
-association A never settles B's attempt), and `requestId` must not be another request than the one
-the attempt stored. Each refusal is logged at ERROR and reads nothing. Then the attempt is read at
+attempt was issued to (the row's `vendorToken` - an authentic callback of association A never settles
+B's attempt, and neither does a Business the association linked after the issue), and `requestId` must
+not be another request than the one the attempt stored. Each refusal is logged at ERROR and reads nothing. Then the attempt is read at
 Lydia like the return does, even when closed. No buyer and no amount cross. A read that fails answers
 `unreadable`, which core turns into the 503 Lydia retries. A verified product cancel or expire is
 logged and applies nothing: the attempt is read at its next return, retry or confirm.
 
-**Not measured:** a PAID sandbox request read back (`state 1` is still Lydia's documentation), the
+**Not measured:** the
 confirm callback of a PAID boutique request end to end, the 81-character order_ref itself at Lydia
 (only the 109-character form was), and the deep-link return on a phone. **Known and not closed
-here:** core's own call to Lydia has no timeout, so a request/do social gave up on may still create a
-request after the 3-minute window; if that attempt was meanwhile read `not-found` and closed, a
-payment for it is still recorded by its callback (paid over a closed row, at ERROR). Concurrent
+here:** a request/do that reaches Lydia after core's 60 s bound (Lydia's own processing, not
+Canari's wait) may still create a request after the 3-minute window; if that attempt was meanwhile
+read `not-found` and closed, a payment for it is still recorded by its callback (paid over a closed
+row, at ERROR). Concurrent
 attempts of DIFFERENT buyers can still oversell `maxPurchasesTotal`, as before this lot.

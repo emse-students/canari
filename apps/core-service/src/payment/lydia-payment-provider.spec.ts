@@ -3,6 +3,7 @@ import { BadRequestException, Logger } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
+  LYDIA_CALL_TIMEOUT_MS,
   LYDIA_MAX_AMOUNT_CENTS,
   LYDIA_MIN_AMOUNT_CENTS,
   LydiaPaymentProvider,
@@ -21,6 +22,33 @@ function makeProvider() {
 
 describe('LydiaPaymentProvider.createCheckoutSession', () => {
   afterEach(() => jest.clearAllMocks());
+
+  /**
+   * Social-service waits 120 s on core. Without a bound of its own, core could still be waiting on
+   * Lydia when social gave up, and the two would disagree on whether the call was answered.
+   */
+  it('bounds request/do under the 120 s social waits, and rethrows a timeout as NOT an answer', async () => {
+    mockedAxios.post.mockRejectedValue(
+      Object.assign(new Error('timeout of 60000ms exceeded'), { code: 'ECONNABORTED' })
+    );
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const attempt = makeProvider().createCheckoutSession({
+      lineItems: [{ productName: 'Sweat', unitAmountCents: 1500, quantity: 1, currency: 'eur' }],
+      successUrl: 'https://canari.example/success',
+      cancelUrl: 'https://canari.example/cancel',
+      connectAccountId: 'vendor-token-abc',
+      payerRecipient: { value: 'user@example.com', type: 'email' },
+      idempotencyKey: 'product:a:b',
+    });
+    // A refusal would be a 400 social RELEASES the attempt on; a lost call must stay an error.
+    await expect(attempt).rejects.not.toBeInstanceOf(BadRequestException);
+    await expect(attempt).rejects.toThrow('timeout of 60000ms exceeded');
+    const [, , config] = mockedAxios.post.mock.calls[0];
+    expect(LYDIA_CALL_TIMEOUT_MS).toBeLessThan(120_000);
+    expect(config).toMatchObject({ timeout: LYDIA_CALL_TIMEOUT_MS });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no response within 60 s'));
+    error.mockRestore();
+  });
 
   it('posts request/do as form-urlencoded with the summed amount and target vendor_token', async () => {
     mockedAxios.post.mockResolvedValue({

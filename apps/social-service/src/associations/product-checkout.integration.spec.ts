@@ -77,13 +77,14 @@ maybe('product checkout attempts against PostgreSQL', () => {
     await admin?.end();
   });
 
-  const openAttempt = () =>
+  const openAttempt = (overrides: Partial<ProductCheckout> = {}) =>
     ds.getRepository(ProductCheckout).save(
       ds.getRepository(ProductCheckout).create({
         productId: PRODUCT,
         userId: USER,
         associationId: ASSO,
         paymentAssociationId: ASSO,
+        vendorToken: 'vendor-test',
         amountCents: 1000,
         currency: 'eur',
         productName: 'Cotisation',
@@ -93,6 +94,7 @@ maybe('product checkout attempts against PostgreSQL', () => {
         expiresAt: new Date(Date.now() + 30 * 60_000),
         settledAt: null,
         purchaseRecordId: null,
+        ...overrides,
       })
     );
 
@@ -112,6 +114,34 @@ maybe('product checkout attempts against PostgreSQL', () => {
       [row.id]
     );
     expect(after).toEqual({ status: 'paid', purchaseRecordId: records[0].id });
+  });
+
+  it('completes an attempt paid before its request id was known ONCE, however many callbacks race', async () => {
+    // A lost request/do, paid and settled by order_ref on the payer's return: no id to record.
+    const row = await openAttempt({ userId: 'd'.repeat(64), requestUuid: null, requestId: null });
+    await (service as any).settlePaidCheckout(row.id);
+    const [before] = await ds.query(
+      `SELECT "stripePaymentIntentId" FROM purchase_records WHERE "userId" = $1`,
+      ['d'.repeat(64)]
+    );
+    expect(before.stripePaymentIntentId).toBeNull();
+
+    const log = jest.spyOn(Logger.prototype, 'log');
+    const complete = (service as any).completePaidWithoutRequestId.bind(service) as (
+      id: string,
+      requestId: string
+    ) => Promise<void>;
+    await Promise.all(Array.from({ length: 8 }, () => complete(row.id, '1001')));
+    const [after] = await ds.query(
+      `SELECT "stripePaymentIntentId" FROM purchase_records WHERE "userId" = $1`,
+      ['d'.repeat(64)]
+    );
+    expect(after.stripePaymentIntentId).toBe('1001');
+    // `IS NULL` on the update is what makes ONE of them the completion that may credit a top-up.
+    expect(
+      log.mock.calls.filter(([m]) => String(m).includes('purchase record completed'))
+    ).toHaveLength(1);
+    log.mockRestore();
   });
 
   it('refuses a second OPEN attempt of one product and buyer, and allows one once the first is closed', async () => {

@@ -21,6 +21,11 @@
 -- index, is what makes a double click issue ONE request - the second insert loses with 23505 and
 -- is answered a typed 409. A retry first settles the open attempt at Lydia (cancel, or read it).
 --
+-- "vendorToken" is the Lydia Business the request was ISSUED to (the paying association's public
+-- `vendor_token` at that moment), snapshotted: every later read or cancel of the request, and the
+-- payee check on its callback, uses the Business that holds the request, even after the association
+-- relinks another one. Public by Lydia's design, but a live identifier: a dev copy blanks it.
+--
 -- No foreign key to association_products: a product deleted while an attempt is open must not
 -- lose the record of money taken for it, so the row carries its own "productName" snapshot.
 --
@@ -39,6 +44,7 @@ CREATE TABLE IF NOT EXISTS product_checkouts (
   "userId" varchar(255) NOT NULL,
   "associationId" uuid NOT NULL,
   "paymentAssociationId" uuid NOT NULL,
+  "vendorToken" varchar(255) NOT NULL,
   "amountCents" integer NOT NULL,
   currency varchar(3) NOT NULL DEFAULT 'eur',
   "productName" varchar(200) NOT NULL,

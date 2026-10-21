@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { firstValueFrom } from 'rxjs';
@@ -942,7 +942,7 @@ export class ProductsService {
   ): Promise<{ checkoutUrl: string; amountCents: number; currency: string; checkoutId: string }> {
     await this.settlePreviousOpenAttempt(productId, userId);
 
-    const { product, amountCents, paymentTarget } = await this.resolvePurchase(
+    const { product, amountCents, paymentTarget, vendorToken } = await this.resolvePurchase(
       associationId,
       productId,
       userId,
@@ -957,6 +957,7 @@ export class ProductsService {
           userId,
           associationId: product.associationId,
           paymentAssociationId: paymentTarget.targetAssociationId,
+          vendorToken,
           amountCents,
           currency: product.currency,
           productName: product.name,
@@ -1020,7 +1021,7 @@ export class ProductsService {
             successUrl: withCheckoutReturnKey(successUrl, returnKey),
             cancelUrl: withCheckoutReturnKey(cancelUrl, returnKey),
             metadata: { productId: product.id, userId, checkoutId: checkout.id },
-            connectAccountId: paymentTarget.connectAccountId,
+            connectAccountId: vendorToken,
             // Lydia's order_ref: unique per ATTEMPT, since Lydia refuses one it has seen (error 3).
             idempotencyKey: productOrderRef(product.id, checkout.id),
             payerEmail,
@@ -1080,8 +1081,8 @@ export class ProductsService {
    * while its fate cannot be established - refusing is the one answer that cannot double-charge.
    *
    * That refusal ENDS: past `expiresAt` + `CHECKOUT_EXPIRY_MARGIN_MS` the request was sent an
-   * `expire_time` that has run out, so an attempt still unproven (the read fails, the paying account
-   * lost its vendor token, Lydia still answers open) is closed `expired` at ERROR and the buyer may
+   * `expire_time` that has run out, so an attempt still unproven (the read or the cancel fails, Lydia
+   * still answers open) is closed `expired` at ERROR and the buyer may
    * retry. A payment Lydia took before then is still recorded by its confirm callback, which finds
    * the attempt by id whatever its status.
    *
@@ -1108,8 +1109,7 @@ export class ProductsService {
     }
     let unproven: string;
     try {
-      const vendorToken = await this.vendorTokenFor(open);
-      if (!vendorToken) throw new Error('its payment account has no vendor token');
+      const vendorToken = open.vendorToken;
       if (open.requestId) {
         const { data } = await firstValueFrom(
           this.httpService.post<{ outcome?: string }>(
@@ -1129,7 +1129,7 @@ export class ProductsService {
           throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
         }
       }
-      const status = await this.readAndApplyRequestState(open, vendorToken);
+      const status = await this.readAndApplyRequestState(open);
       if (status !== 'open') return;
       unproven = 'the request is still open at the provider';
     } catch (err: unknown) {
@@ -1193,21 +1193,14 @@ export class ProductsService {
     } else if (this.isBeingIssued(row)) {
       this.logger.debug(`[SHOP] confirm ${row.id.slice(0, 8)}: its request is being issued`);
     } else {
-      const vendorToken = await this.vendorTokenFor(row);
-      if (!vendorToken) {
+      try {
+        status = await this.readAndApplyRequestState(row);
+      } catch (err: unknown) {
         this.logger.warn(
-          `[SHOP] confirm ${row.id.slice(0, 8)}: its payment account has no vendor token to read the request with`
+          `[SHOP] confirm ${row.id.slice(0, 8)}: could not read its request: ${
+            err instanceof Error ? err.message : String(err)
+          }`
         );
-      } else {
-        try {
-          status = await this.readAndApplyRequestState(row, vendorToken);
-        } catch (err: unknown) {
-          this.logger.warn(
-            `[SHOP] confirm ${row.id.slice(0, 8)}: could not read its request: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          );
-        }
       }
     }
     return { checkoutId: row.id, productId: row.productId, status };
@@ -1220,20 +1213,18 @@ export class ProductsService {
    * `paid` is settled (`settlePaidCheckout`), `declined` (state 5) and `cancelled-or-expired`
    * (state 6: `expired` past the row's `expiresAt`, `cancelled` before it - the state alone cannot
    * tell them apart) close the row, `not-found` on an order_ref lookup (no request carries it:
-   * request/do never reached Lydia) closes it `cancelled`, `open` and `unknown` change nothing. Returns the status the row
-   * now has, as far as this call knows. A failed read throws.
+   * request/do never reached Lydia) closes it `cancelled`, `open` and `unknown` change nothing.
+   * Returns the status the row now has, as far as this call knows. A failed read throws. The read
+   * goes to the Business the request was issued to (the row's `vendorToken` snapshot).
    */
-  private async readAndApplyRequestState(
-    row: ProductCheckout,
-    vendorToken: string
-  ): Promise<ProductCheckoutStatus> {
+  private async readAndApplyRequestState(row: ProductCheckout): Promise<ProductCheckoutStatus> {
     const byUuid = !!row.requestUuid && LYDIA_REQUEST_UUID_RE.test(row.requestUuid);
     const { data } = await firstValueFrom(
       this.httpService.post<{ state?: string; raw?: string }>(
         coreUrl('payments/request-state'),
         byUuid
-          ? { sessionId: row.requestUuid, connectAccountId: vendorToken }
-          : { orderRef: productOrderRef(row.productId, row.id), connectAccountId: vendorToken },
+          ? { sessionId: row.requestUuid, connectAccountId: row.vendorToken }
+          : { orderRef: productOrderRef(row.productId, row.id), connectAccountId: row.vendorToken },
         internalCoreRequestConfig()
       )
     );
@@ -1342,10 +1333,14 @@ export class ProductsService {
             `recorded; check the buyer's other attempts of product ${row.productId.slice(0, 8)} for a charge to refund`
         );
       }
+      // The numeric request id (what callbacks carry, and what core records a payment by), or the
+      // uuid. Null only for an attempt whose request/do answer was lost and no callback has stored
+      // its id yet: request/state never answers one. Lydia's confirm callback stores it and then
+      // completes the record (`completePaidWithoutRequestId`).
       const paymentIntentId = row.requestId ?? row.requestUuid;
       const product = await manager.findOne(AssociationProduct, { where: { id: row.productId } });
       if (product) {
-        await this.grantPurchaseTag(manager, product, row.userId, 'system', paymentIntentId);
+        await this.grantPurchaseTag(manager, product, row.userId, 'system', paymentIntentId, false);
       } else {
         this.logger.error(
           `[SHOP] checkout ${row.id.slice(0, 8)}: product ${row.productId.slice(0, 8)} no longer exists - the purchase is recorded, no tag granted`
@@ -1377,9 +1372,36 @@ export class ProductsService {
       return { row, product, paymentIntentId };
     });
 
-    if (!outcome?.product || !outcome.paymentIntentId) return;
+    if (!outcome?.product) return;
     const { row, product, paymentIntentId } = outcome;
-    if (product.type !== 'balance_topup' || !product.webhookUrl || !product.webhookSecret) return;
+    if (!paymentIntentId) {
+      if (product.type === 'balance_topup') {
+        this.logger.error(
+          `[CERCLE] checkout ${row.id.slice(0, 8)}: paid balance top-up with NO Lydia request id yet - ` +
+            `top-up NOT dispatched; Lydia's confirm callback carries the id and dispatches it then`
+        );
+      }
+      return;
+    }
+    await this.dispatchTopUp(row, product, paymentIntentId);
+  }
+
+  /**
+   * Sends the Cercle top-up of a paid attempt, after its commit, when the product is a top-up with a
+   * webhook configured. A dispatch that could not even start is logged: the purchase stays recorded.
+   */
+  private async dispatchTopUp(
+    row: ProductCheckout,
+    product: AssociationProduct,
+    paymentIntentId: string
+  ): Promise<void> {
+    if (product.type !== 'balance_topup') return;
+    if (!product.webhookUrl || !product.webhookSecret) {
+      this.logger.warn(
+        `[CERCLE] checkout ${row.id.slice(0, 8)}: top-up product ${product.id.slice(0, 8)} has no webhook configured - nothing dispatched`
+      );
+      return;
+    }
     try {
       await this.dispatchCercleWebhook(product, row.userId, row.amountCents, paymentIntentId);
     } catch (err: unknown) {
@@ -1393,13 +1415,42 @@ export class ProductsService {
   }
 
   /**
-   * The vendor token of the account an attempt's request was issued to (the row's
-   * `paymentAssociationId`: the association itself, or the parent it delegated to at the time), or
-   * null when that association has none any more.
+   * Completes a PAID attempt that was settled before any Lydia request id was known (a lost
+   * request/do, settled by its order_ref on the payer's return): its purchase record takes the
+   * request id the verified callback carried, and a top-up is dispatched with it. Exactly once: the
+   * record is updated only while its payment id is still NULL, and only the call that updated it
+   * dispatches. A no-op for every record that already carries an id.
    */
-  private async vendorTokenFor(row: ProductCheckout): Promise<string | null> {
-    const payTo = await this.assoRepo.findOne({ where: { id: row.paymentAssociationId } });
-    return payTo?.lydiaAccountId ?? null;
+  private async completePaidWithoutRequestId(checkoutId: string, requestId: string): Promise<void> {
+    const outcome = await this.checkoutRepo.manager.transaction(async (manager) => {
+      const row = await manager.findOne(ProductCheckout, {
+        where: { id: checkoutId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row?.purchaseRecordId) {
+        this.logger.error(
+          `[SHOP] checkout ${checkoutId.slice(0, 8)} is paid but holds no purchase record to complete`
+        );
+        return null;
+      }
+      const { affected } = await manager.update(
+        PurchaseRecord,
+        { id: row.purchaseRecordId, stripePaymentIntentId: IsNull() },
+        { stripePaymentIntentId: requestId }
+      );
+      if (!affected) {
+        this.logger.debug(
+          `[SHOP] checkout ${row.id.slice(0, 8)}: its purchase record already carries its payment id`
+        );
+        return null;
+      }
+      this.logger.log(
+        `[SHOP] checkout ${row.id.slice(0, 8)}: purchase record completed with request ${requestId}`
+      );
+      const product = await manager.findOne(AssociationProduct, { where: { id: row.productId } });
+      return product ? { row, product } : null;
+    });
+    if (outcome) await this.dispatchTopUp(outcome.row, outcome.product, requestId);
   }
 
   /** The typed 409 of a double click, logged with its reason. */
@@ -1464,6 +1515,8 @@ export class ProductsService {
     product: AssociationProduct;
     amountCents: number;
     paymentTarget: PaymentTarget;
+    /** The paying Business's `vendor_token`: never null once the purchase is allowed. */
+    vendorToken: string;
   }> {
     const [asso, product] = await Promise.all([
       this.assoRepo.findOne({ where: { id: associationId } }),
@@ -1478,7 +1531,8 @@ export class ProductsService {
 
     // Route to the association's own account, or an approved parent's when delegating.
     const paymentTarget = await this.resolvePaymentTargetFor(asso);
-    if (!paymentTarget.ready || !paymentTarget.connectAccountId) {
+    const vendorToken = paymentTarget.connectAccountId;
+    if (!paymentTarget.ready || !vendorToken) {
       throw new BadRequestException(
         paymentTarget.delegated
           ? 'The parent association this club delegates payments to has not completed onboarding to receive payments'
@@ -1526,7 +1580,7 @@ export class ProductsService {
       throw new BadRequestException('No amount provided for this product');
     }
 
-    return { asso, product, amountCents, paymentTarget };
+    return { asso, product, amountCents, paymentTarget, vendorToken };
   }
 
   /**
@@ -1918,9 +1972,12 @@ export class ProductsService {
    * whose issuing call never stored its request ids is found too - and it must be an attempt of
    * THIS product. Two checks then refuse, at ERROR, before anything is read:
    * - `vendorToken`, the Business whose key verified the callback, must be the account the attempt
-   *   was issued to (`vendorTokenFor(row)`, the row's paying association): an authentic callback of
-   *   association A never settles B's attempt, whatever its order_ref says;
-   * - `requestId` must not be ANOTHER request than the one the attempt stored.
+   *   was issued to (the row's `vendorToken` snapshot): an authentic callback of association A
+   *   never settles B's attempt, whatever its order_ref says;
+   * - `requestId` must not be ANOTHER request than the one the attempt stored. An attempt that
+   *   stored none (its request/do answer was lost) takes this one BEFORE it is settled
+   *   (`storeCallbackRequestId`), so the record, the tag and a top-up name the payment; one already
+   *   paid without it is completed (`completePaidWithoutRequestId`).
    * The purchase is then settled exactly as the payer's return settles it - Lydia's state of the
    * attempt's own request, read by its uuid or its order_ref - with the row's product, buyer and
    * amount; nothing of the callback's amount crosses. Asked even of a CLOSED attempt: a payment
@@ -1942,27 +1999,22 @@ export class ProductsService {
       );
       return { outcome: 'refused' };
     }
-    if (row.requestId && row.requestId !== requestId) {
-      this.logger.error(
-        `[SHOP] purchase callback for request ${requestId} REFUSED: checkout ${row.id.slice(0, 8)} ` +
-          `was issued as request ${row.requestId} - nothing recorded`
-      );
-      return { outcome: 'refused' };
-    }
-    const payee = await this.vendorTokenFor(row);
-    if (!payee || payee !== vendorToken) {
+    if (row.vendorToken !== vendorToken) {
       this.logger.error(
         `[SHOP] purchase callback for checkout ${row.id.slice(0, 8)} REFUSED: verified for a Business ` +
-          `that is not the one it was issued to (${payee ? 'another account' : 'no Lydia account any more'}) - nothing recorded`
+          `that is not the one it was issued to - nothing recorded`
       );
       return { outcome: 'refused' };
     }
+    const stored = await this.storeCallbackRequestId(row, requestId);
+    if (!stored) return { outcome: 'refused' };
     if (row.status === 'paid') {
       this.logger.log(`[SHOP] purchase callback for checkout ${row.id.slice(0, 8)}: already paid`);
+      await this.completePaidWithoutRequestId(row.id, requestId);
       return { outcome: 'paid' };
     }
     try {
-      const status = await this.readAndApplyRequestState(row, payee);
+      const status = await this.readAndApplyRequestState(row);
       this.logger.log(
         `[SHOP] purchase callback for checkout ${row.id.slice(0, 8)} settled as ${status}`
       );
@@ -1974,6 +2026,39 @@ export class ProductsService {
       );
       return { outcome: 'unreadable' };
     }
+  }
+
+  /**
+   * Makes the attempt carry the numeric request id of a verified callback BEFORE it is settled, so
+   * the purchase record, the tag and a top-up all name the payment - an attempt whose request/do
+   * answer was lost holds none, and `request/state` never answers one. Conditional on the column
+   * being NULL, so it never overwrites the id request/do stored. Returns false - logged at ERROR -
+   * when the attempt carries ANOTHER request: an authentic callback of a request that is not this
+   * attempt's settles nothing. Updates `row` in place.
+   */
+  private async storeCallbackRequestId(row: ProductCheckout, requestId: string): Promise<boolean> {
+    if (row.requestId === requestId) return true;
+    if (!row.requestId) {
+      const { affected } = await this.checkoutRepo.update(
+        { id: row.id, requestId: IsNull() },
+        { requestId }
+      );
+      if (affected) {
+        this.logger.log(
+          `[SHOP] checkout ${row.id.slice(0, 8)}: request id ${requestId} stored from its verified callback`
+        );
+        row.requestId = requestId;
+        return true;
+      }
+      const now = await this.checkoutRepo.findOne({ where: { id: row.id } });
+      row.requestId = now?.requestId ?? null;
+      if (row.requestId === requestId) return true;
+    }
+    this.logger.error(
+      `[SHOP] purchase callback for request ${requestId} REFUSED: checkout ${row.id.slice(0, 8)} ` +
+        `was issued as request ${row.requestId ?? 'none'} - nothing recorded`
+    );
+    return false;
   }
 
   /**
@@ -1999,14 +2084,17 @@ export class ProductsService {
   /**
    * Grants the tag a purchase of `product` carries, if any, inside the caller's transaction - the
    * cash grant's and the online settlement's - and drops the buyer's sibling tiers in the same one
-   * (XOR), so a switch never leaves two forfaits held at once.
+   * (XOR), so a switch never leaves two forfaits held at once. `manualGrant` says how the purchase
+   * was paid (by hand, or online), never inferred from a missing payment id: an online payment
+   * settled before its request id was known is still an online payment.
    */
   private async grantPurchaseTag(
     manager: EntityManager,
     product: AssociationProduct,
     userId: string,
     grantedBy: string,
-    paymentIntentId: string | null
+    paymentIntentId: string | null,
+    manualGrant: boolean
   ): Promise<void> {
     const grant = await this.resolveGrantTag(product);
     if (!grant) return;
@@ -2020,7 +2108,7 @@ export class ProductsService {
         metadata: {
           productId: product.id,
           paymentIntentId,
-          manualGrant: paymentIntentId === null,
+          manualGrant,
         },
       },
       manager
@@ -2049,7 +2137,14 @@ export class ProductsService {
     const { product, userId, amountCents, paymentMethod, stripePaymentIntentId, grantedBy } =
       params;
     return this.productRepo.manager.transaction(async (manager) => {
-      await this.grantPurchaseTag(manager, product, userId, grantedBy, stripePaymentIntentId);
+      await this.grantPurchaseTag(
+        manager,
+        product,
+        userId,
+        grantedBy,
+        stripePaymentIntentId,
+        paymentMethod !== 'online'
+      );
       return this.purchaseRecordService.create(
         {
           userId,

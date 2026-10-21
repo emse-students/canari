@@ -51,6 +51,13 @@ export class ProductCheckout {
   @Column({ type: 'uuid' })
   paymentAssociationId: string;
 
+  /**
+   * The Lydia Business (`vendor_token`) the request was issued to, as it was at issue time: the one
+   * account that can read or cancel it, and the only one whose verified callback may settle it.
+   */
+  @Column({ type: 'varchar', length: 255 })
+  vendorToken: string;
+
   /** What the request was issued for, resolved server-side at checkout. The ONLY amount recorded. */
   @Column({ type: 'int' })
   amountCents: number;

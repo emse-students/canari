@@ -31,6 +31,13 @@ const HOMOLOGATION_BASE_URL = 'https://homologation.lydia-app.com';
 const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 
 /**
+ * How long one call to Lydia may take. Below the 120 s social-service waits on core
+ * (`associations.module.ts`), so core always ANSWERS - a 5xx, which social reads as a lost call and
+ * leaves the attempt open - rather than social timing out while core still waits on Lydia.
+ */
+export const LYDIA_CALL_TIMEOUT_MS = 60_000;
+
+/**
  * Lydia's payable range per request, confirmed by Lydia 2026-10-04: 0,50 EUR to 1000 EUR. Shared
  * with social-service's mirror through `libs/contracts/payment-amount-range.json`, whose specs on
  * both sides fail the day the two disagree.
@@ -134,11 +141,25 @@ export class LydiaPaymentProvider implements PaymentProvider {
     answers: readonly string[] = []
   ): Promise<T & { error?: string }> {
     const body = new URLSearchParams(fields);
-    const res = await axios.post<
-      T & { error?: string; status?: string; code?: string; message?: string }
-    >(`${this.baseUrl}${path}.json`, body.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    });
+    let res;
+    try {
+      res = await axios.post<
+        T & { error?: string; status?: string; code?: string; message?: string }
+      >(`${this.baseUrl}${path}.json`, body.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: LYDIA_CALL_TIMEOUT_MS,
+      });
+    } catch (err: unknown) {
+      // Not an answer: rethrown, so the caller sees a 5xx and treats the call as LOST (a
+      // request/do may still have created a request at Lydia), never as a refusal.
+      const timedOut = (err as { code?: unknown } | null)?.code === 'ECONNABORTED';
+      this.logger.error(
+        `${path} got no answer from Lydia: ${
+          timedOut ? `no response within ${LYDIA_CALL_TIMEOUT_MS / 1000} s` : String(err)
+        }`
+      );
+      throw err;
+    }
     // Every call through here was previously unlogged, so a response that was neither the
     // expected shape NOR a recognized error left no trace anywhere - the caller silently got back
     // whatever fields WERE there and nothing else. Logging the body (redacted) is what makes that
