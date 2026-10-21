@@ -15,25 +15,27 @@ import { RedisService } from '../common/redis/redis.service';
 import { previewOf } from '../push/push-content';
 import {
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
+  newlyReachedByPersonalRepublicationSql,
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
 import {
   ProposalsService,
   type AfterCommit,
+  type AssociationProposal,
   type ProposalKindHandler,
 } from '../proposals/proposals.service';
-import type { Proposal } from '../proposals/proposal.entity';
 import { PostRepublication } from './entities/post-republication.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { invalidatePostListCache } from './post-list-cache';
-import { REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
+import { lockPostRow, REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
 import { isExpiredReel, type PostKind } from './reel.constants';
 
-/** The columns of a post this service decides on. */
-interface PostRow {
+/** The columns of a post a republication decides on. */
+export interface PostRow {
   id: string;
   authorId: string;
   associationId: string | null;
+  anonymous: boolean;
   hiddenByModeration: boolean;
   scheduledAt: Date | null;
   kind: PostKind;
@@ -41,8 +43,17 @@ interface PostRow {
   markdown: string | null;
 }
 
+/**
+ * Whether a post is withheld from everyone but its author - hidden by moderation, not yet
+ * published, or an expired reel. Such a post is a 404 to whoever asks to republish it.
+ */
+export function isWithheldPost(post: PostRow): boolean {
+  const unpublished = !!post.scheduledAt && new Date(post.scheduledAt).getTime() > Date.now();
+  return post.hiddenByModeration || unpublished || isExpiredReel(post);
+}
+
 /** An association as a republication needs it. */
-interface AssociationRow {
+export interface AssociationRow {
   id: string;
   name: string;
   type: string;
@@ -54,8 +65,10 @@ interface AssociationRow {
  * REPUBLICATION (D38, decided by the user on 2026-10-04, docs/wiki/profiles-and-access.md).
  *
  * A post reaches the audience of its association plus the audience of every association that
- * republishes it, like a LinkedIn repost; the original cannot forbid it, and a PERSONAL post is
- * never republished. Two ways in, one row (`post_republications`):
+ * republishes it, like a LinkedIn repost; the original cannot forbid it. A PERSONAL post is never
+ * republished through THIS class: only its author's consent republishes it (D38b,
+ * `PersonalRepublicationsService`, which reuses `writeRepublication`). Two ways in, one row
+ * (`post_republications`):
  * - PULL, immediate: whoever may publish in association X's name (`POST_AS_ASSO`) republishes, as
  *   X, a post they can SEE. X's own voice is X's own consent.
  * - PUSH, a proposal: whoever may publish in the post's association's name SENDS it to another
@@ -63,7 +76,7 @@ interface AssociationRow {
  *   machinery is generic (`proposals/`); this class is its `repost` kind.
  *
  * WHO IS TOLD: only the readers who see the post for the FIRST time because of the republication,
- * computed on state under the post row's lock (`applyRepublication`), never on a clock.
+ * computed on state under the post row's lock (`writeRepublication`), never on a clock.
  */
 @Injectable()
 export class RepublicationsService implements OnModuleInit, ProposalKindHandler {
@@ -106,7 +119,7 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
     await this.assertVisibleTo(postId, actorId);
     let newlyReached = 0;
     const after = await this.repo.manager.transaction(async (manager) => {
-      const applied = await this.applyRepublication(manager, post, associationId, actorId);
+      const applied = await this.writeRepublication(manager, post, associationId, actorId);
       newlyReached = applied.newlyReached;
       return applied.after;
     });
@@ -114,28 +127,57 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
     return { postId, associationId, newlyReached };
   }
 
-  /** An association withdraws ITS OWN republication: the right to publish in its name. */
+  /**
+   * A republication is withdrawn, by one of TWO parties:
+   * - the republishing association ITSELF (the right to publish in its name, D38);
+   * - the AUTHOR of a PERSONAL post, any republication of it, at any time (D38b): their consent
+   *   was what made it, and it stays theirs to take back.
+   *
+   * For a personal post the request that made it moves in the same transaction, and WHO withdrew
+   * decides how: the author's withdrawal is recorded as a REFUSAL, which stands - the association
+   * cannot ask again for that post; the association's own withdrawal frees its place
+   * (`withdrawn`), so it may ask again and the author decides again. The author is read first, so
+   * an author who is also an officer of the association withdraws as the author.
+   */
   async unrepublish(
     postId: string,
     associationId: string,
     actorId: string,
     isGlobalAdmin: boolean
   ): Promise<{ ok: true }> {
+    const post = await this.loadPostRow(postId);
+    const byAuthor = !!post && !post.associationId && post.authorId === actorId;
     const flag = AssociationPermissionFlag.POST_AS_ASSO;
-    if (!(await this.associations.mayAct(actorId, associationId, flag, { isGlobalAdmin }))) {
+    if (
+      !byAuthor &&
+      !(await this.associations.mayAct(actorId, associationId, flag, { isGlobalAdmin }))
+    ) {
       this.logger.debug(
         `[REPOST] ${actorId.slice(0, 8)} may not withdraw ${associationId.slice(0, 8)}'s republication`
       );
       throw new ForbiddenException('You may not publish in this association name');
     }
-    const removed: unknown = await this.repo.manager.query(
-      `DELETE FROM post_republications WHERE "postId" = $1 AND "associationId" = $2`,
-      [postId, associationId]
-    );
-    const count = Array.isArray(removed) && typeof removed[1] === 'number' ? removed[1] : 0;
-    if (count === 0) throw new NotFoundException('Republication not found');
+    await this.repo.manager.transaction(async (manager) => {
+      // The post first, then the proposal it closes below: see `lockPostRow`.
+      await lockPostRow(manager, postId);
+      const removed: unknown = await manager.query(
+        `DELETE FROM post_republications WHERE "postId" = $1 AND "associationId" = $2`,
+        [postId, associationId]
+      );
+      const count = Array.isArray(removed) && typeof removed[1] === 'number' ? removed[1] : 0;
+      if (count === 0) throw new NotFoundException('Republication not found');
+      if (post && !post.associationId) {
+        await manager.query(
+          `UPDATE proposals SET status = $4, "decidedBy" = $3, "decidedAt" = now()
+            WHERE kind = 'repost-personal' AND "subjectId" = $1 AND "fromAssociationId" = $2
+              AND status = 'accepted'`,
+          [postId, associationId, actorId, byAuthor ? 'refused' : 'withdrawn']
+        );
+      }
+    });
     this.logger.log(
-      `[REPOST] ${associationId.slice(0, 8)} withdrew its republication of ${postId.slice(0, 8)} (by ${actorId.slice(0, 8)})`
+      `[REPOST] republication of ${postId.slice(0, 8)} by ${associationId.slice(0, 8)} withdrawn ` +
+        `by ${byAuthor ? 'its author' : 'the association'} (${actorId.slice(0, 8)})`
     );
     await this.dropFeedCache();
     return { ok: true };
@@ -162,17 +204,21 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
     return post.associationId as string;
   }
 
-  async apply(manager: EntityManager, proposal: Proposal, actorId: string): Promise<AfterCommit> {
+  async apply(
+    manager: EntityManager,
+    proposal: AssociationProposal,
+    actorId: string
+  ): Promise<AfterCommit> {
     // The post may have changed since it was proposed (a reel expiring): judged again, now.
     const post = await this.loadRepublishable(proposal.subjectId, manager);
-    const applied = await this.applyRepublication(manager, post, proposal.toAssociationId, actorId);
+    const applied = await this.writeRepublication(manager, post, proposal.toAssociationId, actorId);
     return applied.after;
   }
 
-  async announce(proposal: Proposal, acceptorIds: string[]): Promise<void> {
+  async announce(proposal: AssociationProposal, acceptorIds: string[]): Promise<void> {
     const [from, post] = await Promise.all([
       this.loadAssociation(proposal.fromAssociationId),
-      this.loadPost(proposal.subjectId),
+      this.loadPostRow(proposal.subjectId),
     ]);
     if (!from || !post) {
       this.logger.warn(
@@ -197,6 +243,11 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
       pushData: { queueAssociationId: proposal.toAssociationId },
     });
     this.logger.log(`[REPOST] proposal ${proposal.id.slice(0, 8)} announced to ${count}`);
+  }
+
+  /** The post first, then the proposal: see `lockPostRow`. */
+  lockSubject(manager: EntityManager, postId: string): Promise<void> {
+    return lockPostRow(manager, postId);
   }
 
   async describe(postIds: string[]): Promise<Map<string, Record<string, unknown>>> {
@@ -235,8 +286,14 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
    * republication's readers included, so it is told nothing here; an announced one is told to the
    * readers who see it for the first time - `NEWLY_REACHED_BY_REPUBLICATION_SQL`, asked BEFORE the
    * row exists. The idempotence is the primary key: a second republication of the pair is a 409.
+   *
+   * A PERSONAL post (D38b) is announced to its author's FOLLOWERS only, never to everyone who sees
+   * it, so "the sweep will tell them" holds for the followers alone: before the first announce, the
+   * readers newly reached who do NOT follow the author are told here, and the sweep tells the
+   * followers; after it, every newly reached reader is told here. Either way, never a reader on the
+   * other side of a block with the author (`newlyReachedByPersonalRepublicationSql`).
    */
-  private async applyRepublication(
+  async writeRepublication(
     manager: EntityManager,
     post: PostRow,
     associationId: string,
@@ -248,9 +305,16 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
     );
     if (locked.length === 0) throw new NotFoundException('Post not found');
     const announced = locked[0].feedNotifiedAt !== null;
-    const newly: { id: string }[] = announced
-      ? await manager.query(NEWLY_REACHED_BY_REPUBLICATION_SQL, [post.id, associationId])
-      : [];
+    const personal = !post.associationId;
+    let newly: { id: string }[] = [];
+    if (personal) {
+      newly = await manager.query(newlyReachedByPersonalRepublicationSql(announced), [
+        post.id,
+        associationId,
+      ]);
+    } else if (announced) {
+      newly = await manager.query(NEWLY_REACHED_BY_REPUBLICATION_SQL, [post.id, associationId]);
+    }
     const inserted: unknown[] = await manager.query(
       `INSERT INTO post_republications ("postId", "associationId", "republishedBy")
          VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING "postId"`,
@@ -270,7 +334,8 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
     const recipientIds = newly.map((r) => r.id);
     this.logger.log(
       `[REPOST] ${post.id.slice(0, 8)} republished by ${associationId.slice(0, 8)} ` +
-        `(actor ${actorId.slice(0, 8)}, announced=${announced}, newly reached=${recipientIds.length})`
+        `(actor ${actorId.slice(0, 8)}, personal=${personal}, announced=${announced}, ` +
+        `newly reached=${recipientIds.length})`
     );
     return {
       newlyReached: recipientIds.length,
@@ -316,10 +381,11 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
 
   // ── Reads and refusals ─────────────────────────────────────────────────────────────────────────
 
-  private async loadPost(postId: string, manager?: EntityManager): Promise<PostRow | null> {
+  /** The post's deciding columns, or null when it does not exist. */
+  async loadPostRow(postId: string, manager?: EntityManager): Promise<PostRow | null> {
     const rows: PostRow[] = await (manager ?? this.repo.manager).query(
-      `SELECT id, "authorId", "associationId", "hiddenByModeration", "scheduledAt", kind,
-              "expiresAt", markdown
+      `SELECT id, "authorId", "associationId", COALESCE(anonymous, false) AS anonymous,
+              "hiddenByModeration", "scheduledAt", kind, "expiresAt", markdown
          FROM posts WHERE id = $1`,
       [postId]
     );
@@ -327,25 +393,25 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
   }
 
   /**
-   * The post, refused when it may not be republished: gone, hidden, not yet published or an
-   * expired reel is a 404 (for whoever asks, it does not exist); a PERSONAL post is a 400 - never
-   * republished (D38), whoever asks.
+   * The post, refused when it may not be republished here: gone, hidden, not yet published or an
+   * expired reel is a 404 (for whoever asks, it does not exist); a PERSONAL post is a 400 on these
+   * routes - it is republished only by its author's consent (D38b,
+   * `PersonalRepublicationsService`), never by an association acting alone.
    */
   private async loadRepublishable(postId: string, manager?: EntityManager): Promise<PostRow> {
-    const post = await this.loadPost(postId, manager);
-    const unpublished = !!post?.scheduledAt && new Date(post.scheduledAt).getTime() > Date.now();
-    if (!post || post.hiddenByModeration || unpublished || isExpiredReel(post)) {
+    const post = await this.loadPostRow(postId, manager);
+    if (!post || isWithheldPost(post)) {
       this.logger.debug(`[REPOST] ${postId.slice(0, 8)} is not republishable (absent or withheld)`);
       throw new NotFoundException('Post not found');
     }
     if (!post.associationId) {
       this.logger.debug(`[REPOST] ${postId.slice(0, 8)} refused: a personal post`);
-      throw new BadRequestException('A personal post is never republished');
+      throw new BadRequestException('A personal post is republished only with its author consent');
     }
     return post;
   }
 
-  private async loadAssociation(id: string): Promise<AssociationRow | null> {
+  async loadAssociation(id: string): Promise<AssociationRow | null> {
     const rows: AssociationRow[] = await this.repo.manager.query(
       `SELECT id, name, type, "logoUrl", "logoMediaId" FROM associations WHERE id = $1`,
       [id]
@@ -374,7 +440,7 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
    * GRANT-FREE (`readGrants: false`): a nominative read grant opens a post to READ, never to
    * republish it - publishing goes through an institution (user, 2026-10-07).
    */
-  private async assertVisibleTo(postId: string, actorId: string): Promise<void> {
+  async assertVisibleTo(postId: string, actorId: string): Promise<void> {
     const rows: { visible: boolean }[] = await this.repo.manager.query(
       `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: false })} AS visible
          FROM posts WHERE posts.id = $1`,

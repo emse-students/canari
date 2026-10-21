@@ -7,7 +7,8 @@ import { BookingsService } from './bookings.service';
 /**
  * THE ONE ROUTE WITH NO SESSION, AT THE HTTP LAYER: what a calendar app receives. The rules behind
  * it are `bookings.service.integration.spec.ts`'s; here, its headers and the order of its checks -
- * a malformed id is a 400 from the pipe, before any signature is computed.
+ * a malformed id, or a repeated `u`/`sig` that Express would hand over as an array, is a 400 from
+ * a pipe, before any signature is computed.
  */
 describe('GET bookings/:id/calendar.ics', () => {
   const ID = '11111111-2222-4333-8444-555555555555';
@@ -60,5 +61,21 @@ describe('GET bookings/:id/calendar.ics', () => {
     const res = await fetch(`${base}/bookings/${ID}/calendar.ics?u=alice&sig=bad`);
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ code: 'calendar-signature' });
+  });
+
+  it.each([
+    ['a repeated recipient', 'u=alice&u=bob&sig=good'],
+    ['a repeated signature', 'u=alice&sig=good&sig=good'],
+  ])('refuses %s with a 400 before the signature is looked at', async (_what, query) => {
+    const res = await fetch(`${base}/bookings/${ID}/calendar.ics?${query}`);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'query-not-a-string' });
+    expect(calls).toEqual([]);
+  });
+
+  it('still hands an absent recipient and signature to the service, which refuses them', async () => {
+    const res = await fetch(`${base}/bookings/${ID}/calendar.ics`);
+    expect(res.status).toBe(403);
+    expect(calls).toEqual([[ID, undefined, undefined]]);
   });
 });

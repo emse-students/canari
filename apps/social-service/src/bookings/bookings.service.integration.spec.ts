@@ -106,6 +106,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   const facts = new Map<string, Record<string, unknown>>();
   /** Runs while the facts are built - i.e. between `book`'s first read of the space and its lock. */
   let duringFacts: (() => Promise<void>) | null = null;
+  /** The answers each facts build was handed, in order. */
+  const builtAnswers: Record<string, string[]>[] = [];
   /** core-service's profile call fails while set (`listedSpaces`). */
   let profileDown = false;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
@@ -165,7 +167,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         ),
     } as unknown as AssociationsService;
     const pricingFacts = {
-      build: async ({ userId }: { userId: string }) => {
+      build: async ({ userId, answers }: { userId: string; answers: Record<string, string[]> }) => {
+        builtAnswers.push(answers);
         await duringFacts?.();
         return facts.get(userId) ?? {};
       },
@@ -524,6 +527,45 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await refusal(book(space.id, r, '10:00', '10:30'))).toEqual({ code: 'blocked' });
       await service.removeBlock(blockId, as(ORGA), NOW);
       await expect(book(space.id, r, '10:00', '10:30')).resolves.toHaveProperty('id');
+    });
+
+    it('refuses a block over a block of the same resource: the same range twice writes one row', async () => {
+      const { resourceIds } = await setup({}, 2);
+      const [r, other] = resourceIds;
+      const first = { startsAt: on('09:00'), endsAt: on('10:00') };
+      await service.addBlock(r, first, as(ORGA), NOW);
+      const refused = { code: 'block-overlap' };
+      expect(await refusal(service.addBlock(r, first, as(ORGA), NOW))).toEqual(refused);
+      // Any overlap, whichever side reaches into the other.
+      for (const [from, to] of [
+        ['09:30', '09:45'],
+        ['08:00', '09:15'],
+        ['09:45', '11:00'],
+        ['08:00', '11:00'],
+      ]) {
+        expect(
+          await refusal(service.addBlock(r, { startsAt: on(from), endsAt: on(to) }, as(ORGA), NOW))
+        ).toEqual(refused);
+      }
+      // Touching ranges and another resource are not overlaps.
+      await service.addBlock(r, { startsAt: on('10:00'), endsAt: on('11:00') }, as(ORGA), NOW);
+      await service.addBlock(r, { startsAt: on('08:00'), endsAt: on('09:00') }, as(ORGA), NOW);
+      await service.addBlock(other, first, as(ORGA), NOW);
+      expect(await ds.getRepository(BookingBlock).countBy({ resourceId: r })).toBe(3);
+      // Racing the same block: one winner, the rest told it exists.
+      const racing = { startsAt: on('15:00'), endsAt: on('16:00') };
+      const racers = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          service.addBlock(r, racing, as(ORGA), NOW).then(
+            () => 'won',
+            (err: unknown) => refusal(Promise.reject(err))
+          )
+        )
+      );
+      expect(racers.filter((x) => x === 'won')).toHaveLength(1);
+      // Every loser is told the block exists: never a deadlock or a try-again.
+      expect(racers.filter((x) => x !== 'won')).toEqual(Array(4).fill({ code: 'block-overlap' }));
+      expect(await ds.getRepository(BookingBlock).countBy({ resourceId: r })).toBe(4);
     });
 
     it('lets the linked account block its own resource, and refuses a past range', async () => {
@@ -1025,6 +1067,29 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await refusal(service.calendarLink(id, as(ALICE)))).toEqual({
         code: 'already-cancelled',
       });
+    });
+
+    it('judges answers keyed by the declared questions only: a __proto__ key reaches no map', async () => {
+      const items = [{ id: 'q', label: 'Remarque', required: true, type: 'short_text' }];
+      const { space, resourceIds } = await setup({ items: items as never });
+      // As a JSON body arrives: `__proto__` an OWN key, which a `{}` literal turns into its prototype.
+      const answers = JSON.parse('{"q":"oui","__proto__":["x"],"undeclared":"y"}') as Record<
+        string,
+        string
+      >;
+      builtAnswers.length = 0;
+      const { id } = await service.book(
+        space.id,
+        { resourceId: resourceIds[0], startsAt: on('10:00'), endsAt: on('10:30'), answers },
+        as(ALICE),
+        NOW
+      );
+      const judged = builtAnswers[builtAnswers.length - 1];
+      expect(Object.getPrototypeOf(judged)).toBeNull();
+      expect(Object.keys(judged)).toEqual(['q']);
+      expect(judged.q).toEqual(['oui']);
+      const [row] = await q(`SELECT answers FROM bookings WHERE id = $1`, [id]);
+      expect(row.answers).toEqual({ q: 'oui' });
     });
 
     it('serves the .ics on its signature alone, with no answer, private text or name', async () => {

@@ -198,6 +198,16 @@ function republicationReachesUserSql(post: string, user: string, opts: ReadOpts 
 }
 
 /**
+ * User row `user` shares at least one space with the author whose id is the expression `author` -
+ * what makes a PERSONAL item (a post, a live) visible. No read grant ever reaches it (WP7).
+ */
+function sharesSpaceWithAuthorSql(author: string, user: string): string {
+  return `EXISTS (
+      SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
+      WHERE vis_author.id = ${author} AND ${isReaderSpaceSql('vis_shared', user)})`;
+}
+
+/**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
  * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
  *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
@@ -207,9 +217,11 @@ function republicationReachesUserSql(post: string, user: string, opts: ReadOpts 
  *   reader's spaces), OR sees an association that republished it. A post has no rules of its own
  *   any more (D38, user 2026-10-04): what widens its audience is a republication, never the author.
  *   The promo and contributor FILTERS of D38 are not built yet, so nothing narrows either branch;
- * - a personal post (anonymous included): the user shares at least one space with its AUTHOR.
- *   NO read grant ever reaches this branch (WP7): a grant is spliced into the association branch
- *   alone, so a named reader sees what an ENTITY published and never what a student wrote.
+ * - a personal post (anonymous included): the user shares at least one space with its AUTHOR, OR
+ *   sees an association that republished it - which exists only because the author ACCEPTED that
+ *   association's request (D38b). NO read grant ever reaches this branch (WP7), the republication
+ *   disjunct included (it is spliced without `readGrants`): a named reader sees what an ENTITY
+ *   published and never what a student wrote.
  *
  * MONOTONE IN REPUBLICATIONS, and `NEWLY_REACHED_BY_REPUBLICATION_SQL` relies on it: adding one
  * only ever adds a disjunct, so who sees a post after is who saw it before plus who the republisher
@@ -222,9 +234,9 @@ export function postVisibleToUserSql(
 ): string {
   const adminClause = opts.adminSeesAll ? `${isAdminSql(user)}\n    OR ` : '';
   return `(${adminClause}${post}."authorId" = ${user}.id
-    OR (${post}."associationId" IS NULL AND EXISTS (
-      SELECT 1 FROM users vis_author JOIN spaces vis_shared ON ${isReaderSpaceSql('vis_shared', 'vis_author')}
-      WHERE vis_author.id = ${post}."authorId" AND ${isReaderSpaceSql('vis_shared', user)}))
+    OR (${post}."associationId" IS NULL AND (
+      ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}
+      OR ${republicationReachesUserSql(post, user)}))
     OR (${post}."associationId" IS NOT NULL AND (
       ${associationVisibleToUserSql(`${post}."associationId"`, user, { readGrants: opts.readGrants })}
       OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })})))`;
@@ -243,6 +255,28 @@ export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users 
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
 
 /**
+ * `NEWLY_REACHED_BY_REPUBLICATION_SQL` for a PERSONAL post (D38b), with two more terms:
+ * - never a reader on either side of a block with the author: the feed hides a blocked author's
+ *   posts, so telling them would be a notification about a post they are never shown;
+ * - BEFORE the first announce (`announced` false), never one of the author's FOLLOWERS: a personal
+ *   post is announced to its author's followers who see it (`announceRecipientsSql(true)`), and
+ *   once the republication commits they see it, so the sweep tells them - and telling them here
+ *   too would tell them twice. After the announce, the sweep is spent and everyone newly reached is
+ *   told here.
+ */
+export function newlyReachedByPersonalRepublicationSql(announced: boolean): string {
+  const followers = announced
+    ? ''
+    : `
+    AND NOT EXISTS (SELECT 1 FROM user_follows nr_follow
+      WHERE nr_follow."followedUserId" = nr_post."authorId" AND nr_follow."followerUserId" = nr_user.id)`;
+  return `${NEWLY_REACHED_BY_REPUBLICATION_SQL}
+    AND NOT EXISTS (SELECT 1 FROM user_blocks nr_block
+      WHERE (nr_block."blockerId" = nr_user.id AND nr_block."blockedId" = nr_post."authorId")
+         OR (nr_block."blockerId" = nr_post."authorId" AND nr_block."blockedId" = nr_user.id))${followers}`;
+}
+
+/**
  * Post row `post` is visible to the viewer whose id is the placeholder `viewer` (`$5`, or a TypeORM
  * `:name`). An absent viewer (NULL) matches no `users` row, so it sees nothing.
  */
@@ -254,6 +288,29 @@ export function postVisibleToViewerSql(
   // Grants count by default (every READ path); a WRITE that a grant never opened - a vote, a
   // republication - passes `readGrants: false`, explicitly.
   return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${postVisibleToUserSql(post, 'vis_viewer', { ...opts, readGrants: opts.readGrants ?? true })})`;
+}
+
+/**
+ * Live row `live` (a `lives` row) is visible to user row `user`: THE RULE OF A POST BY THE SAME
+ * BROADCASTER (WP-L7, decided 2026-10-19) - its broadcaster; a member's live, a user sharing a space
+ * with the broadcaster; an association's live, a user who sees the association (a member, or its
+ * rules reach one of their spaces, or - with `readGrants` - a nominative read grant). A live has no
+ * republication, so that disjunct of the post rule has nothing to add. An admin is a reader like any
+ * other, as when browsing posts.
+ */
+export function liveVisibleToUserSql(live: string, user: string, opts: ReadOpts = {}): string {
+  return `(${live}."broadcasterId" = ${user}.id
+    OR (${live}."associationId" IS NULL AND ${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)})
+    OR (${live}."associationId" IS NOT NULL AND ${associationVisibleToUserSql(`${live}."associationId"`, user, opts)}))`;
+}
+
+/**
+ * Live row `live` is visible to the viewer whose id is the placeholder `viewer` - the watch paths
+ * (the list, the key, the manifest), so read grants count as on every post READ path. An absent
+ * viewer sees nothing.
+ */
+export function liveVisibleToViewerSql(live: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${liveVisibleToUserSql(live, 'vis_viewer', { readGrants: true })})`;
 }
 
 /** Association `association` is visible to the viewer whose id is the placeholder `viewer`. */

@@ -235,6 +235,34 @@ function codeOnly(raw) {
     .join('\n');
 }
 
+/**
+ * Remove every `# canari-only:begin` ... `# canari-only:end` region, markers included.
+ *
+ * `arm-auto-merge.yml` has ONE declared difference between the four repositories: Canari also arms
+ * the lockfile-refresh pull request of its own App (user, 2026-10-18), by an allowlist inside those
+ * markers. The mechanism outside them must stay identical everywhere, so the region is cut BEFORE
+ * the comparison rather than the comparison being weakened: an edit outside the markers still forks,
+ * and a marker that is opened and never closed is a failure here, not a silently longer region.
+ */
+function withoutCanariOnly(raw) {
+  const out = [];
+  let inside = false;
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (t === '# canari-only:begin') {
+      if (inside) throw new Error('nested # canari-only:begin');
+      inside = true;
+    } else if (t === '# canari-only:end') {
+      if (!inside) throw new Error('# canari-only:end without a begin');
+      inside = false;
+    } else if (!inside) {
+      out.push(line);
+    }
+  }
+  if (inside) throw new Error('# canari-only:begin is never closed');
+  return out.join('\n');
+}
+
 /** Hash one file the same way in every repository, so CRLF cannot make two copies look different. */
 function digest(path, transform) {
   const raw = readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
@@ -272,11 +300,12 @@ const SIBLINGS = REPOS.filter(([label]) => label !== 'Canari');
 
 // `arm-auto-merge.yml` IS COMPARED TWICE, AND THE TWO ANSWERS MEAN DIFFERENT THINGS. Its YAML is
 // identical in all four - same trigger, same guard, same `client-id`, same single call - and that is
-// the property that must never fork. Its PROSE is identical in the three siblings and longer in
+// the property that must never fork. THE ONE DECLARED EXCEPTION is Canari's `# canari-only:` region
+// (the lockfile-refresh allowlist, 2026-10-18), cut before comparing; see `withoutCanariOnly`. Its PROSE is identical in the three siblings and longer in
 // Canari, whose copy cites the two pull requests the behaviour was measured on THERE (#329, #330).
 // Copying a measurement into three repositories that never made it would be an invention.
 const ARM = '.github/workflows/arm-auto-merge.yml';
-compare(ARM, REPOS, '  [YAML only - the mechanism]', codeOnly);
+compare(ARM, REPOS, '  [YAML only - the mechanism, Canari-only regions cut]', (raw) => codeOnly(withoutCanariOnly(raw)));
 compare(ARM, SIBLINGS, '  [prose too; Canari cites measurements made only there]');
 
 for (const [shared, why] of SHARED_BY_SIBLINGS) compare(shared, SIBLINGS, `  [Canari excluded: ${why}]`);

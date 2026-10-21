@@ -13,6 +13,8 @@
   } from '$lib/associations/api';
   import { buildCampaignShelves } from '$lib/associations/listShelves';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import MyMembershipsSection from '$lib/components/associations/MyMembershipsSection.svelte';
+  import { groupAssociationsForSelect } from '$lib/associations/selectGroups';
   import AssociationTile from '$lib/components/associations/AssociationTile.svelte';
   import { ChevronDown } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -41,6 +43,7 @@
   });
 
   const myIds = $derived(new Set(myAssociations.map((a) => a.id)));
+  const myLists = $derived(groupAssociationsForSelect(myAssociations).lists);
   const activeLists = $derived(lists.filter((a) => !a.archived));
   const archivedLists = $derived(lists.filter((a) => a.archived));
 
@@ -79,6 +82,12 @@
         {error}
       </div>
     {:else}
+      <MyMembershipsSection
+        heading={m.assoc_list_mine_lists_heading()}
+        items={myLists}
+        href={(a) => `/lists/${encodeURIComponent(a.slug)}`}
+      />
+
       {#if activeLists.length === 0}
         <div
           class="border-cn-border bg-cn-surface rounded-2xl border-2 border-dashed py-16 text-center"

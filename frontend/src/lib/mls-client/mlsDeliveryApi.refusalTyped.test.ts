@@ -53,4 +53,16 @@ describe('delivery refusals carry status and code', () => {
     expect(refusalStatus(e)).toBe(502);
     expect(refusalCode(e)).toBeNull();
   });
+
+  it.each([
+    ['rename', (a: MlsDeliveryApi) => a.renameGroup('g1', 'n')],
+    ['group image', (a: MlsDeliveryApi) => a.setGroupImage('g1', null)],
+    ['group members', (a: MlsDeliveryApi) => a.getGroupMembers('g1')],
+    ['user groups', (a: MlsDeliveryApi) => a.getUserGroups('u1')],
+    ['kick of a stale device', (a: MlsDeliveryApi) => a.kickStaleDevice('d1', 'u1', 'g1')],
+  ])('%s: a refusal is typed with status and code', async (_name, call) => {
+    const e = await call(api(refused(409, { code: 'CONFLICT_X' }))).catch((x: unknown) => x);
+    expect(refusalStatus(e)).toBe(409);
+    expect(refusalCode(e)).toBe('CONFLICT_X');
+  });
 });

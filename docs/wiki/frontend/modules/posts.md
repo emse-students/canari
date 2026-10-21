@@ -103,10 +103,17 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   file browser instead of the photo picker, so photos/videos and documents have one each.
   **There is NO capture input and no system camera (user, 2026-10-11, D-camera).** The ONE camera chip
   ("Ouvrir la camera", not drawn for a fine pointer) opens the in-app CanaReel camera as an overlay
-  (`CameraOverlay`, `ReelCapture` with `destination="post"`): a PHOTO or a VIDEO taken there comes
+  (`CameraOverlay`, `ReelCapture` with `destination="post"`): a PHOTO taken there comes
   back as a file through `onFiles` and is attached - and retained - as any picked post media, with
-  the POST class, never as a reel. The sound-removal button and the gallery shortcut of the reel flow
-  are not offered there. **The post camera asks the lens and the microphone as TWO requests**
+  the POST class, never as a reel. **A VIDEO filmed there is a CanaReel since 2026-10-19** (user:
+  one camera, one behaviour): it goes to the reel publish step with the composer's text as caption,
+  that step says it is deleted after 30 days, and "Garder comme post" hands it back here as an
+  ordinary attachment, with the caption and identity as edited there. A new post with a schedule, a
+  poll, a form or a linked event keeps the old outcome (a reel carries none of them): its camera
+  attaches the video. A video picked from the gallery stays a post, and the post EDITOR's camera
+  (`destination="post-edit"`) attaches videos too - an existing post never becomes a reel
+  ([reels](reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)). The
+  sound-removal button and the gallery shortcut of the reel flow are not offered there. **The post camera asks the lens and the microphone as TWO requests**
   (`postCameraOpener`, PR #1859 review 2026-10-15; one opener per camera session, which does not ask again after a refusal, so a lens flip asks nothing): one combined request made a refused microphone a
   refused camera, so a post took no photo either. A refused microphone leaves a live camera with no
   audio track: every press is a photo, said once ("Micro indisponible : photos uniquement"). A cap
@@ -246,6 +253,23 @@ reader; `PostCard` reads `canManage` straight from the response; and `viewerIsPu
 association post through `POST_AS_ASSO` for creation and management alike. What would settle the
 report is the post itself: whether its publisher held `POST_AS_ASSO` on that association, or reached
 the composer through the global-admin route alone.
+
+## Asking the author of a personal post (D38b, 2026-10-19)
+
+A personal post is carried by an association only with its author's consent; the decision, the
+refusals and the proof are on
+[profiles-and-access](../../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
+On the card, three served fields:
+
+- `canRequestRepublication` draws "Republier au nom d'une association", which opens
+  `RepublishDialog` in `request` mode (`personalRequestCandidates`).
+- `republicationRequests` draws "Demande envoyee au nom de X" under the header and "Annuler la
+  demande de X" in the menu (`withdrawProposal`).
+- `canUnrepublishAs` lists EVERY republisher for the post's author, who may withdraw any of them.
+
+A refused request is read by its typed `code` (`personalRequestRefusalMessage`), never its message.
+The author answers in `/notifications/requests`, reached from the notification, its push
+(`fr.emse.canari://republication-requests`) and a link on `/notifications` while one waits.
 
 ## The search stops where the feed stops (2026-10-04)
 
@@ -1027,6 +1051,7 @@ the console line separates the causes the shared message cannot: a refused conne
 | `/posts` | Main feed |
 | `/post/[postId]` | Single post page |
 | `/posts/new` | Create post form |
+| `/notifications/requests` | The author's inbox of republication requests (D38b): accept or refuse an association's request to carry a personal post |
 
 ## One catch said seven things
 
@@ -1361,6 +1386,98 @@ and every way out; in Chromium on a stand-in thread, light and dark: hovering op
 mouse opens the list, the release leaves it open, the wheel and a click elsewhere close it. **Owed:**
 the hold under a finger on a phone.
 
+## A double tap likes the post, and never unlikes it (2026-10-19)
+
+**Asked by the user on 2026-10-19:** *"J'aimerais qu'on puisse liker un CanaReel en double cliquant
+dessus (et qu'on puisse faire pareil pour tous les posts d'ailleurs)."* One Svelte action,
+`actions/doubleTapLike.ts`, on every post card (`PostCard`, so the feed and `/posts/[id]` alike,
+whatever the post carries) and on the reel on screen in the full-screen viewer (`ReelSlide`, see
+[reels](reels.md#a-double-tap-on-a-reel-likes-it-2026-10-19)). A mouse double click is the same
+gesture.
+
+**What it does - Instagram's rule.**
+
+- A post the reader has NOT reacted to gets "J'aime" (the heart, `DOUBLE_TAP_REACTION` in
+  `posts/postReaction.ts`), through the reaction picker's OWN path: the card's `handleReaction`, so
+  the tally moves on the tap, a mute already known refuses with the same line and sends nothing, the
+  request goes behind `assertNotMuted`, and a failure rolls back with the same sentence. There is no
+  second gate to keep in step: the button has none beyond the mute, and the server's refusal is
+  answered the same way for both.
+- A post the reader has ALREADY reacted to, with ANY reaction, gets the heart drawn again and NO
+  request: a double tap never removes a reaction, and never replaces one the reader chose (a 😂 stays
+  a 😂). The picker remains the one way to change or take back a reaction - and the keyboard's and
+  the screen reader's way to like at all: the gesture adds no tab stop and no name, and a click with
+  no pointer behind it (`detail === 0`: Enter, Space, an assistive activation) is never counted.
+- A signed-out reader, or a card being edited, has no double tap.
+- `DoubleTapHeart` draws the reaction's own picture (Noto's heart, `EmojiText`) where the second tap
+  landed, springs it up and fades it (`.double-tap-heart` in `app.css`, 800 ms), and removes it on
+  `animationend` - never a timer. Under reduced motion it is a still heart fading over 500 ms: the
+  global reduced-motion rule would shorten it to 0.01 ms and remove it before a frame, so the class
+  outranks it on purpose; an opacity change is not motion. One `navigator.vibrate(12)` through
+  `utils/haptics.ts`, when the member has vibrations on - Android only, iOS WebKit has no vibration
+  API and no plugin was added.
+
+**How a double tap is told from a single one.** The taps are the engine's `click`s, read in the
+CAPTURE phase on the card: a click is what the engine already decided was a tap (a press that
+scrolled, panned or pinched makes none), and capture sees it before any child - `VideoPlayer` stops
+its own click's propagation. Two clicks within `GESTURE.DOUBLE_TAP_MS` (250) and
+`GESTURE.DOUBLE_TAP_SLOP_PX` (50) are a double, decided by `isDoubleTap` through
+`createTapDisambiguator` - the arithmetic the media viewer's zoom and the message bubble's heart
+already share, not a third copy. A third quick tap belongs to the same gesture (`quietAfterDouble`).
+
+- **On text, the header, a poll's question, a reel in the viewer: no single tap is held.** The first
+  click goes on to its target at once. On text it does nothing; on a reel it toggles the player's
+  controls, and the second toggles them back - the pair cancels itself, so nothing needs to wait.
+- **On a media that OPENS A VIEWER the single tap IS held**, because no second tap can take back a
+  full-screen viewer: a picture (`PostMedia`'s image button), a feed video and a reel card
+  (`InlineVideo`'s open button), the gallery's "+N" cell carry `data-double-tap-defers`. Their click
+  is stopped in capture and replayed (`element.click()`) once the window has passed with no second
+  tap; a double spends it on the like. **That wait is `createTapDisambiguator`'s one timer and its
+  stated reason: whether a second tap will come is not a fact any event carries before it comes.**
+  If the value were wrong, a slow double tap would open the viewer, or a single tap would open it
+  late - a feel, never a correctness or a traffic question. It is paid on those targets only.
+  Enter or a screen reader opens them at once (`detail === 0`). A drag, a second finger or a
+  `pointercancel` after the tap drops the held open, and an opener the feed removed meanwhile is not
+  replayed. **Reasoned, not measured:** the replayed open now runs ~250 ms after the gesture; Chrome
+  keeps a user activation for seconds, WebKit forwards one through a timer under 1 s, and the viewer
+  starts its player after an asynchronous decrypt anyway - whether a reel still opens WITH SOUND
+  for a member who turned it on is owed on the iPhone.
+- **Never a tap of this gesture:** anything `tapBelongsToInnerControl` names (a link, a mention, a
+  button, a poll option, a field, `role="button"`), anything under `[data-no-double-tap]` - the
+  action bar and the comment section of the card - and the click ending a drag-selection of text
+  (`hasActiveTextSelection`). A tap on any of these also ENDS a sequence, so text-option-text is no
+  like.
+- **The region is asked FIRST, before the media marker** (`classify` in the action). A comment's
+  picture or GIF is a `PostMedia` button carrying `data-double-tap-defers`, inside the comments'
+  `data-no-double-tap`; asked the other way round, a double tap on it liked the POST and its
+  lightbox never opened (review of #2113). It now opens at once, with no hold, and never likes.
+- **Link previews are OUTSIDE the gesture.** A `LinkPreviewCard` is an `<a>` around a `PostMedia`
+  picture: a media opener nested inside another control belongs to that control, so the preview's
+  picture opens at once as before and two taps on any part of a preview never like - the preview
+  is another post's or another site's, not the one being liked.
+- **A mouse double click does not select the word under it** on the card: its second `mousedown`
+  (`detail === 2`) is prevented, outside controls. A drag still selects, and a long press on a phone
+  still selects (it is never a click).
+- **Every overlay a card opens is portalled out of it** (`FullScreenViewer`, `Modal`, the reel
+  viewer), so a double tap inside a lightbox - its own zoom - never reaches the card.
+
+**What `touch-action` was NOT changed, and why.** A double tap on a phone could also be the engine's
+double-tap ZOOM. The feed and the post page scroll in `.page-scroll-wrap`, whose `touch-action:
+pan-y pinch-zoom` (design-reference sections 28 and 38) already removes it - any value but `auto`
+does - and the reel viewer's frame is `touch-none`. Whether WebKit honours that for a double tap on a
+card is part of the owed reading. Adding `manipulation` to the card would intersect to the same
+`pan-y pinch-zoom` and change nothing, so the #1223 tab-swipe rules are untouched: a double tap has no
+travel, so it never engages the tab swipe, the reel viewer's swipe or the reply swipe.
+
+**Pinned:** `doubleTapLike.test.ts` (window, slop, a third tap, a control's taps, a control between
+two taps, no pointer, a second finger, a drag, a press inside the slop, a selection, a held media
+tap opened once / spent on a double / dropped by a drag / not replayed once removed / dropped on
+teardown, the word-selection guard), `PostCard.doubleTap.svelte.test.ts` (one request when not
+reacted, none when liked or reacted otherwise, the heart's lifetime, a poll option and the action
+bar keep their taps, the mute and failure lines, signed out, a viewer like reaching the card),
+`postReaction.test.ts`, and on the reel side `ReelSlide.doubleTap` and `ReelViewer.like`. **Owed on
+the Mi 9T and the iPhone 12:** [device-verification](../../device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones).
+
 ## Scheduled posts: where they show, and the event picker order (2026-10-06)
 
 A scheduled post is visible to its AUTHOR only, in `ScheduledPostsPanel` above the feed of `/posts`
@@ -1458,7 +1575,9 @@ merges over it.
   not carry it.
 - **Without any of the reader's served rights.** Every `can*` field (`canManage`, `canPin`,
   `canReport`, `canUnmaskAnonymous`, `canRepublish`, `canProposeRepublication`,
-  `canUnrepublishAs`) is removed before the page is sealed, and `canVote` is stored as `false`. A
+  `canUnrepublishAs`, `canRequestRepublication`) is removed before the page is sealed, and so is
+  `republicationRequests` (D38b: what the reader's associations asked an author, perhaps answered
+  since); `canVote` is stored as `false`. A
   card drawn from the device therefore offers no edit, no delete, no pin, no vote and no
   republication until the server's own answer says who this reader is. A reader holding a nominative
   read grant (#1606) can never be offered a vote from the copy. The reason is the same as F1's for
@@ -1737,3 +1856,17 @@ the line it writes is an error and must be explained when it appears.
 tie-breaker, so two posts sharing a `publishedAt` may swap across an `OFFSET` page boundary. The next
 page's merge (`loadMorePosts`) already drops an id it holds, so this can skip a post, never duplicate
 one.
+
+## Comment sheet rework (2026-10-21)
+
+Plan: a full-screen sheet from the comment icon, the composer pinned above the keyboard, replies folded, a draft per post, and posting as an association or anonymously. It ships in four pull requests; **this section records what is on `main`**.
+
+**PR 1 - server paging and the client data layer (done).**
+
+- `COMMENT_MAX_LENGTH = 2000` on `AddCommentDto.text` and `EditCommentDto.text` (`comment-page.ts` server side, `posts/api.ts` client side - a refused text is a 400).
+- `editComment` writes `editedAt` (ISO, inside the comments JSONB, no migration); `PostComment.editedAt` carries it.
+- `GET /api/posts/:postId/comments?cursor=<position>&limit=20&order=recent|oldest` serves WHOLE THREADS (`pageComments`): a head and all its descendants, never a split thread. The cursor is the array position of the last head returned, exclusive (`recent` walks down, `oldest` up). It is named `cursor`, not the plan's `before`, because one name has to serve both orders. Visibility is `assertVisible`'s and blocked accounts are dropped (a blocked head drops its thread). The "liked" order is applied by the client on what it has loaded.
+- `commentCount` already counted replies and `PostCard` already read it through `commentCountOf` - the plan's "Charger tout hidden" item was stale.
+- `postCommentDraft.ts`: one draft per account AND post, keyed like `postComposerDraft`.
+
+**Open (PR 2-4):** comment identity (association / anonymous), the components, the sheet.

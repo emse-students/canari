@@ -32,4 +32,24 @@ export class PlatformConfig {
     default: 'disabled',
   })
   paymentProvider!: 'lydia' | 'disabled';
+
+  /** The server's kill switch for calls (migration 014): which calls may start on this estate. */
+  @Column({
+    name: 'calls_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'off',
+  })
+  callsMode!: CallsMode;
 }
+
+/**
+ * Which calls an estate lets start. `off` refuses every call request; `audio` refuses a ring that
+ * asks for video; `audio_video` allows both. Read by chat-delivery-service on every call request
+ * (`apps/chat-delivery-service/src/utils/calls-mode.ts`, the same three values, held together by the
+ * column's CHECK constraint) and published to clients by `GET /api/version`.
+ */
+export type CallsMode = 'off' | 'audio' | 'audio_video';
+
+/** Every {@link CallsMode}, for the DTO's validation. */
+export const CALLS_MODES: readonly CallsMode[] = ['off', 'audio', 'audio_video'];

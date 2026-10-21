@@ -87,7 +87,7 @@ status or an error code (`describeFailure`), never a URL, which would carry the 
 | Service | Route | 2xx means |
 | --- | --- | --- |
 | chat-delivery | `DELETE /api/internal/users/:id` | every row in `ACCOUNT_ERASURE_COVERAGE` (`src/utils/account-erasure-coverage.ts`) is gone or anonymised |
-| social | `DELETE /api/internal/users/:id` | the account left every community (each repaired first), `ERASURE_STATEMENTS` ran in ONE transaction, the JSONB scrub ran, the feed cache was dropped |
+| social | `DELETE /api/internal/users/:id` | the account left every community (each repaired first), `ERASURE_STATEMENTS` ran in ONE transaction around the JSONB scrub (the proposal statements after it), the feed cache was dropped |
 | media | `DELETE /api/media/internal/users/:id` | every object the account uploaded is deleted, except what `survivesAccountDeletion` names; **503 while any delete failed**, and a failed object keeps its live entry so the retry finds it |
 
 ### The coverage is asserted against the schema
@@ -113,7 +113,9 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   messages (reactions and pins included; the salons are told a pin is gone) and the client-id
   tombstones its deleted ones left (`channel_message_client_tombstones`, migration 090: author,
   salon and a random id - an erased account repeats no send, so nothing needs them; a message
-  delete racing the erasure locks the row first, so it waits and writes none)**, its key packages, devices, PIN verifier, push tokens, signature keys,
+  delete racing the erasure locks the row first, so it waits and writes none; the fan-out outbox
+  entry of a message (`channel_message_fanout`, migration 093) goes with its message by cascade, and
+  its mentions of other accounts live only until the broadcast is handed off)**, its key packages, devices, PIN verifier, push tokens, signature keys,
   notification preferences, dismissal markers, DMs (tombstoned for the other party), queued
   messages to it and queued APPLICATION messages from it; in core, blocks, sessions, the profile
   trail and correction requests, announcement readership.
@@ -141,6 +143,15 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
 - **Lives** (`LIVES_ERASURE_STATEMENTS`): a live it broadcast is ENDED (`erased`) and its broadcaster
   becomes `[deleted]` in one statement, and the live sweep deletes its segments and its row within
   30 seconds (no replay, L3); a removed-viewer row naming it, and its `live_starts` rows, are deleted - [lives](services/lives.md#a-deleted-account).
+- **Associations, FIRST** (`ERASURE_ASSOCIATION_LOCK_SQL`, before any write): every association one of
+  its writes reaches is locked `FOR NO KEY UPDATE`, in id order. An association delete locks its
+  association first and the erasure used to reach it last, so they deadlocked (`40P01`) -
+  [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
+- **Proposals and republications, LAST** (`ERASURE_PROPOSAL_STATEMENTS`, after the scrub of other
+  people's posts): an acceptance locks the post before the proposal, so an erasure that took a
+  proposal before a post it had reacted to deadlocked against it. A pending request to an author it
+  asked (D38b) is voided (`[voided]`; its bell row, whose actor is the asker, goes with the account's notifications), the rest anonymised -
+  [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.
 

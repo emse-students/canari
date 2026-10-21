@@ -127,11 +127,16 @@ describe('what a stored row may carry', () => {
       canRepublish: true,
       canProposeRepublication: true,
       canUnrepublishAs: ['a1'],
+      canRequestRepublication: true,
+      republicationRequests: [
+        { associationId: 'a2', associationName: 'A2', proposalId: 'r1', status: 'pending' },
+      ],
       canVote: true,
       reactions: { bob: 'like' },
     });
     const stored = storableFeedRow(served);
     expect(Object.keys(stored).filter((k) => /^can[A-Z]/.test(k))).toEqual(['canVote']);
+    expect(stored.republicationRequests).toBeUndefined();
     expect(stored.canVote).toBe(false);
     expect(stored.reactions).toEqual({ bob: 'like' });
     expect(stored.markdown).toBe('post p1');

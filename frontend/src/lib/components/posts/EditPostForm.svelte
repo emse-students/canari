@@ -415,7 +415,7 @@
           {/each}
 
           <!-- New files (local, not yet uploaded). -->
-          {#each newFiles as file, i (file.name + i)}
+          {#each newFiles as file, i (`${i}:${file.name}`)}
             {@const Icon = fileTypeIcon(file)}
             <div
               class="flex w-[100px] shrink-0 snap-start flex-col gap-2 sm:w-[120px]"

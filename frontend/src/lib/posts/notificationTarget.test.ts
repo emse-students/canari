@@ -51,12 +51,26 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(18);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(24);
+    // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
+    // or a withdrawal has no page.
+    const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
     for (const type of KNOWN_NOTIFICATION_TYPES) {
-      const slugged = type === 'repost_proposed' || type === 'coorganise_proposed';
-      expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(slugged);
+      const noHref =
+        type === 'repost_proposed' ||
+        type === 'coorganise_proposed' ||
+        liveModeration.includes(type);
+      expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(noHref);
     }
   });
+
+  it.each(['live_cut', 'live_suspended', 'live_withdrawn'])(
+    'knows %s and gives it no link, so the row is told and inert rather than a dead /posts/<id>',
+    (type) => {
+      expect(isKnownNotificationType(type)).toBe(true);
+      expect(notificationHref({ type, postId: 'live-1' })).toBeNull();
+    }
+  );
 
   it('gives a type it has never heard of NO link, so the row can say so instead of a dead /posts/<id>', () => {
     expect(notificationHref({ type: 'something_new', postId: 'x' })).toBeNull();
@@ -86,6 +100,14 @@ describe('resolveNotificationHref', () => {
       resolveNotificationHref({ type: 'association_repost', postId: 'p1' }, lookup)
     ).resolves.toBe('/posts/p1');
     expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('sends the author of a personal post to their requests, and the proposer to the post (D38b)', () => {
+    expect(notificationHref({ type: 'repost_personal_requested', postId: 'p1' })).toBe(
+      '/notifications/requests'
+    );
+    expect(notificationHref({ type: 'repost_personal_accepted', postId: 'p1' })).toBe('/posts/p1');
+    expect(notificationHref({ type: 'repost_personal_refused', postId: 'p1' })).toBe('/posts/p1');
   });
 
   it('rejects when the association cannot be found, rather than guessing a page', async () => {

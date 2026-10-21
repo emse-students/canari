@@ -139,6 +139,17 @@ export function salonMarksAfterLoad(
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
+let salonMarksDelivered = 0;
+
+/**
+ * A monotonic count of salon marks the server has taken, ticking the instant each one is taken
+ * (not when its flush ends). A request sent before a tick may predate the mark it counts, which is
+ * how `unread-counts` decides whether it may be shared.
+ */
+export function salonMarksDeliveredCount(): number {
+  return salonMarksDelivered;
+}
+
 /** The marks still owed, for tests and diagnostics. */
 export function owedSalonReadMarks(userId: string): Owed {
   return load('salon', userId);
@@ -197,6 +208,7 @@ async function flush(
       if ((current[id]?.at ?? 0) <= mark.at) delete current[id];
       store(space, userId, current);
       delivered++;
+      if (space === 'salon') salonMarksDelivered++;
     } catch (e) {
       console.warn(
         `[READ] ${space} mark ${mark.at} for ${id} not delivered - kept, and asked again at` +

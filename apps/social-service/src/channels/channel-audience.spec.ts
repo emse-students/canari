@@ -191,6 +191,12 @@ describe('channel audience', () => {
       expect(audienceOf(redis, 'channel.typing')).not.toContain(OUTSIDER);
     });
 
+    it('does not echo typing back to the typist', async () => {
+      const { service, redis } = makeService(privateChannel);
+      await service.publishTyping('ch-staff', INSIDER, true);
+      expect(audienceOf(redis, 'channel.typing')).not.toContain(INSIDER);
+    });
+
     it('keeps a pin off an outsider socket', async () => {
       // Pinned by an admin who joined the salon: since 2026-10-05 a pin is moderation for every
       // message, so a plain member - even the author - is refused before anything is published.

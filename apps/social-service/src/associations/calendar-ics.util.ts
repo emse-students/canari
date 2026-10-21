@@ -9,7 +9,20 @@ export type AggregatedCalendarIcsRow = {
   endsAt: string | null;
   associationName: string;
   associationSlug: string;
+  /** The accepted co-organisers, in display order (D39); absent on a single-owner row. */
+  coOwners?: Array<{ name: string }>;
 };
+
+/**
+ * The organisers as ONE summary suffix - the SAME rule as the client's `organisersLabel`: the name
+ * alone, `A + B` for two, `A + N autres` from three on (up to four associations may run an event).
+ * An entry in a subscriber's calendar named only the owner and hid up to three co-organisers.
+ * French because the feed is anonymous and carries no locale, like the rest of this file's output.
+ */
+export function organisersSummary(owners: string[]): string {
+  if (owners.length <= 2) return owners.join(' + ');
+  return `${owners[0]} + ${owners.length - 1} autres`;
+}
 
 /**
  * Builds a VCALENDAR (UTC) for aggregated association agenda rows.
@@ -27,7 +40,7 @@ export function buildAggregatedCalendarIcs(
   const base = opts.frontendBaseUrl.replace(/\/+$/, '');
   const events: IcsEvent[] = rows.map((r) => ({
     uid: r.id,
-    summary: `${r.title} - ${r.associationName}`,
+    summary: `${r.title} - ${organisersSummary([r.associationName, ...(r.coOwners ?? []).map((co) => co.name)].filter((n) => n.trim() !== ''))}`,
     startsAt: r.startsAt,
     endsAt: r.endsAt,
     description: r.description,

@@ -102,6 +102,7 @@
 - [Host OS updates](infrastructure/host-updates.md) — the four boxes' security updates, the `#clear` without which the policy is decorative, the 30-second `502` this scope does NOT incur, and the daily run that fails on a finding
 - [Dev environment](infrastructure/dev-environment.md) — `dev.canari-emse.fr`: what keeps it apart from production, the full copy and its three strips, the declared version gap, and the one kind of evidence that lifts a merge ceiling
 - [Store listings](store-listings.md) - what Play and the App Store show: current texts and what is stale, screenshot sizes, the fictional-demo-data pipeline and its privacy checklist
+- [Store UGC answers](store-ugc-answers.md) - what Apple 1.2 and Play's UGC policy ask (filter, report, block, contact, terms), mapped to what the app has and what is missing (WP-L9)
 - [Production queue and epoch audit, 2026-10-12](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md) - why `queued_message` reached 93 k rows: repair answers sent to every seat of a new community, and seats of devices with no session left; no client stuck, the reaper by age rejected
 - [Storage forecast](infrastructure/storage-forecast.md) — Measured unit costs, the model at 400 daily users, and why the backup scheme fails before the data does
 - [Storage and retention](infrastructure/storage-and-retention.md) — Draft audit of 2026-10-11: host disk, volumes, logs and backups measured read-only; the unmeasured remainder is listed
@@ -138,7 +139,7 @@
 - [Device readings, 2026-10](device-readings-2026-10.md) — the Mi 9T and iPhone 12 alpha passes of 2026-10-05 to 10-07: what passed, with the evidence, and the bench traps met
 - [Bench readings for calls and live, 2026-10-18](device-readings-calls-live-2026-10-18.md) - calls BLOCKED (no tag carries lot 1); the WP-L1 live bench on both phones: 720p fMP4 segments for 36-42 min, a growing MSE source with 0 append errors, bitrate, battery and heat
 - [Testing methodology](testing-methodology.md) — How a result earns belief: the harness faults distilled into rules, plus the environment traps that read as application bugs
-- [Test suite reform](test-suite-reform.md) — The whole test estate measured (2026-10-18): where the 16-minute frontend job goes, the gaps found, and the ordered work packages WP-T1..T8
+- [Test suite reform](test-suite-reform.md) — The whole test estate measured (2026-10-18): where the 16-minute frontend job goes, the gaps found, and the ordered work packages WP-T1..T8, and the generated inventory of every suite with its deletion candidates (`tools/test-inventory`)
 - [Mechanism audit](mechanism-audit.md) - What every part of the app is covered by, measured across the board, the unit tests and the hand pass - and the five things nothing watches
 - [Cross-client testing](cross-client-testing.md) — The campaign board, state only: every check, its verdict, and the commit it ran on
 - [Cross-client rig findings](cross-client-harness-findings.md) — Open findings about the instrument itself: debris sweep, the starting-point contract, duplicated helpers, the PIN-verifier strand, the two `canari-harness` directories

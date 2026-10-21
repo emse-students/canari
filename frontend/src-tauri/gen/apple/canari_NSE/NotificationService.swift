@@ -158,8 +158,20 @@ class NotificationService: UNNotificationServiceExtension {
     // Republication (D38): the republishing, then the proposing, association names the title.
     case "social_association_repost": composed = actorTitled("association_repost")
     case "social_repost_proposed": composed = actorTitled("repost_proposed")
+    // D38b: an association asks the AUTHOR to republish their personal post.
+    case "social_repost_personal_requested": composed = actorTitled("repost_personal_requested")
     // Co-organisation (D39): the organising association names the title, the event is the body.
     case "social_coorganise_proposed": composed = actorTitled("coorganise_proposed")
+    // A live started (WP-L7): the broadcaster names the title, the body is the fixed sentence.
+    case "social_live_started": composed = actorTitled("live_started")
+    // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
+    // no fragment.
+    case "social_live_cut", "social_live_suspended", "social_live_withdrawn":
+      let stem = String(key.dropFirst("social_".count))
+      composed = (
+        Self.localized("notif.social.\(stem).title", locale: locale),
+        Self.localized("notif.social.\(stem).body", locale: locale)
+      )
     case "social_reaction":
       composed = (
         Self.localized("notif.social.reaction.title", locale: locale),
@@ -597,6 +609,9 @@ class NotificationService: UNNotificationServiceExtension {
     let messageId: String
     let sentAt: Int64
     let replyTo: String?
+    /// "image" | "video" | "audio" | "file" | "reel", as Rust read it. "reel" is a CanaReel sent in
+    /// a conversation (WP-RC-7): Rust words its line and withholds its key, so `isImageMedia` is
+    /// false for it twice over - no thumbnail, ever.
     let mediaKind: String?
     let mediaId: String?
     let mediaKey: String?
@@ -998,9 +1013,19 @@ class NotificationService: UNNotificationServiceExtension {
     // same format is spelled by the social-service alert title, the Kotlin service and
     // `canari_push.mm`; `channelPushFields.test.ts` holds the four together.
     content.title = workspaceName.isEmpty ? "#\(channelName)" : "\(workspaceName) - #\(channelName)"
+    // The phone's names, read at most once for this banner: the author line and the tokens share it.
+    let nameBook = Self.mentionNameBook(myUserId: ctx?.userId)
     content.body =
-      body.map { Self.renderMentions($0, myUserId: ctx?.userId, locale: ctx?.locale) }
+      body.map {
+        Self.renderMentions($0, myUserId: ctx?.userId, locale: ctx?.locale, nameBook: nameBook)
+      }
       ?? Self.localizedFormat("notif.channel.message", channelName, locale: ctx?.locale)
+    // A salon banner names no author (its title is the salon), so a mention of this reader says WHO
+    // in the subtitle - the Android twin puts the same line above the body (WP-MENTION-NAME).
+    if mentionsMe {
+      content.subtitle = Self.mentionAuthorLine(
+        senderId: senderId, nameBook: nameBook, locale: ctx?.locale)
+    }
     content.threadIdentifier = "channel_\(channelId)"
     content.userInfo["deepLink"] = "fr.emse.canari://chat/channel_\(channelId)"
     // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
@@ -1092,32 +1117,105 @@ class NotificationService: UNNotificationServiceExtension {
     return seed
   }
 
-  /// The `reason` of a refusal from `background.rs`, or nil for anything that is not one.
-  /// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with a WORD - "you" for this
-  /// device's own user, "someone" for anybody else - and collapses the run of spaces a token left.
+  /// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with something readable -
+  /// "you" for this device's own user, the NAME the phone already holds for anybody else, and the
+  /// word "someone" for an id it has never named - and collapses the run of spaces a token left.
   ///
-  /// The extension has no name directory and no second chance to redraw, so it renders the one id it
-  /// knows for certain and says plainly that it does not know the others, rather than a hex blob on
-  /// the very banner a mention makes time-sensitive. Android twin: `renderMentions`.
-  private static func renderMentions(_ text: String, myUserId: String?, locale: String?) -> String {
+  /// The names come from the phone's own copy, never from the push or the network
+  /// (WP-MENTION-NAME, 2026-10-18): `display_names.json` in the App Group, which the app writes with
+  /// every name it has resolved (`store_display_names`). Android twin: `renderMentions`.
+  ///
+  /// `nameBook` is the banner's one read of those names, shared with `mentionAuthorLine` on the
+  /// salon path; nil reads them here, at most once, and only for a token naming somebody else.
+  private static func renderMentions(
+    _ text: String, myUserId: String?, locale: String?,
+    nameBook: (() -> [String: Any]?)? = nil
+  ) -> String {
     guard text.contains("@["),
       let regex = try? NSRegularExpression(pattern: "@\\[([0-9a-fA-F]{64})\\]")
     else { return text }
     let me = myUserId?.lowercased()
     let ns = text as NSString
+    let book = nameBook ?? mentionNameBook(myUserId: me)
+    var named = 0
+    var unknown = 0
     var out = ""
     var cursor = 0
     for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
       out += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
       let id = ns.substring(with: match.range(at: 1)).lowercased()
-      let key = (me != nil && id == me) ? "notif.mention.you" : "notif.mention.someone"
-      out += "@" + localized(key, locale: locale)
+      if me != nil && id == me {
+        out += "@" + localized("notif.mention.you", locale: locale)
+      } else {
+        if let name = book()?[id] as? String, !name.isEmpty {
+          named += 1
+          out += "@" + name
+        } else {
+          unknown += 1
+          out += "@" + localized("notif.mention.someone", locale: locale)
+        }
+      }
       cursor = match.range.location + match.range.length
     }
     out += ns.substring(from: cursor)
+    if named + unknown > 0 {
+      NSLog("[CanariNSE] [MENTION_NAME] named=\(named) unknown=\(unknown)")
+    }
     return out.replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
   }
 
+  /// The phone's names for one banner: `display_names.json` read on the first call only, so the
+  /// author line and the tokens of one banner cost one file read, and a banner needing neither none.
+  private static func mentionNameBook(myUserId: String?) -> () -> [String: Any]? {
+    var names: [String: Any]?
+    var read = false
+    return {
+      if !read {
+        names = loadMentionNames(myUserId: myUserId?.lowercased())
+        read = true
+      }
+      return names
+    }
+  }
+
+  /// "Alice mentioned you" for a salon banner that mentions this reader (WP-MENTION-NAME,
+  /// 2026-10-18): the AUTHOR, named from the phone's own copy of names under the same owner rule as
+  /// the tokens, and "Someone" when the phone has never named them. Never from the push, which
+  /// carries only `senderId`. Salon only: an MLS banner already names its sender. Android twin:
+  /// `mentionAuthorLine`.
+  private static func mentionAuthorLine(
+    senderId: String, nameBook: () -> [String: Any]?, locale: String?
+  ) -> String {
+    let id = senderId.lowercased()
+    let name = id.isEmpty ? nil : (nameBook()?[id] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    NSLog("[CanariNSE] [MENTION_NAME] author named=\(name != nil)")
+    // The placeholder opens the sentence in both languages, so the word is capitalised there.
+    let someone = localized("notif.mention.someone", locale: locale)
+    let who = name ?? (someone.prefix(1).uppercased() + someone.dropFirst())
+    return localizedFormat("notif.social.mention.title", who, locale: locale)
+  }
+
+  /// The `names` map of `display_names.json` in the App Group, or nil when it cannot be used:
+  /// absent, unreadable, or written for another account than `myUserId` (one file per install, and
+  /// two accounts may sign in on one phone).
+  private static func loadMentionNames(myUserId: String?) -> [String: Any]? {
+    guard let me = myUserId, let dir = appGroupDir() else { return nil }
+    guard let data = try? Data(contentsOf: dir.appendingPathComponent("display_names.json")) else {
+      NSLog("[CanariNSE] [MENTION_NAME] no display_names.json - every other mention is 'someone'")
+      return nil
+    }
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      NSLog("[CanariNSE] [MENTION_NAME] display_names.json unreadable")
+      return nil
+    }
+    guard (root["userId"] as? String)?.lowercased() == me else {
+      NSLog("[CanariNSE] [MENTION_NAME] display_names.json belongs to another account - not used")
+      return nil
+    }
+    return root["names"] as? [String: Any]
+  }
+
+  /// The `reason` of a refusal from `background.rs`, or nil for anything that is not one.
   private static func refusalReason(_ json: String?) -> String? {
     guard let json = json, let data = json.data(using: .utf8),
       let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

@@ -84,6 +84,12 @@
      * into view once it is drawn, and marked so the reader sees which one they were told about.
      */
     focusCommentId?: string;
+    /**
+     * Drawn as a sheet's body (`ReelCommentsSheet`): the list scrolls in the height it is given and
+     * the composer stays docked under it, as Instagram's does, and the show/hide toggle is not drawn
+     * - the sheet has its own close.
+     */
+    docked?: boolean;
   }
 
   let {
@@ -106,6 +112,7 @@
     onKeyDown,
     pendingCommentIds,
     focusCommentId,
+    docked = false,
   }: Props = $props();
 
   /** The DOM id of a comment's row, the anchor a notification tap scrolls to. */
@@ -590,81 +597,88 @@
 -->
 {#if comments.length > 0 || showComments}
   <div
-    class="border-t border-black/5 bg-white/30 px-4 pt-2 pb-3 sm:px-5 dark:border-white/10 dark:bg-black/10"
+    class={docked
+      ? 'flex h-full min-h-0 flex-col px-4 pt-2 pb-3 sm:px-5'
+      : 'border-t border-black/5 bg-white/30 px-4 pt-2 pb-3 sm:px-5 dark:border-white/10 dark:bg-black/10'}
   >
-    <!--
+    <div
+      class={docked ? 'min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain' : ''}
+      data-post-comments-list
+    >
+      <!--
       Controls: show/hide + sort. Both are about a LIST, so neither is drawn for a post with no
       comments - opened from zero, this section is a composer and "Masquer les commentaires" would
       name something that is not on screen.
     -->
-    {#if topLevelComments.length > 0}
-      <div class="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <div class="min-w-0">
-          {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
-            <button
-              type="button"
-              onclick={onToggleComments}
-              class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-            >
-              <ChevronDown size={16} strokeWidth={2.5} />
-              {m.post_show_comments_label({ count: topLevelComments.length })}
-            </button>
-          {:else if showComments}
-            <button
-              type="button"
-              onclick={onToggleComments}
-              class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-            >
-              <ChevronUp size={16} strokeWidth={2.5} />
-              {m.post_hide_comments_label()}
-            </button>
-          {/if}
-        </div>
-
-        <!-- Tri -->
-        {#if topLevelComments.length > 1}
-          <div class="flex min-w-0 flex-wrap items-center gap-1">
-            <ArrowUpDown size={12} class="text-text-muted opacity-60" />
-            {#each [['recent', m.post_sort_recent_label()], ['oldest', m.post_sort_oldest_label()], ['liked', m.post_sort_liked_label()]] as const as [mode, label] (mode)}
+      {#if topLevelComments.length > 0}
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <div class="min-w-0">
+            {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
               <button
                 type="button"
-                onclick={() => (sortMode = mode)}
-                class="text-2xs rounded-full px-2 py-0.5 font-bold transition-colors {sortMode ===
-                mode
-                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                  : 'text-text-muted hover:text-text-main'}"
+                onclick={onToggleComments}
+                class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
               >
-                {label}
+                <ChevronDown size={16} strokeWidth={2.5} />
+                {m.post_show_comments_label({ count: topLevelComments.length })}
               </button>
-            {/each}
+            {:else if showComments && !docked}
+              <button
+                type="button"
+                onclick={onToggleComments}
+                class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+              >
+                <ChevronUp size={16} strokeWidth={2.5} />
+                {m.post_hide_comments_label()}
+              </button>
+            {/if}
           </div>
-        {/if}
-      </div>
-    {/if}
 
-    <!-- Comment list. -->
-    {#if visibleComments.length > 0}
-      <div class="mb-3 space-y-1">
-        {#each visibleComments as comment (comment.id)}
-          {@render commentNode(comment, false)}
-        {/each}
-      </div>
-    {/if}
+          <!-- Tri -->
+          {#if topLevelComments.length > 1}
+            <div class="flex min-w-0 flex-wrap items-center gap-1">
+              <ArrowUpDown size={12} class="text-text-muted opacity-60" />
+              {#each [['recent', m.post_sort_recent_label()], ['oldest', m.post_sort_oldest_label()], ['liked', m.post_sort_liked_label()]] as const as [mode, label] (mode)}
+                <button
+                  type="button"
+                  onclick={() => (sortMode = mode)}
+                  class="text-2xs rounded-full px-2 py-0.5 font-bold transition-colors {sortMode ===
+                  mode
+                    ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                    : 'text-text-muted hover:text-text-main'}"
+                >
+                  {label}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
 
-    <!-- Load all comments (if the backend returns more). -->
-    {#if onLoadAllComments && totalCommentCount !== undefined && totalCommentCount >= 20 && showComments}
-      <button
-        type="button"
-        onclick={handleLoadAll}
-        disabled={loadingAll}
-        class="text-text-muted hover:text-text-main text-2xs mb-2 w-full rounded-lg py-1.5 font-bold transition-colors disabled:opacity-50"
-      >
-        {loadingAll ? m.common_loading_label() : m.post_load_all_comments_label()}
-      </button>
-    {/if}
+      <!-- Comment list. -->
+      {#if visibleComments.length > 0}
+        <div class="mb-3 space-y-1">
+          {#each visibleComments as comment (comment.id)}
+            {@render commentNode(comment, false)}
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Load all comments (if the backend returns more). -->
+      {#if onLoadAllComments && totalCommentCount !== undefined && totalCommentCount >= 20 && showComments}
+        <button
+          type="button"
+          onclick={handleLoadAll}
+          disabled={loadingAll}
+          class="text-text-muted hover:text-text-main text-2xs mb-2 w-full rounded-lg py-1.5 font-bold transition-colors disabled:opacity-50"
+        >
+          {loadingAll ? m.common_loading_label() : m.post_load_all_comments_label()}
+        </button>
+      {/if}
+    </div>
 
     <!-- Input area. -->
-    <div class="flex flex-col gap-2">
+    <div class="flex flex-col gap-2 {docked ? 'shrink-0 pt-2' : ''}">
       {#if replyingToId}
         <div
           class="animate-in fade-in slide-in-from-bottom-1 text-2xs ml-10 flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 font-bold text-amber-700 dark:text-amber-400"

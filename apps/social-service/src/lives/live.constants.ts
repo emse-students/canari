@@ -94,8 +94,197 @@ export const LIVE_RESERVATION_TTL_MS = LIVE_STORE_TIMEOUT_MS + 5_000;
  */
 export const LIVE_INGEST_MAX_CONCURRENT = 4;
 
-/** Why a live ended - the `endReason` column. */
-export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased';
+/**
+ * THE HOST'S USABLE EGRESS, in bits per second: the floor of the ~90-107 Mb/s aggregate measured
+ * out of production on 443 (realtime-media-feasibility.md, sections 4 and 2a, two separate hours).
+ * Every viewer of every live is one more copy out of this ONE link - nginx's cache saves the app
+ * and the store, never a byte of it (live.md, option C). A MEASUREMENT FROM ONE OUTSIDE CLIENT, to
+ * be replaced by the DSI's figure (Q3) or a campus-side measurement when either exists.
+ */
+export const LIVE_HOST_EGRESS_BPS = 90_000_000;
+
+/**
+ * The share of {@link LIVE_HOST_EGRESS_BPS} lives may take. The link also carries production's own
+ * traffic, dev, Le Cercle and the co-tenant sites of a host we do not own; 0.8 leaves a fifth of it
+ * to everything else. A planning figure.
+ */
+export const LIVE_EGRESS_SHARE = 0.8;
+
+/**
+ * What one viewer costs the uplink, in bits per second: the MEASURED mean of the WP-L1 bench on the
+ * platform that produces more (Chrome/Android, 2.89-3.06 Mb/s against a 2.5 Mb/s target;
+ * device-readings-calls-live-2026-10-18.md). Sized on the heavier broadcaster, so a live from an
+ * iPhone (~1.45 Mb/s) leaves headroom rather than the reverse.
+ */
+export const LIVE_VIEWER_BITRATE_BPS = 3_000_000;
+
+/**
+ * THE VIEWER CAP OF THE HOST (L8 as the plan resolved it: "a cap set by the host's uplink"):
+ * floor(90 Mb/s x 0.8 / 3 Mb/s) = 24 seats, across EVERY live at once, since they share the link.
+ * Seat N+1 is refused 503 `LIVE_FULL` (lives.md, "The viewer cap"). The broadcaster takes none.
+ */
+export const LIVE_VIEWER_CAP = Math.floor(
+  (LIVE_HOST_EGRESS_BPS * LIVE_EGRESS_SHARE) / LIVE_VIEWER_BITRATE_BPS
+);
+
+/**
+ * How long a seat is held after the viewer's last key read or manifest poll. A viewer polls every
+ * segment (a few seconds), so 30 s is ten polls missed: wrong too SHORT, a watching viewer loses its
+ * seat to the next one in; wrong too LONG, a viewer that vanished without `DELETE .../seat` (a
+ * crash, a lost network) holds a seat that long. The leave route is the proof; this is only the
+ * bound on a viewer that could not send it.
+ */
+export const LIVE_SEAT_LEASE_MS = 30_000;
+
+/** Why a live ended - the `endReason` column. `cut`: staff ended it (WP-L8, `POST /api/lives/:id/cut`). */
+export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased' | 'cut';
+
+/**
+ * THE REASON CODES OF A STAFF CUT - the report reasons of `content_reports`
+ * (`frontend/src/lib/moderation/reasons.ts`), so a moderator answers a report in the vocabulary it
+ * was filed in. A code, never a sentence: the broadcaster's client words it in its own language.
+ */
+export const LIVE_CUT_REASONS = ['spam', 'harassment', 'inappropriate', 'other'] as const;
+export type LiveCutReason = (typeof LIVE_CUT_REASONS)[number];
+
+/** The longest free text a moderator may attach to a cut (the mute reason's bound). */
+export const LIVE_CUT_DETAILS_MAX = 500;
+
+/** One day, the unit the moderation durations below are decided in. */
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * How long a cut is KEPT (`live_cuts`): 90 days, the owner's decision of 2026-10-20 (register row
+ * C20). Deleted by the live sweep past it; an account erasure deletes the account's at once.
+ */
+export const LIVE_CUT_RETENTION_MS = 90 * DAY_MS;
+
+/**
+ * THE STRIKE LADDER COUNTS THE CUTS STILL ON RECORD (owner, 2026-10-20): a rolling window equal to
+ * the cut's retention, so an abuse older than it is forgotten. ONE number, not two that agree today:
+ * a cut the ladder still counts is a cut that is still kept. Every count reads `"cutAt"` against the
+ * database clock with this window, so a prune running late never makes a forgotten cut count.
+ */
+export const LIVE_STRIKE_WINDOW_MS = LIVE_CUT_RETENTION_MS;
+
+/**
+ * The strike from which a cut SUSPENDS the right to broadcast (owner, 2026-10-20: the 1st abuse is a
+ * warning and the cut, the 2nd a suspension). A cut's strike is fixed when it is recorded
+ * (`live_cuts.strike`, 1 + the other cuts on record then), so a later prune of an older cut never
+ * lifts a suspension it caused.
+ */
+export const LIVE_SUSPENSION_FROM_STRIKE = 2;
+
+/** How long a suspension lasts, from the cut that caused it: 30 days (owner, 2026-10-20). */
+export const LIVE_SUSPENSION_MS = 30 * DAY_MS;
+
+/**
+ * The cuts on record from which STAFF MAY WITHDRAW the right to broadcast (owner, 2026-10-20: the
+ * 3rd abuse, "decided by staff"). Never automatic: the 3rd cut suspends, as the 2nd does, and
+ * `withdrawalDue` tells a moderator the decision is theirs to take.
+ */
+export const LIVE_WITHDRAWAL_FROM_CUTS = 3;
+
+/**
+ * THE HARD BOUND ON A REPORTED CHAT LINE (owner, 2026-10-20, WP-L8b): kept until its report is
+ * handled, and NEVER longer than this, handled or not - an unhandled report would otherwise keep a
+ * member's words for ever. Erased by the live sweep, from `keptAt` (the report's time).
+ */
+export const LIVE_CHAT_REPORT_MAX_KEEP_MS = 90 * DAY_MS;
+
+/**
+ * THE RESPONSE COMMITMENT TO THE STORES (owner, 2026-10-20): a live report (`live` or `live_chat`)
+ * is answered within 24 hours ON WORKING DAYS. A pending report whose WORKING age passes this is
+ * named at `error` by the hourly `[LIVE_REPORT_AGE]` report (`LiveReportAgeScheduler`).
+ */
+export const LIVE_REPORT_RESPONSE_WORKING_MS = DAY_MS;
+
+/**
+ * The zone whose Saturdays and Sundays are not working days for {@link LIVE_REPORT_RESPONSE_WORKING_MS}:
+ * the school's. Public holidays are NOT left out (no calendar of them exists here), so the alarm can
+ * fire on a bank holiday a day early - early, never late.
+ */
+export const LIVE_REPORT_WORKING_ZONE = 'Europe/Paris';
+
+/**
+ * THE VERSION OF THE RULES A MEMBER ACCEPTS BEFORE BROADCASTING (L11). A start is refused 403
+ * `LIVE_RULES_NOT_ACCEPTED` unless the member's recorded acceptance (`live_rules_acceptances`) is at
+ * least this version, or the start itself carries `acceptedRulesVersion` equal to it - which records
+ * it. Raise it when the rules' TEXT changes, so every member accepts the new text once. Version 2
+ * (2026-10-21): the sheet shows the posts' publication rules (owner, 2026-10-20), not the four
+ * live-specific lines of version 1.
+ */
+export const LIVE_RULES_VERSION = 2;
+
+/**
+ * THE LONGEST CHAT MESSAGE, in UTF-16 code units of plain text (WP-L6, C11). The server never sees
+ * the text - it is sealed with the live key - so this is the CLIENT's bound, published here so an
+ * installed build reads it rather than carries it; the server bounds the sealed size below.
+ */
+export const LIVE_CHAT_MESSAGE_MAX_CHARS = 300;
+
+/** The AES-GCM overhead of a sealed message: a 12-byte IV and a 16-byte tag (C12). */
+export const LIVE_CHAT_SEAL_OVERHEAD_BYTES = 12 + 16;
+
+/**
+ * The largest sealed message the server stores: the overhead plus 300 UTF-16 units at most 3 UTF-8
+ * bytes each (a pair of units is a 4-byte character, under 6), so 928 bytes.
+ */
+export const LIVE_CHAT_SEALED_MAX_BYTES =
+  LIVE_CHAT_SEAL_OVERHEAD_BYTES + 3 * LIVE_CHAT_MESSAGE_MAX_CHARS;
+
+/**
+ * THE LONGEST TEXT A CHAT-LINE REPORT MAY HAND OVER, in UTF-8 bytes (WP-L8b): whatever the largest
+ * sealed line the server STORES can hold, so every line a viewer can see is reportable - not the
+ * client composer's 300 characters, which an older or another client need not have applied
+ * (review of #2172). A UTF-16 unit is at least one UTF-8 byte, so it bounds the units too.
+ */
+export const LIVE_CHAT_REPORT_TEXT_MAX_BYTES =
+  LIVE_CHAT_SEALED_MAX_BYTES - LIVE_CHAT_SEAL_OVERHEAD_BYTES;
+
+/** The smallest: the overhead and one byte of text - an empty message is not a message. */
+export const LIVE_CHAT_SEALED_MIN_BYTES = LIVE_CHAT_SEAL_OVERHEAD_BYTES + 1;
+
+/**
+ * How many messages one account may post on one live in {@link LIVE_CHAT_RATE_WINDOW_MS} (C6),
+ * counted from its rows under the live's row lock, by the database clock. 429 `LIVE_MESSAGE_TOO_FAST`.
+ */
+export const LIVE_CHAT_MESSAGES_PER_WINDOW = 3;
+
+/** The rolling window of {@link LIVE_CHAT_MESSAGES_PER_WINDOW}. */
+export const LIVE_CHAT_RATE_WINDOW_MS = 5_000;
+
+/** What a viewer's FIRST poll (no `messagesAfter`) receives: the newest messages, at most this many (C13). */
+export const LIVE_CHAT_BACKLOG = 50;
+
+/** The most messages one poll answers after its cursor; the rest come with the next poll. */
+export const LIVE_CHAT_PAGE = 100;
+
+/**
+ * THE FIVE FLOATING REACTIONS (owner, 2026-10-20, superseding C8): ❤️ like (heart), 😂 laugh,
+ * 👏 clap (bravo), 🔥 fire, 🐤 canari (the canary chick). No sad, no angry. ASCII wire names; the
+ * client draws the Noto picture. A burst naming an older kind (`love`, `happy`) is 400
+ * `LIVE_REACTION_INVALID` - dev builds only, so nothing in the field breaks.
+ */
+export const LIVE_REACTION_KINDS = ['like', 'laugh', 'clap', 'fire', 'canari'] as const;
+
+/** One of {@link LIVE_REACTION_KINDS}. */
+export type LiveReactionKind = (typeof LIVE_REACTION_KINDS)[number];
+
+/**
+ * The step reactions are summed over (C7): a burst falls in window floor(age / 2 s) of its live, and
+ * the poll answers one sum per kind per window. Also the rolling window of the two rates below.
+ */
+export const LIVE_REACTION_WINDOW_MS = 2_000;
+
+/** How many bursts one account may send per {@link LIVE_REACTION_WINDOW_MS} (C6). */
+export const LIVE_REACTION_BURSTS_PER_WINDOW = 2;
+
+/** How many taps one account may make per {@link LIVE_REACTION_WINDOW_MS}: five a second (C6). */
+export const LIVE_REACTION_TAPS_PER_WINDOW = 10;
+
+/** The most bursts one poll sums after its cursor; the rest come with the next poll. */
+export const LIVE_REACTION_PAGE = 500;
 
 /** The numbers as the API serves them. */
 export function liveLimits(): {
@@ -107,6 +296,20 @@ export function liveLimits(): {
   segmentMinDurationMs: number;
   segmentBurst: number;
   startsPerHour: number;
+  viewerCap: number;
+  seatLeaseMs: number;
+  rulesVersion: number;
+  chatMessageMaxChars: number;
+  chatSealedMaxBytes: number;
+  chatMessagesPerWindow: number;
+  chatRateWindowMs: number;
+  chatBacklog: number;
+  reactionKinds: readonly LiveReactionKind[];
+  reactionWindowMs: number;
+  reactionBurstsPerWindow: number;
+  reactionTapsPerWindow: number;
+  strikeWindowMs: number;
+  suspensionMs: number;
 } {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
@@ -117,5 +320,19 @@ export function liveLimits(): {
     segmentMinDurationMs: LIVE_SEGMENT_MIN_DURATION_MS,
     segmentBurst: LIVE_SEGMENT_BURST,
     startsPerHour: LIVE_STARTS_PER_HOUR,
+    viewerCap: LIVE_VIEWER_CAP,
+    seatLeaseMs: LIVE_SEAT_LEASE_MS,
+    rulesVersion: LIVE_RULES_VERSION,
+    chatMessageMaxChars: LIVE_CHAT_MESSAGE_MAX_CHARS,
+    chatSealedMaxBytes: LIVE_CHAT_SEALED_MAX_BYTES,
+    chatMessagesPerWindow: LIVE_CHAT_MESSAGES_PER_WINDOW,
+    chatRateWindowMs: LIVE_CHAT_RATE_WINDOW_MS,
+    chatBacklog: LIVE_CHAT_BACKLOG,
+    reactionKinds: LIVE_REACTION_KINDS,
+    reactionWindowMs: LIVE_REACTION_WINDOW_MS,
+    reactionBurstsPerWindow: LIVE_REACTION_BURSTS_PER_WINDOW,
+    reactionTapsPerWindow: LIVE_REACTION_TAPS_PER_WINDOW,
+    strikeWindowMs: LIVE_STRIKE_WINDOW_MS,
+    suspensionMs: LIVE_SUSPENSION_MS,
   };
 }

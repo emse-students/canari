@@ -1,5 +1,6 @@
 import { Controller, Get, Param, ParseUUIDPipe, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
+import { OptionalStringPipe } from '../common/optional-string.pipe';
 import { BookingsService } from './bookings.service';
 
 /**
@@ -16,8 +17,8 @@ export class BookingCalendarController {
   @Get(':bookingId/calendar.ics')
   async ics(
     @Param('bookingId', ParseUUIDPipe) bookingId: string,
-    @Query('u') recipientId: string | undefined,
-    @Query('sig') sig: string | undefined,
+    @Query('u', OptionalStringPipe) recipientId: string | undefined,
+    @Query('sig', OptionalStringPipe) sig: string | undefined,
     @Res({ passthrough: true }) res: Response
   ) {
     const body = await this.service.calendarIcs(bookingId, recipientId, sig);

@@ -1191,6 +1191,10 @@ leaving it to be read - the file names, both directions; that no job reachable f
 deploy; that no `workflow_call` lacks a caller; that no script is unreferenced; and that the shared
 files are identical where they are meant to be. It needs the four checkouts side by side, so it is
 run by hand and is wired into no pipeline. Its README says where the four are ALLOWED to differ.
+**One declared difference in `arm-auto-merge.yml` since 2026-10-18:** Canari also arms the App's
+lockfile refresh of a Dependabot cargo bump, inside a `# canari-only:` region the comparison cuts
+first, so every edit outside it still forks ([cicd](cicd.md#a-dependabot-cargo-bump-that-is-incomplete-by-construction-is-completed-and-merged-wp-rust-lock-automerge-2026-10-18)).
+The siblings commit no `Cargo.lock` at all (measured 2026-10-19), so they have nothing to complete.
 
 **WHAT ONLY THE USER CAN DO, and it is why mail keeps arriving.** The notification volume is an
 ACCOUNT setting, not a repository one: `github.com/settings/notifications` -> Actions email OFF, and

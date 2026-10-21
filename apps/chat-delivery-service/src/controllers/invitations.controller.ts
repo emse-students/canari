@@ -38,6 +38,7 @@ import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-in
 import { activeRevocationWhere } from '../utils/revocation';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
+import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
 @Controller()
@@ -80,7 +81,9 @@ export class InvitationsController {
       where: { userId: callerUserId, groupId },
     });
     if (!membership) {
-      throw new ForbiddenException('Not a member of this group');
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.NOT_A_MEMBER, 'Not a member of this group')
+      );
     }
   }
 
@@ -103,7 +106,9 @@ export class InvitationsController {
     });
     if (!group) throw new NotFoundException('Group not found');
     if (!group.isGroup) {
-      throw new BadRequestException('Invites are only available for group chats');
+      throw new BadRequestException(
+        refusalBody(RefusalCode.INVITE_NOT_A_GROUP, 'Invites are only available for group chats')
+      );
     }
     const invite = this.groupInviteRepo.create({
       groupId: safeGroupId,
@@ -140,7 +145,9 @@ export class InvitationsController {
     const callerId = sanitizeQueryValue(headerUserId ?? '', 'userId');
     const invite = await this.groupInviteRepo.findOne({ where: { token } });
     if (!invite || !groupInviteIsValid(invite)) {
-      throw new NotFoundException('Invalid or expired invitation.');
+      throw new NotFoundException(
+        refusalBody(RefusalCode.INVITE_INVALID, 'Invalid or expired invitation.')
+      );
     }
     const group = await this.groupRepo.findOne({
       where: { id: invite.groupId, deletedAt: IsNull() },
@@ -168,7 +175,12 @@ export class InvitationsController {
       ),
     ];
     if (deviceIds.length === 0) {
-      throw new BadRequestException('No active device - open Canari on a device and try again.');
+      throw new BadRequestException(
+        refusalBody(
+          RefusalCode.NO_ACTIVE_DEVICE,
+          'No active device - open Canari on a device and try again.'
+        )
+      );
     }
 
     // 1. User-level membership (authoritative "who belongs to the group").

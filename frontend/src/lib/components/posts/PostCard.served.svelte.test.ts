@@ -25,6 +25,7 @@ import {
 import { nextPostSequence, servedAt, stampServed } from '$lib/posts/postCardSync';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { m } from '$lib/paraglide/messages';
+import { flushMacrotask } from '../../../test/flush';
 
 // `listPosts` stays REAL: the order it stamps its rows in is what is under test.
 vi.mock('$lib/posts/api', async (importOriginal) => ({
@@ -125,7 +126,7 @@ function deferred<T>() {
 }
 
 async function settle(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 0));
+  await flushMacrotask();
   flushSync();
 }
 

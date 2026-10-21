@@ -49,10 +49,6 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     count: 1,
     why: 'the pill-background toggle of the text style bar, sized to sit in one row with the 36px font chips beside it',
   },
-  'lib/components/chat/CallOverlay.svelte': {
-    count: 15,
-    why: 'the primary controls of a full-screen call, not a row of secondary actions; and CALLS_ENABLED is false, so nothing here can be looked at while it changes',
-  },
   'lib/components/chat/ChatComposer.svelte': {
     count: 2,
     why: 'crosses overlaying a 64px media thumbnail',

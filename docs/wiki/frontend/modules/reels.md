@@ -159,6 +159,20 @@ element only ever sees one stream. Pinned by `CameraScreen.svelte.test.ts` (iden
 its own stream rather than installing it - a fact recorded at the request, never a delay
 (`reels/cameraSession.svelte.ts`, pinned by its test).
 
+**The camera never changes the page's theme (iPhone, user report 2026-10-19).** `CameraScreen`
+holds the native status bar at light icons (`themeStore.holdNativeBar('dark')`), and on iOS that
+reaches `CanariApplyTheme`, which sets the WINDOW's `overrideUserInterfaceStyle` - and WKWebView's
+`prefers-color-scheme` follows the window. In the default `system` preference on a light phone the
+store took that echo for the phone turning dark, applied it, and its release then posted the echoed
+dark back: the app went dark on opening the camera (the tab and every composer's overlay alike) and
+stayed dark until a restart. Nothing was written to the preference, so a cold start came back
+right. Android's bridge only sets the bar icons and the browser has no bridge, so neither was
+touched. Fix: once a theme has reached the iOS shell, a change of that query is the page's own
+command, never the OS (`colorSchemeIsOwnCommand`, `themeStore.svelte.ts`). Pinned by
+`themeStore.test.ts` and `CameraScreen.svelte.test.ts` (an iOS shell stub that echoes the window
+style into the media query; both fail without the fix). What it leaves:
+[android-ios-parity](../android-ios-parity.md#the-system-theme-on-ios-is-read-at-start-only).
+
 **Read on both phones through a real swipe from the feed (2026-10-02).** Mi 9T, through harness row
 REEL-1: live in 1211 ms, 720x1280 from `camera 0, facing back`, 30 fps, torch offered, and the track
 ended once the swipe back reached `/posts`. iPhone 12 (iOS 27.0.1), through the WebKit bridge: live,
@@ -169,7 +183,7 @@ once the swipe back reached `/posts`. On both phones the shutter stayed disabled
 
 ## The capture screen (C4)
 
-The app's own, never the system camera (`components/reels/ReelCapture.svelte` over `CameraScreen`). **It is also the ONLY capture path of the composers (user, 2026-10-11, D-camera)**: `ReelCapture` takes a `destination` - `feed` (this tab: the review leads to the publish step), `post` (photo or video, handed back as a FILE to the post composer, post retention) or `chat` (PHOTOS ONLY, handed back to the chat as an ordinary image message) - and a composer mounts it inside `CameraOverlay`, a full-screen layer over the page, never the `/camera` tab ([reels-in-chat](reels-in-chat.md#1-entering-the-camera-from-a-conversation)). The tab:
+The app's own, never the system camera (`components/reels/ReelCapture.svelte` over `CameraScreen`). **It is also the ONLY capture path of the composers (user, 2026-10-11, D-camera)**: `ReelCapture` takes a `destination` - `feed` (this tab: the review leads to the publish step), `post` (the NEW-post composer: a photo handed back as a FILE, a filmed video a CanaReel since 2026-10-19 - [below](#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)), `post-edit` (the post editor: photo or video handed back as a FILE, post retention) or `chat` (PHOTOS ONLY, handed back to the chat as an ordinary image message) - and a composer mounts it inside `CameraOverlay`, a full-screen layer over the page, never the `/camera` tab ([reels-in-chat](reels-in-chat.md#1-entering-the-camera-from-a-conversation)). The tab:
 a full-screen preview, the close and lens controls at the top (switch, and the torch where the lens
 has one), the gallery bottom-left, and the shutter in the middle.
 
@@ -300,6 +314,69 @@ as an ordinary post: the server contract defines a reel as exactly one video wit
 photo must not be disguised as a reel. Video decorations use the same editor and are rendered into a
 local MediaRecorder stream before the existing H.264/AAC preparation path.
 
+## The two ways into the camera publish the same thing (2026-10-19)
+
+**User report, relayed 2026-10-19: "+" then the camera did something different from swiping to the
+camera.** It did, by D-camera's retention by DESTINATION: a video filmed from the new-post composer
+was handed back as a file and published as `kind='post'`. **Decided by the user the same day:
+one camera, one behaviour (option B of three - keep it, make it a reel, or ask).** The production
+post behind the report (`kind='post'`, one 360x480 video, no `durationMs`) was neither path: 360x480
+portrait is the iOS SYSTEM camera's medium quality, reached by the `<input capture>` the composer
+carried until D-camera (#1859, first stable `v1.2.9`) - an older app, or Safari's file sheet, which a
+web page cannot remove.
+
+| | Swipe from the feed (`/camera` tab) | "+" -> new post -> "Caméra" chip | The post editor's camera |
+| --- | --- | --- | --- |
+| Component | `ReelCapture destination="feed"` | `PostComposerBar reel` -> `CameraOverlay` -> `ReelCapture destination="post"` | `PostComposerBar` (no `reel`) -> `destination="post-edit"` |
+| Capture | front lens, the preview's crop, 90 s ring from `reel-limits` | the same | the same |
+| Microphone | with the lens: refused = no camera | asked apart: refused = photos only | asked apart |
+| A FILMED VIDEO | `ReelPublishSheet` -> `kind:'reel'`, `durationMs`, `reel` class (30 days) | **the same** `ReelPublishSheet`, `kind:'reel'`, `durationMs`; caption = the composer's text, identity = its choice | handed back as a file: an existing post never becomes a reel |
+| What the step adds from the composer | - | an amber notice "CanaReel : supprimé au bout de 30 jours" BEFORE "Publier", and "Garder comme post", which hands the video back to the composer as before | - |
+| After publishing | lands on `/posts` (replace) | the composer's text is spent (the draft is saved without it at once), the composer closes, the feed shows where the reel landed | - |
+| A PHOTO | the publish step, an ordinary post | handed back to the composer, an ordinary post | handed back |
+| Gallery / sound removal | yes / yes | no (the composer has "Photo/vidéo", whose video stays a POST) / no | no / no |
+
+One table decides it (`destinationRules` + `handsBackTake` in `reels/reelCapture.ts`): a photo and
+a video of the same destination may part ways.
+
+**What the adversarial review of #2124 settled (2026-10-19):**
+
+- **A new post the member set a schedule, a poll, a form or a linked event on keeps the OLD
+  outcome**: the composer passes no `reel` (`composerAllowsReel`, `posts/postComposerDraft.ts`),
+  the camera is `post-edit`, and its video is attached to that post - a reel carries none of them
+  (the server's `assertCreateKindShape` refuses each), the post can. Silent on purpose: the outcome
+  is the one the member always had.
+- **"Garder comme post" carries the step's edits back**: the caption REPLACES the composer's text
+  when it differs from it (it started as that text, so an untouched caption changes nothing), and
+  the identity chosen in the step becomes the post's.
+- **A publish past its upload keeps the step** (both paths, the tab's included): a Back during
+  `mediaUpload`/`createPost` used to return to the take while the upload went on, and "Suivant",
+  "Publier" published the take a SECOND time. Now that Back is refused and the entry given back,
+  the back arrow is disabled, and "Publier" stays disabled until the publish ends; leaving the
+  screen (`navigation`) still closes it and takes the take along. `bindHistoryOverlay` now tells its
+  close WHY it runs, which is what lets the step tell the two apart. **"Past stopping" is per
+  media (re-review):** a camera PHOTO has no abort at any stage (`publishCameraPhoto` takes no
+  signal), so its Back is refused from the press of "Publier" on - closing in its first second
+  still gave a second post; a VIDEO stays stoppable until its upload, since its re-encode signal is
+  armed at the press and an abort during the mute check or the token makes the re-encode refuse
+  before any post exists. Pinned by `ReelPublishSheet.stopping.svelte.test.ts`.
+- **"Garder comme post" hands the take back FIRST**: the step's caption and identity reach the
+  composer only once it has received the video, never with a take lost to a missing `oncapture`.
+- **An ANONYMOUS post or reel lands in `all`**, never `associations` (`isAssociationIdentity`,
+  `posts/postIdentity.ts`; `!!identity` counted anonymity as an association), for the composer's
+  ordinary publish too.
+- **The deletion notice is a `role="note"` in the warning token (`amber-warn`) and takes the focus
+  when the step opens**, so a screen reader meets it before "Publier"; on the tab the focus goes to
+  the step's title.
+
+Pinned by `ReelCapture.svelte.test.ts` (the same
+filmed video creates `kind:'reel'` with its duration from the tab and from the composer; the photo
+and the editor still hand back; "Garder comme post" hands the video back with its poster),
+`ReelPublishSheet.svelte.test.ts` (the notice, the caption, no navigation from the composer),
+`CreatePostForm.svelte.test.ts` (the text is spent and the composer closes) and
+`PostComposerBar.svelte.test.ts` (new post vs editor). On phones:
+[check CR](../../device-verification.md#cr-the-composers-camera-films-a-canareel---owed-on-both-phones).
+
 ## Publishing (R3, on C2 and C3)
 
 **The review, the editor and the sound removal are on [reel-editor](reel-editor.md)** (2026-10-05):
@@ -425,6 +502,137 @@ neither pauses nor turns the reel: the tap-outside layer is a button, and the un
 (`touch-pan-y`) instead of turning the reel. Anchored to the bottom, above the player's bar, so 2x
 type grows UPWARD. The viewer has nothing else at the bottom-right at 390 px (its step buttons are
 `md:` and mid-height; the save is in the player's bar), so nothing collides.
+
+### A double tap on a reel likes it (2026-10-19)
+
+**Asked by the user:** *"J'aimerais qu'on puisse liker un CanaReel en double cliquant dessus."* The
+gesture is the post card's (`actions/doubleTapLike.ts`; the contract, the disambiguation and what is
+reasoned rather than measured are in
+[posts](posts.md#a-double-tap-likes-the-post-and-never-unlikes-it-2026-10-19)). On a reel:
+
+- **In the viewer, anywhere on the reel on screen**, the letterbox bands included (`ReelSlide`;
+  only the `active` slide listens). Nothing is held: the first tap toggles `VideoPlayer`'s controls at
+  once, as before, and the second toggles them back, so a like leaves them as they were. The player's
+  bar, its play button (drawn while paused), the caption's toggle and its tap-outside layer, and the
+  author link are controls and keep their taps.
+- **It is the card's reaction path** (`posts/postReaction.ts`): `ReelViewer.likeReel` writes the
+  heart into its own list on the tap, sends the same request behind `assertNotMuted`, and on a
+  failure rolls it back and says the card's sentence as a toast (the viewer has no card line). A reel
+  already reacted to, with any reaction, gets the heart and no request. **The server's answer is
+  announced to the cards on screen** (`publishPostReactions`, which `PostCard` listens to by post
+  id), so closing the viewer shows the reel's card with the heart just given.
+- **Only a post can be liked**: the viewer takes the reader as `likerId`, which the card's
+  `PostContent` and the feed's `ReelsEntryButton` pass; a conversation's reel (`MessageMediaRenderer`,
+  RC-1) is not a post and passes none, so a double tap there does nothing.
+- **In the feed, the reel card** is a post card: a double tap likes, and a single tap opens the viewer
+  once the double-tap window (250 ms) has passed (`data-double-tap-defers` on `InlineVideo`'s open
+  button) - the one place this gesture adds a wait.
+- **The viewer's heart button is the rail's** (next section, 2026-10-19): it takes a like back, and
+  it is how a screen reader likes in the viewer.
+
+### The rail, the comments sheet and the photo pages (user, 2026-10-19: Instagram's Reels)
+
+**Asked by the user:** the reference for CanaReels is **Instagram Reels** (Snapchat's private
+sending is a different task): a vertical icon rail on each page, the comments in a sheet over the
+playing reel, and the posts of ONE photo in the same feed. Built against the Instagram reference
+below; **owed on both phones**
+([device-verification RR](../../device-verification.md#rr-the-canareels-rail-the-comments-sheet-and-the-photo-pages---owed-on-both-phones)).
+
+- **The rail** (`ReelActionRail`, inside `ReelSlide`'s frame, bottom-right on the caption's
+  baseline; the caption keeps `pr-16` free for it): **heart** with the number of reactions,
+  **comments** with the number of comments, **send**. Drawn only when the viewer has a reader
+  (`likerId`), so a conversation's reel (RC-1) has none. `data-no-double-tap` keeps it out of the
+  double tap, `data-reel-rail` out of the viewer's swipe (`NOT_A_GESTURE`).
+- **The heart says "I reacted"** (`reels/reelRail.ts`): a post carries reactions of several kinds,
+  one per reader, and the rail has room for one. Empty with no reaction, red with "J'aime", and
+  **the reader's OWN emoji in its place for any other kind** (lead's decision after review,
+  2026-10-19), named "Votre réaction : ..., retirer" - so a tap, which takes the reader's reaction
+  back, never removes a 😂 the rail did not show. With none, a tap gives "J'aime". The number is
+  every reaction; a kind this client does not know (a newer server's) is named "Votre réaction",
+  never "J'aime". Changing to another kind stays the card's picker. Same path as the double tap
+  (`toggledReactions`, `sendPostReaction`, `publishPostReactions`, rollback + toast), and **one
+  reaction in flight per reel**: a second tap (heart or double tap) before the server answered is
+  ignored and logged, so two answers never land out of order and a rollback returns to a state no
+  later tap moved. A request the server never answers does not hold the heart forever: every
+  `apiFetch` carries its response deadline (`RequestDeadlineError`), which rolls the heart back
+  with the card's sentence and frees it.
+- **The comment number is the server's total** (`commentCount`, `posts/commentChange.ts`): a list
+  row carries only the newest twenty comments, so `comments.length` read "20" for a post of 57 -
+  on the rail and on the card's button alike. Every write keeps the total in step, and "load all"
+  (`GET /api/posts/:id`, every comment and no total) sets it to the rows it read - on the read's
+  own object, so its served stamp survives. On the card, a comment write declares `comments` AND
+  `commentCount` to its ledger: a read issued before the write adopts neither.
+- **Send is the post menu's share** (`posts/sharePost.ts`: copy the public link, toast). Sending a
+  post INTO a conversation does not exist; it is an owed decision, not built here.
+- **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
+  `docked` mode (the list scrolls, the composer stays at the bottom), written through
+  `posts/postCommentThread.svelte.ts`, the class the card now uses too, and reported through
+  `posts/reportComment.ts`, also the card's. No new request. 60 % of the screen, `rounded-t-3xl`,
+  a grabber; it rides the keyboard (`keyboard-aware-bottom`, capped at `--app-viewport-height`).
+  It closes by a drag down on its top (`decideDismiss`, the media viewer's rule), Back (its own
+  history entry, so Back closes the sheet and not the viewer), a tap on the reel above it, Escape,
+  and the X. No focus trap: it takes the focus on open and hands it back to the button on close.
+  A write there reaches the card behind AS A CHANGE (`publishPostComments` carries an upsert or a
+  removal, never a list): the viewer's copy is a feed row of the newest twenty, and a card holding
+  the whole thread used to adopt it and collapse.
+- **Dialogs opened from inside the viewer** (the report, the GIF picker) used to sit UNDER it
+  (`--z-modal` 280, `--z-sheet` 160, against `--z-viewer` 300): `utils/viewerLayer.ts` marks the
+  viewer's subtree and `Modal`/`ModalOverlay` take the `--z-viewer-dialog` rung (305) there.
+- **Photo pages** (`reels/fullScreenPost.ts`): a post whose ONLY content is one picture - no other
+  media, no poll, no form - is a page like a reel: the same frame, caption and rail, its picture
+  instead of the video, no player bar (so the caption sits lower). Several media, a video outside a
+  reel, a file and text alone stay out, and so do **a linked calendar event and a link in the
+  text**: the card draws the event's card (date, place, add to calendar) and the link's preview,
+  and a page would silently drop both. **The list is newest first and nothing else** (lead's
+  decision): a pin is a feed concept, and a pinned post would head every reader's CanaReels. The list comes from the server
+  (`kind=reel&singlePhotos=true`, [server half](../../services/reels.md#reading)); a row it serves
+  that the client reads as neither is drawn as a reel and accused once in the log.
+
+- **The mouse wheel turns the page on a desktop** (user, 2026-10-19; `reels/reelWheel.ts`): a notch
+  down is the next reel, up the previous, through `go` - the arrow buttons' and keys' own step. ONE
+  GESTURE, ONE PAGE: a trackpad flick or a free-spinning wheel sends dozens of events and its
+  inertia keeps going after the page lands, so a new page turns only when the last one has landed
+  (the viewer's own `settling`, the one state every entry point reads) AND the wheel has been quiet
+  for `WHEEL_QUIET_MS` (200 ms; the wheel sends no "end" event, so the quiet is the only proof a
+  gesture ended). The chevrons wait for `settling` like the keys and the swipe, a `touchcancel`
+  moves nothing unless a drag of the viewer's was under way, and `settle` never drops a pending
+  landing: a move started over one runs it first and logs an error (review of #2119: a chevron
+  clicked mid-transition used to drop the wheel's landing and jam the wheel for good). A
+  `transitioncancel` (the track hidden or detached mid-move, where `transitionend` never comes)
+  lands the page like a `transitionend`, so `settling` can never stay set and freeze the viewer. Left to the browser:
+  ctrl+wheel (zoom, and a trackpad pinch), a mostly horizontal scroll, the wheel while the comments
+  sheet is open or over a child that scrolls (the list, an unfolded caption). The listener is
+  non-passive on the viewer only, `preventDefault` runs only on a consumed event, and it goes with
+  the viewer. Touch, swipes and their thresholds are unchanged.
+
+#### Instagram reference (Mi 9T, 2026-10-19)
+
+Observed in the Instagram app on the bench Mi 9T (1080 x 2340 px at 396 dpi, 2.475 px per dp), an
+account already signed in, read only - nothing liked, commented or sent. Measured with
+`adb shell input swipe` and the accessibility tree.
+
+| What | Measured |
+| --- | --- |
+| Rail position | column centre x = 1005 px, ~30 dp from the right edge; anchored to the BOTTOM - it moves up with a longer caption |
+| Rail pitch | one action every 161 px (~65 dp); the number ~33 dp under its icon |
+| Rail order | like, comment, repost, send (paper plane), save, more, then the audio art |
+| Caption | author row (avatar, name, Follow) bottom-left, one line of text with an ellipsis |
+| Comments sheet | the video SHRINKS into the area above and keeps playing; the sheet's top at 963 px (~59 % of the height), large top corners, a grabber, comment rows with a heart and count on the right, emoji row + composer docked at the bottom |
+| Sheet closes | a drag down from the grabber (540,990 -> 2100 in 400 ms); Back (the reel stays); a tap on the video above. A 500 px swipe over the list in 150 ms scrolled it and did NOT close |
+| Next reel: long fast swipe | 80 % -> 20 % of the height (1404 px) in 200 ms: next |
+| Next reel: slow drags, 1000 ms | 60 px no, 100 px (0.10 px/ms) no, 150 px (0.15 px/ms) yes, 300 px yes |
+| Next reel: very slow | 600 px over 6000 ms (26 % of the height, 0.10 px/ms) snapped BACK; 1300 px over 13000 ms (56 %) went on |
+| Next reel: flicks | 60 px in 40 ms no; 120 px in 60 ms yes |
+
+**Reading:** a velocity-driven pager - a release above ~0.12-0.15 px/ms (0.05-0.06 dp/ms, about
+Android's minimum fling of 50 dp/s) turns the page, else only past half the page - with a minimum
+flick distance between 60 and 120 px (~24-48 dp). Canari's reel pager is the media viewer's
+`decideSwipe` (`utils/viewerGestures.ts`): past 25 % of the height (`SWIPE_COMMIT_RATIO`), or a
+flick of 0.4 CSS px/ms (`FLICK_VELOCITY`) over 24 CSS px (`FLICK_MIN_DISTANCE_PX`) - a CSS px is a
+dp in the WebView. So a slow drag commits SOONER in Canari (25 % against 50 %) and a flick needs to
+be about seven times FASTER. These numbers are the reference for tuning it; this change applies
+none of them. **Follow-up, after the phone reading of RR:** decide whether the reel pager moves
+towards these thresholds (lead's decision: not in the rail's pull request).
 
 ### The CanaReels entry - an icon beside the tabs that opens the viewer (user, 2026-10-16)
 

@@ -1,6 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 
 /**
  * A toast is user-visible chrome, so its text must come from Paraglide. Nothing in the type system
@@ -11,11 +9,6 @@ import { fileURLToPath } from 'node:url';
  * hardcoded French strings all reached production this way. This test reads the sources and fails
  * on the one pattern that produced every one of them.
  */
-
-// Kept in a variable: Vite rewrites `new URL('<literal>', import.meta.url)` into an asset URL,
-// which is no longer a file:// URL by the time fileURLToPath sees it.
-const SRC_REL = '../..';
-const SRC = fileURLToPath(new URL(SRC_REL, import.meta.url));
 
 /** `showToast(` applied to a quoted literal, capturing its delimiter and body. */
 const TOAST_LITERAL = /showToast\(\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
@@ -31,14 +24,6 @@ function literalToastOffences(source: string): string[] {
     .map(([match]) => match);
 }
 
-function sourceFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) return entry === 'paraglide' ? [] : sourceFiles(full);
-    return /\.(ts|svelte)$/.test(entry) && !entry.endsWith('.test.ts') ? [full] : [];
-  });
-}
-
 describe('toast localization', () => {
   it('flags an inline literal and accepts an interpolated message', () => {
     expect(literalToastOffences(`showToast('Vote impossible', 'warning')`)).toHaveLength(1);
@@ -47,10 +32,12 @@ describe('toast localization', () => {
   });
 
   it('never passes an unlocalized literal to showToast', () => {
-    const offenders = sourceFiles(SRC).filter(
-      (f) => literalToastOffences(readFileSync(f, 'utf8')).length > 0
-    );
+    const offenders = sourceFiles({
+      under: 'src',
+      extensions: ['ts', 'svelte'],
+      tests: 'exclude',
+    }).filter(({ text }) => literalToastOffences(text).length > 0);
 
-    expect(offenders.map((f) => f.slice(SRC.length).replace(/\\/g, '/'))).toEqual([]);
+    expect(offenders.map(({ path }) => relativeTo(path, 'src'))).toEqual([]);
   });
 });

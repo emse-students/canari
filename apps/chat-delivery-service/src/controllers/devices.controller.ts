@@ -48,6 +48,7 @@ import {
 } from '../retention.constants';
 import { resolveUserDisplayName } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
+import { RefusalCode } from '../utils/refusal-codes';
 
 /**
  * Why a device cannot be handed a KeyPackage right now - and whether that is for ever.
@@ -295,7 +296,7 @@ export class DevicesController {
         `[REGISTER_DEVICE] REFUSED revoked device user=${userId} device=${deviceId}`
       );
       throw new ForbiddenException({
-        code: 'DEVICE_REVOKED',
+        code: RefusalCode.DEVICE_REVOKED,
         message: 'This device was revoked. Enrol again under a new device id.',
       });
     }
@@ -338,7 +339,7 @@ export class DevicesController {
         `[REGISTER_DEVICE] REFUSED device cap user=${userId} device=${deviceId} live=${deviceCount}/${MAX_DEVICES_PER_USER}`
       );
       throw new BadRequestException({
-        code: 'DEVICE_LIMIT_REACHED',
+        code: RefusalCode.DEVICE_LIMIT_REACHED,
         message: `Maximum ${MAX_DEVICES_PER_USER} devices per user reached. Delete an unused device in Settings first.`,
         max: MAX_DEVICES_PER_USER,
       });

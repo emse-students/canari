@@ -155,6 +155,68 @@ describe('ModerationService - reports', () => {
     });
   });
 
+  describe('createReport on a live (WP-L8)', () => {
+    const LIVE = '22222222-2222-4222-8222-222222222222';
+
+    it('stores the BROADCASTER read from the live, never the id the client sent, and hides nothing', async () => {
+      reportRepo.manager.query
+        .mockResolvedValueOnce([{ broadcasterId: 'bob', visible: true }]) // the live
+        .mockResolvedValueOnce([]); // no block between alice and bob
+      reportRepo.count.mockResolvedValue(50);
+
+      await service.createReport({
+        reporterId: 'alice',
+        contentType: 'live',
+        contentId: LIVE.toUpperCase(),
+        reason: 'inappropriate',
+        reportedUserId: 'mallory',
+      });
+
+      expect(reportRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ contentType: 'live', contentId: LIVE, reportedUserId: 'bob' })
+      );
+      // A live is CUT by staff, never auto-hidden by a count (no policy says otherwise).
+      expect(reportRepo.count).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an id that is not a uuid', 'not-a-uuid', []],
+      ['a live with no row', LIVE, []],
+      [
+        'a live the reporter cannot see (the rule of a post)',
+        LIVE,
+        [{ broadcasterId: 'bob', visible: false }],
+      ],
+    ])('answers 404 LIVE_NOT_FOUND for %s, and files nothing', async (_what, id, rows) => {
+      reportRepo.manager.query.mockResolvedValueOnce(rows);
+
+      await expect(
+        service.createReport({
+          reporterId: 'alice',
+          contentType: 'live',
+          contentId: id,
+          reason: 'spam',
+        })
+      ).rejects.toMatchObject({ status: 404, response: { code: 'LIVE_NOT_FOUND' } });
+      expect(reportRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 across a block, in either direction, as the live itself does', async () => {
+      reportRepo.manager.query
+        .mockResolvedValueOnce([{ broadcasterId: 'bob', visible: true }])
+        .mockResolvedValueOnce([{ '?column?': 1 }]);
+
+      await expect(
+        service.createReport({
+          reporterId: 'alice',
+          contentType: 'live',
+          contentId: LIVE,
+          reason: 'spam',
+        })
+      ).rejects.toMatchObject({ status: 404, response: { code: 'LIVE_NOT_FOUND' } });
+    });
+  });
+
   describe('listAllReports', () => {
     it('deletes nothing - retention is the weekly cron and not a side effect of reading', async () => {
       reportRepo.find.mockResolvedValue([]);

@@ -23,6 +23,7 @@ import type {
   StoredGraineSession,
   StoredMessage,
 } from '$lib/db';
+import { flushMacrotask } from '../../../test/flush';
 
 const storageForUser = new Map<string, IStorage>();
 vi.mock('$lib/db', async (importOriginal) => ({
@@ -585,7 +586,7 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await Promise.resolve();
 
     const change = performPinChange(options('u-inflight', fakeMls()), OLD, NEW);
-    await new Promise((r) => setTimeout(r, 20));
+    await flushMacrotask();
     land();
     await Promise.all([inFlight, change]);
 

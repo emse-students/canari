@@ -10,6 +10,9 @@ export default defineConfig({
     // point. Fourteen assertions depended on worker order until 2026-09-17 - see the file.
     setupFiles: ['./src/test/locale.ts', './src/test/noRealNetwork.ts'],
     globals: true,
+    // The source tree is walked ONCE per run for the ~20 scan files, not once per file: see
+    // `src/test/sourceTreeSetup.ts` and docs/wiki/test-suite-reform.md (WP-T9).
+    globalSetup: ['./src/test/sourceTreeSetup.ts'],
     include: ['src/**/*.{test,spec}.ts'],
     coverage: {
       exclude: [

@@ -24,6 +24,7 @@ vi.mock('$lib/minesweeper/api', () => ({
 vi.mock('$lib/stores/userState.svelte', () => ({ globalAdminState: () => false }));
 
 import MinesweeperModal from './MinesweeperModal.svelte';
+import { flushMacrotask } from '../../../test/flush';
 
 afterAll(adoptTransitionAnimations());
 
@@ -103,7 +104,7 @@ describe('MinesweeperModal - full-screen chrome', () => {
     expect(byText('Libre')!.getAttribute('aria-pressed')).toBe('true');
     document.querySelector<HTMLButtonElement>('[data-cell="0"]')!.click();
     for (let i = 0; i < 6; i++) {
-      await new Promise((r) => setTimeout(r, 20));
+      await flushMacrotask();
       flushSync();
     }
     expect(startChallenge).not.toHaveBeenCalled();

@@ -30,3 +30,12 @@ export function postIdentityFields(
   if (identity === ANONYMOUS_POST_IDENTITY) return { anonymous: true };
   return { associationId: identity };
 }
+
+/**
+ * Whether `identity` publishes AS AN ASSOCIATION - the question the landing feed asks. Not "is the
+ * field set": anonymity sets it too, and an anonymous post is a personal one, landing in `all`
+ * (review of #2124: `!!identity` sent an anonymous post to the associations feed).
+ */
+export function isAssociationIdentity(identity: string): boolean {
+  return postIdentityFields(identity).associationId !== undefined;
+}

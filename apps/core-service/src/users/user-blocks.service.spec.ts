@@ -135,25 +135,33 @@ describe('UserBlocksService', () => {
     });
 
     it('refuses to block yourself', async () => {
-      await expect(service.block('alice', 'alice')).rejects.toThrow('You cannot block yourself');
+      await expect(service.block('alice', 'alice')).rejects.toMatchObject({
+        response: { code: 'BLOCK_SELF' },
+      });
     });
 
     it('refuses an account that does not exist', async () => {
       userRepo.findOne.mockResolvedValue(null);
-      await expect(service.block('alice', 'ghost')).rejects.toThrow('User not found');
+      await expect(service.block('alice', 'ghost')).rejects.toMatchObject({
+        response: { code: 'BLOCK_TARGET_NOT_FOUND' },
+      });
     });
 
     it('refuses past the cap, which exists to bound the search exclusion and not the user', async () => {
       blockRepo.findOne.mockResolvedValue(null);
       blockRepo.count.mockResolvedValue(200);
-      await expect(service.block('alice', 'bob')).rejects.toThrow('more than 200');
+      await expect(service.block('alice', 'bob')).rejects.toMatchObject({
+        response: { code: 'BLOCK_LIMIT_REACHED', max: 200 },
+      });
     });
   });
 
   describe('unblock', () => {
     it('refuses when there is nothing to lift', async () => {
       blockRepo.delete.mockResolvedValue({ affected: 0, raw: [] });
-      await expect(service.unblock('alice', 'bob')).rejects.toThrow('not blocked');
+      await expect(service.unblock('alice', 'bob')).rejects.toMatchObject({
+        response: { code: 'NOT_BLOCKED' },
+      });
     });
 
     it('deletes only the row the caller owns, so a block cannot be lifted by its target', async () => {

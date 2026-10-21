@@ -28,13 +28,15 @@ export async function retireForms(
     'formId' in target
       ? (['id', target.formId] as const)
       : (['associationId', target.associationId] as const);
+  // `getQuery()` returns a bare `SELECT ...`: the parentheses `EXISTS` needs are written here.
+  // Without them every call was a syntax error, unseen by a spec whose mock returned them.
   const hasSubmission = () =>
-    manager
+    `(${manager
       .createQueryBuilder()
       .select('1')
       .from(Submission, 's')
       .where('"s"."formId" = "forms"."id"')
-      .getQuery();
+      .getQuery()})`;
 
   const archivedResult = await manager
     .createQueryBuilder()
