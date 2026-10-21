@@ -114,7 +114,12 @@ import {
   type MlsStateWriteLatch,
 } from '$lib/utils/hex';
 import { m } from '$lib/paraglide/messages';
-import { showToast } from '$lib/stores/toast.svelte';
+import { showPinnedToast } from '$lib/stores/toast.svelte';
+import {
+  MAX_REFUSED_ROTATION_RELOADS,
+  REFUSED_ROTATION_RELOADS_KEY,
+  forgetRefusedRotationReloads,
+} from '$lib/mls-client/refusedRotationReloads';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
@@ -226,28 +231,6 @@ function assertResolvedIdentity(seam: string, userId: string, deviceId: string):
   if (deviceId === UNRESOLVED_DEVICE_ID || !deviceId) {
     console.error(`[IDENTITY] ${seam} called before the deviceId resolved - refused`);
     throw new UnresolvedIdentityError(seam, 'deviceId');
-  }
-}
-
-/**
- * How many reloads IN A ROW, per tab, a refused rotation may cost before the page stops reloading
- * (`BaseMlsService.endDocumentAfterRefusedRotation`). Two: the first is the ordinary cure, the
- * second covers a peer that was still mid-write; a third would be the loop.
- */
-export const MAX_REFUSED_ROTATION_RELOADS = 2;
-/** The `sessionStorage` key of that count - per tab, kept across a reload, gone with the tab. */
-export const REFUSED_ROTATION_RELOADS_KEY = 'canari.mls.refusedRotationReloads';
-
-/**
- * Resets the count once a key package round has PUBLISHED - the proof that this page holds an
- * identity the server accepts, so any run of refused rotations is over. Best-effort: a count that
- * could not be cleared only shortens a later bound in this tab.
- */
-function forgetRefusedRotationReloads(): void {
-  try {
-    sessionStorage.removeItem(REFUSED_ROTATION_RELOADS_KEY);
-  } catch (e) {
-    console.warn('[MLS] could not reset the refused-rotation reload count:', e);
   }
 }
 
@@ -2750,15 +2733,17 @@ export abstract class BaseMlsService implements IMlsService {
    * connection. Not a successful init: in the loop above every init succeeds - it is the round after
    * it that meets the revocation - so an init reset would never let the count reach the bound. Past
    * it the page is NOT reloaded: it stays latched - it writes nothing - says so at `error`, and tells
-   * the member in a toast that stays until dismissed: close the other tabs, then reload.
+   * the member in a toast it cannot close: close the other tabs, then reload. The session's end
+   * clears the count too (`tearDownLiveSession`), so the next account in this tab starts at zero.
    */
   protected endDocumentAfterRefusedRotation(): void {
     if (typeof window === 'undefined') return;
+    const key = REFUSED_ROTATION_RELOADS_KEY;
     let done: number;
     try {
-      done = Number(sessionStorage.getItem(REFUSED_ROTATION_RELOADS_KEY) ?? '0') || 0;
+      done = Number(sessionStorage.getItem(key) ?? '0') || 0;
       if (done < MAX_REFUSED_ROTATION_RELOADS) {
-        sessionStorage.setItem(REFUSED_ROTATION_RELOADS_KEY, String(done + 1));
+        sessionStorage.setItem(key, String(done + 1));
       }
     } catch (e) {
       // Uncounted, a reload could be the loop this bound exists to stop: the page stays latched.
@@ -2789,12 +2774,12 @@ export abstract class BaseMlsService implements IMlsService {
 
   /**
    * The member's half of a page that stopped reloading ({@link endDocumentAfterRefusedRotation}):
-   * the console is not where anybody reads that the page now saves nothing. A toast that stays
-   * until dismissed, with the remedy and a reload button; the reload is the member's to take, once
-   * the other tabs are closed.
+   * the console is not where anybody reads that the page now saves nothing. A toast with the remedy
+   * and a reload button, and NO close button: closed, it would leave a page that saves nothing and
+   * looks alive. The reload is the member's to take, once the other tabs are closed.
    */
   protected tellMemberThisPageEnded(): void {
-    showToast(m.mls_page_ended_other_tab_writing(), 'error', null, {
+    showPinnedToast(m.mls_page_ended_other_tab_writing(), 'error', {
       label: m.common_reload_button(),
       run: () => this.reloadDocument(),
     });

@@ -3,11 +3,11 @@
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
+import { BaseMlsService } from './BaseMlsService';
 import {
-  BaseMlsService,
   MAX_REFUSED_ROTATION_RELOADS,
   REFUSED_ROTATION_RELOADS_KEY,
-} from './BaseMlsService';
+} from '$lib/mls-client/refusedRotationReloads';
 import { createMlsStatePersister } from '$lib/mls-client/mlsStatePersister';
 import type { IMlsService } from '$lib/mls-client';
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
@@ -249,10 +249,11 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
         expect(toastStore.toasts).toHaveLength(page < MAX_REFUSED_ROTATION_RELOADS ? 0 : 1);
       }
       expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT reloaded again'));
-      // The console is not where a member reads it: the remedy, on screen, until dismissed, with
-      // the reload as the member's own gesture.
+      // The console is not where a member reads it: the remedy, on screen, with the reload as the
+      // member's own gesture - and no close button, or a closed notice leaves a page that looks alive.
       const [toast] = toastStore.toasts;
       expect(toast.message).toBe(m.mls_page_ended_other_tab_writing());
+      expect(toast.dismissible).toBe(false);
       expect(toast.action?.label).toBe(m.common_reload_button());
       toast.action?.run();
       expect(last.reloadDocument).toHaveBeenCalledTimes(1);

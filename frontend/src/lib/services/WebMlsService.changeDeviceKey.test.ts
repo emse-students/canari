@@ -43,6 +43,19 @@ describe('WebMlsService.changeDeviceKeyImpl', () => {
       expect((failure as MlsStateWriteRefusedError).outcome).toBe(outcome);
     }
   );
+
+  // An ENDED document was said once, by the refused rotation; a re-seal it refuses is silent, while
+  // a guard refusal still names its outcome.
+  it.each([
+    ['ended', 0],
+    ['stale', 1],
+  ] as const)('a re-seal refused as %s logs %i error line(s)', async (outcome, lines) => {
+    saveMlsState.mockResolvedValueOnce(outcome);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await changeDeviceKeyImpl('k').catch(() => {});
+    expect(error).toHaveBeenCalledTimes(lines);
+    error.mockRestore();
+  });
 });
 
 /**

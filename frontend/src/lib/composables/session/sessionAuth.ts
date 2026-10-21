@@ -99,6 +99,7 @@ import {
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
 import { disposeMlsEncryptWorker } from '$lib/mls-client/mlsEncryptWorkerSession';
+import { forgetRefusedRotationReloads } from '$lib/mls-client/refusedRotationReloads';
 import {
   setupMessageHandler,
   openGatewayConnection,
@@ -2580,6 +2581,8 @@ export function tearDownLiveSession(
   resetHistoryReconciliation();
   // A Welcome this session sent says nothing about the next user's requests.
   resetWelcomeSent();
+  // Nor does a run of refused rotations: a sign-in after this one in the same tab starts its own.
+  forgetRefusedRotationReloads();
   // The probe sender closes over this session's storage and device key, so it must not outlive it:
   // a reconciliation from the next login would otherwise describe the previous user's store.
   setHistoryProbeSender(null);

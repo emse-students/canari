@@ -990,10 +990,14 @@ export class WebMlsService extends BaseMlsService {
     const newState = await this.saveState(newDeviceKeyB64);
     const outcome = await saveMlsState(this.userId, newState, latch);
     if (outcome !== 'written') {
-      console.error(
-        `[MLS] Device key change: the re-sealed state was NOT written (${outcome}) - the stored ` +
-          'state stays under the old key.'
-      );
+      // An ENDED document was announced ONCE, by the refused rotation's own line; repeating it per
+      // refused write is the noise the latch exists to end.
+      if (outcome !== 'ended') {
+        console.error(
+          `[MLS] Device key change: the re-sealed state was NOT written (${outcome}) - the stored ` +
+            'state stays under the old key.'
+        );
+      }
       throw new MlsStateWriteRefusedError(outcome);
     }
     console.log('[MLS] Device key changed - state re-encrypted and persisted.');

@@ -647,19 +647,26 @@ sees it. The start check stays, so an ended document captures nothing. Native ha
 and never refuses, so only the start check applies there.
 
 **The latch is said ONCE.** The rotation's `error` line says every later write is refused; the
-refused writes themselves are silent, typed, and the persister repeats nothing.
+refused writes themselves are silent, typed, and the persister repeats nothing. A device-key re-seal
+refused as `ended` is silent too; refused by the guard, it still says which outcome kept the old key.
 
 **The reload is bounded by a count, never a clock.** The page it starts logs in again, and every
 login path asks the server whether the stored id is revoked and wipes it if so, so one reload
 normally ends it. That question answers `false` when the server is unreachable, though, and a page
 that then reaches the server while another document keeps writing would rotate, be refused and
-reload again. So at most two such reloads per tab (`sessionStorage`, which a reload keeps) with no
-key package round PUBLISHED in between: any round that publishes resets the count - an ordinary
-login's, a healed page's, a landed rotation's. A successful init does NOT reset it, because in that
+reload again. So at most two such reloads per tab (`sessionStorage`, which a reload keeps -
+`refusedRotationReloads.ts`) with no key package round PUBLISHED in between: any round that
+publishes resets the count - an ordinary login's, a healed page's, a landed rotation's - and so does
+the session's end (`tearDownLiveSession`, sign-out and revocation alike), so a sign-in after a
+sign-out in the same tab never inherits a run; the factory wipe empties `sessionStorage` whole. The
+key is NOT per account: every exit of an account passes that teardown, and a per-account key would
+have to join `accountLocalKeys.ts`, which is the `localStorage` sweep of an account deletion. A
+successful init does NOT reset it, because in that
 loop every init succeeds; it is the round after it that meets the revocation, so an init reset
 would keep the count below the bound for ever. Past the bound the page is not reloaded: it stays
-latched, writes nothing, says so at `error`, and shows the member a toast that stays until dismissed
-(`mls_page_ended_other_tab_writing`: close the other tabs, then reload), with a reload button.
+latched, writes nothing, says so at `error`, and shows the member a PINNED toast
+(`showPinnedToast`, `mls_page_ended_other_tab_writing`: close the other tabs, then reload) with a
+reload button and no close button - closed, it would leave a page that saves nothing and looks alive.
 
 **One accusation per event.** The init path printed three lines for one refusal: the guard's `warn`,
 the rotation's `error`, and the login's `[INIT] Login failed` at `error`. The rotation's line is the
@@ -676,11 +683,13 @@ lost. A post or a comment being written is not lost: their drafts persist in `lo
 Pinned by `hex.mlsVersion.test.ts` (superseded versus stale, untagged writes; a refusal as
 `collision` or stale by one that ends the document makes the next queued write `ended`),
 `WebMlsService.changeDeviceKey.test.ts` ("WebMlsService.writeCheckpoint": the latch handed to the
-write, `ended` rejects), `mlsStatePersister.test.ts` (a refused checkpoint adds no line),
+write, `ended` rejects; a re-seal refused as `ended` logs nothing), `mlsStatePersister.test.ts` (a refused checkpoint adds no line),
 `BaseMlsService.externalJoin.test.ts` (no fork accusation for an own-document stale write, one for a
 foreign one), `BaseMlsService.deviceRevoked.test.ts` and `WebMlsService.legacyMigration.test.ts`
 (the refused rotation ends the document on the revocation path, and only for a refusal; a flight
 already sealing when the rotation is refused is refused at its put; after the refusal no later
 checkpoint, persister flight or re-seal is written, and only one line is printed; the reload bound,
-its toast, and its reset by a published round), `savedStateFailure.test.ts` (the typed login
+its toast, and its reset by a published round), `refusedRotationReloads.test.ts` and
+`signOutEndsLiveSession.test.ts` (the session's end clears the count),
+`ToastContainer.svelte.test.ts` (a pinned toast has no close button), `savedStateFailure.test.ts` (the typed login
 failure), `loginErrors.test.ts` (narrated, not accused). Each was mutation-checked.
