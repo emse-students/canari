@@ -30,8 +30,9 @@ import { MlsStateWriteRefusedError } from '$lib/utils/hex';
  *    checkpoint that fails raises it again);
  * 4. that checkpoint resolving means this state is ON DISK: on web `writeCheckpoint` resolves on
  *    `written`, or on `superseded` (this document's own later capture is stored, a superset), and
- *    rejects typed on `stale` and `collision` (the stored blob is another document's); on native
- *    the save throws or lands.
+ *    rejects typed on `stale` and `collision` (the stored blob is another document's) and on
+ *    `ended` (a refused rotation latched this document's writes); on native the save throws or
+ *    lands.
  *
  * At the outermost close the covering checkpoint is the one the close itself starts, so the mark
  * costs no extra write. Inside a live drain the close starts nothing, so the flush starts one of its
