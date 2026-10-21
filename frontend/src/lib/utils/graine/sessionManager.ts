@@ -90,7 +90,9 @@ export interface GraineOutboundSlot {
  * An ADD advances the epoch too, and rotates a session it did not have to. That is deliberate: the
  * cost is one extra O(1) seed distribution, and the alternative - a durable "somebody LEFT" marker -
  * is state that has to be written by every device, kept until every session has cycled past it, and
- * is silently wrong the once it is missed.
+ * is silently wrong the once it is missed. **Measured 2026-10-21, adds are the dominant trigger**:
+ * one session per two messages on production, because every device joining the key group commits.
+ * A local check needing no marker is in `docs/wiki/protocols/dm-vs-community-encryption.md`.
  *
  * **This answers yes or no, and that is the whole question anything here asks.** It returned WHICH
  * of the three fired until 2026-09-14; nothing branched on it, no durable log carried it and no
@@ -199,8 +201,9 @@ async function reserve(
   const distributionFrame = await deps.distribute(minted);
   const stored: StoredGraineSession = { ...minted, sentCount: 1, distributionFrame };
   await deps.storage.saveGraineSession(stored, deps.deviceKeyB64);
-  // Rare by design - once per 100 messages, per week, or per membership change - so a console full
-  // of these says the epoch is moving for a reason nobody has looked at yet. It does NOT say which
+  // Meant to be rare - once per 100 messages, per week, or per membership change - but every device
+  // joining the key group moves the epoch too, so a growing community prints one of these for most
+  // sends (measured 2026-10-21, see `shouldRotateGraineSession`). It does NOT say which
   // of the three fired: that reached no durable log and no report, and a distinction nothing can
   // read is a distinction nothing can act on.
   console.info(
