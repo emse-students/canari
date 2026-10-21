@@ -362,6 +362,10 @@ searches), `HEAD` content-length.
 
 Mechanism of both: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix). Delete each with its fix.
 
+## P3 - a TURN budget of 0 reads as 950 (2026-10-21, decision owed by the user)
+
+`CallsService.turnBudgetGb` reads `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` and answers 950 for any value that is not a positive integer - `0` included, so "no relay at all" cannot be written as a budget, and a typo silently becomes the default. Owed: the user's decision on what `0` (and an unparsable value) should mean. Mechanism: [calls](frontend/modules/calls.md#the-turn-budget-reads-cloudflares-meter-b7).
+
 ## P3 - CALL-PATH-LINE: the `selected path ... relayed=` line over-counts relayed calls (2026-10-20, not built)
 
 The client's path line ([calls](frontend/modules/calls.md); a diagnostic since 2026-10-21 - the TURN budget reads Cloudflare's meter, never this line) is written ONCE, at `connected`; ICE may move to a better pair afterwards. Bench P1 logged `relayed=yes` on both ends while `getStats` read `host/udp -> host/udp` at the end ([readings](device-readings-2026-10.md)). Fix: log the pair again when the selected pair changes (or at hang-up), so the last line names the path the call ended on. Delete with its fix.

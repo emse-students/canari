@@ -6,7 +6,7 @@ import {
   dateChunks,
   METER_TIMEOUT_MS,
   monthDays,
-  settledThrough,
+  oldestReadable,
   TurnMeterUnavailableError,
   TurnUsageMeter,
 } from './turn-usage-meter.service';
@@ -67,10 +67,11 @@ describe('the day arithmetic', () => {
     expect(days[20]).toBe('2026-10-21');
   });
 
-  it('settles a day an hour after it ends, never today', () => {
-    expect(settledThrough(now)).toBe('2026-10-20');
-    // 00:30: yesterday ended 30 min ago, still moving.
-    expect(settledThrough(new Date('2026-10-21T00:30:00Z'))).toBe('2026-10-19');
+  it('names the oldest date the dataset can still answer', () => {
+    // 8 days back from 12:00 is 2026-10-13T12:00: that day started earlier, so the 14th.
+    expect(oldestReadable(now, { maxDuration: DAY, notOlderThan: 8 * DAY })).toBe('2026-10-14');
+    // The 32 days measured on 2026-10-21: the whole month, and more.
+    expect(oldestReadable(now, { maxDuration: DAY, notOlderThan: 32 * DAY })).toBe('2026-09-20');
   });
 
   it('asks a range in one chunk when the dataset allows it', () => {
@@ -98,7 +99,7 @@ describe('the day arithmetic', () => {
   it('refuses a day older than the retention - a part would under-count', () => {
     expect(() =>
       dateChunks('2026-10-01', now, { maxDuration: 31 * DAY, notOlderThan: 8 * DAY })
-    ).toThrow(/less than the .* back to 2026-10-01, a day this meter never stored/);
+    ).toThrow(/less than the .* back to 2026-10-01/);
   });
 });
 
@@ -116,6 +117,12 @@ describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
       hashes.set(k, { ...hashes.get(k), ...fields });
       return Promise.resolve(Object.keys(fields).length);
     }),
+    hdel: jest.fn((k: string, ...fields: string[]) => {
+      const h = { ...hashes.get(k) };
+      for (const f of fields) delete h[f];
+      hashes.set(k, h);
+      return Promise.resolve(fields.length);
+    }),
     expire: jest.fn(() => Promise.resolve(1)),
   };
   let meter: TurnUsageMeter;
@@ -124,10 +131,10 @@ describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
   const now = new Date('2026-10-21T12:00:00Z');
   const DAYS_KEY = 'turn:metered:days:2026-10';
 
-  /** Closed days already stored, 10 bytes each: 2026-10-<from> .. 2026-10-20. */
-  const storeClosedDays = (from = 1) => {
-    const fields: Record<string, string> = {};
-    for (let d = from; d <= 20; d++) fields[`2026-10-${String(d).padStart(2, '0')}`] = '10';
+  /** Days 2026-10-<from>..<to> stored at 10 bytes each, read as far back as `coveredFrom`. */
+  const storeDays = (from: number, to: number, coveredFrom = '2026-10-01') => {
+    const fields: Record<string, string> = { covered_from: coveredFrom };
+    for (let d = from; d <= to; d++) fields[`2026-10-${String(d).padStart(2, '0')}`] = '10';
     hashes.set(DAYS_KEY, fields);
   };
 
@@ -149,7 +156,7 @@ describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
     jest.restoreAllMocks();
   });
 
-  it('reads the limits, then the month per date account-wide, and stores the closed days', async () => {
+  it('reads the limits, then the month per date account-wide, and stores what it read', async () => {
     fetchSpy
       .mockResolvedValueOnce(settingsAnswer())
       .mockResolvedValueOnce(usageAnswer({ '2026-10-03': 100, '2026-10-20': 20, '2026-10-21': 3 }));
@@ -172,57 +179,54 @@ describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
     // Account-wide: the free allowance is the account's, so no key narrows the sum.
     expect(usage).not.toContain('keyId');
 
-    // Twenty closed days stored (a day with no group is a stored 0); today is not.
-    const stored = hashes.get(DAYS_KEY)!;
-    expect(Object.keys(stored)).toHaveLength(20);
-    expect(stored['2026-10-03']).toBe('100');
-    expect(stored['2026-10-04']).toBe('0');
-    expect(stored['2026-10-20']).toBe('20');
-    expect(stored['2026-10-21']).toBeUndefined();
+    // Only the days Cloudflare RETURNED are stored - never a missing day as 0 - plus the coverage.
+    expect(hashes.get(DAYS_KEY)).toEqual({
+      '2026-10-03': '100',
+      '2026-10-20': '20',
+      '2026-10-21': '3',
+      covered_from: '2026-10-01',
+    });
     expect(redis.expire).toHaveBeenCalledWith(DAYS_KEY, 70 * DAY);
   });
 
-  it('asks only the days not stored yet, and sums the stored ones', async () => {
-    storeClosedDays();
+  // A LATE INGESTION IS COUNTED: nothing is frozen while Cloudflare can still correct it.
+  it('re-asks every readable day on every reading, and overwrites what it stored', async () => {
+    storeDays(1, 20);
     fetchSpy
       .mockResolvedValueOnce(settingsAnswer())
-      .mockResolvedValueOnce(usageAnswer({ '2026-10-21': 7 }));
+      .mockResolvedValueOnce(usageAnswer({ '2026-10-03': 150, '2026-10-21': 7 }));
 
-    await expect(meter.monthEgressBytes(now)).resolves.toBe(20 * 10 + 7);
+    await expect(meter.monthEgressBytes(now)).resolves.toBe(157);
     expect(queryOf(fetchSpy.mock.calls[1])).toContain(
-      'filter: { date_geq: "2026-10-21", date_leq: "2026-10-21" }'
+      'filter: { date_geq: "2026-10-01", date_leq: "2026-10-21" }'
     );
-    expect(redis.hset).not.toHaveBeenCalled();
+    expect(hashes.get(DAYS_KEY)!['2026-10-03']).toBe('150');
+    // A day stored before and with no group now is dropped, not kept at its old value.
+    expect(hashes.get(DAYS_KEY)!['2026-10-04']).toBeUndefined();
   });
 
-  // THE POINT OF STORING THE DAYS: a dataset keeping 8 days still meters the whole month, as long as
-  // every closed day was read while it could be.
-  it('meters the whole month with a retention shorter than the month', async () => {
-    storeClosedDays();
+  // THE POINT OF STORING: a dataset keeping 8 days still meters the whole month.
+  it('sums the stored days that left a short retention, and asks only the readable ones', async () => {
+    storeDays(1, 13);
+    delete hashes.get(DAYS_KEY)!['2026-10-05']; // read, and no group: no relay that day
     fetchSpy
       .mockResolvedValueOnce(settingsAnswer(31 * DAY, 8 * DAY))
       .mockResolvedValueOnce(usageAnswer({ '2026-10-21': 7 }));
 
-    await expect(meter.monthEgressBytes(now)).resolves.toBe(207);
+    await expect(meter.monthEgressBytes(now)).resolves.toBe(12 * 10 + 7);
+    expect(queryOf(fetchSpy.mock.calls[1])).toContain(
+      'filter: { date_geq: "2026-10-14", date_leq: "2026-10-21" }'
+    );
   });
 
-  it('is unavailable when a day never stored is older than the retention', async () => {
-    storeClosedDays(5); // 2026-10-01 .. 04 were never read
+  it('is unavailable when a day left the retention without ever being read - never a 0', async () => {
+    storeDays(5, 13, '2026-10-05'); // 2026-10-01 .. 04 were never read
     fetchSpy.mockResolvedValueOnce(settingsAnswer(31 * DAY, 8 * DAY));
 
-    await expect(meter.monthEgressBytes(now)).rejects.toThrow(/back to 2026-10-01/);
+    await expect(meter.monthEgressBytes(now)).rejects.toThrow(
+      /2026-10-01 left the dataset's retention .* without ever being read/
+    );
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('re-reads yesterday until it settles, and stores it then', async () => {
-    const early = new Date('2026-10-21T00:30:00Z');
-    fetchSpy
-      .mockResolvedValueOnce(settingsAnswer())
-      .mockResolvedValueOnce(usageAnswer({ '2026-10-20': 5 }));
-
-    await expect(meter.monthEgressBytes(early)).resolves.toBe(5);
-    expect(hashes.get(DAYS_KEY)!['2026-10-20']).toBeUndefined();
-    expect(hashes.get(DAYS_KEY)!['2026-10-19']).toBe('0');
   });
 
   it('splits the asked days into sub-queries when the window is narrower', async () => {
@@ -313,6 +317,7 @@ describe('TurnUsageMeter (B7: the budget is what Cloudflare metered)', () => {
 
   it.each([
     ['a sum that is not a number', { '2026-10-21': 'lots' }, /a non-number/],
+    ['a null sum (which Number() would read as 0)', { '2026-10-21': null }, /a non-number/],
     ['a group outside its range', { '2026-09-30': 1 }, /a group outside its range/],
   ])('is unavailable on %s', async (_n, days, reason) => {
     fetchSpy.mockResolvedValueOnce(settingsAnswer()).mockResolvedValueOnce(usageAnswer(days));

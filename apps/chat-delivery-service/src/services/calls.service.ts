@@ -155,12 +155,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CallsService.name);
   private turnMeterReportInterval: ReturnType<typeof setInterval> | null = null;
   private turnMeterFirstReport: ReturnType<typeof setTimeout> | null = null;
-  /**
-   * The Cloudflare credentials request in progress. ONE request however many call setups arrive
-   * while it runs: the credentials are the account's, not a member's, and a burst of `ice-servers`
-   * must not be a burst of requests to Cloudflare's API.
-   */
-  private credentialsInflight: Promise<{ iceServers: IceServerConfig[] }> | null = null;
 
   constructor(
     @InjectRepository(GroupMember)
@@ -503,10 +497,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       return { iceServers: STUN_ONLY, turn: { status: 'unavailable', code: withheld } };
     }
 
-    this.credentialsInflight ??= this.fetchCloudflareIceServers(turnKeyId, cloudflareToken).finally(
-      () => (this.credentialsInflight = null)
-    );
-    const { iceServers } = await this.credentialsInflight;
+    // One credential per request, never shared: a TURN credential is a member's for its TTL, and
+    // handing one in flight to an unrelated member would put two people's relay on one username.
+    const { iceServers } = await this.fetchCloudflareIceServers(turnKeyId, cloudflareToken);
     return { iceServers, turn: { status: 'available' } };
   }
 

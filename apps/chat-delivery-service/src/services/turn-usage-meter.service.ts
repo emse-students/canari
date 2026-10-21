@@ -35,14 +35,7 @@ export const METER_TIMEOUT_MS = 5000;
 const DAY_SEC = 24 * 60 * 60;
 
 /**
- * How long after a UTC day ends its total is written as FINAL, in seconds. Cloudflare's analytics
- * trail the traffic by minutes; an hour is a margin, not a measurement, and the cost of it being
- * too short is a closed day under-counted by the last minutes' relay.
- */
-const DAY_SETTLE_SEC = 60 * 60;
-
-/**
- * How long a month's closed-day totals are kept, in seconds: past the month's end, plus a margin.
+ * How long a month's day totals are kept, in seconds: past the month's end, plus a margin.
  * A total is never needed after its month, and the key must not outlive the estate's interest.
  */
 const DAY_TOTALS_TTL_SEC = 70 * DAY_SEC;
@@ -58,13 +51,36 @@ function meterCacheKey(month: string): string {
 }
 
 /**
- * `turn:metered:days:2026-10` - a hash of `YYYY-MM-DD` -> egress bytes, one field per CLOSED day of
- * the month. DURABLE STATE, not a cache: written once per day (see {@link settledThrough}), so a
- * reading only ever asks Cloudflare for the days not yet in it - and a dataset whose retention is
- * shorter than a month still meters the whole month, as long as each day was read while it could be.
+ * `turn:metered:days:2026-10` - a hash of `YYYY-MM-DD` -> egress bytes, one field per day of the
+ * month for which Cloudflare RETURNED a total, plus {@link COVERED_FROM_FIELD}. DURABLE STATE, but
+ * never a FROZEN one: every day still inside the dataset's retention is asked again on every reading
+ * and its field overwritten, so a late ingestion is counted as soon as Cloudflare has it. A stored
+ * total is only ever USED for a day that has left the retention - the latest reading of it, made
+ * while it could still be read.
  */
 function dayTotalsKey(month: string): string {
   return `turn:metered:days:${month}`;
+}
+
+/**
+ * The hash field holding the earliest date of the month any successful reading covered. A day at
+ * or after it that left the retention with NO stored total was read, and Cloudflare returned no
+ * group for it: no relay that day. A day before it was never read at all, and its total is unknown
+ * - never a 0.
+ */
+const COVERED_FROM_FIELD = 'covered_from';
+
+/** `2026-10-21` - the shape of a day field, as opposed to {@link COVERED_FROM_FIELD}. */
+const DATE_FIELD = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The egress of one group as the API wrote it: a number, or a string of digits. Anything else -
+ * `null` included, which `Number()` would read as 0 - is not a measurement.
+ */
+function egressOf(raw: unknown): number | null {
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw >= 0 ? raw : null;
+  if (typeof raw === 'string' && /^\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  return null;
 }
 
 /** Present while a recent reading failed: its value is the reason, for the log. */
@@ -130,12 +146,15 @@ export function monthDays(now: Date): string[] {
 }
 
 /**
- * The last UTC date whose total is FINAL at `now`: its day ended at least {@link DAY_SETTLE_SEC}
- * ago. Every later date (yesterday shortly after midnight, and today) is still moving and is read
- * afresh on each reading, never stored.
+ * The oldest UTC date the dataset can still answer at `now`: the first whose start is no more than
+ * `notOlderThan` ago. Every date from it to today is asked on every reading.
  */
-export function settledThrough(now: Date): string {
-  return utcDate(new Date(now.getTime() - (DAY_SEC + DAY_SETTLE_SEC) * 1000));
+export function oldestReadable(now: Date, limits: DatasetLimits): string {
+  const limit = now.getTime() - limits.notOlderThan * 1000;
+  const date = utcDate(new Date(limit));
+  return dayStart(date).getTime() >= limit
+    ? date
+    : utcDate(new Date(dayStart(date).getTime() + DAY_SEC * 1000));
 }
 
 /**
@@ -146,8 +165,7 @@ export function settledThrough(now: Date): string {
  * @throws TurnMeterUnavailableError when the dataset cannot answer the range: a window under a day,
  *   or a retention (`notOlderThan`) that does not reach back to `from`. Reading a PART would
  *   under-count, and an under-counted budget is an unbounded one. With the closed-day totals stored,
- *   `from` is the oldest day not yet stored, so this trips only when a day went unread for longer
- *   than the dataset keeps it (the first deployment mid-month, or a lost Redis).
+ *   `from` is the oldest day still readable, so this trips only on a window too short for today.
  */
 export function dateChunks(from: string, now: Date, limits: DatasetLimits): DateChunk[] {
   const daysPerChunk = Math.floor(limits.maxDuration / DAY_SEC);
@@ -159,7 +177,7 @@ export function dateChunks(from: string, now: Date, limits: DatasetLimits): Date
   const ageSec = (now.getTime() - dayStart(from).getTime()) / 1000;
   if (ageSec > limits.notOlderThan) {
     throw new TurnMeterUnavailableError(
-      `the dataset keeps ${limits.notOlderThan}s, less than the ${Math.ceil(ageSec)}s back to ${from}, a day this meter never stored`
+      `the dataset keeps ${limits.notOlderThan}s, less than the ${Math.ceil(ageSec)}s back to ${from}`
     );
   }
   const today = utcDate(now);
@@ -205,10 +223,13 @@ function chunkDays(chunk: DateChunk): number {
  * `maxDuration` splits the range into aliased sub-queries, each grouped by `date`. Every literal is
  * validated (the account id) or computed (the dates).
  *
- * CLOSED DAYS ARE STORED, so retention does not bound the month. A day's total is written to Redis
- * once it has settled ({@link settledThrough}) and is never asked again; a reading asks only for the
- * days not stored yet plus the open ones. The hourly report (`CallsService`) reads the meter while
- * calls are open, so each day is stored even on a day nobody asks for a relay.
+ * EVERY READABLE DAY IS RE-ASKED, AND THE OTHERS ARE STORED. Each reading asks Cloudflare for every
+ * day of the month still inside `notOlderThan` and overwrites its stored total, so nothing is frozen
+ * while Cloudflare can still correct it (a late ingestion, a session booked at the day's close). A
+ * day that has LEFT the retention is summed from its last stored reading; one never read at all
+ * makes the meter unavailable, never a 0. With the 32 days measured on 2026-10-21 a calendar month
+ * never leaves the retention, and the store is idle. The hourly report (`CallsService`) reads the
+ * meter while calls are open, so each day is read again until its last readable hour.
  *
  * WHAT IT CANNOT BOUND. Credentials already issued stay valid for their TTL
  * (`CLOUDFLARE_TURN_TTL_SECONDS`, 2 h): reaching the budget withholds NEW credentials, so the
@@ -280,8 +301,8 @@ export class TurnUsageMeter {
   }
 
   /**
-   * The month's egress: the stored closed days, plus a query for every day not stored yet and the
-   * days still open. Newly settled days are stored before the sum is returned.
+   * The month's egress: a query for every day still readable, stored as it reads, plus the stored
+   * totals of the days that left the retention.
    */
   private async meterMonth(
     accountId: string,
@@ -291,51 +312,72 @@ export class TurnUsageMeter {
     limits: DatasetLimits
   ): Promise<number> {
     const days = monthDays(now);
-    const settled = settledThrough(now);
-    const stored = await this.storedDays(month);
-    const toAsk = days.filter((d) => d > settled || !stored.has(d));
-    const asked = await this.queryDays(accountId, token, dateChunks(toAsk[0], now, limits));
+    const readable = oldestReadable(now, limits);
+    const askFrom = days[0] >= readable ? days[0] : readable;
+    const { totals: stored, coveredFrom } = await this.storedDays(month);
 
-    const closing: [string, number][] = [];
+    // The days that left the retention: their last stored reading, or the proof they were read.
     let total = 0;
-    for (const day of days) {
+    for (const day of days.filter((d) => d < askFrom)) {
       const known = stored.get(day);
-      if (known !== undefined && day <= settled) {
+      if (known !== undefined) {
         total += known;
-        continue;
+      } else if (coveredFrom === null || day < coveredFrom) {
+        throw new TurnMeterUnavailableError(
+          `${day} left the dataset's retention (${limits.notOlderThan}s) without ever being read`
+        );
       }
-      // A day inside an asked range with no group had no TURN traffic: the dataset returns nothing.
-      const bytes = asked.get(day) ?? 0;
-      total += bytes;
-      if (day <= settled) closing.push([day, bytes]);
+      // Read while it could be, and Cloudflare returned no group: no relay that day.
     }
-    if (closing.length > 0) {
-      const key = dayTotalsKey(month);
-      await this.redis.hset(key, Object.fromEntries(closing.map(([d, b]) => [d, String(b)])));
-      await this.redis.expire(key, DAY_TOTALS_TTL_SEC);
-      this.logger.log(
-        `[ICE] TURN meter: stored ${closing.length} closed day(s) of ${month} (${closing.map(([d]) => d).join(', ')})`
-      );
+
+    const asked = await this.queryDays(accountId, token, dateChunks(askFrom, now, limits));
+    const quiet: string[] = [];
+    for (const day of days.filter((d) => d >= askFrom)) {
+      const bytes = asked.get(day);
+      if (bytes === undefined) {
+        // No group: nothing relayed THAT WE KNOW OF yet. Counted as nothing now, stored as nothing -
+        // the next reading asks again while the day is readable.
+        quiet.push(day);
+      } else {
+        total += bytes;
+      }
     }
+    const key = dayTotalsKey(month);
+    const fields: Record<string, string> = Object.fromEntries(
+      [...asked].map(([d, b]) => [d, String(b)])
+    );
+    if (coveredFrom === null || askFrom < coveredFrom) fields[COVERED_FROM_FIELD] = askFrom;
+    if (Object.keys(fields).length > 0) await this.redis.hset(key, fields);
+    if (quiet.length > 0) await this.redis.hdel(key, ...quiet);
+    await this.redis.expire(key, DAY_TOTALS_TTL_SEC);
     return total;
   }
 
-  /** The closed-day totals stored for `month`; an unreadable field is named and re-asked. */
-  private async storedDays(month: string): Promise<Map<string, number>> {
+  /** The day totals stored for `month`, and how far back readings have covered it. */
+  private async storedDays(
+    month: string
+  ): Promise<{ totals: Map<string, number>; coveredFrom: string | null }> {
     const raw = await this.redis.hgetall(dayTotalsKey(month));
     const days = new Map<string, number>();
+    let coveredFrom: string | null = null;
     for (const [day, value] of Object.entries(raw ?? {})) {
-      const bytes = Number(value);
-      if (Number.isFinite(bytes) && bytes >= 0) {
+      if (day === COVERED_FROM_FIELD) {
+        if (DATE_FIELD.test(value)) {
+          coveredFrom = value;
+        } else {
+          this.logger.error(`[ICE] stored TURN coverage is unreadable (${value}) - ignored`);
+        }
+        continue;
+      }
+      const bytes = egressOf(value);
+      if (DATE_FIELD.test(day) && bytes !== null) {
         days.set(day, bytes);
       } else {
         // Only this class writes the hash; a value it cannot read is a defect, asked again.
-        this.logger.error(
-          `[ICE] stored TURN total for ${day} is unreadable (${value}) - re-reading`
-        );
+        this.logger.error(`[ICE] stored TURN total for ${day} is unreadable (${value}) - ignored`);
       }
     }
-    return days;
+    return { totals: days, coveredFrom };
   }
 
   private config(): { accountId: string; token: string } {
@@ -412,13 +454,13 @@ export class TurnUsageMeter {
         sum?: { egressBytes?: unknown };
       }[]) {
         const date = group.dimensions?.date;
-        const egress = Number(group.sum?.egressBytes);
+        const egress = egressOf(group.sum?.egressBytes);
         if (typeof date !== 'string' || date < chunk.from || date > chunk.to) {
           throw new TurnMeterUnavailableError(
             `a group outside its range: ${JSON.stringify(group)}`
           );
         }
-        if (!Number.isFinite(egress) || egress < 0) {
+        if (egress === null) {
           throw new TurnMeterUnavailableError(`a non-number: ${JSON.stringify(group)}`);
         }
         perDay.set(date, (perDay.get(date) ?? 0) + egress);

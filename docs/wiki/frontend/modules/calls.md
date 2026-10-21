@@ -347,7 +347,7 @@ anything: production's switch defaults to `off`, and `CALLS_COMPILED` is untouch
 | Value | What the server allows |
 |---|---|
 | `off` (the default, migration 014) | nothing starts: `initiate`, `ring`, `room-token` and `ice-servers` answer 403 `CALLS_DISABLED` |
-| `audio` | every call, except a ring that asks for video: 403 `CALLS_VIDEO_DISABLED` |
+| `audio` | every call, except a ring that asks for video: 403 `CALLS_VIDEO_DISABLED` - see the limit below |
 | `audio_video` | everything |
 
 - **Where it lives.** One column on core-service's singleton row (`014_platform_config_calls_mode.sql`,
@@ -368,6 +368,11 @@ anything: production's switch defaults to `off`, and `CALLS_COMPILED` is untouch
   lost row is not mistaken for an admin's `off`; a value outside the three THROWS
   (a switch that cannot be read is not read as open). `ring-end` and `presence` are never gated: they
   stop or record a call.
+- **How far `audio` is enforced.** On the server, ONLY by the ring's DECLARED `hasVideo`: `ring`
+  refuses a ring that says it carries video. `initiate`, `room-token` and `ice-servers` take no
+  media kind and check only `off`, so a callee joining an audio call, or a client that declares
+  audio and then sends video, is not refused by anything server-side. The client hides the video
+  button and the camera-on control; the server cannot see the media, which is peer to peer.
 - **What it cannot do.** A call already connected is peer to peer and never touches the server
   again: it runs to its end. The switch stops every new call, every callee still to answer, and
   every new TURN credential. A modified client could still turn its camera on inside an `audio`
@@ -411,8 +416,9 @@ another key on the account spends the same allowance. Direct calls put nothing o
 construction; no client says anything. Configuration: `CLOUDFLARE_ACCOUNT_ID` (32 hex) and
 `CLOUDFLARE_TURN_ANALYTICS_TOKEN` (a token with Account Analytics read), `env-manifest.tsv` `warn`
 on both estates. One reading is reused for 60 s (`turn:metered:<YYYY-MM>`): a member hammering
-`ice-servers` must not spend the GraphQL quota, and concurrent setups share ONE reading in flight
-(single flight). Every request to Cloudflare - the meter's and the credentials' - carries
+`ice-servers` must not spend the GraphQL quota, and concurrent setups share ONE meter reading in
+flight (single flight). The TURN CREDENTIALS are never shared: one request to Cloudflare per
+`ice-servers`, since a credential is a member's for its TTL. Every request to Cloudflare - the meter's and the credentials' - carries
 `AbortSignal.timeout(5000)`: past it the meter is unavailable (typed) and the credentials call a
 logged 503, so a Cloudflare that never answers cannot hold call setups open.
 
@@ -426,16 +432,17 @@ cached an hour (`turn:metered:settings`, logged when read), and `dateChunks` spl
 must ask into whole-day ranges no wider than `maxDuration`, asked as aliased sub-queries (`c0`,
 `c1`, ...) in ONE request, each grouped by `dimensions { date }`.
 
-**Closed days are DURABLE, so retention does not bound the month.** A day's total is written to the
-Redis hash `turn:metered:days:<YYYY-MM>` once it has settled (its day ended at least an hour ago,
-the analytics lag's margin), and never asked again; a reading asks only for the days not stored yet
-plus the open ones (yesterday until it settles, and today). The hourly report below reads the meter
-while calls are open, so every day is stored within ~an hour of settling even when nobody needed a
-relay. A `maxDuration` under a day, or a day NEVER stored that is older than `notOlderThan`, is
-refused as unreadable rather than summed short - an under-count is a budget that never trips. That
-second case is only reachable on the first deployment mid-month or after a lost Redis, and only if
-the dataset keeps less than the days already gone; the dataset's limits are logged on each read, so
-the first dev deploy shows whether it can happen at all.
+**Every readable day is re-asked; only days past retention come from storage.** Each reading asks
+Cloudflare for EVERY day of the month still inside `notOlderThan`, and writes what it got to the
+Redis hash `turn:metered:days:<YYYY-MM>`, overwriting: nothing is frozen while Cloudflare can still
+correct it (a late ingestion, a session booked at a day's close - a first version froze a day an
+hour after it ended, and would have under-counted those for the rest of the month). Only a day
+Cloudflare RETURNED a group for is stored; a day with no group is never stored as 0, and a field
+`covered_from` records how far back readings reached. A day that has LEFT the retention is summed
+from its stored total, or counted as no relay if it was covered and had no group, and a day never
+read at all makes the meter unavailable. The hourly report below re-reads the meter while calls are
+open, so a day is read until its last readable hour. A `maxDuration` under a day is refused too -
+an under-count is a budget that never trips.
 
 **A meter that cannot be read withholds TURN, never the call** - a typed degradation, not a
 fallback. Unconfigured, unreachable, an HTTP or GraphQL error, no visible account, a dataset not
@@ -468,8 +475,8 @@ meter's lag (minutes).
 **Measured against the live API (2026-10-21, the production token):** the endpoint is
 `https://api.cloudflare.com/client/v4/graphql` (the bare `/graphql` answers 10404 "No route"), and
 the `settings` query answers `enabled=true`, `maxDuration=2764800`, `notOlderThan=2764800` (32 days).
-So a whole calendar month (31 days at most) is one chunk, and a day never stored is always still
-within retention - the refusal above cannot trip on this account today. **Still unexercised:** the
+So a whole calendar month (31 days at most) is one chunk and never leaves the retention: on this
+account every reading asks the whole month, and the stored totals are never used. **Still unexercised:** the
 per-date usage query itself (`dimensions { date }`, `orderBy: [date_ASC]`); the first dev deploy
 carrying this answers it, and a refusal names itself in the `[ICE]` error line.
 

@@ -218,27 +218,21 @@ describe('CallsService', () => {
       );
     });
 
-    it('asks Cloudflare for credentials once for concurrent setups, bounded by a timeout', async () => {
-      let answer: (r: Response) => void = () => {};
+    it('asks Cloudflare for credentials per request, never sharing one, bounded by a timeout', async () => {
       const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation((_u, init) => {
         expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
-        return new Promise<Response>((resolve) => (answer = resolve));
+        return Promise.resolve(
+          new Response(JSON.stringify({ iceServers: [{ urls: ['turn:turn.example:3478'] }] }), {
+            status: 200,
+          })
+        );
       });
 
-      const both = Promise.all([
+      await Promise.all([
         service.getIceServers('user-1', 'group-1', 'call-1'),
         service.getIceServers('user-1', 'group-1', 'call-1'),
       ]);
-      await new Promise((r) => setImmediate(r));
-      answer(
-        new Response(JSON.stringify({ iceServers: [{ urls: ['turn:turn.example:3478'] }] }), {
-          status: 200,
-        })
-      );
-
-      const [a, b] = await both;
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      expect(a).toEqual(b);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
     });
 
     it('answers 503, logged, when Cloudflare gives no credentials in time', async () => {
