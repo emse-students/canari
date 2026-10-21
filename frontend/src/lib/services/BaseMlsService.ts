@@ -107,7 +107,14 @@ import {
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { getToken } from '$lib/stores/auth';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
-import { fromBase64, MlsStateWriteRefusedError, toBase64 } from '$lib/utils/hex';
+import {
+  fromBase64,
+  MlsStateWriteRefusedError,
+  toBase64,
+  type MlsStateWriteLatch,
+} from '$lib/utils/hex';
+import { m } from '$lib/paraglide/messages';
+import { showToast } from '$lib/stores/toast.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
@@ -232,20 +239,10 @@ export const MAX_REFUSED_ROTATION_RELOADS = 2;
 export const REFUSED_ROTATION_RELOADS_KEY = 'canari.mls.refusedRotationReloads';
 
 /**
- * The write latch's one check (`BaseMlsService.stateWritesEnded`), at the two seams every MLS state
- * write of a live client goes through: the persister, the watchdog, the burn, the registry fallback
- * and the rotation all reach `persistCheckpoint`, and the re-seal is `changeDeviceKey`. Each refused
- * write is a write that would have landed, so each gets its line.
+ * Resets the count once a key package round has PUBLISHED - the proof that this page holds an
+ * identity the server accepts, so any run of refused rotations is over. Best-effort: a count that
+ * could not be cleared only shortens a later bound in this tab.
  */
-function refuseIfStateWritesEnded(ended: boolean, what: string): void {
-  if (!ended) return;
-  console.warn(
-    `[MLS] ${what} REFUSED: this document ended after a refused rotation - its client is on no disk and must not reach one`
-  );
-  throw new MlsStateWriteRefusedError('ended');
-}
-
-/** Resets the count once a rotation has landed. Best-effort: a stale count only shortens the bound. */
 function forgetRefusedRotationReloads(): void {
   try {
     sessionStorage.removeItem(REFUSED_ROTATION_RELOADS_KEY);
@@ -2363,6 +2360,12 @@ export abstract class BaseMlsService implements IMlsService {
    * it runs until the next response commits, and a persister flight, the session watchdog or a burn
    * checkpoint can land in between. A latch on the one write path is what makes that window inert.
    * Never cleared: a document that set it is ended, and the next one is a new instance.
+   *
+   * READ AT THE PUT, NOT ONLY AT THE START. A checkpoint captures, encrypts off-thread and waits
+   * for the database; a flight that passed the start check before the rotation's refusal would
+   * otherwise land after it. So the web write reads it inside its own transaction, and the
+   * rotation's refusal SETS it there, synchronously (`MlsStateWriteLatch` in `utils/hex.ts`).
+   * SILENT at every refused write: the rotation's line said it once, where it was decided.
    */
   private stateWritesEnded = false;
 
@@ -2435,7 +2438,10 @@ export abstract class BaseMlsService implements IMlsService {
     const roundState = { stale: false };
     const round = (async (): Promise<DatedKeyPackage> => {
       try {
-        return await this.generateKeyPackageImpl(deviceKeyB64);
+        const published = await this.generateKeyPackageImpl(deviceKeyB64);
+        // A published round proves this page's identity is accepted: any refused-rotation run ended.
+        forgetRefusedRotationReloads();
+        return published;
       } catch (e) {
         if (!(e instanceof DeviceRevokedError)) throw e;
         if (roundState.stale) {
@@ -2464,7 +2470,9 @@ export abstract class BaseMlsService implements IMlsService {
           );
           throw new Error('key package round abandoned during re-enrolment');
         }
-        return this.generateKeyPackageImpl(deviceKeyB64);
+        const republished = await this.generateKeyPackageImpl(deviceKeyB64);
+        forgetRefusedRotationReloads();
+        return republished;
       }
     })();
     // THE CALLER STOPS WAITING AFTER A DEADLINE, THE WORK IS NOT CANCELLED (a native `invoke` and a
@@ -2698,19 +2706,19 @@ export abstract class BaseMlsService implements IMlsService {
     this.stateWasExpected = false;
     await this.loadStateWithKey(deviceKeyB64, undefined);
     try {
-      await this.persistCheckpoint();
+      // ENDS THE DOCUMENT ON REFUSAL, inside the transaction that refuses it: a flight of this
+      // document already past its start check must find the latch set at its own put.
+      await this.persistCheckpoint({ endsDocumentOnRefusal: true });
     } catch (e) {
       if (!(e instanceof MlsStateWriteRefusedError)) throw e;
-      // FIRST, before anything can yield: no later capture of this fresh client may reach the disk.
+      // Already set by the web write; set here too for a writer that refuses outside a transaction.
       this.stateWritesEnded = true;
       console.error(
-        `[MLS] Device identity rotation ABORTED: another document wrote this account's state (${e.outcome}), so ${this.deviceId} is on no disk - ${oldDeviceId} stays the stored id and keeps its server row, and this document must end`
+        `[MLS] Device identity rotation ABORTED: another document wrote this account's state (${e.outcome}), so ${this.deviceId} is on no disk - ${oldDeviceId} stays the stored id and keeps its server row, every later MLS state write of this document is refused, and this document must end`
       );
       throw e;
     }
     localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
-    // A rotation that landed is the proof that any run of refused ones is over.
-    forgetRefusedRotationReloads();
     // The counters describe the ratchets of the device being abandoned, whose state was discarded
     // for a fresh one starting at generation zero. Carried over, they would burn against sends
     // that, from the peers' side, this device has never made.
@@ -2737,9 +2745,12 @@ export abstract class BaseMlsService implements IMlsService {
    * That question answers `false` when the server is unreachable, though, and a page that then
    * reaches the server and meets another document still writing would rotate, be refused and reload
    * again, for as long as the other one writes. So at most {@link MAX_REFUSED_ROTATION_RELOADS}
-   * reloads in a row per tab (`sessionStorage`, which a reload keeps); a rotation that lands resets
-   * the count. Past it the page is NOT reloaded: it stays latched - it writes nothing - and says so
-   * at `error`, where the member's remedy is to close the other tabs.
+   * reloads per tab (`sessionStorage`, which a reload keeps) with no key package round PUBLISHED in
+   * between: a round that publishes resets the count, and every healthy page publishes one per
+   * connection. Not a successful init: in the loop above every init succeeds - it is the round after
+   * it that meets the revocation - so an init reset would never let the count reach the bound. Past
+   * it the page is NOT reloaded: it stays latched - it writes nothing - says so at `error`, and tells
+   * the member in a toast that stays until dismissed: close the other tabs, then reload.
    */
   protected endDocumentAfterRefusedRotation(): void {
     if (typeof window === 'undefined') return;
@@ -2755,12 +2766,14 @@ export abstract class BaseMlsService implements IMlsService {
         `[MLS] refused rotation: the reload count is unreadable, so this page is NOT reloaded and writes no state - close the other tabs of this account:`,
         e
       );
+      this.tellMemberThisPageEnded();
       return;
     }
     if (done >= MAX_REFUSED_ROTATION_RELOADS) {
       console.error(
         `[MLS] refused rotation: ${done} reloads in a row met another document writing this account's state, so this page is NOT reloaded again and writes no state - close the other tabs of this account`
       );
+      this.tellMemberThisPageEnded();
       return;
     }
     console.warn(
@@ -2772,6 +2785,19 @@ export abstract class BaseMlsService implements IMlsService {
   /** The reload itself, apart so a test can observe it without unloading its runner. */
   protected reloadDocument(): void {
     window.location.reload();
+  }
+
+  /**
+   * The member's half of a page that stopped reloading ({@link endDocumentAfterRefusedRotation}):
+   * the console is not where anybody reads that the page now saves nothing. A toast that stays
+   * until dismissed, with the remedy and a reload button; the reload is the member's to take, once
+   * the other tabs are closed.
+   */
+  protected tellMemberThisPageEnded(): void {
+    showToast(m.mls_page_ended_other_tab_writing(), 'error', null, {
+      label: m.common_reload_button(),
+      run: () => this.reloadDocument(),
+    });
   }
 
   /**
@@ -3193,8 +3219,14 @@ export abstract class BaseMlsService implements IMlsService {
    * snapshot across the IPC bridge as a JSON array of one number per byte for four call sites that
    * all threw it away. A contract that forces a platform to produce something no caller of that
    * platform wants is not an abstraction, and this seam - a write, returning nothing - is.
+   *
+   * `latch` is this document's write latch ({@link stateWritesEnded}); a platform whose store can
+   * refuse a write reads it AT THE PUT, and rejects `MlsStateWriteRefusedError('ended')` on it.
    */
-  protected abstract writeCheckpoint(deviceKeyB64: string): Promise<void>;
+  protected abstract writeCheckpoint(
+    deviceKeyB64: string,
+    latch: MlsStateWriteLatch
+  ): Promise<void>;
 
   /**
    * Advances this device's send ratchet by `count` generations without emitting anything.
@@ -3214,14 +3246,25 @@ export abstract class BaseMlsService implements IMlsService {
    * next load, where the opposite order costs one too few and reproduces exactly the fault this
    * exists to close. Leaving the pairing to each call site would be the eighteen-call-sites lesson
    * of `sendMessage`, re-learnt on the seam that guards the ratchet instead of the one that moves it.
+   *
+   * THE LATCH IS READ TWICE ({@link stateWritesEnded}): here, so an ended document captures
+   * nothing, and at the put, where it decides. `endsDocumentOnRefusal` is the rotation's: its write
+   * sets the latch in the very transaction that refuses it.
    */
-  async persistCheckpoint(): Promise<void> {
-    refuseIfStateWritesEnded(this.stateWritesEnded, 'checkpoint');
+  async persistCheckpoint(options?: { endsDocumentOnRefusal?: boolean }): Promise<void> {
+    if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
     const emitted = snapshotEmitted(this.userId);
     // The replay marks are captured BEFORE the write for the same reason as `emitted`: a page
     // decrypted while the seal runs is marked in memory, and this write does not hold its advance.
     const replayMarks = snapshotPendingHistoryMarks(this.userId);
-    await this.writeCheckpoint(this.currentDeviceKeyB64);
+    await this.writeCheckpoint(this.currentDeviceKeyB64, {
+      isEnded: () => this.stateWritesEnded === true,
+      endOnRefusal: options?.endsDocumentOnRefusal
+        ? () => {
+            this.stateWritesEnded = true;
+          }
+        : undefined,
+    });
     commitPersisted(this.userId, emitted);
     // TWO LEDGERS, ONE WRITE, AND THE SECOND ONE WAS BOUND TO THE WRONG EVENT UNTIL 2026-09-08.
     //
@@ -3247,8 +3290,10 @@ export abstract class BaseMlsService implements IMlsService {
    * the old key, so the old key is what still describes it.
    */
   async changeDeviceKey(newDeviceKeyB64: string): Promise<void> {
-    refuseIfStateWritesEnded(this.stateWritesEnded, 'device key re-seal');
-    await this.changeDeviceKeyImpl(newDeviceKeyB64);
+    if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
+    await this.changeDeviceKeyImpl(newDeviceKeyB64, {
+      isEnded: () => this.stateWritesEnded === true,
+    });
     this.currentDeviceKeyB64 = newDeviceKeyB64;
   }
 
@@ -3306,7 +3351,11 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
-  protected abstract changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void>;
+  /** `latch`: as on {@link writeCheckpoint}, read at the put. */
+  protected abstract changeDeviceKeyImpl(
+    newDeviceKeyB64: string,
+    latch: MlsStateWriteLatch
+  ): Promise<void>;
   protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<DatedKeyPackage>;
   abstract publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   abstract createGroup(groupId: string): Promise<void>;

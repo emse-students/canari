@@ -35,16 +35,19 @@ export const toastStore = {
 /**
  * Show a toast notification that auto-dismisses after `durationMs` (default 4.5 s).
  * Safe to call from any context (components, stores, composables).
+ *
+ * `durationMs: null` keeps it until the member dismisses it or takes its action - for a state that
+ * does not go away by itself, where a notice that vanishes is a report nobody read.
  */
 export function showToast(
   message: string,
   type: Toast['type'] = 'error',
-  durationMs = 4500,
+  durationMs: number | null = 4500,
   action?: ToastAction
 ): void {
   const id = _nextId++;
   _toasts = [..._toasts, { id, message, type, action }];
-  setTimeout(() => dismissToast(id), durationMs);
+  if (durationMs !== null) setTimeout(() => dismissToast(id), durationMs);
 }
 
 /** How long an "Undo" stays offered: longer than a plain notice, since it asks for a decision. */

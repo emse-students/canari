@@ -12,7 +12,9 @@ import { createMlsStatePersister } from '$lib/mls-client/mlsStatePersister';
 import type { IMlsService } from '$lib/mls-client';
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
 import { DeviceRevokedError } from '$lib/mls-client/mlsDeliveryApi';
-import { MlsStateWriteRefusedError } from '$lib/utils/hex';
+import { MlsStateWriteRefusedError, type MlsStateWriteLatch } from '$lib/utils/hex';
+import { dismissToast, toastStore } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * Guards the recovery from a server-side revocation.
@@ -64,7 +66,8 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
     // Persisted before anything else may fail: a new id in localStorage next to the old state is
     // what made the identity churn self-sustaining.
     expect(localStorage.getItem('mls_device_id_u')).toBe('d-fresh');
-    expect(ctx.persistCheckpoint).toHaveBeenCalledWith();
+    // The rotation's write ends the document if it is refused - see the latch cases below.
+    expect(ctx.persistCheckpoint).toHaveBeenCalledWith({ endsDocumentOnRefusal: true });
     expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'd-revoked');
     expect(impl).toHaveBeenCalledTimes(2);
   });
@@ -127,10 +130,18 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
     function guardedCtx() {
       let next = ourFirstVersion;
       const written: number[] = [];
-      const writeCheckpoint = vi.fn(async () => {
+      /** A capture's off-thread seal, held on a promise per version when a test needs to. */
+      const seals = new Map<number, Promise<void>>();
+      // As `WebMlsService.writeCheckpoint` + `hex.ts` decide: capture, seal, then at the put the
+      // latch, then the guard - whose refusal ends the document when the write says so.
+      const writeCheckpoint = vi.fn(async (_key: string, latch: MlsStateWriteLatch) => {
         const v = next++;
-        if (v === storedByOther) throw new MlsStateWriteRefusedError('collision');
-        if (v < storedByOther) throw new MlsStateWriteRefusedError('stale');
+        await seals.get(v);
+        if (latch.isEnded()) throw new MlsStateWriteRefusedError('ended');
+        if (v <= storedByOther) {
+          latch.endOnRefusal?.();
+          throw new MlsStateWriteRefusedError(v === storedByOther ? 'collision' : 'stale');
+        }
         written.push(v);
       });
       const changeDeviceKeyImpl = vi.fn().mockResolvedValue(undefined);
@@ -146,8 +157,35 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
         currentDeviceKeyB64: 'key-b64',
         ...seams,
       }) as ReturnType<typeof makeCtx> & typeof seams;
-      return { ctx, written, writeCheckpoint, changeDeviceKeyImpl };
+      return { ctx, written, writeCheckpoint, changeDeviceKeyImpl, seals };
     }
+
+    it('a flight PAST its start check when the rotation is refused is refused at its put', async () => {
+      const { ctx, written, writeCheckpoint, seals } = guardedCtx();
+      let releaseRotation!: () => void;
+      let releaseFlight!: () => void;
+      seals.set(ourFirstVersion, new Promise<void>((r) => (releaseRotation = r)));
+      seals.set(ourFirstVersion + 1, new Promise<void>((r) => (releaseFlight = r)));
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const round = generateKeyPackage(ctx);
+      // The rotation has captured the fresh client and is sealing it.
+      await vi.waitFor(() => expect(writeCheckpoint).toHaveBeenCalledTimes(1));
+      // A watchdog checkpoint starts now: the latch is still clear, so it captures (one version
+      // above) and seals too.
+      const flight = ctx.persistCheckpoint();
+      await vi.waitFor(() => expect(writeCheckpoint).toHaveBeenCalledTimes(2));
+
+      releaseRotation();
+      await expect(round).rejects.toMatchObject({ outcome });
+      releaseFlight();
+      await expect(flight).rejects.toMatchObject({ outcome: 'ended' });
+
+      expect(written).toEqual([]);
+      error.mockRestore();
+      warn.mockRestore();
+    });
 
     it('no later checkpoint, persister flight or re-seal of this document is ever written', async () => {
       const { ctx, written, writeCheckpoint, changeDeviceKeyImpl } = guardedCtx();
@@ -173,36 +211,69 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
       // Only the rotation's own capture ever reached the guard.
       expect(writeCheckpoint).toHaveBeenCalledTimes(1);
       expect(changeDeviceKeyImpl).not.toHaveBeenCalled();
+      // ONE line for the event, the rotation's: every refused write after it is silent.
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('REFUSED'))).toEqual([]);
       error.mockRestore();
       warn.mockRestore();
     });
   });
 
   describe('the reload a refused rotation costs is bounded per tab', () => {
-    beforeEach(() => sessionStorage.clear());
+    beforeEach(() => {
+      sessionStorage.clear();
+      // `dismissToast` replaces the list, so iterating the current one is safe.
+      for (const toast of toastStore.toasts) dismissToast(toast.id);
+    });
 
     function endingCtx() {
       return {
         reloadDocument: vi.fn(),
         endDocumentAfterRefusedRotation:
           BaseMlsService.prototype['endDocumentAfterRefusedRotation'],
+        tellMemberThisPageEnded: BaseMlsService.prototype['tellMemberThisPageEnded'],
       };
     }
 
-    it(`reloads ${MAX_REFUSED_ROTATION_RELOADS} times in a row, then stops and says so`, () => {
+    it(`reloads ${MAX_REFUSED_ROTATION_RELOADS} times in a row, then stops, says so, and TELLS the member`, () => {
       const error = vi.spyOn(console, 'error').mockImplementation(() => {});
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       // Each call is one page: a reload keeps `sessionStorage`, so the count carries across them.
-      for (let page = 0; page < MAX_REFUSED_ROTATION_RELOADS + 2; page++) {
-        const ctx = endingCtx();
-        ctx.endDocumentAfterRefusedRotation();
-        expect(ctx.reloadDocument).toHaveBeenCalledTimes(
+      let last = endingCtx();
+      for (let page = 0; page < MAX_REFUSED_ROTATION_RELOADS + 1; page++) {
+        last = endingCtx();
+        last.endDocumentAfterRefusedRotation();
+        expect(last.reloadDocument).toHaveBeenCalledTimes(
           page < MAX_REFUSED_ROTATION_RELOADS ? 1 : 0
         );
+        expect(toastStore.toasts).toHaveLength(page < MAX_REFUSED_ROTATION_RELOADS ? 0 : 1);
       }
       expect(error).toHaveBeenCalledWith(expect.stringContaining('NOT reloaded again'));
+      // The console is not where a member reads it: the remedy, on screen, until dismissed, with
+      // the reload as the member's own gesture.
+      const [toast] = toastStore.toasts;
+      expect(toast.message).toBe(m.mls_page_ended_other_tab_writing());
+      expect(toast.action?.label).toBe(m.common_reload_button());
+      toast.action?.run();
+      expect(last.reloadDocument).toHaveBeenCalledTimes(1);
       error.mockRestore();
       warn.mockRestore();
+    });
+
+    it('an ordinary published round resets the count, so two refusals hours apart are not "in a row"', async () => {
+      sessionStorage.setItem(REFUSED_ROTATION_RELOADS_KEY, String(MAX_REFUSED_ROTATION_RELOADS));
+      const ctx = makeCtx({
+        generateKeyPackageImpl: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      });
+      await generateKeyPackage(ctx);
+      expect(sessionStorage.getItem(REFUSED_ROTATION_RELOADS_KEY)).toBeNull();
+    });
+
+    it('a round that fails leaves the count where it is', async () => {
+      sessionStorage.setItem(REFUSED_ROTATION_RELOADS_KEY, '1');
+      const ctx = makeCtx({ generateKeyPackageImpl: vi.fn().mockRejectedValue(new Error('down')) });
+      await expect(generateKeyPackage(ctx)).rejects.toThrow('down');
+      expect(sessionStorage.getItem(REFUSED_ROTATION_RELOADS_KEY)).toBe('1');
     });
 
     it('a rotation that lands resets the count', async () => {

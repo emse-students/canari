@@ -34,7 +34,7 @@ describe('WebMlsService.changeDeviceKeyImpl', () => {
 
   // `superseded` too: the re-seal must land ITSELF, and a newer blob of this document may still be
   // sealed under the old key.
-  it.each(['superseded', 'stale', 'collision'] as const)(
+  it.each(['superseded', 'stale', 'collision', 'ended'] as const)(
     'FAILS, typed, when the version guard drops the write (%s)',
     async (outcome) => {
       saveMlsState.mockResolvedValueOnce(outcome);
@@ -69,8 +69,22 @@ describe('WebMlsService.writeCheckpoint', () => {
     }
   );
 
-  it.each(['stale', 'collision'] as const)(
-    "REJECTS, typed and silently, when the stored blob is another document's (%s)",
+  it('hands the latch to the write, read at its put after this capture and its seal', async () => {
+    saveMlsState.mockResolvedValueOnce('written');
+    const latch = { isEnded: () => false };
+    const ctx = { userId: 'u1', saveState: vi.fn().mockResolvedValue(new Uint8Array([7])) };
+    await (
+      WebMlsService.prototype['writeCheckpoint'] as (
+        this: unknown,
+        k: string,
+        l: typeof latch
+      ) => Promise<void>
+    ).call(ctx, 'k', latch);
+    expect(saveMlsState).toHaveBeenLastCalledWith('u1', new Uint8Array([7]), latch);
+  });
+
+  it.each(['stale', 'collision', 'ended'] as const)(
+    'REJECTS, typed and silently, when the state is not on disk (%s)',
     async (outcome) => {
       saveMlsState.mockResolvedValueOnce(outcome);
       const warn = vi.spyOn(console, 'warn');

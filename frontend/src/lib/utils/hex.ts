@@ -212,9 +212,10 @@ function openMlsDb(userId: string): Promise<IDBDatabase> {
  * own later capture is already stored, which holds everything this one did); or refused by the
  * version guard as `stale` (older than another document's stored blob) or `collision` (another
  * writer reached the same version). A checkpoint is durable on `written` or `superseded`; a write
- * that must land ITSELF - a device key change's re-seal - only on `written`.
+ * that must land ITSELF - a device key change's re-seal - only on `written`. `ended` is the writing
+ * document's own refusal, not the guard's: its {@link MlsStateWriteLatch} is set.
  */
-export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collision';
+export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collision' | 'ended';
 
 /**
  * A write was refused by the version guard, so the state it carried is NOT on disk. The device key
@@ -223,11 +224,11 @@ export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collisi
  * it in one line; a catcher that only re-reports it adds noise.
  *
  * `ended` is not the guard's: the document itself refused the write, because a rotation it ran was
- * refused and what it holds in memory is on no disk (`BaseMlsService.persistCheckpoint`'s latch).
- * That refusal, too, has already been said once, where it was decided.
+ * refused and what it holds in memory is on no disk ({@link MlsStateWriteLatch}). That refusal is
+ * said once, by the document, the first time it refuses.
  */
 export class MlsStateWriteRefusedError extends Error {
-  constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'> | 'ended') {
+  constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'>) {
     super(
       outcome === 'ended'
         ? 'the MLS state write was refused: this document ended after a refused rotation'
@@ -246,12 +247,37 @@ export class MlsStateWriteRefusedError extends Error {
  */
 export async function saveMlsStateEncrypted(
   userId: string,
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  latch?: MlsStateWriteLatch
 ): Promise<MlsStateWriteOutcome> {
-  return withDeviceKeyHeld(userId, () => writeMlsState(userId, bytes));
+  return withDeviceKeyHeld(userId, () => writeMlsState(userId, bytes, latch));
 }
 
-async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStateWriteOutcome> {
+/**
+ * A document's write latch, read and set INSIDE the write's own transaction.
+ *
+ * A check made before the write starts is not enough: a checkpoint captures, then encrypts off the
+ * main thread, then waits for the gate and the database, and the latch can be set by another write
+ * of the same document during any of those awaits. IndexedDB serialises read-write transactions on
+ * one store, so the verdict below and the put are one synchronous step, and a latch set by an earlier
+ * transaction's verdict is seen by every later one.
+ */
+export interface MlsStateWriteLatch {
+  /** True once this document may write no MLS state: the write resolves `ended`, nothing stored. */
+  isEnded(): boolean;
+  /**
+   * For a write whose refusal ENDS the document (a rotation's checkpoint): called synchronously in
+   * the transaction that refused it, so no later transaction of this document can land.
+   */
+  endOnRefusal?(): void;
+}
+
+async function writeMlsState(
+  userId: string,
+  bytes: Uint8Array,
+  latch?: MlsStateWriteLatch
+): Promise<MlsStateWriteOutcome> {
+  if (latch?.isEnded()) return 'ended';
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -271,6 +297,11 @@ async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStat
     const store = tx.objectStore(IDB_STORE);
     const verReq = store.get(MLS_STATE_VERSION_KEY);
     verReq.onsuccess = () => {
+      // THE LATCH, AT THE PUT: see `MlsStateWriteLatch` for why the check at the start is not one.
+      if (latch?.isEnded()) {
+        outcome = 'ended';
+        return;
+      }
       const stored = (verReq.result as number | undefined) ?? 0;
       // A tagged write older than or equal to what is stored is a stale flush - skip it so a slow
       // encrypted checkpoint cannot clobber a fresher concurrent write. Untagged writes (restore,
@@ -312,6 +343,7 @@ async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStat
             `this state from ${mine} is not on disk`
         );
         outcome = 'stale';
+        latch?.endOnRefusal?.();
         return;
       }
       if (version !== undefined && version === stored) {
@@ -321,6 +353,7 @@ async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStat
             `comparable and this state from ${mine} is not on disk`
         );
         outcome = 'collision';
+        latch?.endOnRefusal?.();
         return;
       }
       store.put(bytes, MLS_STATE_ENCRYPTED_KEY);
@@ -358,9 +391,10 @@ export async function purgeLegacyPlainMlsState(userId: string): Promise<void> {
 /** @deprecated Alias for {@link saveMlsStateEncrypted}. */
 export async function saveMlsState(
   userId: string,
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  latch?: MlsStateWriteLatch
 ): Promise<MlsStateWriteOutcome> {
-  return saveMlsStateEncrypted(userId, bytes);
+  return saveMlsStateEncrypted(userId, bytes, latch);
 }
 
 /**

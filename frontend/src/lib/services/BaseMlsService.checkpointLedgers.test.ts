@@ -57,7 +57,11 @@ describe('BaseMlsService.persistCheckpoint', () => {
 
     await persist(ctx);
 
-    expect(ctx.writeCheckpoint).toHaveBeenCalledWith('k');
+    // With this document's write latch, read at the put (`BaseMlsService.deviceRevoked.test.ts`).
+    expect(ctx.writeCheckpoint).toHaveBeenCalledWith(
+      'k',
+      expect.objectContaining({ isEnded: expect.any(Function) })
+    );
     expect(commitPendingHistoryMarks).toHaveBeenCalledWith({ userId: 'u', groups: [] });
   });
 

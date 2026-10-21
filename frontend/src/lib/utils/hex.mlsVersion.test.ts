@@ -164,6 +164,49 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([9]));
   });
 
+  /**
+   * THE LATCH IS DECIDED AT THE PUT, AND SET BY THE REFUSAL ITSELF. A refused rotation's checkpoint
+   * (`endOnRefusal`) and a flight of the same document captured just after it - one version above
+   * the other document's - are both in the database's queue. Checked only before the write started,
+   * the flight is `written`: the fresh, groupless client over the other document's good state.
+   */
+  it.each([
+    ['collision', 1],
+    ['stale', 2],
+  ] as const)(
+    "a refusal as %s that ends the document makes its next queued write 'ended', nothing stored",
+    async (refusal, ahead) => {
+      // The other document reached the version this one tags next (collision) or the one after
+      // (stale by one). Read off the counter rather than seeded, which only ever raises it.
+      const theirs = (mlsSnapshotVersion(tagMlsSnapshot(new Uint8Array([0]))) ?? 0) + ahead;
+      store.set(MLS_STATE_ENCRYPTED_KEY, new Uint8Array([9]));
+      store.set(MLS_STATE_VERSION_KEY, theirs);
+      let ended = false;
+      const latch = {
+        isEnded: () => ended,
+        endOnRefusal: () => {
+          ended = true;
+        },
+      };
+      const rotation = tagMlsSnapshot(new Uint8Array([1]));
+      const flight = tagMlsSnapshot(new Uint8Array([2]));
+      // Unlatched, the flight would land (collision case) or collide (stale case) - never 'ended'.
+      expect(mlsSnapshotVersion(flight)).toBe(theirs + 2 - ahead);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // Both started before either answers: the flight passed any start check long ago.
+      const outcomes = await Promise.all([
+        saveMlsStateEncrypted('user-1', rotation, latch),
+        saveMlsStateEncrypted('user-1', flight, { isEnded: latch.isEnded }),
+      ]);
+      warn.mockRestore();
+
+      expect(outcomes).toEqual([refusal, 'ended']);
+      expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([9]));
+      expect(store.get(MLS_STATE_VERSION_KEY)).toBe(theirs);
+    }
+  );
+
   it('forgets its own version after an untagged write, whose bytes it cannot vouch for', async () => {
     const older = tagMlsSnapshot(new Uint8Array([1]));
     const newer = tagMlsSnapshot(new Uint8Array([2]));
