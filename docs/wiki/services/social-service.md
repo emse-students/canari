@@ -179,7 +179,6 @@ added later without the pipe fails there.
 | POST | `/api/channels` | Create channel in a workspace |
 | POST | `/api/channels/:channelId/messages` | Send encrypted channel message |
 | GET | `/api/channels/:channelId/messages` | List messages newest-first (`limit`≤200, `before` ISO cursor) |
-| POST | `/api/channels/:channelId/members/join` | Join channel |
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (drops the caller from `allowedUsers` and rotates the key). A public channel answers 400 - see "A channel-scoped action never touches community membership" |
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
@@ -212,6 +211,13 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   it on production, with the loser's grid left showing a permission the server had dropped and one
   it had never stored. Every change is announced on `workspace.role.permissions`, so no open grid
   keeps drawing what a role used to grant.
+- **Two doors into a community, and no third.** A membership row is written by an accepted invite
+  link (`POST invites/:token/accept`) or by a member holding the invite permission
+  (`POST :channelId/members/invite`). Nothing else writes one, because membership is what entitles a
+  device to the community's key-distribution group (`isDistributionGroupEntitled`), and so to every
+  public salon's seeds. A join route left from the channels MVP had no caller; it was deleted on 2026-10-22, and `channel-join-route.spec.ts` asserts over HTTP that its
+  path answers 404. **A new route that writes `channel_workspace_members` checks what those two
+  doors check, or it is a third door.**
 - **Channel access.** `canAccessChannel`: a **public** channel is readable by every workspace
   member; a **private** channel is readable only by users listed in `channels.allowedUsers` **plus**
   any admin (`workspace.manage`) - admins reach every channel without being explicitly added.
