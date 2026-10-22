@@ -715,7 +715,7 @@ Job `vendored-upstream` of `scheduled.yml` now reports an upstream `tauri-plugin
 **Why it is not settled.**
 - `retire` runs `docker rm` on the old replica, so its error log, the one line that names the hop, is gone with it.
 - The test prints no frontend log when case 1 fails.
-- Docker was not run for this reading: the session's brief forbids Docker on this machine.
+- Not reproduced locally.
 
 **Owed, in order.**
 1. Make the evidence survive: `retire` prints the retired replica's error lines before `rm`, and the test prints both frontends' logs when a POST fails.
