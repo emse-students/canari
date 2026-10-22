@@ -2035,7 +2035,10 @@ Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come 
 16. **Store listings (2026-10-22).** Redo everything, texts AND images, with FICTIONAL demo accounts created on dev and no personal data. The user sees the texts and the images BEFORE any submission.
 17. **The next pre-release (`1.4.1-alpha.1`)** is cut as soon as the ready batch of security and sharing pull requests has merged, without waiting for the rest.
 18. **Standing reminder from the user:** *"il faut toujours vider le backlog, et assez rapidement avoir les lives et les appels en production"*. The backlog is always drained, and lives and calls reach production quickly ([live-production](frontend/modules/live-production.md), [calls](frontend/modules/calls.md)).
-19. **Phone at-rest key (#2274): option B** - the PIN also enters the key on the device. Constraints: the SAME PIN on every device and NO added friction (staying signed in without the PIN, and biometrics, still work). "Stay signed in" stays ON by default, so B protects only the devices that turn it off.
+19. **Phone at-rest key (#2274): the built design stays** (user, 2026-10-22, after first choosing a variant that also mixed the PIN into the key, then seeing what it would add). Notifications stay complete, the PIN is verified by the server, the hardware key protects the stored data, practicality first.
+20. **Migrations chat-delivery 036 (`dm_seat_evictions`) and social-service 108 (`distribution_departures`) may ride the next stable** (#2258).
+21. **Lives: the live key is encrypted at rest under an environment secret** (a migration, the user's yes). `calls_mode` may be set to `audio` in production by the lead as soon as the stable is deployed and read on both phones, with an immediate notice to the user; `lives_mode` may be opened in production by the lead once everything is read, with an announcement from the lead. The incident rule of the window is unchanged.
+22. **iPhone ring: practicality.** Until a native ring exists (PushKit VoIP token plus CallKit, its own switch), the iPhone call alert is generic ("Appel entrant", no name); that work package joins the calls queue.
 
 ## P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167
 
