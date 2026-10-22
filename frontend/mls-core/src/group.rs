@@ -156,25 +156,6 @@ impl MlsManager {
         }
     }
 
-    /// Bounds the pins once trees shrink: past `MAX_PINNED_IDENTITIES`, the identities no held tree
-    /// contains are dropped (`DeviceTrust::prune_absent`). This device's own identity always stays.
-    /// The departures follow the same rule, by group (`DeviceTrust::prune_departures`).
-    pub(crate) fn prune_device_pins(&mut self) {
-        let leaves: Vec<_> = self
-            .groups
-            .values()
-            .flat_map(crate::device_trust::leaf_keys)
-            .collect();
-        let own = String::from_utf8_lossy(self.credential.identity()).to_string();
-        let mut held: std::collections::HashSet<&str> =
-            leaves.iter().map(|(_, id, _)| id.as_str()).collect();
-        held.insert(own.as_str());
-        self.device_trust.prune_absent(&held);
-        let held_groups: std::collections::HashSet<&str> =
-            self.groups.keys().map(String::as_str).collect();
-        self.device_trust.prune_departures(&held_groups);
-    }
-
     /// Forgets the local MLS state of a group: in-memory AND persistent OpenMLS storage.
     /// `min_epoch`: minimum epoch a Welcome must reach to be accepted (protects against a
     /// stale re-Welcome on a diverged branch). Pass 0 to impose no minimum.
@@ -185,7 +166,9 @@ impl MlsManager {
     pub fn forget_group(&mut self, group_id: &str, min_epoch: u64) {
         self.groups.remove(group_id);
         self.pending_external_joins.remove(group_id);
-        self.prune_device_pins();
+        // NO PRUNING HERE: a forget is also the first half of a forget-and-re-Welcome HEAL, and a pin
+        // dropped now would be re-written from whatever tree the re-Welcome brings. The pins and the
+        // departures are bounded at load, past their cap only (`load_or_create`).
         if min_epoch > 0 {
             self.forgotten_group_min_epochs
                 .insert(group_id.to_string(), min_epoch);

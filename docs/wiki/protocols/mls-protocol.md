@@ -638,28 +638,46 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   pins existed is seeded at load from every tree it holds, so nothing already trusted is refused. A
   package for a known device under an unknown key is skipped as `signature-key-changed`. Nothing
   today can prove such a change - the old key goes with the lost state and there is no
-  cross-signing - so the refusal is final until the device re-enrols under a new id.
+  cross-signing - so the refusal stands until the device re-enrols under a new id, or a merged tree
+  shows it still holding its pinned key (below).
 - **Bounded.** Past 8192 pinned identities (`MAX_PINNED_IDENTITIES`), the pins of identities no held
-  tree contains are dropped, at load and when a group is forgotten (`prune_absent`). A pin of a
-  device still in a held tree is never dropped; a dropped identity is first sight again if it
-  returns, the answer a device that never met it gets.
-- **The replace path.** `handleWelcomeRequest` used to remove a device's stale leaf and then re-add
-  it. It now asks `vetKeyPackage` FIRST: a refused package removes nothing and adds nothing.
-  `addMember` throws the typed `DeviceTrustRefusedError` before staging, and the callers log it once
-  per identity per session (`reportDeviceTrustRefusal`) and retire nothing.
+  tree contains are dropped, AT LOAD ONLY (`prune_absent`) - never when a group is forgotten, since a
+  forget is half of a forget-and-re-Welcome heal and the pins it would drop are about to be needed.
+  A pin of a device still in a held tree is never dropped. A dropped identity is remembered
+  (`device_pins_pruned`, bounded at 8192), and a pin written for it again is UNANCHORED: learned
+  from a tree after this device had already forgotten it, so it vouches for less than a pin held
+  since first sight.
+- **Reaffirmations.** A pin counts the merged commits that showed its device holding the pinned key -
+  its leaf re-entering under that key, or a commit it signed. This is what lifts a remembered
+  refusal (below).
+- **The replace path: ONE commit.** `handleWelcomeRequest`, for a device whose leaf is still in the
+  tree, sends Remove and Add in the SAME commit (`replaceMember` -> Rust
+  `MlsManager::replace_device_with_base`, WASM `replace_device`, Tauri `remplacer_appareil`); the
+  Welcome goes to the re-added device. It used to kick the leaf, then re-add it in a second commit,
+  which left the device out of the group in between and recorded a departure for a device that never
+  left. The package is vetted FIRST, in TypeScript and again in Rust: a refused package stages
+  nothing. `addMember` and `replaceMember` throw the typed `DeviceTrustRefusedError` before staging,
+  and the callers log it once per identity per session (`reportDeviceTrustRefusal`) and retire
+  nothing. The `DuplicateSignature` catch (`handleDuplicateLeafError`) still kicks only, the re-add
+  following on a later request.
 - **A refusal no retry can lift is remembered.** Every package of a device carries the same
   signature key, so a `signature-key-changed` refusal would come back at every sweep, each one
   spending a one-time KeyPackage. It is recorded per own device (`refusedDevices.ts`,
   `ACCOUNT_KEY.refusedDevices`), and `processPendingInvitations` and `handleWelcomeRequest` skip that
   device without fetching anything, with a line naming the remedy: its owner resets it, and it
   re-enrols under a new id. An `identity-mismatch` is not remembered - the next package may be the
-  right one. The bulk-Add skip report (`warnSkippedKeyPackages`) says each refused device once per
-  session.
+  right one. Each entry stores the pin's reaffirmation count when it was refused, and is LIFTED when
+  the count has grown (a merged tree showed the device under its pinned key, so the refused package
+  was not the device's) or when the pin is gone. Nothing is remembered for a device with no pin. A
+  device that rotates its own id drops what its old id remembered (`forgetRefusedDevicesOf`). The
+  bulk-Add skip report (`warnSkippedKeyPackages`) says each refused device once per session.
 - **External commits.** Pins gate the Adds this device builds. An external commit is a joiner
   adding itself under its own signature, which another member cannot refuse without forking, so it
   is merged as signed and what it admitted is recorded like any other admission. The joiner pins the
   tree it joined only once its commit is MERGED (`pending_external_joins`): a join the server refused
-  pins nothing.
+  pins nothing. The marker is in the sealed state, so a checkpoint and a restart before the merge
+  keep it, and the load-time seeding skips any group with a pending commit. Clearing an external
+  join's pending commit forgets the group: there is no prior epoch to fall back to.
 - **Events.** Every NEW device a merged commit admitted - ours or a peer's, the signer read from the
   verified commit - is recorded as a `DeviceEvent` (`identity`, `keyFingerprint`, `trust`:
   `first-sight` / `key-changed`, `addedBy`). The diff is on `(identity, key)` pairs, never on leaf
@@ -673,19 +691,26 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
 
 - **A key this device has seen: `pinnedSignatureKeys(userId, deviceId)`.** THE one source for any
   verifier of a signature made by a device key (an admission voucher, a signed history entry): the
-  pins, never a key the server published alone. `null` is a device never seen, or one whose pin was
-  pruned past the bound - a verifier reads it as UNVERIFIED, never as FORGED. Several keys come back
+  pins, never a key the server published alone. It answers a `DevicePin` -
+  `{ keys: Uint8Array[]; anchored: boolean; reaffirmations: number }` - or `null`. `null` is a device
+  never seen, or one whose pin was pruned past the bound - a verifier reads it as UNVERIFIED, never
+  as FORGED. `anchored: false` is a pin re-learned after a prune: a signature verifying under it is
+  weaker evidence, and a verifier says so rather than calling it verified. Several keys come back
   only for a state seeded from trees that disagreed; a signature verifying under any of them was
-  made by a key this device saw. Rust `MlsManager::pinned_signature_keys`, WASM
-  `pinned_signature_keys`, Tauri `cles_signature_epinglees`.
+  made by a key this device saw. The "no pin" line is logged once, in Rust. Rust
+  `MlsManager::pinned_signature_keys`, WASM `pinned_signature_keys`, Tauri
+  `cles_signature_epinglees`.
 - **Departures: `removalEpochs(groupId, userId)`.** When a merged commit - live, replayed on
   catch-up, or our own - removes a USER's last leaf from a tree, `(groupId, user, epoch)` is recorded
   in the sealed state (`PersistedState.device_departures`, bounded at 8192 like the pins: past it,
   the departures of groups no longer held are dropped). Recorded at merge time, so a device that
   only caught up on a kick and a re-add still sees the removal. Compared per user over the trees: a
-  one-commit leaf swap (an external rejoin, a heal) and one device among several leaving record
-  nothing; a kick and a re-add in two commits is a departure whatever the kick was for. Never a
-  device event and never shown. An empty answer is NOT SEEN, never "never happened". Rust
+  one-commit leaf swap (an external rejoin, a heal, the one-commit replace above) and one device
+  among several leaving record nothing; a kick and a re-add in two commits is a departure whatever
+  the kick was for. Two properties a reader must hold: it is PER USER, not per device, and it holds
+  only the commits THIS device merged - a commit before it joined, or one it skipped through a
+  Welcome, is absent. Never a device event and never shown. An empty answer is NOT SEEN, never
+  "never happened". Rust
   `MlsManager::removal_epochs`, Tauri `epoques_departs`.
 
 ### What each legitimate flow does

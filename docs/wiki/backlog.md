@@ -63,7 +63,6 @@ Restored history carries each message's author signature, and frames carry a sig
 - **Rig rows:** a history restore between two clients on a live local estate (a signed message verified, an older one marked "author unverified"), and a forced fork that must produce one `[INTEGRITY] fork` line on each side.
 - **A `minClientVersion` floor:** unsigned messages are only MARKED today, because every older client sends them. Refusing them outright waits until the floor is a signing build on both stores, plus the retention window of the oldest unsigned message.
 - **Decisions for the user:** (1) how an unverified restored message is shown (today a small italic label beside "edited"); (2) whether edits, deletions and reactions in a bundle keep needing the author's signature (today) or the relayer's word is enough.
-- **Anchored pins:** the tree leaf, then the pins of the key-binding work (#2268), verify; none accuses yet. An ANCHORED pin will accuse once #2268 exposes that flag.
 - **P3 - a history bundle has no byte cap per chunk, only a message count**, and each message now carries its body and proof beside its content (about 2.5x per message). A cap in bytes is owed before bundles of long messages are common.
 
 ## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)

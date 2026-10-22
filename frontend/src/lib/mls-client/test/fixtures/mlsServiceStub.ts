@@ -14,6 +14,7 @@ export function createMlsServiceStub(
     persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     generateKeyPackage: vi.fn().mockResolvedValue(new Uint8Array([9])),
     addMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
+    replaceMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
     // Default: the package is the device's pinned one - a test about a refusal overrides it.
     vetKeyPackage: vi.fn().mockResolvedValue('pinned'),
     takeDeviceEvents: vi.fn().mockResolvedValue([]),

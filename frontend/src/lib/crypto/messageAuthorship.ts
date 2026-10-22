@@ -23,6 +23,7 @@ import protobuf from 'protobufjs/minimal.js';
 import { canari } from '$lib/proto/canari.js';
 import { Writer, type GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
+import type { DevicePin } from '$lib/mls-client/deviceTrust';
 
 /** The label opening every descriptor - distinct from every Graine label. */
 export const AUTHOR_DESCRIPTOR_LABEL = 'canari-mls-author-v1';
@@ -57,7 +58,7 @@ export interface RecordedAuthorship {
  */
 export interface AuthorKeySource {
   memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
-  pinnedSignatureKeys(userId: string, deviceId: string): Promise<Uint8Array[] | null>;
+  pinnedSignatureKeys(userId: string, deviceId: string): Promise<DevicePin | null>;
   graineSignatureEngine(): GraineSignatureEngine;
 }
 
@@ -149,8 +150,9 @@ export type AuthorshipCheck =
  * Checks a relayed proof: decodes it, finds the author device's TRUSTED key and verifies the
  * signature over the descriptor of the group the proof NAMES (`recorded.group`).
  *
- * - `forged`: the proof is malformed, or names no group or device. A key that fails to verify does
- *   NOT accuse: the current tree may be a re-Welcome's, and a pin not anchored may be server-served.
+ * - `forged`: the proof is malformed, names no group or device, or the author's ANCHORED pin holds
+ *   keys and none verifies it. No other key accuses: the current tree may be a re-Welcome's, and an
+ *   unanchored pin was re-taken after a prune.
  * - `unproven`: no trusted key verifies it - none exists (a ghost device, or one met before
  *   pinning), or the ones known may not accuse. That says nothing about the proof, and the caller
  *   treats it as unsigned.
@@ -201,23 +203,30 @@ export async function checkRecordedAuthorship(
   const treeKey = await mls.memberSignatureKey(treeGroupId, author);
   if (treeKey && (await verifiesUnder(treeKey))) return verified('tree');
   // Pinned under the user id as MLS names it (the author string keeps the sender's casing).
-  const pins = (await mls.pinnedSignatureKeys(author.slice(0, sep), author.slice(sep + 1))) ?? [];
-  for (const pin of pins) {
-    if (await verifiesUnder(pin)) return verified('pinned');
+  const pin = await mls.pinnedSignatureKeys(author.slice(0, sep), author.slice(sep + 1));
+  const pinned = pin?.keys ?? [];
+  for (const key of pinned) {
+    if (await verifiesUnder(key)) return verified('pinned');
   }
-  if (pins.length === 0 && !treeKey) {
+  // ONLY AN ANCHORED PIN ACCUSES: it holds every key this device ever saw for that device, so a
+  // signature valid under none of them was not made by it. The current tree cannot - it may be a
+  // re-Welcome's, holding a leaf the author did not sign this message with, and the proof names no
+  // epoch - and neither can an unanchored pin, re-taken after a prune from whatever tree came next.
+  if (pin?.anchored && pinned.length > 0) {
+    return {
+      kind: 'forged',
+      why: `the signature verifies under none of ${author}'s ${pinned.length} anchored pinned key(s)`,
+    };
+  }
+  if (pinned.length === 0 && !treeKey) {
     return {
       kind: 'unproven',
       why: `${author} has no leaf in the tree and no pin - no trusted key`,
     };
   }
-  // NO KEY HERE MAY ACCUSE. The current tree may be a re-Welcome's, holding a leaf the author did not
-  // sign this message with, and the proof names no epoch to tie it to the tree it was sent in; and no
-  // pin is known to be ANCHORED (first seen in an authenticated tree rather than re-taken by a heal),
-  // so each may be a server-served key. Only an anchored pin may accuse, once the pin source says so.
   return {
     kind: 'unproven',
-    why: `the signature verifies under none of ${author}'s ${pins.length + (treeKey ? 1 : 0)} known key(s) (tree, unanchored pins) - none may accuse`,
+    why: `the signature verifies under none of ${author}'s ${pinned.length + (treeKey ? 1 : 0)} known key(s) (tree, unanchored pin) - none may accuse`,
   };
 }
 

@@ -161,11 +161,23 @@ describe('checking a relayed proof', () => {
     const substitute = await newTestAuthor('alice:dev-a');
     const rec = await signedBy(alice, GROUP, HELLO);
     const check = await checkRecordedAuthorship(
-      keySource({ tree: [], pinned: [substitute] }),
+      keySource({ tree: [], pinned: [substitute], anchored: false }),
       GROUP,
       rec
     );
     expect(check.kind).toBe('unproven');
+  });
+
+  it('accuses when an ANCHORED pin contradicts the signature', async () => {
+    const alice = await newTestAuthor('alice:dev-a');
+    const substitute = await newTestAuthor('alice:dev-a');
+    const rec = await signedBy(substitute, GROUP, HELLO);
+    const check = await checkRecordedAuthorship(
+      keySource({ tree: [], pinned: [alice], anchored: true }),
+      GROUP,
+      rec
+    );
+    expect(check.kind).toBe('forged');
   });
 
   it('does not accuse on a current tree key - it may come from a re-Welcome, not the message epoch', async () => {
@@ -175,7 +187,7 @@ describe('checking a relayed proof', () => {
     const rewelcomed = await newTestAuthor('alice:dev-a');
     const rec = await signedBy(alice, GROUP, HELLO);
     const check = await checkRecordedAuthorship(
-      keySource({ tree: [rewelcomed], pinned: [rewelcomed] }),
+      keySource({ tree: [rewelcomed], pinned: [rewelcomed], anchored: false }),
       GROUP,
       rec
     );

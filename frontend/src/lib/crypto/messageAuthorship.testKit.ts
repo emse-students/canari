@@ -46,9 +46,14 @@ export async function signedBy(
 
 /**
  * A key source answering from a fixed tree and fixed pins: a device in neither has no trusted key
- * (`pinnedSignatureKeys` answers `null`, as for a device never pinned).
+ * (`pinnedSignatureKeys` answers `null`, as for a device never pinned). Pins are ANCHORED unless
+ * `anchored: false` says the pin was re-taken after a prune.
  */
-export function keySource(opts: { tree?: TestAuthor[]; pinned?: TestAuthor[] }): AuthorKeySource {
+export function keySource(opts: {
+  tree?: TestAuthor[];
+  pinned?: TestAuthor[];
+  anchored?: boolean;
+}): AuthorKeySource {
   return {
     async memberSignatureKey(_groupId, identity) {
       return opts.tree?.find((a) => a.identity === identity)?.publicKey ?? null;
@@ -57,7 +62,7 @@ export function keySource(opts: { tree?: TestAuthor[]; pinned?: TestAuthor[] }):
       const keys = (opts.pinned ?? [])
         .filter((a) => a.identity === `${userId}:${deviceId}`)
         .map((a) => a.publicKey);
-      return keys.length > 0 ? keys : null;
+      return keys.length > 0 ? { keys, anchored: opts.anchored ?? true, reaffirmations: 0 } : null;
     },
     graineSignatureEngine: () => webCryptoEngine,
   };

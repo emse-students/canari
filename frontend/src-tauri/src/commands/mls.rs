@@ -588,6 +588,26 @@ pub(crate) fn ajouter_membres_bulk(
     Ok((commit, welcome, added, skipped, group_info))
 }
 
+/// Stages ONE commit that removes the device `identity`'s leaf and adds it back from `key_package`
+/// (the repair of a device whose leaf is still in the tree), without merging (C7-A). Returns
+/// `(commit, welcome, group_info)` - see `MlsManager::replace_device_with_base`.
+#[tauri::command]
+pub(crate) fn remplacer_appareil(
+    group_id: String,
+    identity: String,
+    key_package: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<mls_core::ReplaceDeviceResult, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager
+        .replace_device_with_base(&group_id, &identity, &key_package)
+        .map_err(|e| e.to_string())
+}
+
 /// Whether `key_package` may be added as `expected_identity` (`userId:deviceId`), without staging
 /// anything: `"first-sight"` / `"pinned"` when it may, otherwise the skip reason's wire name. Asked
 /// BEFORE a re-add removes the device's stale leaf - see `MlsManager::vet_key_package`.
@@ -607,14 +627,15 @@ pub(crate) fn verifier_key_package(
         .to_string())
 }
 
-/// The signature keys this device pinned for `user_id:device_id`, or `None` for a device never seen
-/// (unverified, never forged) - see `MlsManager::pinned_signature_keys`.
+/// The pin of `user_id:device_id` (`{ keys, anchored, reaffirmations }`, keys as byte arrays), or
+/// `None` for a device never seen (unverified, never forged) - see
+/// `MlsManager::pinned_signature_keys`.
 #[tauri::command]
 pub(crate) fn cles_signature_epinglees(
     user_id: String,
     device_id: String,
     state: tauri::State<AppState>,
-) -> Result<Option<Vec<Vec<u8>>>, String> {
+) -> Result<Option<mls_core::device_trust::PinView>, String> {
     let lock = state
         .mls_manager
         .lock()

@@ -1177,9 +1177,10 @@ message.
 **Verifying and accusing are different questions.** A key that verifies proves the author; a key
 that fails to verify accuses only if it is the key the author held WHEN it signed. The current tree
 cannot say so - a heal's re-Welcome replaces the leaf, and the proof names no epoch - and a pin
-re-taken by a heal past the pin cap may be a server-served key. So neither accuses: a contradiction
-is `unproven`, and `forged` is left to a malformed proof. Only a pin the key-binding work marks
-ANCHORED (first seen in an authenticated tree) may accuse, once it exposes that mark.
+re-taken after a prune may be a server-served key. So neither accuses: a contradiction is
+`unproven`. Only a pin the key-binding work marks ANCHORED (`DevicePin.anchored`: no prune since
+it was first taken, so it holds every key this device saw for that device) accuses - a signature
+valid under none of its keys is `forged`, as is a malformed proof.
 
 **An edited message is verified only with its edit.** The signed bytes are the ORIGINAL body. A
 restored message marked edited whose edit is not proven by the author's signed `edit_message` keeps

@@ -60,6 +60,7 @@ import {
   isDeviceTrustRefusal,
   verdictAdmits,
   type DeviceEvent,
+  type DevicePin,
   type KeyPackageVerdict,
 } from '$lib/mls-client/deviceTrust';
 import {
@@ -147,6 +148,7 @@ import {
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
+import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
@@ -2731,6 +2733,8 @@ export abstract class BaseMlsService implements IMlsService {
     // failed delete is retried at the next published round rather than forgotten; never awaited, so
     // a rotation does not block on the network.
     recordAbandonedDevice(this.userId, oldDeviceId);
+    // The refusals the abandoned id remembered were judged by pins its discarded state held.
+    forgetRefusedDevicesOf({ userId: this.userId, deviceId: oldDeviceId });
     void retireAbandonedDevices({
       userId: this.userId,
       liveDeviceId: this.deviceId,
@@ -3446,6 +3450,14 @@ export abstract class BaseMlsService implements IMlsService {
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }>;
+  /** Stages ONE commit removing the device `identity`'s leaf and adding it back from `keyPackage`,
+   *  WITHOUT merging (`replace_device_with_base`). Returns the commit, the Welcome for that device
+   *  and the external-join base for the epoch the commit creates. */
+  protected abstract stageReplaceDevice(
+    groupId: string,
+    identity: string,
+    keyPackage: Uint8Array
+  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }>;
   /** Stages a Remove commit (all devices of the given users) WITHOUT merging. Returns the commit
    *  and the external-join base for the epoch it creates. */
   protected abstract stageRemoveMembers(
@@ -4798,30 +4810,36 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<KeyPackageVerdict>;
   /** Takes the pending device events from the MLS layer - see {@link takeDeviceEvents}. */
   protected abstract takeDeviceEventsNative(): Promise<DeviceEvent[]>;
-  /** Reads the pins of one device from the MLS layer - see {@link pinnedSignatureKeys}. */
+  /** Reads the pin of one device from the MLS layer - see {@link pinnedSignatureKeys}. */
   protected abstract pinnedSignatureKeysNative(
     userId: string,
     deviceId: string
-  ): Promise<Uint8Array[] | null>;
+  ): Promise<DevicePin | null>;
+  /** Reads the recorded departures from the MLS layer - see {@link removalEpochs}. */
+  protected abstract removalEpochsNative(groupId: string, userId: string): Promise<number[]>;
 
   /**
-   * The signature keys THIS DEVICE has seen for `userId:deviceId` in a signed tree it merged or
-   * joined, or `null` for a device it never saw - THE SINGLE SOURCE OF TRUST for "a key this device
-   * has seen" (`MlsManager::pinned_signature_keys`, the device pins).
+   * What THIS DEVICE has seen of `userId:deviceId`'s signature key in a signed tree it merged or
+   * joined (`DevicePin`), or `null` for a device it never saw - THE SINGLE SOURCE OF TRUST for "a key
+   * this device has seen" (`MlsManager::pinned_signature_keys`, the device pins).
    *
    * WHY: a verifier of a signature made by a device key (a community admission voucher, a signed
    * history entry) must not take the key from the server, which is the party the signature has to
    * hold against. A pinned key came from a tree whose commits this device verified itself.
    *
-   * `null` MEANS UNVERIFIED, NEVER FORGED. Pins are bounded, and past the bound the pin of a device
-   * no held tree contains any more is dropped, so a device seen once can come back unknown. A
-   * verifier shows such a signature as not checked, and never as a forgery. Several keys come back
-   * only for a state seeded from trees that disagreed; a signature verifying under ANY of them was
-   * made by a key this device saw for that device. The user half matches case-insensitively and the
-   * device half exactly, as the KeyPackage binding reads them.
+   * `null` MEANS UNVERIFIED, NEVER FORGED. Pins are bounded, and past the bound (at load only, never
+   * on a heal) the pin of a device no held tree contains any more is dropped, so a device seen once
+   * can come back unknown. `anchored: false` MEANS THE SAME FOR A CONTRADICTION: that pin was
+   * written after the device's previous pin was pruned, from whatever tree came next, so a signature
+   * failing under it is unverified, never forged. Several `keys` come back only for a state seeded
+   * from trees that disagreed; a signature verifying under ANY of them was made by a key this device
+   * saw for that device. The user half matches case-insensitively and the device half exactly, as
+   * the KeyPackage binding reads them. A miss is logged once, in Rust - this per-message path adds
+   * no line of its own.
    */
-  /** Reads the recorded departures from the MLS layer - see {@link removalEpochs}. */
-  protected abstract removalEpochsNative(groupId: string, userId: string): Promise<number[]>;
+  async pinnedSignatureKeys(userId: string, deviceId: string): Promise<DevicePin | null> {
+    return this.pinnedSignatureKeysNative(userId, deviceId);
+  }
 
   /**
    * The epochs at which this device saw `userId` LEAVE `groupId`'s tree - a merged commit removed
@@ -4830,31 +4848,19 @@ export abstract class BaseMlsService implements IMlsService {
    * WHY: a verifier that must know whether a user was removed (and when) cannot ask the server, and
    * observing the tree finds a removal only when it happens to look between a kick and a re-add.
    * This is recorded at MERGE time in Rust, in the one place every merged commit passes - live,
-   * replayed on catch-up, or our own - so every device that merged the commit records it.
-   * Compared per user over the trees: a single commit that swaps a leaf (a resync, a heal) and the
-   * removal of one device among several record nothing; a kick and a re-add in TWO commits is a
-   * departure, whatever the kick was for.
+   * replayed on catch-up, or our own.
+   *
+   * TWO PROPERTIES A CALLER RELIES ON: it is PER USER - a single commit that swaps a leaf (a resync,
+   * a heal) and the removal of one device among several record nothing, while a kick and a re-add in
+   * TWO commits is a departure whatever the kick was for; and it holds only commits THIS device
+   * merged - a device that entered the group later knows no departure from before it arrived.
    *
    * AN EMPTY LIST IS "NOT SEEN", NEVER "NEVER HAPPENED": commits merged before this record existed,
-   * by a state since lost, or dropped past its bound are absent. Kept in the sealed state; never a
-   * device event and never user-visible.
+   * by a state since lost, before this device joined, or dropped past its bound are absent. Kept in
+   * the sealed state; never a device event and never user-visible.
    */
   async removalEpochs(groupId: string, userId: string): Promise<number[]> {
-    const epochs = await this.removalEpochsNative(groupId, userId);
-    console.debug(
-      `[TRUST] departures of ${sanitizeForLog(userId).slice(0, 8)} from ${groupId.slice(0, 8)}...: ${epochs.length}`
-    );
-    return epochs;
-  }
-
-  async pinnedSignatureKeys(userId: string, deviceId: string): Promise<Uint8Array[] | null> {
-    const keys = await this.pinnedSignatureKeysNative(userId, deviceId);
-    if (keys === null) {
-      console.debug(
-        `[TRUST] no pinned key for ${sanitizeForLog(userId).slice(0, 8)}:${sanitizeForLog(deviceId)} - unverified`
-      );
-    }
-    return keys;
+    return this.removalEpochsNative(groupId, userId);
   }
 
   /**
@@ -4910,6 +4916,36 @@ export abstract class BaseMlsService implements IMlsService {
           groupInfo: staged.groupInfo,
         };
       },
+      { excludeDeviceIds, exportTree: true }
+    );
+    return { welcome: result.welcome, ratchetTree: result.ratchetTree };
+  }
+
+  /**
+   * Re-adds a device whose leaf is STILL in the tree, removing that leaf and adding the device back
+   * from `device.keyPackage` in ONE commit (staged, validated, merged as every commit is - C7-A).
+   *
+   * WHY ONE COMMIT: a kick and a re-add in two commits leave one epoch where the user is out of the
+   * tree, which reads as a departure to every member (`removalEpochs`) - and a server that answers
+   * one way could steer an honest member into that shape. One commit has no such epoch. The package
+   * is vetted first and a trust refusal throws the typed `DeviceTrustRefusedError`, as `addMember`.
+   */
+  async replaceMember(
+    groupId: string,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
+    excludeDeviceIds?: string[]
+  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
+    const verdict = await this.vetKeyPackage(device.keyPackage, device.userId, device.deviceId);
+    if (!verdictAdmits(verdict) && isDeviceTrustRefusal(verdict)) {
+      throw new DeviceTrustRefusedError(verdict, device.userId, device.deviceId);
+    }
+    console.info(
+      `[TRUST] replacing ${sanitizeForLog(device.userId).slice(0, 8)}:${sanitizeForLog(device.deviceId)} in ${groupId.slice(0, 8)}... in one commit`
+    );
+    const result = await this.runCommitTransaction(
+      groupId,
+      async () =>
+        this.stageReplaceDevice(groupId, `${device.userId}:${device.deviceId}`, device.keyPackage),
       { excludeDeviceIds, exportTree: true }
     );
     return { welcome: result.welcome, ratchetTree: result.ratchetTree };
