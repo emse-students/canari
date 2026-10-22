@@ -193,8 +193,43 @@ one message.**
 
 **Both factors of that estimate were wrong by 2026-10-21.** A v2 seed is about 330 bytes on the wire,
 not 50. The largest community minted 458 seeds in its first 8 days, because adds rotate (§4.1). Its
-bundle is about 150 KB today, and the 8 000-seed cap is about 2.6 MB in one MLS message
+bundle is about 150 KB today, and the 8 000-seed cap was about 2.6 MB in one MLS message
 ([dm-vs-community-encryption](dm-vs-community-encryption.md#the-history-bundle---6x-heavier-per-seed-and-sized-for-the-wrong-rotation-rate)).
+
+**An answer is bounded in BYTES and sent in pages (2026-10-22).** Every hop a bundle crosses was read
+from code and config, and the binding one is the pending-queue page an offline device catches up in:
+
+| Hop | Limit |
+| --- | --- |
+| `POST /api/mls/send`, nginx `client_max_body_size` | 100 MB |
+| chat-delivery `bodyParser.json` | 10 MB of JSON |
+| `queued_message.proto` (Postgres, no length) | 1 GB |
+| Redis `chat:messages`, delivery to gateway | 512 MB |
+| gateway to device WebSocket (tungstenite defaults on both ends, no override) | 16 MiB frame, 64 MiB message |
+| **pending-queue page, `PENDING_PAGE_MAX_BYTES`** | **1 MiB of base64** (one larger row is still sent, alone) |
+| ciphertext inlined in a push | ~3.7 KB: a page never fits, the device fetches it by `queuedMessageId` |
+
+`GRAINE_BUNDLE_PAGE_MAX_BYTES` is 256 KiB of encoded `AppMessage`, about 342 KiB of base64 with its
+MLS framing: a third of that page. An answer over it goes as `page_count` complete
+`GraineBundleMsg`s under one `request_id`, numbered by `page_index`, seeds grouped by salon so a
+salon is re-read by as few pages as possible; `truncated` rides the last page only. An answer that
+fits is one bundle with no page numbers, the same bytes as before. 8 000 seeds is about eleven pages;
+`GRAINE_HISTORY_BUNDLE_MAX_SEEDS` now bounds one answer's work, not one message
+([bundlePages.ts](../../../frontend/src/lib/utils/graine/bundlePages.ts)).
+
+**Pages need no reassembly, so nothing waits for them.** A receiver stores each seed on its own in the
+durable seed store, keyed on the session id. Pages may arrive in any order. A duplicated page is
+`already-held`: nothing is stored and no salon is re-read. A lost page is a set of sessions, and the
+first row under one of them that fails to open asks for it (§4.5), which derives what is missing from
+the messages rather than from a timer. The page numbers only reach the absorb line
+(`page 2/5 of request r`), so a gap shows in a log. A numbering that cannot be true is warned about
+and the page is still absorbed. A page that fails to send is logged with how many pages went before it.
+
+**A reader that predates pages** decodes a page with a schema lacking fields 7 and 8 (protobufjs and
+the native `proto_fields` reader both skip unknown tags), so each page is an ordinary bundle carrying
+its own seeds. It absorbs them, writes one debug line per page, re-reads the salons each page adds to,
+and warns `TRUNCATED` once, at the last page, when the answer was cut. No old reader asks again for a
+history it already holds part of (`requestCommunityHistory` asks only when no seed is held).
 
 `history_visibility` is per community, **`shared` by default** (a newcomer receives the past),
 `joined` available for a sensitive salon. Two consequences to carry deliberately:

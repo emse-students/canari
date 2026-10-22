@@ -17,6 +17,7 @@ import {
 } from '$lib/proto/codec';
 import { toBase64 } from '$lib/utils/hex';
 import { encodeGraineEndorsementV2, graineSeedCommitment } from '$lib/crypto/graineV2';
+import { GRAINE_BUNDLE_PAGE_MAX_BYTES } from '$lib/crypto/graineConstants';
 import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
 import {
   encodeAdmissionVoucher,
@@ -1255,6 +1256,44 @@ describe('a history request from a joiner (WP-34)', () => {
     expect(bundle?.holdsNothing).toBeFalsy();
   });
 
+  it('pages a history larger than the byte bound, every page to the device that asked', async () => {
+    // A v2 seed is ~330 bytes, so the 8 000-seed cap was ~2.6 MB in ONE message - over the pending
+    // page an offline device catches up in (dm-vs-community-encryption, "the history bundle").
+    const many: StoredGraineSession[] = Array.from({ length: 3000 }, (_, i) => ({
+      workspaceId: 'ws-1',
+      channelId: `chan-${i % 7}`,
+      sessionId: `s-${String(i).padStart(24, '0')}`,
+      senderId: 'carol'.repeat(12),
+      seedB64: toBase64(SEED),
+      firstIndex: 0,
+      createdAt: i + 1,
+      v2: {
+        minterDeviceId: 'd'.repeat(83),
+        signingPublicKeyB64: toBase64(V2_WIRE.signingPublicKey),
+        endorsementB64: toBase64(V2_WIRE.endorsement),
+      },
+    }));
+    const sendMessage = wireWithSessions(many);
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(historyFrame());
+
+    expect(sendMessage.mock.calls.length).toBeGreaterThan(1);
+    const pages = sendMessage.mock.calls.map(([, payload]) => {
+      expect((payload as Uint8Array).length).toBeLessThanOrEqual(GRAINE_BUNDLE_PAGE_MAX_BYTES);
+      return decodeAppMessage(payload)?.graineBundle;
+    });
+    for (const [, , , delivery] of sendMessage.mock.calls) {
+      expect(delivery).toEqual(addressedKeyMaterial('newcomer:newcomer-web'));
+    }
+    expect(new Set(pages.map((p) => p?.requestId))).toEqual(new Set(['r-h']));
+    expect(pages.map((p) => p?.pageIndex)).toEqual(pages.map((_, i) => i));
+    expect(new Set(pages.flatMap((p) => (p?.seeds ?? []).map((s) => s.sessionId))).size).toBe(3000);
+    expect(info.mock.calls.flat().join(' ')).toContain(`in ${pages.length} page(s)`);
+    info.mockRestore();
+  });
+
   it('SAYS it holds nothing rather than falling silent, addressed to the device that asked (section 24)', async () => {
     const sendMessage = wireWithSessions([]);
     registerCommunityHistoryVisibility('ws-1', 'shared');
@@ -1456,6 +1495,132 @@ describe('a bundle answering our own request (WP-33)', () => {
     expect(saved.map((s) => s.sessionId)).toEqual(['s-a', 's-b']);
     // Without this the rows stay dropped until the user happens to leave and re-enter the salon.
     expect(repaired).toEqual([['chan-1', 'chan-2']]);
+  });
+
+  describe('a paged answer (one request, several bundles)', () => {
+    function pageFrame(
+      seeds: canari.GraineMsg.$Properties[],
+      pageIndex: number,
+      pageCount: number,
+      extra: Partial<canari.GraineBundleMsg.$Properties> = {}
+    ) {
+      return {
+        scope: workspaceScope('ws-1'),
+        workspaceId: 'ws-1',
+        groupId: 'g-1',
+        sender: 'bob',
+        senderDeviceId: 'bob-phone',
+        plaintext: encodeAppMessage(
+          mkGraineBundle({
+            workspaceId: 'ws-1',
+            requestId: 'r-p',
+            seeds,
+            pageIndex,
+            pageCount,
+            ...extra,
+          })
+        ),
+      };
+    }
+
+    it('stores every seed whatever order the pages arrive in, and names each page in its line', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const repaired: string[][] = [];
+      setGraineRepairListener((ids) => repaired.push(ids));
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      const pages = [
+        [await v2SeedFor('chan-1', 's-a', 0), await v2SeedFor('chan-1', 's-b', 0)],
+        [await v2SeedFor('chan-2', 's-c', 0)],
+        [await v2SeedFor('chan-3', 's-d', 0)],
+      ];
+
+      for (const index of [2, 0, 1])
+        await handleDistributionFrame(pageFrame(pages[index], index, 3));
+
+      expect(saved.map((s) => s.sessionId).sort()).toEqual(['s-a', 's-b', 's-c', 's-d']);
+      expect(repaired).toEqual([['chan-3'], ['chan-1'], ['chan-2']]);
+      const said = debug.mock.calls.flat().join(' ');
+      // A gap in this sequence is a lost page, visible in the log; the rows it carried ask again
+      // one session at a time, which is what makes losing one harmless.
+      for (const n of [1, 2, 3]) expect(said).toContain(`page ${n}/3 of request r-p`);
+      debug.mockRestore();
+    });
+
+    it('treats a duplicated page as what it is - nothing new stored, no salon re-read', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const repaired: string[][] = [];
+      setGraineRepairListener((ids) => repaired.push(ids));
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      const page = pageFrame([await v2SeedFor('chan-1', 's-a', 0)], 0, 2);
+
+      await handleDistributionFrame(page);
+      await handleDistributionFrame(page);
+
+      expect(saved.map((s) => s.sessionId)).toEqual(['s-a']);
+      expect(repaired).toEqual([['chan-1']]);
+      expect(debug.mock.calls.flat().join(' ')).toContain('absorbed 0/1 seed(s) (1 already held');
+      debug.mockRestore();
+    });
+
+    /**
+     * WHAT A READER BEFORE PAGES DOES WITH ONE. It decodes with a schema that has no field 7 or 8,
+     * so a page reads as an ordinary bundle carrying its own seeds - the shape every reader since
+     * 1.0.3 absorbs seed by seed (`absorbSeedBundle`). As in the section 24 row below, this runs no
+     * old code: it proves the new bytes decode to that bundle, seeds and request id intact.
+     */
+    it('reads, to a schema without page numbers, as an ordinary bundle with its seeds', async () => {
+      const oldSchema = protobuf.Root.fromJSON({
+        nested: {
+          GraineMsg: { fields: { sessionId: { type: 'string', id: 2 } } },
+          GraineBundleMsg: {
+            fields: {
+              workspaceId: { type: 'string', id: 1 },
+              requestId: { type: 'string', id: 2 },
+              seeds: { rule: 'repeated', type: 'GraineMsg', id: 3 },
+              truncated: { type: 'bool', id: 4 },
+              missingSessionIds: { rule: 'repeated', type: 'string', id: 5 },
+              holdsNothing: { type: 'bool', id: 6 },
+            },
+          },
+          AppMessage: {
+            oneofs: { kind: { oneof: ['graineBundle'] } },
+            fields: { graineBundle: { type: 'GraineBundleMsg', id: 12 } },
+          },
+        },
+      });
+      const AppMessageV0 = oldSchema.lookupType('AppMessage');
+      const page = pageFrame(
+        [await v2SeedFor('chan-1', 's-a', 0), await v2SeedFor('chan-1', 's-b', 0)],
+        1,
+        3,
+        { truncated: true }
+      );
+      const old = AppMessageV0.toObject(AppMessageV0.decode(page.plaintext), {
+        defaults: true,
+      }) as {
+        graineBundle: { requestId: string; truncated: boolean; seeds: { sessionId: string }[] };
+      };
+
+      expect(old.graineBundle.requestId).toBe('r-p');
+      expect(old.graineBundle.seeds.map((s) => s.sessionId)).toEqual(['s-a', 's-b']);
+      expect(old.graineBundle.truncated).toBe(true);
+      expect('pageIndex' in old.graineBundle).toBe(false);
+      expect('pageCount' in old.graineBundle).toBe(false);
+    });
+
+    it('absorbs a page whose numbering is impossible, and says so - the numbers decide nothing', async () => {
+      const { storage, saved } = fakeStorage();
+      wire(storage);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-1', 's-a', 0)], 4, 2));
+
+      expect(saved.map((s) => s.sessionId)).toEqual(['s-a']);
+      expect(warn.mock.calls.flat().join(' ')).toContain('page 5 of 2');
+      warn.mockRestore();
+    });
   });
 
   it('says out loud what it absorbed, because a repair that worked left no trace at all', async () => {

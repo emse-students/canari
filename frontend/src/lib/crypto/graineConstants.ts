@@ -70,18 +70,43 @@ export const GRAINE_REUSED_ROTATE_AFTER_MS = 24 * 60 * 60 * 1000;
 export const GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL = 20;
 
 /**
- * Ceiling on the seeds one history bundle may carry, and therefore on what a newcomer receives in
- * a single message.
+ * Ceiling on the seeds one ANSWER may carry, across all of its pages.
  *
  * Sized on 2026-08-17 for a one-year community with 30 active senders rotating weekly: ~1 500 seeds
- * at ~50 bytes each, about 80 KB. Both factors were wrong by 2026-10-21: a v2 seed is ~330 bytes on
- * the wire, so this cap is ~2.6 MB in one message, and adds rotate sessions, so the largest
- * community minted 458 seeds in 8 days (`docs/wiki/protocols/dm-vs-community-encryption.md`). It is
- * a REFUSAL rather than a silent truncation
- * - a bundle quietly cut short would read as "this is all the history there is", which is the exact
- * silence this protocol exists to remove.
+ * at ~50 bytes each, about 80 KB in one message. Both factors were wrong by 2026-10-21: a v2 seed is
+ * ~330 bytes on the wire and adds rotate sessions (`docs/wiki/protocols/dm-vs-community-encryption.md`).
+ * Since 2026-10-22 it no longer bounds a MESSAGE - {@link GRAINE_BUNDLE_PAGE_MAX_BYTES} does - only
+ * the work of one answer: ~2.6 MB in about eleven pages. Reaching it is a REFUSAL stated on the
+ * wire (`truncated`) rather than a silent cut - a bundle quietly cut short would read as "this is
+ * all the history there is", which is the exact silence this protocol exists to remove.
  */
 export const GRAINE_HISTORY_BUNDLE_MAX_SEEDS = 8000;
+
+/**
+ * Ceiling on ONE bundle message, in bytes of the encoded `AppMessage` handed to MLS - so an answer
+ * larger than this is sent as several pages (`GraineBundleMsg.page_index` / `page_count`).
+ *
+ * A seed count could not bound a message once a seed was ~330 bytes and its identifiers free to
+ * grow. Every hop the frame crosses, read from code and config on 2026-10-22 (the frame travels as
+ * base64, so ~4/3 of this, plus MLS framing of a few hundred bytes - no padding is configured):
+ *
+ * | Hop | Limit |
+ * | --- | --- |
+ * | `POST /api/mls/send`, nginx `client_max_body_size` | 100 MB |
+ * | chat-delivery `bodyParser.json` | 10 MB of JSON |
+ * | `queued_message.proto` (Postgres `varchar`, no length) | 1 GB |
+ * | Redis `chat:messages` publish to the gateway | 512 MB |
+ * | gateway -> device WebSocket (tungstenite defaults on both ends, no override) | 16 MiB frame, 64 MiB message |
+ * | **the pending-queue page, `PENDING_PAGE_MAX_BYTES`** | **1 MiB of base64** |
+ * | a push carrying the ciphertext inline | ~3.7 KB - never a bundle page; fetched by `queuedMessageId` |
+ *
+ * The binding hop is the pending page: it is the unit an offline device catches up in, sized to
+ * cross a poor mobile link, and a single row larger than it is still delivered, alone and over
+ * budget. 256 KiB is ~342 KiB of base64 with its framing, a THIRD of that page - so a page never
+ * crowds a catch-up and leaves room for the frames queued beside it - and 1/29 of the body limit.
+ * Today's largest community (~150 KB) still answers in one message.
+ */
+export const GRAINE_BUNDLE_PAGE_MAX_BYTES = 256 * 1024;
 
 /**
  * What a community lets a newcomer read. Per community, not per channel: a member belongs to the

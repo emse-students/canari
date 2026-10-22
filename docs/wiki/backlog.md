@@ -128,8 +128,9 @@ key group kept in the MLS state by `mls-core` and judged by `graineOutboundVerdi
 production ratio named on that page, and one read-only pass proving every stored external commit's
 path leaf names its committer (the server now refuses one that does not). A new USER still rotates
 (D5, decided 2026-10-22); a new device of a present user continues, by an Add or an external
-commit alike; (2) bound the bundle in bytes and page it, after measuring what the gateway and
-the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
+commit alike; (2) the bundle bounded in bytes and paged is BUILT (draft PR, 2026-10-22), owed one rig run of a
+paged history answer ([channel-encryption §4.4](protocols/channel-encryption.md#44-joining-and-what-a-share-link-is-worth));
+(3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
 
