@@ -263,6 +263,21 @@ about them is open work** - the story is in `CHANGELOG.md`, the mechanism on the
 the rule in [durable-rules](durable-rules.md). Delete the line once the measurement is taken. The
 phone passes already taken are history: [device-readings-2026-10](device-readings-2026-10.md).
 
+**READ 2026-10-22 on the Mi 9T: `v1.4.0-alpha.1` (SIDELOADED, what it covers).** Artefact: the release
+asset `app-universal-release.apk` of the tag (versionName `1.4.0`, versionCode `100400001`, signed by
+the association's release key, SHA-256 prefix `e25c0e9f89ccb2f5`), installed with `adb install` after
+uninstalling Play's 1.3.1 (a bench phone, a new device, `installerPackageName` null). **A sideload
+proves the CODE, not the Play-signed path**: Play serves 1.4.0 on the `internal` track only, and that
+phone's Google account got 1.3.1 from the listing (not an internal tester; the opt-in is a human click).
+Read: the build talks to `https://dev.canari-emse.fr` (banner "Environnement de test"); sign-in held
+(the phone browser's IdP session was still alive, so no credential was typed) and the PIN gate passed; feed, calendar, forms, shop, notifications,
+settings and dashboard all open; the comments sheet (#2207) opens full screen (present within the 2.5 s the probe
+waited, not a latency measurement) with the box pinned above the keyboard, and closes; 299 log lines for the app's process, 0 console warnings or
+errors, 0 `FATAL`/`ANR`/`SIGABRT`. **NOT read:** a DM and a community open (the bench owner has no
+conversation and no community on dev, and nothing was created there), the live features (dev-only
+behind their kill switches), share-in/out, push (a dev push cannot be read), the feed left-edge and
+tab-swipe gestures (no touch input was driven).
+
 | What | The measurement that closes it |
 | --- | --- |
 | the organiser alert for a payment over capacity (#2228, D3; owed only once `FORM_ORGANISER_ALERT_ENABLED` is `true`) | first the client floor: `minClientVersion` at or above the version carrying #2228 on both estates, both stores serving it; then on the Mi 9T AND the iPhone 12, one payment landing on a full form on dev: the push arrives with the title only, a tap (app killed AND backgrounded) opens `/forms` with that form's responses accordion open and in view, and the bell row reads the alert sentence ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)) |
