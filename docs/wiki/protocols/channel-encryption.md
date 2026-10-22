@@ -515,6 +515,43 @@ public `GET /mls/group-info/:groupId` is left refusing distribution groups rathe
 them. A member removed from the community must still be removed from the MLS group (WP-30's
 rotation-on-departure); no server-side check substitutes for that.
 
+**AND THE COMMIT IS ASKED THE SAME QUESTION (WP-KEYGROUP-JOIN-GATE, 2026-10-22) - the third
+alternative above, taken after all, for the commit alone.** Gating the GroupInfo decides who may
+READ the base; it does not decide who may COMMIT, and an accepted external commit also promotes its
+committing device to `active`. So chat-delivery's commit gate now asks social-service, per key-group
+external commit, `POST /internal/distribution-groups/entitlement` (`kind`, `scopeId`, `userId`).
+Social-service answers with the SAME predicates as the routes that serve the GroupInfo
+(`isDistributionGroupEntitled`: a community's members; a private salon's readers). A conversation's
+external commit keeps its own roster check, and a member commit never reaches social-service.
+
+| Outcome | What the commit gate does |
+| --- | --- |
+| `{ entitled: true }` | accepts; the epoch moves and the committer is activated |
+| `{ entitled: false }` | `403` (`code: NOT_A_MEMBER`, `error: committer_not_member`), before the epoch moves |
+| anything else (secret unset, unreachable, non-2xx, no boolean) | `503 entitlement_unavailable`, before the epoch moves - never an acceptance |
+
+The objection recorded above - a fail-closed network hop inside an authorization path - is paid
+deliberately: the hop happens only on a key-group EXTERNAL commit (~77/day measured 2026-10-22), and
+the client already reads any failed submission as `unreachable`, claims nothing about membership, and
+joins again on its next recovery pass. A key group's Welcome TARGET is asked the same question in
+`sendWelcome`, since a grant is written in social-service before the granting device Welcomes anyone
+(a conversation's Welcome target must be on its roster instead). Code:
+`apps/chat-delivery-service/src/internal/distribution-entitlement.ts`,
+`apps/social-service/src/internal/internal-distribution-entitlement.controller.ts`.
+
+**The answer is read before the commit lock, and an eviction can land after it - documented, with its
+bound, not closed.** The entitlement is asked in `validateCommit` before the lock is taken, and the
+committer is activated inside it, after the transaction. A departure in social-service
+(`evictFromDistributionGroup` on chat-delivery's internal controller) that runs in that gap deletes
+the leaver's rows first, and the activation then writes an `active` row back. A conversation's
+external commit has the same window between `isOnRoster` and the activation. Re-asking inside the
+lock would narrow the gap and not close it, because the eviction does not take the commit lock. The
+bound is the one every departure already has: the leaver's leaf is in the tree either way, and the
+removal commit that a remaining member makes when it next opens the community deactivates the row.
+Until then the device keeps receiving the group's frames. That leaver loses the immediate,
+server-enforced cut an eviction gives, and keeps only the cryptographic cut of the commit. The window is the duration of one commit's transaction, and closing it
+means making the eviction and the activation exclude each other.
+
 **What creation writes, and what it deliberately does not.** The `dm_groups` row, and nothing else:
 no `dm_group_members`, no `DeviceGroupMembership`. Both absences are asserted directly in
 `internal.distribution-group.spec.ts`, because nothing in the system would ever complain about their

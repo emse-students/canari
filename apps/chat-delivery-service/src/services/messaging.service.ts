@@ -42,6 +42,11 @@ import {
   mlsFrameEpoch,
   readCommitFrame,
 } from '../utils/mls-frame-epoch';
+import {
+  type DistributionScope,
+  distributionScopeOf,
+  isEntitledToDistributionGroup,
+} from '../internal/distribution-entitlement';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
   exclusionWindows,
@@ -2519,9 +2524,12 @@ export class MessagingService {
    *   recognised by its own clear header ({@link readCommitFrame}), never by a client flag. It is
    *   accepted from whoever may read the base it is built on - the roster predicate of
    *   {@link getGroupInfo} - so the gate and the door it guards answer the same question.
+   * - A KEY-DISTRIBUTION GROUP'S external commit is asked of social-service, which owns its roster
+   *   and serves its base by the same predicate ({@link isEntitledToDistributionGroup}). Unanswered,
+   *   it is a retryable 503 and never an acceptance (WP-KEYGROUP-JOIN-GATE).
    *
-   * A key-distribution group's external join has no entitlement check here yet (WP-KEYGROUP-JOIN-GATE
-   * in `docs/wiki/backlog.md`); each one is logged.
+   * Every caller runs this before the epoch moves, so a refusal also stops the activation an
+   * accepted commit grants its committer.
    */
   private async assertCommitterMayCommit(
     groupId: string,
@@ -2530,41 +2538,44 @@ export class MessagingService {
     external: boolean,
     traceId: string
   ): Promise<void> {
-    if (external && (await this.isKeyDistributionGroup(groupId))) {
-      this.logger.warn(
-        `[COMMIT][${traceId}] key-group external join group=${groupId} ` +
-          `device=${sanitizeLogValue(userId)}:${deviceId} - no entitlement check yet ` +
-          `(WP-KEYGROUP-JOIN-GATE)`
-      );
-      return;
-    }
-    const allowed = external
-      ? await this.isOnRoster(groupId, userId)
-      : !!(await this.deviceGroupRepo.findOne({
-          where: [
-            { groupId, userId, deviceId, status: 'active' as const },
-            { groupId, userId, deviceId, status: 'pending' as const, kickedAt: IsNull() },
-          ],
-          select: { deviceId: true },
-        }));
+    const scope = external ? await this.keyDistributionScope(groupId) : null;
+    const allowed = scope
+      ? await isEntitledToDistributionGroup(scope, userId, traceId)
+      : external
+        ? await this.isOnRoster(groupId, userId)
+        : !!(await this.deviceGroupRepo.findOne({
+            where: [
+              { groupId, userId, deviceId, status: 'active' as const },
+              { groupId, userId, deviceId, status: 'pending' as const, kickedAt: IsNull() },
+            ],
+            select: { deviceId: true },
+          }));
     if (allowed) return;
     this.logger.warn(
       `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
-        `device=${sanitizeLogValue(userId)}:${deviceId} kind=${external ? 'external' : 'member'}`
+        `device=${sanitizeLogValue(userId)}:${deviceId} ` +
+        `kind=${scope ? `key-group-external ${scope.kind}=${scope.id}` : external ? 'external' : 'member'}`
     );
-    throw new ForbiddenException({
-      error: 'committer_not_member',
-      message: 'this commit is not accepted',
-    });
+    // `code` is what a client's typed refusal reads; `error` is kept for the clients that read it.
+    throw new ForbiddenException(
+      refusalBody(RefusalCode.NOT_A_MEMBER, 'this commit is not accepted', {
+        error: 'committer_not_member',
+      })
+    );
   }
 
   /** Whether `groupId` is a Graine key-distribution group (a community's or a private salon's). */
   private async isKeyDistributionGroup(groupId: string): Promise<boolean> {
+    return (await this.keyDistributionScope(groupId)) !== null;
+  }
+
+  /** The scope owning `groupId` if it is a key-distribution group, `null` for a conversation. */
+  private async keyDistributionScope(groupId: string): Promise<DistributionScope | null> {
     const group = await this.groupRepo.findOne({
       where: { id: groupId },
       select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
     });
-    return !!(group?.distributionWorkspaceId || group?.distributionChannelId);
+    return distributionScopeOf(group);
   }
 
   /** Whether `userId` is on the user roster of `groupId` - who may read its external-join base. */
@@ -2637,10 +2648,14 @@ export class MessagingService {
     // THE TARGET OF A CONVERSATION'S WELCOME IS ON ITS ROSTER. Every client path registers the
     // member (`registerMember`) before it delivers the Welcome, so this refuses only a device whose
     // owner the group does not name - the row written below would otherwise make it a device of
-    // the group. A key-distribution group has no user roster here; its target is checked against
-    // social-service with its external joins (WP-KEYGROUP-JOIN-GATE).
-    const keyDistribution = !!(group?.distributionWorkspaceId || group?.distributionChannelId);
-    if (!keyDistribution && !(await this.isOnRoster(safeGroupId, deviceInfo.userId))) {
+    // the group. A key-distribution group has no user roster here, so its target is asked of
+    // social-service, exactly as its external joins are (WP-KEYGROUP-JOIN-GATE); a grant is
+    // written there before the granting device Welcomes anyone.
+    const scope = distributionScopeOf(group);
+    const targetAdmissible = scope
+      ? await isEntitledToDistributionGroup(scope, deviceInfo.userId, traceId)
+      : await this.isOnRoster(safeGroupId, deviceInfo.userId);
+    if (!targetAdmissible) {
       this.logger.warn(
         `[WELCOME][${traceId}] REJECT welcome_target_not_member group=${safeGroupId} ` +
           `target=${sanitizeLogValue(deviceInfo.userId)}:${targetDeviceId}`

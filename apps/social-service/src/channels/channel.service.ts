@@ -1299,14 +1299,52 @@ export class ChannelService implements OnApplicationBootstrap {
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
-    if (!member) {
+    if (!(await this.isWorkspaceMember(workspaceId, userId))) {
       this.logger.warn(
         `[DISTRIBUTION_GROUP] refused workspace=${workspaceId} user=${userId.slice(0, 8)} - not a member`
       );
       throw new ForbiddenException('Not a member of this workspace');
     }
     return workspace;
+  }
+
+  /** The membership half of {@link assertWorkspaceMember}, shared with {@link isDistributionGroupEntitled}. */
+  private async isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
+    return !!(await this.memberRepo.findOne({ where: { workspaceId, userId } }));
+  }
+
+  /** The access half of {@link assertChannelReader}, shared with {@link isDistributionGroupEntitled}. */
+  private async isChannelReader(channel: Channel, userId: string): Promise<boolean> {
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    return !!member && this.canAccessChannel(channel, member, userId);
+  }
+
+  /**
+   * Whether `userId` may hold a device in the key-distribution group of a scope - the question
+   * chat-delivery asks before it accepts an external commit to that group (WP-KEYGROUP-JOIN-GATE).
+   *
+   * The SAME predicates as the routes that serve the group's GroupInfo, which IS the capability to
+   * external-join: a community's group admits its members ({@link getDistributionGroupForMember}),
+   * a private salon's its readers ({@link getChannelDistributionGroupForMember}). So a commit is
+   * accepted exactly when the base it was built on could have been served to its author. A scope
+   * that no longer exists, or a salon that is no longer private, entitles nobody.
+   */
+  async isDistributionGroupEntitled(
+    kind: 'workspace' | 'channel',
+    scopeId: string,
+    userId: string
+  ): Promise<boolean> {
+    if (kind === 'workspace') {
+      const workspace = await this.workspaceRepo.findOne({
+        where: { id: scopeId },
+        select: { id: true },
+      });
+      return !!workspace && (await this.isWorkspaceMember(scopeId, userId));
+    }
+    const channel = await this.channelRepo.findOne({ where: { id: scopeId } });
+    return !!channel?.isPrivate && (await this.isChannelReader(channel, userId));
   }
 
   /**
@@ -1401,10 +1439,7 @@ export class ChannelService implements OnApplicationBootstrap {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
-    const member = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId },
-    });
-    if (!member || !this.canAccessChannel(channel, member, userId)) {
+    if (!(await this.isChannelReader(channel, userId))) {
       this.logger.warn(
         `[CHANNEL_GRAINE] refused channel=${channelId} user=${userId.slice(0, 8)} - no access`
       );

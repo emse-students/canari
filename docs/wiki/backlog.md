@@ -223,13 +223,21 @@ runs it or approves it explicitly); sending the DPO dossier; the DSI log-retenti
 - **Firefox disabled scroll anchoring on the `/posts` feed.** Ten consecutive sub-pixel adjustments of about 0.1667 px preceded it; rounding at a fractional device-pixel ratio is suspected. Reproduce with a `ResizeObserver` log on the feed container before changing anything.
 - **A seed asked by two phones was declined by a web device** (`holding 0 - missing ... declining`). Open observation: separate the causes by who should have held it, which needs a read of production state (private operations notes), not a client change.
 
-## Owed before the stable that carries the commit-caller checks: one background Welcome read on the Mi 9T, on the local estate (2026-10-22)
+## Hardware reading owed (user): one background Welcome on the Mi 9T (2026-10-22)
 
 The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the
-push-secret-authenticated committer, so a native path changed and no gate here runs native code. It is
-read on the LOCAL estate, with the server and a Mi 9T debug build made from ONE commit: the head that
-stacks this change with the seat-promotion and key-group join changes. Any stable carrying them is
-held until the reading is in; this replaces the reading on `dev` planned first.
+push-secret-authenticated committer, so a native path changed and no gate here runs native code.
+
+**Verified from source instead of hardware (2026-10-22).** The rig could not build the trigger: a new
+device asks for a background Welcome only when its own external join fails for a reason other than
+not being a member. So the request was compared with the route by reading both.
+`sendWelcomeAndCommit` in `CanariFirebaseMessagingService.kt` sends `Authorization: PushSecret`, puts
+`userId` and `deviceId` in the body, and sends neither `senderId` nor `x-user-id`. The route
+authenticates that exact pair and hands it to `validateCommit` as the committer, `senderId` included.
+The pair passes the registry check because the push-token row and the key-package row both take
+`userId` from `x-user-id`. iOS never posts this route. `push.controller.welcome-commit.spec.ts`
+already sends exactly this body. **The reading below stays owed, by the user**, and it no longer holds
+a stable.
 
 The reading has one setup and three checks:
 
@@ -249,9 +257,33 @@ The reading has one setup and three checks:
   No `REJECT` appears, and in particular no commit-caller refusal.
 - **The newcomer.** It opens the group and reads the next message.
 
-## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join has no entitlement gate yet (2026-10-22)
+## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
-A key-group external join has no entitlement check yet; each one is logged `[COMMIT] key-group external join`. An accepted external commit also promotes its committing device to `active`, as every external join must, so the check belongs before both. A key group's Welcome target is not checked either: a conversation's Welcome target must be on its roster, and a key group has no roster here. The roster of a key group is held by social-service. Owed next, as its own pull request with an opus review: a social-service internal route answering "is this person entitled to this scope", called by chat-delivery for a key-group external commit only. A failed call refuses with a retryable 503 and never accepts, and its rate is measured against the ~77 joins/day before a stable.
+A key-group external commit and a key group's Welcome target are now asked of social-service
+(`POST /internal/distribution-groups/entitlement`) before the epoch moves and before any activation;
+an unanswered call is a `503 entitlement_unavailable`, never an acceptance
+([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+Owed before a stable: the rate of `[ENTITLEMENT] UNANSWERED` lines on dev, then production, against
+the ~77 key-group joins/day.
+
+## P3 - An external commit's activation can follow an eviction it raced (2026-10-22)
+
+The entitlement or roster answer is read before the commit lock, and the activation runs inside it. An
+eviction that lands between the two leaves an `active` row behind, cut only by the next member
+removal commit. The bound and the reasoning are in [channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live).
+The fix makes the eviction and the activation exclude each other. Before choosing between a shared
+lock and a conditional activation, count how often `[DISTRIBUTION_GROUP] evict` and an `ADMITS` or
+activation line for the same user and group fall within one second of each other on production.
+
+## P3 - `POST /mls/commit` has no rate limit (2026-10-22)
+
+Neither an edge `limit_req` nor the configured `ThrottlerModule` applies to the commit route. A key
+group's external commit costs a social-service call, one or two queries and a log line on each
+service, so a crafted stream of them costs every one of those. A limit must not refuse legitimate
+bursts: a device that rejoins many groups after a restore commits once per group in quick succession.
+Measure first: the maximum number of commits per user per minute on production over 30 days
+(`mls_commit_log`, grouped by sender device and minute). Set the limit above that maximum, then add a
+test that the route answers `429` past it and never below it.
 
 ## P3 - A refused membership report is silent on the client (2026-10-22)
 
