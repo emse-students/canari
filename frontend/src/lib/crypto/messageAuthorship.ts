@@ -2,8 +2,7 @@
  * Restored history carries each message's original author signature.
  *
  * MLS proves who sent a frame while the frame is live. A `history_bundle` re-sends messages long
- * after that, and any member writes one - so until this module a member could hand a newcomer a
- * message "from" anybody. Since this change every application frame carries its author's signature
+ * after that, and any member writes one. So every application frame carries its author's signature
  * INSIDE the plaintext (`mls-core/src/authorship.rs` appends it, as `AppMessage` field 14), a device
  * keeps the exact bytes and the proof beside the message, and a bundle relays both. The receiver
  * checks the proof against the author's key and derives the message from the signed bytes, never

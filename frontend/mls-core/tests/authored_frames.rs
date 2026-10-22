@@ -3,8 +3,7 @@
 //! against the author's key long after MLS has forgotten the epoch it was sent in.
 //!
 //! MLS proves the sender of a frame while the frame is live. Once a member has decrypted it, the
-//! plaintext is just bytes in a local store, and a peer re-sending them in a bundle could name
-//! anybody as their author. The proof travels with the bytes: `author_descriptor` binds the group,
+//! plaintext is just bytes in a local store, and the proof travels with them: `author_descriptor` binds the group,
 //! the author's `userId:deviceId` and the SHA-256 of the exact bytes the author sent (which hold the
 //! message id, the author's timestamp and the content), and the author's MLS credential key signs it.
 //!

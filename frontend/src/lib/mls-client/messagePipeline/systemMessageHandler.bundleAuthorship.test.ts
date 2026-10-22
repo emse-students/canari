@@ -14,9 +14,8 @@ import {
 } from '$lib/mls-client/integrityFindings';
 
 /**
- * A `history_bundle` from MALLORY, a member, about ALICE's messages - the attack the author proofs
- * close (history-reconciliation, "Restored history carries its author's signature"). Before them,
- * every one of these changed the receiving device's history on mallory's word alone.
+ * A `history_bundle` from MALLORY, a member, about ALICE's messages: what the receiving device takes
+ * from it (history-reconciliation, "Restored history carries its author's signature").
  */
 const ME = 'me';
 const GROUP = 'g1';
@@ -68,10 +67,34 @@ function added(ctx: ReturnType<typeof makeCtx>): any[] {
 }
 
 describe('history_bundle - restored history carries its author signature', () => {
-  it('REFUSES a message forged in another member name, and records the finding', async () => {
+  it('never verifies a message signed in another member name - kept, MARKED, no accusation', async () => {
+    // The key that fails to verify may be a re-Welcome leaf, not the one alice signed with, so it
+    // may not accuse: the row reads exactly as an unsigned one.
     const { alice, mallory } = await cast();
     const ctx = makeCtx(alice, mallory);
     const authorship = await signedBy(mallory, GROUP, HELLO, { claim: 'alice:dev-a' });
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [
+          { id: 'm1', senderId: 'alice', content: helloContent, timestamp: SENT_AT, authorship },
+        ],
+      },
+      ctx as any
+    );
+
+    expect(added(ctx)).toEqual([
+      expect.objectContaining({ messageId: 'm1', restoredUnverified: true }),
+    ]);
+    expect(recordedIntegrityFindings()).toEqual([]);
+  });
+
+  it('REFUSES a message whose proof is malformed, and records the finding', async () => {
+    const { alice, mallory } = await cast();
+    const ctx = makeCtx(alice, mallory);
+    const signed = await signedBy(alice, GROUP, HELLO);
+    const authorship = { ...signed, proof: 'AAAA' };
 
     await handleSystemEvent(
       'history_bundle',
@@ -142,7 +165,7 @@ describe('history_bundle - restored history carries its author signature', () =>
     ]);
   });
 
-  it('no longer lets another member tombstone a message this device holds', async () => {
+  it('takes a tombstone of a held message only from its author', async () => {
     const { alice, mallory } = await cast();
     const held = {
       id: 'm1',

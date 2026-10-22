@@ -7,7 +7,7 @@
 //! so inside the encryption the two always agree. A fork (two trees at one epoch number, which a
 //! commit gate accepting two commits for one epoch produces) shows up as exactly one event: a frame
 //! from the other tree that this device CANNOT open, the `same-epoch refusal` of `messaging.rs`.
-//! Until now that refusal could not tell "my copy of this epoch differs from the sender's" from
+//! The fingerprint lets that refusal tell "my copy of this epoch differs from the sender's" from
 //! "these bytes are damaged".
 //!
 //! **What travels.** `AAD = version(1) lp(identity) fp(16) signature(64)`, where `fp` is the first 16

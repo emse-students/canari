@@ -383,8 +383,8 @@ message off the server (WP-PENDING-2).
 ### Fork detection: a signed epoch fingerprint in every application frame (2026-10-22)
 
 Two members can hold two different trees for one conversation at the SAME epoch number - a fork -
-and nothing used to say so: each side only saw the other's frames refused (`same-epoch-refusal`).
-Since this change every application frame carries, in the MLS `PrivateMessage`'s authenticated data
+and each side sees only the other's frames refused (`same-epoch-refusal`). To tell the two apart,
+every application frame carries, in the MLS `PrivateMessage`'s authenticated data
 (set with `group.set_aad`, cleared again on every exit), a signed claim of the sender's view:
 
 - `fp = SHA-256(lp("canari-mls-epoch-fp-v1") lp(epoch_authenticator))[..16]`;

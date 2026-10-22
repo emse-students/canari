@@ -3,8 +3,7 @@
 //! against the author's key.
 //!
 //! MLS proves who sent a frame while the frame is live. Once a member has decrypted it the plaintext
-//! is bytes in a local store, and nothing in a `history_bundle` used to say who wrote them: any
-//! member could relay a message "from" anybody. The proof closes that.
+//! is bytes in a local store; the proof is what lets a `history_bundle` say who wrote them.
 //!
 //! **What is signed.** `author_descriptor` = `lp("canari-mls-author-v1") lp(groupId) lp(author)
 //! lp(SHA-256(body))`, where `body` is the exact `AppMessage` bytes the author sent and `author` its
