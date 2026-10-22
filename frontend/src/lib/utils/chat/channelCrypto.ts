@@ -15,6 +15,7 @@ import {
   GraineSessionUnavailableError,
   GraineV1SessionNotHeldError,
   openChannelMessage,
+  openChannelMessagePage,
   sealChannelMessage,
 } from '$lib/utils/graine/channelSeal';
 import { GraineSignatureError } from '$lib/crypto/graineV2';
@@ -233,13 +234,58 @@ export async function decodeChannelMessageRow(
   tally?: UnreadableRowTally
 ): Promise<DecodedChannelRow | null> {
   const channel = rawChannelId(channelId);
+  return decodeOpenedRow(channel, row, userIdLower, () => openChannelMessage(channel, row), tally);
+}
+
+/**
+ * Decodes a whole PAGE of rows, the answer for each at its own position: exactly what
+ * {@link decodeChannelMessageRow} answers row by row - the same decode, the same unreadable-row
+ * report, in page order - but the page's signatures cost ONE engine call
+ * (`openChannelMessagePage`, F7) instead of one per row. What the history load and the
+ * whole-history search call.
+ */
+export async function decodeChannelMessagePage(
+  channelId: string,
+  rows: readonly ChannelMessageRow[],
+  userIdLower: string,
+  tally?: UnreadableRowTally
+): Promise<(DecodedChannelRow | null)[]> {
+  const channel = rawChannelId(channelId);
+  const openings = await openChannelMessagePage(channel, rows);
+  const out: (DecodedChannelRow | null)[] = [];
+  for (const [i, row] of rows.entries()) {
+    const opening = openings[i];
+    out.push(
+      await decodeOpenedRow(
+        channel,
+        row,
+        userIdLower,
+        async () => {
+          if (!opening.ok) throw opening.error;
+          return opening.bytes;
+        },
+        tally
+      )
+    );
+  }
+  return out;
+}
+
+/** The decode both entries share: `open` answers the row's plaintext or throws why it has none. */
+async function decodeOpenedRow(
+  channel: string,
+  row: ChannelMessageRow,
+  userIdLower: string,
+  open: () => Promise<Uint8Array>,
+  tally: UnreadableRowTally | undefined
+): Promise<DecodedChannelRow | null> {
   const serverMs = parseServerTimestampMs(row.createdAt);
   let content: string | undefined;
   let timestamp: Date | undefined;
   let isSystem = false;
   let clientMessageId: string | undefined;
   try {
-    const bytes = await openChannelMessage(channel, row);
+    const bytes = await open();
     const decoded = decodeAppMessage(bytes);
     clientMessageId = decoded?.messageId ? String(decoded.messageId) : undefined;
     if (decoded?.reaction) {

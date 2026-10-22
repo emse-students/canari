@@ -1,4 +1,8 @@
-import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
+import {
+  packGraineSignatureChecks,
+  type GraineSignatureEngine,
+  type GraineSignatureVerdict,
+} from '$lib/crypto/graineV2';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
 import { invoke } from '@tauri-apps/api/core';
@@ -1596,6 +1600,14 @@ export class TauriMlsService extends BaseMlsService {
           publicKey: Array.from(publicKey),
           message: Array.from(message),
           signature: Array.from(signature),
+        });
+      },
+      // ONE invoke for the page, its checks packed into one base64 string: per-byte number arrays
+      // are what made each single invoke cost (durable-rules, "an IPC bridge serialises").
+      async verifySignatures(checks) {
+        if (checks.length === 0) return [];
+        return invoke<GraineSignatureVerdict[]>('graine_verify_signatures', {
+          packedB64: toBase64(packGraineSignatureChecks(checks)),
         });
       },
     };
