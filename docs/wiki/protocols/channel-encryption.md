@@ -1699,6 +1699,31 @@ finds the same epoch returns before the roster read and writes no line; a pass a
 asks again. The measured case: a phone joining while the laptop holding the seeds is offline, then
 the laptop coming online and joining - which is itself the commit that moves the epoch.
 
+### An answer carries only the seeds of the salons its key group may read (2026-10-22)
+
+**Seeds are STORED per community, whichever key group brought them** (`IMlsService.DistributionFrame`),
+so a device's store does not say on its own which roster a seed was sealed to. Both answer paths -
+the HISTORY bundle (`gatherCommunityHistory`) and a SESSIONS repair (`gatherNamedSessions`) - read
+that store, and an answer goes back on the key group the request ARRIVED on. So both now keep only
+the sessions whose salon rides that group (`seedOutsideScope` in `frameHandler.ts`):
+
+- on the community's group, the seeds of PUBLIC salons only;
+- on a private salon's own group, the seeds of that salon only.
+
+Which group a salon rides is `scopeForChannel`, learned from the community listing
+(`registerChannelWorkspace`) - the same fact the seal uses. A salon the answerer has NOT listed is
+withheld: its roster is not known, and guessing public is the expensive half of the asymmetry. A
+withheld seed is absent from both lists of the answer, for the reason a `joined` refusal is (every
+honest member filters the same way, so `missing` would walk the roster), and a HISTORY answer left
+with nothing to send stays silent rather than claiming "I hold nothing" (section 24).
+
+**The receiver checks the same fact**: a NEW seed whose salon is known to ride another group than
+the one it arrived on is refused (`out-of-scope`, one line per bundle - an answerer that predates
+this filter relays such seeds honestly). A seed of a salon the receiver has not listed is kept on
+the community's group, because a public salon's first seed can arrive before the listing that names
+it; the filter at the source is what covers that case. Pinned by `frameHandler.test.ts`, "the salon
+scope of an answer".
+
 ### Found while writing this: a discriminator dropped in transit
 
 `GroupMeta.distributionWorkspaceId` has been documented since WP-22 as "the discriminator a

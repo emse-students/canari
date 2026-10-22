@@ -2,7 +2,11 @@ import protobuf from 'protobufjs';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
 import { addressedKeyMaterial } from '$lib/mls-client/frameDelivery';
-import { workspaceScope } from '$lib/mls-client/distributionScope';
+import {
+  channelScope,
+  workspaceScope,
+  type DistributionScope,
+} from '$lib/mls-client/distributionScope';
 import {
   decodeAppMessage,
   encodeAppMessage,
@@ -19,6 +23,7 @@ import { handleDistributionFrame } from './frameHandler';
 import {
   graineRepairHoldObserver,
   holdGraineRepairs,
+  registerChannelWorkspace,
   registerCommunityHistoryVisibility,
   releaseGraineRepairs,
   setGraineRepairListener,
@@ -684,6 +689,8 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     // it. Left unregistered it would fail closed, and every one of them would measure the boundary
     // instead of the thing it is named after.
     registerCommunityHistoryVisibility('ws-1', 'shared');
+    // A public salon, listed: its seeds ride the community's group (see 'the salon scope of an answer').
+    registerChannelWorkspace('chan-1', 'ws-1', false);
     graineHistoryFloor.mockReset();
   });
 
@@ -1069,6 +1076,12 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
 });
 
 describe('a history request from a joiner (WP-34)', () => {
+  beforeEach(() => {
+    // Two public salons, listed: their seeds ride the community's group.
+    registerChannelWorkspace('chan-1', 'ws-1', false);
+    registerChannelWorkspace('chan-2', 'ws-1', false);
+  });
+
   function historyFrame() {
     return {
       scope: workspaceScope('ws-1'),
@@ -1719,5 +1732,218 @@ describe('a seed this device already holds', () => {
 
     expect(saved[0].firstIndex).toBe(0);
     expect(repaired).toEqual([['chan-1']]);
+  });
+});
+
+/**
+ * AN ANSWER CARRIES ONLY THE SEEDS OF THE SALONS ITS KEY GROUP MAY READ.
+ *
+ * Every seed is stored under its COMMUNITY, whichever key group it arrived on, so the store does not
+ * say on its own which roster a seed was sealed to. A private salon has its own key group so that a
+ * member outside it is never sent its seed - and an answer gathered from the community store and
+ * sent on the COMMUNITY's group would hand that seed to whoever asked there. The scope the frame
+ * arrived on is the roster the answer goes back to, so it filters the answer, on both answer paths;
+ * and the receiver refuses a seed whose salon belongs to another roster than the group it arrived on.
+ */
+describe('the salon scope of an answer', () => {
+  const PUBLIC = 'chan-pub';
+  const PRIVATE = 'chan-priv';
+
+  const sessionIn = (channelId: string, sessionId: string): StoredGraineSession => ({
+    workspaceId: 'ws-1',
+    channelId,
+    sessionId,
+    senderId: 'carol',
+    seedB64: toBase64(SEED),
+    firstIndex: 0,
+    createdAt: 1,
+  });
+  const held = [sessionIn(PUBLIC, 's-pub'), sessionIn(PRIVATE, 's-priv')];
+
+  /** alice holds a seed of each salon; `listed` is what her community listing registered. */
+  function wireAnswerer(listed: { channelId: string; isPrivate: boolean }[]) {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const rows = new Map(held.map((s) => [s.sessionId, s]));
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async (id: string) => rows.get(id) ?? null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => held,
+        countGraineSessionsForWorkspace: async () => held.length,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    for (const { channelId, isPrivate } of listed)
+      registerChannelWorkspace(channelId, 'ws-1', isPrivate);
+    return sendMessage;
+  }
+  const BOTH_LISTED = [
+    { channelId: PUBLIC, isPrivate: false },
+    { channelId: PRIVATE, isPrivate: true },
+  ];
+
+  function askOn(
+    scope: DistributionScope,
+    request: Partial<Parameters<typeof mkGraineRequest>[0]>
+  ) {
+    return {
+      scope,
+      workspaceId: 'ws-1',
+      groupId: scope.kind === 'workspace' ? 'g-community' : 'g-private',
+      sender: 'mallory',
+      senderDeviceId: 'mallory-web',
+      plaintext: encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          answererUserId: 'alice',
+          requestId: 'r-s',
+          ...request,
+        })
+      ),
+    };
+  }
+
+  const bundleSent = (sendMessage: ReturnType<typeof vi.fn>) =>
+    decodeAppMessage(sendMessage.mock.calls[0]?.[1])?.graineBundle;
+  const answered = (sendMessage: ReturnType<typeof vi.fn>) =>
+    (bundleSent(sendMessage)?.seeds ?? []).map((s) => String(s.sessionId));
+
+  it("a HISTORY answer on the community's group carries no seed of a private salon", async () => {
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(workspaceScope('ws-1'), { kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    expect(info.mock.calls.flat().join(' ')).toContain('withholding 1 seed(s)');
+    info.mockRestore();
+  });
+
+  it("a SESSIONS answer on the community's group withholds a private salon's session, without calling it missing", async () => {
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(workspaceScope('ws-1'), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['s-pub', 's-priv'],
+      })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    // "Missing" means "ask somebody else", and every honest member applies the same filter.
+    expect(bundleSent(sendMessage)?.missingSessionIds ?? []).toEqual([]);
+    info.mockRestore();
+  });
+
+  it("an answer on a private salon's own group carries that salon's seeds and no other", async () => {
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(channelScope('ws-1', PRIVATE), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['s-pub', 's-priv'],
+      })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-priv']);
+    info.mockRestore();
+  });
+
+  it('withholds a seed whose salon this device has not listed - its roster is not known', async () => {
+    const sendMessage = wireAnswerer([{ channelId: PUBLIC, isPrivate: false }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(workspaceScope('ws-1'), { kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    expect(info.mock.calls.flat().join(' ')).toContain('1 not listed on this device');
+    info.mockRestore();
+  });
+
+  it('stays silent when every seed it holds belongs to another roster - never "I hold nothing"', async () => {
+    const sendMessage = wireAnswerer([{ channelId: PRIVATE, isPrivate: true }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(workspaceScope('ws-1'), { kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY })
+    );
+
+    // The public seed is unlisted and the private one is another roster's: nothing may travel, and
+    // "I hold nothing" would be false - this device holds rows of the community.
+    expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it("refuses a private salon's seed arriving on the community's group, and stores the rest", async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    registerChannelWorkspace(PUBLIC, 'ws-1', false);
+    registerChannelWorkspace(PRIVATE, 'ws-1', true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-community',
+      sender: 'bob',
+      senderDeviceId: 'bob-web',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-1',
+          seeds: [await v2SeedFor(PUBLIC, 's-pub', 0), await v2SeedFor(PRIVATE, 's-priv', 0)],
+        })
+      ),
+    });
+
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
+    // One warn per bundle: an answerer that predates the filter relays such seeds honestly.
+    expect(warn.mock.calls.flat().join(' ')).toContain('REFUSED 1 seed(s) relayed by bob');
+    expect(warn.mock.calls.flat().join(' ')).toContain('(s-priv)');
+    warn.mockRestore();
+  });
+
+  it('keeps a seed whose salon is not listed yet on the community group - the answerer filtered it', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-community',
+      sender: 'bob',
+      plaintext: encodeAppMessage({ ...mkGraine(await v2SeedFor('chan-new', 's-new', 0)) }),
+    });
+
+    // A public salon's first seed can arrive before the listing that names it; refusing it would
+    // leave the salon unreadable until a repair.
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-new']);
+  });
+
+  it("refuses a seed of another salon arriving on a private salon's own group, listed or not", async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      scope: channelScope('ws-1', PRIVATE),
+      workspaceId: 'ws-1',
+      groupId: 'g-private',
+      sender: 'bob',
+      plaintext: encodeAppMessage({ ...mkGraine(await v2SeedFor('chan-elsewhere', 's-x', 0)) }),
+    });
+
+    expect(saved).toHaveLength(0);
+    expect(error.mock.calls.flat().join(' ')).toContain('REFUSED seed s-x');
+    error.mockRestore();
   });
 });
