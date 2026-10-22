@@ -1208,6 +1208,74 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         expect(txQueuedRepo.save).not.toHaveBeenCalled();
         expect(sent).not.toHaveBeenCalled();
       });
+
+      /**
+       * A KEY GROUP HAS NO USER ROSTER HERE, so its Welcome's target is asked of social-service
+       * (WP-KEYGROUP-JOIN-GATE) - about the TARGET, never the committer - before the epoch moves.
+       */
+      describe("in a key group, the target's entitlement", () => {
+        let previous: string | undefined;
+        let fetchSpy: jest.SpyInstance;
+        const social = (status: number, answer: unknown) =>
+          fetchSpy.mockResolvedValue(new Response(JSON.stringify(answer), { status }));
+        const keyGroup = () =>
+          tables({
+            keyPackages: [ownKey, newcomer],
+            devices: [ownDevice],
+            roster: [],
+            group: { distributionWorkspaceId: 'ws-1' },
+          });
+
+        beforeEach(() => {
+          previous = process.env.INTERNAL_SECRET;
+          process.env.INTERNAL_SECRET = 'sekret';
+          fetchSpy = jest.spyOn(globalThis, 'fetch');
+        });
+
+        afterEach(() => {
+          fetchSpy.mockRestore();
+          if (previous === undefined) delete process.env.INTERNAL_SECRET;
+          else process.env.INTERNAL_SECRET = previous;
+        });
+
+        it('stores the Welcome when social-service entitles the target', async () => {
+          keyGroup();
+          social(200, { entitled: true });
+          fanOut();
+
+          await expect(withWelcome()).resolves.toEqual({ accepted: true, newEpoch: 6 });
+          expect(JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body))).toEqual({
+            kind: 'workspace',
+            scopeId: 'ws-1',
+            userId: 'user-2',
+          });
+          expect(txQueuedRepo.save).toHaveBeenCalledTimes(1);
+        });
+
+        it('refuses before the epoch moves when social-service does not entitle the target', async () => {
+          keyGroup();
+          social(200, { entitled: false });
+          const sent = fanOut();
+
+          await expect(withWelcome()).resolves.toEqual({
+            accepted: false,
+            currentEpoch: 5,
+            reason: 'welcome_target_not_member',
+          });
+          expect(transaction).not.toHaveBeenCalled();
+          expect(sent).not.toHaveBeenCalled();
+        });
+
+        it('is a retryable 503, recording nothing, when social-service cannot answer', async () => {
+          keyGroup();
+          fetchSpy.mockRejectedValue(new TypeError('fetch failed'));
+          const sent = fanOut();
+
+          await expect(withWelcome()).rejects.toBeInstanceOf(ServiceUnavailableException);
+          expect(transaction).not.toHaveBeenCalled();
+          expect(sent).not.toHaveBeenCalled();
+        });
+      });
     });
   });
 
