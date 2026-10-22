@@ -96,15 +96,17 @@ pub(crate) fn footprint(root: &Path) -> Result<(u64, u64), String> {
 }
 
 /// How many Graine sessions the mirror in `dir` holds for `channel_id`: `None` when there is no
-/// mirror at all, which is a different fact from a mirror holding none for this channel.
-pub(crate) fn graine_sessions(dir: &Path, channel_id: &str) -> Result<Option<usize>, String> {
-    let text = match std::fs::read_to_string(dir.join(GRAINE_SEEDS)) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("read {GRAINE_SEEDS}: {e}")),
+/// mirror at all, which is a different fact from a mirror holding none for this channel. The mirror
+/// is sealed (`native_cache`), so `key` is the install's cache key; a sealed mirror with no key is
+/// an error, never a count.
+pub(crate) fn graine_sessions(
+    dir: &Path,
+    key: Option<&crate::native_cache::CacheKey>,
+    channel_id: &str,
+) -> Result<Option<usize>, String> {
+    let Some(root) = crate::commands::push::read_graine_mirror(dir, key)? else {
+        return Ok(None);
     };
-    let root: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("{GRAINE_SEEDS} unparsable: {e}"))?;
     Ok(Some(
         root.get(channel_id)
             .and_then(|c| c.as_object())
@@ -295,12 +297,16 @@ pub(crate) async fn bench_native_store(
         }
         "graine" => {
             let channel = channel_id.ok_or("graine needs channelId")?;
+            #[cfg(mobile)]
+            let key = Some(crate::native_cache::app_cache_key(&app)?);
+            #[cfg(not(mobile))]
+            let key: Option<crate::native_cache::CacheKey> = None;
             let group_count = match &group {
-                Ok(g) => graine_sessions(g, &channel)?,
+                Ok(g) => graine_sessions(g, key.as_ref(), &channel)?,
                 Err(_) => None,
             };
             json!({
-                "app": graine_sessions(&data_dir, &channel)?,
+                "app": graine_sessions(&data_dir, key.as_ref(), &channel)?,
                 "group": group_count,
                 "groupError": group_error,
             })
@@ -407,12 +413,20 @@ mod tests {
     #[test]
     fn graine_sessions_separates_no_mirror_from_none_for_the_channel() {
         let d = scratch("graine");
-        assert_eq!(graine_sessions(&d, "c1").unwrap(), None);
-        std::fs::write(d.join(GRAINE_SEEDS), r#"{"c1":{"s1":{},"s2":{}}}"#).unwrap();
-        assert_eq!(graine_sessions(&d, "c1").unwrap(), Some(2));
-        assert_eq!(graine_sessions(&d, "c2").unwrap(), Some(0));
+        let key = [1u8; 32];
+        assert_eq!(graine_sessions(&d, Some(&key), "c1").unwrap(), None);
+        let sealed = crate::native_cache::seal_file(
+            &key,
+            crate::native_cache::Purpose::SeedMirror,
+            br#"{"c1":{"s1":{},"s2":{}}}"#,
+        );
+        std::fs::write(d.join(GRAINE_SEEDS), sealed).unwrap();
+        assert_eq!(graine_sessions(&d, Some(&key), "c1").unwrap(), Some(2));
+        assert_eq!(graine_sessions(&d, Some(&key), "c2").unwrap(), Some(0));
+        // A sealed mirror read with no key is an error, never a count.
+        assert!(graine_sessions(&d, None, "c1").is_err());
         assert!(remove_graine_mirror(&d).unwrap());
-        assert_eq!(graine_sessions(&d, "c1").unwrap(), None);
+        assert_eq!(graine_sessions(&d, Some(&key), "c1").unwrap(), None);
         assert!(!remove_graine_mirror(&d).unwrap());
     }
 

@@ -2,7 +2,7 @@ name: canari
 options:
   bundleIdPrefix: fr.emse.canari
   deploymentTarget:
-    iOS: 14.0
+    iOS: 16.0
 fileGroups: [../../src]
 configs:
   debug: debug

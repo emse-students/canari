@@ -1,6 +1,7 @@
 import { generateAvatarColor, getInitials } from './avatar';
 import { emojiHtml } from '$lib/utils/emojiSvg';
 import { apiAssetUrl } from './apiUrl';
+import { Log } from './Log';
 import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import type { Association, AssociationMember } from '$lib/associations/api';
 
@@ -52,7 +53,7 @@ export async function exportTrombinoscope(
           <div style="position:relative;width:72px;height:72px;border-radius:50%;overflow:hidden;flex-shrink:0;">
             <img src="${apiAssetUrl(`/api/users/${encodeURIComponent(m.userId)}/avatar`)}"
                  style="width:72px;height:72px;object-fit:cover;border-radius:50%;display:block;"
-                 onerror="this.nextElementSibling.style.display='flex';this.remove();" />
+                 data-avatar-fallback />
             <div style="display:none;position:absolute;inset:0;background:${bg};align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;border-radius:50%;">${initials}</div>
           </div>
           <p data-pdf-text style="font-size:12px;font-weight:700;line-height:1.3;word-break:break-word;margin:0;">${emojiHtml(name)}</p>
@@ -77,6 +78,13 @@ export async function exportTrombinoscope(
       ${cards}
     </div>`;
 
+  // A member with no photo shows the initials behind it. A listener and not an `onerror=` attribute:
+  // the Content-Security-Policy refuses inline handlers (lib/security/cspPolicy.js). Attached before
+  // the container joins the document, so an error that fires at once still finds it.
+  for (const img of container.querySelectorAll<HTMLImageElement>('img[data-avatar-fallback]')) {
+    img.addEventListener('error', () => showInitialsInstead(img), { once: true });
+  }
+
   document.body.appendChild(container);
 
   try {
@@ -98,4 +106,16 @@ export async function exportTrombinoscope(
   } finally {
     document.body.removeChild(container);
   }
+}
+
+/**
+ * Replaces a member photo that failed to load with the initials box that follows it. The `<img>` is
+ * REMOVED rather than hidden: the rasteriser draws an `<img>` it cannot inline as a box reading "img"
+ * (see the file header).
+ */
+export function showInitialsInstead(img: HTMLImageElement): void {
+  Log.d('Trombinoscope', 'member photo did not load, initials drawn instead');
+  const initials = img.nextElementSibling;
+  if (initials instanceof HTMLElement) initials.style.display = 'flex';
+  img.remove();
 }
