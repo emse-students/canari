@@ -283,13 +283,18 @@ export function inlineProtoBudget(input: PushMessageInput): number {
  *   client always fetches the whole bundle (ciphertext AND ratchet tree) through `fetch-proto`,
  *   and the tree is what makes it 4 to 5 KB against a ~3.7 KB budget. Measured: 4608 B against
  *   3716 B. Nothing is dropped - the push still wakes the device, which fetches by `queuedMessageId`.
- * - `over-budget`: a MESSAGE whose ciphertext did not fit. Never expected: it means the fixed
- *   fields (`senderName`, `groupName`, unbounded user text) grew, so it is reported at warn level.
+ * - `long-frame`: a MESSAGE too long to fit even beside EMPTY names - a long text. Expected since
+ *   every frame carries its author's signature and a signed epoch claim (about 360 B more, measured
+ *   in `mls-core/tests/authored_frames.rs`): carried by reference like a Welcome, debug line.
+ * - `over-budget`: a MESSAGE that would have fit beside empty names and did not beside these. That
+ *   means the fixed fields (`senderName`, `groupName`, unbounded user text) grew, so it is reported
+ *   at warn level.
  * - `empty`: nothing to carry.
  */
 export type ProtoCarriage =
   | { kind: 'inlined'; proto: string; bytes: number; budget: number }
   | { kind: 'by-reference'; proto: ''; bytes: number; budget: number }
+  | { kind: 'long-frame'; proto: ''; bytes: number; budget: number }
   | { kind: 'over-budget'; proto: ''; bytes: number; budget: number }
   | { kind: 'empty'; proto: ''; bytes: 0; budget: number };
 
@@ -311,6 +316,9 @@ export function decideProtoCarriage(input: PushMessageInput, protoB64: string): 
   if (bytes === 0) return { kind: 'empty', proto: '', bytes: 0, budget };
   if (input.isWelcome) return { kind: 'by-reference', proto: '', bytes, budget };
   if (bytes <= budget) return { kind: 'inlined', proto: protoB64, bytes, budget };
+  // Would it have fit beside empty names? If not, the FRAME is long, not the names.
+  const bareBudget = inlineProtoBudget({ ...input, senderName: '', groupName: '' });
+  if (bytes > bareBudget) return { kind: 'long-frame', proto: '', bytes, budget };
   return { kind: 'over-budget', proto: '', bytes, budget };
 }
 

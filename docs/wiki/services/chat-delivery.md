@@ -2182,5 +2182,8 @@ the push; the iOS NSE processes no Welcome at all. So inlining a Welcome could n
 
 **The decision** is `decideProtoCarriage` in `push-payload.ts`, a typed `ProtoCarriage`: `inlined`
 (a message that fits), `by-reference` (every Welcome, whatever its size; debug line, expected),
-`over-budget` (a MESSAGE that did not fit: the fixed fields grew; `warn`), `empty`. No client change
+`long-frame` (a MESSAGE too long to fit even beside empty names - a long text, carried by reference,
+debug; every frame is about 360 B raw longer since it carries its author's signature and a signed
+epoch claim, measured in `mls-core/tests/authored_frames.rs`), `over-budget` (a MESSAGE that would
+have fit beside empty names: the fixed fields grew; `warn`), `empty`. No client change
 and no native work was needed. `push-payload.spec.ts` pins the 4608 B case.

@@ -37,6 +37,9 @@ export interface RestoredMessageEntry {
   content: string;
   timestamp: number;
   authorship?: RecordedAuthorship;
+  /** The relayer says the message was edited since; `content` is then the edited body. */
+  isEdited?: boolean;
+  editProof?: RecordedAuthorship;
 }
 
 /** What may be done with a restored message. */
@@ -54,8 +57,13 @@ type Log = (msg: string) => void;
 
 /**
  * Decides a restored message. `relayerUserId` is the user MLS authenticated the bundle frame from.
- * A proof whose author's keys cannot be fetched is `unverified`, not `forged`: that says nothing
+ * A proof with no trusted key to check it against is `unverified`, not `forged`: that says nothing
  * about the message, and it is kept with its proof so a later relay can still prove it.
+ *
+ * AN EDITED MESSAGE IS VERIFIED ONLY WITH ITS EDIT. The signed bytes are the ORIGINAL body; taking
+ * them when the edit cannot be proven (no signed edit relayed, or an older build's edit) would bring
+ * back a text its author retracted, looking authenticated. So an unproven edit keeps the relayed
+ * (edited) body and MARKS the row instead.
  */
 export async function vetRestoredMessage(
   mls: AuthorKeySource,
@@ -71,8 +79,8 @@ export async function vetRestoredMessage(
     return { kind: 'unverified', why: 'no author proof, relayed by another member' };
   }
   const check = await checkRecordedAuthorship(mls, groupId, entry.authorship);
-  if (check.kind === 'unanswered') {
-    log(`[AUTHORSHIP] restored ${entry.id.slice(0, 8)} not provable now: ${check.why}`);
+  if (check.kind === 'unproven') {
+    log(`[AUTHORSHIP] restored ${entry.id.slice(0, 8)} not provable here: ${check.why}`);
     return claimed === relayer
       ? { kind: 'relayer-is-author' }
       : { kind: 'unverified', why: check.why };
@@ -94,6 +102,25 @@ export async function vetRestoredMessage(
   }
   const envelope = appMsgToEnvelope(check.message);
   if (!envelope) return { kind: 'forged', why: 'the signed bytes are not a displayable message' };
+  if (entry.isEdited === true) {
+    const edit = await vetRestoredEdit(
+      mls,
+      groupId,
+      { id: entry.id, senderId: claimed, content: envelope.content },
+      entry,
+      relayer,
+      log
+    );
+    if (edit.kind === 'forged') return { kind: 'forged', why: `its edit: ${edit.why}` };
+    if (edit.kind === 'relayer') return { kind: 'relayer-is-author' };
+    if (edit.kind === 'none') {
+      log(
+        `[AUTHORSHIP] restored ${entry.id.slice(0, 8)} is edited and its edit is not proven - the relayed body is kept, marked`
+      );
+      return { kind: 'unverified', why: 'edited, and the edit carries no proof' };
+    }
+    // A proven edit: the original is verified here, and the merge applies the signed edit to it.
+  }
   return {
     kind: 'verified',
     content: envelope.content,
@@ -117,7 +144,7 @@ async function signedEventAbout(
   { kind: 'ok'; data: Record<string, unknown> } | { kind: 'refused'; why: string; forged: boolean }
 > {
   const check: AuthorshipCheck = await checkRecordedAuthorship(mls, groupId, proof);
-  if (check.kind === 'unanswered') return { kind: 'refused', why: check.why, forged: false };
+  if (check.kind === 'unproven') return { kind: 'refused', why: check.why, forged: false };
   if (check.kind === 'forged') return { kind: 'refused', why: check.why, forged: true };
   if (check.group !== groupId) {
     return { kind: 'refused', why: 'the proof was signed in another conversation', forged: false };
@@ -264,7 +291,7 @@ export async function vetRestoredReactions(
       continue;
     }
     const check = await checkRecordedAuthorship(mls, groupId, r.proof);
-    if (check.kind === 'unanswered' || (check.kind === 'verified' && check.group !== groupId)) {
+    if (check.kind === 'unproven' || (check.kind === 'verified' && check.group !== groupId)) {
       out.unproven += 1;
       continue;
     }

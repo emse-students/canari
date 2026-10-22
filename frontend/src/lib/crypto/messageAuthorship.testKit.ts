@@ -44,25 +44,11 @@ export async function signedBy(
   return { body: toBase64(body), proof: toBase64(proof), group: groupId };
 }
 
-/**
- * A key source answering from a fixed map: `tree` for leaves of the group, `published` for what the
- * server lists; a device in neither is unknown, and `unreachable` makes the server unanswered.
- */
-export function keySource(opts: {
-  tree?: TestAuthor[];
-  published?: TestAuthor[];
-  unreachable?: boolean;
-}): AuthorKeySource {
+/** A key source answering from a fixed tree: a device not in `tree` has no trusted key. */
+export function keySource(opts: { tree?: TestAuthor[] }): AuthorKeySource {
   return {
     async memberSignatureKey(_groupId, identity) {
       return opts.tree?.find((a) => a.identity === identity)?.publicKey ?? null;
-    },
-    async fetchDeviceSignatureKeys(userId, deviceId) {
-      if (opts.unreachable) return { kind: 'unanswered', detail: 'offline' };
-      const keys = (opts.published ?? [])
-        .filter((a) => a.identity === `${userId}:${deviceId}`)
-        .map((a) => a.publicKey);
-      return { kind: 'keys', keys };
     },
     graineSignatureEngine: () => webCryptoEngine,
   };

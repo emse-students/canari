@@ -1,4 +1,5 @@
 import { canari } from '$lib/proto/canari.js';
+import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import type {
   AddMessageToChatOptions,
   Conversation,
@@ -83,9 +84,17 @@ export interface ReplaySystemEventCtx {
    * member that sent the event. The author check cannot always happen here - the message may not be
    * in memory yet - so the claim is carried to whoever can verify it against the stored row.
    */
-  deletedMessages: Map<string, { by: string }>;
+  deletedMessages: Map<string, { by: string; proof?: RecordedAuthorship }>;
   /** Messages edited via an `edit_message` event, with their new content and who claims to edit. */
-  editedMessages: Map<string, { content: string; editedAt: Date; by: string }>;
+  editedMessages: Map<
+    string,
+    { content: string; editedAt: Date; by: string; proof?: RecordedAuthorship }
+  >;
+  /**
+   * The author's signature on THIS frame, as mls-core verified it ({@link recordAuthorship}) -
+   * stored with the edit or the deletion so a bundle this device writes later proves it.
+   */
+  authorship?: RecordedAuthorship;
   /**
    * Read state accumulated over the page, one instant per participant, merged as `max`. Written to
    * the conversation once at the end of the replay rather than message by message - which is the
@@ -288,7 +297,10 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       }
       // Recorded with the claimed author when the message is not in memory: the row it applies to
       // is read later, and that is where the claim can still be checked.
-      deletedMessages.set(data.messageId, { by: senderNorm });
+      deletedMessages.set(data.messageId, {
+        by: senderNorm,
+        ...(ctx.authorship ? { proof: ctx.authorship } : {}),
+      });
     } else if (parsed.system.event === 'edit_message' && data.messageId && data.newContent) {
       // Dated by the sender, exactly as the live path and the pin path are, so a replay cannot undo
       // an edit this device already holds that is newer - and two devices replaying the same log in
@@ -338,6 +350,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         content: data.newContent,
         editedAt,
         by: senderNorm,
+        ...(ctx.authorship ? { proof: ctx.authorship } : {}),
       });
     } else if (
       (parsed.system.event === 'pin' || parsed.system.event === 'unpin') &&

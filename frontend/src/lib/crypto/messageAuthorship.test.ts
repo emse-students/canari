@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { canari } from '$lib/proto/canari.js';
 import { encodeAppMessage } from '$lib/proto/codec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
@@ -6,8 +6,6 @@ import {
   authorDescriptor,
   checkRecordedAuthorship,
   recordAuthorship,
-  resetPublishedAuthorKeys,
-  setPinnedSignatureKeys,
   splitAuthorProof,
 } from './messageAuthorship';
 import { keySource, newTestAuthor, signedBy } from './messageAuthorship.testKit';
@@ -18,11 +16,6 @@ function hex(bytes: Uint8Array): string {
 
 const GROUP = 'g-auth';
 const HELLO = { messageId: 'm-1', sentAt: 1_700_000_000_000, text: { content: 'hello' } };
-
-afterEach(() => {
-  setPinnedSignatureKeys(null);
-  resetPublishedAuthorKeys();
-});
 
 describe('the descriptor', () => {
   it('matches the vector mls-core signs (tests/authored_frames.rs)', async () => {
@@ -105,24 +98,6 @@ describe('checking a relayed proof', () => {
     expect(check.kind).toBe('forged');
   });
 
-  it('asks the server once per device for a whole bundle', async () => {
-    const alice = await newTestAuthor('alice:dev-a');
-    const source = keySource({ published: [alice] });
-    let asked = 0;
-    const counting = {
-      ...source,
-      fetchDeviceSignatureKeys: async (u: string, d: string) => {
-        asked += 1;
-        return source.fetchDeviceSignatureKeys(u, d);
-      },
-    };
-    for (const id of ['m-1', 'm-2', 'm-3']) {
-      const rec = await signedBy(alice, GROUP, { ...HELLO, messageId: id });
-      expect((await checkRecordedAuthorship(counting, GROUP, rec)).kind).toBe('verified');
-    }
-    expect(asked).toBe(1);
-  });
-
   it('refuses a body whose text or timestamp was changed after signing', async () => {
     const alice = await newTestAuthor('alice:dev-a');
     const rec = await signedBy(alice, GROUP, HELLO);
@@ -146,27 +121,20 @@ describe('checking a relayed proof', () => {
     expect(check.kind).toBe('forged');
   });
 
-  it('verifies a device that has left the tree under the keys the server published for it', async () => {
-    const alice = await newTestAuthor('alice:dev-a');
-    const rec = await signedBy(alice, GROUP, HELLO);
-    const check = await checkRecordedAuthorship(keySource({ published: [alice] }), GROUP, rec);
-    expect(check.kind).toBe('verified');
+  it('neither verifies nor accuses an author with no leaf in the tree - the server is no evidence', async () => {
+    // A ghost device the server could publish a key for, or an honest author whose keys an erasure
+    // deleted: with no TRUSTED key, both read the same - unproven, never verified, never forged.
+    const ghost = await newTestAuthor('alice:dev-ghost');
+    const rec = await signedBy(ghost, GROUP, HELLO);
+    const check = await checkRecordedAuthorship(keySource({ tree: [] }), GROUP, rec);
+    expect(check.kind).toBe('unproven');
   });
 
-  it('says unanswered, not forged, when the author has left and the server cannot be asked', async () => {
-    const alice = await newTestAuthor('alice:dev-a');
-    const rec = await signedBy(alice, GROUP, HELLO);
-    const check = await checkRecordedAuthorship(keySource({ unreachable: true }), GROUP, rec);
-    expect(check.kind).toBe('unanswered');
-  });
-
-  it('lets a pin overrule a key the server publishes', async () => {
+  it('accuses only when a trusted key contradicts the signature', async () => {
     const alice = await newTestAuthor('alice:dev-a');
     const substitute = await newTestAuthor('alice:dev-a');
-    // The server (or whoever answers for it) published a key of its own and signed with it.
     const rec = await signedBy(substitute, GROUP, HELLO);
-    setPinnedSignatureKeys({ keysFor: async () => [alice.publicKey] });
-    const check = await checkRecordedAuthorship(keySource({ published: [substitute] }), GROUP, rec);
+    const check = await checkRecordedAuthorship(keySource({ tree: [alice] }), GROUP, rec);
     expect(check.kind).toBe('forged');
   });
 

@@ -235,6 +235,52 @@ fn a_proof_is_only_read_as_the_last_field() {
     assert_eq!(len, 0);
 }
 
+/// What the signature and the fork claim COST on the wire, measured rather than assumed: the push
+/// path inlines a frame's base64 only under a fixed budget (`inlineProtoBudget`), so the growth per
+/// frame is the number the budget has to be read against. Printed with `--nocapture`.
+#[test]
+fn an_authored_frame_grows_by_a_bounded_amount() {
+    let gid = "g-cost";
+    let (mut alice, _bob) = pair_in_group(gid);
+    for text_len in [2usize, 500, 2000] {
+        let mut body = vec![0x0a];
+        let text = vec![b'x'; text_len];
+        // TextMsg { content } inside AppMessage.text, lengths as 2-byte varints at most.
+        let mut inner = vec![0x0a];
+        push_varint(&mut inner, text_len as u64);
+        inner.extend_from_slice(&text);
+        push_varint(&mut body, inner.len() as u64);
+        body.extend_from_slice(&inner);
+        let sent = alice.send_authored_message(gid, &body).expect("send");
+        let trailer = append_author_proof(&body, &sent.author_proof).len() - body.len();
+        let overhead = sent.ciphertext.len() - body.len();
+        println!(
+            "[cost] body={}B ciphertext={}B overhead={}B of which proof trailer={}B",
+            body.len(),
+            sent.ciphertext.len(),
+            overhead,
+            trailer
+        );
+        // Signature (64) + the proof's fields + the AAD's claim (identity, 16-byte fp, 64-byte sig).
+        assert!(
+            trailer < 120,
+            "the proof trailer stays under 120 B, was {trailer}"
+        );
+    }
+}
+
+fn push_varint(out: &mut Vec<u8>, mut v: u64) {
+    loop {
+        let byte = (v & 0x7f) as u8;
+        v >>= 7;
+        if v == 0 {
+            out.push(byte);
+            break;
+        }
+        out.push(byte | 0x80);
+    }
+}
+
 /// The descriptor is rebuilt by `frontend/src/lib/crypto/messageAuthorship.ts`, which checks the
 /// proofs a history bundle relays. These bytes are the contract between the two: the TS test
 /// asserts the same hex.

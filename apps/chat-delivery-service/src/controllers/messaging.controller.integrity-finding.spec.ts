@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { Logger } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { MessagingController } from './messaging.controller';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
@@ -13,18 +13,25 @@ import { MessagingService } from '../services/messaging.service';
  * signature (`forged-history`). Protocol: history-reconciliation, "Restored history carries its
  * author's signature", and mls-protocol, "Fork detection".
  *
- * A client's console is collected nowhere, so this ERROR line is the only place the event is read.
- * Judged on the same two things as `sender-mismatch`: who reported what, and no forged line.
+ * Judged on what is ESTABLISHED (the authenticated reporter, a member of the group) against what is
+ * only CLAIMED (the peer it names), and on no forged line.
  */
 describe('MessagingController - POST mls/integrity-finding', () => {
   let controller: MessagingController;
   let error: jest.SpyInstance;
+  let warn: jest.SpyInstance;
+  let members: Set<string>;
 
   beforeEach(async () => {
     error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    members = new Set(['g-1234|alice', 'g-1\n[SEND] forged|alice']);
+    const service = {
+      isGroupMember: async (groupId: string, userId: string) => members.has(`${groupId}|${userId}`),
+    };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MessagingController],
-      providers: [{ provide: MessagingService, useValue: {} as unknown as MessagingService }],
+      providers: [{ provide: MessagingService, useValue: service as unknown as MessagingService }],
     })
       .overrideGuard(ThrottlerGuard)
       .useValue({ canActivate: () => true })
@@ -34,10 +41,13 @@ describe('MessagingController - POST mls/integrity-finding', () => {
     controller = module.get(MessagingController);
   });
 
-  afterEach(() => error.mockRestore());
+  afterEach(() => {
+    error.mockRestore();
+    warn.mockRestore();
+  });
 
-  it('prints a fork with its epoch and the member whose claim differs', () => {
-    expect(
+  it('prints a fork with its epoch, the reporter as a fact and the peer as a claim', async () => {
+    await expect(
       controller.reportIntegrityFinding('alice', 'web-alice-1', {
         kind: 'fork',
         groupId: 'g-1234',
@@ -45,27 +55,52 @@ describe('MessagingController - POST mls/integrity-finding', () => {
         peer: 'bob:dev-b',
         detail: 'fork',
       })
-    ).toEqual({ recorded: true });
+    ).resolves.toEqual({ recorded: true });
 
     expect(error).toHaveBeenCalledWith(
-      '[INTEGRITY] kind=fork reporter=alice:web-alice-1 group=g-1234 epoch=7 peer=bob:dev-b detail=fork'
+      '[INTEGRITY] kind=fork reporter=alice:web-alice-1 group=g-1234 epoch=7 claimedPeer=bob:dev-b detail=fork'
     );
   });
 
-  it('prints forged history with the relayer and the author it claimed', () => {
-    controller.reportIntegrityFinding('alice', 'web-alice-1', {
+  it('prints an unproven fork at warn, as mls-core does', async () => {
+    await controller.reportIntegrityFinding('alice', 'web-alice-1', {
+      kind: 'fork',
+      groupId: 'g-1234',
+      epoch: 7,
+      peer: 'bob:dev-b',
+      detail: 'unproven',
+    });
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('detail=unproven'));
+  });
+
+  it('refuses a reporter that is not a member of the group', async () => {
+    await expect(
+      controller.reportIntegrityFinding('mallory', 'dev-m', {
+        kind: 'forged-history',
+        groupId: 'g-1234',
+        peer: 'alice',
+        detail: 'message',
+      })
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('REJECT not-a-member'));
+  });
+
+  it('prints forged history with the relayer it claims', async () => {
+    await controller.reportIntegrityFinding('alice', 'web-alice-1', {
       kind: 'forged-history',
       groupId: 'g-1234',
       peer: 'mallory',
       detail: 'signature',
     });
     expect(error).toHaveBeenCalledWith(
-      '[INTEGRITY] kind=forged-history reporter=alice:web-alice-1 group=g-1234 epoch=none peer=mallory detail=signature'
+      '[INTEGRITY] kind=forged-history reporter=alice:web-alice-1 group=g-1234 epoch=none claimedPeer=mallory detail=signature'
     );
   });
 
-  it('refuses a kind it does not know, and cannot be made to forge a line', () => {
-    controller.reportIntegrityFinding('alice', 'web-alice-1', {
+  it('refuses a kind it does not know, and cannot be made to forge a line', async () => {
+    await controller.reportIntegrityFinding('alice', 'web-alice-1', {
       kind: 'something\n[SEND] forged',
       groupId: 'g-1\n[SEND] forged',
       epoch: 'seven',
@@ -76,6 +111,6 @@ describe('MessagingController - POST mls/integrity-finding', () => {
     expect(line).toContain('kind=invalid');
     expect(line).toContain('group=invalid');
     expect(line).toContain('epoch=invalid');
-    expect(line).toContain('peer=invalid');
+    expect(line).toContain('claimedPeer=invalid');
   });
 });

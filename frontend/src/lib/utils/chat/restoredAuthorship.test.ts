@@ -74,6 +74,55 @@ describe('a restored message', () => {
     }
   });
 
+  it('never brings back a retracted text as verified: an unproven edit keeps the relayed body, marked', async () => {
+    const { alice, keys } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const edited = serializeEnvelope(mkTextEnvelope('hello, corrected'));
+    const verdict = await vetRestoredMessage(
+      keys,
+      GROUP,
+      {
+        id: 'm-1',
+        senderId: 'alice',
+        content: edited,
+        timestamp: SENT_AT,
+        authorship,
+        isEdited: true,
+      },
+      'mallory',
+      silent
+    );
+    expect(verdict.kind).toBe('unverified');
+  });
+
+  it('verifies an edited message whose signed edit rides with it', async () => {
+    const { alice, keys } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const editProof = await signedBy(alice, GROUP, {
+      messageId: 'e-1',
+      ...mkSystem(
+        'edit_message',
+        JSON.stringify({ messageId: 'm-1', newContent: 'hello, corrected', editedAt: SENT_AT + 5 })
+      ),
+    });
+    const verdict = await vetRestoredMessage(
+      keys,
+      GROUP,
+      {
+        id: 'm-1',
+        senderId: 'alice',
+        content: 'whatever the relayer says',
+        timestamp: SENT_AT,
+        authorship,
+        isEdited: true,
+        editProof,
+      },
+      'mallory',
+      silent
+    );
+    expect(verdict.kind).toBe('verified');
+  });
+
   it('is never VERIFIED by a proof from another conversation - only marked, as if unsigned', async () => {
     const { alice, keys } = await cast();
     const authorship = await signedBy(alice, 'g-other', HELLO);

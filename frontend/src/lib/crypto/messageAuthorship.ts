@@ -24,7 +24,6 @@ import protobuf from 'protobufjs/minimal.js';
 import { canari } from '$lib/proto/canari.js';
 import { Writer, type GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 
 /** The label opening every descriptor - distinct from every Graine label. */
 export const AUTHOR_DESCRIPTOR_LABEL = 'canari-mls-author-v1';
@@ -49,28 +48,16 @@ export interface RecordedAuthorship {
 }
 
 /**
- * Where a device's signature keys come from when a PIN exists for it.
+ * What the checks below need of the MLS service, so a test needs no client.
  *
- * DEFINED HERE, IMPLEMENTED BY THE KEY-PINNING WORK: when it answers a list, that list is the only
- * set of keys a proof may verify under - a pin is authoritative, so a server that publishes another
- * key for the device cannot make a forged proof pass. `null` means "no pin for this device", and
- * the tree and the server's published keys are asked instead.
+ * ONLY KEYS THIS DEVICE TRUSTS: the author device's leaf in the current tree, which MLS
+ * authenticated. A key the SERVER publishes is never enough on its own - a server can list a key for
+ * a device that never existed, or drop a real one - so it can neither verify a proof nor accuse one.
+ * The device-key pins of the key-binding work are the second trusted source, added when that work
+ * exposes them.
  */
-export interface PinnedSignatureKeys {
-  keysFor(userId: string, deviceId: string): Promise<Uint8Array[] | null>;
-}
-
-let pinnedKeys: PinnedSignatureKeys | null = null;
-
-/** Installs the pinned-key source (the key-pinning work calls this once at start). */
-export function setPinnedSignatureKeys(source: PinnedSignatureKeys | null): void {
-  pinnedKeys = source;
-}
-
-/** What the checks below need of the MLS service - three calls, so a test needs no client. */
 export interface AuthorKeySource {
   memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
-  fetchDeviceSignatureKeys(userId: string, deviceId: string): Promise<DeviceSignatureKeys>;
   graineSignatureEngine(): GraineSignatureEngine;
 }
 
@@ -141,31 +128,6 @@ export function recordOwnAuthorship(
   return { body: toBase64(body), proof: toBase64(proof), group: groupId };
 }
 
-/**
- * The server's published keys per device, asked once a session: a bundle of N messages from one
- * author would otherwise fetch the same answer N times. Only an ANSWER is kept - an unreachable
- * server is asked again by the next proof.
- */
-const publishedKeys = new Map<string, Uint8Array[]>();
-
-/** Forgets the cached published keys (sign-out, and tests). */
-export function resetPublishedAuthorKeys(): void {
-  publishedKeys.clear();
-}
-
-async function publishedKeysFor(
-  mls: AuthorKeySource,
-  userId: string,
-  deviceId: string
-): Promise<DeviceSignatureKeys> {
-  const key = `${userId}:${deviceId}`;
-  const cached = publishedKeys.get(key);
-  if (cached) return { kind: 'keys', keys: cached };
-  const answer = await mls.fetchDeviceSignatureKeys(userId, deviceId);
-  if (answer.kind === 'keys') publishedKeys.set(key, answer.keys);
-  return answer;
-}
-
 /** What checking a relayed proof established. */
 export type AuthorshipCheck =
   | {
@@ -177,23 +139,23 @@ export type AuthorshipCheck =
       message: canari.AppMessage;
       /** The group the proof was signed in - the CALLER compares it with the conversation. */
       group: string;
-      /** Which keys proved it: a pin, the group's tree or the server's published keys. */
-      source: 'pinned' | 'tree' | 'server';
+      /** Which trusted key proved it - today the author's leaf in the tree. */
+      source: 'tree';
     }
   | { kind: 'forged'; why: string }
-  | { kind: 'unanswered'; why: string };
+  | { kind: 'unproven'; why: string };
 
 /**
- * Checks a relayed proof: decodes it, resolves the author device's keys and verifies the signature
- * over the descriptor of the group the proof NAMES (`recorded.group`). `forged` is a proof that is
- * malformed, names no group or device, or verifies under none of the author's keys; `unanswered` is
- * a device that has left the tree and whose published keys could not be fetched, which says nothing
- * about the proof. A proof that verifies in ANOTHER group is `verified` with that group, and whether
- * it may stand for a message of this conversation is the caller's decision.
+ * Checks a relayed proof: decodes it, finds the author device's TRUSTED key and verifies the
+ * signature over the descriptor of the group the proof NAMES (`recorded.group`).
  *
- * Keys: a pin when one exists (authoritative - nothing else is tried), otherwise the device's leaf in
- * `treeGroupId`'s tree, then the keys the server published for it - because a DM's history outlives
- * a device's leaf, and a proof signed under a key the device has since replaced is still its proof.
+ * - `forged`: the proof is malformed, names no group or device, or a key this device trusts (the
+ *   author's leaf in `treeGroupId`'s tree) CONTRADICTS the signature. Only local evidence accuses.
+ * - `unproven`: no trusted key for the author (they left the tree). That says nothing about the
+ *   proof - the server's word is not evidence either way - and the caller treats it as unsigned.
+ *
+ * A proof that verifies in ANOTHER group is `verified` with that group, and whether it may stand for
+ * a message of this conversation is the caller's decision.
  */
 export async function checkRecordedAuthorship(
   mls: AuthorKeySource,
@@ -219,53 +181,21 @@ export async function checkRecordedAuthorship(
     return { kind: 'forged', why: 'the proof names no device' };
   }
   const authorUserId = author.slice(0, sep).toLowerCase();
-  const deviceId = author.slice(sep + 1);
   const message = decodeBody(body);
   if (!message) return { kind: 'forged', why: 'the signed bytes are not a message' };
 
-  const descriptor = await authorDescriptor(group, author, body);
-  const engine = mls.graineSignatureEngine();
-  const verifiesUnder = async (keys: Uint8Array[]): Promise<boolean> => {
-    for (const key of keys) {
-      if ((await engine.verifySignature(key, descriptor, proof.signature)) === 'valid') return true;
-    }
-    return false;
-  };
-  const verified = (source: 'pinned' | 'tree' | 'server'): AuthorshipCheck => ({
-    kind: 'verified',
-    author,
-    authorUserId,
-    message,
-    group,
-    source,
-  });
-
-  const pinned = pinnedKeys ? await pinnedKeys.keysFor(authorUserId, deviceId) : null;
-  if (pinned) {
-    if (await verifiesUnder(pinned)) return verified('pinned');
-    return {
-      kind: 'forged',
-      why: `the signature verifies under none of ${author}'s ${pinned.length} pinned key(s)`,
-    };
-  }
   const treeKey = await mls.memberSignatureKey(treeGroupId, author);
-  if (treeKey && (await verifiesUnder([treeKey]))) return verified('tree');
-  const published = await publishedKeysFor(mls, authorUserId, deviceId);
-  if (published.kind === 'unanswered') {
-    // A tree key that does not verify is not yet an accusation: the device may have signed under a
-    // key it has since replaced, and only the server's list could say so.
-    return {
-      kind: 'unanswered',
-      why: `${author}'s published keys are unreachable (${published.detail})`,
-    };
+  if (!treeKey) {
+    return { kind: 'unproven', why: `${author} has no leaf in the tree, so no trusted key` };
   }
-  if (await verifiesUnder(published.keys)) return verified('server');
-  const tried = published.keys.length + (treeKey ? 1 : 0);
-  if (tried === 0) return { kind: 'forged', why: `${author} has no signature key anywhere` };
-  return {
-    kind: 'forged',
-    why: `the signature verifies under none of ${author}'s ${tried} key(s) (tree and server)`,
-  };
+  const descriptor = await authorDescriptor(group, author, body);
+  const verdict = await mls
+    .graineSignatureEngine()
+    .verifySignature(treeKey, descriptor, proof.signature);
+  if (verdict !== 'valid') {
+    return { kind: 'forged', why: `the signature does not verify under ${author}'s tree key` };
+  }
+  return { kind: 'verified', author, authorUserId, message, group, source: 'tree' };
 }
 
 function decodeBody(body: Uint8Array): canari.AppMessage | null {

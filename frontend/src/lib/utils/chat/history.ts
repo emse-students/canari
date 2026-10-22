@@ -13,7 +13,7 @@ import {
   type PendingHistoryMessage,
 } from './historySystemEvents';
 import { decodeAppMessage } from '$lib/proto/codec';
-import { recordAuthorship } from '$lib/crypto/messageAuthorship';
+import { recordAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { drainForkFindings } from '$lib/mls-client/integrityFindings';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted } from '$lib/paraglide/messages';
@@ -713,8 +713,11 @@ export async function replayConversationHistory(params: {
     // reflects the correct state without a second network round-trip.
     // Each carries WHO claims the mutation: the author check needs the stored row, which is only
     // read after the batch save.
-    const deletedMessages = new Map<string, { by: string }>();
-    const editedMessages = new Map<string, { content: string; editedAt: Date; by: string }>();
+    const deletedMessages = new Map<string, { by: string; proof?: RecordedAuthorship }>();
+    const editedMessages = new Map<
+      string,
+      { content: string; editedAt: Date; by: string; proof?: RecordedAuthorship }
+    >();
     // Read state accumulated over the whole page: one instant per participant, merged as `max`,
     // applied to the conversation once at the end. It is conversation-level state, so it is not
     // affected by the batch save below at all - which is exactly what made the per-message version
@@ -1023,6 +1026,7 @@ export async function replayConversationHistory(params: {
               contactName,
               userId,
               conversationId: id,
+              ...(authorship ? { authorship } : {}),
               getConversation,
               setConversation,
               messageReactions,
@@ -1319,11 +1323,17 @@ export async function replayConversationHistory(params: {
               ...(updatesById.get(m.id) ?? m),
               isDeleted: true,
               content: chat_system_message_deleted(),
+              // The original bytes go with the message; the author's signed tombstone stays.
+              authorship: null,
+              editProof: null,
+              ...(deletion.proof ? { deleteProof: deletion.proof } : {}),
             });
           } else if (edit && replayMutationIsAuthorised(m, edit.by, 'edit')) {
             updatesById.set(m.id, {
               ...(updatesById.get(m.id) ?? m),
               isEdited: true,
+              // The author's signed edit, so a bundle this device writes proves the edited body.
+              ...(edit.proof ? { editProof: edit.proof } : {}),
               // The accumulator holds the replacement TEXT; the body it replaces is this row's,
               // and only here is it known. Writing the text itself dropped the reply reference the
               // body carries - see `applyEditToBody`.

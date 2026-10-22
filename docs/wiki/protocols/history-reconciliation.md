@@ -1166,15 +1166,23 @@ crypto, with a shared vector against the Rust side):
 | edit, deletion | the author's signed event names this message; or the relayer is the author | dropped, never applied on a third party's word |
 | reaction | the reactor's signed frame proves exactly this state; or the relayer is the reactor | dropped |
 
-**Keys.** A pin is authoritative when the key-pinning work provides one (`PinnedSignatureKeys`, the
-interface is DEFINED in `messageAuthorship.ts` and implemented there - nothing else is tried).
-Otherwise the author's leaf in the tree, then the keys the server published for that device, asked
-once per device per session. An unreachable server is not a forgery: the entry is kept as unproven.
+**Keys - only those this device trusts.** The author's leaf in the current tree, which MLS
+authenticated; the device-key pins of the key-binding work join it when that work exposes them. A
+key the SERVER publishes is never evidence either way: it can neither verify a proof (a server could
+list a key for a device that never existed) nor accuse one (an erasure, or a server, can drop a real
+key). So `forged` means a TRUSTED key contradicts the signature, and an author with no trusted key
+is `unproven` - kept, marked, exactly like an unsigned message.
+
+**An edited message is verified only with its edit.** The signed bytes are the ORIGINAL body. A
+restored message marked edited whose edit is not proven by the author's signed `edit_message` keeps
+the relayed (edited) body and is marked unverified - a retracted text never comes back looking
+authenticated. The history replay stores the signed edit and deletion like the live path does.
 
 **A refusal is loud.** Every refused entry is an ERROR line and an integrity finding
 ([`integrityFindings.ts`](../../../frontend/src/lib/mls-client/integrityFindings.ts)), reported once
-per session to `POST mls/integrity-finding`, which logs `[INTEGRITY]` at ERROR server side. The UI
-for findings comes later.
+per session to `POST mls/integrity-finding`. The route accepts a report only from a member of the
+group; it logs the authenticated reporter as a fact and the peer as `claimedPeer`, at ERROR, and an
+`unproven` fork at warn as mls-core does. The UI for findings comes later.
 
 ### Reactions
 

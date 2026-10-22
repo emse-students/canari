@@ -204,12 +204,16 @@ export class MessagingController {
    * "Fork detection".
    *
    * Stores nothing, like `sender-mismatch`. Every field goes through `sanitizeLogValue`, `kind` is
-   * an allowlist and `epoch` a non-negative integer, so no body can write a line of its own. The
-   * reporter is the authenticated user, never a field of the body.
+   * an allowlist and `epoch` a non-negative integer, so no body can write a line of its own.
+   *
+   * WHAT IS ESTABLISHED AND WHAT IS CLAIMED. The reporter is the authenticated user and device and a
+   * MEMBER of the group (anyone else is refused, 403) - those are facts. The `peer` it names is only
+   * its claim, and logged as `claimedPeer`. The level follows the client's own: an `unproven` fork
+   * (one it could not attribute) is a warn, as in mls-core; the rest are ERROR.
    */
   @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/integrity-finding')
-  reportIntegrityFinding(
+  async reportIntegrityFinding(
     @Headers('x-user-id') authUserId: string | undefined,
     @Headers('x-canari-device') reporterDeviceId: string | undefined,
     @Body()
@@ -220,7 +224,22 @@ export class MessagingController {
       peer?: unknown;
       detail?: unknown;
     }
-  ): { recorded: true } {
+  ): Promise<{ recorded: true }> {
+    const reporter = `${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)}`;
+    const groupId = typeof body.groupId === 'string' ? body.groupId : '';
+    if (
+      !groupId ||
+      !authUserId ||
+      !(await this.messagingService.isGroupMember(groupId, authUserId))
+    ) {
+      this.logger.warn(
+        `[INTEGRITY] REJECT not-a-member reporter=${reporter} group=${sanitizeLogValue(body.groupId)}`
+      );
+      throw new ForbiddenException({
+        error: 'not-a-member',
+        message: 'not a member of this group',
+      });
+    }
     const kind = body.kind === 'fork' || body.kind === 'forged-history' ? body.kind : 'invalid';
     const epoch =
       body.epoch === undefined || body.epoch === null
@@ -228,11 +247,11 @@ export class MessagingController {
         : Number.isSafeInteger(body.epoch) && (body.epoch as number) >= 0
           ? String(body.epoch)
           : 'invalid';
-    this.logger.error(
-      `[INTEGRITY] kind=${kind} reporter=${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)} ` +
-        `group=${sanitizeLogValue(body.groupId)} epoch=${epoch} peer=${sanitizeLogValue(body.peer)} ` +
-        `detail=${sanitizeLogValue(body.detail)}`
-    );
+    const line =
+      `[INTEGRITY] kind=${kind} reporter=${reporter} group=${sanitizeLogValue(groupId)} ` +
+      `epoch=${epoch} claimedPeer=${sanitizeLogValue(body.peer)} detail=${sanitizeLogValue(body.detail)}`;
+    if (body.detail === 'unproven') this.logger.warn(line);
+    else this.logger.error(line);
     return { recorded: true };
   }
 
