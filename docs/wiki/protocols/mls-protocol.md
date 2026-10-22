@@ -665,8 +665,9 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   was built on - ours accepted, or a member's - or, if its commit is refused, from the tree it falls
   back to at that moment.
 - **Reaffirmations.** A pin counts the merged commits that showed its device holding the pinned key -
-  its leaf re-entering under that key, or a commit it signed. This is what lifts a remembered
-  refusal (below).
+  its leaf re-entering under that key, or a commit it signed. A merge with nothing pending signed
+  nothing and counts nothing (`a_merge_with_nothing_pending_reaffirms_no_pin`). This is what lifts
+  a remembered refusal (below).
 - **The replace path: ONE commit.** `handleWelcomeRequest`, for a device whose leaf is still in the
   tree, sends Remove and Add in the SAME commit (`replaceMember` -> Rust
   `MlsManager::replace_device_with_base`, WASM `replace_device`, Tauri `remplacer_appareil`); the

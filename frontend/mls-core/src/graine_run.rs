@@ -441,7 +441,9 @@ impl MlsManager {
             // tree is first sight of its members, never "a device was added".
             self.device_trust
                 .observe_joined_tree(group_id, epoch, &leaves_after, &own_identity);
-        } else {
+        } else if before.is_some() {
+            // Only a commit that WAS pending is one we signed: a merge with nothing pending
+            // proves nothing, so it reaffirms no pin, ours included.
             self.device_trust.observe_merged_commit(
                 group_id,
                 epoch,
