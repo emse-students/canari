@@ -141,6 +141,7 @@ function ctx(
     'submitRecorded',
     'resubmitUnresolved',
     'awaitCommitCheckpoint',
+    'checkpointStageBeforeSend',
     'mergeSettled',
     'deliverOwedWelcomes',
     'knownUnresolvedGroups',
@@ -250,6 +251,49 @@ describe('runCommitTransaction - the record is written by the stage, never after
     await checkpointer;
     expect(snapshots.length).toBeGreaterThan(0);
     expect(snapshots.every((s) => s.status === 'recorded')).toBe(true);
+  });
+
+  it('puts the stage and its record on disk BEFORE the first request leaves, so a crash after the send reloads them', async () => {
+    // The disk is what the last checkpoint exported. The request leaves, and the device crashes
+    // before any further checkpoint: the reload is whatever the disk held when it left.
+    const disk: PendingState = new Map();
+    persistMlsStructuralCheckpoint.mockImplementation(async () => {
+      disk.clear();
+      for (const [g, read] of c.state) disk.set(g, read);
+      return true;
+    });
+    // What the disk held at the moment the first request left: all a crash right then leaves.
+    let atSend: PendingState | null = null;
+    const c = ctx(
+      vi.fn(async () => {
+        atSend ??= new Map(disk);
+        throw lost();
+      })
+    );
+    await expect(run(c)).rejects.toBeInstanceOf(CommitOutcomeUnknownError);
+    expect(atSend!.get(G)).toMatchObject({ status: 'recorded', record: { baseEpoch: 5 } });
+
+    // The reload: the state is the disk. The gate had taken the commit, and answers its
+    // resubmission as a duplicate - the device merges the commit it sent, never forgets it.
+    const reloaded = ctx(submitting({ accepted: true, duplicate: true }), {
+      state: new Map(atSend!),
+    });
+    expect(reloaded.state.get(G)).toMatchObject({ status: 'recorded' });
+    await reloaded.settleUnresolvedCommits();
+    expect(reloaded.delivery.submitCommit.mock.calls[0].slice(0, 3)).toEqual([G, 5, OURS]);
+    expect(reloaded.mergePendingCommit).toHaveBeenCalledTimes(1);
+    expect(reloaded.clearPendingCommit).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing, and clears, when that checkpoint fails', async () => {
+    persistMlsStructuralCheckpoint.mockRejectedValueOnce(new Error('disk full'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const c = ctx(submitting());
+    await expect(run(c)).rejects.toThrow('not checkpointed');
+    expect(c.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+    expect(c.state.size).toBe(0);
+    vi.mocked(console.error).mockRestore();
   });
 
   it('sends nothing and clears when the stage left no usable record', async () => {

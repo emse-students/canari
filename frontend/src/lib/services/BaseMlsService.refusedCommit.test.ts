@@ -65,6 +65,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       [
         'settleUnresolvedLocked',
         'settleUnresolvedCommitFromLog',
+        'checkpointStageBeforeSend',
         'submitRecorded',
         'resubmitUnresolved',
       ].map((name) => [

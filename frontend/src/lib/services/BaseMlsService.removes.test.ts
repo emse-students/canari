@@ -45,7 +45,7 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
       groupsWithPendingCommit: vi.fn(async () => []),
       // REAL: with no staged commit kept they settle nothing and submit once.
       ...Object.fromEntries(
-        ['settleUnresolvedLocked', 'submitRecorded'].map((name) => [
+        ['settleUnresolvedLocked', 'checkpointStageBeforeSend', 'submitRecorded'].map((name) => [
           name,
           (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],
         ])

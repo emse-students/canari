@@ -60,7 +60,12 @@ function commitCtx(accepted: boolean) {
     // The real ones: with no staged commit kept they settle nothing (see
     // `BaseMlsService.unresolvedCommit.test.ts` for the cases where they do).
     ...Object.fromEntries(
-      ['settleUnresolvedLocked', 'submitRecorded', 'resubmitUnresolved'].map((name) => [
+      [
+        'settleUnresolvedLocked',
+        'checkpointStageBeforeSend',
+        'submitRecorded',
+        'resubmitUnresolved',
+      ].map((name) => [
         name,
         (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],
       ])

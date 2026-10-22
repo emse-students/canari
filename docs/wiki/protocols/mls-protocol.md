@@ -699,7 +699,7 @@ a commit it already accepted from that device at that base epoch as accepted aga
 [chat-delivery](../services/chat-delivery.md)). Accepted or duplicate -> merge; a refusal (another
 commit took the epoch, or a 4xx, sent only before the gate) -> clear and catch up; still no answer
 (a transport failure, a 5xx, or `concurrent_commit` - a lock our own first request may hold) -> the
-staged commit is KEPT and checkpointed, and `CommitOutcomeUnknownError` (a `TransportFailureError`)
+staged commit is KEPT (already on disk, see below), and `CommitOutcomeUnknownError` (a `TransportFailureError`)
 is thrown. Until a resubmission answers, the group takes no commit and no send. The resubmission runs
 at the next gateway connection (before the pending messages are drained), before the next send or
 commit in the group, and a commit replay settles it from the log only when the log holds a row AT its
@@ -719,6 +719,24 @@ commit: a new stage, the merge, the clear, a forget, or another member's commit 
 each end it, and only live ones are saved - in a `#[serde(default)]` field of the state, so an older
 state loads with none and an older build drops the field when it saves. The client keeps a derived
 in-memory index of the groups holding one, so a send does not cross into the platform to ask.
+
+**On disk before the first request leaves.** One call makes the stage and its record inseparable;
+it does not make them durable. `runCommitTransaction` therefore awaits a structural checkpoint
+between the stage and the first `submitCommit` (`checkpointStageBeforeSend`). Before that, a crash
+after the send and before the next checkpoint reloaded the state from BEFORE the stage: the server
+might hold the commit, and the device could neither merge it nor resubmit it (it fell to rung 1 or 2).
+Now any crash after the send reloads the stage and its record, and the resubmission at the next
+connection merges or clears it. A checkpoint that fails sends nothing and clears the stage, which is
+definitive because nothing has left. The checkpoint the kept-unresolved path used to await afterwards
+is gone: the state it wrote is already on disk. **Cost: one checkpoint per commit, awaited under the
+MLS lock.** Measured with `mls-core/tests/heavy_state_checkpoint.rs` (release, desktop, 2026-10-22):
+export + seal is 0.7 ms at 5 groups, 5.5 ms at 40 and 12.3 ms at 80 (7.7 MB). On the web the
+2026-10-12 audit puts a 7.7 MB checkpoint at ~47 ms with its IndexedDB put
+([performance-audit](../frontend/performance-audit-2026-10-12.md)). On native, #1826 read a seal and
+write of median 2 ms, p95 5 ms, on a 304 KB state ([device-verification](../device-verification.md)).
+A request for durability made while a checkpoint is running waits for the NEXT one, so the worst case
+is two checkpoints. Commits are rare next to checkpoints: the fleet ceiling is ~200 commits a day
+(see the leaf-refresh interval above), against 247 checkpoints in 432 s on ONE phone after a sign-in (Mi 9T, 2026-10-13).
 
 **A record that cannot be read decides nothing.** "No record" proves the commit never left; a record
 that does not decode (the crate's CBOR, or the intent inside it) proves nothing, and the bytes a
