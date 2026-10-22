@@ -14,6 +14,12 @@ import {
 import { toBase64 } from '$lib/utils/hex';
 import { encodeGraineEndorsementV2, graineSeedCommitment } from '$lib/crypto/graineV2';
 import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
+import {
+  encodeAdmissionVoucher,
+  encodeDirectAdmission,
+  mintInviteLinkGrant,
+  redeemInviteLinkGrant,
+} from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
 import {
@@ -55,13 +61,42 @@ vi.mock('./graineMirror', () => ({ mirrorGraineSeed: vi.fn().mockResolvedValue(u
 
 /** Where each session becomes readable for the asker - computed by the server, never here. */
 const graineHistoryFloor = vi.fn();
+/** The community's roster - arrival dates, creator mark and admission vouchers (section 25). */
+const listWorkspaceMembers = vi.fn();
 vi.mock('$lib/services/ChannelService', () => ({
   ChannelService: class {
     graineHistoryFloor(...args: unknown[]) {
       return graineHistoryFloor(...args);
     }
+    listWorkspaceMembers(...args: unknown[]) {
+      return listWorkspaceMembers(...args);
+    }
   },
 }));
+
+/** An arrival before the admission proof existed: such a member is admitted by their date. */
+const BEFORE_THE_PROOF = '2026-01-01T00:00:00.000Z';
+/** An arrival after it: such a member needs a voucher. */
+const AFTER_THE_PROOF = '2026-12-01T00:00:00.000Z';
+
+/** A roster row as `listWorkspaceMembers` serves it. */
+function member(
+  userId: string,
+  joinedAt = BEFORE_THE_PROOF,
+  extra: { isCreator?: boolean; admissionVoucher?: string | null } = {}
+) {
+  return { id: `m-${userId}`, userId, role: 'member', joinedAt, ...extra };
+}
+
+beforeEach(() => {
+  // Every member admitted before the proof existed, so every row that is not about admission sees
+  // the past handed over exactly as before. The roots a device records are per account, durable.
+  localStorage.clear();
+  listWorkspaceMembers.mockReset();
+  listWorkspaceMembers.mockResolvedValue(
+    ['alice', 'bob', 'carol', 'newcomer'].map((id) => member(id))
+  );
+});
 
 const SEED = new Uint8Array(32).fill(3);
 
@@ -1719,5 +1754,268 @@ describe('a seed this device already holds', () => {
 
     expect(saved[0].firstIndex).toBe(0);
     expect(repaired).toEqual([['chan-1']]);
+  });
+});
+
+describe('the past goes only to an admission this device can verify (section 25)', () => {
+  /** dave joined after the proof existed, with no voucher, and his device is in the tree. */
+  const DAVE_DEVICE_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 200 - i);
+  let DAVE_DEVICE_PK: Uint8Array;
+  beforeAll(async () => {
+    DAVE_DEVICE_PK = await ed25519PublicKeyOf(DAVE_DEVICE_SECRET);
+  });
+  beforeEach(() => {
+    tree.set('dave:dev-d', DAVE_DEVICE_PK);
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    graineHistoryFloor.mockReset();
+  });
+
+  const community: StoredGraineSession[] = [
+    {
+      workspaceId: 'ws-1',
+      channelId: 'chan-1',
+      sessionId: 's-1',
+      senderId: 'alice',
+      seedB64: toBase64(SEED),
+      firstIndex: 0,
+      createdAt: 1,
+    },
+  ];
+
+  function wireAnswerer() {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async (id: string) => community.find((c) => c.sessionId === id) ?? null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => community,
+        countGraineSessionsForWorkspace: async () => community.length,
+      } as unknown as IStorage,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: graineMls({ sendMessage }),
+    });
+    return sendMessage;
+  }
+
+  function ask(kind: 'history' | 'sessions') {
+    return {
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'newcomer',
+      senderDeviceId: 'newcomer-web',
+      plaintext: encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          kind:
+            kind === 'history'
+              ? canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY
+              : canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+          sessionIds: kind === 'sessions' ? ['s-1'] : [],
+          answererUserId: 'alice',
+          requestId: 'r-a',
+        })
+      ),
+    };
+  }
+
+  /** A direct voucher: `signer` admitted `subject`, signed with `secret`. */
+  async function directVoucher(
+    subject: string,
+    signer: { userId: string; deviceId: string },
+    secret: Uint8Array,
+    workspaceId = 'ws-1'
+  ) {
+    const statement = { workspaceId, subjectUserId: subject, signer, issuedAt: 1_800_000_000_000 };
+    return encodeAdmissionVoucher({
+      kind: 'direct',
+      ...statement,
+      signature: await webCryptoEngine.signWithSessionKey(secret, encodeDirectAdmission(statement)),
+    });
+  }
+
+  /** The roster with `newcomer` arrived after the proof existed, carrying `voucher`. */
+  function newcomerArrives(voucher: string | null) {
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('dave', AFTER_THE_PROOF),
+      member('newcomer', AFTER_THE_PROOF, { admissionVoucher: voucher }),
+    ]);
+  }
+
+  const carolDevice = { userId: 'carol', deviceId: 'dev-c' };
+
+  it('hands no past to a newcomer whose admission carries no proof, and says why', async () => {
+    newcomerArrives(null);
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    // The community SHARES its past - and this member's admission is the server's word alone.
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(info.mock.calls.flat().join(' ')).toContain('admission is not proven');
+    info.mockRestore();
+  });
+
+  it('hands the past to a newcomer a rooted member admitted directly', async () => {
+    newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds?.map((x) => x.sessionId)).toEqual(['s-1']);
+  });
+
+  it('hands the past to a newcomer who followed a link a rooted member stood behind', async () => {
+    const grant = await mintInviteLinkGrant(
+      'ws-1',
+      carolDevice,
+      1_800_000_000_000,
+      webCryptoEngine,
+      (m) => webCryptoEngine.signWithSessionKey(CAROL_DEVICE_SECRET, m)
+    );
+    newcomerArrives(
+      encodeAdmissionVoucher(await redeemInviteLinkGrant(grant, 'newcomer', webCryptoEngine))
+    );
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds).toHaveLength(1);
+  });
+
+  it('refuses a voucher signed by a member whose own admission is not proven', async () => {
+    // dave is in the tree with a real key and signs a real voucher: the chain still has no root.
+    newcomerArrives(
+      await directVoucher('newcomer', { userId: 'dave', deviceId: 'dev-d' }, DAVE_DEVICE_SECRET)
+    );
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('accepts a chain: a voucher signed by a member who was admitted by a rooted one', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('dave', AFTER_THE_PROOF, {
+        admissionVoucher: await directVoucher('dave', carolDevice, CAROL_DEVICE_SECRET),
+      }),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await directVoucher(
+          'newcomer',
+          { userId: 'dave', deviceId: 'dev-d' },
+          DAVE_DEVICE_SECRET
+        ),
+      }),
+    ]);
+    const sendMessage = wireAnswerer();
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a voucher that admits somebody else, copied onto the newcomer row', async () => {
+    newcomerArrives(await directVoucher('dave', carolDevice, CAROL_DEVICE_SECRET));
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('refuses a voucher for another community, or one whose signature does not hold', async () => {
+    for (const voucher of [
+      await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET, 'ws-other'),
+      await directVoucher('newcomer', carolDevice, DAVE_DEVICE_SECRET),
+    ]) {
+      localStorage.clear();
+      newcomerArrives(voucher);
+      const sendMessage = wireAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(warn.mock.calls.flat().join(' ')).toContain('REFUSED admission voucher');
+      info.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('answers an unproven repair as joined: the seed floored at the newcomer arrival', async () => {
+    newcomerArrives(null);
+    graineHistoryFloor.mockResolvedValue({ 's-1': 4 });
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('sessions'));
+
+    // They still read everything from their arrival on: the server places that floor.
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'newcomer', ['s-1']);
+    const seeds = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle?.seeds;
+    expect(Number(seeds?.[0].firstIndex)).toBe(4);
+    info.mockRestore();
+  });
+
+  it('keeps the roots it recorded first: a later backdated arrival does not make a member rooted', async () => {
+    newcomerArrives(null);
+    wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await handleDistributionFrame(ask('history'));
+
+    // The server now claims the newcomer arrived before the proof existed.
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', BEFORE_THE_PROOF),
+    ]);
+    const sendMessage = wireAnswerer();
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('roots the creator of the community, the one member nobody else admitted', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice', AFTER_THE_PROOF),
+      member('newcomer', AFTER_THE_PROOF, { isCreator: true }),
+    ]);
+    const sendMessage = wireAnswerer();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    info.mockRestore();
+  });
+
+  it('hands nothing over, out loud, when the roster cannot be read', async () => {
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    const sendMessage = wireAnswerer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(ask('history'));
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(' ')).toContain('cannot verify');
+    warn.mockRestore();
+    info.mockRestore();
   });
 });

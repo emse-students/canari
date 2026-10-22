@@ -134,6 +134,11 @@ export interface ChannelJoinDto {
 export interface ChannelInviteDto {
   targetUserId: string;
   roleName?: string;
+  /**
+   * The admission this device signed for the target (channel-encryption section 25), stored on
+   * their membership row so a member can hand them the community's past.
+   */
+  admissionVoucher?: string;
 }
 
 export interface ChannelUpdateRoleDto {
@@ -234,6 +239,16 @@ export interface ChannelMemberDto {
    * (channel-encryption section 23). Absent is "not answered", never "none".
    */
   onlineDevices?: string[];
+  /**
+   * Whether this member created the community - the one member nobody else admitted. Absent from a
+   * social service older than the admission proof (channel-encryption section 25).
+   */
+  isCreator?: boolean;
+  /**
+   * The signed admission stored with this membership (channel-encryption section 25), or null when
+   * the member was admitted without one. Absent from an older social service.
+   */
+  admissionVoucher?: string | null;
 }
 
 /**
@@ -555,11 +570,17 @@ export class ChannelService {
     return res.json();
   }
 
-  /** Joins the calling user into the community behind an invite link. */
-  async acceptInvite(token: string): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
+  /**
+   * Joins the calling user into the community behind an invite link. `admissionVoucher` is the
+   * proof built from the link's fragment (channel-encryption section 25), when it carried one.
+   */
+  async acceptInvite(
+    token: string,
+    admissionVoucher?: string
+  ): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/invites/${encodeURIComponent(token)}/accept`,
-      { method: 'POST' }
+      { method: 'POST', body: JSON.stringify(admissionVoucher ? { admissionVoucher } : {}) }
     );
     await this.handleError(res);
     return res.json() as Promise<{ workspaceSlug: string; alreadyMember: boolean }>;

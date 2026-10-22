@@ -1297,6 +1297,16 @@ expires. Bounds that would mint a dead link - an expiry already past, a cap belo
 (`INVITE_EXPIRY_INVALID`, `INVITE_EXPIRY_IN_THE_PAST`, `INVITE_MAX_USES_INVALID`) rather than stored,
 since `inviteIsValid` would otherwise hand back a token dead on arrival with nothing saying why.
 
+### A membership carries the admission a member signed (2026-10-22)
+
+`channel_members."admissionVoucher"` (migration `107`, nullable text) holds the voucher a member's
+device signed for this membership: sent as `admissionVoucher` with an admin's add
+(`POST /api/channels/:channelId/members/invite`) and with a link's accept (body of
+`POST /api/channels/invites/:token/accept`, written onto an existing row too). The service checks
+only that it is base64url and at most 4096 characters (`ADMISSION_VOUCHER_INVALID` otherwise) - it
+cannot verify it, and the members do. The workspace roster serves it with `isCreator`. Why, and the
+format: [channel-encryption section 25](../protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22).
+
 ### A user id becomes a property name, and four sites spelled the refusal differently (2026-09-23)
 
 Reactions and poll answers are both stored as a map KEYED BY USER ID (`reactions`, `votesByUser`),

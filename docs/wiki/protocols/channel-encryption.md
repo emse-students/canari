@@ -1151,7 +1151,10 @@ group.** Entry is by external commit against a published `mls_group_info`, and e
 from a roster the server owns. A server that wanted future seeds would not read them out of a column
 any more - it would admit a device it controls. That is a strictly better position than before (it
 buys nothing retroactive, and every commit is visible to the members in the group's log) but it is
-not nothing, and no client currently WATCHES that log for an unexpected admission.
+not nothing, and no client currently WATCHES that log for an unexpected admission. **The PAST is
+handed over on a member's signature, not on the roster** since 2026-10-22: a member gives a
+community's history only to a newcomer whose admission it can verify
+([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)).
 
 **`history_visibility` is a policy guarantee, never a cryptographic one.** Only a device holding a
 seed can withhold it, so the rule is applied by the answering member. A modified client answers
@@ -3689,3 +3692,113 @@ a device-less leaf does; one device counted once), `graineStore.test.ts` and
 reading - a cold start with every other member online, then a second start: the first shows one
 `holds nothing ... at distribution epoch N - recorded, asking the next member` per member and then
 `is final at distribution epoch N`; the second shows no `asked ... no-seed-held` for that community.
+
+## 25. A member hands the past only to an admission it can verify (decided by the user 2026-10-22)
+
+**The decision** (user, 2026-10-22, *"Garder Partagé par défaut"*): a community stays `shared` by
+default - a newcomer reads what was written before they arrived - but a member's device hands that
+past over only to a newcomer whose ADMISSION it can verify itself, with a signature, never on the
+roster's word alone. The roster is the server's; a device that believes it hands every seed it
+holds to whoever the roster names. Seeds keep rotating when a new user arrives (D5, the rotation
+work of #2263, not this section).
+
+### Three ways to prove an admission were weighed
+
+| Option | Verdict |
+| --- | --- |
+| A member-committed add (the admitter's device commits the newcomer into the key group) | Rejected: a link newcomer is admitted while no member is online, and the key group is entered by external commit for every device after the first (section 20). It would change the join path, not prove it. |
+| An admin-signed roster | Rejected: one more signed object to keep current on every change, and a link admission happens with no admin present. |
+| **A signed invitation - a voucher stored with the membership** | **Chosen.** Each real way in already passes through a member's device (the panel add, the link shown): that device signs, the voucher rides the membership row, any member verifies it with keys it already holds. |
+
+### The join paths, and what each carries
+
+| Path (`social-service`) | Who signs | Voucher |
+| --- | --- | --- |
+| Creating the community | nobody - the creator is a root | none needed |
+| An admin adds a member from the panel (`inviteToChannel`) | the admin's device, at the add | `direct`, sent with the add |
+| A newcomer follows an invite link (`acceptWorkspaceInvite`) | the device that SHOWED the link, at display; the newcomer redeems it | `link`, sent with the accept |
+| A link shown by an old client, or copied without its `#` part | nobody | none: the newcomer joins, and reads from their arrival on |
+| Any other way onto the roster | nobody | none: answered as `joined` |
+
+**An old invite link keeps working for joining and gives no past until it is re-issued** - the cost
+the user accepted. A link shown by this version carries its proof after the `#`; one shown before it
+does not, and its newcomer reads from their arrival on until an admin adds them again or they follow
+a fresh link (a member who is already on the roster and follows a fresh link has the voucher
+written onto their row).
+
+### The trust rule (`frontend/src/lib/utils/graine/admissionGate.ts`)
+
+An asker's admission is PROVEN to an answering device when one of these holds:
+
+1. **Self**: the asker is this device's own account (a new device of mine).
+2. **Root**: the asker arrived before the proof existed (`ADMISSION_PROOF_SINCE`, 2026-10-22), or
+   created the community. The roots are recorded ONCE per community on this device, with each
+   root's arrival date, the first time they are needed; a member stays a root only while the roster
+   shows THAT arrival, so a backdated arrival or a renamed creator later moves nothing, and a member
+   who leaves and comes back needs a voucher like anybody new.
+3. **Vouched**: the asker's row carries a voucher about THIS community and THIS member, not signed
+   by the member it admits, whose signatures verify under the signer device's credential key (from
+   the key group's tree, as a Graine v2 endorsement - `deviceSignatureKeysFor`, shared with
+   `checkSeedEndorsement`), and whose signer is admitted in turn. A chain of vouchers ends at a root.
+
+`pastPolicyFor(frame)` is THE gate, and both answer paths call it - the HISTORY bundle
+(`gatherCommunityHistory`) and the SESSIONS repair (`gatherNamedSessions`) - so the two cannot
+disagree about a member. It returns `joined` when the community is set to it, when the admission is
+not proven (`info`: a decision, not a loss), or when the roster cannot be read (`warn`: fail closed).
+
+**Not proven is never refused whole**: the answer is the one a `joined` community gives - nothing
+from before the asker's arrival, everything from it on, under the same server-computed floor.
+
+### The wire
+
+Every signed structure begins with its own length-prefixed label, as Graine v2's do: the label keeps
+one signature from verifying as another, and its leading `0x00` keeps a device-key signature from
+ever being an MLS `SignContent` (`mls-core/src/graine_signature.rs`). `lp` is a u32 big-endian length
+then the bytes; `be64` a u64 big-endian count of milliseconds.
+
+```text
+A = lp("canari-graine-admit-direct-v1") || lp(workspaceId) || lp(subject) || lp(signerUser) || lp(signerDevice) || be64(issuedAt)
+L = lp("canari-graine-admit-link-v1")   || lp(workspaceId) || lp(signerUser) || lp(signerDevice) || lp(linkPublicKey) || be64(issuedAt)
+R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(linkPublicKey)
+```
+
+- **direct**: the admin's device signs `A` with its MLS credential key (`signWithDeviceCredential`).
+- **link**: the device showing the link mints a fresh Ed25519 pair, signs `L` with its credential
+  key, and puts `L`'s fields, that signature and the link's SECRET in the fragment
+  (`canari-graine-invite-v1`, base64url) - a browser never sends a fragment to a server. The join page
+  takes it, drops it from the address at once, keeps it in the tab's session storage across a
+  sign-in (never in `returnTo`), and the newcomer signs `R` with the secret. The voucher carries `L`'s
+  fields and both signatures, and verifies with no secret.
+- **The voucher** (`canari-graine-admission-v1`, base64url, at most 4096 characters) is stored in
+  `channel_members."admissionVoucher"` (migration `107`) and served on the roster with `isCreator`.
+  The server checks its alphabet and length and nothing else: it cannot verify it, and need not.
+
+### What it does not do, stated
+
+- It proves a USER was admitted, not that a device is theirs: a device key is trusted as a Graine
+  v2 endorsement trusts it (BasicCredential's limit, section 21). Device cross-signing is that work.
+- A device that first checks a community after the cut records its roots from the roster as it then
+  stands.
+- An invite link is a bearer proof: whoever holds the full link, `#` part included, can be admitted
+  with the past. Share it as you would the community itself.
+- A newcomer admitted by an older client, or through a link without its `#` part, reads from their
+  arrival on until re-admitted.
+
+### Order with the other drafts
+
+Merges after #2262 (salon scope) and #2264 (visibility floors). #2264 moves the visibility read into
+`seedsTheAskerMayRead`; on rebase, its `historyVisibilityFor(...) === 'shared'` becomes
+`(await pastPolicyFor(frame)) === 'shared'`, so the gate stays the ONE function both paths call.
+#2263 (rotation on a new user) and #2255 (paging) touch neither the gate nor the voucher.
+
+Tests: `graineAdmission.test.ts` (the leading `0x00`, round trips, every tampering: subject,
+community, signer, forged link key, malformed bytes), `frameHandler.test.ts` (an unproven newcomer is
+floored on both paths; direct, link and chained admissions hand the past; an unrooted signer, a
+copied voucher, another community, a bad signature, a backdated arrival do not; the creator is a
+root; an unreadable roster fails closed), `inviteFragment.test.ts`, `historyOverlayStack.test.ts`
+(the fragment leaves the address), `useChannelWorkspaces.svelte.test.ts` (the add carries the
+voucher; a signing failure still adds, without it), `channel.service.spec.ts` and
+`mls-device-guard.spec.ts` (stored on accept and on add, an invalid voucher refused, served on the
+roster). **Owed on the rig** (proposed COMM-26..30): a fresh link with its fragment gives the past;
+an old link joins and reads from arrival; an admin add gives the past; a new device of a rooted
+member gets the past; the `admission is not proven` line on the answerer for an unproven newcomer.

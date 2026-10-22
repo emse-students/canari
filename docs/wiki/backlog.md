@@ -40,6 +40,15 @@ page and its review, then A; then a `minClientVersion` carrying C once both stor
 limits:
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
 
+## P1 - A community's past goes only to a proven admission: BUILT (draft PR), owed its migration, its readings and one decision (2026-10-22)
+
+Decided by the user: communities stay `shared` by default, the past goes only to an admission a
+member can verify, and a new user's arrival rotates (D5, #2263). Owed, in order: merge after #2262
+and #2264; migration `107` applied (waits for the user's yes); the rig rows COMM-26..30; and one
+decision - whether the cut date (`ADMISSION_PROOF_SINCE`, 2026-10-22) should be the date the change
+reaches production instead. Old invite links give no past until re-issued. Design:
+[channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22).
+
 ## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)
 
 `purgeDeviceFootprint` deletes a revoked device's rows in every group. For a member whose interval

@@ -10,10 +10,10 @@ import {
   announceGraineRepair,
   cacheGraineSession,
   cachedGraineSession,
-  historyVisibilityFor,
   requireGraineRuntime,
 } from './runtime';
 import { historyFloorsFor } from './historyBoundary';
+import { pastPolicyFor } from './admissionGate';
 import { mirrorGraineSeed } from './graineMirror';
 import { forgetAskedSession, noteHistoryHeldNothing, noteSeedUnavailable } from './repair';
 import { seedFromWire, storedV2From, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
@@ -499,7 +499,9 @@ async function gatherNamedSessions(
     );
   }
 
-  if (historyVisibilityFor(frame.workspaceId) === 'shared') {
+  // THE PAST GOES ONLY TO AN ADMISSION THIS DEVICE CAN VERIFY (section 25): a community sharing
+  // its past answers an unproven asker exactly as a `joined` one does - from their arrival on.
+  if ((await pastPolicyFor(frame)) === 'shared') {
     return { seeds: held.map(toWireSeed), missing, truncated };
   }
 
@@ -537,7 +539,7 @@ async function gatherNamedSessions(
     // names either a client that has not learned the rule yet or one that is not applying it.
     console.info(
       `[GRAINE] withholding ${withheld.length} seed(s) from ${frame.sender}: community ` +
-        `${frame.workspaceId.slice(0, 8)} is set to 'joined' and they hold nothing that member may read`
+        `${frame.workspaceId.slice(0, 8)} is answered as 'joined' and they hold nothing that member may read`
     );
   }
   return { seeds, missing, truncated };
@@ -561,9 +563,12 @@ async function gatherCommunityHistory(
   storage: IStorage,
   deviceKeyB64: string
 ): Promise<GatheredSeeds | null> {
-  if (historyVisibilityFor(frame.workspaceId) === 'joined') {
+  // ONE GATE FOR BOTH PATHS (section 25): `joined` is the community's setting, or a sharing
+  // community's answer to an asker whose admission this device cannot verify - which
+  // `pastPolicyFor` has already said.
+  if ((await pastPolicyFor(frame)) === 'joined') {
     console.info(
-      `[GRAINE] not sending history to ${frame.sender}: community ${frame.workspaceId.slice(0, 8)} is set to 'joined'`
+      `[GRAINE] not sending history to ${frame.sender}: community ${frame.workspaceId.slice(0, 8)} is answered as 'joined'`
     );
     return null;
   }

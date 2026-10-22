@@ -26,6 +26,41 @@ export type EndorsementVerdict =
 /** Which key proved a valid endorsement: the key group's tree, or the server's published keys. */
 export type EndorsementSource = 'tree' | 'server';
 
+/** The keys a device's signature is checked against, and where they came from. */
+export type DeviceSignatureKeysFor =
+  | { kind: 'keys'; keys: Uint8Array[]; source: EndorsementSource }
+  | { kind: 'unanswered'; why: string };
+
+/**
+ * The credential key(s) a device's signature is checked against: the ONE key the key group's TREE
+ * holds for `userId:deviceId` when that device is a member - a failure against it is a refusal, not
+ * a cue to try the server - and otherwise the keys the server published for it, the trust a
+ * BasicCredential already gives the server and no more (decided by the user, section 21).
+ *
+ * Shared by the two things a device's credential key signs and a member checks: a v2 seed's
+ * endorsement, and an admission voucher (section 25).
+ *
+ * @param keyGroupId The key group whose tree names the device.
+ */
+export async function deviceSignatureKeysFor(
+  mls: IMlsService,
+  keyGroupId: string,
+  userId: string,
+  deviceId: string
+): Promise<DeviceSignatureKeysFor> {
+  const identity = `${userId}:${deviceId}`;
+  const treeKey = await mls.memberSignatureKey(keyGroupId, identity);
+  if (treeKey) return { kind: 'keys', keys: [treeKey], source: 'tree' };
+  const published = await mls.fetchDeviceSignatureKeys(userId, deviceId);
+  if (published.kind === 'unanswered') {
+    return {
+      kind: 'unanswered',
+      why: `${identity} has left the tree and its published keys are unreachable (${published.detail})`,
+    };
+  }
+  return { kind: 'keys', keys: published.keys, source: 'server' };
+}
+
 /**
  * Checks a v2 seed's endorsement against the minter device's signature key (channel-encryption
  * section 21): the key the key group's TREE holds for that device when it is still a member - the
@@ -55,23 +90,14 @@ export async function checkSeedEndorsement(
   }
 
   const identity = `${v2.minterUserId}:${v2.minterDeviceId}`;
-  const treeKey = await mls.memberSignatureKey(keyGroupId, identity);
-  let candidates: Uint8Array[];
-  let source: EndorsementSource;
-  if (treeKey) {
-    candidates = [treeKey];
-    source = 'tree';
-  } else {
-    const published = await mls.fetchDeviceSignatureKeys(v2.minterUserId, v2.minterDeviceId);
-    if (published.kind === 'unanswered') {
-      return {
-        kind: 'unanswered',
-        why: `${identity} has left the tree and its published keys are unreachable (${published.detail})`,
-      };
-    }
-    candidates = published.keys;
-    source = 'server';
-  }
+  const resolved = await deviceSignatureKeysFor(
+    mls,
+    keyGroupId,
+    v2.minterUserId,
+    v2.minterDeviceId
+  );
+  if (resolved.kind === 'unanswered') return resolved;
+  const { keys: candidates, source } = resolved;
   if (candidates.length === 0) {
     return {
       kind: 'refused',

@@ -1,0 +1,94 @@
+import {
+  decodeInviteLinkGrant,
+  encodeAdmissionVoucher,
+  encodeDirectAdmission,
+  encodeInviteLinkGrant,
+  mintInviteLinkGrant,
+  redeemInviteLinkGrant,
+} from '$lib/crypto/graineAdmission';
+import { platformGraineSignatureEngine } from '$lib/mls-client/platformGraineSignatureEngine';
+import { requireGraineRuntime } from './runtime';
+
+/**
+ * Where an admission proof is MADE (channel-encryption section 25) - one function per way a
+ * newcomer arrives. What a member does with one is `admissionGate.ts`.
+ *
+ * Each signs with THIS device's MLS credential key, the key its leaf in the community's key group
+ * carries, so a member checks it against a key it already agreed on.
+ */
+
+/**
+ * The voucher this device signs when its member adds `subjectUserId` from the community panel,
+ * sent with the invitation and stored on the newcomer's membership row.
+ *
+ * @throws When the messaging layer is not running here - the caller says so and invites anyway: an
+ *   admission without a proof still admits, it gives no past.
+ */
+export async function signDirectAdmission(
+  workspaceId: string,
+  subjectUserId: string
+): Promise<string> {
+  const { mlsService, userId } = requireGraineRuntime('cannot sign an admission');
+  const statement = {
+    workspaceId,
+    subjectUserId: subjectUserId.toLowerCase(),
+    signer: { userId, deviceId: mlsService.getDeviceId() },
+    issuedAt: Date.now(),
+  };
+  const signature = await mlsService.signWithDeviceCredential(encodeDirectAdmission(statement));
+  console.info(
+    `[GRAINE] admission of ${statement.subjectUserId.slice(0, 8)} to community ${workspaceId.slice(0, 8)} signed by device ${statement.signer.deviceId.slice(0, 8)}`
+  );
+  return encodeAdmissionVoucher({ kind: 'direct', ...statement, signature });
+}
+
+/**
+ * The fragment an invite link to `workspaceId` carries, minted by THIS device each time it shows
+ * the link: a fresh link key, endorsed by this device. Nothing is stored - two displays give two
+ * fragments for one server token, both valid, so any member's device that shows the link can stand
+ * behind it without sharing a secret with any other.
+ *
+ * It carries a SECRET - whoever holds it can admit anyone with a proof - so it lives only in the
+ * URL's fragment, which a browser never sends to a server.
+ *
+ * @returns The fragment, without its `#`.
+ */
+export async function mintInviteFragment(workspaceId: string): Promise<string> {
+  const { mlsService, userId } = requireGraineRuntime('cannot stand behind an invite link');
+  const signer = { userId, deviceId: mlsService.getDeviceId() };
+  const grant = await mintInviteLinkGrant(
+    workspaceId,
+    signer,
+    Date.now(),
+    mlsService.graineSignatureEngine(),
+    (message) => mlsService.signWithDeviceCredential(message)
+  );
+  console.info(
+    `[GRAINE] invite link to community ${workspaceId.slice(0, 8)} endorsed by device ${signer.deviceId.slice(0, 8)}`
+  );
+  return encodeInviteLinkGrant(grant);
+}
+
+/**
+ * The voucher of `userId` following an invite link whose fragment is `fragment`: the link's grant,
+ * redeemed for them with the link's secret. Sent with the accept call and stored on the new
+ * membership row.
+ *
+ * Needs no messaging layer - only this platform's Ed25519 engine - because joining comes before it
+ * on a new device: a first sign-in reaches the join page before any MLS client exists.
+ *
+ * @throws `AdmissionFormatError` for a fragment that is not a grant - the caller says so and joins
+ *   anyway, with no past.
+ */
+export async function voucherFromInviteFragment(fragment: string, userId: string): Promise<string> {
+  const grant = decodeInviteLinkGrant(fragment);
+  const voucher = await redeemInviteLinkGrant(
+    grant,
+    userId.toLowerCase(),
+    platformGraineSignatureEngine()
+  );
+  console.info(
+    `[GRAINE] invite link to community ${grant.workspaceId.slice(0, 8)} redeemed, endorsed by ${grant.signer.userId.slice(0, 8)}:${grant.signer.deviceId.slice(0, 8)}`
+  );
+  return encodeAdmissionVoucher(voucher);
+}
