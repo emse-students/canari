@@ -734,7 +734,7 @@ pub(crate) fn store_graine_seeds_json(
         // is one the app admitted seeds for. Any other is left to the app, which reads the same
         // answer from its durable queue at its next start and checks it fully.
         if seed["relayed"].as_bool() == Some(true)
-            && !mirror_holds_channel(data_dir, entry.channel_id)
+            && !mirror_holds_channel(data_dir, key, entry.channel_id)
         {
             left_to_the_app += 1;
             continue;
@@ -759,18 +759,21 @@ pub(crate) fn store_graine_seeds_json(
 
 /// Whether the mirror holds at least one session of `channel_id` - a salon whose seeds the app has
 /// admitted. Read without the lock, as [`read_graine_seed`] reads: every writer renames a whole
-/// file over the old one. An absent or unreadable file holds nothing.
+/// file over the old one.
+///
+/// THE MIRROR IS SEALED, so it is opened with `key` through [`read_graine_mirror`], the one reader -
+/// a plain-text parse fails on every sealed file, and every relayed seed would then be left to the
+/// app. An absent file holds nothing; an unreadable one holds nothing either, and says so at ERROR,
+/// because a mirror this device wrote and cannot open is not an expected state.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
-fn mirror_holds_channel(data_dir: &std::path::Path, channel_id: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string(data_dir.join("graine_seeds.json")) else {
-        return false;
-    };
-    match serde_json::from_str::<serde_json::Value>(&text) {
-        Ok(root) => root[channel_id]
+fn mirror_holds_channel(data_dir: &std::path::Path, key: &CacheKey, channel_id: &str) -> bool {
+    match read_graine_mirror(data_dir, Some(key)) {
+        Ok(Some(root)) => root[channel_id]
             .as_object()
             .is_some_and(|sessions| !sessions.is_empty()),
+        Ok(None) => false,
         Err(e) => {
-            log::warn!("[GRAINE_PUSH] mirror unparsable while checking salon {channel_id}: {e}");
+            log::error!("[GRAINE_PUSH] mirror unreadable while checking salon {channel_id}: {e}");
             false
         }
     }
@@ -2079,7 +2082,10 @@ mod graine_mirror_tests {
             { "channelId": "other-salon", "sessionId": "s-b", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true },
             { "channelId": "new-salon", "sessionId": "s-c", "seedB64": "c2VlZA==", "createdAt": 4 },
         ]);
-        assert_eq!(store_graine_seeds_json(&dir, &seeds.to_string()), 2);
+        assert_eq!(
+            store_graine_seeds_json(&dir, Some(&KEY), &seeds.to_string()),
+            2
+        );
         assert!(mirror(&dir)["read-salon"].get("s-a").is_some());
         assert!(mirror(&dir).get("other-salon").is_none());
         assert!(mirror(&dir)["new-salon"].get("s-c").is_some());
