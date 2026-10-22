@@ -243,6 +243,29 @@ phone state the reading would have had with the pending commits drained first. A
 same newcomer ended `ALREADY_MEMBER` on the phone, a duplicate that is expected. **Not fixed here:** the
 fix is native and MLS, its own work package with an adversarial review.
 
+## Hardware reading owed (user): the encryption PIN unlock on the iPhone, TestFlight 1.4.0 (100400003) (2026-10-22)
+
+Read over WDA on the iPhone 12 (TestFlight `1.4.0 (100400003)`, the alpha.3 build, `dev.canari-emse.fr`,
+the bench account the phone holds). **Not concluded: no regression is claimed.**
+
+- **Creating a PIN works.** After a reset (`PIN oublie ?`, `Reinitialiser mon PIN`, confirm), the six
+  digits tapped one per 400 ms and `Creer mon PIN` opened the app on the feed.
+- **Unlocking did not answer under WDA.** After the app was terminated and relaunched, the same six
+  digits tapped one per 500 ms and `Deverrouiller` left the gate up for more than 15 s, three times,
+  with no error text. A wrong PIN on this phone had shown `PIN incorrect : ce PIN ne correspond pas a
+  celui enregistre pour ce compte`, so this is neither a refusal nor a message. The WebContent process
+  stayed alive (the feed behind kept playing its media, network lines every ~10 s, no crash).
+- **The manual-entry variant is not clean.** Typing the six digits into the text field after a fresh
+  relaunch showed seven dots, so a leftover character or a double type came with it; its result (the
+  gate staying up) proves nothing.
+- **What could not be read.** A TestFlight build is not inspectable from Windows, so the WebView console
+  around the tap was not captured (the device syslog carries native and WebKit lines only). TestFlight
+  no longer offered `100400001`, so there is no A/B on the phone. A diff of the four alphas found no file
+  of the PIN, unlock, keystore or WASM path changed between alpha.1 and alpha.4.
+- **Owed:** one unlock by a human finger on that phone (`PIN oublie ?`, reset, a PIN of the user's
+  choosing, relaunch, unlock). If it also hangs, this is a P1 to bisect; if it answers, the cause is the
+  way a tap reaches the button over WDA. The phone is left on the gate, signed in, until then.
+
 ## P3 - iPhone sign-in: the login page stays on a disabled "Redirection..." after the in-app sheet is cancelled (read 2026-10-22)
 
 On the iPhone (TestFlight `1.4.0`, build 100400001, `dev.canari-emse.fr`), cancelling the identity sheet
