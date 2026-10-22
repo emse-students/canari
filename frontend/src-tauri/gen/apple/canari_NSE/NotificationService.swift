@@ -109,6 +109,13 @@ class NotificationService: UNNotificationServiceExtension {
       // clients; here it is replaced by one in the phone's own language.
       applyReactionContent(userInfo: userInfo, content: content)
       finish()
+    case "call_ring":
+      // The GENERIC ring alert of an iPhone with no VoIP token (calls.service `ringViaFcm`, no native
+      // ring until CALLS_NATIVE_RING_COMPILED). It is NOT an MLS message: falling to the default
+      // branch would overwrite the server's "Appel entrant" with the encrypted-message fallback and
+      // add message buttons. The server's title and body are KEPT; only the filing is set here.
+      applyGenericCallRing(userInfo: userInfo, content: content)
+      finish()
     case "social", "form_reminder":
       // Not encrypted, and since 2026-08-19 not composed by the server either: the payload carries
       // a `contentKey` and the two untranslatable pieces, and the sentence is written here in the
@@ -125,6 +132,31 @@ class NotificationService: UNNotificationServiceExtension {
       finish()
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
+    }
+  }
+
+  /// Files the generic incoming-call alert: stacked under its conversation, opening it on a tap, and
+  /// time-sensitive so it breaks through Focus. The wording is the server's own (localized from the
+  /// device's `push_token.locale`, no caller and no conversation name) and is left untouched. The
+  /// deep link carries NO `acceptCall`: nothing native answers a call yet, the app only opens the
+  /// conversation. `canariCallId` lets a later `call_ring_end` remove this banner.
+  private func applyGenericCallRing(
+    userInfo: [AnyHashable: Any],
+    content: UNMutableNotificationContent
+  ) {
+    let groupId = Self.string(userInfo["groupId"]) ?? ""
+    let callId = Self.string(userInfo["callId"]) ?? ""
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .timeSensitive
+    }
+    if groupId.isEmpty {
+      NSLog("[CanariNSE] call_ring with no groupId - banner kept without a deep link")
+    } else {
+      content.threadIdentifier = groupId
+      content.userInfo["deepLink"] = "fr.emse.canari://chat/\(groupId)"
+    }
+    if !callId.isEmpty {
+      content.userInfo["canariCallId"] = callId
     }
   }
 

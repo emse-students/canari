@@ -1016,13 +1016,14 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    */
   private async ringViaFcm(pt: PushToken, dataFields: Record<string, string>): Promise<boolean> {
     // Names removed for iOS: `...anonymous` below and FCM's own `data` both reach the APNs payload.
+    const toIos = pt.platform === 'ios';
     const anonymous = Object.fromEntries(
       Object.entries(dataFields).filter(([key]) => !CALL_NAME_FIELDS.has(key))
     );
     try {
       await getMessaging().send({
         token: pt.token,
-        data: pt.platform === 'ios' ? anonymous : dataFields,
+        data: toIos ? anonymous : dataFields,
         android: { priority: 'high', ttl: 60_000 },
         apns: {
           payload: {
@@ -1036,7 +1037,19 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
             },
             ...anonymous,
           },
-          headers: { 'apns-push-type': 'alert', 'apns-priority': '10' },
+          headers: toIos
+            ? {
+                'apns-push-type': 'alert',
+                'apns-priority': '10',
+                // Dead after the ring window, like Android's 60 s ttl: a phone that was off must not
+                // show a ring for a call long over. The collapse id replaces a re-sent ring.
+                'apns-expiration': String(Math.floor(Date.now() / 1000) + CALL_RING_TIMEOUT_SEC),
+                // APNs refuses a collapse id over 64 bytes (a callId may be up to 128): none then.
+                ...(Buffer.byteLength(dataFields.callId) <= 64
+                  ? { 'apns-collapse-id': dataFields.callId }
+                  : {}),
+              }
+            : { 'apns-push-type': 'alert', 'apns-priority': '10' },
         },
       });
       return true;

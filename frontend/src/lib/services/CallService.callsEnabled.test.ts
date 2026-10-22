@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
 import { CallService } from './CallService';
@@ -11,6 +11,12 @@ import { isBlockedWith } from '$lib/users/blocks';
  */
 
 vi.mock('$lib/features', () => ({ CALLS_ENABLED: true, CALLS_VIDEO_ENABLED: true }));
+/** What the server's kill switch says; mutable so a test can close calls. */
+const server = vi.hoisted(() => ({ mode: 'audio' as 'off' | 'audio' | 'audio_video' }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverCallsMode: () => server.mode,
+}));
 vi.mock('$lib/users/blocks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/users/blocks')>()),
   isBlockedWith: vi.fn(async () => false),
@@ -37,6 +43,26 @@ const INVITE = {
 };
 
 describe('CallService with calls enabled', () => {
+  afterEach(() => {
+    server.mode = 'audio';
+  });
+
+  it('does not ring while the server kill switch reads off', async () => {
+    server.mode = 'off';
+    const service = new CallService(fakeMls);
+
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      INVITE,
+      'me@example.org',
+      'device-1'
+    );
+
+    expect(get(service.callState)).toBe('idle');
+    expect(service.currentCallId).toBeNull();
+  });
+
   it('rings on an invite the held-off build ignores', async () => {
     const service = new CallService(fakeMls);
 

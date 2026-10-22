@@ -183,8 +183,8 @@ class MainActivity : TauriActivity() {
         pushForeground(isInForeground)
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
         webView.addJavascriptInterface(GestureBridge(), "canariGestures")
-        // The ongoing-call service (WP-C-BG-A) exists only in a build that places calls; the page
-        // reads an absent `canariCall` as exactly that.
+        // The ongoing-call service (WP-C-BG-A) is declared in the main manifest since the calls flip;
+        // the page reads an absent `canariCall` as a build that lost the declaration.
         CallBridge.attach(webView)
         if (CallBridge.serviceDeclared(this)) {
             webView.addJavascriptInterface(CallBridge.JsInterface(applicationContext), "canariCall")

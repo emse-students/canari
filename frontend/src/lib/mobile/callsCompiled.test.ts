@@ -172,13 +172,98 @@ describe('the committed files are the ONLY carriers: no build step patches a cal
   // Before the flip a pre-release got `audio` from a PlistBuddy branch of ios.yml and the Android
   // service from a gradle overlay on VITE_DEPLOY_ENVIRONMENT. Both are deleted: a build that
   // differs from the committed files is a build the tests above did not read.
-  it('ios.yml patches no UIBackgroundModes entry', () => {
-    expect(iosWorkflow).not.toContain('UIBackgroundModes');
+  it('ios.yml WRITES no UIBackgroundModes entry (it may print the built ones)', () => {
+    // Write commands only: PlistBuddy Add/Set/Delete/Merge/Import and plutil insert/replace/remove.
+    // A read-only `Print :UIBackgroundModes` is the CI step that shows what the archive declares.
+    const writes = iosWorkflow
+      .split('\n')
+      .filter((line) => line.includes('UIBackgroundModes'))
+      .filter(
+        (line) =>
+          /(Add|Set|Delete|Merge|Import|Clear)s+:UIBackgroundModes/.test(line) ||
+          /plutil\s+-(insert|replace|remove)\s+UIBackgroundModes/.test(line)
+      );
+    expect(writes, 'ios.yml writes UIBackgroundModes').toEqual([]);
+  });
+
+  it('ios.yml prints the built background modes and microphone string, read-only', () => {
+    expect(iosWorkflow).toContain('Print :UIBackgroundModes" "$BUILT_PLIST"');
+    expect(iosWorkflow).toContain('Print :NSMicrophoneUsageDescription" "$BUILT_PLIST"');
   });
 
   it('build.gradle.kts merges no calls overlay', () => {
     expect(androidGradle).not.toContain('src/calls/');
     expect(androidGradle).not.toContain('VITE_DEPLOY_ENVIRONMENT');
+  });
+});
+
+describe('the generic ring alert of an iPhone with no VoIP token is filed, not overwritten', () => {
+  const nse = read(resolve(APPLE, 'canari_NSE/NotificationService.swift'));
+
+  /** The text from `start` up to the next `end` after it, or fail naming what went missing. */
+  function between(src: string, start: string, end: string, what: string): string {
+    const from = src.indexOf(start);
+    expect(from, `${what} was renamed or removed`).toBeGreaterThanOrEqual(0);
+    const to = src.indexOf(end, from + start.length);
+    expect(to, `the end of ${what} was not found`).toBeGreaterThan(from);
+    return src.slice(from, to);
+  }
+
+  it('the extension has a call_ring case that never reaches the MLS ladder', () => {
+    // Without it the type falls to handleMlsMessage, which replaces the server's "Appel entrant"
+    // with the encrypted-message fallback and adds message buttons.
+    const branch = between(nse, 'case "call_ring":', 'case "social"', 'the call_ring case');
+    expect(branch).toContain('applyGenericCallRing');
+    expect(branch).toContain('finish()');
+    expect(branch).not.toContain('handleMlsMessage');
+  });
+
+  it('keeps the server wording, files it under its conversation and opens it without answering', () => {
+    const body = between(
+      nse,
+      'private func applyGenericCallRing(',
+      '/// Writes a server-sent',
+      'applyGenericCallRing'
+    );
+    expect(body).not.toMatch(/content\.(title|body|subtitle) =/);
+    expect(body).toContain('content.threadIdentifier = groupId');
+    expect(body).toContain('"fr.emse.canari://chat/\\(groupId)"');
+    expect(body).not.toContain('acceptCall');
+    expect(body).toContain('.timeSensitive');
+    expect(body).toContain('content.userInfo["canariCallId"] = callId');
+  });
+
+  it('call_ring_end takes the delivered alert off the lock screen', () => {
+    const end = between(
+      pushMm,
+      '@"call_ring_end"]) {',
+      'BOOL isWelcome',
+      'the call_ring_end branch'
+    );
+    expect(end).toContain('removeDeliveredNotificationsWithIdentifiers');
+    expect(end).toContain('canariCallId');
+  });
+});
+
+describe('project.yml repeats the plist declarations, so an xcodegen run cannot drop them', () => {
+  const projectYml = read(resolve(APPLE, 'project.yml'));
+
+  it('the same background modes, in the same order', () => {
+    const list = captured(
+      projectYml,
+      /UIBackgroundModes: \[([^\]]*)\]/,
+      'UIBackgroundModes in project.yml'
+    );
+    expect(list.split(',').map((s) => s.trim())).toEqual(backgroundModes());
+  });
+
+  it('the same microphone purpose string', () => {
+    const text = captured(
+      projectYml,
+      /NSMicrophoneUsageDescription: (.*)\r?\n/,
+      'NSMicrophoneUsageDescription in project.yml'
+    );
+    expect(text.trim()).toBe(microphonePurposes()[0].text);
   });
 });
 

@@ -29,6 +29,12 @@ import { flushMacrotask } from '../../test/flush';
 /** Mutable: the audio-only describe turns video off; every other test runs a build that has it. */
 const features = vi.hoisted(() => ({ CALLS_ENABLED: true, CALLS_VIDEO_ENABLED: true }));
 vi.mock('$lib/features', () => features);
+/** What the server's kill switch says; mutable so a test can close calls. */
+const serverSwitch = vi.hoisted(() => ({ mode: 'audio' as 'off' | 'audio' | 'audio_video' }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverCallsMode: () => serverSwitch.mode,
+}));
 vi.mock('$lib/users/blocks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/users/blocks')>()),
   isBlockedWith: vi.fn(async () => false),
@@ -1768,6 +1774,23 @@ describe('the ring window, both sides', () => {
     );
     expect(notificationPreferences.callsAllowed).toHaveBeenCalledWith('group-1');
     expect(get(service.callState)).toBe('idle');
+  });
+
+  it('does not ring while the server kill switch reads off', async () => {
+    serverSwitch.mode = 'off';
+    try {
+      const service = new CallService(fakeMls);
+      await service.handleCallSignal(
+        'peer@example.org',
+        'group-1',
+        invite(5),
+        'me@example.org',
+        'device-1'
+      );
+      expect(get(service.callState)).toBe('idle');
+    } finally {
+      serverSwitch.mode = 'audio';
+    }
   });
 
   it('does not ring for an invite that carries no window', async () => {
