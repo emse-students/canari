@@ -44,7 +44,9 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
   INVITE_ROLE_NOT_GRANTABLE,
+  permissionsCover,
   PIN_REQUIRES_MODERATION,
+  REMOVAL_EXCEEDS_ACTOR,
   ROLE_CHANGE_EXCEEDS_ACTOR,
   roleGrantsChannelManagement,
   roleGrantsModeration,
@@ -1094,8 +1096,7 @@ export class ChannelService implements OnApplicationBootstrap {
     const baseRole = this.baseMemberRole(roles);
 
     // COUNTING THE USE IS WHAT ADMITS, in ONE statement that carries the bound. The read above is a
-    // preview only: two accepts that both read the last free use used to both join, then both
-    // increment past `maxUses`. The conditional UPDATE takes the invite's row lock, so a concurrent
+    // preview only; the bound is decided here. The conditional UPDATE takes the invite's row lock, so a concurrent
     // accept waits for this one and then re-evaluates the WHERE against the committed count - and
     // the member is written in the same transaction, so a refused claim leaves nobody behind.
     const claimed = await this.inviteRepo.manager.transaction(async (tx) => {
@@ -1979,11 +1980,24 @@ export class ChannelService implements OnApplicationBootstrap {
       this.refuseRoleChangeBeyondActor('create', input.workspaceId, input.actorUserId);
     }
 
+    // THE RANK IS THE SERVER'S, and the body's `priority` is not read: the lowest role is what
+    // joining grants (`baseMemberRole`) and the highest decides who is promoted when a community
+    // loses its last administrator, so neither end is a caller's to choose. A new role ranks just
+    // above the base role. The column has no default, so it is always set here.
+    const base = this.baseMemberRole(
+      await this.roleRepo.find({ where: { workspaceId: input.workspaceId } })
+    );
+    const priority = (base?.priority ?? 0) + 1;
+
     const role = this.roleRepo.create({
       workspaceId: input.workspaceId,
       name: input.name,
+      priority,
       permissions: input.permissions,
     });
+    this.logger.log(
+      `[ROLE] created workspace=${input.workspaceId} priority=${priority} perms=${(input.permissions ?? []).length} by=${input.actorUserId.slice(0, 8)}`
+    );
     return this.roleRepo.save(role);
   }
 
@@ -2630,6 +2644,9 @@ export class ChannelService implements OnApplicationBootstrap {
     const base = this.baseMemberRole(roles);
     if (!requestedName) return base;
     const wanted = this.mapRoleInputToWorkspaceRoleName(requestedName);
+    // "Membre" is how every client names the ordinary invitation, so it means the base role even in
+    // a community whose lowest role is called something else.
+    if (wanted === 'Membre' || wanted === base?.name) return base;
     const role = roles.find((r) => r.name === wanted) ?? null;
     if (!role || role.id === base?.id) return role;
 
@@ -2822,33 +2839,66 @@ export class ChannelService implements OnApplicationBootstrap {
     return { success: true };
   }
 
-  /** Kicks a member from the workspace entirely (removes from all channels). Requires MANAGE_WORKSPACE, MANAGE_CHANNEL, or KICK_MEMBERS permission. */
-  async kickFromWorkspace(workspaceId: string, targetUserId: string, actorUserId: string) {
-    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
-    if (!workspace) throw new NotFoundException('Workspace not found');
-
+  /**
+   * The actor's right to remove `targetUserId` from this workspace or one of its salons - refused
+   * here, never returned. THE ONE GATE of both removals (`kickFromWorkspace`,
+   * `removeMemberFromChannel`), so they cannot disagree about who may remove whom.
+   *
+   * The actor holds `member.kick`, `channel.manage` or `workspace.manage`, the target is a member,
+   * and the target's roles grant nothing the actor does not hold (`permissionsCover`, the bound
+   * every role change asks): an actor may not take away more than they hold.
+   *
+   * @throws ForbiddenException `REMOVAL_EXCEEDS_ACTOR` when the target holds more than the actor
+   */
+  private async assertActorMayRemoveMember(
+    workspaceId: string,
+    actorUserId: string,
+    targetUserId: string
+  ): Promise<void> {
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: actorUserId },
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
-      );
-    }
+    const actorPermissions = await this.permissionsOfMember(actorMember);
+    const hasPerm =
+      actorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+      actorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
+      actorPermissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS);
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
 
-    // Verify the target user is a member
     const targetMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: targetUserId },
     });
     if (!targetMember) throw new NotFoundException('Target member not found in workspace');
+
+    if (!permissionsCover(actorPermissions, await this.permissionsOfMember(targetMember))) {
+      this.logger.warn(
+        `[WORKSPACE] refused removal - target holds more than the actor workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
+      );
+      throw new ForbiddenException({
+        code: REMOVAL_EXCEEDS_ACTOR,
+        message: 'This member holds permissions you do not have.',
+      });
+    }
+  }
+
+  /** What a member's roles grant, as one de-duplicated list (empty for a member with no role). */
+  private async permissionsOfMember(member: ChannelMember): Promise<string[]> {
+    if (!member.roleIds?.length) return [];
+    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    return [...new Set(roles.flatMap((r) => r.permissions))];
+  }
+
+  /**
+   * Kicks a member from the workspace entirely (removes from all channels). Requires
+   * MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by `assertActorMayRemoveMember`.
+   */
+  async kickFromWorkspace(workspaceId: string, targetUserId: string, actorUserId: string) {
+    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    await this.assertActorMayRemoveMember(workspaceId, actorUserId, targetUserId);
 
     // The actor's permission was checked; the TARGET's roles never were, so KICK_MEMBERS alone
     // used to remove the sole Administrateur.
@@ -2914,11 +2964,7 @@ export class ChannelService implements OnApplicationBootstrap {
     });
     if (!role) throw new NotFoundException('Role not found');
 
-    const targetRoles =
-      targetMember.roleIds?.length > 0
-        ? await this.roleRepo.find({ where: { id: In(targetMember.roleIds) } })
-        : [];
-    const targetPermissions = targetRoles.flatMap((r) => r.permissions);
+    const targetPermissions = await this.permissionsOfMember(targetMember);
     if (
       !actorMayGrantRole(actorPermissions, role.permissions) ||
       !actorMayGrantRole(actorPermissions, targetPermissions)
@@ -3011,34 +3057,13 @@ export class ChannelService implements OnApplicationBootstrap {
    *  For private channels, removes them from allowedUsers and rotates the key.
    *  For public channels, only rotates the key so the removed user's cached epoch key
    *  is invalidated (the user is still a workspace member and can re-join if invited again).
-   *  Requires MANAGE_WORKSPACE or MANAGE_CHANNELS permission. */
+   *  Requires MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by
+   *  `assertActorMayRemoveMember`. */
   async removeMemberFromChannel(channelId: string, targetUserId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
-    const adminMember = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId: actorUserId },
-    });
-    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
-
-    let hasPerm = false;
-    if (adminMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
-      );
-    }
-
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
-
-    // Verify the target user is a workspace member
-    const targetMember = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId: targetUserId },
-    });
-    if (!targetMember) throw new NotFoundException('Target member not found in workspace');
+    await this.assertActorMayRemoveMember(channel.workspaceId, actorUserId, targetUserId);
 
     // Remove from private channel's allowedUsers list
     if (channel.isPrivate) {
@@ -4908,11 +4933,7 @@ export class ChannelService implements OnApplicationBootstrap {
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    const actorRoles =
-      actorMember.roleIds?.length > 0
-        ? await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } })
-        : [];
-    const permissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
+    const permissions = await this.permissionsOfMember(actorMember);
     if (!roleGrantsRoleManagement(permissions)) {
       throw new ForbiddenException('Missing MANAGE_ROLES permission');
     }

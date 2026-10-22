@@ -65,7 +65,7 @@ describe('the role an invitation grants', () => {
   ] as unknown as ChannelRole[];
 
   /** A service whose actor holds `actorRoleId`, inviting a person who is not yet a member. */
-  function makeService(actorRoleId: string) {
+  function makeService(actorRoleId: string, roles: ChannelRole[] = ROLES) {
     const channelRepo = {
       findOne: jest.fn().mockResolvedValue({
         id: CHANNEL,
@@ -96,13 +96,13 @@ describe('the role an invitation grants', () => {
         ({ where }: { where: { id?: FindOperator<string[]>; workspaceId?: string } }) => {
           if (where.id) {
             const ids = where.id.value as unknown as string[];
-            return Promise.resolve(ROLES.filter((r) => ids.includes(r.id)));
+            return Promise.resolve(roles.filter((r) => ids.includes(r.id)));
           }
-          return Promise.resolve(ROLES);
+          return Promise.resolve(roles);
         }
       ),
       findOne: jest.fn(({ where }: { where: { name: string } }) =>
-        Promise.resolve(ROLES.find((r) => r.name === where.name) ?? null)
+        Promise.resolve(roles.find((r) => r.name === where.name) ?? null)
       ),
     };
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
@@ -118,8 +118,8 @@ describe('the role an invitation grants', () => {
     return { service, memberRepo };
   }
 
-  const invite = (actorRoleId: string, roleName?: string) => {
-    const made = makeService(actorRoleId);
+  const invite = (actorRoleId: string, roleName?: string, roles: ChannelRole[] = ROLES) => {
+    const made = makeService(actorRoleId, roles);
     const result = made.service
       .inviteToChannel(CHANNEL, { targetUserId: TARGET, actorUserId: 'u-actor', roleName })
       .catch((e: unknown) => e);
@@ -203,6 +203,19 @@ describe('the role an invitation grants', () => {
     const unnamed = invite('r-mod');
     expect(await unnamed.result).toMatchObject({ success: true });
     expect(grantedRoleIds(unnamed.memberRepo)).toEqual(['r-member']);
+  });
+
+  it('reads "Membre" as the base role even where Membre is not the lowest one', async () => {
+    // Deployed clients send `roleName: 'Membre'` for every ordinary invitation. A community whose
+    // lowest role is another one must still let a moderator invite: the request names the base
+    // role, and the base role is what it gets.
+    const roles = [
+      ...ROLES,
+      { id: 'r-guest', name: 'Invite', priority: 5, permissions: [] },
+    ] as unknown as ChannelRole[];
+    const { result, memberRepo } = invite('r-mod', 'Membre', roles);
+    expect(await result).toMatchObject({ success: true });
+    expect(grantedRoleIds(memberRepo)).toEqual(['r-guest']);
   });
 
   it('lets an administrator grant Administrateur', async () => {

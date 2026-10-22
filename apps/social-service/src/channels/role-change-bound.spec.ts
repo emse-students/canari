@@ -220,6 +220,21 @@ describe('role changes bounded by the actor', () => {
   });
 
   describe('creating a role', () => {
+    it('ranks a new role just above the base role, whatever the body says', async () => {
+      // The column has no default, so a role saved without one could not be stored at all; and the
+      // rank is the server's, because the lowest role is what joining grants and the highest one
+      // decides who is promoted when a community loses its last administrator.
+      const { service, roleRepo } = makeService();
+      await service.createRole({
+        workspaceId: WS,
+        name: 'Aide',
+        priority: 1000,
+        permissions: [P.INVITE_MEMBERS],
+        actorUserId: 'u-mgr',
+      } as never);
+      expect(roleRepo.save).toHaveBeenCalledWith(expect.objectContaining({ priority: 11 }));
+    });
+
     it('refuses a role granting what its creator lacks', async () => {
       const { service, roleRepo } = makeService();
       expect(

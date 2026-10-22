@@ -137,10 +137,31 @@ export function actorMayGrantRole(
   actorPermissions: readonly string[],
   grantedPermissions: readonly string[]
 ): boolean {
-  if (!roleGrantsRoleManagement(actorPermissions)) return false;
-  if (actorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)) return true;
-  return grantedPermissions.every((p) => actorPermissions.includes(p));
+  return (
+    roleGrantsRoleManagement(actorPermissions) &&
+    permissionsCover(actorPermissions, grantedPermissions)
+  );
 }
+
+/**
+ * Whether `actorPermissions` include everything `otherPermissions` grant - THE ONLY definition of
+ * "holds at least as much", the bound on every grant (`actorMayGrantRole`) and every removal: an
+ * actor may neither hand out nor take away more than they hold. `workspace.manage` holds every
+ * permission.
+ */
+export function permissionsCover(
+  actorPermissions: readonly string[],
+  otherPermissions: readonly string[]
+): boolean {
+  if (actorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)) return true;
+  return otherPermissions.every((p) => actorPermissions.includes(p));
+}
+
+/**
+ * The refusal code of a removal - from the community or from a private salon - of a member whose
+ * roles grant more than the actor holds (`permissionsCover`).
+ */
+export const REMOVAL_EXCEEDS_ACTOR = 'REMOVAL_EXCEEDS_ACTOR';
 
 /**
  * The refusal code of an invitation asking to grant a role its author may not grant.

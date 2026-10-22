@@ -2,8 +2,7 @@
  * ACCEPTING A COMMUNITY INVITE LINK, AGAINST A REAL POSTGRESQL - where a use is counted.
  *
  * A link's `maxUses` is a bound only if counting a use and checking the bound are ONE statement.
- * `acceptWorkspaceInvite` used to read `uses`, add the member, then `increment` - so two accepts
- * that both read the last free use both joined. The claim is now a conditional
+ * `acceptWorkspaceInvite` claims a use with a conditional
  * `UPDATE ... WHERE uses < maxUses RETURNING`, in the transaction that adds the member, and an
  * accept whose claim matched no row is refused with nothing written. A mock cannot judge a row lock,
  * so the interleaving is made deterministic here: a raw client claims the last use and holds its
@@ -147,11 +146,9 @@ maybe('accepting a community invite link against PostgreSQL', () => {
     expect(await usesOf(id)).toBe(1);
   });
 
-  it('an accept racing the one that took the LAST use is refused, and adds nobody', async () => {
-    // The interleaving the old read-then-increment lost: another accept has claimed the last use
-    // and not committed when this one starts. This one read `uses = 0 < 1`, joined, and incremented
-    // to 2 once the lock let go. It must instead wait on the claim, find the cap reached, and
-    // write nothing.
+  it('concurrent accepts never exceed the cap: one waiting on the last use is refused', async () => {
+    // Another accept has claimed the last use and not committed when this one starts. This one
+    // waits on the claim, finds the cap reached once it commits, and writes nothing.
     const { id, token } = await link(1);
     const other = await holder();
     try {
@@ -169,7 +166,7 @@ maybe('accepting a community invite link against PostgreSQL', () => {
     }
   });
 
-  it('an accept racing a rotation that revoked the link is refused, and adds nobody', async () => {
+  it('an accept concurrent with a rotation that revoked the link is refused', async () => {
     const { token, id } = await link(null);
     const rotation = await holder();
     try {
@@ -189,7 +186,7 @@ maybe('accepting a community invite link against PostgreSQL', () => {
     }
   });
 
-  it('concurrent accepts never exceed the cap', async () => {
+  it('four concurrent accepts on a cap of two admit exactly two', async () => {
     const { id, token } = await link(2);
     const joiners = ['many-1', 'many-2', 'many-3', 'many-4'];
     const outcomes = await Promise.all(
