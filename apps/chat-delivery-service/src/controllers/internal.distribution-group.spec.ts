@@ -60,6 +60,7 @@ describe('InternalController - the community distribution group', () => {
     activateDeviceMembership: jest.Mock;
   };
   let previousSecret: string | undefined;
+  let seatLockQueries: string[];
 
   beforeEach(async () => {
     previousSecret = process.env.INTERNAL_SECRET;
@@ -70,10 +71,19 @@ describe('InternalController - the community distribution group', () => {
     // callback with a manager that hands `Group` back to this very repo - which is what keeps the
     // assertions on `groupRepo.update` measuring the real write - and every other entity to a
     // counting fake, so a table dropped from the sweep shows up as a missing name.
+    // The eviction runs in the same kind of transaction (under the seat lock), and its two deletes
+    // land on the very repos the assertions below read.
+    seatLockQueries = [];
     const transactionalManager = {
+      query: jest.fn((sql: string, params: unknown[]) => {
+        seatLockQueries.push(`${sql} ${JSON.stringify(params)}`);
+        return Promise.resolve([]);
+      }),
       getRepository: jest.fn((entity: unknown) => {
         if (entity === Group) return groupRepo;
         purged.push(entity);
+        if (entity === DeviceGroupMembership) return deviceGroupRepo;
+        if (entity === QueuedMessage) return queuedMessageRepo;
         return { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
       }),
     };
@@ -519,6 +529,10 @@ describe('InternalController - the community distribution group', () => {
       );
 
       expect(result).toEqual({ evicted: true, memberships: 2, queued: 5, routes: 2 });
+      // Under the group's seat lock, the one an external commit's activation also takes.
+      expect(seatLockQueries).toEqual([
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) ["keygroup-seat:g-1"]',
+      ]);
       expect(deviceGroupRepo.delete).toHaveBeenCalledWith({ groupId: 'g-1', userId: USER });
       expect(queuedMessageRepo.delete).toHaveBeenCalledWith({
         groupId: 'g-1',

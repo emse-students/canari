@@ -2091,18 +2091,9 @@ export class MlsDeliveryApi {
       });
       if (!res.ok) {
         const refusal = await refusalFromResponse(res, 'invitation status report');
-        let reason: string | null = null;
-        try {
-          const body: unknown = await res.json();
-          const raw =
-            body && typeof body === 'object' ? (body as Record<string, unknown>).reason : null;
-          if (typeof raw === 'string') reason = raw;
-        } catch {
-          // Not JSON: an edge page, which names no reason.
-        }
         console.warn(
           `[MEMBERSHIP] report of ${status} REFUSED for group ${groupId.slice(0, 8)}... device ${deviceId}: ` +
-            `status=${refusal.status} code=${refusal.code ?? 'none'} reason=${reason ?? 'none'}`
+            `status=${refusal.status} code=${refusal.code ?? 'none'} reason=${refusal.reason ?? 'none'}`
         );
       }
     } catch (e) {

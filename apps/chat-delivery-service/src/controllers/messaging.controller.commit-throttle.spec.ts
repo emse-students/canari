@@ -5,14 +5,15 @@
  *
  * Pinned: the route carries `HeaderAuthGuard` then `UserThrottlerGuard`, in that order (the tracker
  * keys on the `x-user-id` the first guard proved); the limit is `MLS_COMMIT_LIMIT_PER_MINUTE`; the
- * guard lets exactly that many commits through in one window and answers the next with a 429; and
+ * guard lets exactly that many commits through in one window and answers the next with a 429 whose
+ * body names `RATE_LIMITED` and the wait (`retryAfterMs`); and
  * one user's quota is not another's. The guard is driven through its real `canActivate` against the
  * real route metadata, so no clock and no sleep decides any of it.
  */
-import { ExecutionContext, HttpStatus, Logger } from '@nestjs/common';
+import { ExecutionContext, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
-import { ThrottlerException, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { MLS_COMMIT_LIMIT_PER_MINUTE, MessagingController } from './messaging.controller';
@@ -63,8 +64,13 @@ describe('POST /mls/commit rate limit', () => {
     }
     expect(warned).toEqual([]);
     const refused = await guard.canActivate(commitContext('user-a')).catch((e: unknown) => e);
-    expect(refused).toBeInstanceOf(ThrottlerException);
-    expect((refused as ThrottlerException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    expect(refused).toBeInstanceOf(HttpException);
+    expect((refused as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    // The wait is carried as a typed field the client reads, not as a header it would have to find.
+    const body = (refused as HttpException).getResponse() as { code: string; retryAfterMs: number };
+    expect(body.code).toBe('RATE_LIMITED');
+    expect(body.retryAfterMs).toBeGreaterThan(0);
+    expect(body.retryAfterMs).toBeLessThanOrEqual(60_000);
     expect(warned).toEqual([
       expect.stringContaining('[THROTTLE] REFUSED MessagingController.validateCommit'),
     ]);

@@ -17,6 +17,7 @@ import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps } from './sessionAuth';
 import { rejoinBehindDistributionGroup } from '$lib/utils/graine/distributionGroup';
 import { ChannelService } from '$lib/services/ChannelService';
+import { commitRateLimitRemainingMs } from '$lib/mls-client/commitRateLimit';
 
 /**
  * Timer-based safety net for a stuck epoch gap. The pipeline's own escalation is REACTIVE
@@ -192,6 +193,12 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
       // A gap is a claim about HELD state lagging behind the group's epoch. A device holding
       // nothing has no epoch to be behind, and the candidate loop below already owns its recovery.
       if (!localGroups.has(id)) continue;
+      // An escalation DROPS the state and re-joins by commit; under the commit rate limit the drop
+      // would be followed by a refused join. The gap stays marked, so the next tick takes it.
+      if (commitRateLimitRemainingMs(now) > 0) {
+        cb.log(`[SYNC_WATCHDOG] stuck-gap escalations paused - the commit rate limit holds`);
+        break;
+      }
       escalateStuckGap(id, recoveryDeps, cb.log);
     }
 
@@ -236,6 +243,16 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
       }
       // The seam still owns the pacing; this only declines to ask a question already answered.
       if (!isReAddDue(id)) continue;
+      // THE SERVER HAS SAID NO TO EVERY COMMIT OF THIS ACCOUNT FOR A WHILE (a `429` on the commit
+      // gate, `commitRateLimit.ts`). Re-adds are external commits, so the sweep stops here and the
+      // next one resumes it, rather than collecting one refusal per group.
+      const commitWaitMs = commitRateLimitRemainingMs();
+      if (commitWaitMs > 0) {
+        cb.log(
+          `[SYNC_WATCHDOG] recovery sweep paused - the commit rate limit holds for ${Math.round(commitWaitMs / 1000)} s more`
+        );
+        break;
+      }
       // Not in WASM -> drive the single recovery seam. It marks the group not-ready on the first
       // attempt and throttles to one attempt per RECOVERY_TIMEOUT_MS.
       requestReAdd(id, recoveryDeps).catch((e: unknown) =>

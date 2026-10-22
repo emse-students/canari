@@ -1,5 +1,6 @@
-import { ExecutionContext, Injectable, Logger } from '@nestjs/common';
+import { ExecutionContext, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ThrottlerGuard, type ThrottlerLimitDetail } from '@nestjs/throttler';
+import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 
 // Module-level rather than a field: `ThrottlerGuard` declares members of its own.
 const logger = new Logger('UserThrottlerGuard');
@@ -24,19 +25,28 @@ export class UserThrottlerGuard extends ThrottlerGuard {
   }
 
   /**
-   * The refusal, said once in this service's log before the stock `429` is thrown: without it a
-   * refused user leaves a trace in nginx's access line alone, which names no route handler and no
-   * limit. The user id is cut to its first eight characters, as every other line here does.
+   * The refusal: said once in this service's log, then answered as a coded `429`
+   * (`code: RATE_LIMITED`) carrying `retryAfterMs`, the wait the throttler computed.
+   *
+   * The wait travels in the BODY as well as the stock `Retry-After` header because a cross-origin
+   * client (the native app's WebView) cannot read a header the response does not expose, and the
+   * client's typed refusal is built from the body (`refusalFromResponse`). Without the log line a
+   * refused user would leave a trace in nginx's access line alone, which names no route handler and
+   * no limit. The user id is cut to its first eight characters, as every other line here does.
    */
   protected override async throwThrottlingException(
     context: ExecutionContext,
     detail: ThrottlerLimitDetail
   ): Promise<void> {
+    const retryAfterMs = Math.max(1, detail.timeToBlockExpire) * 1000;
     logger.warn(
       `[THROTTLE] REFUSED ${context.getClass().name}.${context.getHandler().name} ` +
         `tracker=${detail.tracker.slice(0, 13)} limit=${detail.limit}/${detail.ttl}ms ` +
-        `hits=${detail.totalHits}`
+        `hits=${detail.totalHits} retryAfterMs=${retryAfterMs}`
     );
-    return super.throwThrottlingException(context, detail);
+    throw new HttpException(
+      refusalBody(RefusalCode.RATE_LIMITED, 'too many requests, retry later', { retryAfterMs }),
+      HttpStatus.TOO_MANY_REQUESTS
+    );
   }
 }

@@ -539,38 +539,45 @@ joins again on its next recovery pass. A key group's Welcome TARGET is asked the
 `apps/chat-delivery-service/src/internal/distribution-entitlement.ts`,
 `apps/social-service/src/internal/internal-distribution-entitlement.controller.ts`.
 
-**The answer is read before the commit lock, and an eviction can land after it - documented, with its
-bound, not closed.** The entitlement is asked in `validateCommit` before the lock is taken, and the
-committer is activated inside it, after the transaction. A departure in social-service
-(`evictFromDistributionGroup` on chat-delivery's internal controller) that runs in that gap deletes
-the leaver's rows first, and the activation then writes an `active` row back. A conversation's
-external commit has the same window between `isOnRoster` and the activation. Re-asking inside the
-lock would narrow the gap and not close it, because the eviction does not take the commit lock. The
-bound is the one every departure already has: the leaver's leaf is in the tree either way, and the
-removal commit that a remaining member makes when it next opens the community deactivates the row.
-Until then the device keeps receiving the group's frames. That leaver loses the immediate,
-server-enforced cut an eviction gives, and keeps only the cryptographic cut of the commit.
+**A departure and a key-group join are serialised by one lock, and the activation re-reads the
+entitlement inside it (2026-10-22).** The gate's answer is read before the epoch moves, but the seat
+is written later, so a departure could run in between. Two changes close that window:
 
-**A lock shared by the eviction and the activation does not close it on its own (read
-2026-10-22).** Every departure in social-service (`leaveWorkspace`, `kickFromWorkspace`, `leaveChannel`,
-`removeMemberFromChannel` and `updateChannelAccess`) evicts BEFORE it removes the roster row, so that a
-failed eviction aborts a departure that is still retryable. Between the two, the entitlement
-predicate still answers `true` for the leaver - correctly, since they are still on the roster. A
-commit whose entitlement is read in that gap is entitled whatever chat-delivery locks, and its
-activation lands after the eviction. Closing it needs the entitlement to turn `false` no later than
-the eviction begins, which is a change to social-service's departure order or state: for example a
-second, idempotent eviction AFTER the roster row goes, mutually exclusive with an activation whose
-entitlement is read inside the same exclusion. That is a design decision, tracked in
-[backlog](../backlog.md).
+- **One per-group lock.** `withKeyGroupSeatLock` (`apps/chat-delivery-service/src/utils/key-group-seat-lock.ts`)
+  is a transaction-scoped Postgres advisory lock on `keygroup-seat:<groupId>`, released at commit or
+  rollback and never by a clock. `evictFromDistributionGroup` runs its deletes and its Redis seat
+  removal under it, and `activateKeyGroupCommitter` (`messaging.service.ts`) runs under it too: it asks
+  `isEntitledToDistributionGroup` AGAIN immediately before the upsert, and activates only on `true`.
+  `false` is logged as a departure that raced the commit; an unanswered re-read is logged at error and
+  activates nothing - the same rule as the gate, never an acceptance.
+- **A second eviction after the roster write.** Every departure in social-service (`leaveWorkspace`,
+  `kickFromWorkspace`, `leaveChannel`, `removeMemberFromChannel`, `updateChannelAccess`, and the
+  workspace-wide cut of private channels) still evicts BEFORE it removes the roster row, so that a
+  failed eviction aborts a departure that is still retryable. It now evicts a second time AFTER the
+  roster write commits. Between the two the entitlement still answers `true` - correctly, the leaver is
+  still on the roster - so the first eviction alone cannot exclude a commit read in that gap. The
+  second one can: either the activation's re-read ran before it (the row it wrote is deleted), or after
+  the roster write (the re-read answers `false`). A failed second eviction does not undo the departure;
+  it is logged `[KEY_DISTRIBUTION] second eviction FAILED` at error, and what would retry it is tracked
+  in [backlog](../backlog.md).
+
+The interleaving is asserted without a clock in `messaging.commit-log.spec.ts` ("against a departure
+that races it") and the order `evict -> roster -> evict` in social-service's `distribution-group.spec.ts`.
 
 **`POST /mls/commit` is rate-limited per user (2026-10-22):** `MLS_COMMIT_LIMIT_PER_MINUTE` (600)
 through `UserThrottlerGuard`, after `HeaderAuthGuard`. A refusal is the throttler's `429` before the
-gate, so the epoch has not moved: the staged-commit path rolls its commit back and throws
-`CommitRefusedError('rate_limited')`, and an external join reads it like any failed submission,
-`unreachable`. The number sits above what a client's serial commit path produces during a restore
-and is owed a check against the production maximum per user and minute (`mls_commit_log`). The
-background Welcome's commit (`POST /mls/push/send-welcome-and-commit`, PushSecret) is not limited, since it
-is one commit per Welcome and not a stream the client chooses.
+gate, so the epoch has not moved. Its body is `{ code: 'RATE_LIMITED', retryAfterMs }`, read by
+`refusalFromResponse` into `ApiRefusalError.retryAfterMs`. The client records that wait once for the
+process (`frontend/src/lib/mls-client/commitRateLimit.ts`) because the quota is per ACCOUNT: the
+staged-commit path rolls its commit back and throws `CommitRefusedError('rate_limited')` carrying the
+wait, an external join returns `{ reason: 'rate_limited', retryAfterMs }`, and while the wait holds
+neither stages nor builds anything. The sync watchdog's recovery sweep and its stuck-gap escalations
+stop for the rest of the tick instead of collecting one `429` per group. The number sits above what a
+client's serial commit path produces during a restore and is owed a check against the production
+maximum per user and minute (`mls_commit_log`). The background Welcome's commit
+(`POST /mls/push/send-welcome-and-commit`) and the push-triggered key-group join of #2266
+(`POST /mls/push/key-group-join`), both PushSecret routes, are not throttled, so they do not count
+against this quota.
 
 **What creation writes, and what it deliberately does not.** The `dm_groups` row, and nothing else:
 no `dm_group_members`, no `DeviceGroupMembership`. Both absences are asserted directly in

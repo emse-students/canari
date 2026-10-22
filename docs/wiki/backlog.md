@@ -286,27 +286,28 @@ an unanswered call is a `503 entitlement_unavailable`, never an acceptance
 Owed before a stable: the rate of `[ENTITLEMENT] UNANSWERED` lines on dev, then production, against
 the ~77 key-group joins/day.
 
-## P3 - An external commit's activation can follow an eviction it raced (2026-10-22)
+## P3 - The key-group seat lock: what it does not yet carry (2026-10-22)
 
-The entitlement or roster answer is read before the commit lock, and the activation runs inside it. An
-eviction that lands between the two leaves an `active` row behind, cut only by the next member
-removal commit. The bound and the reasoning are in [channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live).
-A lock shared by the eviction and the activation inside chat-delivery is NOT enough: social-service
-evicts before it removes the roster row, so a commit whose entitlement is read in that gap is
-legitimately entitled (2026-10-22, the reasoning in the same section). **Owed: a design decision** -
-the entitlement must turn `false` no later than the eviction begins, for example by a second
-idempotent eviction after the roster row goes, exclusive with an activation whose entitlement is read
-inside the same exclusion. Before choosing, count how often `[DISTRIBUTION_GROUP] evict` and an
-`ADMITS` or activation line for the same user and group fall within one second of each other on
-production.
+A key-group external commit's activation and `evictFromDistributionGroup` share one per-group
+advisory lock, the entitlement is re-read inside it, and social-service evicts a second time after
+every departure's roster write
+([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+Owed: (1) a durable "eviction owed" row written in the roster-delete transaction and drained by an
+existing sweep, so a failed second eviction (logged `[KEY_DISTRIBUTION] second eviction FAILED`) is
+retried rather than read by hand; (2) the same exclusion for the other two writers of an `active`
+key-group row, the publisher activation and the admits; (3) the count of `second eviction FAILED`
+lines on dev then production, expected 0.
 
 ## P3 - The commit rate limit is not yet checked against production (2026-10-22)
 
-`POST /mls/commit` is limited to 600 commits per user per minute since 2026-10-22
+`POST /mls/commit` is limited to 600 commits per user per minute since 2026-10-22, and a refusal
+carries its wait (`RATE_LIMITED`, `retryAfterMs`) so the client's sweeps stop on it
 ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
-Owed: the production maximum per user and minute over 30 days (`mls_commit_log` joined to its sender
-device's user, grouped by minute), and the count of `[THROTTLE] REFUSED
-MessagingController.validateCommit` lines on dev then production, expected 0.
+The push-triggered key-group joins of #2266 go through `POST /mls/push/key-group-join` (PushSecret),
+which has no throttler, so they do NOT count against this per-user quota. Owed: the production
+maximum per user and minute over 30 days (`mls_commit_log` joined to its sender device's user,
+grouped by minute), and the count of `[THROTTLE] REFUSED MessagingController.validateCommit` lines
+on dev then production, expected 0.
 
 ## Note - a kicked device's membership report (2026-10-22)
 

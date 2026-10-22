@@ -35,6 +35,7 @@ import {
   readDistributionGroup,
   workspaceScope,
   type DistributionGroupRef,
+  type DistributionScope,
 } from './distribution-group.client';
 
 import {
@@ -507,6 +508,52 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * The SECOND eviction of a departure, made once the roster row that entitled the leaver is gone.
+   *
+   * WHY TWICE. The first eviction runs before the roster write so that its failure can abort a
+   * departure that is still retryable ({@link cutOffKeyDistribution}). Between the two, the leaver
+   * is still on the roster, so an external commit whose entitlement is read in that gap is entitled
+   * and chat-delivery activates its committer. This call, after the roster write, is the one an
+   * activation is ordered against: chat-delivery runs the eviction and the activation under one
+   * per-group seat lock and re-reads the entitlement inside it, so an activation either lands before
+   * this (and is deleted by it) or after it (and reads `false`) - channel-encryption, "WP-21, and the
+   * gate it had nowhere to live".
+   *
+   * IT CANNOT ABORT ANYTHING, the roster row is already gone. So a failure is logged at error: the
+   * leaver may then keep a seat an external commit wrote in the gap, until the removal commit a
+   * remaining member owes deactivates it.
+   */
+  private async evictAgainAfterRosterWrite(
+    scope: DistributionScope,
+    userId: string,
+    reason: string
+  ): Promise<void> {
+    try {
+      const cut = await evictFromDistributionGroup(this.internalSecret, scope, userId);
+      this.logger.log(
+        `[KEY_DISTRIBUTION] second eviction scope=${scope.kind}:${scope.id} user=${userId.slice(0, 8)} ` +
+          `reason=${reason} evicted=${cut.evicted} memberships=${cut.memberships} routes=${cut.routes}`
+      );
+    } catch (e) {
+      this.logger.error(
+        `[KEY_DISTRIBUTION] second eviction FAILED scope=${scope.kind}:${scope.id} ` +
+          `user=${userId.slice(0, 8)} reason=${reason}: ${e instanceof Error ? e.message : String(e)} ` +
+          `- a seat activated during the departure may survive until a member's removal commit`
+      );
+    }
+  }
+
+  /** {@link evictAgainAfterRosterWrite} for a salon, under the same guard as its first cut. */
+  private async evictAgainFromChannel(
+    channel: Channel,
+    userId: string,
+    reason: string
+  ): Promise<void> {
+    if (!channel.isPrivate || !channel.distributionGroupId) return;
+    await this.evictAgainAfterRosterWrite(channelScope(channel.id), userId, reason);
+  }
+
+  /**
    * Gives a PRIVATE salon its own distribution group, or returns the one it already has.
    *
    * BEFORE THE ROW IS CALLED PRIVATE, AND ALLOWED TO ABORT THAT. A salon marked private whose group
@@ -658,6 +705,7 @@ export class ChannelService implements OnApplicationBootstrap {
       await this.cutOffChannelKeyDistribution(channel, userId, reason);
       channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalised);
       await this.channelRepo.save(channel);
+      await this.evictAgainFromChannel(channel, userId, reason);
     }
     this.logger.log(
       `[CHANNEL_GRAINE] private salons cut workspace=${workspaceId} user=${userId.slice(0, 8)} ` +
@@ -2150,6 +2198,7 @@ export class ChannelService implements OnApplicationBootstrap {
     await this.cutOffEveryPrivateChannel(workspaceId, userId, 'left_workspace');
 
     await this.memberRepo.delete({ workspaceId, userId });
+    await this.evictAgainAfterRosterWrite(workspaceScope(workspaceId), userId, 'left');
 
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     // Published before any deletion: the event is what tells the leaver's own devices to drop the
@@ -2371,6 +2420,10 @@ export class ChannelService implements OnApplicationBootstrap {
       channel.writePolicy = writePolicy;
     }
     await this.channelRepo.save(channel);
+    // `dropped` is non-empty only while the salon stays private, so its group is still the one cut.
+    for (const userId of dropped) {
+      await this.evictAgainFromChannel(channel, userId, 'access_updated');
+    }
 
     // AFTER the save, and best-effort: the salon is public now, so its own group distributes to a
     // roster nothing consults - inert if it survives, and refusing the change over it would be
@@ -2799,6 +2852,7 @@ export class ChannelService implements OnApplicationBootstrap {
     const normalized = input.userId.trim().toLowerCase();
     channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
     await this.channelRepo.save(channel);
+    await this.evictAgainFromChannel(channel, input.userId, 'left_channel');
 
     return { success: true };
   }
@@ -2839,6 +2893,7 @@ export class ChannelService implements OnApplicationBootstrap {
     await this.cutOffEveryPrivateChannel(workspaceId, targetUserId, 'kicked_from_workspace');
 
     await this.memberRepo.delete({ workspaceId, userId: targetUserId });
+    await this.evictAgainAfterRosterWrite(workspaceScope(workspaceId), targetUserId, 'kicked');
 
     // Notify the kicked user and remaining workspace members
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
@@ -3028,6 +3083,7 @@ export class ChannelService implements OnApplicationBootstrap {
       const normalized = targetUserId.trim().toLowerCase();
       channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
       await this.channelRepo.save(channel);
+      await this.evictAgainFromChannel(channel, targetUserId, 'removed_from_channel');
     }
 
     // Notify the removed user and everyone who can still see the salon. `allowedUsers` was

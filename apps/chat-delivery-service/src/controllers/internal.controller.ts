@@ -35,6 +35,7 @@ import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { sanitizeIdentityValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
+import { withKeyGroupSeatLock } from '../utils/key-group-seat-lock';
 import { MessagingService } from '../services/messaging.service';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
@@ -504,14 +505,27 @@ export class InternalController {
       return { evicted: false, memberships: 0, queued: 0, routes: 0 };
     }
 
-    const memberships = await this.deviceGroupRepo.delete({ groupId: group.id, userId });
-    const queued = await this.queuedMessageRepo.delete({ groupId: group.id, recipientId: userId });
-
-    const routed = await this.redis.smembers(`group:members:${group.id}`);
-    const toRemove = routed.filter((m) => m.startsWith(`${userId}:`));
-    if (toRemove.length > 0) {
-      await this.redis.srem(`group:members:${group.id}`, ...toRemove);
-    }
+    // UNDER THE SEAT LOCK, so an external commit's activation for this user runs wholly before this
+    // (and its row is deleted here) or wholly after (and re-reads an entitlement that social-service
+    // has, by its second eviction, already turned false). See `withKeyGroupSeatLock`.
+    const { memberships, queued, toRemove } = await withKeyGroupSeatLock(
+      this.groupRepo.manager,
+      group.id,
+      async (m) => {
+        const deletedRows = await m
+          .getRepository(DeviceGroupMembership)
+          .delete({ groupId: group.id, userId });
+        const deletedQueue = await m
+          .getRepository(QueuedMessage)
+          .delete({ groupId: group.id, recipientId: userId });
+        const routed = await this.redis.smembers(`group:members:${group.id}`);
+        const routes = routed.filter((r) => r.startsWith(`${userId}:`));
+        if (routes.length > 0) {
+          await this.redis.srem(`group:members:${group.id}`, ...routes);
+        }
+        return { memberships: deletedRows, queued: deletedQueue, toRemove: routes };
+      }
+    );
 
     this.logger.log(
       `[DISTRIBUTION_GROUP] evict scope=${label} group=${group.id} user=${userId.slice(0, 8)} ` +

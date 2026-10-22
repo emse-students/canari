@@ -56,6 +56,7 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
+import { withKeyGroupSeatLock } from '../utils/key-group-seat-lock';
 import {
   deleteGroupOwnedRows,
   deleteGroupRedisKeys,
@@ -1841,7 +1842,13 @@ export class MessagingService {
         message: 'this commit is not accepted',
       });
     }
-    await this.assertCommitterMayCommit(groupId, committer, deviceId, frame.external, traceId);
+    const keyGroupScope = await this.assertCommitterMayCommit(
+      groupId,
+      committer,
+      deviceId,
+      frame.external,
+      traceId
+    );
 
     this.logger.log(
       `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`
@@ -1997,7 +2004,9 @@ export class MessagingService {
       const committerRow = await this.deviceGroupRepo.findOne({
         where: { userId: committer, deviceId, groupId },
       });
-      if (committerRow?.status !== 'active') {
+      if (committerRow?.status !== 'active' && keyGroupScope) {
+        await this.activateKeyGroupCommitter(keyGroupScope, committer, deviceId, groupId, traceId);
+      } else if (committerRow?.status !== 'active') {
         await this.activateDeviceMembership(committer, deviceId, groupId, {
           authority: 'accepted_commit',
         }).catch((e) =>
@@ -2530,6 +2539,9 @@ export class MessagingService {
    *
    * Every caller runs this before the epoch moves, so a refusal also stops the activation an
    * accepted commit grants its committer.
+   *
+   * @returns the key group's scope when this is a key-distribution group's EXTERNAL commit, so the
+   *   activation can ask the same question again under the seat lock; `null` otherwise.
    */
   private async assertCommitterMayCommit(
     groupId: string,
@@ -2537,7 +2549,7 @@ export class MessagingService {
     deviceId: string,
     external: boolean,
     traceId: string
-  ): Promise<void> {
+  ): Promise<DistributionScope | null> {
     const scope = external ? await this.keyDistributionScope(groupId) : null;
     const allowed = scope
       ? await isEntitledToDistributionGroup(scope, userId, traceId)
@@ -2550,7 +2562,7 @@ export class MessagingService {
             ],
             select: { deviceId: true },
           }));
-    if (allowed) return;
+    if (allowed) return scope;
     this.logger.warn(
       `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
         `device=${sanitizeLogValue(userId)}:${deviceId} ` +
@@ -2562,6 +2574,61 @@ export class MessagingService {
         error: 'committer_not_member',
       })
     );
+  }
+
+  /**
+   * Activates the committer of an accepted key-group EXTERNAL commit, under the group's seat lock
+   * ({@link withKeyGroupSeatLock}), the lock the eviction of a departing member also takes.
+   *
+   * THE ENTITLEMENT IS ASKED AGAIN, INSIDE THE LOCK, IMMEDIATELY BEFORE THE WRITE. The answer the
+   * gate read before the epoch moved may predate a departure: social-service evicts, removes the
+   * roster row, then evicts again. Read here, the answer and the activation are one step against
+   * either eviction - one that ran first is seen (the second one only runs once the roster says
+   * no), and one that runs after deletes the row written here. The gate's own read stays where it is,
+   * because it is what keeps a refused commit from moving the epoch.
+   *
+   * A `false` or an unanswered call activates nothing. The commit itself stands (the epoch has
+   * moved); the leaf is cut by the removal commit a remaining member owes, as for any departure, and
+   * an entitled device that was merely unanswered finds its seat missing (`memberDevices`) and joins
+   * again. Best-effort like the activation it replaces: every outcome is logged, nothing throws.
+   */
+  private async activateKeyGroupCommitter(
+    scope: DistributionScope,
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    traceId: string
+  ): Promise<void> {
+    try {
+      await withKeyGroupSeatLock(this.groupRepo.manager, groupId, async (m) => {
+        let entitled: boolean;
+        try {
+          entitled = await isEntitledToDistributionGroup(scope, userId, traceId);
+        } catch (e) {
+          this.logger.error(
+            `[COMMIT][${traceId}] key-group committer NOT activated group=${groupId} ` +
+              `device=${cutUserId(userId)}:${cutDeviceId(deviceId)} - entitlement unanswered under the seat lock: ${String(e)}`
+          );
+          return;
+        }
+        if (!entitled) {
+          this.logger.warn(
+            `[COMMIT][${traceId}] key-group committer NOT activated group=${groupId} ` +
+              `device=${cutUserId(userId)}:${cutDeviceId(deviceId)} - no longer entitled ` +
+              `(${scope.kind}=${scope.id}); a departure raced this commit`
+          );
+          return;
+        }
+        await this.activateDeviceMembership(userId, deviceId, groupId, {
+          authority: 'accepted_commit',
+          manager: m,
+        });
+      });
+    } catch (e) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
+      );
+    }
   }
 
   /** Whether `groupId` is a Graine key-distribution group (a community's or a private salon's). */
@@ -2875,7 +2942,20 @@ export class MessagingService {
     userId: string,
     deviceId: string,
     groupId: string,
-    { tag = 'MEMBERSHIP_ACTIVE', authority }: { tag?: string; authority: ActivationAuthority }
+    {
+      tag = 'MEMBERSHIP_ACTIVE',
+      authority,
+      manager,
+    }: {
+      tag?: string;
+      authority: ActivationAuthority;
+      /**
+       * The transaction to write the seat in, when the caller holds a lock in it - the key-group
+       * seat lock ({@link activateKeyGroupCommitter}). The routing set is then written before that
+       * transaction commits, so it is ordered by the same lock.
+       */
+      manager?: EntityManager;
+    }
   ): Promise<ActivationOutcome> {
     // A NON-IDENTITY IS REFUSED HERE, BECAUSE THE GATE BELOW CANNOT SEE IT AND TWO DOORS DID NOT
     // LOOK. `deviceAddressability` asks whether this pair is reachable; a placeholder that
@@ -2913,7 +2993,7 @@ export class MessagingService {
 
     // `kickedAt: null`: the device is IN, so nothing is owed to it and no kick is outstanding.
     // `admittedAtEpoch: null`: its status routes it from here on, so its admission has done its job.
-    await this.deviceGroupRepo.upsert(
+    await (manager ? manager.getRepository(DeviceGroupMembership) : this.deviceGroupRepo).upsert(
       {
         userId,
         deviceId,

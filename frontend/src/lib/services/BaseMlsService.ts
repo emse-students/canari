@@ -141,6 +141,7 @@ import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
@@ -3436,6 +3437,16 @@ export abstract class BaseMlsService implements IMlsService {
       // The section covers stage through merge - the whole window in which this device's notion of
       // the epoch and the server's can disagree. See `epochSendBarrier`.
       runAsEpochAdvance(groupId, async () => {
+        // NOT STAGED AT ALL while the server still refuses this account's commits: the answer is
+        // already known (`commitRateLimit.ts`), and nothing is left to roll back.
+        const waitMs = commitRateLimitRemainingMs();
+        if (waitMs > 0) {
+          const epoch = await this.freshEpoch(groupId);
+          console.warn(
+            `[COMMIT] ${groupId.slice(0, 8)}... not submitted - the commit rate limit holds for ${Math.round(waitMs / 1000)} s more`
+          );
+          throw new CommitRefusedError('rate_limited', epoch, undefined, waitMs);
+        }
         const staged = await stageFn();
         // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
         const baseEpoch = await this.freshEpoch(groupId);
@@ -3478,13 +3489,19 @@ export abstract class BaseMlsService implements IMlsService {
             console.warn(
               `[COMMIT] ${groupId.slice(0, 8)}... refused by the commit rate limit at epoch ${baseEpoch} - staged commit rolled back`
             );
+            noteCommitRateLimited(e.retryAfterMs);
             await this.clearPendingCommit(groupId).catch((clearErr) =>
               console.error(
                 `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the rate-limited commit:`,
                 String(clearErr).slice(0, 120)
               )
             );
-            throw new CommitRefusedError('rate_limited', baseEpoch, undefined);
+            throw new CommitRefusedError(
+              'rate_limited',
+              baseEpoch,
+              undefined,
+              commitRateLimitRemainingMs()
+            );
           }
           throw e;
         }
@@ -4469,6 +4486,15 @@ export abstract class BaseMlsService implements IMlsService {
       // gate must exclude the id that actually joins.
       const excludeSelf = [`${this.userId}:${this.deviceId}`];
       for (let attempt = 0; attempt < EXTERNAL_JOIN_MAX_ATTEMPTS; attempt++) {
+        // The server already refuses this account's commits for a while: nothing is built, and the
+        // caller is told how long (`commitRateLimit.ts`), so a sweep can stop rather than ask again.
+        const waitMs = commitRateLimitRemainingMs();
+        if (waitMs > 0) {
+          console.warn(
+            `[MLS] externalJoin ${short}... not attempted - the commit rate limit holds for ${Math.round(waitMs / 1000)} s more`
+          );
+          return { joined: false, reason: 'rate_limited', retryAfterMs: waitMs };
+        }
         // THE REFUSAL HAS TO SURVIVE THIS CATCH, which flattened every outcome into `null` and cost
         // the caller the only discriminator it needed. `NotAGroupMemberError` is the server answering
         // the question recovery is asking; anything else says nothing about membership and leaves the
@@ -4550,12 +4576,25 @@ export abstract class BaseMlsService implements IMlsService {
           // still dropped, because an external commit cannot be cleared and a pending one left
           // unmerged breaks every later operation on it - and if the server DID accept the commit we
           // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
+          const rateLimited = e instanceof ApiRefusalError && e.status === 429;
           await dropGroupState(this, joined.groupId, {
-            reason: 'the commit gate could not be reached',
+            reason: rateLimited
+              ? 'the commit gate refused it under the rate limit'
+              : 'the commit gate could not be reached',
             // Built in memory during this very call and never checkpointed: there is nothing
             // durable to undo, and a save here would cost one per failed attempt.
             checkpoint: 'never-persisted',
           });
+          // A 429 IS AN ANSWER: the throttler refused before the gate, so nothing was accepted. Its
+          // wait is recorded for every commit path and handed to the caller, which stops its sweep.
+          if (rateLimited) {
+            noteCommitRateLimited(e.retryAfterMs);
+            return {
+              joined: false,
+              reason: 'rate_limited',
+              retryAfterMs: commitRateLimitRemainingMs(),
+            };
+          }
           console.warn(
             `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
               ` nothing is claimed about membership:`,

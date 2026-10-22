@@ -13,6 +13,7 @@ import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterReg
 import { isInEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { commitRateLimitRemainingMs, resetCommitRateLimit } from '$lib/mls-client/commitRateLimit';
 
 /**
  * The WRITE-side entrance to the recovery ladder: a commit the server refuses because our base
@@ -171,12 +172,19 @@ describe('BaseMlsService - a commit refused for a stale epoch', () => {
 });
 
 describe('BaseMlsService - a commit refused by the rate limit (429)', () => {
-  beforeEach(() => resetEpochGapRegistry());
+  beforeEach(() => {
+    resetEpochGapRegistry();
+    resetCommitRateLimit();
+  });
+  // The wait is process-wide by design, so it must not leak into the describes after this one.
+  afterEach(() => resetCommitRateLimit());
 
   it('rolls the staged commit back and throws a typed refusal, never a loss of state', async () => {
     const ctx = makeCtx();
     ctx.delivery.submitCommit.mockRejectedValue(
-      new ApiRefusalError(429, null, 'Commit submission HTTP error (429)')
+      new ApiRefusalError(429, 'RATE_LIMITED', 'Commit submission HTTP error (429)', {
+        retryAfterMs: 30_000,
+      })
     );
 
     const refused = await runCommit(ctx, 'g').catch((e: unknown) => e);
@@ -186,6 +194,9 @@ describe('BaseMlsService - a commit refused by the rate limit (429)', () => {
     expect(refused).toBeInstanceOf(CommitRefusedError);
     expect((refused as CommitRefusedError).reason).toBe('rate_limited');
     expect((refused as CommitRefusedError).currentEpoch).toBeUndefined();
+    // The server's wait is carried as a typed field, so a sweep can stop on it.
+    expect((refused as CommitRefusedError).retryAfterMs).toBeGreaterThan(29_000);
+    expect(commitRateLimitRemainingMs()).toBeGreaterThan(29_000);
     expect(ctx.clearPendingCommit).toHaveBeenCalledWith('g');
     expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
     // No epoch is known ahead of ours, so the recovery ladder is not entered.
@@ -200,6 +211,36 @@ describe('BaseMlsService - a commit refused by the rate limit (429)', () => {
 
     await expect(runCommit(ctx, 'g')).rejects.toBe(unanswered);
     expect(ctx.clearPendingCommit).not.toHaveBeenCalled();
+    expect(commitRateLimitRemainingMs()).toBe(0);
+  });
+
+  it('refuses the next commit BEFORE staging it while the wait holds - no second 429 is collected', async () => {
+    const first = makeCtx();
+    first.delivery.submitCommit.mockRejectedValue(
+      new ApiRefusalError(429, 'RATE_LIMITED', 'Commit submission HTTP error (429)', {
+        retryAfterMs: 30_000,
+      })
+    );
+    await runCommit(first, 'g1').catch(() => undefined);
+
+    // Another group, same account: the per-user quota is spent for it too.
+    const second = makeCtx();
+    const stageFn = vi.fn(async () => ({
+      commit: new Uint8Array([1]),
+      groupInfo: new Uint8Array([2]),
+    }));
+    const refused = await (
+      BaseMlsService.prototype as unknown as {
+        runCommitTransaction: (g: string, s: typeof stageFn) => Promise<unknown>;
+      }
+    ).runCommitTransaction
+      .call(second, 'g2', stageFn)
+      .catch((e: unknown) => e);
+
+    expect(refused).toBeInstanceOf(CommitRefusedError);
+    expect((refused as CommitRefusedError).reason).toBe('rate_limited');
+    expect(stageFn).not.toHaveBeenCalled();
+    expect(second.delivery.submitCommit).not.toHaveBeenCalled();
   });
 });
 

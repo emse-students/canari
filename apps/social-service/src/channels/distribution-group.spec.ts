@@ -570,6 +570,87 @@ describe('ChannelService - the community distribution group', () => {
       expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: 'u2' });
     });
 
+    /**
+     * AND EVICTS AGAIN ONCE THE ROSTER ROW IS GONE. Between the first eviction and the roster write
+     * the leaver is still entitled, so an external commit read in that gap is activated; the second
+     * eviction is the one chat-delivery orders that activation against (its seat lock).
+     */
+    it.each([
+      ['leaving', 'left', (s: ChannelService) => s.leaveWorkspace(WORKSPACE, USER), USER],
+      [
+        'being kicked',
+        'kicked',
+        (s: ChannelService) => s.kickFromWorkspace(WORKSPACE, 'u2', USER),
+        'u2',
+      ],
+    ])(
+      'evicts a second time AFTER the roster row is gone, on %s',
+      async (_n, _reason, depart, leaver) => {
+        const { service, memberRepo, workspaceRepo, roleRepo } = makeService();
+        workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, name: WORKSPACE_NAME });
+        memberRepo.findOne.mockImplementation(async ({ where }: { where: { userId: string } }) => ({
+          workspaceId: WORKSPACE,
+          userId: where.userId,
+          roleIds: where.userId === USER ? ['r-admin'] : [],
+        }));
+        memberRepo.find.mockResolvedValue([
+          { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] },
+          { workspaceId: WORKSPACE, userId: 'u2', roleIds: [] },
+          { workspaceId: WORKSPACE, userId: 'u3', roleIds: ['r-admin'] },
+        ]);
+        roleRepo.find.mockResolvedValue([
+          { id: 'r-admin', permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE], priority: 10 },
+        ]);
+        const order: string[] = [];
+        global.fetch = jest.fn(async (url: unknown, init?: { method?: string }) => {
+          if (init?.method === 'DELETE' && String(url).includes('/members/')) order.push('evict');
+          return new Response(
+            JSON.stringify({ evicted: true, memberships: 1, queued: 0, routes: 1 }),
+            { status: 200 }
+          );
+        }) as never;
+        memberRepo.delete.mockImplementation(async () => {
+          order.push('roster');
+          return { affected: 1 };
+        });
+
+        await expect(depart(service)).resolves.toEqual({ success: true });
+
+        expect(order).toEqual(['evict', 'roster', 'evict']);
+        const evictions = (global.fetch as unknown as jest.Mock).mock.calls.filter(
+          ([, init]) => String(init?.method) === 'DELETE'
+        );
+        for (const [url] of evictions) {
+          expect(String(url)).toContain(
+            `internal/mls/distribution-groups/workspace/${WORKSPACE}/members/${leaver}`
+          );
+        }
+      }
+    );
+
+    it('logs a failed second eviction at error and completes the departure it cannot undo', async () => {
+      const { service, memberRepo, workspaceRepo } = makeService();
+      communityWith(memberRepo, workspaceRepo);
+      let calls = 0;
+      global.fetch = jest.fn(async () => {
+        calls++;
+        if (calls === 1) {
+          return new Response(
+            JSON.stringify({ evicted: true, memberships: 1, queued: 0, routes: 1 }),
+            { status: 200 }
+          );
+        }
+        throw new Error('ECONNREFUSED');
+      }) as never;
+
+      await expect(service.leaveWorkspace(WORKSPACE, USER)).resolves.toEqual({ success: true });
+
+      expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: USER });
+      expect(
+        (service['logger'].error as jest.Mock).mock.calls.map((c) => String(c[0]))
+      ).toContainEqual(expect.stringContaining('second eviction FAILED'));
+    });
+
     it('refuses the last admin before it cuts anything off', async () => {
       // Order matters: a removal that is going to be refused must not have already revoked the
       // key distribution of somebody who stays.

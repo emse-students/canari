@@ -453,6 +453,40 @@ describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => 
         audience,
       }));
 
+  /**
+   * A MEMBER DROPPED FROM A PRIVATE SALON IS EVICTED TWICE: before the save (which may abort it), and
+   * again once the save has removed them from `allowedUsers` - the eviction chat-delivery orders a
+   * racing external commit's activation against (channel-encryption, "WP-21").
+   */
+  it('evicts a dropped member before the save and again after it', async () => {
+    const { service } = makeService({ isPrivate: true, allowedUsers: [ADMIN, MEMBER] });
+    const order: string[] = [];
+    (global.fetch as unknown as jest.Mock).mockImplementation(
+      (url: unknown, init?: { method?: string }) => {
+        if (init?.method === 'DELETE' && String(url).includes(`/members/${MEMBER}`)) {
+          order.push('evict');
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({ evicted: true, memberships: 1, queued: 0, routes: 1 })
+            ),
+        } as unknown as Response);
+      }
+    );
+    const channelRepo = service['channelRepo'] as unknown as { save: jest.Mock };
+    channelRepo.save.mockImplementation((c: Record<string, unknown>) => {
+      order.push('save');
+      return Promise.resolve(c);
+    });
+
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN]);
+
+    expect(order).toEqual(['evict', 'save', 'evict']);
+  });
+
   it('announces a private salon to the member a roster edit just added, and to nobody else', async () => {
     const { service, redis } = makeService({ isPrivate: true, allowedUsers: [ADMIN] });
 

@@ -20,6 +20,8 @@ import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersiste
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { resetCommitRateLimit } from '$lib/mls-client/commitRateLimit';
 
 /**
  * Unit-tests the external-join ORCHESTRATION (Phase 4a) in isolation: fetch GroupInfo -> build the
@@ -446,5 +448,38 @@ describe('BaseMlsService.externalJoin', () => {
     // breaks every later operation on the group.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
     expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
+  });
+
+  // A 429 IS AN ANSWER, and the wait it names holds for every group of this account: the join
+  // reports it typed, and the next join does not even build a commit until it has passed.
+  it('reports a rate-limited join with its wait, and builds nothing more while the wait holds', async () => {
+    resetCommitRateLimit();
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockRejectedValue(
+      new ApiRefusalError(429, 'RATE_LIMITED', 'Commit submission HTTP error (429)', {
+        retryAfterMs: 20_000,
+      })
+    );
+
+    const first = await externalJoin(ctx, 'g');
+    expect(first).toMatchObject({ joined: false, reason: 'rate_limited' });
+    expect((first as { retryAfterMs: number }).retryAfterMs).toBeGreaterThan(19_000);
+    // Refused before the gate: the commit was built in memory and is dropped, never retried.
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
+
+    const other = makeCtx();
+    expect(await externalJoin(other, 'g2')).toMatchObject({
+      joined: false,
+      reason: 'rate_limited',
+    });
+    expect(other.joinByExternalCommit).not.toHaveBeenCalled();
+    expect(other.delivery.submitCommit).not.toHaveBeenCalled();
+    resetCommitRateLimit();
   });
 });

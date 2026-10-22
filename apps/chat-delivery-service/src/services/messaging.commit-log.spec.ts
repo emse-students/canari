@@ -20,6 +20,7 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
+import { withKeyGroupSeatLock } from '../utils/key-group-seat-lock';
 
 describe('MessagingService - commit-log (rung-1 backbone)', () => {
   let service: MessagingService;
@@ -49,6 +50,9 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   };
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<void>) =>
     cb({
+      // The key-group seat lock's `pg_advisory_xact_lock`: a no-op here, a real queue in the
+      // interleaving cases below.
+      query: jest.fn().mockResolvedValue([]),
       getRepository: (entity: unknown) => {
         if (entity === Group) return { update: groupUpdate };
         // THE COMMIT-LOG ROW IS WRITTEN INSIDE THIS TRANSACTION NOW, not best-effort after it: the
@@ -842,8 +846,9 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       let previous: string | undefined;
       let fetchSpy: jest.SpyInstance;
       let activate: jest.SpyInstance;
+      // A fresh Response per call: the gate and the activation each read one, and a body is read once.
       const social = (status: number, body: unknown) =>
-        fetchSpy.mockResolvedValue(new Response(JSON.stringify(body), { status }));
+        fetchSpy.mockImplementation(async () => new Response(JSON.stringify(body), { status }));
 
       beforeEach(() => {
         previous = process.env.INTERNAL_SECRET;
@@ -879,13 +884,21 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).resolves.toMatchObject({
             accepted: true,
           });
-          expect(JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body))).toEqual({
-            ...asked,
-            userId: 'user-1',
-          });
-          expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1', {
-            authority: 'accepted_commit',
-          });
+          // Asked twice, the same question: by the gate before the epoch moves, then again under
+          // the seat lock immediately before the activation.
+          expect(fetchSpy).toHaveBeenCalledTimes(2);
+          for (const [, init] of fetchSpy.mock.calls) {
+            expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+              ...asked,
+              userId: 'user-1',
+            });
+          }
+          expect(activate).toHaveBeenCalledWith(
+            'user-1',
+            'device-1',
+            'group-1',
+            expect.objectContaining({ authority: 'accepted_commit', manager: expect.anything() })
+          );
         }
       );
 
@@ -925,6 +938,163 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
         await expect(commit({}, 'user-1')).resolves.toMatchObject({ accepted: true });
         expect(fetchSpy).not.toHaveBeenCalled();
+      });
+
+      /**
+       * THE ACTIVATION AND A DEPARTURE'S EVICTION ARE ONE STEP EACH, IN ONE ORDER.
+       *
+       * Social-service evicts, deletes the roster row, then evicts again; the entitlement read before
+       * the epoch moved may predate all three. So the activation re-reads it under the group's seat
+       * lock, the lock the eviction takes. Driven by hand, never by a clock: the second entitlement
+       * answer is a deferred the case resolves, and the fake transaction queues on the advisory key
+       * exactly as Postgres does.
+       */
+      describe('against a departure that races it', () => {
+        type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void };
+        const deferred = <T>(): Deferred<T> => {
+          let resolve!: (v: T) => void;
+          const promise = new Promise<T>((r) => (resolve = r));
+          return { promise, resolve };
+        };
+        /** Lets every already-runnable continuation run, so a case can observe who is blocked. */
+        const settle = async () => {
+          for (let i = 0; i < 50; i++) await Promise.resolve();
+        };
+
+        let events: string[];
+        let seats: Map<string, unknown>;
+        let originalTx: ReturnType<typeof transaction.getMockImplementation>;
+
+        beforeEach(() => {
+          activate.mockRestore();
+          events = [];
+          seats = new Map();
+          redis.sadd.mockImplementation(() => {
+            events.push('route');
+            return Promise.resolve(1);
+          });
+          // One FIFO tail per advisory key, held until the transaction's callback settles.
+          const tails = new Map<string, Promise<void>>();
+          originalTx = transaction.getMockImplementation();
+          transaction.mockImplementation(async (cb: (m: unknown) => Promise<void>) => {
+            const releases: Array<() => void> = [];
+            const seatRepo = {
+              upsert: jest.fn(async (row: { userId: string; deviceId: string }) => {
+                events.push('activate');
+                seats.set(`${row.userId}:${row.deviceId}`, row);
+              }),
+              delete: jest.fn(async ({ userId }: { userId: string }) => {
+                events.push('evict');
+                for (const key of seats.keys()) {
+                  if (key.startsWith(`${userId}:`)) seats.delete(key);
+                }
+                return { affected: 1 };
+              }),
+            };
+            const m = {
+              query: async (_sql: string, [key]: [string]) => {
+                const previous = tails.get(key) ?? Promise.resolve();
+                const mine = deferred<void>();
+                tails.set(
+                  key,
+                  previous.then(() => mine.promise)
+                );
+                releases.push(() => mine.resolve());
+                await previous;
+              },
+              getRepository: (entity: unknown) => {
+                if (entity === Group) return { update: groupUpdate };
+                if (entity === MlsCommitLog)
+                  return { createQueryBuilder: () => commitInsertBuilder };
+                if (entity === DeviceGroupMembership) return seatRepo;
+                return txGroupInfoRepo;
+              },
+            };
+            try {
+              return await cb(m);
+            } finally {
+              releases.forEach((release) => release());
+            }
+          });
+        });
+
+        afterEach(() => {
+          transaction.mockImplementation(originalTx);
+          redis.sadd.mockImplementation(() => Promise.resolve(1));
+        });
+
+        /** The eviction's critical section, as `evictFromDistributionGroup` runs it. */
+        const evict = () =>
+          withKeyGroupSeatLock(groupRepo.manager as never, 'group-1', async (m) => {
+            await m
+              .getRepository(DeviceGroupMembership)
+              .delete({ groupId: 'group-1', userId: 'user-1' });
+          });
+
+        it('an eviction arriving while the activation holds the lock waits, then deletes the seat it wrote', async () => {
+          tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
+          fanOut();
+          const underLock = deferred<Response>();
+          const asked = deferred<void>();
+          fetchSpy
+            .mockResolvedValueOnce(
+              new Response(JSON.stringify({ entitled: true }), { status: 200 })
+            )
+            .mockImplementationOnce(() => {
+              asked.resolve();
+              return underLock.promise;
+            });
+
+          const committed = commit({ proto: EXTERNAL_COMMIT }, 'user-1');
+          await asked.promise;
+          // The activation holds the seat lock and is waiting on its entitlement answer.
+          const evicted = evict();
+          await settle();
+          expect(events).toEqual([]);
+
+          underLock.resolve(new Response(JSON.stringify({ entitled: true }), { status: 200 }));
+          await expect(committed).resolves.toMatchObject({ accepted: true });
+          await evicted;
+
+          // Activation and its route under the lock, then the eviction - and no seat survives.
+          expect(events).toEqual(['activate', 'route', 'evict']);
+          expect(seats.size).toBe(0);
+        });
+
+        it('an activation after the second eviction re-reads a roster that says no, and writes nothing', async () => {
+          tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
+          fanOut();
+          // The gate read predates the departure; by the time the activation asks again, social-
+          // service has evicted, removed the roster row and evicted again.
+          fetchSpy
+            .mockResolvedValueOnce(
+              new Response(JSON.stringify({ entitled: true }), { status: 200 })
+            )
+            .mockResolvedValueOnce(
+              new Response(JSON.stringify({ entitled: false }), { status: 200 })
+            );
+
+          await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).resolves.toMatchObject({
+            accepted: true,
+          });
+          expect(events).toEqual([]);
+          expect(seats.size).toBe(0);
+        });
+
+        it('an unanswered re-read activates nothing - never an acceptance', async () => {
+          tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
+          fanOut();
+          fetchSpy
+            .mockResolvedValueOnce(
+              new Response(JSON.stringify({ entitled: true }), { status: 200 })
+            )
+            .mockRejectedValueOnce(new TypeError('fetch failed'));
+
+          await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).resolves.toMatchObject({
+            accepted: true,
+          });
+          expect(events).toEqual([]);
+        });
       });
     });
 

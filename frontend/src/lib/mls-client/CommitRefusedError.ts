@@ -16,11 +16,15 @@ export class CommitRefusedError extends Error {
    * @param reason - the server's refusal reason (`epoch_mismatch`, `concurrent_commit`, ...).
    * @param baseEpoch - the epoch the refused commit was built on.
    * @param currentEpoch - the server's epoch at the refusal, when it reported one.
+   * @param retryAfterMs - `rate_limited` only: how long the server asked this account to wait
+   *   before its next commit (`commitRateLimit.ts`); null for every other reason, or
+   *   when the server named no wait.
    */
   constructor(
     readonly reason: string,
     readonly baseEpoch: number,
-    readonly currentEpoch: number | undefined
+    readonly currentEpoch: number | undefined,
+    readonly retryAfterMs: number | null = null
   ) {
     super(`Staged commit rejected: ${reason}`);
     this.name = 'CommitRefusedError';
