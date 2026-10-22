@@ -1,5 +1,9 @@
 import type { EncryptedGraineRow } from '$lib/db/types';
-import { sweepExpiredGraineSeeds } from './retention';
+import {
+  boundGraineRetentionDays,
+  GRAINE_RETENTION_FLOOR_DAYS,
+  sweepExpiredGraineSeeds,
+} from './retention';
 import { cacheGraineSession, cachedGraineSession, setGraineRuntime } from './runtime';
 
 /**
@@ -171,6 +175,22 @@ describe('sweepExpiredGraineSeeds', () => {
 
     expect(deleted).toEqual([]);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('retentionDays=NaN'));
+    error.mockRestore();
+  });
+
+  it('bounds the window from below only', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // At the floor and above it the server's value is used as is, silently: an honest answer.
+    expect(boundGraineRetentionDays(GRAINE_RETENTION_FLOOR_DAYS)).toBe(GRAINE_RETENTION_FLOOR_DAYS);
+    expect(boundGraineRetentionDays(400)).toBe(400);
+    expect(error).not.toHaveBeenCalled();
+
+    expect(boundGraineRetentionDays(GRAINE_RETENTION_FLOOR_DAYS - 1)).toBe(
+      GRAINE_RETENTION_FLOOR_DAYS
+    );
+    expect(boundGraineRetentionDays(Number.POSITIVE_INFINITY)).toBeNull();
+    expect(error).toHaveBeenCalledTimes(2);
     error.mockRestore();
   });
 

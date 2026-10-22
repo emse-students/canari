@@ -43,8 +43,8 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
  * and the server already decides which sessions are live, so a ceiling bounds nothing it could not
  * route around while costing history if the product window is ever lengthened.
  *
- * Shortening the product window therefore means lowering this floor in the same change - until then
- * the sweep keeps seeds longer and says so at `error` on every run.
+ * Shortening the product window therefore means lowering this floor in the same change;
+ * `retentionFloorPin.test.ts` fails the moment the two numbers differ.
  */
 export const GRAINE_RETENTION_FLOOR_DAYS = 365;
 
@@ -64,6 +64,9 @@ export function boundGraineRetentionDays(serverDays: number): number | null {
   if (serverDays < GRAINE_RETENTION_FLOOR_DAYS) {
     // Accuses: an honest server answers the product window, so this is a server that is wrong or
     // hostile, and the clamp is what keeps it from wiping the history of every salon on this device.
+    // A server stuck in that state gets this line on EVERY sweep, deliberately: it is not a one-off
+    // to be remembered and silenced, it is a standing fault, and a line that stopped repeating would
+    // read as a server that had been fixed.
     console.error(
       `[GRAINE] retention sweep clamped - the server answered retentionDays=${serverDays}, below the client floor of ${GRAINE_RETENTION_FLOOR_DAYS}; sweeping with the floor`
     );

@@ -1191,9 +1191,11 @@ softening of the window: pinning is somebody deliberately saying this one outliv
 deleting it silently at a year would destroy the one kind of message a human explicitly marked as
 durable. Pinned sets are small and bounded per channel.
 
-**The seeds are swept on the SAME window, and the window is asked for rather than copied.** The
-obvious implementation gives the device its own one-year timer, and that is two windows meant to be
-one - the shape that drifts. Instead:
+**The seeds are swept on the SAME window, and the window is asked for; the client holds only a
+FLOOR equal to it.** The obvious implementation gives the device its own one-year timer, and that is
+two windows meant to be one - the shape that drifts. Instead the server answers liveness and the
+window, and the device bounds that window from below (`GRAINE_RETENTION_FLOOR_DAYS`, pinned equal to
+`CHANNEL_MESSAGE_RETENTION_DAYS` by `retentionFloorPin.test.ts`):
 
 1. `sweepExpiredGraineSeeds` (post-boot, tab-leader only) reads the session ids it holds out of the
    ENCRYPTED rows - id and date, never the seed, so an undecryptable row is swept like any other.
@@ -1209,7 +1211,7 @@ Two refusals carry the design:
 - **A session younger than the window is never dropped, whatever the answer says.** "No message
   names this session" has two causes the answer cannot separate - its messages expired, or it has
   none yet - and only the first is a reason to delete. The window travels back with the answer
-  (`retentionDays`) so the client still holds no copy of it, and it is sent as DAYS rather than as
+  (`retentionDays`); the client holds a floor equal to it, never a second clock, and it is sent as DAYS rather than as
   a cutoff instant so both sides of the comparison stay on the device's own clock.
   **Client-side bounds on server-provided retention (2026-10-22):** the answer is bounded from below
   by `GRAINE_RETENTION_FLOOR_DAYS` = 365 (`retention.ts`), the product window above. An honest
