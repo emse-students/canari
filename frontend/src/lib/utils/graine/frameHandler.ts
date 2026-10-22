@@ -10,7 +10,9 @@ import {
   announceGraineRepair,
   cacheGraineSession,
   cachedGraineSession,
+  awaitSalonListing,
   historyVisibilityFor,
+  isCommunityListed,
   rawChannelId,
   requireGraineRuntime,
   scopeForChannel,
@@ -45,6 +47,9 @@ import { checkSeedEndorsement, type EndorsementSource } from './endorsement';
  * `out-of-scope` - a NEW seed of a salon whose key group is not the one it arrived on
  *   ({@link seedOutsideScope}); nothing was stored. Said by the caller, once per bundle, for the
  *   reason `v1-refused` is: an answerer that predates the scope filter relays such seeds honestly.
+ * `awaiting-listing` - a NEW seed, on the community's group, of a salon the community's answered
+ *   listing did not name: not stored, held in memory until a registration says whether the salon is
+ *   public (`awaitSalonListing`).
  *
  * A boolean used to fold the first two together ("held, including when it already was"), and a seed
  * bundle travels on the community's distribution group, so EVERY member receives the answer to
@@ -57,7 +62,8 @@ export type SeedStoreOutcome =
   | 'already-held'
   | 'declined'
   | 'v1-refused'
-  | 'out-of-scope';
+  | 'out-of-scope'
+  | 'awaiting-listing';
 
 /**
  * What storing one incoming seed did, and - for a NEW v2 session - which key proved its endorsement.
@@ -70,6 +76,8 @@ export interface SeedStoreResult {
   outcome: SeedStoreOutcome;
   /** Set only when this call admitted a new v2 session. */
   endorsedBy?: EndorsementSource;
+  /** Set only on `out-of-scope`: which mismatch it was, which decides how loudly it is said. */
+  outOfScope?: 'other-salon-group' | 'private-salon';
 }
 
 /**
@@ -140,8 +148,21 @@ export async function storeIncomingSeed(
       return { outcome: nowHeld(seed.sessionId, 'already-held') };
   }
 
-  if (!existing && seedOutsideScope(seed.channelId, scope) === 'other-roster') {
-    return { outcome: 'out-of-scope' };
+  if (!existing) {
+    const outside = seedOutsideScope(seed.channelId, scope);
+    if (outside === 'other-salon-group' || outside === 'private-salon') {
+      return { outcome: 'out-of-scope', outOfScope: outside };
+    }
+    if (outside === 'unlisted') {
+      // Private and closed to this viewer, or public and created since the listing: only the
+      // salon's registration can say which, so the seed waits for it, unstored.
+      const waits = awaitSalonListing(workspaceId, seed.channelId, async () => {
+        const { outcome } = await storeIncomingSeed(workspaceId, senderId, seed, keyGroupId, scope);
+        if (outcome === 'stored') announceGraineRepair([String(seed.channelId)]);
+      });
+      return { outcome: waits ? 'awaiting-listing' : 'declined' };
+    }
+    // `not-listed-yet`: kept - see `seedOutsideScope`.
   }
 
   const admitted = existing
@@ -256,23 +277,31 @@ function seedConflict(
  * community whichever group they arrived on, so the store alone cannot say this; this does, and
  * both ends ask it - the answerer before a seed leaves, the receiver before a new one is kept.
  *
- * - `other-roster`: the salon is known to ride another group - a private salon asked about on the
- *   community's group, or any other salon on a private salon's own group (which needs no listing:
- *   the scope names its one salon).
- * - `not-listed`: the community's group, and this session has not listed the salon, so its roster
- *   is not known. The ANSWERER withholds it (handing it over is the leak if it is private); the
- *   RECEIVER keeps it, since honest answerers filter at the source and a public salon's first seed
- *   can arrive before the listing that names it.
+ * - `other-salon-group`: a private salon's own group, and another salon (needs no listing: the
+ *   scope names its one salon). No honest path sends that.
+ * - `private-salon`: the community's group, and a salon registered PRIVATE. An honest path exists -
+ *   a salon made private keeps, in the community group's log, the seeds minted while it was public -
+ *   so a receiver says it without accusing anybody.
+ * - `unlisted`: the community's group, the community's listing HAS answered and did not name the
+ *   salon. The listing names every public salon to every member, so the salon is private and closed
+ *   to this viewer - or public and created since. The receiver holds the seed unstored until a
+ *   registration decides ({@link storeIncomingSeed}).
+ * - `not-listed-yet`: the community's group, and its listing has not answered yet. The RECEIVER
+ *   keeps the seed: a public salon's seeds arrive with the key group, before the listing, and
+ *   honest answerers filter at the source.
+ *
+ * The ANSWERER withholds every non-null answer: handing a seed whose roster it does not know over
+ * is the leak if the salon is private.
  */
 function seedOutsideScope(
   channelId: string,
   scope: DistributionScope
-): 'other-roster' | 'not-listed' | null {
+): 'other-salon-group' | 'private-salon' | 'unlisted' | 'not-listed-yet' | null {
   const salon = rawChannelId(channelId);
-  if (scope.kind === 'channel') return salon === scope.channelId ? null : 'other-roster';
+  if (scope.kind === 'channel') return salon === scope.channelId ? null : 'other-salon-group';
   const known = scopeForChannel(salon);
-  if (!known) return 'not-listed';
-  return sameScope(known, scope) ? null : 'other-roster';
+  if (!known) return isCommunityListed(scope.workspaceId) ? 'unlisted' : 'not-listed-yet';
+  return sameScope(known, scope) ? null : 'private-salon';
 }
 
 /**
@@ -289,7 +318,7 @@ function withinFrameScope(
   for (const session of held) {
     const outside = seedOutsideScope(session.channelId, frame.scope);
     if (outside === null) kept.push(session);
-    else if (outside === 'other-roster') otherRoster++;
+    else if (outside === 'other-salon-group' || outside === 'private-salon') otherRoster++;
     else notListed++;
   }
   if (otherRoster + notListed > 0) {
@@ -339,17 +368,34 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
   }
 
   if (msg.graine) {
-    const { outcome, endorsedBy } = await storeIncomingSeed(
+    const { outcome, endorsedBy, outOfScope } = await storeIncomingSeed(
       frame.workspaceId,
       frame.sender,
       seedFromWire(msg.graine),
       frame.groupId,
       frame.scope
     );
-    if (outcome === 'out-of-scope') {
-      // An ERROR: an honest sender distributes a seed on its salon's own key group, always.
+    const salon = String(msg.graine.channelId).slice(0, 8);
+    if (outcome === 'out-of-scope' && outOfScope === 'other-salon-group') {
+      // An ERROR: a private salon's key group carries that salon's seeds and nothing else, and no
+      // honest sender has a reason to put another salon's seed on it.
       console.error(
-        `[GRAINE] REFUSED seed ${msg.graine.sessionId} from ${frame.sender}: its salon ${String(msg.graine.channelId).slice(0, 8)} rides another key group than ${scopeLabel(frame.scope)}`
+        `[GRAINE] REFUSED seed ${msg.graine.sessionId} from ${frame.sender}: salon ${salon} is not the salon of ${scopeLabel(frame.scope)}`
+      );
+      return;
+    }
+    if (outcome === 'out-of-scope') {
+      // A WARN, accusing nobody: a salon made private after it was public leaves, in the community
+      // group's log, the seeds an honest sender minted while it was public - a device catching up
+      // meets them here. Its readers fetch them again on the salon's own group.
+      console.warn(
+        `[GRAINE] not storing seed ${msg.graine.sessionId} from ${frame.sender}: salon ${salon} is private now, and its seeds ride its own key group, not ${scopeLabel(frame.scope)} (a seed minted before it became private, or a sender out of step)`
+      );
+      return;
+    }
+    if (outcome === 'awaiting-listing') {
+      console.info(
+        `[GRAINE] seed ${msg.graine.sessionId} from ${frame.sender} waits, unstored: salon ${salon} is not in ${scopeLabel(frame.scope)}'s listing - kept only if it is registered as public`
       );
       return;
     }
@@ -698,6 +744,7 @@ async function absorbSeedBundle(
   const repaired = new Set<string>();
   const refusedV1: string[] = [];
   const refusedOutOfScope: string[] = [];
+  let awaitingListing = 0;
   let absorbed = 0;
   let alreadyHeld = 0;
   let endorsedByServer = 0;
@@ -722,14 +769,27 @@ async function absorbSeedBundle(
       refusedV1.push(String(seed.sessionId ?? ''));
     } else if (outcome === 'out-of-scope') {
       refusedOutOfScope.push(String(seed.sessionId ?? ''));
+    } else if (outcome === 'awaiting-listing') {
+      awaitingListing++;
     }
   }
 
-  if (refusedOutOfScope.length > 0) {
+  if (refusedOutOfScope.length + awaitingListing > 0) {
     // ONE line per bundle, and a warn: an answerer that predates the scope filter relays the seeds of
     // every salon it holds, honestly. Nothing of those seeds is stored or named beyond their ids.
+    const why: string[] = [];
+    if (refusedOutOfScope.length > 0) {
+      why.push(
+        `${refusedOutOfScope.length} REFUSED, their salon rides another key group (${refusedOutOfScope.slice(0, 3).join(', ')}${refusedOutOfScope.length > 3 ? ', ...' : ''})`
+      );
+    }
+    if (awaitingListing > 0) {
+      why.push(
+        `${awaitingListing} waiting unstored for a salon the community's listing did not name`
+      );
+    }
     console.warn(
-      `[GRAINE] REFUSED ${refusedOutOfScope.length} seed(s) relayed by ${frame.sender} on ${scopeLabel(frame.scope)}: their salon rides another key group (${refusedOutOfScope.slice(0, 3).join(', ')}${refusedOutOfScope.length > 3 ? ', ...' : ''})`
+      `[GRAINE] not storing ${refusedOutOfScope.length + awaitingListing} seed(s) relayed by ${frame.sender} on ${scopeLabel(frame.scope)}: ${why.join('; ')}`
     );
   }
 

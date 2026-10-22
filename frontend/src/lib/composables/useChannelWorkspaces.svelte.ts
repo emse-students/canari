@@ -25,6 +25,7 @@ import {
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
 import {
+  markCommunityListed,
   narrowHistoryVisibility,
   registerChannelWorkspace,
   registerCommunityHistoryVisibility,
@@ -538,6 +539,9 @@ export function useChannelWorkspaces() {
         })
       );
     }
+    // EVERY SALON THE LISTING NAMED IS REGISTERED: from here a salon it did not name, met on the
+    // community's key group, is not one this viewer may read as public (`markCommunityListed`).
+    markCommunityListed(workspaceId);
 
     // THE ENTRY WAITS FOR THE KEY GROUP, as it always did: a private salon's own group and the send
     // gate both come after the community's group is registered - and so after MLS is READY, which
@@ -1594,6 +1598,7 @@ export function useChannelWorkspaces() {
             })
           );
         }
+        markCommunityListed(workspaceId);
       } catch {
         // Non-fatal: channels will load on next full refresh
       }

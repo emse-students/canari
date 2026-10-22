@@ -23,6 +23,7 @@ import { handleDistributionFrame } from './frameHandler';
 import {
   graineRepairHoldObserver,
   holdGraineRepairs,
+  markCommunityListed,
   registerChannelWorkspace,
   registerCommunityHistoryVisibility,
   releaseGraineRepairs,
@@ -1883,14 +1884,9 @@ describe('the salon scope of an answer', () => {
     info.mockRestore();
   });
 
-  it("refuses a private salon's seed arriving on the community's group, and stores the rest", async () => {
-    const { storage, saved } = fakeStorage();
-    wire(storage);
-    registerChannelWorkspace(PUBLIC, 'ws-1', false);
-    registerChannelWorkspace(PRIVATE, 'ws-1', true);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    await handleDistributionFrame({
+  /** A bundle on the community's group, as an answerer that predates the filter sends it. */
+  async function oldAnswerersBundle(sessions: [string, string][]) {
+    return {
       scope: workspaceScope('ws-1'),
       workspaceId: 'ws-1',
       groupId: 'g-community',
@@ -1900,16 +1896,112 @@ describe('the salon scope of an answer', () => {
         mkGraineBundle({
           workspaceId: 'ws-1',
           requestId: 'r-1',
-          seeds: [await v2SeedFor(PUBLIC, 's-pub', 0), await v2SeedFor(PRIVATE, 's-priv', 0)],
+          seeds: await Promise.all(sessions.map(([c, s]) => v2SeedFor(c, s, 0))),
         })
       ),
-    });
+    };
+  }
+
+  it("an ADMIN's device, whose listing names the private salon, refuses its seed on the community's group", async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    // The listing shows an administrator the private salons they have not joined.
+    registerChannelWorkspace(PUBLIC, 'ws-1', false);
+    registerChannelWorkspace(PRIVATE, 'ws-1', true);
+    markCommunityListed('ws-1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      await oldAnswerersBundle([
+        [PUBLIC, 's-pub'],
+        [PRIVATE, 's-priv'],
+      ])
+    );
 
     expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
     // One warn per bundle: an answerer that predates the filter relays such seeds honestly.
-    expect(warn.mock.calls.flat().join(' ')).toContain('REFUSED 1 seed(s) relayed by bob');
-    expect(warn.mock.calls.flat().join(' ')).toContain('(s-priv)');
+    const said = warn.mock.calls.flat().join(' ');
+    expect(said).toContain('not storing 1 seed(s) relayed by bob');
+    expect(said).toContain('(s-priv)');
     warn.mockRestore();
+  });
+
+  it("an ORDINARY non-member's device, whose listing never names the private salon, does not store its seed", async () => {
+    // What social-service lists to a member who is not in a private salon: the public salons only.
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    registerChannelWorkspace(PUBLIC, 'ws-1', false);
+    markCommunityListed('ws-1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      await oldAnswerersBundle([
+        [PUBLIC, 's-pub'],
+        [PRIVATE, 's-priv'],
+      ])
+    );
+
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
+    expect(warn.mock.calls.flat().join(' ')).toContain(
+      "1 waiting unstored for a salon the community's listing did not name"
+    );
+
+    // Nothing ever registers it as public, and an event naming it private drops it for good.
+    registerChannelWorkspace(PRIVATE, 'ws-1', true);
+    await Promise.resolve();
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
+    expect(info.mock.calls.flat().join(' ')).toContain('it is a private salon');
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it("admits a seed that beat its salon's channel-created event, once the event registers it public", async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    registerChannelWorkspace(PUBLIC, 'ws-1', false);
+    markCommunityListed('ws-1');
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-community',
+      sender: 'bob',
+      plaintext: encodeAppMessage({ ...mkGraine(await v2SeedFor('chan-new', 's-new', 0)) }),
+    });
+    expect(saved).toHaveLength(0);
+
+    registerChannelWorkspace('chan-new', 'ws-1', false);
+    await vi.waitFor(() => expect(saved.map((s) => s.sessionId)).toEqual(['s-new']));
+    await vi.waitFor(() => expect(repaired).toEqual([['chan-new']]));
+    setGraineRepairListener(null);
+    info.mockRestore();
+  });
+
+  it('says a distributed seed of a salon now private is not stored, without accusing its sender', async () => {
+    // A salon made private keeps, in the community group's log, the seeds minted while it was public.
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    registerChannelWorkspace(PRIVATE, 'ws-1', true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-community',
+      sender: 'bob',
+      plaintext: encodeAppMessage({ ...mkGraine(await v2SeedFor(PRIVATE, 's-old', 0)) }),
+    });
+
+    expect(saved).toHaveLength(0);
+    expect(error).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(' ')).toContain('before it became private');
+    warn.mockRestore();
+    error.mockRestore();
   });
 
   it('keeps a seed whose salon is not listed yet on the community group - the answerer filtered it', async () => {
@@ -1924,8 +2016,8 @@ describe('the salon scope of an answer', () => {
       plaintext: encodeAppMessage({ ...mkGraine(await v2SeedFor('chan-new', 's-new', 0)) }),
     });
 
-    // A public salon's first seed can arrive before the listing that names it; refusing it would
-    // leave the salon unreadable until a repair.
+    // BEFORE the community's listing has answered: a public salon's seeds arrive with the key group,
+    // ahead of the listing that names it; refusing them would leave the salon unreadable.
     expect(saved.map((s) => s.sessionId)).toEqual(['s-new']);
   });
 
