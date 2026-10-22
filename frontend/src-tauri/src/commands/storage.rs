@@ -292,9 +292,9 @@ pub(crate) const STALE_WELCOME_LEDGER_FILE: &str = "welcome_request_stale.json";
 /// outlives the state it belongs to.
 fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
     log::debug!("[MLS] removing mls.bin and what was built from it");
-    // `mls.bin` GOES LAST: everything before it describes it or was built from it, so a sweep that
-    // fails part-way leaves the state intact and the next reset finishes the job - never staged
-    // epoch secrets, or a memo about a digest, beside no state.
+    // `mls.bin` GOES AFTER WHAT WAS BUILT FROM IT: the staged files and the ledger describe it, so a
+    // sweep that fails part-way leaves the state intact and the next reset finishes the job - never
+    // staged epoch secrets, or a memo about a digest, beside no state...
     match std::fs::read_dir(data_dir) {
         Ok(entries) => {
             for entry in entries.flatten() {
@@ -309,12 +309,16 @@ fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(format!("list {}: {e}", data_dir.display())),
     }
+    // ...and the owner record AFTER it: a failed removal of `mls.bin` leaves the state with the
+    // record naming whose it is, never a state nobody is named for.
     let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
+    let owner_tmp = format!("{MLS_STATE_OWNER_FILE}.tmp");
     for name in [
         STALE_WELCOME_LEDGER_FILE,
         stale_ledger_tmp.as_str(),
-        MLS_STATE_OWNER_FILE,
         "mls.bin",
+        MLS_STATE_OWNER_FILE,
+        owner_tmp.as_str(),
     ] {
         let path = data_dir.join(name);
         if path.exists() {
@@ -1165,8 +1169,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// `mls.bin` GOES LAST: a sweep that fails part-way leaves the state it was sweeping intact,
-    /// never a state whose staged files are half gone - or worse, staged epoch secrets beside no state.
+    /// `mls.bin` GOES AFTER THE STAGED FILES AND THE LEDGER: a sweep that fails part-way leaves the
+    /// state it was sweeping intact, never staged epoch secrets beside no state.
     #[test]
     fn a_sweep_that_fails_part_way_leaves_mls_bin_in_place() {
         let dir = temp_dir("mls-sweep-order");
@@ -1180,6 +1184,33 @@ mod tests {
             dir.join("mls.bin").exists(),
             "the state outlives a sweep that did not finish"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE OWNER RECORD GOES AFTER `mls.bin`: a removal of `mls.bin` that fails leaves the state
+    /// WITH its owner, never a state nobody is named for - which the gate would read like any
+    /// other account's. Its temporary goes too.
+    #[test]
+    fn a_failed_mls_bin_removal_keeps_the_owner_record() {
+        let dir = temp_dir("mls-owner-order");
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        // A `mls.bin` that cannot be removed as a file.
+        std::fs::create_dir_all(dir.join("mls.bin")).unwrap();
+        file(&dir, "welcome_request_stale.json");
+
+        assert!(remove_mls_state_in(&dir).is_err());
+        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-a"));
+        assert!(
+            !dir.join("welcome_request_stale.json").exists(),
+            "what was built from mls.bin still goes before it"
+        );
+
+        std::fs::remove_dir_all(dir.join("mls.bin")).unwrap();
+        file(&dir, "mls.bin");
+        file(&dir, &format!("{MLS_STATE_OWNER_FILE}.tmp"));
+        remove_mls_state_in(&dir).unwrap();
+        assert_eq!(read_mls_state_owner(&dir), None);
+        assert!(!dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp")).exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 
