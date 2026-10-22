@@ -43,6 +43,8 @@ import {
   readCommitFrame,
 } from '../utils/mls-frame-epoch';
 import {
+  askDepartureOutcome,
+  type DepartureOutcome,
   type DistributionScope,
   distributionScopeOf,
   isEntitledToDistributionGroup,
@@ -58,9 +60,10 @@ import {
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import {
   claimSeat,
-  departingUsers,
+  readSeatEviction,
   recordSeatEviction,
   seatClaimHolds,
+  settleSeatDeparture,
   takeSeatLock,
   withSeatLock,
   type SeatClaim,
@@ -1866,6 +1869,7 @@ export class MessagingService {
       frame.external,
       traceId
     );
+    const admitClaims = await this.claimKeyGroupAdmits(groupId, body.admits, traceId);
 
     this.logger.log(
       `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`
@@ -1958,22 +1962,25 @@ export class MessagingService {
       // on a reject - against a loss that no later call can repair.
       await this.groupRepo.manager.transaction(async (m) => {
         // THE ADMITS WRITE SEATS, SO THEY TAKE THE SEAT LOCK - first, before any row, so this
-        // transaction and an eviction always take their locks in the same order. A person whose
-        // departure is in progress is not admitted: their eviction after the roster write would
-        // find the `pending` row this wrote, but one that never arrives would leave it for good.
+        // transaction and an eviction always take their locks in the same order. In a key group
+        // each admitted person was asked of social-service before any lock, against a claim
+        // (`claimKeyGroupAdmits`); here the claim is re-read, a database read only, and a person
+        // not entitled, evicted since, or departing is not admitted.
         await takeSeatLock(m, groupId);
-        const departing = await departingUsers(
-          m,
-          groupId,
-          declaredAdmits.map((a) => a.userId)
-        );
-        if (departing.size > 0) {
-          admitted = declaredAdmits.filter((a) => !departing.has(a.userId));
-          for (const a of declaredAdmits.filter((d) => departing.has(d.userId))) {
+        if (admitClaims) {
+          const kept: typeof declaredAdmits = [];
+          for (const a of declaredAdmits) {
+            const claim = admitClaims.get(a.userId);
+            const refusal = claim ? await seatClaimHolds(m, claim) : 'not_entitled';
+            if (refusal === null) {
+              kept.push(a);
+              continue;
+            }
             this.logger.warn(
-              `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${a.userId}:${a.deviceId} reason=departure_in_progress`
+              `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${a.userId}:${a.deviceId} reason=${refusal}`
             );
           }
+          admitted = kept;
         }
         await m.getRepository(Group).update({ id: groupId }, { activeEpoch: baseEpoch + 1 });
         if (newBase) {
@@ -2626,6 +2633,47 @@ export class MessagingService {
   }
 
   /**
+   * The claims a key group's commit writes its admits against, taken BEFORE any lock - or `null` for
+   * a conversation, whose admits the roster already governs, and for a commit that admits nobody.
+   *
+   * An admit writes a `pending` seat its device later promotes by reporting itself, so it is a door
+   * into the group like an external join, and in a key group it is held to the same question: is
+   * this person entitled, asked of social-service per distinct person. Each claim is read before
+   * that question ({@link claimSeat}) and re-read under the seat lock, so a departure that lands in
+   * between refuses the admit there, and the HTTP call is never made under a lock.
+   *
+   * An unanswered question is a retryable 503 for the whole commit, before the epoch moves - the
+   * gate's rule, never an acceptance.
+   *
+   * @returns per admitted person, the claim when entitled and `null` when not.
+   */
+  private async claimKeyGroupAdmits(
+    groupId: string,
+    declared: ValidateCommitBody['admits'],
+    traceId: string
+  ): Promise<Map<string, SeatClaim | null> | null> {
+    if (!Array.isArray(declared) || declared.length === 0) return null;
+    const scope = await this.keyDistributionScope(groupId);
+    if (!scope) return null;
+    const people = new Set<string>();
+    for (const d of declared) {
+      const userId = sanitizeQueryValue(d?.userId ?? '', 'admits.userId');
+      if (!isUnresolvedIdentity(userId)) people.add(userId);
+    }
+    const claims = new Map<string, SeatClaim | null>();
+    for (const userId of people) {
+      const claim = await claimSeat(this.groupRepo.manager, groupId, userId);
+      const entitled = await isEntitledToDistributionGroup(scope, userId, traceId);
+      claims.set(userId, entitled ? claim : null);
+    }
+    this.logger.log(
+      `[COMMIT][${traceId}] ADMITS_ASKED group=${groupId} ${scope.kind}=${scope.id} people=${people.size} ` +
+        `entitled=${[...claims.values()].filter(Boolean).length}`
+    );
+    return claims;
+  }
+
+  /**
    * Takes a claim on a seat of `userId` in `groupId` - read BEFORE the check that decides an
    * activation ({@link claimSeat}). For the doors outside this service that create a seat.
    */
@@ -2640,45 +2688,70 @@ export class MessagingService {
    *
    * Idempotent: every step is a delete keyed on the pair, and the generation only moves.
    *
-   * @param owed true while a key group's departure is in progress (social-service's eviction before
-   *   its roster write); false once it is settled.
+   * @param departure `'begin'` for a key group's eviction made BEFORE social-service's roster write:
+   *   it begins a departure, named by the generation returned. `{ settles }` for the eviction made
+   *   after it, which settles THAT departure (a later one that began meanwhile stays owed).
    */
   async evictSeats(
     groupId: string,
     userId: string,
-    owed: boolean
-  ): Promise<{ memberships: number; queued: number; toRemove: number; generation: number }> {
+    departure: 'begin' | { settles: number }
+  ): Promise<{
+    memberships: number;
+    queued: number;
+    toRemove: number;
+    generation: number;
+    settled: boolean;
+  }> {
     return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
-      const generation = await recordSeatEviction(m, groupId, userId, owed);
-      const memberships = await m.getRepository(DeviceGroupMembership).delete({ groupId, userId });
-      const queued = await m.getRepository(QueuedMessage).delete({ groupId, recipientId: userId });
-      const routed = await this.redis.smembers(`group:members:${groupId}`);
-      const routes = routed.filter((r) => r.startsWith(`${userId}:`));
-      if (routes.length > 0) {
-        await this.redis.srem(`group:members:${groupId}`, ...routes);
-      }
-      return {
-        memberships: memberships.affected ?? 0,
-        queued: queued.affected ?? 0,
-        toRemove: routes.length,
-        generation,
-      };
+      const generation = await recordSeatEviction(m, groupId, userId, departure === 'begin');
+      const settled =
+        departure !== 'begin' && (await settleSeatDeparture(m, groupId, userId, departure.settles));
+      const cut = await this.deleteSeats(m, groupId, userId);
+      return { ...cut, generation, settled };
     });
+  }
+
+  /**
+   * Deletes every seat of `userId` in `groupId` - the membership rows, the frames queued to them and
+   * the Redis routes - in the transaction `m` (which holds the seat lock).
+   */
+  private async deleteSeats(
+    m: EntityManager,
+    groupId: string,
+    userId: string
+  ): Promise<{ memberships: number; queued: number; toRemove: number }> {
+    const memberships = await m.getRepository(DeviceGroupMembership).delete({ groupId, userId });
+    const queued = await m.getRepository(QueuedMessage).delete({ groupId, recipientId: userId });
+    const routed = await this.redis.smembers(`group:members:${groupId}`);
+    const routes = routed.filter((r) => r.startsWith(`${userId}:`));
+    if (routes.length > 0) {
+      await this.redis.srem(`group:members:${groupId}`, ...routes);
+    }
+    return {
+      memberships: memberships.affected ?? 0,
+      queued: queued.affected ?? 0,
+      toRemove: routes.length,
+    };
   }
 
   /**
    * SETTLES THE KEY-GROUP DEPARTURES WHOSE SECOND EVICTION NEVER ARRIVED (hourly, beside the stale
    * device detection).
    *
-   * A row left `owed` is a departure social-service began - it evicted before its roster write - and
-   * did not finish telling: the eviction after the roster write failed, or the roster write itself
-   * did. Each row is asked of social-service, OUTSIDE any lock, and settled under the seat lock only
-   * if no eviction rewrote it meanwhile (its generation is unchanged):
+   * A row with an `owedDeparture` is a departure social-service began - it evicted before its roster
+   * write - and did not finish telling: the eviction after the roster write failed, or the roster
+   * write itself did. Each is asked of social-service BY ITS NAME, OUTSIDE any lock
+   * ({@link askDepartureOutcome}). The entitlement is not asked: it answers `true` both while the
+   * roster write has not committed and after a rejoin, and settling on the first lets a seat be
+   * written for a person whose departure then commits. The outcome is final - asking decides an
+   * undecided departure as `cancelled`, and its roster write can then no longer commit under that
+   * name - and is applied under the seat lock only if that departure is still the one owed:
    *
-   * - not entitled: the departure happened. The seats are cut again (anything written since the first
-   *   eviction goes) and the row is settled.
-   * - entitled: the departure did not happen (the roster write failed, or the person is back). The
-   *   row is settled and they may hold a seat again.
+   * - `departed`: the seats are cut again (anything written since the first eviction goes) and the
+   *   departure is settled.
+   * - `cancelled`: the departure never committed and now never will; the person is still on the
+   *   roster. The departure is settled and they may hold a seat again.
    * - unanswered: left as it is, for the next pass, and logged.
    *
    * A row whose group is gone, or is not a key group, is settled as it stands. Each row is caught on
@@ -2688,53 +2761,39 @@ export class MessagingService {
    */
   async drainOwedSeatEvictions(): Promise<number> {
     const owed = (await this.groupRepo.manager.query(
-      `SELECT "groupId", "userId", "generation" FROM dm_seat_evictions WHERE "owed" LIMIT 500`
-    )) as Array<{ groupId: string; userId: string; generation: number | string }>;
+      `SELECT "groupId", "userId", "owedDeparture" FROM dm_seat_evictions
+       WHERE "owedDeparture" IS NOT NULL LIMIT 500`
+    )) as Array<{ groupId: string; userId: string; owedDeparture: number | string }>;
     let settled = 0;
     for (const row of owed) {
       const traceId = this.makeTraceId('seat-drain');
-      const generation = Number(row.generation);
+      const departure = Number(row.owedDeparture);
       try {
         const scope = await this.keyDistributionScope(row.groupId);
-        let entitled: boolean | null = null;
+        let decided: DepartureOutcome | null = null;
         if (scope) {
           try {
-            entitled = await isEntitledToDistributionGroup(scope, row.userId, traceId);
+            decided = await askDepartureOutcome(row.groupId, row.userId, departure, traceId);
           } catch (e) {
             this.logger.warn(
-              `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} left owed - entitlement unanswered: ${String(e)}`
+              `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} departure=${departure} left owed - outcome unanswered: ${String(e)}`
             );
             continue;
           }
         }
         const outcome = await withSeatLock(this.groupRepo.manager, row.groupId, async (m) => {
-          const now = (await m.query(
-            `SELECT "generation", "owed" FROM dm_seat_evictions WHERE "groupId" = $1 AND "userId" = $2`,
-            [row.groupId, row.userId]
-          )) as Array<{ generation: number | string; owed: boolean }>;
-          if (!now[0]?.owed || Number(now[0].generation) !== generation) return 'moved';
-          if (entitled === false) {
+          const now = await readSeatEviction(m, row.groupId, row.userId);
+          if (now.owedDeparture !== departure) return 'moved';
+          if (decided === 'departed') {
             await recordSeatEviction(m, row.groupId, row.userId, false);
-            await m
-              .getRepository(DeviceGroupMembership)
-              .delete({ groupId: row.groupId, userId: row.userId });
-            await m
-              .getRepository(QueuedMessage)
-              .delete({ groupId: row.groupId, recipientId: row.userId });
-            const routed = await this.redis.smembers(`group:members:${row.groupId}`);
-            const routes = routed.filter((r) => r.startsWith(`${row.userId}:`));
-            if (routes.length > 0) await this.redis.srem(`group:members:${row.groupId}`, ...routes);
-            return 'evicted';
+            await this.deleteSeats(m, row.groupId, row.userId);
           }
-          await m.query(
-            `UPDATE dm_seat_evictions SET "owed" = FALSE, "updatedAt" = now() WHERE "groupId" = $1 AND "userId" = $2`,
-            [row.groupId, row.userId]
-          );
-          return scope ? 'still_entitled' : 'not_a_key_group';
+          await settleSeatDeparture(m, row.groupId, row.userId, departure);
+          return decided ?? 'not_a_key_group';
         });
         if (outcome !== 'moved') settled++;
         this.logger.log(
-          `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} outcome=${outcome}`
+          `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} departure=${departure} outcome=${outcome}`
         );
       } catch (e) {
         this.logger.error(

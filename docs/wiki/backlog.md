@@ -288,15 +288,17 @@ the ~77 key-group joins/day.
 
 ## P3 - The key-group seat lock: what it does not yet carry (2026-10-22)
 
-Every seat-creating write (a commit's committer, a key group's publisher, a commit's admits) and
-every eviction (a key-group departure, a conversation removal) share one per-group advisory lock and
-one durable row, `dm_seat_evictions` (migration 036); no HTTP call runs under the lock, and a
-departure left owed is settled by the hourly sweep
-([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
-Owed: (1) migration 036 applied on dev then production, with the user's yes, BEFORE the code
-deploys; (2) the counts of `[KEY_DISTRIBUTION] second eviction FAILED` and of `[SEAT_DRAIN]`
-outcomes on dev then production, expected 0 and near 0; (3) bringing the remaining roster writers
-(account erasure, and admits after a departure has settled) under the same record.
+Every seat-creating write (a commit's committer and its admits, a key group's publisher) and every
+eviction share one per-group advisory lock and one durable row, `dm_seat_evictions` (chat-delivery
+migration 036); every key-group departure, account erasure included, goes through one function and
+records its outcome in `distribution_departures` (social migration 108), which the hourly drain asks
+for ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+Both migrations are applied by the release's deploy before the new containers start. Owed: (1) the
+counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `DEPARTURE_SUPERSEDED` and `[SEAT_DRAIN]`
+outcomes on dev then production, expected 0, 0 and near 0; (2) one run of the drain's question
+against a departure in flight on a real Postgres (the first-writer-wins rule is asserted only on a
+fake); (3) the HTTP cost of a key group's admits (one entitlement question per admitted person)
+measured on dev.
 
 ## P3 - The commit rate limit is not yet checked against production (2026-10-22)
 

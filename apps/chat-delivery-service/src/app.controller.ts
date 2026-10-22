@@ -136,7 +136,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // Detect stale devices: devices whose membership hasn't been updated
     // within MESSAGE_RETENTION_MS are reset to pending for re-invite.
     // The same hourly membership pass settles the key-group departures whose post-roster eviction
-    // never arrived (`dm_seat_evictions.owed`) - see MessagingService.drainOwedSeatEvictions.
+    // never arrived (`dm_seat_evictions.owedDeparture`) - see MessagingService.drainOwedSeatEvictions.
     this.staleDeviceInterval = setInterval(() => {
       void this.detectStaleDevices().catch((e) =>
         this.logger.error('[CRON] detectStaleDevices failed', e)

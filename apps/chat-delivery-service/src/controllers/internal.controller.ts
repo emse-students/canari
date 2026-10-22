@@ -508,9 +508,12 @@ export class InternalController {
    *
    * THE EVICTION IS RECORDED (`dm_seat_evictions`, {@link recordSeatEviction}) under the group's
    * seat lock, so a seat claimed before it is never written after it. Social-service calls this
-   * twice per departure: before its roster write (`phase` absent - the departure is then in
-   * progress, `owed`) and after it (`phase=after_roster_write`, which settles it). A second call
-   * that never arrives is settled by {@link MessagingService.drainOwedSeatEvictions}.
+   * twice per departure: before its roster write (`phase` absent), which BEGINS a departure and
+   * answers its name (`groupId` + `departure`) for social-service to record in the roster write's
+   * transaction; and after it (`phase=after_roster_write&departure=<name>`), which settles that
+   * departure. A second call that never arrives is settled by
+   * {@link MessagingService.drainOwedSeatEvictions}, which asks social-service for the outcome of
+   * that name.
    */
   @Delete('mls/distribution-groups/:scope/:scopeId/members/:userId')
   async evictFromDistributionGroup(
@@ -518,8 +521,16 @@ export class InternalController {
     @Param('scopeId') scopeId: string,
     @Param('userId') userId: string,
     @Headers('x-internal-secret') headerSecret: string,
-    @Query('phase') phase?: string
-  ): Promise<{ evicted: boolean; memberships: number; queued: number; routes: number }> {
+    @Query('phase') phase?: string,
+    @Query('departure') departureParam?: string
+  ): Promise<{
+    evicted: boolean;
+    memberships: number;
+    queued: number;
+    routes: number;
+    groupId?: string;
+    departure?: number;
+  }> {
     this.assertInternalSecret(headerSecret);
     const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
     const label = `${scope}:${scopeId}`;
@@ -527,6 +538,13 @@ export class InternalController {
       throw new BadRequestException('phase must be absent or after_roster_write');
     }
     const departureSettled = phase === 'after_roster_write';
+    const settles = Number(departureParam);
+    const named = departureParam !== undefined && Number.isInteger(settles) && settles >= 1;
+    if (departureSettled ? !named : departureParam !== undefined) {
+      throw new BadRequestException(
+        'departure (a positive integer) is required with phase=after_roster_write, and only with it'
+      );
+    }
 
     const group = await this.groupRepo.findOne({ where });
     if (!group) {
@@ -540,18 +558,27 @@ export class InternalController {
 
     // UNDER THE SEAT LOCK, so a seat activation for this user runs wholly before this (and its row
     // is deleted here) or wholly after (and finds its claim overtaken). See `utils/seat-eviction.ts`.
-    const { memberships, queued, toRemove, generation } = await this.messagingService.evictSeats(
-      group.id,
-      userId,
-      !departureSettled
-    );
+    const { memberships, queued, toRemove, generation, settled } =
+      await this.messagingService.evictSeats(
+        group.id,
+        userId,
+        departureSettled ? { settles } : 'begin'
+      );
 
     this.logger.log(
       `[DISTRIBUTION_GROUP] evict scope=${label} group=${group.id} user=${userId.slice(0, 8)} ` +
-        `phase=${departureSettled ? 'after_roster_write' : 'before_roster_write'} generation=${generation} ` +
-        `memberships=${memberships} queued=${queued} routes=${toRemove}`
+        (departureSettled
+          ? `phase=after_roster_write departure=${settles} settled=${settled} `
+          : `phase=before_roster_write departure=${generation} `) +
+        `generation=${generation} memberships=${memberships} queued=${queued} routes=${toRemove}`
     );
-    return { evicted: true, memberships, queued, routes: toRemove };
+    return {
+      evicted: true,
+      memberships,
+      queued,
+      routes: toRemove,
+      ...(departureSettled ? {} : { groupId: group.id, departure: generation }),
+    };
   }
 
   /**

@@ -87,6 +87,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     action: 'kept',
     reason: 'a transient outbox entry, deleted at hand-off and with its message',
   },
+  // How the account's key-group departures ended (migration 108). Once the account is gone no
+  // device of it can take a seat, so the outcomes have nothing left to decide.
+  'distribution_departures.userId': { action: 'delete' },
   'channel_members.userId': {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
@@ -447,6 +450,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `DELETE FROM minesweeper_challenges WHERE "userId" = $1`,
   },
   { label: 'minesweeper_bans', sql: `DELETE FROM minesweeper_bans WHERE "userId" = $1` },
+  {
+    label: 'distribution_departures',
+    sql: `DELETE FROM distribution_departures WHERE "userId" = $1`,
+  },
   { label: 'reviewer_grants', sql: `DELETE FROM document_reviewer_grants WHERE "userId" = $1` },
   { label: 'read_grants', sql: `DELETE FROM read_grants WHERE user_id = $1` },
   {

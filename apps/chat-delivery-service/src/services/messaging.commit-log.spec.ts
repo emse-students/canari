@@ -973,7 +973,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         let events: string[];
         let seats: Map<string, unknown>;
         /** `dm_seat_evictions`, by `groupId:userId`. */
-        let evictions: Map<string, { generation: number; owed: boolean }>;
+        let evictions: Map<string, { generation: number; owedDeparture: number | null }>;
         /** When armed, the seat write waits on it - an activation caught holding the lock. */
         let upsertGate: Deferred<void> | null;
         let upsertStarted: Deferred<void>;
@@ -984,35 +984,31 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         const evictionTable = (sql: string, params: unknown[] = []): unknown[] => {
           const key = `${String(params[0])}:${String(params[1])}`;
           if (sql.includes('INSERT INTO dm_seat_evictions')) {
+            const generation = (evictions.get(key)?.generation ?? 0) + 1;
             const next = {
-              generation: (evictions.get(key)?.generation ?? 0) + 1,
-              owed: !!params[2],
+              generation,
+              owedDeparture: params[2] ? generation : (evictions.get(key)?.owedDeparture ?? null),
             };
             evictions.set(key, next);
-            return [{ generation: next.generation }];
+            return [{ generation }];
           }
-          if (sql.includes('SELECT "generation", "owed" FROM dm_seat_evictions')) {
+          if (sql.includes('SELECT "generation", "owedDeparture" FROM dm_seat_evictions')) {
             const row = evictions.get(key);
             return row ? [row] : [];
           }
-          if (sql.includes('SELECT "groupId", "userId", "generation" FROM dm_seat_evictions')) {
+          if (sql.includes('SELECT "groupId", "userId", "owedDeparture" FROM dm_seat_evictions')) {
             return [...evictions.entries()]
-              .filter(([, row]) => row.owed)
+              .filter(([, row]) => row.owedDeparture !== null)
               .map(([k, row]) => {
                 const [groupId, userId] = k.split(':');
-                return { groupId, userId, generation: row.generation };
+                return { groupId, userId, owedDeparture: row.owedDeparture };
               });
           }
-          if (sql.includes('UPDATE dm_seat_evictions SET "owed" = FALSE')) {
+          if (sql.includes('UPDATE dm_seat_evictions SET "owedDeparture" = NULL')) {
             const row = evictions.get(key);
-            if (row) row.owed = false;
-            return [];
-          }
-          if (sql.includes('SELECT "userId" FROM dm_seat_evictions')) {
-            const users = params[1] as string[];
-            return users
-              .filter((u) => evictions.get(`${String(params[0])}:${u}`)?.owed)
-              .map((userId) => ({ userId }));
+            if (!row || row.owedDeparture !== params[2]) return [];
+            row.owedDeparture = null;
+            return [{ generation: row.generation }];
           }
           return [];
         };
@@ -1099,6 +1095,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
         const entitled = (yes: boolean) =>
           new Response(JSON.stringify({ entitled: yes }), { status: 200 });
+        const outcome = (o: 'departed' | 'cancelled') =>
+          new Response(JSON.stringify({ outcome: o }), { status: 200 });
 
         it('an eviction arriving while the activation holds the lock waits, then deletes the seat it wrote', async () => {
           tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
@@ -1109,7 +1107,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           const committed = commit({ proto: EXTERNAL_COMMIT }, 'user-1');
           await upsertStarted.promise;
           // The activation holds the seat lock, mid-write.
-          const evicted = service.evictSeats('group-1', 'user-1', true);
+          const evicted = service.evictSeats('group-1', 'user-1', 'begin');
           await settle();
           expect(events).toEqual([]);
 
@@ -1138,8 +1136,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
           const committed = commit({ proto: EXTERNAL_COMMIT }, 'user-1');
           await asked.promise;
-          await service.evictSeats('group-1', 'user-1', true); // before the roster write
-          await service.evictSeats('group-1', 'user-1', false); // after it
+          await service.evictSeats('group-1', 'user-1', 'begin'); // before the roster write
+          await service.evictSeats('group-1', 'user-1', { settles: 1 }); // after it
           answer.resolve(entitled(true));
 
           // The commit stands (it is a valid MLS commit), but the seat claim was overtaken.
@@ -1154,7 +1152,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           fanOut();
           // The first eviction has run, the roster row is still there, so social-service still says
           // yes - the gap a lock alone could not close.
-          await service.evictSeats('group-1', 'user-1', true);
+          await service.evictSeats('group-1', 'user-1', 'begin');
           fetchSpy.mockResolvedValueOnce(entitled(true));
 
           await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).resolves.toMatchObject({
@@ -1167,8 +1165,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         it('a person who leaves and comes back is seated again once the departure is settled', async () => {
           tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
           fanOut();
-          await service.evictSeats('group-1', 'user-1', true);
-          await service.evictSeats('group-1', 'user-1', false);
+          await service.evictSeats('group-1', 'user-1', 'begin');
+          await service.evictSeats('group-1', 'user-1', { settles: 1 });
           // Re-entitled: the claim is taken after the departure, so nothing overtakes it.
           fetchSpy.mockResolvedValueOnce(entitled(true));
 
@@ -1179,69 +1177,141 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           expect(seats.size).toBe(1);
         });
 
+        it('a late second eviction settles ITS departure only, never a later one in progress', async () => {
+          await service.evictSeats('group-1', 'user-1', 'begin'); // departure 1
+          await service.evictSeats('group-1', 'user-1', 'begin'); // departure 2, before 1 settled
+
+          const late = await service.evictSeats('group-1', 'user-1', { settles: 1 });
+
+          expect(late.settled).toBe(false);
+          expect(evictions.get('group-1:user-1')).toEqual({ generation: 3, owedDeparture: 2 });
+        });
+
         /**
          * A SECOND EVICTION THAT NEVER ARRIVED is settled from the durable row by the hourly drain,
-         * which asks social-service OUTSIDE the lock and writes under it only if the row is unchanged.
+         * which asks social-service for THAT departure's outcome - never the entitlement - OUTSIDE
+         * the lock, and writes under it only if that departure is still the one owed.
          */
         describe('the drain of departures left in progress', () => {
           beforeEach(async () => {
             tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
             seats.set('user-1:device-1', { userId: 'user-1' });
-            await service.evictSeats('group-1', 'user-1', true);
+            await service.evictSeats('group-1', 'user-1', 'begin');
             // A seat written meanwhile by some path the drain must cut again.
             seats.set('user-1:device-9', { userId: 'user-1' });
             events = [];
           });
 
-          it('cuts again and settles a departure social-service confirms', async () => {
-            fetchSpy.mockResolvedValueOnce(entitled(false));
+          it('asks the outcome of the departure by its name, never the entitlement', async () => {
+            fetchSpy.mockResolvedValueOnce(outcome('cancelled'));
+
+            await service.drainOwedSeatEvictions();
+            const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+            expect(url).toMatch(/internal\/distribution-groups\/departure-outcome$/);
+            expect(JSON.parse(String(init.body))).toEqual({
+              groupId: 'group-1',
+              userId: 'user-1',
+              departure: 1,
+            });
+          });
+
+          it('cuts again and settles a departure social-service says committed', async () => {
+            fetchSpy.mockResolvedValueOnce(outcome('departed'));
 
             await expect(service.drainOwedSeatEvictions()).resolves.toBe(1);
             expect(events).toEqual(['evict']);
             expect(seats.size).toBe(0);
-            expect(evictions.get('group-1:user-1')).toEqual({ generation: 2, owed: false });
+            expect(evictions.get('group-1:user-1')).toEqual({ generation: 2, owedDeparture: null });
           });
 
-          it('settles without cutting when the person is still entitled - the departure did not happen', async () => {
-            fetchSpy.mockResolvedValueOnce(entitled(true));
+          it('settles without cutting a departure social-service cancelled - the person is still a member', async () => {
+            fetchSpy.mockResolvedValueOnce(outcome('cancelled'));
 
             await expect(service.drainOwedSeatEvictions()).resolves.toBe(1);
             expect(events).toEqual([]);
-            expect(evictions.get('group-1:user-1')).toEqual({ generation: 1, owed: false });
+            expect(evictions.get('group-1:user-1')).toEqual({ generation: 1, owedDeparture: null });
           });
 
           it('leaves the row owed when social-service cannot answer', async () => {
             fetchSpy.mockRejectedValueOnce(new TypeError('fetch failed'));
 
             await expect(service.drainOwedSeatEvictions()).resolves.toBe(0);
-            expect(evictions.get('group-1:user-1')).toEqual({ generation: 1, owed: true });
+            expect(evictions.get('group-1:user-1')).toEqual({ generation: 1, owedDeparture: 1 });
           });
 
-          it('writes nothing when an eviction rewrote the row while it was asking', async () => {
+          it('a cancelled answer for an old departure leaves a NEWER one owed', async () => {
+            // While the drain asks about departure 1, it is settled and the person leaves again.
             fetchSpy.mockImplementationOnce(async () => {
-              await service.evictSeats('group-1', 'user-1', false);
-              return entitled(true);
+              await service.evictSeats('group-1', 'user-1', { settles: 1 });
+              await service.evictSeats('group-1', 'user-1', 'begin'); // departure 3
+              return outcome('cancelled');
             });
 
             await expect(service.drainOwedSeatEvictions()).resolves.toBe(0);
-            // The second eviction's own settlement stands; the stale `true` changed nothing.
-            expect(evictions.get('group-1:user-1')).toEqual({ generation: 2, owed: false });
+            expect(evictions.get('group-1:user-1')).toEqual({ generation: 3, owedDeparture: 3 });
           });
         });
 
-        it('admits nobody whose departure is in progress', async () => {
-          tables({
-            keyPackages: [ownKey, { userId: 'user-2', deviceId: 'device-2' }],
-            devices: [ownDevice],
-            group: { distributionWorkspaceId: 'ws-1' },
+        describe("a key group's admits", () => {
+          beforeEach(() => {
+            tables({
+              keyPackages: [ownKey, { userId: 'user-2', deviceId: 'device-2' }],
+              devices: [ownDevice],
+              group: { distributionWorkspaceId: 'ws-1' },
+            });
+            fanOut();
           });
-          fanOut();
-          await service.evictSeats('group-1', 'user-2', true);
+          const admitUser2 = () =>
+            commit({ admits: [{ userId: 'user-2', deviceId: 'device-2' }] }, 'user-1');
 
-          await expect(
-            commit({ admits: [{ userId: 'user-2', deviceId: 'device-2' }] }, 'user-1')
-          ).resolves.toMatchObject({ accepted: true });
-          expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
+          it('admits an entitled person, asked before any lock', async () => {
+            fetchSpy.mockResolvedValueOnce(entitled(true));
+
+            await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
+            expect(membershipInsertBuilder.values).toHaveBeenCalledWith(
+              expect.objectContaining({ userId: 'user-2', deviceId: 'device-2' })
+            );
+            expect(JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body))).toEqual({
+              kind: 'workspace',
+              scopeId: 'ws-1',
+              userId: 'user-2',
+            });
+          });
+
+          it('admits nobody whose departure has settled and who is no longer entitled', async () => {
+            await service.evictSeats('group-1', 'user-2', 'begin');
+            await service.evictSeats('group-1', 'user-2', { settles: 1 });
+            fetchSpy.mockResolvedValueOnce(entitled(false));
+
+            await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
+            expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
+          });
+
+          it('admits nobody whose departure is in progress', async () => {
+            await service.evictSeats('group-1', 'user-2', 'begin');
+            fetchSpy.mockResolvedValueOnce(entitled(true));
+
+            await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
+            expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
+          });
+
+          it('admits nobody evicted between the question and the lock', async () => {
+            fetchSpy.mockImplementationOnce(async () => {
+              await service.evictSeats('group-1', 'user-2', 'begin');
+              await service.evictSeats('group-1', 'user-2', { settles: 1 });
+              return entitled(true);
+            });
+
+            await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
+            expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
+          });
+
+          it('is a retryable 503 for the whole commit when social-service cannot answer', async () => {
+            fetchSpy.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+            await expect(admitUser2()).rejects.toBeInstanceOf(ServiceUnavailableException);
+            expect(groupUpdate).not.toHaveBeenCalled();
+          });
         });
       });
     });

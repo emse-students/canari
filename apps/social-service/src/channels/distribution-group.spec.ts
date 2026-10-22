@@ -14,6 +14,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { CHANNEL_PERMISSIONS } from './permissions';
+import { fakeDepartureManager } from './departure-transaction.fake-spec';
 
 /**
  * Social-service is the ONLY gate in front of a community's Graine key-distribution group: the
@@ -87,6 +88,8 @@ describe('ChannelService - the community distribution group', () => {
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve(x)),
       delete: jest.fn(),
     };
+    const departures = fakeDepartureManager(() => ({ channelRepo, memberRepo }));
+    Object.assign(memberRepo, { manager: departures });
     const messageRepo = { delete: jest.fn(), manager: { transaction: jest.fn() } };
     const inviteRepo = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const redis = { publishChannelEvent: jest.fn(() => Promise.resolve()) };
@@ -104,7 +107,7 @@ describe('ChannelService - the community distribution group', () => {
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
 
-    return { service, workspaceRepo, channelRepo, roleRepo, memberRepo, redis };
+    return { service, workspaceRepo, channelRepo, roleRepo, memberRepo, redis, departures };
   }
 
   beforeEach(() => {
@@ -461,6 +464,16 @@ describe('ChannelService - the community distribution group', () => {
   });
 
   describe('a departure cuts the leaver off the key distribution', () => {
+    /** chat-delivery's answer to a first eviction: the departure it began, by name. */
+    const begun = (departure: number) => ({
+      evicted: true,
+      memberships: 1,
+      queued: 0,
+      routes: 1,
+      groupId: 'g-1',
+      departure,
+    });
+
     /** A workspace with `member` in it and one other member, so no last-member rule fires. */
     function communityWith(
       memberRepo: { findOne: jest.Mock; find: jest.Mock },
@@ -604,10 +617,7 @@ describe('ChannelService - the community distribution group', () => {
         const order: string[] = [];
         global.fetch = jest.fn(async (url: unknown, init?: { method?: string }) => {
           if (init?.method === 'DELETE' && String(url).includes('/members/')) order.push('evict');
-          return new Response(
-            JSON.stringify({ evicted: true, memberships: 1, queued: 0, routes: 1 }),
-            { status: 200 }
-          );
+          return new Response(JSON.stringify(begun(7)), { status: 200 });
         }) as never;
         memberRepo.delete.mockImplementation(async () => {
           order.push('roster');
@@ -625,12 +635,97 @@ describe('ChannelService - the community distribution group', () => {
             `internal/mls/distribution-groups/workspace/${WORKSPACE}/members/${leaver}`
           );
         }
-        // The first marks the departure in progress on chat-delivery; the second, after the roster
-        // write, settles it - so the two calls are told apart by their phase, not their order.
+        // The first begins the departure on chat-delivery and answers its name; the second, after
+        // the roster write, settles THAT departure - told apart by their phase, not their order.
         expect(String(evictions[0][0])).not.toContain('phase=');
-        expect(String(evictions[1][0])).toContain('?phase=after_roster_write');
+        expect(String(evictions[1][0])).toContain('?phase=after_roster_write&departure=7');
       }
     );
+
+    it('records the departure by its name in the roster write, and an erasure leaves the same way', async () => {
+      const { service, memberRepo, workspaceRepo, roleRepo, departures } = makeService();
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, name: WORKSPACE_NAME });
+      memberRepo.find.mockImplementation(async ({ where }: { where: { userId?: string } }) =>
+        where.userId
+          ? [{ workspaceId: WORKSPACE, userId: USER }]
+          : [
+              { workspaceId: WORKSPACE, userId: USER, roleIds: [] },
+              { workspaceId: WORKSPACE, userId: 'u2', roleIds: ['r-admin'] },
+            ]
+      );
+      roleRepo.find.mockResolvedValue([
+        { id: 'r-admin', permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE], priority: 10 },
+      ]);
+      global.fetch = jest.fn(
+        async () => new Response(JSON.stringify(begun(4)), { status: 200 })
+      ) as never;
+
+      await expect(service.removeAccountFromWorkspaces(USER)).resolves.toBe(1);
+
+      // The community's own key group is cut too - an erasure used to cut only the private salons.
+      const evictions = (global.fetch as unknown as jest.Mock).mock.calls.map(([url]) =>
+        String(url)
+      );
+      expect(evictions[0]).toContain(`distribution-groups/workspace/${WORKSPACE}/members/${USER}`);
+      expect(evictions[1]).toContain('?phase=after_roster_write&departure=4');
+      expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: USER });
+      expect(departures.decided.get(`g-1:${USER}:4`)).toBe('departed');
+    });
+
+    /**
+     * THE DRAIN'S QUESTION DECIDES. chat-delivery asks how a departure ended when its second eviction
+     * never arrived; the entitlement could not tell "not committed yet" from "came back", so the
+     * question writes the answer: a departure not yet recorded is `cancelled`, and its roster write
+     * is then refused. Interleaved by hand, at the exact point the race needs.
+     */
+    describe('against the drain asking how it ended', () => {
+      it('a question landing between the first eviction and the roster write cancels the departure', async () => {
+        const { service, memberRepo, workspaceRepo, redis } = makeService();
+        communityWith(memberRepo, workspaceRepo);
+        let asked: 'departed' | 'cancelled' | undefined;
+        global.fetch = jest.fn(async () => {
+          // The first eviction has begun departure 7, and the drain asks before the roster write.
+          asked = await service.decideDistributionDeparture('g-1', USER, 7);
+          return new Response(JSON.stringify(begun(7)), { status: 200 });
+        }) as never;
+
+        await expect(service.leaveWorkspace(WORKSPACE, USER)).rejects.toMatchObject({
+          response: { code: 'DEPARTURE_SUPERSEDED' },
+        });
+
+        // Final both ways: the drain read `cancelled`, and the person is still a member.
+        expect(asked).toBe('cancelled');
+        expect(memberRepo.delete).not.toHaveBeenCalled();
+        expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('a question landing after the roster write committed reads departed', async () => {
+        const { service, memberRepo, workspaceRepo } = makeService();
+        communityWith(memberRepo, workspaceRepo);
+        let calls = 0;
+        global.fetch = jest.fn(async () => {
+          calls++;
+          if (calls === 1) return new Response(JSON.stringify(begun(7)), { status: 200 });
+          throw new Error('ECONNREFUSED'); // the second eviction is lost
+        }) as never;
+
+        await expect(service.leaveWorkspace(WORKSPACE, USER)).resolves.toEqual({ success: true });
+
+        await expect(service.decideDistributionDeparture('g-1', USER, 7)).resolves.toBe('departed');
+      });
+
+      it('a question about a departure that never began a roster write reads cancelled, for good', async () => {
+        const { service } = makeService();
+
+        await expect(service.decideDistributionDeparture('g-1', USER, 9)).resolves.toBe(
+          'cancelled'
+        );
+        await expect(service.decideDistributionDeparture('g-1', USER, 9)).resolves.toBe(
+          'cancelled'
+        );
+      });
+    });
 
     it('logs a failed second eviction at error and completes the departure it cannot undo', async () => {
       const { service, memberRepo, workspaceRepo } = makeService();
@@ -638,12 +733,7 @@ describe('ChannelService - the community distribution group', () => {
       let calls = 0;
       global.fetch = jest.fn(async () => {
         calls++;
-        if (calls === 1) {
-          return new Response(
-            JSON.stringify({ evicted: true, memberships: 1, queued: 0, routes: 1 }),
-            { status: 200 }
-          );
-        }
+        if (calls === 1) return new Response(JSON.stringify(begun(7)), { status: 200 });
         throw new Error('ECONNREFUSED');
       }) as never;
 

@@ -545,33 +545,53 @@ departure could run in between. `apps/chat-delivery-service/src/utils/seat-evict
 window with a durable row and a lock:
 
 - **The row.** `dm_seat_evictions` (migration `036_seat_evictions.sql`), one per (group, person):
-  a `generation` every eviction bumps, and `owed`, true while a key group's departure is in progress.
+  a `generation` every eviction bumps, and `owedDeparture`, the NAME of a key group's departure in
+  progress (the generation of the eviction that began it), or null.
 - **The lock.** A transaction-scoped Postgres advisory lock on `seat:<groupId>`, released by the
   commit or the rollback and never by a clock. Every writer that evicts or creates a seat holds it:
   `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
-  roster write and its eviction record in one transaction), the commit's advance (which also refuses
-  the admits of a person whose departure is owed), and `activateDeviceMembership` for an accepted
-  commit's committer and a key group's publisher.
-- **The claim.** Before the check that decides an activation (the roster, or
+  roster write and its eviction record in one transaction), the commit's advance (its admits), and
+  `activateDeviceMembership` for an accepted commit's committer and a key group's publisher.
+- **The claim.** Before the check that decides a seat (the roster, or
   `isEntitledToDistributionGroup` over HTTP, always outside the lock) `claimSeat` reads the row.
   Under the lock `seatClaimHolds` re-reads it - a database read only - and the seat is written only if
-  the generation has not moved and nothing is owed. An eviction therefore ran before the claim (the
-  check sees it), between claim and write (nothing is written), or after the write (it deletes the
-  seat). An activation without a claim is refused and logged at error.
-- **Two evictions per departure, and a drain.** Every departure in social-service (`leaveWorkspace`,
-  `kickFromWorkspace`, `leaveChannel`, `removeMemberFromChannel`, `updateChannelAccess`, and the
-  workspace-wide cut of private channels) evicts BEFORE it removes the roster row - recorded
-  `owed=true`, so that a failed eviction aborts a departure that is still retryable - and again AFTER
-  the roster write commits, with `?phase=after_roster_write`, which settles it `owed=false`. A failed
-  second eviction is logged `[KEY_DISTRIBUTION] second eviction FAILED` and the row stays owed; the
-  hourly sweep (`drainOwedSeatEvictions`, logged `[SEAT_DRAIN]`) asks the entitlement outside the
-  lock and settles the row only if its generation has not moved meanwhile.
+  the generation has not moved and no departure is owed. An eviction therefore ran before the claim
+  (the check sees it), between claim and write (nothing is written), or after the write (it deletes
+  the seat). An activation without a claim is refused and logged at error.
+- **A key group's admits are asked like a join.** An admit writes a `pending` seat its device later
+  promotes by reporting itself, so in a key group each admitted person is asked of social-service
+  (`claimKeyGroupAdmits`, before the commit lock) against a claim re-read under the seat lock: not
+  entitled, evicted since, or departing is `ADMIT_REFUSED`. Unanswered is a 503 for the whole commit,
+  before the epoch moves.
+- **One departure function, two evictions, a named outcome.** Every departure in social-service -
+  `leaveWorkspace`, `kickFromWorkspace` and the account erasure (`removeFromWorkspace`, the community's
+  group and every private salon naming the person), `leaveChannel`, `removeMemberFromChannel`,
+  `updateChannelAccess` - goes through `ChannelService.departDistributionGroups`. It evicts BEFORE the
+  roster write (so a failed eviction aborts a departure that is still retryable), and chat-delivery
+  answers the departure's name; the roster write and a `departed` row in `distribution_departures`
+  (social migration `108`) commit in ONE transaction; then it evicts again with
+  `?phase=after_roster_write&departure=<name>`, which settles that departure and no later one.
+- **The drain asks for an OUTCOME, never the entitlement.** A failed second eviction is logged
+  `[KEY_DISTRIBUTION] second eviction FAILED` and the departure stays owed. The hourly sweep
+  (`drainOwedSeatEvictions`, `[SEAT_DRAIN]`) asks social-service how THAT departure ended
+  (`internal/distribution-groups/departure-outcome`). The entitlement could not answer: it says `true`
+  both before the roster write commits and after a rejoin, and settling on the first lets a seat be
+  written for a person whose departure then commits. The question decides: with no `departed` row
+  yet, social-service writes `cancelled` under the same primary key, so the roster write can no
+  longer commit under that name (it is refused with `DEPARTURE_SUPERSEDED` and rolls back; the person
+  stays a member). The drain applies the outcome under the seat lock only if that departure is still
+  the one owed: `departed` cuts again and settles, `cancelled` settles.
 
 The interleavings are asserted without a clock in `messaging.commit-log.spec.ts` ("against a
 departure that races it": an eviction while the activation holds the lock, a stale HTTP answer after
-the whole departure, an activation between the two evictions, the drain), in
-`members.controller.exclusions.spec.ts` (the removal's order under the lock) and the order
-`evict -> roster -> evict?phase=after_roster_write` in social-service's `distribution-group.spec.ts`.
+the whole departure, an activation between the two evictions, a late settlement against a newer
+departure, the drain, the admits), in `members.controller.exclusions.spec.ts` (the removal's order
+under the lock), and in social-service's `distribution-group.spec.ts`: the order
+`evict -> roster -> evict&departure`, the erasure taking the same path, and the drain's question
+landing before the roster write (the departure is cancelled) or after it (it reads `departed`). The
+first-writer-wins rule is modelled by a fake (`departure-transaction.fake-spec.ts`); the Postgres
+wait that makes it hold under concurrency is the primary key's, and no integration run against a
+real database covers it yet.
 
 **`POST /mls/commit` is rate-limited per user (2026-10-22):** `MLS_COMMIT_LIMIT_PER_MINUTE` (600)
 through `UserThrottlerGuard`, after `HeaderAuthGuard`. A refusal is the throttler's `429` before the
