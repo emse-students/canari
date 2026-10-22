@@ -352,6 +352,21 @@ impl MlsManager {
         Ok(rows)
     }
 
+    /// How many leaves of the held trees carry a LEGACY BARE credential (`userId`, no device - builds
+    /// before device identities). The measurement that retires the bare reading of
+    /// `device_trust::canonical_user_of` (docs/wiki/legacy-compatibility.md): it is printed in every
+    /// load's state-composition line, and the shim goes once it reads 0 everywhere.
+    pub fn legacy_bare_leaves(&self) -> usize {
+        self.groups
+            .values()
+            .flat_map(|group| group.members())
+            .filter(|member| {
+                crate::members::credential_identity(&member.credential)
+                    .is_ok_and(|id| crate::device_trust::is_legacy_bare_identity(&id))
+            })
+            .count()
+    }
+
     /// One compact line naming the three heaviest parts of the state, for the load-time log.
     ///
     /// THREE, not all nineteen: a line nobody reads to the end is a line that hides the next defect,
@@ -368,8 +383,9 @@ impl MlsManager {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!(
-                    "{total}B total; {head}; {}",
-                    self.device_trust.pin_summary()
+                    "{total}B total; {head}; {}, {} legacy bare leaves",
+                    self.device_trust.pin_summary(),
+                    self.legacy_bare_leaves()
                 )
             }
             // NOT SWALLOWED INTO AN EMPTY STRING: a caller logging this would print a line that

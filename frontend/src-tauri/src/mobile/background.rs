@@ -1297,6 +1297,38 @@ mod tests {
         assert_eq!(open("SENDER-ALICE")["ok"], true);
     }
 
+    /// A LEGACY BARE CREDENTIAL (`userId`, no device - builds before device identities) names its
+    /// user: a push it signed is that user's, as it was before the canonical reader. A credential
+    /// naming nobody (two separators) is still refused.
+    #[test]
+    fn a_push_from_a_bare_legacy_leaf_is_its_users() {
+        let manager = MlsManager::load_or_create("me", "dev-m", None).expect("manager");
+        let frame =
+            super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
+        let classify = |sender: &str, envelope: &str| {
+            super::classify_verified(
+                &manager,
+                "group-legacy",
+                envelope,
+                mls_core::IncomingApplication {
+                    plaintext: frame.clone(),
+                    sender_identity: Some(sender.to_string()),
+                },
+                PushLanguage::French,
+            )
+        };
+
+        assert_eq!(classify("Legacy-User", "legacy-user")["ok"], true);
+        assert_eq!(
+            classify("legacy-user", "mallory")["reason"],
+            "sender-mismatch"
+        );
+        assert_eq!(
+            classify("legacy-user:a:b", "legacy-user")["reason"],
+            "sender-mismatch"
+        );
+    }
+
     /// A frame whose generation the saved state already spent is refused FOR GOOD, and says so:
     /// the native callers skip the commit catch-up and the worker on that token, because no later
     /// epoch can read bytes refused at an epoch this device holds. An epoch gap keeps the old

@@ -192,10 +192,24 @@ pub struct DeviceTrust {
     unseeded: std::collections::HashSet<String>,
 }
 
-/// The user half of `identity` in its [`canonical_identity`] form, or `None` for an identity that
-/// is not well formed. Every comparison of a leaf's user with a user id goes through it.
+/// The user `identity` names, ASCII-lowercased, or `None` for an identity that names nobody. Every
+/// comparison of a leaf's user with a user id goes through it.
+///
+/// TWO SHAPES ARE READ. A device identity `user:device` ([`canonical_identity`]), and the LEGACY
+/// BARE `user` credential that builds before device identities wrote (no colon at all): it names
+/// its user and NO device, so it is removed with that user and a push it signed is that user's, but
+/// [`canonical_identity`] refuses it - it is never pinned and never matches `user:device`. Kept
+/// until no held tree carries a bare leaf (docs/wiki/legacy-compatibility.md).
 pub fn canonical_user_of(identity: &str) -> Option<String> {
+    if is_legacy_bare_identity(identity) {
+        return Some(canonical_user_id(identity));
+    }
     canonical_identity(identity).and_then(|c| c.split_once(':').map(|(user, _)| user.to_string()))
+}
+
+/// Whether `identity` is the LEGACY BARE credential shape: a non-empty user id with no colon.
+pub fn is_legacy_bare_identity(identity: &str) -> bool {
+    !identity.is_empty() && !identity.contains(':')
 }
 
 /// A bare user id in the form [`canonical_user_of`] returns: ASCII-lowercased, so a roster's or a
@@ -301,7 +315,8 @@ impl DeviceTrust {
         let mut loaded: HashMap<String, Pin> = HashMap::new();
         for p in pins {
             if canonical_identity(&p.identity).as_deref() != Some(p.identity.as_str()) {
-                log::warn!(
+                // ERROR, not WARN: no code wrote this record, so the sealed state is inconsistent.
+                log::error!(
                     "[TRUST] a persisted pin is not keyed by a canonical identity ({}) - dropped",
                     p.identity
                 );
@@ -321,7 +336,7 @@ impl DeviceTrust {
             .filter(|p| {
                 let canonical = canonical_identity(p).as_deref() == Some(p.as_str());
                 if !canonical {
-                    log::warn!(
+                    log::error!(
                         "[TRUST] a pruned record is not a canonical identity ({p}) - dropped"
                     );
                 }

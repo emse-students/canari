@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   canonicalIdentity,
   canonicalUserId,
+  canonicalUserOf,
   deviceIdOfLeaf,
   sameDeviceIdentity,
   treeHoldsDevice,
@@ -55,5 +56,25 @@ describe('leafIdentity - the one canonical identity, as Rust keys the pins', () 
   it('finds a device in a tree under any spelling of its user', () => {
     expect(treeHoldsDevice(['me:self', 'Legit-User:dev-1'], 'legit-user', 'dev-1')).toBe(true);
     expect(treeHoldsDevice(['legit-user:DEV-1'], 'legit-user', 'dev-1')).toBe(false);
+  });
+});
+
+// THE LEGACY BARE CREDENTIAL (`userId`, no device), as Rust's `canonical_user_of` reads it - the
+// cases of `a_bare_identity_names_its_user_and_no_device` (tests/legacy_bare_leaf.rs).
+describe('leafIdentity - a legacy bare leaf names its user and no device', () => {
+  it('names the user of a bare leaf, and never matches a device', () => {
+    expect(canonicalUserOf('BoB')).toBe('bob');
+    expect(canonicalIdentity('bob')).toBeNull();
+    expect(sameDeviceIdentity('bob', 'bob:dev1')).toBe(false);
+    expect(treeHoldsDevice(['bob'], 'bob', 'dev1')).toBe(false);
+  });
+
+  it('names nobody for what Rust refuses', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const bad of ['', 'bob:', ':dev1', 'bob:a:b']) {
+      expect(canonicalUserOf(bad)).toBeNull();
+      expect(userIdOfLeaf(bad)).toBe('');
+    }
+    error.mockRestore();
   });
 });

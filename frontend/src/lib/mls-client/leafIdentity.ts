@@ -66,11 +66,24 @@ export function treeHoldsDevice(
   return wanted !== null && leafIdentities.some((leaf) => canonicalIdentity(leaf) === wanted);
 }
 
-/** The user id half of a leaf identity, canonical ({@link canonicalUserId}); `''` for a refused identity. */
+/**
+ * The user a leaf identity names, canonical ({@link canonicalUserId}), or `null` when it names
+ * nobody - the twin of Rust's `device_trust::canonical_user_of`.
+ *
+ * TWO SHAPES ARE READ: a device identity `user:device` ({@link canonicalIdentity}), and the LEGACY
+ * BARE `user` credential builds before device identities wrote (no colon). A bare leaf names its user
+ * and NO device: {@link canonicalIdentity} refuses it, so it never matches `user:device`. Kept until
+ * no held tree carries a bare leaf (docs/wiki/legacy-compatibility.md).
+ */
+export function canonicalUserOf(identity: string): string | null {
+  if (identity !== '' && !identity.includes(':')) return canonicalUserId(identity);
+  const canonical = canonicalIdentity(identity);
+  return canonical === null ? null : canonical.slice(0, canonical.indexOf(':'));
+}
+
+/** The user id of a leaf identity ({@link canonicalUserOf}); `''` for one that names nobody. */
 export function userIdOfLeaf(identity: string): string {
-  if (isMalformed(identity)) return '';
-  const colon = identity.indexOf(':');
-  return canonicalUserId(colon === -1 ? identity : identity.slice(0, colon));
+  return canonicalUserOf(identity) ?? '';
 }
 
 /** The device id half of a leaf identity, or `''` when it carries none or is refused. */

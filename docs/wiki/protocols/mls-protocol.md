@@ -606,8 +606,10 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   (`canonical_identity`: user half lowercased, device half as is): the pin store is keyed by it,
   every lookup and comparison goes through it - the tree-key lookup a seed endorsement is checked
   against (`member_signature_key`), the removals by user and by device, the batch dedupe, and the
-  native push checks (`canonical_user_of`, `canonical_user_id`). A persisted record NOT keyed
-  canonically is dropped with a WARN at load, never merged into a pin: merging would turn a key
+  native push checks (`canonical_user_of`, `canonical_user_id`). `canonical_user_of` also reads the
+  LEGACY BARE `userId` credential as its user with no device; it is never pinned and never matches a
+  device ([legacy-compatibility](../legacy-compatibility.md)). A persisted record NOT keyed
+  canonically is dropped with an ERROR at load, never merged into a pin: merging would turn a key
   conflict between two records into trust. Its TypeScript twin is `leafIdentity.ts` (`canonicalIdentity`,
   `canonicalUserId`, `sameDeviceIdentity`, `treeHoldsDevice`), tested on the same cases. It is used
   by every TypeScript tree check and every comparison against a leaf's user half, so a spelling Rust
