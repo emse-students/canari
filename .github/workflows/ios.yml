@@ -376,7 +376,10 @@ jobs:
           # `local-estate` and every fetch to the workstation would be refused by the plugin. It is
           # written to GITHUB_ENV so it exists for the Rust step ONLY in this mode - an EMPTY
           # TAURI_CONFIG would be parsed and fail every release.
-          echo 'TAURI_CONFIG={"app":{"security":{"capabilities":["default","local-estate","ios-system-components"]}}}' >> "$GITHUB_ENV"
+          # READ FROM tauri.local.conf.json, never retyped (2026-10-22): the file also widens the
+          # WebView's Content-Security-Policy to the workstation (http:, ws:), and a copy written
+          # here would keep the capabilities and lose the policy - every request to it refused.
+          echo "TAURI_CONFIG=$(jq -c . src-tauri/tauri.local.conf.json)" >> "$GITHUB_ENV"
 
       # THE TWO KEYS iOS NEEDS BEFORE A WEBVIEW MAY TALK CLEARTEXT TO A MACHINE ON THE WI-FI, patched
       # into THIS build's Info.plist and never into the committed one: a store build must keep

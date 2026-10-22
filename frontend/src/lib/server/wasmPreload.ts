@@ -9,6 +9,15 @@
  * bundle has been fetched, parsed and executed. On a link where the JS alone takes a minute, that
  * is a minute of idle bandwidth-in-waiting for a file that depends on nothing in it.
  *
+ * ## WHY THE SCRIPT IS IN `app.html` AND ONLY ITS INPUTS ARE WRITTEN HERE
+ *
+ * The Content-Security-Policy allows no inline script but those it knows the hash of
+ * (`lib/security/cspPolicy.js`), and the hashes of `app.html`'s scripts are computed when the build
+ * starts - before the bundler has named the binary. A script carrying the URL would be a new text,
+ * and so a refused one, on every build. So the script is FIXED text in `app.html`, and the server
+ * writes what varies - the URL and the key prefix - into the attributes of the marker `<meta>` it
+ * reads. An attribute is data; no policy is asked about it.
+ *
  * ## WHY IT IS A SCRIPT AND NOT A `<link>` WRITTEN INTO `app.html`
  *
  * Two facts decide it, and both are per-visitor:
@@ -45,24 +54,24 @@ import { MLS_DEVICE_ID_PREFIX } from '$lib/mls-client/wasmPrefetch';
  */
 export const WASM_PRELOAD_MARKER = '<meta name="canari-wasm-preload" data-canari-wasm />';
 
+/** Escapes a value for a double-quoted HTML attribute. */
+function attribute(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
 /**
- * Builds the script that appends the preload link when this browser profile has enrolled an MLS
- * device. Inert in a native shell: Tauri embeds its frontend, so there is nothing to download.
+ * Builds the filled marker the `app.html` preload script reads: the content-hashed binary URL in
+ * `content`, the enrolled-device key prefix in `data-device-prefix`. The script appends the preload
+ * link only when this browser profile holds a key with that prefix. In a native shell nothing fills
+ * the marker and the script returns at once: Tauri embeds its frontend, so there is nothing to
+ * download.
  *
  * @param wasmUrl the content-hashed URL of `mls_wasm_bg.wasm`, as the bundler resolved it.
- * @returns an inline `<script>` element, ready to be placed in the head.
+ * @returns the `<meta>` element that replaces {@link WASM_PRELOAD_MARKER}.
  */
-export function renderWasmPreloadScript(wasmUrl: string): string {
-  const url = JSON.stringify(wasmUrl);
-  const prefix = JSON.stringify(MLS_DEVICE_ID_PREFIX);
+export function renderWasmPreloadMeta(wasmUrl: string): string {
   return (
-    '<script>(function(){try{' +
-    'if(window.__TAURI_INTERNALS__)return;' +
-    `for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);` +
-    `if(k&&k.indexOf(${prefix})===0){` +
-    `var l=document.createElement("link");l.rel="preload";l.as="fetch";` +
-    `l.crossOrigin="anonymous";l.fetchPriority="low";l.href=${url};` +
-    'document.head.appendChild(l);return}}' +
-    '}catch(_){}})();</script>'
+    `<meta name="canari-wasm-preload" content="${attribute(wasmUrl)}" ` +
+    `data-device-prefix="${attribute(MLS_DEVICE_ID_PREFIX)}" data-canari-wasm />`
   );
 }

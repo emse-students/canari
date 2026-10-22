@@ -932,6 +932,7 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 - **A permission to DISPLAY is not a permission to READ** - the half that is allowed is the visible half, so the feature looks alive and does nothing. [edge](infrastructure/cloudflare-edge.md)
 - **A CSP refusal is indistinguishable from an ordinary failure, BY DESIGN** - only `securitypolicyviolation` names the directive, so build the probe on that event or it reports the theory it was written with. [edge](infrastructure/cloudflare-edge.md)
 - **An allowlist is a DESCRIPTION OF THE CODE**, so it has a test that fails when the code calls a host it does not name. [edge](infrastructure/cloudflare-edge.md)
+- **A page's script policy is written by whoever knows its scripts' hashes - SvelteKit, not nginx** - a hashless second policy on a page is intersected with it and refuses every inline script, so the page blocks carry only `frame-ancestors`. And an inline script must be FIXED text: one that embeds a per-build value cannot be hashed in advance, so the value goes in an attribute it reads. [edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)
 
 **Topology**
 

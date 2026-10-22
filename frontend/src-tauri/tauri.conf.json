@@ -19,7 +19,21 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "connect-src": "'self' ipc: http://ipc.localhost blob: https://canari.emse.fr wss://canari.emse.fr https://canari-emse.fr wss://canari-emse.fr https://www.canari-emse.fr wss://www.canari-emse.fr https://dev.canari-emse.fr wss://dev.canari-emse.fr",
+        "img-src": "'self' data: blob: https:",
+        "font-src": "'self' data:",
+        "worker-src": "'self' blob:",
+        "media-src": "'self' blob: https://canari.emse.fr https://canari-emse.fr https://www.canari-emse.fr https://dev.canari-emse.fr",
+        "frame-src": "'self'",
+        "form-action": "'self'",
+        "object-src": "'none'",
+        "base-uri": "'self'"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"],
       "capabilities": [
         "default",
         "ios-system-components"

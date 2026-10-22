@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build && bun ./scripts/check-bundle-consistency.mjs && bun ./scripts/check-platform-service.mjs && bun ./scripts/check-emoji-coverage.mjs",
+    "build": "vite build && bun ./scripts/check-bundle-consistency.mjs && bun ./scripts/check-platform-service.mjs && bun ./scripts/check-emoji-coverage.mjs && bun ./scripts/check-built-csp.mjs",
     "preview": "vite preview",
     "test": "bun run paraglide:compile && bun run paraglide:compile:test && vitest run",
     "test:watch": "bun run paraglide:compile:test && vitest",
