@@ -35,10 +35,50 @@ const kotlin = readFileSync(
   'utf8'
 );
 
-/** Kotlin without its comments: a doc block naming a call to say why it is NOT used is not a use. */
+/**
+ * Kotlin without its comments: a doc block naming a call to say why it is NOT used is not a use.
+ * A scan, not a regex: a `/*` or `//` inside a string literal (`"image/*"`, a URL) opens no comment,
+ * and a regex reading it as one would hide the code after it from every assertion below.
+ */
 function codeOnly(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  let out = '';
+  let i = 0;
+  while (i < source.length) {
+    const two = source.slice(i, i + 2);
+    if (source.startsWith('"""', i)) {
+      const end = source.indexOf('"""', i + 3);
+      const stop = end === -1 ? source.length : end + 3;
+      out += source.slice(i, stop);
+      i = stop;
+    } else if (source[i] === '"' || source[i] === "'") {
+      const quote = source[i];
+      let j = i + 1;
+      while (j < source.length && source[j] !== quote && source[j] !== '\n') {
+        j += source[j] === '\\' ? 2 : 1;
+      }
+      out += source.slice(i, j + 1);
+      i = j + 1;
+    } else if (two === '/*') {
+      const end = source.indexOf('*/', i + 2);
+      i = end === -1 ? source.length : end + 2;
+    } else if (two === '//') {
+      const end = source.indexOf('\n', i);
+      i = end === -1 ? source.length : end;
+    } else {
+      out += source[i];
+      i += 1;
+    }
+  }
+  return out;
 }
+
+it('strips comments but never a comment marker inside a string', () => {
+  const code = codeOnly('val m = "image/*" // gone\ncall() /* gone */ val u = "https://x"');
+  expect(code).toContain('"image/*"');
+  expect(code).toContain('call()');
+  expect(code).toContain('"https://x"');
+  expect(code).not.toContain('gone');
+});
 
 /** The `<activity>` element declaring MainActivity, up to its closing tag. */
 function mainActivity(): string {
