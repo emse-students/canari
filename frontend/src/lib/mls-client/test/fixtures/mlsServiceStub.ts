@@ -109,6 +109,8 @@ export function createMlsServiceStub(
       async (_groupId: string, forUserId?: string) =>
         new Map(forUserId ? [[forUserId.toLowerCase(), []]] : [])
     ),
+    // As every server since step A answers: addressed history answers are routed.
+    getAddressedAnswersSupported: vi.fn().mockResolvedValue(true),
     getGroupRosters: vi.fn().mockResolvedValue({ rosters: new Map(), refused: new Set() }),
     getUserGroups: vi.fn().mockResolvedValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
