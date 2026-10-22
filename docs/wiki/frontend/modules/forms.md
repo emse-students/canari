@@ -593,8 +593,9 @@ the price is only as good as the answer it is computed from:
     never byte for byte.
   - **What that costs:** an edit that changes a duplicated question's CONTENT but keeps its id is
     not refused either; the next change to the ids is.
-  - **It depends on no count.** How many production forms hold a duplicate today is a reading the
-    user owes, for information only.
+  - **It depends on no count.** For the record, a read-only count on 2026-10-22 (one SELECT over
+    `forms.items`, no write) found NO form holding two items with one id: 0 of 8 on production, 0 of
+    1 on dev. The guard would therefore have refused no stored form either way.
 - **The stored answer is the priced one.** The answer to a question the submitter did not see
   (`visibleItemIds`) is neither charged nor required, and it is no longer stored either, nor is its
   file attached.
