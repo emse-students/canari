@@ -56,6 +56,10 @@ abstract class SendSeamHarness extends BaseMlsService {
     };
   }
 
+  /** No staged commit is kept in this state: a send asks, and finds nothing to settle. */
+  protected async groupsWithPendingCommit(): Promise<string[]> {
+    return [];
+  }
   protected async encryptForSend(_groupId: string, _messageBytes: Uint8Array): Promise<Uint8Array> {
     this.encryptCalls++;
     this.trace.push('encrypt');

@@ -86,6 +86,16 @@ rotate on departures only (a self-update is a non-departure epoch). Their roster
 (`reconcileDistributionGroupRoster`) does not read the `revoked` answer yet; owed: the same allowlist
 there (a removal IS a departure, so it rotates, as it should).
 
+## P3 - A commit left unresolved past the commit-log horizon reads as refused (2026-10-22)
+
+A commit whose submission got no answer is settled by resubmitting it, and the gate's duplicate
+answer reads the commit-log row at its base epoch
+([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)). Rows are kept 365 days and the
+last 20 000 epochs per group, so a commit left unresolved longer than that (a device offline for a
+year, or a group that moved 20 000 epochs) is answered `epoch_mismatch` even if it had landed: the
+device clears it and falls to rung 2. Owed only if a measurement ever shows it: a count of
+`DUPLICATE` versus refused resubmissions older than a day.
+
 ## P3 - Names in the clear: conversation, community and salon names (user, 2026-10-21, not designed)
 
 `dm_groups.name`, `channel_workspaces.name` and `slug`, and `channels.name` are plaintext, and pushes

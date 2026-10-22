@@ -33,6 +33,11 @@ pub struct PersistedState {
     /// #[serde(default)] ensures compatibility with states saved before this field was added.
     #[serde(default)]
     pub forgotten_group_min_epochs: HashMap<String, u64>,
+    /// The submission of each group's staged commit, by group id (`pending_submission.rs`). Only
+    /// those whose staged commit is still pending are written. `#[serde(default)]`: a state saved
+    /// before this field reads as none, and a build before it ignores the field.
+    #[serde(default, with = "crate::byte_compat::bytes_map")]
+    pub pending_submissions: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -48,6 +53,8 @@ pub(crate) struct PersistedStateSer<'a> {
     #[serde(with = "crate::byte_compat::bytes_vec")]
     pub(crate) group_ids: &'a [Vec<u8>],
     pub(crate) forgotten_group_min_epochs: &'a HashMap<String, u64>,
+    #[serde(with = "crate::byte_compat::bytes_map")]
+    pub(crate) pending_submissions: &'a HashMap<Vec<u8>, Vec<u8>>,
 }
 
 // Struct request wrapper for serialization
@@ -162,6 +169,9 @@ pub struct MlsManager {
     /// Set by forget_group to prevent a stale Welcome (from a device itself behind on epoch)
     /// from putting this device back on the wrong branch.
     pub(crate) forgotten_group_min_epochs: HashMap<String, u64>,
+
+    /// The submission of each group's staged commit, kept with it (`pending_submission.rs`).
+    pub(crate) pending_submissions: HashMap<String, Vec<u8>>,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
 }
@@ -703,6 +713,11 @@ impl MlsManager {
                 credential,
                 groups,
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
+                pending_submissions: state
+                    .pending_submissions
+                    .into_iter()
+                    .map(|(id, s)| (String::from_utf8_lossy(&id).to_string(), s))
+                    .collect(),
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -810,6 +825,7 @@ impl MlsManager {
                 credential,
                 groups: HashMap::new(),
                 forgotten_group_min_epochs: HashMap::new(),
+                pending_submissions: HashMap::new(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
             })
         }
@@ -857,12 +873,15 @@ impl MlsManager {
             .collect();
         group_ids.sort();
 
-        // 4. Encode the global state without copying storage_values
+        // 4. Encode the global state without copying storage_values. The submissions are filtered
+        //    to the groups still holding their staged commit, so the two cannot disagree on disk.
+        let pending_submissions = self.live_pending_submissions();
         let persisted = PersistedStateSer {
             identity_bundle: &bundle_bytes,
             storage_values: &storage_lock,
             group_ids: &group_ids,
             forgotten_group_min_epochs: &self.forgotten_group_min_epochs,
+            pending_submissions: &pending_submissions,
         };
 
         let mut final_bytes = Vec::new();

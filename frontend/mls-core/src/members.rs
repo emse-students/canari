@@ -158,6 +158,9 @@ impl MlsManager {
         // C7-A: do NOT merge here. The commit is only *staged*. The caller validates it
         // server-side THEN calls merge_pending_commit_for (accepted) or clear_pending_commit_for
         // (rejected) - never merge-before-validation again, hence no local fork on rejection.
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         let commit = commit_msg_out
             .tls_serialize_detached()
@@ -199,6 +202,9 @@ impl MlsManager {
 
         // C7-A : stage uniquement (cf. remove_members_for_users) - merge/clear par l'appelant
         // apres validation serveur.
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         let commit = commit_msg_out
             .tls_serialize_detached()
@@ -217,6 +223,7 @@ impl MlsManager {
         group
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge pending commit error: {:?}", e)))?;
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         Ok(())
     }
@@ -232,6 +239,7 @@ impl MlsManager {
         group
             .clear_pending_commit(self.provider.storage())
             .map_err(|e| MlsError::OpenMls(format!("Clear pending commit error: {:?}", e)))?;
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         Ok(())
     }
@@ -398,6 +406,9 @@ impl MlsManager {
 
         let base = successor_base(group_info, group_id)?;
 
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         Ok((
             (commit_bytes, Some(welcome_bytes), added_indices, skipped),

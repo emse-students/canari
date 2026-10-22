@@ -12,7 +12,7 @@ import {
   type LeafRefreshDeps,
 } from './leafRefresh';
 import { CommitRefusedError } from './CommitRefusedError';
-import { CommitOutcomeUnknownError } from './unresolvedCommits';
+import { CommitOutcomeUnknownError } from './commitSubmission';
 
 /**
  * THE PERIODIC LEAF REFRESH: WHEN A DEVICE REPLACES ITS OWN LEAF, AND EVERY CASE IN WHICH IT MUST NOT.

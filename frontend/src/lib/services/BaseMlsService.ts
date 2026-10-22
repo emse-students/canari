@@ -147,15 +147,13 @@ import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import {
   CommitOutcomeUnknownError,
-  forgetUnresolvedCommit,
+  decodeSubmission,
+  encodeSubmission,
   isDefinitiveCommitRefusal,
-  readUnresolvedCommits,
-  recordUnresolvedCommit,
   resubmissionVerdict,
-  unresolvedCommitFor,
+  type CommitSubmission,
   type ResubmissionVerdict,
-  type UnresolvedCommit,
-} from '$lib/mls-client/unresolvedCommits';
+} from '$lib/mls-client/commitSubmission';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
@@ -3487,10 +3485,9 @@ export abstract class BaseMlsService implements IMlsService {
           // top of it while it stays unknown: openmls holds it pending, and the epoch this commit
           // would be built on is exactly what that outcome decides.
           if ((await this.settleUnresolvedLocked(groupId)) === 'unknown') {
-            const prior = unresolvedCommitFor(this.userId, this.deviceId, groupId);
             throw new CommitOutcomeUnknownError(
               groupId,
-              prior?.baseEpoch ?? -1,
+              this.getEpoch(groupId),
               'the previous commit of this group is still unresolved'
             );
           }
@@ -3513,7 +3510,7 @@ export abstract class BaseMlsService implements IMlsService {
           // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
           // between this accept and the local merge below, our epoch lags the server by one - a gap
           // the rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
-          const submission: UnresolvedCommit = {
+          const submission: CommitSubmission = {
             groupId,
             baseEpoch,
             commit: toBase64(staged.commit),
@@ -3523,8 +3520,21 @@ export abstract class BaseMlsService implements IMlsService {
             // Whom this commit removes, so the server queues it to the devices its half of the
             // removal already parted (`commitRemovals`).
             ...(opts.removes ? { removes: opts.removes } : {}),
-            at: Date.now(),
+            ...(staged.welcome ? { welcome: toBase64(staged.welcome) } : {}),
           };
+          // KEPT BESIDE THE STAGED COMMIT, IN THE SAME STATE, BEFORE THE FIRST REQUEST
+          // (`commitSubmission.ts`). From here on any checkpoint holds both or neither, and a staged
+          // commit found without its submission provably never left this device.
+          try {
+            await this.recordPendingSubmission(groupId, encodeSubmission(submission));
+          } catch (e) {
+            await this.clearPendingCommit(groupId).catch(() => {});
+            console.error(
+              `[COMMIT] ${groupId.slice(0, 8)}... could not keep the submission beside the staged ` +
+                `commit - cleared before sending anything: ${String(e).slice(0, 120)}`
+            );
+            throw e;
+          }
           let validation: Awaited<ReturnType<typeof this.delivery.submitCommit>>;
           try {
             validation = await this.submitRecorded(submission);
@@ -3548,14 +3558,10 @@ export abstract class BaseMlsService implements IMlsService {
             );
             const answer = await this.resubmitUnresolved(submission);
             if (answer.verdict === 'unknown') {
-              leftUnresolved = this.keepUnresolved(submission);
-              if (!leftUnresolved) {
-                // Nothing would settle it after a reload, and a pending commit nobody settles
-                // blocks every later commit in the group: cleared, and the cost - if it had
-                // landed, this device is one epoch behind its own commit - left to rung 2.
-                await this.clearPendingCommit(groupId).catch(() => {});
-                throw answer.error ?? e;
-              }
+              // KEPT: the staged commit and its submission stay in the state, checkpointed once the
+              // lock is released; a later resubmission decides.
+              leftUnresolved = true;
+              this.unresolvedGroups?.add(groupId);
               throw new CommitOutcomeUnknownError(groupId, baseEpoch, answer.error ?? e);
             }
             if (answer.answer === undefined) {
@@ -3614,7 +3620,7 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** Submits `submission` to the commit gate, exactly as recorded - the one spelling of the request. */
   private submitRecorded(
-    submission: UnresolvedCommit
+    submission: CommitSubmission
   ): ReturnType<typeof this.delivery.submitCommit> {
     return this.delivery.submitCommit(
       submission.groupId,
@@ -3632,7 +3638,7 @@ export abstract class BaseMlsService implements IMlsService {
    * first time, or answered as a duplicate), refused (an epoch conflict, or a 4xx), or unknown (no
    * answer, a 5xx, or `concurrent_commit` - a lock our own first request may hold).
    */
-  private async resubmitUnresolved(submission: UnresolvedCommit): Promise<{
+  private async resubmitUnresolved(submission: CommitSubmission): Promise<{
     verdict: ResubmissionVerdict;
     answer?: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>;
     error?: unknown;
@@ -3658,22 +3664,6 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Keeps an unanswered commit: recorded durably, its staged state left pending. Returns false when
-   * the record could not be written, in which case the caller must not keep it.
-   */
-  private keepUnresolved(submission: UnresolvedCommit): boolean {
-    const kept = recordUnresolvedCommit(this.userId, this.deviceId, submission);
-    if (!kept) {
-      console.error(
-        `[COMMIT] ${submission.groupId.slice(0, 8)}... the commit from epoch ` +
-          `${submission.baseEpoch} has an UNKNOWN outcome and could not be recorded - cleared; ` +
-          'if it had landed, this device is one epoch behind its own commit (rung 2)'
-      );
-    }
-    return kept;
-  }
-
-  /**
    * Awaits the structural checkpoint after an unresolved commit was kept or settled. Kept: the record
    * names a pending commit, and a reload restoring the state from before it would find nothing to
    * merge or clear. Settled: the server already holds the outcome, and the merged epoch's secrets
@@ -3690,71 +3680,109 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
+  /** Keeps `submission` beside `groupId`'s staged commit, in the MLS state (`commitSubmission.ts`). */
+  protected abstract recordPendingSubmission(
+    groupId: string,
+    submission: Uint8Array
+  ): Promise<void>;
+  /** The submission kept beside `groupId`'s staged commit; `null` when it has none or never sent it. */
+  protected abstract pendingSubmission(groupId: string): Promise<Uint8Array | null>;
+  /** Every group whose state holds a staged commit not yet merged or cleared. */
+  protected abstract groupsWithPendingCommit(): Promise<string[]>;
+
   /**
-   * Settles the unresolved commit of `groupId`, if it has one, by resubmitting it. MUST be called
-   * holding the MLS lock (and inside the group's epoch-advance barrier): it merges or clears.
+   * The groups this session knows hold an unresolved commit - a DERIVED index of the MLS state, read
+   * from it once ({@link groupsWithPendingCommit}) and then kept by the paths that keep or settle a
+   * commit, so a send does not cross into the platform to ask. The state stays the one truth: every
+   * settlement reads it again.
+   */
+  private unresolvedGroups: Set<string> | null = null;
+
+  private async knownUnresolvedGroups(): Promise<Set<string>> {
+    if (this.unresolvedGroups === null) {
+      this.unresolvedGroups = new Set(await this.groupsWithPendingCommit());
+    }
+    return this.unresolvedGroups;
+  }
+
+  /**
+   * Settles `groupId`'s staged commit, if its state holds one, by resubmitting the submission kept
+   * beside it. MUST be called holding the MLS lock (and inside the group's epoch-advance barrier):
+   * it merges or clears.
    *
-   * - `none`: nothing to settle - no record, or one made moot (the group is no longer held, or its
-   *   epoch moved: another member's commit at that base was processed, which clears ours);
-   * - `merged` / `refused`: the gate answered, and the record is gone;
-   * - `unknown`: still no answer; the record and the pending commit stay.
+   * - `none`: no staged commit;
+   * - `merged`: the gate accepted it (first time or duplicate) - merged, and an Add's Welcome
+   *   delivered to the devices it admits, since nobody else is left to send it;
+   * - `cleared`: refused (and caught up), or staged and NEVER SENT - no submission beside it, which
+   *   the record-before-send order makes a proof, not a guess;
+   * - `unknown`: still no answer; the staged commit and its submission stay.
    */
   private async settleUnresolvedLocked(
     groupId: string
-  ): Promise<'none' | 'merged' | 'refused' | 'unknown'> {
-    const record = unresolvedCommitFor(this.userId, this.deviceId, groupId);
-    if (!record) return 'none';
+  ): Promise<'none' | 'merged' | 'cleared' | 'unknown'> {
+    if (!(await this.groupsWithPendingCommit()).includes(groupId)) {
+      this.unresolvedGroups?.delete(groupId);
+      return 'none';
+    }
     const short = groupId.slice(0, 8);
-    if (!this.getLocalGroups().includes(groupId)) {
-      forgetUnresolvedCommit(
-        this.userId,
-        this.deviceId,
-        groupId,
-        'moot - the group is no longer held'
+    const bytes = await this.pendingSubmission(groupId);
+    const submission = bytes ? decodeSubmission(bytes) : null;
+    if (!submission) {
+      await this.clearPendingCommit(groupId).catch((e: unknown) =>
+        console.error(`[COMMIT] ${short}... could not clear an unsent staged commit: ${String(e)}`)
       );
-      return 'none';
-    }
-    const epoch = this.getEpoch(groupId);
-    if (epoch !== record.baseEpoch) {
-      forgetUnresolvedCommit(
-        this.userId,
-        this.deviceId,
-        groupId,
-        `moot - the group moved to epoch ${epoch} by another commit`
+      this.unresolvedGroups?.delete(groupId);
+      console.warn(
+        `[COMMIT] ${short}... a staged commit with ${bytes ? 'an UNREADABLE' : 'no'} submission ` +
+          `beside it - ${bytes ? 'it cannot be resubmitted' : 'it was never sent'}; cleared`
       );
-      return 'none';
+      return 'cleared';
     }
-    const answer = await this.resubmitUnresolved(record);
-    if (answer.verdict === 'unknown') return 'unknown';
+    const answer = await this.resubmitUnresolved(submission);
+    if (answer.verdict === 'unknown') {
+      this.unresolvedGroups?.add(groupId);
+      return 'unknown';
+    }
+    this.unresolvedGroups?.delete(groupId);
     if (answer.verdict === 'accepted') {
-      await this.mergeSettled(groupId, record.baseEpoch);
-      forgetUnresolvedCommit(this.userId, this.deviceId, groupId, 'accepted - merged');
+      await this.mergeSettled(submission);
       return 'merged';
     }
     await this.clearPendingCommit(groupId).catch((e: unknown) =>
       console.warn(`[COMMIT] ${short}... could not clear the refused commit: ${String(e)}`)
     );
-    forgetUnresolvedCommit(this.userId, this.deviceId, groupId, 'refused - cleared');
-    await this.catchUpOnRefusedCommit(groupId, record.baseEpoch, answer.answer?.currentEpoch);
-    return 'refused';
+    console.log(
+      `[COMMIT] ${short}... the kept commit from epoch ${submission.baseEpoch}: refused - cleared`
+    );
+    await this.catchUpOnRefusedCommit(groupId, submission.baseEpoch, answer.answer?.currentEpoch);
+    return 'cleared';
   }
 
   /**
-   * Merges a kept commit the gate has now accepted. A merge that fails (the pending commit did not
-   * survive a reload) leaves this device one epoch behind its own commit, which openmls cannot
-   * replay - so the group is marked in a gap and the recovery ladder owns it, said loudly.
+   * Merges a kept commit the gate has now accepted, dates the leaf, and delivers an Add's Welcome to
+   * the devices it admits - the Welcome is a separate request made after the accept, and the call
+   * that staged the Add is long gone. A Welcome that cannot be delivered is said; the joiner's
+   * welcome request is what repairs it then.
    */
-  private async mergeSettled(groupId: string, baseEpoch: number): Promise<void> {
-    try {
-      await this.mergePendingCommit(groupId);
-      noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, baseEpoch + 1);
-    } catch (e) {
-      console.error(
-        `[COMMIT] ${groupId.slice(0, 8)}... the commit from epoch ${baseEpoch} WAS accepted but ` +
-          `nothing is pending to merge (${String(e).slice(0, 120)}) - one epoch behind our own ` +
-          'commit; left to the recovery ladder'
-      );
-      markEpochGap(groupId);
+  private async mergeSettled(submission: CommitSubmission): Promise<void> {
+    const { groupId, baseEpoch } = submission;
+    const short = groupId.slice(0, 8);
+    await this.mergePendingCommit(groupId);
+    noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, baseEpoch + 1);
+    console.log(`[COMMIT] ${short}... the kept commit from epoch ${baseEpoch}: accepted - merged`);
+    if (!submission.welcome || !submission.admits?.length) return;
+    const welcome = fromBase64(submission.welcome);
+    const tree = await this.exportRatchetTree(groupId);
+    for (const a of submission.admits) {
+      try {
+        await this.sendWelcome(welcome, a.userId, groupId, a.deviceId, tree);
+        console.log(`[COMMIT] ${short}... Welcome of the settled Add delivered to ${a.deviceId}`);
+      } catch (e) {
+        console.error(
+          `[COMMIT] ${short}... Welcome of the settled Add NOT delivered to ${a.deviceId} - its ` +
+            `welcome request repairs it: ${String(e).slice(0, 120)}`
+        );
+      }
     }
   }
 
@@ -3763,21 +3791,21 @@ export abstract class BaseMlsService implements IMlsService {
    * per group, then awaits a checkpoint when any group's state moved.
    */
   async settleUnresolvedCommits(groupIds?: string[]): Promise<void> {
-    const pending = Object.keys(readUnresolvedCommits(this.userId, this.deviceId)).filter(
-      (g) => !groupIds || groupIds.includes(g)
-    );
+    const all = await this.groupsWithPendingCommit();
+    this.unresolvedGroups = new Set(all);
+    const pending = all.filter((g) => !groupIds || groupIds.includes(g));
     if (pending.length === 0) return;
-    console.log(`[COMMIT] settling ${pending.length} unresolved commit(s) by resubmission`);
+    console.log(`[COMMIT] settling ${pending.length} staged commit(s) by resubmission`);
     let moved = false;
     for (const groupId of pending) {
       try {
         const outcome = await this.runUnderMlsLock(() =>
           runAsEpochAdvance(groupId, () => this.settleUnresolvedLocked(groupId))
         );
-        if (outcome === 'merged' || outcome === 'refused') moved = true;
+        if (outcome === 'merged' || outcome === 'cleared') moved = true;
       } catch (e) {
         console.warn(
-          `[COMMIT] ${groupId.slice(0, 8)}... settling the unresolved commit failed: ${String(e).slice(0, 160)}`
+          `[COMMIT] ${groupId.slice(0, 8)}... settling the kept commit failed: ${String(e).slice(0, 160)}`
         );
       }
     }
@@ -3785,36 +3813,29 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * See {@link IMlsService.settleUnresolvedCommitFromLog}. Takes no lock and makes no request: it is
-   * called from inside a commit replay, by whoever holds the client for it.
+   * See {@link IMlsService.settleUnresolvedCommitFromLog}. Takes no lock: it is called from inside a
+   * commit replay, by whoever holds the client for it.
    */
   async settleUnresolvedCommitFromLog(
     groupId: string,
     commitAtBase: string | null
   ): Promise<'none' | 'merged' | 'cleared' | 'undecided'> {
-    const record = unresolvedCommitFor(this.userId, this.deviceId, groupId);
-    if (!record) return 'none';
-    if (this.getEpoch(groupId) !== record.baseEpoch) {
-      forgetUnresolvedCommit(this.userId, this.deviceId, groupId, 'moot - the group moved on');
-      return 'none';
-    }
-    // NO ROW AT THE BASE EPOCH DECIDES NOTHING: it is "not yet" as much as "never".
-    if (commitAtBase === null) return 'undecided';
-    if (commitAtBase === record.commit) {
-      await this.mergeSettled(groupId, record.baseEpoch);
-      forgetUnresolvedCommit(this.userId, this.deviceId, groupId, 'the log holds it - merged');
+    if (!(await this.groupsWithPendingCommit()).includes(groupId)) return 'none';
+    const short = groupId.slice(0, 8);
+    const bytes = await this.pendingSubmission(groupId);
+    const submission = bytes ? decodeSubmission(bytes) : null;
+    if (submission && commitAtBase === null) return 'undecided';
+    this.unresolvedGroups?.delete(groupId);
+    if (submission && commitAtBase === submission.commit) {
+      await this.mergeSettled(submission);
       return 'merged';
     }
+    // Another device's commit holds the epoch, or ours was never sent: either way it did not land.
     await this.clearPendingCommit(groupId).catch((e: unknown) =>
-      console.warn(
-        `[COMMIT] ${groupId.slice(0, 8)}... could not clear the lost commit: ${String(e)}`
-      )
+      console.warn(`[COMMIT] ${short}... could not clear the lost commit: ${String(e)}`)
     );
-    forgetUnresolvedCommit(
-      this.userId,
-      this.deviceId,
-      groupId,
-      "another device's commit holds its epoch - cleared"
+    console.log(
+      `[COMMIT] ${short}... the kept commit: ${submission ? "another device's commit holds its epoch" : 'never sent'} - cleared`
     );
     return 'cleared';
   }
@@ -5206,13 +5227,12 @@ export abstract class BaseMlsService implements IMlsService {
     await this.waitForCatchUpIdle();
     // NOTHING IS SEALED ON TOP OF A COMMIT WHOSE OUTCOME IS UNKNOWN: whether this device is at N or
     // N+1 is exactly what that outcome decides, so it is asked first, by the same resubmission.
-    if (unresolvedCommitFor(this.userId, this.deviceId, groupId)) {
+    if ((await this.knownUnresolvedGroups()).has(groupId)) {
       await this.settleUnresolvedCommits([groupId]);
-      const still = unresolvedCommitFor(this.userId, this.deviceId, groupId);
-      if (still) {
+      if ((await this.knownUnresolvedGroups()).has(groupId)) {
         throw new CommitOutcomeUnknownError(
           groupId,
-          still.baseEpoch,
+          this.getEpoch(groupId),
           'a send waits for the resubmission to answer'
         );
       }

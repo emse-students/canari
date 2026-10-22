@@ -1242,6 +1242,21 @@ export class WebMlsService extends BaseMlsService {
     return this.client.own_context_matches_base(groupId, groupInfo);
   }
 
+  /** WASM client wrapper - see {@link BaseMlsService.recordPendingSubmission}. */
+  protected async recordPendingSubmission(groupId: string, submission: Uint8Array): Promise<void> {
+    this.client.record_pending_submission(groupId, submission);
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.pendingSubmission}. */
+  protected async pendingSubmission(groupId: string): Promise<Uint8Array | null> {
+    return this.client.pending_submission(groupId) ?? null;
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */
+  protected async groupsWithPendingCommit(): Promise<string[]> {
+    return this.client.groups_with_pending_commit();
+  }
+
   /** WASM client wrapper - merges the pending staged commit (server accepted). */
   protected async mergePendingCommit(groupId: string): Promise<void> {
     this.client.merge_pending_commit(groupId);

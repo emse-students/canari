@@ -48,12 +48,16 @@ function commitCtx(accepted: boolean) {
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     clearPendingCommit: vi.fn().mockResolvedValue(undefined),
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
-    // The real ones: with no unresolved commit recorded they settle nothing (see
+    // No staged commit kept in the state: every commit here is answered at once.
+    groupsWithPendingCommit: vi.fn(async () => []),
+    recordPendingSubmission: vi.fn(async () => {}),
+    // The real ones: with no staged commit kept they settle nothing (see
     // `BaseMlsService.unresolvedCommit.test.ts` for the cases where they do).
     ...Object.fromEntries(
-      ['settleUnresolvedLocked', 'submitRecorded', 'resubmitUnresolved', 'keepUnresolved'].map(
-        (name) => [name, (BaseMlsService.prototype as unknown as Record<string, unknown>)[name]]
-      )
+      ['settleUnresolvedLocked', 'submitRecorded', 'resubmitUnresolved'].map((name) => [
+        name,
+        (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],
+      ])
     ),
   };
 }
@@ -149,6 +153,10 @@ abstract class SendHarness extends BaseMlsService {
     ) => {
       this.scheduled.push(g);
     };
+  }
+  /** No staged commit is kept in this state: a send asks, and finds nothing to settle. */
+  protected async groupsWithPendingCommit(): Promise<string[]> {
+    return [];
   }
   protected async encryptForSend(): Promise<Uint8Array> {
     return new Uint8Array([1]);

@@ -53,8 +53,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
     userId: 'user-a',
     deviceId: 'web-a',
-    getLocalGroups: vi.fn(() => []),
-    // REAL: with no unresolved commit recorded they settle nothing and submit once, which is the
+    // No staged commit kept in the state: every commit here is answered at once.
+    groupsWithPendingCommit: vi.fn(async () => []),
+    recordPendingSubmission: vi.fn(async () => {}),
+    // REAL: with no staged commit kept they settle nothing and submit once, which is the
     // case here (`BaseMlsService.unresolvedCommit.test.ts` owns the others).
     ...Object.fromEntries(
       [
@@ -62,7 +64,6 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
         'settleUnresolvedCommitFromLog',
         'submitRecorded',
         'resubmitUnresolved',
-        'keepUnresolved',
       ].map((name) => [
         name,
         (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],

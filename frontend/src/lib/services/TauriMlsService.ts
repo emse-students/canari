@@ -1321,6 +1321,22 @@ export class TauriMlsService extends BaseMlsService {
     });
   }
 
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.recordPendingSubmission}. */
+  protected async recordPendingSubmission(groupId: string, submission: Uint8Array): Promise<void> {
+    await invoke('noter_soumission', { groupId, submission: Array.from(submission) });
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.pendingSubmission}. */
+  protected async pendingSubmission(groupId: string): Promise<Uint8Array | null> {
+    const bytes = await invoke<number[] | null>('soumission_en_attente', { groupId });
+    return bytes ? new Uint8Array(bytes) : null;
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */
+  protected async groupsWithPendingCommit(): Promise<string[]> {
+    return invoke<string[]>('groupes_commit_en_attente');
+  }
+
   /** Tauri-native `invoke` wrapper - merges the pending staged commit (server accepted) and refreshes the epoch cache. */
   protected async mergePendingCommit(groupId: string): Promise<void> {
     await invoke('confirmer_commit', { groupId });

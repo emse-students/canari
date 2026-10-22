@@ -743,6 +743,32 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Records the submission of `group_id`'s staged commit beside it, in the same state
+    /// (`MlsManager::record_pending_submission`) - BEFORE its first request is sent.
+    #[wasm_bindgen]
+    pub fn record_pending_submission(
+        &mut self,
+        group_id: String,
+        submission: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        self.manager
+            .record_pending_submission(&group_id, submission)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// The submission of `group_id`'s staged commit, or `undefined` when it has none or was never
+    /// sent (`MlsManager::pending_submission`).
+    #[wasm_bindgen]
+    pub fn pending_submission(&self, group_id: String) -> Option<Vec<u8>> {
+        self.manager.pending_submission(&group_id)
+    }
+
+    /// Every group holding a staged commit (`MlsManager::groups_with_pending_commit`).
+    #[wasm_bindgen]
+    pub fn groups_with_pending_commit(&self) -> Vec<String> {
+        self.manager.groups_with_pending_commit()
+    }
+
     /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).
     /// Advances the local epoch. Counterpart of `clear_pending_commit`. [[C7]] Option A:
     /// validate-then-merge.

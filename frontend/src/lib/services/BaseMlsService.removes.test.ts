@@ -38,7 +38,10 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
       runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
       freshEpoch: vi.fn().mockResolvedValue(5),
       mergePendingCommit: vi.fn().mockResolvedValue(undefined),
-      // REAL: with no unresolved commit recorded they settle nothing and submit once.
+      // No staged commit kept in the state: the commit here is answered at once.
+      groupsWithPendingCommit: vi.fn(async () => []),
+      recordPendingSubmission: vi.fn(async () => {}),
+      // REAL: with no staged commit kept they settle nothing and submit once.
       ...Object.fromEntries(
         ['settleUnresolvedLocked', 'submitRecorded'].map((name) => [
           name,

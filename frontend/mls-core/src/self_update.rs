@@ -81,6 +81,9 @@ impl MlsManager {
             .stage_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("SelfUpdate stage error: {e:?}")))?;
 
+        // A NEW STAGED COMMIT HAS NO SUBMISSION YET: one left from an earlier commit must never be
+        // read as this one's (`pending_submission.rs`).
+        self.drop_pending_submission(group_id);
         self.mark_state_dirty();
         let (commit_out, _welcome, group_info) = bundle.into_contents();
         let commit = commit_out

@@ -759,6 +759,52 @@ pub(crate) fn contexte_correspond_base(
         .map_err(|e| e.to_string())
 }
 
+/// Records the submission of `group_id`'s staged commit beside it, in the same state
+/// (`MlsManager::record_pending_submission`) - BEFORE its first request is sent.
+#[tauri::command]
+pub(crate) fn noter_soumission(
+    group_id: String,
+    submission: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager
+        .record_pending_submission(&group_id, submission)
+        .map_err(|e| e.to_string())
+}
+
+/// The submission of `group_id`'s staged commit, or `None` when it has none or was never sent
+/// (`MlsManager::pending_submission`).
+#[tauri::command]
+pub(crate) fn soumission_en_attente(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Option<Vec<u8>>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.pending_submission(&group_id))
+}
+
+/// Every group holding a staged commit (`MlsManager::groups_with_pending_commit`).
+#[tauri::command]
+pub(crate) fn groupes_commit_en_attente(
+    state: tauri::State<AppState>,
+) -> Result<Vec<String>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.groups_with_pending_commit())
+}
+
 /// Confirms (merges) a *staged* commit (ADD or REMOVE) AFTER the server accepts it
 /// (`validateCommit`). Advances the local epoch. Counterpart of `annuler_commit`. [[C7]] Option A:
 /// validate-then-merge, never a local fork on rejection (unified ADD+REMOVE regime).

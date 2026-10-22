@@ -1,19 +1,12 @@
 import {
-  forgetUnresolvedCommit,
+  decodeSubmission,
+  encodeSubmission,
   isDefinitiveCommitRefusal,
-  readUnresolvedCommits,
-  recordUnresolvedCommit,
   resubmissionVerdict,
-  unresolvedCommitFor,
-} from './unresolvedCommits';
-import { ACCOUNT_KEY, accountLocalStorageKeysIn } from '$lib/utils/accountLocalKeys';
+  type CommitSubmission,
+} from './commitSubmission';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { TransportFailureError } from '$lib/utils/transportFailure';
-
-const U = 'user-a';
-const D = 'web-a';
-
-beforeEach(() => localStorage.clear());
 
 describe('isDefinitiveCommitRefusal - did the gate answer, and refuse?', () => {
   it.each([
@@ -42,28 +35,22 @@ describe('resubmissionVerdict', () => {
   });
 });
 
-describe('the unresolved-commit record', () => {
-  const rec = { groupId: 'g-1', baseEpoch: 5, commit: 'AQ==', groupInfo: 'Ag==', at: 1 };
-
-  it('round-trips per group and is forgotten per group', () => {
-    expect(recordUnresolvedCommit(U, D, rec)).toBe(true);
-    recordUnresolvedCommit(U, D, { ...rec, groupId: 'g-2' });
-    expect(unresolvedCommitFor(U, D, 'g-1')).toEqual(rec);
-    forgetUnresolvedCommit(U, D, 'g-1', 'test');
-    expect(Object.keys(readUnresolvedCommits(U, D))).toEqual(['g-2']);
-    forgetUnresolvedCommit(U, D, 'g-2', 'test');
-    expect(localStorage.getItem(ACCOUNT_KEY.unresolvedCommits(U, D))).toBeNull();
+describe('the submission kept in the MLS state', () => {
+  it('round-trips every field, the Welcome included', () => {
+    const s: CommitSubmission = {
+      groupId: 'g-1',
+      baseEpoch: 5,
+      commit: 'AQ==',
+      groupInfo: 'Ag==',
+      admits: [{ userId: 'u-b', deviceId: 'd-b' }],
+      excludeDeviceIds: ['u-b:d-b'],
+      welcome: 'Aw==',
+    };
+    expect(decodeSubmission(encodeSubmission(s))).toEqual(s);
   });
 
-  it('reads an unreadable record as empty', () => {
-    localStorage.setItem(ACCOUNT_KEY.unresolvedCommits(U, D), '[1]');
-    expect(readUnresolvedCommits(U, D)).toEqual({});
-  });
-
-  it('is one of the keys an account deletion sweeps', () => {
-    recordUnresolvedCommit(U, D, rec);
-    expect(accountLocalStorageKeysIn(localStorage, U)).toContain(
-      ACCOUNT_KEY.unresolvedCommits(U, D)
-    );
+  it('reads unreadable bytes as null', () => {
+    expect(decodeSubmission(new TextEncoder().encode('[1]'))).toBeNull();
+    expect(decodeSubmission(new Uint8Array([0xff]))).toBeNull();
   });
 });

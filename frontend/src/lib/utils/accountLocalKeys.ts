@@ -95,9 +95,6 @@ export const ACCOUNT_KEY = {
   deviceName: (userId: string, deviceId: string) => `device-name:${userId}:${deviceId}`,
   /** `leafRefresh.ts`: when this device's own commits last replaced its leaf, per group. */
   leafRefresh: (userId: string, deviceId: string) => `mls_leaf_refresh:${userId}:${deviceId}`,
-  /** `unresolvedCommits.ts`: this device's submitted commits whose outcome is unknown, per group. */
-  unresolvedCommits: (userId: string, deviceId: string) =>
-    `mls_unresolved_commits:${userId}:${deviceId}`,
 } as const;
 
 /** The Tauri store (`@tauri-apps/plugin-store`) that mirrors {@link ACCOUNT_KEY}`.lastActive`. */
@@ -152,7 +149,6 @@ function keyPrefixes(userId: string): string[] {
     ACCOUNT_KEY.notReadySince(userId, ''),
     ACCOUNT_KEY.deviceName(userId, ''),
     ACCOUNT_KEY.leafRefresh(userId, ''),
-    ACCOUNT_KEY.unresolvedCommits(userId, ''),
   ];
 }
 

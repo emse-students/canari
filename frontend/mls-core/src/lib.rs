@@ -8,6 +8,7 @@ pub mod keystore;
 pub mod logging;
 pub mod members;
 pub mod messaging;
+pub mod pending_submission;
 pub mod self_update;
 pub mod state;
 pub mod state_blob;

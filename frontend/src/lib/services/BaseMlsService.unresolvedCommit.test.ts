@@ -12,24 +12,27 @@ import { BaseMlsService } from './BaseMlsService';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import {
   CommitOutcomeUnknownError,
-  readUnresolvedCommits,
-  recordUnresolvedCommit,
-  unresolvedCommitFor,
-  type UnresolvedCommit,
-} from '$lib/mls-client/unresolvedCommits';
+  decodeSubmission,
+  encodeSubmission,
+  type CommitSubmission,
+} from '$lib/mls-client/commitSubmission';
 import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
 
 /**
- * A SUBMISSION WHOSE ANSWER WAS LOST IS RESUBMITTED, NEVER GUESSED.
+ * A SUBMISSION WHOSE ANSWER WAS LOST IS RESUBMITTED, NEVER GUESSED - AND IT IS KEPT IN THE MLS STATE.
  *
  * Reading the server's log after a lost answer cannot tell "not landed yet" from "never landed": a
- * clear decided from an empty log races the request still in flight, which the gate then accepts
- * - and the device has thrown away a commit everyone else applied. So the SAME bytes are submitted
+ * clear decided from an empty log races the request still in flight. So the SAME bytes are sent
  * again, the gate answers a duplicate of an accepted commit as accepted, and an outcome that stays
- * unknown is KEPT, durably, with nothing else committed or sent in the group until a resubmission
- * answers. These cases pin each verdict and each place a resubmission is owed.
+ * unknown is KEPT - beside the staged commit, in the same state, recorded before the first request,
+ * so the two can never disagree on disk. A staged commit with no submission was therefore never
+ * sent. These cases pin each verdict and each place a resubmission is owed.
+ *
+ * The platform's staged commit and its submission are modelled by `state`, with the crate's rules
+ * (`mls-core/tests/pending_submission.rs` pins them): a stage starts a commit with no submission,
+ * a merge or a clear ends both.
  */
 
 const U = 'user-a';
@@ -55,18 +58,48 @@ function submitting(...steps: Step[]) {
 
 const lost = () => new TransportFailureError(new TypeError('Failed to fetch'));
 
-function ctx(submitCommit: ReturnType<typeof vi.fn>, opts: { epoch?: number } = {}) {
+/** group id -> its staged commit's submission (`null`: staged, never submitted). */
+type PendingState = Map<string, Uint8Array | null>;
+
+function primitives(state: PendingState, order: string[]) {
+  return {
+    recordPendingSubmission: vi.fn(async (g: string, s: Uint8Array) => {
+      order.push('record');
+      if (!state.has(g)) throw new Error('InvalidData: no staged commit');
+      state.set(g, s);
+    }),
+    pendingSubmission: vi.fn(async (g: string) => state.get(g) ?? null),
+    groupsWithPendingCommit: vi.fn(async () => [...state.keys()]),
+    mergePendingCommit: vi.fn(async (g: string) => {
+      state.delete(g);
+    }),
+    clearPendingCommit: vi.fn(async (g: string) => {
+      state.delete(g);
+    }),
+  };
+}
+
+function ctx(submitCommit: ReturnType<typeof vi.fn>, opts: { state?: PendingState } = {}) {
+  const state: PendingState = opts.state ?? new Map();
+  const order: string[] = [];
+  const submit = vi.fn(async (...args: unknown[]) => {
+    order.push('submit');
+    return (submitCommit as (...a: unknown[]) => unknown)(...args);
+  });
   const c: Record<string, unknown> = {
     userId: U,
     deviceId: D,
-    delivery: { submitCommit },
+    state,
+    order,
+    delivery: { submitCommit: submit },
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     freshEpoch: vi.fn().mockResolvedValue(5),
-    getEpoch: vi.fn(() => opts.epoch ?? 5),
-    getLocalGroups: vi.fn(() => [G]),
-    mergePendingCommit: vi.fn().mockResolvedValue(undefined),
-    clearPendingCommit: vi.fn().mockResolvedValue(undefined),
+    getEpoch: vi.fn(() => 5),
+    exportRatchetTree: vi.fn().mockResolvedValue(new Uint8Array([7])),
+    sendWelcome: vi.fn().mockResolvedValue(undefined),
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
+    unresolvedGroups: null,
+    ...primitives(state, order),
   };
   // The real seams under test: what they decide from the gate's answers is what these cases are about.
   for (const name of [
@@ -74,15 +107,17 @@ function ctx(submitCommit: ReturnType<typeof vi.fn>, opts: { epoch?: number } = 
     'settleUnresolvedLocked',
     'submitRecorded',
     'resubmitUnresolved',
-    'keepUnresolved',
     'awaitCommitCheckpoint',
     'mergeSettled',
+    'knownUnresolvedGroups',
     'settleUnresolvedCommits',
     'settleUnresolvedCommitFromLog',
   ]) {
     c[name] = proto[name];
   }
   return c as unknown as Record<string, ReturnType<typeof vi.fn>> & {
+    state: PendingState;
+    order: string[];
     delivery: { submitCommit: ReturnType<typeof vi.fn> };
     runCommitTransaction(
       g: string,
@@ -94,21 +129,40 @@ function ctx(submitCommit: ReturnType<typeof vi.fn>, opts: { epoch?: number } = 
   };
 }
 
-const stage = vi.fn(async () => ({ commit: new Uint8Array([1]), groupInfo: new Uint8Array([2]) }));
-const run = (c: ReturnType<typeof ctx>) =>
+/** A stage as the crate does it: the group now holds a staged commit with no submission. */
+function stagerOf(c: ReturnType<typeof ctx>) {
+  return vi.fn(async () => {
+    c.state.set(G, null);
+    return { commit: new Uint8Array([1]), groupInfo: new Uint8Array([2]) };
+  });
+}
+
+const run = (c: ReturnType<typeof ctx>, stage = stagerOf(c)) =>
   c.runCommitTransaction(G, stage, { removes: [{ userId: 'user-z' }] });
 
-function record(over: Partial<UnresolvedCommit> = {}): UnresolvedCommit {
-  return { groupId: G, baseEpoch: 5, commit: OURS, groupInfo: BASE, at: 1, ...over };
+function submission(over: Partial<CommitSubmission> = {}): CommitSubmission {
+  return { groupId: G, baseEpoch: 5, commit: OURS, groupInfo: BASE, ...over };
+}
+
+/** A group whose state holds a staged commit and the submission kept beside it. */
+function kept(over: Partial<CommitSubmission> = {}): PendingState {
+  return new Map([[G, encodeSubmission(submission(over))]]);
 }
 
 beforeEach(() => {
   localStorage.clear();
-  stage.mockClear();
   persistMlsStructuralCheckpoint.mockReset().mockResolvedValue(true);
 });
 
 describe('runCommitTransaction - a submission that got no answer', () => {
+  it('keeps the submission beside the staged commit BEFORE the first request', async () => {
+    const c = ctx(submitting({ accepted: true }));
+    await run(c);
+    expect(c.order).toEqual(['record', 'submit']);
+    const recorded = c.recordPendingSubmission.mock.calls[0][1] as Uint8Array;
+    expect(decodeSubmission(recorded)).toEqual(submission({ removes: [{ userId: 'user-z' }] }));
+  });
+
   it('resubmits the SAME request, and merges when the resubmission is accepted', async () => {
     const c = ctx(submitting(lost(), { accepted: true }));
     await run(c);
@@ -117,7 +171,7 @@ describe('runCommitTransaction - a submission that got no answer', () => {
     expect(c.delivery.submitCommit.mock.calls[0].slice(0, 3)).toEqual([G, 5, OURS]);
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
     expect(c.clearPendingCommit).not.toHaveBeenCalled();
-    expect(readUnresolvedCommits(U, D)).toEqual({});
+    expect(c.state.size).toBe(0);
     expect(readLeafRefreshLedger(U, D)[G]).toMatchObject({ epoch: 6 });
   });
 
@@ -136,7 +190,7 @@ describe('runCommitTransaction - a submission that got no answer', () => {
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
     expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, 6);
     expect(c.mergePendingCommit).not.toHaveBeenCalled();
-    expect(readUnresolvedCommits(U, D)).toEqual({});
+    expect(c.state.size).toBe(0);
   });
 
   it('clears WITHOUT resubmitting a 4xx - the gate answered, and it refused', async () => {
@@ -145,7 +199,7 @@ describe('runCommitTransaction - a submission that got no answer', () => {
     await expect(run(c)).rejects.toBe(refusal);
     expect(c.delivery.submitCommit).toHaveBeenCalledTimes(1);
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
-    expect(readUnresolvedCommits(U, D)).toEqual({});
+    expect(c.state.size).toBe(0);
   });
 
   it.each([
@@ -160,7 +214,7 @@ describe('runCommitTransaction - a submission that got no answer', () => {
       { accepted: false, reason: 'concurrent_commit', currentEpoch: 5 },
     ],
   ] as Array<[string, Step]>)(
-    'KEEPS the staged commit, records it durably and checkpoints it after %s',
+    'KEEPS the staged commit and its submission, and checkpoints them, after %s',
     async (_name, second) => {
       const c = ctx(submitting(lost(), second));
       const err = await run(c).catch((e: unknown) => e);
@@ -169,130 +223,163 @@ describe('runCommitTransaction - a submission that got no answer', () => {
       expect(isTransportFailure(err)).toBe(true);
       expect(c.clearPendingCommit).not.toHaveBeenCalled();
       expect(c.mergePendingCommit).not.toHaveBeenCalled();
-      expect(unresolvedCommitFor(U, D, G)).toMatchObject({
-        groupId: G,
-        baseEpoch: 5,
-        commit: OURS,
-        groupInfo: BASE,
-        removes: [{ userId: 'user-z' }],
-      });
+      expect(decodeSubmission(c.state.get(G)!)).toMatchObject({ baseEpoch: 5, commit: OURS });
       expect(persistMlsStructuralCheckpoint).toHaveBeenCalledTimes(1);
     }
   );
 
-  it('clears when the unresolved record cannot be written - nothing would settle it after a reload', async () => {
-    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
-      throw new Error('QuotaExceededError');
+  it('sends nothing and clears when the submission cannot be kept beside the commit', async () => {
+    const c = ctx(submitting());
+    c.recordPendingSubmission.mockRejectedValueOnce(new Error('state unavailable'));
+    await expect(run(c)).rejects.toThrow('state unavailable');
+    expect(c.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('delivers nothing itself when the Add is accepted at once - its caller sends the Welcome', async () => {
+    const c = ctx(submitting(lost(), { accepted: true }));
+    const stage = vi.fn(async () => {
+      c.state.set(G, null);
+      return {
+        commit: new Uint8Array([1]),
+        groupInfo: new Uint8Array([2]),
+        welcome: new Uint8Array([3]),
+      };
     });
-    try {
-      const c = ctx(submitting(lost(), lost()));
-      await expect(run(c)).rejects.toBeInstanceOf(TransportFailureError);
-      expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
-    } finally {
-      setItem.mockRestore();
-    }
+    const out = (await c.runCommitTransaction(G, stage, {
+      excludeDeviceIds: ['user-b:dev-b'],
+    })) as { welcome?: Uint8Array };
+    expect(out.welcome).toEqual(new Uint8Array([3]));
+    expect(c.sendWelcome).not.toHaveBeenCalled();
   });
 });
 
 describe('runCommitTransaction - a group whose last commit is unresolved', () => {
   it('takes NO new commit while a resubmission of the old one still gets no answer', async () => {
-    recordUnresolvedCommit(U, D, record());
-    const c = ctx(submitting(lost()));
-    await expect(run(c)).rejects.toBeInstanceOf(CommitOutcomeUnknownError);
+    const c = ctx(submitting(lost()), { state: kept() });
+    const stage = stagerOf(c);
+    await expect(run(c, stage)).rejects.toBeInstanceOf(CommitOutcomeUnknownError);
     expect(stage).not.toHaveBeenCalled();
     expect(c.delivery.submitCommit.mock.calls[0].slice(0, 3)).toEqual([G, 5, OURS]);
-    expect(unresolvedCommitFor(U, D, G)).not.toBeNull();
+    expect(c.state.has(G)).toBe(true);
   });
 
   it('merges the old commit when its resubmission is accepted, then stages the new one', async () => {
-    recordUnresolvedCommit(U, D, record());
-    const c = ctx(submitting({ accepted: true, duplicate: true }, { accepted: true }));
-    await run(c);
+    const c = ctx(submitting({ accepted: true, duplicate: true }, { accepted: true }), {
+      state: kept(),
+    });
+    const stage = stagerOf(c);
+    await run(c, stage);
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(2);
     expect(stage).toHaveBeenCalledTimes(1);
-    expect(unresolvedCommitFor(U, D, G)).toBeNull();
   });
 });
 
 describe('settleUnresolvedCommits - the resubmission at the next connection', () => {
-  it('merges on a duplicate answer, forgets the record and checkpoints', async () => {
-    recordUnresolvedCommit(U, D, record({ admits: [{ userId: 'u-b', deviceId: 'd-b' }] }));
-    const c = ctx(submitting({ accepted: true, duplicate: true }));
+  it('merges on a duplicate answer, from the submission kept in the state, and checkpoints', async () => {
+    const c = ctx(submitting({ accepted: true, duplicate: true }), {
+      state: kept({ excludeDeviceIds: ['u-b:d-b'] }),
+    });
     await c.settleUnresolvedCommits();
     expect(c.delivery.submitCommit).toHaveBeenCalledExactlyOnceWith(
       G,
       5,
       OURS,
-      undefined,
+      ['u-b:d-b'],
       BASE,
-      [{ userId: 'u-b', deviceId: 'd-b' }],
+      undefined,
       undefined
     );
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
-    expect(unresolvedCommitFor(U, D, G)).toBeNull();
+    expect(c.state.size).toBe(0);
     expect(persistMlsStructuralCheckpoint).toHaveBeenCalledTimes(1);
   });
 
-  it('clears and catches up on a refusal', async () => {
-    recordUnresolvedCommit(U, D, record());
-    const c = ctx(submitting({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 7 }));
+  it("delivers an Add's Welcome to every device it admits - nobody else is left to send it", async () => {
+    const c = ctx(submitting({ accepted: true, duplicate: true }), {
+      state: kept({
+        welcome: 'Aw==',
+        admits: [
+          { userId: 'u-b', deviceId: 'd-b1' },
+          { userId: 'u-b', deviceId: 'd-b2' },
+        ],
+      }),
+    });
+    await c.settleUnresolvedCommits();
+    // AFTER the merge: the tree the joiner needs is the one of the epoch the Add created.
+    expect(c.exportRatchetTree.mock.invocationCallOrder[0]).toBeGreaterThan(
+      c.mergePendingCommit.mock.invocationCallOrder[0]
+    );
+    expect(c.sendWelcome.mock.calls).toEqual([
+      [new Uint8Array([3]), 'u-b', G, 'd-b1', new Uint8Array([7])],
+      [new Uint8Array([3]), 'u-b', G, 'd-b2', new Uint8Array([7])],
+    ]);
+  });
+
+  it('delivers no Welcome when the kept Add is refused', async () => {
+    const c = ctx(submitting({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 7 }), {
+      state: kept({ welcome: 'Aw==', admits: [{ userId: 'u-b', deviceId: 'd-b' }] }),
+    });
     await c.settleUnresolvedCommits();
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
     expect(c.catchUpOnRefusedCommit).toHaveBeenCalledWith(G, 5, 7);
-    expect(unresolvedCommitFor(U, D, G)).toBeNull();
+    expect(c.sendWelcome).not.toHaveBeenCalled();
+    expect(c.state.size).toBe(0);
   });
 
-  it('keeps the record when the resubmission gets no answer either', async () => {
-    recordUnresolvedCommit(U, D, record());
-    const c = ctx(submitting(lost()));
+  it('keeps both when the resubmission gets no answer either', async () => {
+    const c = ctx(submitting(lost()), { state: kept() });
     await c.settleUnresolvedCommits();
     expect(c.clearPendingCommit).not.toHaveBeenCalled();
     expect(c.mergePendingCommit).not.toHaveBeenCalled();
-    expect(unresolvedCommitFor(U, D, G)).not.toBeNull();
+    expect(c.state.has(G)).toBe(true);
   });
 
-  it('forgets, without a submission, a record whose group moved on or is no longer held', async () => {
-    recordUnresolvedCommit(U, D, record());
-    recordUnresolvedCommit(U, D, record({ groupId: 'g-gone' }));
-    // g-1 is at epoch 6: something else moved it (another member's commit at 5 cleared ours).
-    const c = ctx(submitting(), { epoch: 6 });
+  it('clears, with no request, a staged commit that has no submission - it was never sent', async () => {
+    // The crash this answers: the checkpoint landed after the stage and before the submission was
+    // kept, which happens before the first request - so the reloaded state holds a commit that
+    // never left the device.
+    const c = ctx(submitting(), { state: new Map([[G, null]]) });
     await c.settleUnresolvedCommits();
     expect(c.delivery.submitCommit).not.toHaveBeenCalled();
-    expect(readUnresolvedCommits(U, D)).toEqual({});
+    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+    expect(c.state.size).toBe(0);
   });
 });
 
 describe('settleUnresolvedCommitFromLog - the log decided at the base epoch', () => {
-  it('merges when the row at the base epoch is OUR commit', async () => {
-    recordUnresolvedCommit(U, D, record());
-    const c = ctx(submitting());
+  it("merges when the row at the base epoch is OUR commit, and delivers an Add's Welcome", async () => {
+    const c = ctx(submitting(), {
+      state: kept({ welcome: 'Aw==', admits: [{ userId: 'u-b', deviceId: 'd-b' }] }),
+    });
     expect(await c.settleUnresolvedCommitFromLog(G, OURS)).toBe('merged');
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
-    expect(unresolvedCommitFor(U, D, G)).toBeNull();
+    expect(c.sendWelcome).toHaveBeenCalledTimes(1);
   });
 
   it("clears when the row at the base epoch is another device's commit", async () => {
-    recordUnresolvedCommit(U, D, record());
-    const c = ctx(submitting());
+    const c = ctx(submitting(), { state: kept() });
     expect(await c.settleUnresolvedCommitFromLog(G, 'Bw==')).toBe('cleared');
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
-    expect(unresolvedCommitFor(U, D, G)).toBeNull();
   });
 
   it('decides NOTHING when the log has no row at the base epoch yet', async () => {
-    recordUnresolvedCommit(U, D, record());
-    const c = ctx(submitting());
+    const c = ctx(submitting(), { state: kept() });
     expect(await c.settleUnresolvedCommitFromLog(G, null)).toBe('undecided');
     expect(c.mergePendingCommit).not.toHaveBeenCalled();
     expect(c.clearPendingCommit).not.toHaveBeenCalled();
-    expect(unresolvedCommitFor(U, D, G)).not.toBeNull();
+  });
+
+  it('clears a staged commit that was never sent', async () => {
+    const c = ctx(submitting(), { state: new Map([[G, null]]) });
+    expect(await c.settleUnresolvedCommitFromLog(G, null)).toBe('cleared');
   });
 });
 
 /** Only `sendMessage` and what it reaches; the two dozen other abstract members stay unstubbed. */
 abstract class SendHarness extends BaseMlsService {
   readonly encrypted: string[] = [];
-  constructor(submitCommit: ReturnType<typeof vi.fn>) {
+  constructor(submitCommit: ReturnType<typeof vi.fn>, state: PendingState) {
     super('web');
     Object.assign(this as unknown as Record<string, unknown>, {
       userId: U,
@@ -300,9 +387,7 @@ abstract class SendHarness extends BaseMlsService {
       delivery: { postApplicationMessage: async () => null, submitCommit },
       scheduleLeafRefresh: () => {},
       getEpoch: () => 5,
-      getLocalGroups: () => [G],
-      mergePendingCommit: vi.fn().mockResolvedValue(undefined),
-      clearPendingCommit: vi.fn().mockResolvedValue(undefined),
+      ...primitives(state, []),
     });
   }
   protected async encryptForSend(groupId: string): Promise<Uint8Array> {
@@ -310,12 +395,14 @@ abstract class SendHarness extends BaseMlsService {
     return new Uint8Array([1]);
   }
 }
-const Harness = SendHarness as unknown as new (s: ReturnType<typeof vi.fn>) => SendHarness;
+const Harness = SendHarness as unknown as new (
+  s: ReturnType<typeof vi.fn>,
+  state: PendingState
+) => SendHarness;
 
 describe('sendMessage - a group whose last commit is unresolved', () => {
   it('encrypts NOTHING while the resubmission still gets no answer', async () => {
-    recordUnresolvedCommit(U, D, record());
-    const svc = new Harness(submitting(lost()));
+    const svc = new Harness(submitting(lost()), kept());
     await expect(svc.sendMessage(G, new Uint8Array([9]))).rejects.toBeInstanceOf(
       CommitOutcomeUnknownError
     );
@@ -323,10 +410,21 @@ describe('sendMessage - a group whose last commit is unresolved', () => {
   });
 
   it('settles first, then sends at the epoch the answer decided', async () => {
-    recordUnresolvedCommit(U, D, record());
-    const svc = new Harness(submitting({ accepted: true, duplicate: true }));
+    const state = kept();
+    const svc = new Harness(submitting({ accepted: true, duplicate: true }), state);
     await svc.sendMessage(G, new Uint8Array([9]));
     expect(svc.encrypted).toEqual([G]);
-    expect(unresolvedCommitFor(U, D, G)).toBeNull();
+    expect(state.size).toBe(0);
+  });
+
+  it('asks the state once, then sends without crossing to it again', async () => {
+    const state: PendingState = new Map();
+    const svc = new Harness(submitting(), state);
+    await svc.sendMessage(G, new Uint8Array([9]));
+    await svc.sendMessage(G, new Uint8Array([9]));
+    const asked = (svc as unknown as { groupsWithPendingCommit: ReturnType<typeof vi.fn> })
+      .groupsWithPendingCommit;
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(svc.encrypted).toEqual([G, G]);
   });
 });

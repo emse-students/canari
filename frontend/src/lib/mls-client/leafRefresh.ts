@@ -36,7 +36,7 @@
  */
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { CommitRefusedError } from './CommitRefusedError';
-import { CommitOutcomeUnknownError } from './unresolvedCommits';
+import { CommitOutcomeUnknownError } from './commitSubmission';
 
 /**
  * How long a leaf may hold the same key material before this device replaces it: SEVEN DAYS.
@@ -335,7 +335,7 @@ export async function refreshLeafIfDue(
       return 'unverified';
     }
     if (e instanceof CommitOutcomeUnknownError) {
-      // Neither merged nor cleared: kept, and settled by a resubmission (`unresolvedCommits.ts`),
+      // Neither merged nor cleared: kept, and settled by a resubmission (`commitSubmission.ts`),
       // which dates the leaf if the gate accepted it. Nothing here decides it.
       deps.log(
         `[LEAF_REFRESH] ${short}... refresh at epoch ${epoch} has an UNKNOWN outcome - kept pending ` +
