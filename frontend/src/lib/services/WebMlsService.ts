@@ -1,6 +1,6 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
-import type { DeviceEvent, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
@@ -1204,6 +1204,20 @@ export class WebMlsService extends BaseMlsService {
     };
   }
 
+  /** WASM client wrapper - `replace_device`, `[commit, welcome, group_info]`, staged not merged. */
+  protected async stageReplaceDevice(
+    groupId: string,
+    identity: string,
+    keyPackage: Uint8Array
+  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }> {
+    const res = this.client.replace_device(groupId, identity, keyPackage);
+    return {
+      commit: res[0] as Uint8Array,
+      welcome: res[1] as Uint8Array,
+      groupInfo: res[2] as Uint8Array,
+    };
+  }
+
   /**
    * IndexedDB answered, and answered "nothing" (an empty record counts as nothing - `stateOrAbsent`).
    * A failed read throws out of `loadMlsState`, which `reenrolLostState` reads as "not proven".
@@ -1220,13 +1234,13 @@ export class WebMlsService extends BaseMlsService {
     return this.client.vet_key_package(keyPackage, identity) as KeyPackageVerdict;
   }
 
-  /** WASM client wrapper - `pinned_signature_keys`, an array of `Uint8Array` or `undefined`. */
+  /** WASM client wrapper - `pinned_signature_keys`, `{ keys, anchored, reaffirmations }` or `undefined`. */
   protected async pinnedSignatureKeysNative(
     userId: string,
     deviceId: string
-  ): Promise<Uint8Array[] | null> {
-    const keys = this.client.pinned_signature_keys(userId, deviceId) as Uint8Array[] | undefined;
-    return keys ?? null;
+  ): Promise<DevicePin | null> {
+    const pin = this.client.pinned_signature_keys(userId, deviceId) as DevicePin | undefined;
+    return pin ?? null;
   }
 
   /** WASM client wrapper - `removal_epochs`, a `Float64Array` of epochs. */

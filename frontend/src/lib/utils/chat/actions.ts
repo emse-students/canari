@@ -11,7 +11,6 @@ import {
   historyStateKeyFor,
   persistMlsStateAfterMutation,
   purgeLocalConversationRecord,
-  kickStaleLeaf,
   isGroupActiveOnServer,
   handleDuplicateLeafError,
 } from '$lib/utils/chat/groupActions';
@@ -216,7 +215,14 @@ export async function processPendingInvitations(params: {
         // A DEVICE THIS ONE REFUSED FOR A CHANGED KEY IS NOT FETCHED AGAIN: every package it has
         // carries the same key, so a fetch would only spend one. The row stays (it is this member's
         // judgement), and the line names who can lift it (`refusedDevices.ts`).
-        if (isRefusedDevice({ userId, deviceId: myDeviceId }, inv.userId, inv.deviceId)) {
+        if (
+          await isRefusedDevice(
+            { userId, deviceId: myDeviceId },
+            inv.userId,
+            inv.deviceId,
+            mlsService
+          )
+        ) {
           reportRefusedDeviceSkipped('[PENDING]', groupId, inv.userId, inv.deviceId);
           continue;
         }
@@ -376,7 +382,7 @@ export async function processPendingInvitations(params: {
           // because the refusal is this member's judgement and not a fact about the device.
           if (e instanceof DeviceTrustRefusedError) {
             reportDeviceTrustRefusal('[PENDING]', groupId, e);
-            recordRefusedDevice({ userId, deviceId: myDeviceId }, e);
+            await recordRefusedDevice({ userId, deviceId: myDeviceId }, e, mlsService);
             continue;
           }
           const errStr = String(e);
@@ -958,7 +964,7 @@ export async function handleWelcomeRequest(params: {
     // A requester this device refused for a changed key is not fetched again, and is told by the
     // line what lifts it (`refusedDevices.ts`). Before the anti-livelock count: it is not an attempt.
     const ownDevice = { userId, deviceId: mlsService.getDeviceId() };
-    if (isRefusedDevice(ownDevice, requesterUserId, requesterDeviceId)) {
+    if (await isRefusedDevice(ownDevice, requesterUserId, requesterDeviceId, mlsService)) {
       reportRefusedDeviceSkipped('[WELCOME_REQ]', groupId, requesterUserId, requesterDeviceId);
       return;
     }
@@ -1014,8 +1020,8 @@ export async function handleWelcomeRequest(params: {
     // optimistically before the phone processes the Welcome. If the device loses its
     // WASM state (restart, fresh-install, NoMatchingKeyPackage), it resends a
     // welcome_request while already marked 'active' server-side.
-    // -> always kick + re-add when the leaf is present in the tree.
-    // Read the TREE, not the routing table - see `leafIsInLocalTree`. This decides a KICK, and the
+    // -> always replace (remove + add, ONE commit) when the leaf is present in the tree.
+    // Read the TREE, not the routing table - see `leafIsInLocalTree`. This decides a REMOVAL, and the
     // Rustdoc on `member_identities` is explicit that a decision to remove a leaf reads the tree.
     // `=== true` keeps the old fall-through: on an unreadable tree the Add is still attempted.
     const leafPresent = await leafIsInLocalTree({
@@ -1029,8 +1035,8 @@ export async function handleWelcomeRequest(params: {
     if (leafPresent === true) {
       // THE REPLACEMENT IS VETTED BEFORE THE LEAF IT REPLACES IS REMOVED. A device that lost its
       // state comes back under the same id with a NEW signature key, and nothing proves that key
-      // is the device's (the old one went with the state): the Add would refuse it, and the kick
-      // would already have taken the device out of the group. A refused package kicks nothing.
+      // is the device's (the old one went with the state): the replace would refuse it, so it is
+      // refused here, with its typed cause, and nothing is staged.
       const verdict = await mlsService.vetKeyPackage(
         targetDevice.keyPackage,
         requesterUserId,
@@ -1040,7 +1046,7 @@ export async function handleWelcomeRequest(params: {
         if (isDeviceTrustRefusal(verdict)) {
           const refusal = new DeviceTrustRefusedError(verdict, requesterUserId, requesterDeviceId);
           reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, refusal);
-          recordRefusedDevice(ownDevice, refusal);
+          await recordRefusedDevice(ownDevice, refusal, mlsService);
         } else {
           log(
             `[WELCOME_REQ] KeyPackage for ${requesterDeviceId.slice(0, 12)}... refused (${verdict}) - no kick, no re-add`
@@ -1052,53 +1058,33 @@ export async function handleWelcomeRequest(params: {
       // session sent to the device long enough ago to be past the cooldown means the device lost
       // or failed to process it; none sent here means the leaf came from another path or session.
       log(
-        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - kick + re-add (` +
+        `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - remove + re-add in one commit (` +
           (lastWelcome
             ? `last Welcome sent here ${Math.round((now - lastWelcome) / 1000)}s ago`
             : 'no Welcome sent from here this session') +
           ')'
       );
-      try {
-        await kickStaleLeaf(groupId, requesterUserId, requesterDeviceId, mlsService, log);
-
-        // Save MLS state after the remove commit
-        await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
-
-        // Re-fetch KeyPackage (may have changed after kick)
-        // Best-effort: empty list on network error => freshDevice not found => clean skip.
-        const freshDevices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
-        const freshDevice = freshDevices.find((d) => d.deviceId === requesterDeviceId);
-        if (!freshDevice) {
-          log(`[WELCOME_REQ] KeyPackage not found after kick for ${requesterDeviceId} - skip`);
-          return;
-        }
-        // Update the reference for the add below - on a COPY: the row came out of a read shared by
-        // every simultaneous asker of this device list (WP-W4), so it is never mutated in place.
-        targetDevice = { ...targetDevice, keyPackage: freshDevice.keyPackage };
-      } catch (e) {
-        // BEHAVIOUR UNCHANGED - the Add is still attempted - but no longer silent. Whatever failed
-        // here, the leaf the Add is about to collide with may still be in the tree, so the
-        // DuplicateSignature that follows used to be the only trace this branch left.
-        //
-        // IT DOES NOT SAY "the kick failed", because `kickStaleLeaf` cannot throw - it reports its
-        // own two halves and returns. Persisting the post-kick state is what reaches here, and
-        // naming the kick instead would send a reader to the one call that had already spoken.
-        log(
-          `[WELCOME_REQ] Post-kick repair of ${requesterDeviceId.slice(0, 12)}... did not complete: ${String(e).slice(0, 100)} - attempting the add anyway`
-        );
-      }
     }
 
-    // ── Add the device to the MLS group (staged transaction, C7-A) ─────
-    // Stage the Add, validate the epoch server-side, then merge + broadcast on accept (excluding
-    // the inviter self and the invitee) or roll back on reject. A rejected commit throws WITHOUT
-    // advancing the local epoch (no fork) and is handled by the outer catch as a retryable failure;
-    // the Welcome is only sent once the commit is accepted. [[C7]]
-    const result = await mlsService.addMember(
-      groupId,
-      { keyPackage: targetDevice.keyPackage, userId: requesterUserId, deviceId: requesterDeviceId },
-      [`${requesterUserId}:${requesterDeviceId}`]
-    );
+    // ── Add (or replace) the device in the MLS group (staged transaction, C7-A) ─────
+    // Stage, validate the epoch server-side, then merge + broadcast on accept (excluding the inviter
+    // self and the invitee) or roll back on reject. A rejected commit throws WITHOUT advancing the
+    // local epoch (no fork) and is handled by the outer catch as a retryable failure; the Welcome is
+    // only sent once the commit is accepted. [[C7]]
+    //
+    // A LEAF STILL IN THE TREE IS REPLACED IN ONE COMMIT, never kicked then re-added: no epoch has
+    // the device out of the tree, so the repair is no departure (`removalEpochs`) and the server
+    // cannot steer an honest member into a two-commit shape that would read as one.
+    const invitee = {
+      keyPackage: targetDevice.keyPackage,
+      userId: requesterUserId,
+      deviceId: requesterDeviceId,
+    };
+    const exclude = [`${requesterUserId}:${requesterDeviceId}`];
+    const result =
+      leafPresent === true
+        ? await mlsService.replaceMember(groupId, invitee, exclude)
+        : await mlsService.addMember(groupId, invitee, exclude);
     await mlsService.registerMember(groupId, requesterUserId);
 
     // Send the Welcome + post-merge ratchet tree to the requesting device.
@@ -1130,7 +1116,7 @@ export async function handleWelcomeRequest(params: {
   } catch (e) {
     if (e instanceof DeviceTrustRefusedError) {
       reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, e);
-      recordRefusedDevice({ userId, deviceId: mlsService.getDeviceId() }, e);
+      await recordRefusedDevice({ userId, deviceId: mlsService.getDeviceId() }, e, mlsService);
       return;
     }
     const errStr = String(e);

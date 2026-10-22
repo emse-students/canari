@@ -23,6 +23,25 @@ export type DeviceTrustRefusal = Extract<
  */
 export type KeyPackageVerdict = 'first-sight' | 'pinned' | SkippedKeyPackageReason;
 
+/**
+ * What this device has seen of one device's signature key - `IMlsService.pinnedSignatureKeys`, the
+ * single source a verifier of a device-key signature reads (`PinView` in Rust).
+ */
+export interface DevicePin {
+  /** The pinned keys: a signature valid under ANY of them was made by a key this device saw. */
+  keys: Uint8Array[];
+  /**
+   * `false` when the pin was written after the device's previous pin was pruned, from whatever tree
+   * came next: a signature that FAILS under it is "unverified", never "forged".
+   */
+  anchored: boolean;
+  /**
+   * How many merged commits showed the device holding a pinned key since the pin was written. For
+   * the refusal memory (`refusedDevices.ts`); a verifier ignores it.
+   */
+  reaffirmations: number;
+}
+
 /** How an admitted leaf's key relates to the pin (`LeafTrust` in Rust). */
 export type LeafTrust = 'first-sight' | 'pinned' | 'key-changed';
 

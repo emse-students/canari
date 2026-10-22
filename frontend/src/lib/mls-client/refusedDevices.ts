@@ -1,28 +1,42 @@
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import type { DeviceTrustRefusedError } from './deviceTrust';
+import type { IMlsService } from './IMlsService';
 
 /**
  * The devices THIS device refused to add because their signature key changed under a pinned id -
  * remembered, so no sweep fetches (and spends) another of their one-time KeyPackages to be refused
  * again.
  *
- * A KEY CHANGE UNDER A KEPT ID IS A REFUSAL NO RETRY CAN LIFT. Every KeyPackage of a device carries
- * the same signature key, so the next fetch is refused for the same reason, and the pin it is refused
- * by stays as long as the device is in a tree this device holds. What lifts it is the device's owner:
- * a device that lost its state re-enrols under a NEW id at start-up, and a new id is not in this
- * record. Nothing else is remembered here - an `identity-mismatch` is a package the server chose, and
- * the next fetch may well be the right one.
+ * A KEY CHANGE UNDER A KEPT ID IS A REFUSAL NO RETRY CAN LIFT - when the device really changed key:
+ * every package it has carries the new key, and the pin stays. What lifts it then is the device's
+ * owner: a device that lost its state re-enrols under a NEW id at start-up, and a new id is not in
+ * this record. But ONE FORGED PACKAGE served for the device produces the very same refusal, so an
+ * entry is also lifted by a fact that disproves the change:
+ * - the device was shown holding its PINNED key by a commit merged since the refusal (its leaf
+ *   re-entering a tree under that key, or a commit it signed) - the pin's `reaffirmations` count
+ *   moved past the one recorded with the entry;
+ * - its pin is gone (pruned): nothing is left to refuse it by.
  *
- * Keyed by this device as well as the account: the pins live in this device's MLS state, and a
- * rotation to a new id starts both over.
+ * Nothing else is remembered here - an `identity-mismatch` is a package the server chose, and the
+ * next fetch may well be the right one. Keyed by this device as well as the account: the pins live
+ * in this device's MLS state, and a rotation to a new id drops the old id's record
+ * ({@link forgetRefusedDevicesOf}).
  */
 
 /** Past this many entries the oldest are dropped - each one is a refusal, so this is never reached. */
 const MAX_REFUSED_DEVICES = 256;
 
-function storageKey(ownUserId: string, ownDeviceId: string): string {
-  return ACCOUNT_KEY.refusedDevices(ownUserId, ownDeviceId);
+/** The own device a record belongs to. */
+interface OwnDevice {
+  userId: string;
+  deviceId: string;
+}
+
+/** One remembered refusal: the device, and its pin's reaffirmation count at the refusal. */
+interface RefusedEntry {
+  identity: string;
+  reaffirmations: number;
 }
 
 /** `userId:deviceId` as the pin reads it: the user half case-insensitive, the device half exact. */
@@ -30,12 +44,19 @@ function identityOf(userId: string, deviceId: string): string {
   return `${userId.toLowerCase()}:${deviceId}`;
 }
 
-function readRefused(ownUserId: string, ownDeviceId: string): string[] {
-  const raw = localStorage.getItem(storageKey(ownUserId, ownDeviceId));
+function readRefused(own: OwnDevice): RefusedEntry[] {
+  const raw = localStorage.getItem(ACCOUNT_KEY.refusedDevices(own.userId, own.deviceId));
   if (!raw) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (v): v is RefusedEntry =>
+        typeof v === 'object' &&
+        v !== null &&
+        typeof (v as RefusedEntry).identity === 'string' &&
+        typeof (v as RefusedEntry).reaffirmations === 'number'
+    );
   } catch {
     // An unreadable record re-fetches - the cost is a KeyPackage, never an Add the pin would allow.
     console.error('[TRUST] the refused-device record is unreadable - read as empty');
@@ -43,25 +64,19 @@ function readRefused(ownUserId: string, ownDeviceId: string): string[] {
   }
 }
 
-/**
- * Whether `userId:deviceId` was refused for a changed key by this device - the caller then does not
- * fetch a KeyPackage for it at all.
- */
-export function isRefusedDevice(
-  own: { userId: string; deviceId: string },
-  userId: string,
-  deviceId: string
-): boolean {
-  return readRefused(own.userId, own.deviceId).includes(identityOf(userId, deviceId));
+function writeRefused(own: OwnDevice, entries: RefusedEntry[]): void {
+  const key = ACCOUNT_KEY.refusedDevices(own.userId, own.deviceId);
+  if (entries.length > 0) localStorage.setItem(key, JSON.stringify(entries));
+  else localStorage.removeItem(key);
 }
 
 /**
  * Every device this device remembers as refused, as `userId:deviceId` (user half lower-cased),
  * oldest first - what the owner's in-app notice of a refused device of their own is built from
- * (`deviceNotices.svelte.ts`).
+ * (`deviceNotices.svelte.ts`). An entry {@link isRefusedDevice} lifted is no longer listed.
  */
-export function listRefusedDevices(own: { userId: string; deviceId: string }): string[] {
-  return readRefused(own.userId, own.deviceId);
+export function listRefusedDevices(own: OwnDevice): string[] {
+  return readRefused(own).map((e) => e.identity);
 }
 
 /** Who is told when a refusal is recorded; one listener, the new-device notices. */
@@ -76,23 +91,63 @@ export function setRefusedDeviceListener(listener: ((identity: string) => void) 
 }
 
 /**
- * Remembers a refusal when no retry can lift it (`signature-key-changed`); any other reason is left
- * to the next sweep. The listener ({@link setRefusedDeviceListener}) is told of the refusal.
+ * Whether `userId:deviceId` stays refused for a changed key by this device - the caller then does
+ * not fetch a KeyPackage for it at all. An entry a later fact disproves (see the module doc) is
+ * LIFTED here, with a line saying why, and the device is fetched again.
+ */
+export async function isRefusedDevice(
+  own: OwnDevice,
+  userId: string,
+  deviceId: string,
+  mls: Pick<IMlsService, 'pinnedSignatureKeys'>
+): Promise<boolean> {
+  const identity = identityOf(userId, deviceId);
+  const entries = readRefused(own);
+  const entry = entries.find((e) => e.identity === identity);
+  if (!entry) return false;
+  const pin = await mls.pinnedSignatureKeys(userId, deviceId);
+  if (pin !== null && pin.reaffirmations <= entry.reaffirmations) return true;
+  writeRefused(
+    own,
+    entries.filter((e) => e.identity !== identity)
+  );
+  console.info(
+    pin === null
+      ? `[TRUST] ${sanitizeForLog(identity)} no longer refused - its pin was pruned`
+      : `[TRUST] ${sanitizeForLog(identity)} no longer refused - a merged commit showed it holding its pinned key since`
+  );
+  return false;
+}
+
+/**
+ * Remembers a refusal when no retry is expected to lift it (`signature-key-changed`), with the pin's
+ * reaffirmation count at that moment; any other reason is left to the next sweep. The listener
+ * ({@link setRefusedDeviceListener}) is told of the refusal.
  *
  * @returns whether the refusal was recorded.
  */
-export function recordRefusedDevice(
-  own: { userId: string; deviceId: string },
-  error: DeviceTrustRefusedError
-): boolean {
+export async function recordRefusedDevice(
+  own: OwnDevice,
+  error: DeviceTrustRefusedError,
+  mls: Pick<IMlsService, 'pinnedSignatureKeys'>
+): Promise<boolean> {
   if (error.reason !== 'signature-key-changed') return false;
+  const pin = await mls.pinnedSignatureKeys(error.userId, error.deviceId);
+  if (pin === null) {
+    // No pin, nothing to have refused by: the refusal cannot be repeated, so it is not remembered.
+    console.warn(
+      `[TRUST] ${sanitizeForLog(error.userId)}:${sanitizeForLog(error.deviceId)} refused but has no pin - not remembered`
+    );
+    return false;
+  }
   const identity = identityOf(error.userId, error.deviceId);
-  const refused = readRefused(own.userId, own.deviceId).filter((id) => id !== identity);
-  refused.push(identity);
-  while (refused.length > MAX_REFUSED_DEVICES) refused.shift();
-  localStorage.setItem(storageKey(own.userId, own.deviceId), JSON.stringify(refused));
+  const entries = readRefused(own).filter((e) => e.identity !== identity);
+  entries.push({ identity, reaffirmations: pin.reaffirmations });
+  while (entries.length > MAX_REFUSED_DEVICES) entries.shift();
+  writeRefused(own, entries);
   console.warn(
-    `[TRUST] ${sanitizeForLog(identity)} remembered as refused - no KeyPackage is fetched for it again`
+    `[TRUST] ${sanitizeForLog(identity)} remembered as refused - no KeyPackage is fetched for it ` +
+      `until it is shown holding its pinned key or its pin goes`
   );
   if (refusalListener) {
     try {
@@ -104,12 +159,17 @@ export function recordRefusedDevice(
   return true;
 }
 
+/** Drops the whole record an OWN device id kept - called when this install rotates away from it. */
+export function forgetRefusedDevicesOf(own: OwnDevice): void {
+  localStorage.removeItem(ACCOUNT_KEY.refusedDevices(own.userId, own.deviceId));
+}
+
 /** The skips this session already reported, so a sweep says each one once. */
 const reportedSkips = new Set<string>();
 
 /**
  * Logs that a remembered device was skipped - at `warn` once per device per session, at `debug`
- * after. The line names the one remedy, so whoever reads it knows which actor can lift it.
+ * after. The line names the remedy, so whoever reads it knows which actor can lift it.
  */
 export function reportRefusedDeviceSkipped(
   tag: string,

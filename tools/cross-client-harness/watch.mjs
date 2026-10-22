@@ -1179,7 +1179,7 @@ const NOTABLE = [
   // passes reporting a different spelling of "the guard held". So the site was read whole
   // (actions.ts:753-975 plus sessionAuth.ts:987) and every line placed deliberately:
   //
-  //   notable      - the six below plus `Welcome -> `, `leaf in MLS tree - kick + re-add` (claimed
+  //   notable      - the six below plus `Welcome -> `, `leaf in MLS tree - remove + re-add in one commit` (claimed
   //                  by the generic `re-?add` rule) and `re-add suspended`. A guard that held.
   //   unexplained  - the ten that are a refusal, an abort, an error, or the >30-day KeyPackage
   //                  FALLBACK. Deliberately ruleless, and pinned that way in classify-selftest.mjs

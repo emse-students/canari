@@ -389,6 +389,12 @@ pub type AddMembersWithBaseResult = (AddMembersBulkResult, Vec<u8>);
 /// [`AddMembersWithBaseResult`].
 pub type StagedRemovalResult = (Vec<u8>, Vec<u8>);
 
+/// Result of `replace_device_with_base`: `(commit, welcome, group_info)` - ONE staged commit that
+/// removes a device's leaf and adds it back from a fresh KeyPackage, the Welcome for that device, and
+/// the external-join base for the epoch the commit creates (same rule as
+/// [`AddMembersWithBaseResult`]).
+pub type ReplaceDeviceResult = (Vec<u8>, Vec<u8>, Vec<u8>);
+
 #[cfg(test)]
 mod skipped_key_package_tests {
     use super::*;

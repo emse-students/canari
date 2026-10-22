@@ -45,6 +45,13 @@ pub struct PersistedState {
     /// Users seen leaving a group's tree in merged commits (`crate::device_trust::Departure`).
     #[serde(default)]
     pub device_departures: Vec<crate::device_trust::Departure>,
+    /// Identities whose pin was pruned: a later pin for one is unanchored (`crate::device_trust`).
+    #[serde(default)]
+    pub device_pins_pruned: Vec<String>,
+    /// Groups joined by an external commit not yet merged: their tree came from a GroupInfo the
+    /// server served, and is pinned only at the merge - across a restart too.
+    #[serde(default)]
+    pub pending_external_joins: Vec<String>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -63,6 +70,8 @@ pub(crate) struct PersistedStateSer<'a> {
     pub(crate) device_pins: &'a [crate::device_trust::PersistedPin],
     pub(crate) device_events: &'a [crate::device_trust::DeviceEvent],
     pub(crate) device_departures: &'a [crate::device_trust::Departure],
+    pub(crate) device_pins_pruned: &'a [String],
+    pub(crate) pending_external_joins: &'a [String],
 }
 
 // Struct request wrapper for serialization
@@ -723,9 +732,12 @@ impl MlsManager {
 
             let mut device_trust = crate::device_trust::DeviceTrust::from_persisted(
                 state.device_pins,
+                state.device_pins_pruned,
                 state.device_events,
                 state.device_departures,
             );
+            let pending_external_joins: std::collections::HashSet<String> =
+                state.pending_external_joins.into_iter().collect();
             // THE TREES THIS STATE ALREADY HOLDS ARE FIRST SIGHT. Every leaf in them was admitted by
             // a commit this device merged; a state written before pins existed holds none, and an
             // identity pinned since is left untouched. Cheap - one credential parse per leaf - and
@@ -738,7 +750,16 @@ impl MlsManager {
                 keypair.public().to_vec(),
             )]);
             let mut seeded = 0usize;
-            for group in groups.values() {
+            for (group_id, group) in &groups {
+                // A GROUP WITH A COMMIT NOT YET MERGED IS NOT A TREE THIS DEVICE ACCEPTED: an external
+                // join's tree is the GroupInfo the server served, and the server may still refuse the
+                // join. It is pinned at the merge (`merge_pending_commit_for`), never here.
+                if pending_external_joins.contains(group_id) || group.pending_commit().is_some() {
+                    log::info!(
+                        "load_or_create: {group_id} has a commit not yet merged - its tree is not seeded"
+                    );
+                    continue;
+                }
                 if device_trust.seed_from_tree(&crate::device_trust::leaf_keys(group)) {
                     seeded += 1;
                 }
@@ -770,7 +791,7 @@ impl MlsManager {
                 groups,
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
                 device_trust,
-                pending_external_joins: Default::default(),
+                pending_external_joins,
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -939,6 +960,10 @@ impl MlsManager {
         let device_pins = self.device_trust.persisted_pins();
         let device_events = self.device_trust.persisted_events();
         let device_departures = self.device_trust.persisted_departures();
+        let device_pins_pruned = self.device_trust.persisted_pruned();
+        let mut pending_external_joins: Vec<String> =
+            self.pending_external_joins.iter().cloned().collect();
+        pending_external_joins.sort();
         let persisted = PersistedStateSer {
             identity_bundle: &bundle_bytes,
             storage_values: &storage_lock,
@@ -947,6 +972,8 @@ impl MlsManager {
             device_pins: &device_pins,
             device_events: &device_events,
             device_departures: &device_departures,
+            device_pins_pruned: &device_pins_pruned,
+            pending_external_joins: &pending_external_joins,
         };
 
         let mut final_bytes = Vec::new();

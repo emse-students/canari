@@ -250,6 +250,89 @@ impl MlsManager {
         Ok((commit, successor_base(group_info, group_id)?))
     }
 
+    /// Stages ONE commit that removes every leaf of the device `identity` and adds it back from
+    /// `key_package_bytes` - the repair of a device that asks to be re-added while its leaf is still
+    /// in the tree. Staged only: the caller merges or clears after the server answers (C7-A).
+    ///
+    /// ONE COMMIT, NOT A KICK THEN AN ADD: no epoch ever has the device out of the tree, so a heal
+    /// never reads as the user leaving (`removal_epochs` records nothing for it) and a delivery
+    /// service cannot steer an honest device into a two-commit shape that would. The Welcome goes to
+    /// the re-added device.
+    ///
+    /// The package is bound and pinned exactly as an Add's is ([`vet_validated`]): a package naming
+    /// another device or carrying an unpinned key stages nothing. No leaf for `identity` is
+    /// [`MlsError::NoSuchMember`] - the caller then adds, it does not replace.
+    pub fn replace_device_with_base(
+        &mut self,
+        group_id: &str,
+        identity: &str,
+        key_package_bytes: &[u8],
+    ) -> Result<crate::ReplaceDeviceResult, MlsError> {
+        let kp = KeyPackageIn::tls_deserialize(&mut &key_package_bytes[..])
+            .map_err(|e| {
+                MlsError::OpenMls(format!("replace_device: undecodable KeyPackage: {e:?}"))
+            })?
+            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|e| MlsError::OpenMls(format!("replace_device: invalid KeyPackage: {e:?}")))?;
+        if let Err(reason) = vet_validated(&self.device_trust, &kp, Some(identity)) {
+            return Err(MlsError::OpenMls(format!(
+                "replace_device: the KeyPackage for {identity} was refused ({})",
+                reason.as_str()
+            )));
+        }
+        let group = self
+            .groups
+            .get_mut(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        let leaf_indices = leaf_indices_where(group, |found| found == identity)?;
+        if leaf_indices.is_empty() {
+            return Err(MlsError::NoSuchMember(format!(
+                "no leaf carries {identity} - nothing to replace"
+            )));
+        }
+        let bundle = group
+            .commit_builder()
+            .propose_removals(leaf_indices.iter().copied())
+            .propose_adds([kp])
+            .load_psks(self.provider.storage())
+            .map_err(|e| MlsError::OpenMls(format!("replace_device load_psks: {e:?}")))?
+            .build(
+                self.provider.rand(),
+                self.provider.crypto(),
+                &self.keypair,
+                |_| true,
+            )
+            .map_err(|e| MlsError::OpenMls(format!("replace_device build: {e:?}")))?
+            .stage_commit(&self.provider)
+            .map_err(|e| MlsError::OpenMls(format!("replace_device stage: {e:?}")))?;
+        let (commit_msg_out, welcome_msg_out, group_info) = bundle.into_messages();
+        let welcome_msg_out = welcome_msg_out.ok_or_else(|| {
+            MlsError::OpenMls(format!("replace_device: no Welcome for {identity}"))
+        })?;
+        log::info!(
+            "[TRUST] {group_id}: {identity} replaced in one commit ({} leaf/leaves out, one in)",
+            leaf_indices.len()
+        );
+        self.mark_state_dirty();
+        let commit = commit_msg_out
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+        let welcome = welcome_msg_out
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+        // `into_messages` hands the base already in its `MlsMessageOut` wire form.
+        let base = group_info
+            .ok_or_else(|| {
+                log::error!(
+                    "[BASE] {group_id}: OpenMLS built no GroupInfo for the replace commit - the group lacks the ratchet-tree extension"
+                );
+                MlsError::OpenMls(format!("no GroupInfo for the staged commit on {group_id}"))
+            })?
+            .tls_serialize_detached()
+            .map_err(|e| MlsError::OpenMls(e.to_string()))?;
+        Ok((commit, welcome, base))
+    }
+
     /// Merges the group's pending (staged) commit: call AFTER the server accepted the commit
     /// (`validateCommit`). Advances the local epoch. Counterpart of `clear_pending_commit_for`.
     /// [[C7]] Option A: validate-then-merge, never a local fork on rejection.
@@ -339,19 +422,30 @@ impl MlsManager {
     /// entry): a key the server published alone proves nothing, because the server is the party the
     /// signature must hold against. A pinned key came from a signed tree this device processed.
     ///
-    /// `None` MEANS UNVERIFIED, NEVER FORGED: pins are bounded, and past the bound the pin of a
-    /// device no held tree contains any more is dropped (`DeviceTrust::prune_absent`), so a device
-    /// once seen can come back unknown. Several keys are returned only for a state seeded from trees
-    /// that disagreed (`seed_from_tree`); a signature verifying under any of them was made by a key
-    /// this device saw for that identity.
-    pub fn pinned_signature_keys(&self, user_id: &str, device_id: &str) -> Option<Vec<Vec<u8>>> {
-        let keys = self
+    /// `None` MEANS UNVERIFIED, NEVER FORGED: pins are bounded, and past the bound (at load only,
+    /// never on a heal's forget) the pin of a device no held tree contains any more is dropped
+    /// (`DeviceTrust::prune_absent`), so a device once seen can come back unknown.
+    ///
+    /// `anchored == false` MEANS THE SAME FOR A CONTRADICTION: the pin was written after that
+    /// device's previous pin was pruned, from whatever tree came next, so a signature that fails
+    /// under it is unverified, never forged. A signature that VERIFIES under it still proves only
+    /// that the key is the one that tree carried.
+    ///
+    /// Several keys are returned only for a state seeded from trees that disagreed
+    /// (`seed_from_tree`); a signature verifying under any of them was made by a key this device saw
+    /// for that identity. `reaffirmations` is for the refusal memory, not for verifiers.
+    pub fn pinned_signature_keys(
+        &self,
+        user_id: &str,
+        device_id: &str,
+    ) -> Option<crate::device_trust::PinView> {
+        let pin = self
             .device_trust
-            .pinned_keys_naming(&format!("{user_id}:{device_id}"));
-        if keys.is_none() {
+            .pin_naming(&format!("{user_id}:{device_id}"));
+        if pin.is_none() {
             log::debug!("[TRUST] no pinned key for {user_id}:{device_id} - unverified, not forged");
         }
-        keys
+        pin
     }
 
     /// The epochs at which this device saw `user_id` LEAVE `group_id`'s tree - a merged commit that
@@ -365,8 +459,12 @@ impl MlsManager {
     /// a remove-and-add) and the removal of one device among several record nothing. A kick and a
     /// re-add in TWO commits is a departure, whatever the reason the kick was made.
     ///
+    /// TWO PROPERTIES A CALLER RELIES ON: it is PER USER (one device of several leaving is not a
+    /// departure), and it holds only commits THIS device merged - a device that entered the group
+    /// later, by a Welcome or an external join, knows no departure from before it arrived.
+    ///
     /// AN EMPTY ANSWER IS "NOT SEEN", NEVER "NEVER HAPPENED": a commit merged before this record
-    /// existed, by a state this device has since lost, or dropped past the bound
+    /// existed, by a state this device has since lost, before it joined, or dropped past the bound
     /// (`MAX_RECORDED_DEPARTURES`) is absent. Never a device event, never user-visible.
     pub fn removal_epochs(&self, group_id: &str, user_id: &str) -> Vec<u64> {
         self.device_trust.removal_epochs(group_id, user_id)
@@ -381,6 +479,16 @@ impl MlsManager {
     /// The local epoch stays unchanged (no fork) and a new commit can be generated.
     /// [[C7]] Option A.
     pub fn clear_pending_commit_for(&mut self, group_id: &str) -> Result<(), MlsError> {
+        // AN EXTERNAL JOIN HAS NO STATE TO FALL BACK TO: clearing its commit leaves a group this
+        // device never entered, holding the tree the server served - which a later load would then
+        // pin. The marker goes and the group with it, so nothing of a refused join survives.
+        if self.pending_external_joins.remove(group_id) {
+            log::warn!(
+                "clear_pending_commit_for: {group_id} was an external join not merged - the group is forgotten, its tree never pinned"
+            );
+            self.forget_group(group_id, 0);
+            return Ok(());
+        }
         let group = self
             .groups
             .get_mut(group_id)

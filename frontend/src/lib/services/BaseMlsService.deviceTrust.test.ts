@@ -4,7 +4,11 @@ vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
 import { BaseMlsService } from './BaseMlsService';
-import { DeviceTrustRefusedError, type KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
+import {
+  DeviceTrustRefusedError,
+  type DevicePin,
+  type KeyPackageVerdict,
+} from '$lib/mls-client/deviceTrust';
 
 /**
  * A KeyPackage is checked against the device it was fetched for, and device keys are pinned on first
@@ -112,28 +116,33 @@ describe('BaseMlsService.addMembersBulk - every package travels with its identit
   });
 });
 
-// THE ONE SOURCE OF A KEY THIS DEVICE HAS SEEN: the pins, read from the MLS layer and handed back
+// THE ONE SOURCE OF A KEY THIS DEVICE HAS SEEN: the pin, read from the MLS layer and handed back
 // unchanged - a device never seen is `null` (unverified), never an empty list a verifier could read
-// as "no key matches, so forged".
+// as "no key matches, so forged"; and a pin re-learned after its identity was pruned says so.
 describe('BaseMlsService.pinnedSignatureKeys - the pins, nothing else', () => {
   const pinned = (
     BaseMlsService.prototype as unknown as {
-      pinnedSignatureKeys: (u: string, d: string) => Promise<Uint8Array[] | null>;
+      pinnedSignatureKeys: (u: string, d: string) => Promise<DevicePin | null>;
     }
   ).pinnedSignatureKeys;
 
-  it('hands back the keys the MLS layer pinned for exactly that device', async () => {
-    const key = new Uint8Array([1, 2, 3]);
-    const ctx = { pinnedSignatureKeysNative: vi.fn(async () => [key]) };
-    await expect(pinned.call(ctx, 'Bob', 'web-1')).resolves.toEqual([key]);
+  it('hands back the pin the MLS layer holds for exactly that device, anchoring included', async () => {
+    const pin: DevicePin = {
+      keys: [new Uint8Array([1, 2, 3])],
+      anchored: false,
+      reaffirmations: 2,
+    };
+    const ctx = { pinnedSignatureKeysNative: vi.fn(async () => pin) };
+    await expect(pinned.call(ctx, 'Bob', 'web-1')).resolves.toEqual(pin);
     expect(ctx.pinnedSignatureKeysNative).toHaveBeenCalledWith('Bob', 'web-1');
   });
 
-  it('answers null for a device never seen, and says it is unverified', async () => {
+  // The "no pin" line is Rust's, once; this seam adds no second copy of it.
+  it('answers null for a device never seen, without a second log line', async () => {
     const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
     const ctx = { pinnedSignatureKeysNative: vi.fn(async () => null) };
     await expect(pinned.call(ctx, 'Bob', 'web-2')).resolves.toBeNull();
-    expect(debug).toHaveBeenCalledWith(expect.stringContaining('unverified'));
+    expect(debug).not.toHaveBeenCalled();
     debug.mockRestore();
   });
 });
@@ -146,10 +155,61 @@ describe('BaseMlsService.removalEpochs - the departures the MLS layer recorded',
         removalEpochs: (g: string, u: string) => Promise<number[]>;
       }
     ).removalEpochs;
-    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
     const ctx = { removalEpochsNative: vi.fn(async () => [3, 7]) };
     await expect(removal.call(ctx, 'g1', 'Bob')).resolves.toEqual([3, 7]);
     expect(ctx.removalEpochsNative).toHaveBeenCalledWith('g1', 'Bob');
-    debug.mockRestore();
+  });
+});
+
+// THE REPAIR OF A LEAF STILL IN THE TREE IS ONE COMMIT (Remove + Add), vetted before anything is
+// staged - the Rust half and its Welcome are tested in tests/device_binding.rs.
+describe('BaseMlsService.replaceMember - one commit, vetted first', () => {
+  const replace = (
+    BaseMlsService.prototype as unknown as {
+      replaceMember: (
+        g: string,
+        d: { keyPackage: Uint8Array; userId: string; deviceId: string },
+        exclude?: string[]
+      ) => Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+    }
+  ).replaceMember;
+  const ctxWith = (verdict: KeyPackageVerdict) => {
+    const staged = { commit: new Uint8Array([1]), welcome: new Uint8Array([2]), groupInfo: null };
+    return {
+      vetKeyPackage: proto.vetKeyPackage,
+      vetKeyPackageNative: vi.fn(async () => verdict),
+      stageReplaceDevice: vi.fn(async () => staged),
+      runCommitTransaction: vi.fn(
+        async (
+          _g: string,
+          stage: () => Promise<typeof staged>,
+          _opts?: { excludeDeviceIds?: string[]; exportTree?: boolean }
+        ) => {
+          const s = await stage();
+          return { welcome: s.welcome, ratchetTree: new Uint8Array([4]) };
+        }
+      ),
+    };
+  };
+
+  it('refuses a changed key with the typed error and stages nothing', async () => {
+    const ctx = ctxWith('signature-key-changed');
+    await expect(replace.call(ctx, 'g1', device)).rejects.toBeInstanceOf(DeviceTrustRefusedError);
+    expect(ctx.runCommitTransaction).not.toHaveBeenCalled();
+    expect(ctx.stageReplaceDevice).not.toHaveBeenCalled();
+  });
+
+  it('stages the replacement for the identity the package was fetched for, in one transaction', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const ctx = ctxWith('pinned');
+    const out = await replace.call(ctx, 'g1', device, ['Bob:web-1']);
+    expect(ctx.stageReplaceDevice).toHaveBeenCalledWith('g1', 'Bob:web-1', device.keyPackage);
+    expect(ctx.runCommitTransaction).toHaveBeenCalledTimes(1);
+    expect(ctx.runCommitTransaction.mock.calls[0][2]).toEqual({
+      excludeDeviceIds: ['Bob:web-1'],
+      exportTree: true,
+    });
+    expect(out.welcome).toEqual(new Uint8Array([2]));
+    info.mockRestore();
   });
 });
