@@ -1,8 +1,10 @@
 use openmls::prelude::*;
 use openmls_rust_crypto::OpenMlsRustCrypto;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
+use crate::graine_run::{BeforeMerge, GraineRun, observe_merge};
 use crate::members::credential_identity;
 use crate::state::{MlsManager, StateSnapshotCache};
 use crate::{MAX_MLS_MESSAGE_BYTES, MlsError};
@@ -144,6 +146,7 @@ impl MlsManager {
             group_id,
             message_bytes,
             &self.state_snapshot,
+            &mut self.graine_runs,
         )
     }
 
@@ -163,10 +166,13 @@ impl MlsManager {
 
         let provider = &self.provider;
         let snapshot = &self.state_snapshot;
+        // Every commit of the batch is observed by the departure tracker IN ORDER, one merge at a
+        // time - a departure in the middle of a batch ends the run like any other.
+        let runs = &mut self.graine_runs;
         messages
             .iter()
             .map(|bytes| {
-                Self::process_incoming_on_group(group, provider, group_id, bytes, snapshot)
+                Self::process_incoming_on_group(group, provider, group_id, bytes, snapshot, runs)
             })
             .collect()
     }
@@ -177,6 +183,7 @@ impl MlsManager {
         group_id: &str,
         message_bytes: &[u8],
         state_snapshot: &RefCell<StateSnapshotCache>,
+        graine_runs: &mut HashMap<String, GraineRun>,
     ) -> Result<Option<IncomingApplication>, MlsError> {
         if message_bytes.len() > MAX_MLS_MESSAGE_BYTES {
             return Err(MlsError::InvalidData);
@@ -375,6 +382,10 @@ impl MlsManager {
             }
         };
 
+        // Whether the verified sender is `new_member_commit` travels to the departure tracker,
+        // which reports it beside each run reset (`graine_run.rs`).
+        let external_commit = matches!(processed_message.sender(), Sender::NewMemberCommit);
+
         match processed_message.into_content() {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
                 state_snapshot.borrow_mut().invalidate_ratchet();
@@ -384,10 +395,14 @@ impl MlsManager {
                 }))
             }
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+                // The tree BEFORE the merge, for Graine's departure tracker: after it, the leaves a
+                // Remove took are gone (`graine_run.rs`).
+                let before = BeforeMerge::read(provider, group, &staged_commit, external_commit);
                 group
                     .merge_staged_commit(provider, *staged_commit)
                     .map_err(|e| MlsError::OpenMls(format!("Merge commit error: {:?}", e)))?;
                 state_snapshot.borrow_mut().invalidate();
+                observe_merge(graine_runs, provider, group_id, before, group);
                 // A Remove commit naming OUR leaf leaves the group inactive, and this is the
                 // instant that becomes true. Before this line the fact was thrown away and the
                 // caller got the same `Ok(None)` as any other applied commit - so the client only

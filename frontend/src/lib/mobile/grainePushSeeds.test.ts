@@ -110,29 +110,41 @@ describe('the shape of one seed, from the frame to the mirror to the reader', ()
     expect(iosFfi).toContain('store_graine_seeds_json(');
   });
 
-  it('the mirror keys the Rust writes are the ones the Kotlin reader asks for', () => {
+  it('the mirror keys the Rust writes are the ones the Rust reader asks for', () => {
     // channelId -> sessionId -> { seed, createdAt }. `seed`, not `seedB64`: the transport name
-    // and the stored name differ, and conflating them is a silent miss in `lookupGraineSeed`.
+    // and the stored name differ, and conflating them is a silent miss in `graineSeedHeld`.
     expect(pushRs).toMatch(/"seed":\s*self\.seed_b64/);
-    expect(kotlin).toMatch(
-      /optJSONObject\(channelId\)[\s\S]{0,80}optJSONObject\(sessionId\)[\s\S]{0,80}optString\("seed"\)/
-    );
+    const reader = /fn read_graine_seed\([\s\S]*?\n\}/.exec(pushRs)?.[0] ?? '';
+    expect(reader).toMatch(/root\[channel_id\]\[session_id\][\s\S]{0,120}entry\["seed"\]/);
   });
 
-  it('one file name, on both sides of the mirror', () => {
+  it('the file is sealed, so no native reader opens it but Rust', () => {
+    // Since 2026-10-22 the mirror is sealed at rest (`native_cache`): a platform that read the
+    // JSON itself would read ciphertext and miss every seed. They ask `graineSeedHeld` instead.
     expect(pushRs).toContain('graine_seeds.json');
-    expect(kotlin).toContain('graine_seeds.json');
+    expect(kotlin).not.toMatch(/File\([^)]*"graine_seeds\.json"\)/);
+    expect(kotlin).toContain('nativeGraineSeedHeld(');
   });
 });
 
 describe('the JNI symbol, which no compiler here checks', () => {
-  it('is declared in Kotlin and exported from Rust under the same name', () => {
-    expect(kotlin).toMatch(
-      /external fun nativeStoreGraineSeeds\(dataDir: String, seedsJson: String\): Int/
-    );
-    expect(libRs).toContain(
-      'Java_fr_emse_canari_CanariFirebaseMessagingService_nativeStoreGraineSeeds'
-    );
+  it.each([
+    [
+      /external fun nativeStoreGraineSeeds\(dataDir: String, cacheKeyB64: String, seedsJson: String\): Int/,
+      'Java_fr_emse_canari_CanariFirebaseMessagingService_nativeStoreGraineSeeds',
+    ],
+    [
+      /external fun nativeGraineSeedHeld\(dataDir: String, cacheKeyB64: String, channelId: String, sessionId: String\): Int/,
+      'Java_fr_emse_canari_CanariFirebaseMessagingService_nativeGraineSeedHeld',
+    ],
+    [
+      // On the companion: the JNI name carries `00024Companion`.
+      /external fun nativeSealCacheLine\(cacheKeyB64: String, line: String\): String\?/,
+      'Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeSealCacheLine',
+    ],
+  ])('%s is declared in Kotlin and exported from Rust under the same name', (decl, symbol) => {
+    expect(kotlin).toMatch(decl);
+    expect(libRs).toContain(symbol);
   });
 
   it('is called by the handler, not by the parser - a decrypt must stay read-only', () => {

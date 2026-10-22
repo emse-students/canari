@@ -76,6 +76,11 @@ export let SERIAL = (() => {
 })();
 export const PKG = 'fr.emse.canari';
 /**
+ * The marker a sealed native cache file starts with (`FILE_MAGIC` in `native_cache.rs`, without its
+ * newline: adb may rewrite line endings).
+ */
+const SEALED_FILE_MAGIC = 'CNSEAL1';
+/**
  * A substring of the app WebView's URL, which is how a devtools target is picked. Android's WebView
  * serves the app from `http://tauri.localhost`; the iPhone's is `tauri://localhost`, which this does
  * NOT match - so a row asks the phone module rather than spelling either.
@@ -189,8 +194,13 @@ export function nativeResidue() {
 
 /**
  * How many Graine sessions the native seed mirror holds for one channel, or null when there is no
- * mirror at all. COUNTS ONLY: the file holds plaintext seeds, and this output is read into a PUBLIC
- * repository.
+ * mirror at all. COUNTS ONLY: this output is read into a PUBLIC repository.
+ *
+ * A SEALED MIRROR IS AN ERROR, NEVER A COUNT. Since 2026-10-22 the file is sealed at rest under a
+ * key only the app and its push service can unwrap (`native_cache.rs`), so `run-as cat` reads
+ * ciphertext: what would lift this is the app answering for itself through `bench_native_store`
+ * (`op: graine`), which the iPhone rig already does (`phone-ios.mjs`) and the Android rig does not
+ * reach yet. A plaintext file is an older build's, and is still counted.
  *
  * @param {string} channelId the raw channel uuid, which is the mirror's key
  * @returns {number | null | { error: string }}
@@ -199,6 +209,12 @@ export function graineMirrorSessions(channelId) {
   try {
     const out = sh(`run-as ${PKG} cat /data/data/${PKG}/graine_seeds.json 2>/dev/null || true`);
     if (!out.trim()) return null;
+    if (out.startsWith(SEALED_FILE_MAGIC)) {
+      return {
+        error:
+          'graine_seeds.json is sealed at rest - count it through bench_native_store (op graine), which this rig does not reach on Android yet',
+      };
+    }
     return Object.keys(JSON.parse(out)[channelId] ?? {}).length;
   } catch (e) {
     return { error: String(e.stderr || e.message).split(/\r?\n/)[0] };
