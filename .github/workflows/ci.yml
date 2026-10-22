@@ -765,6 +765,86 @@ jobs:
           fi
 
   # =================================================================================================
+  # CHAT-DELIVERY AGAINST A REAL POSTGRESQL
+  # =================================================================================================
+  # The seat lock (`utils/seat-eviction.ts`) is a per-group advisory lock that orders a seat's
+  # claim, its eviction, its route and a send's queued rows - which side waits for which is the
+  # mechanism, and no fake can judge it. `*.integration.spec.ts` here run those orderings against
+  # PostgreSQL, gated on `DELIVERY_IT_DATABASE_URL` and SKIPPED without it, so the last step refuses
+  # a run where any spec on disk did not run or any test was skipped - `test-social-integration`'s
+  # rule, for the same reason. The same Postgres as production, by digest (`ci-passed-gate.test.mjs`).
+  test-delivery-integration:
+    name: Chat-delivery integration specs (PostgreSQL)
+    needs: [changes]
+    if: ${{ contains(needs.changes.outputs.ts-matrix, 'apps/chat-delivery-service') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_USER: canari
+          POSTGRES_PASSWORD: it-probe
+          POSTGRES_DB: delivery_it
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U canari"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      # jest runs under node, for the reason given on `Run Test` in the matrix below.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install Dependencies
+        working-directory: apps/chat-delivery-service
+        run: bun install --frozen-lockfile
+
+      # In band: each spec works in its own throwaway schema, but one database serves them all.
+      - name: Run every integration spec
+        working-directory: apps/chat-delivery-service
+        env:
+          DELIVERY_IT_DATABASE_URL: postgres://canari:it-probe@localhost:5432/delivery_it
+        run: >-
+          node --run test -- --runInBand
+          --testPathPatterns '\.integration\.spec\.ts$'
+          --testPathIgnorePatterns '/node_modules/'
+          --json --outputFile "$RUNNER_TEMP/delivery-it.json"
+
+      - name: Every integration spec ran, and none was skipped
+        working-directory: apps/chat-delivery-service
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/delivery-it.json"
+          on_disk="$(find src -name '*.integration.spec.ts' | wc -l)"
+          suites="$(jq '.numTotalTestSuites' "$report")"
+          tests="$(jq '.numTotalTests' "$report")"
+          skipped="$(jq '.numPendingTests + .numTodoTests' "$report")"
+          echo "on disk: $on_disk spec(s); jest ran $suites suite(s), $tests test(s), $skipped skipped"
+          if [ "$on_disk" -eq 0 ] || [ "$suites" -ne "$on_disk" ]; then
+            echo "::error::jest ran $suites integration suite(s) and $on_disk exist - the pattern no longer selects them all"
+            exit 1
+          fi
+          if [ "$tests" -eq 0 ] || [ "$skipped" -ne 0 ]; then
+            echo "::error::$skipped integration test(s) skipped - with the database set, a skip means a spec did not run"
+            jq -r '.testResults[] | select(any(.assertionResults[]; .status != "passed")) | .name' "$report"
+            exit 1
+          fi
+
+  # =================================================================================================
   # TYPESCRIPT BACKEND MATRIX
   # =================================================================================================
   test-typescript-backend:
@@ -1372,7 +1452,7 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-social-integration, test-typescript-backend, test-frontend, test-android, test-harness,
+      [changes, test-rust, boot-nest-apps, test-social-integration, test-delivery-integration, test-typescript-backend, test-frontend, test-android, test-harness,
       test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
     runs-on: ubuntu-24.04
     steps:

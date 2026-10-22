@@ -140,6 +140,25 @@ if (!it) {
   else bad('its pattern does not select live-seats.spec.ts - the seat scripts run nowhere');
 }
 
+console.log("chat-delivery's integration job runs on the database production runs:");
+{
+  const job = jobBlock('test-delivery-integration');
+  if (!job) {
+    bad('no test-delivery-integration job - the seat lock orderings run nowhere');
+  } else {
+    const image = /\n\s+image: (postgres:\S+)/.exec(job)?.[1];
+    const prod = /\n\s+image: (postgres:\S+)/.exec(
+      readFileSync(resolve(repoRoot, 'infrastructure/docker-compose.prod.yml'), 'utf8')
+    )?.[1];
+    if (image && prod && image === prod) ok(`same image as production: ${image}`);
+    else bad(`delivery integration job runs ${image}, production runs ${prod} - bump them together`);
+    if (/DELIVERY_IT_DATABASE_URL: postgres:\/\//.test(job)) ok('it sets DELIVERY_IT_DATABASE_URL');
+    else bad('it does not set DELIVERY_IT_DATABASE_URL - every spec would skip, and pass');
+    if (/numPendingTests/.test(job)) ok('it refuses a skipped test');
+    else bad('it does not read the skipped count - a spec that skipped would pass');
+  }
+}
+
 console.log('every Redis CI runs is the one production runs:');
 {
   const prodRedis = /\n\s+image: (redis:\S+)/.exec(
