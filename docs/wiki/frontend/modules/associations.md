@@ -137,9 +137,8 @@ parses the URL). The reader's half is `imageSrcOrNull` (`frontend/src/lib/utils/
 by `associationLogoSrc`: only a path or an http(s) URL is ever drawn, and a dropped value is said
 through `Log.i`. The two export sheets built as HTML strings (`calendarExport.ts`, `trombinoscope.ts`)
 escape every interpolated value, attributes included, through the one `escapeHtmlAttribute`
-(`frontend/src/lib/utils/escapeHtml.ts`), and carry no inline event handler: a trombinoscope photo
-that does not load is swapped for its initials by an `error` listener on each
-`img[data-avatar-fallback]` (`showInitialsInstead`).
+(`frontend/src/lib/utils/escapeHtml.ts`). In the trombinoscope, a photo that does not load shows
+initials (`showInitialsInstead`).
 
 ### What a list's card says, and what it stopped saying
 
