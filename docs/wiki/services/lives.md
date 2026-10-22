@@ -202,7 +202,8 @@ a same request is one a cache answers.
 - CORS as nginx's own API errors: the three WebView origins (`$api_error_cors_origin`),
   credentials allowed, `Vary: Origin`; the web app is same-origin. The CSP and the two security
   headers are restated (`add_header` replaces the inherited set). The app's CSP already allows it:
-  `connect-src 'self'` on the web, none on Tauri (`"csp": null`).
+  `connect-src 'self'` on the web; on Tauri the WebView's `connect-src` names every backend a
+  store build may bake ([cloudflare-edge](../infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)).
 - `limit_except GET` (HEAD included), and `lives_segments`: 30 r/s burst 60 per client address,
   answering the JSON `@api_error_429`. 30 r/s is the whole cap below fetching a segment a second
   from ONE campus address.

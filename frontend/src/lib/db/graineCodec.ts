@@ -11,12 +11,14 @@
  *    device minted, the frame that distributed it. The frame is not secret (an MLS ciphertext), it
  *    rides in the blob because that needs no column in either store and a backup carries it as is.
  *    A v2 session's endorsement and keys ride there too, for the same reason - and the session
- *    SECRET, on a session this device minted, is the one v2 field that has to be encrypted.
+ *    SECRET, on a session this device minted, is the one v2 field that has to be encrypted. So does
+ *    a minted session's rotation anchor, whose epoch fingerprint is derived from an MLS secret.
  */
 
 import type {
   EncryptedGraineRow,
   GraineDistributionFrame,
+  GraineRotationAnchor,
   StoredGraineSession,
   StoredGraineV2,
 } from './types';
@@ -53,6 +55,29 @@ export function encodeGraineSensitive(session: StoredGraineSession): Record<stri
     seedB64: session.seedB64,
     ...(session.distributionFrame ? { distributionFrame: session.distributionFrame } : {}),
     ...(session.v2 ? { v2: session.v2 } : {}),
+    ...(session.rotationAnchor ? { rotationAnchor: session.rotationAnchor } : {}),
+  };
+}
+
+/**
+ * The rotation anchor out of a decrypted payload, or undefined for anything that is not a whole one
+ * - an older row, which then rotates once. Half an anchor is no anchor: reuse rests on all of it.
+ */
+function anchorOf(payload: unknown): GraineRotationAnchor | undefined {
+  const a = (payload as { rotationAnchor?: Partial<Record<keyof GraineRotationAnchor, unknown>> })
+    ?.rotationAnchor;
+  if (
+    !a ||
+    typeof a.runId !== 'string' ||
+    typeof a.epochFingerprint !== 'string' ||
+    typeof a.redistributed !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return {
+    runId: a.runId,
+    epochFingerprint: a.epochFingerprint,
+    redistributed: a.redistributed,
   };
 }
 
@@ -117,6 +142,7 @@ export function decodeGraineSession(
     seedB64: typeof seed === 'string' ? seed : '',
     distributionFrame: frameOf(payload),
     v2: v2Of(payload),
+    rotationAnchor: anchorOf(payload),
   };
 }
 
