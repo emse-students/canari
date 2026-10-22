@@ -61,6 +61,49 @@ export interface GraineSignatureEngine {
   verifySignatures(checks: readonly GraineSignatureCheck[]): Promise<GraineSignatureVerdict[]>;
 }
 
+/** Every verdict an engine may answer, the runtime copy of {@link GraineSignatureVerdict}. */
+const GRAINE_SIGNATURE_VERDICTS: ReadonlySet<string> = new Set<GraineSignatureVerdict>([
+  'valid',
+  'invalid',
+  'malformed-public-key',
+  'malformed-signature',
+]);
+
+/**
+ * An engine's batch answer that is not one known verdict per check - a broken bridge contract,
+ * never a verdict about any signature. Typed so a page refuses the whole batch on a CLASS: a
+ * verdict handed to the wrong row would be a forged row shown.
+ */
+export class GraineSignatureBatchError extends Error {
+  constructor(readonly detail: string) {
+    super(`Graine v2 signature batch answer refused: ${detail}`);
+    this.name = 'GraineSignatureBatchError';
+  }
+}
+
+/**
+ * Checks the SHAPE of a `verifySignatures` answer: an array of exactly `expected` entries, each a
+ * known verdict string. What crosses the Tauri bridge or leaves WASM is untyped at runtime, so the
+ * cast is not a proof. @throws {GraineSignatureBatchError} on anything else.
+ */
+export function requireGraineVerdicts(answer: unknown, expected: number): GraineSignatureVerdict[] {
+  if (!Array.isArray(answer)) {
+    throw new GraineSignatureBatchError(`not an array (${typeof answer})`);
+  }
+  if (answer.length !== expected) {
+    throw new GraineSignatureBatchError(`${answer.length} verdict(s) for ${expected} check(s)`);
+  }
+  const unknown = answer.findIndex(
+    (v) => typeof v !== 'string' || !GRAINE_SIGNATURE_VERDICTS.has(v)
+  );
+  if (unknown !== -1) {
+    throw new GraineSignatureBatchError(
+      `entry ${unknown} is not a known verdict (${JSON.stringify(answer[unknown])})`
+    );
+  }
+  return answer as GraineSignatureVerdict[];
+}
+
 /** One signature to check inside a batch - the three arguments of `verifySignature`. */
 export interface GraineSignatureCheck {
   publicKey: Uint8Array;

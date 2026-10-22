@@ -2907,11 +2907,13 @@ varint. No Graine bytes can be an MLS `SignContent`, so an endorsement can never
     an answer, not a failed call.
   - **A page is verified in ONE call** (`graine_verify_signatures`, WASM export and Tauri command,
     2026-10-22). The checks cross as one packed buffer (`packGraineSignatureChecks` in
-    `graineV2.ts`, decoded by `unpack_graine_signature_checks`; a shared vector pins the two), as one
+    `graineV2.ts`, decoded by `unpack_graine_signature_checks`; a shared vector pins the two, and
+    `graineSignatureBatch.wasm.test.ts` runs the BUILT WASM on the TS packer), as one
     base64 string over Tauri. Each check is still `verify_graine_signature`, one verdict per check in
     order: it is NOT an Ed25519 batch verification, which answers one bit for the set and is not
     strict, so one forged row would refuse its honest neighbours. A packing that does not parse
-    rejects the call whole; it is a contract break, never a verdict. The history load and the
+    rejects the call whole; it is a contract break, never a verdict. So does an answer that is not
+    one known verdict per check (`requireGraineVerdicts`, a typed `GraineSignatureBatchError`). The history load and the
     whole-history search open their rows through `openChannelMessagePage` (`channelSeal.ts`), which
     runs the single open's two halves around that call: every check before the signature row by
     row, one engine call, then the decrypt and the replay claim in page order. Every row gets what

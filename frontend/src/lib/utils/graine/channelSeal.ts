@@ -4,6 +4,7 @@ import {
   finishGraineV2Open,
   GraineSignatureError,
   prepareGraineV2Open,
+  requireGraineVerdicts,
   sealWithGraineV2,
   type GraineSignatureCheck,
   type GraineSignatureEngine,
@@ -368,14 +369,12 @@ export async function openChannelMessagePage(
     const slice = waiting.slice(from, from + GRAINE_SIGNATURE_BATCH_MAX);
     try {
       // One runtime, one engine: every row of the page was prepared against the same MLS service.
-      const answer = await slice[0].engine.verifySignatures(slice.map((w) => w.check));
-      if (answer.length !== slice.length) {
-        // A broken engine contract, refused whole: a verdict handed to the wrong row is a forged
-        // row shown, so nothing is believed past a count that does not match.
-        throw new Error(
-          `[GRAINE] signature batch answered ${answer.length} verdict(s) for ${slice.length} check(s)`
-        );
-      }
+      // A broken engine contract is refused whole: a verdict handed to the wrong row is a forged
+      // row shown, so nothing is believed from an answer of the wrong shape.
+      const answer = requireGraineVerdicts(
+        await slice[0].engine.verifySignatures(slice.map((w) => w.check)),
+        slice.length
+      );
       slice.forEach((w, k) => verdicts.set(w.at, answer[k]));
     } catch (error) {
       console.error(

@@ -1,6 +1,7 @@
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { byNewestSession } from '$lib/db/graineCodec';
 import {
+  GraineSignatureBatchError,
   GraineSignatureError,
   encodeGraineEndorsementV2,
   graineSeedCommitment,
@@ -709,7 +710,11 @@ describe('opening a v2 row', () => {
       const error = vi.spyOn(console, 'error').mockImplementation(() => {});
       engine.verifySignatures.mockResolvedValueOnce(['valid']);
       const out = await openChannelMessagePage(CHANNEL, [await sealedRow(1), await sealedRow(2)]);
-      expect(out.every((o) => !o.ok)).toBe(true);
+      expect(out.every((o) => !o.ok && o.error instanceof GraineSignatureBatchError)).toBe(true);
+      // Nor from one of the right length that holds something no engine answers.
+      engine.verifySignatures.mockResolvedValueOnce(['valid', 'ok'] as never);
+      const odd = await openChannelMessagePage(CHANNEL, [await sealedRow(3), await sealedRow(4)]);
+      expect(odd.every((o) => !o.ok && o.error instanceof GraineSignatureBatchError)).toBe(true);
       error.mockRestore();
     });
   });

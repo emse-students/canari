@@ -9,6 +9,8 @@ import {
   openWithGraineV2,
   packGraineSignatureChecks,
   prepareGraineV2Open,
+  GraineSignatureBatchError,
+  requireGraineVerdicts,
   sealWithGraineV2,
   verifyGraineEndorsementV2,
   type GraineEndorsementV2,
@@ -253,6 +255,20 @@ describe('graine v2 - the packed signature batch', () => {
         '0000000103' +
         '00000000000000020405'
     );
+  });
+
+  it('accepts only an answer of one known verdict per check', () => {
+    expect(requireGraineVerdicts(['valid', 'invalid'], 2)).toEqual(['valid', 'invalid']);
+    for (const [answer, expected] of [
+      [null, 1],
+      ['valid', 1],
+      [['valid'], 2],
+      [['valid', 'maybe'], 2],
+      [['valid', 3], 2],
+      [['randomness'], 1],
+    ] as const) {
+      expect(() => requireGraineVerdicts(answer, expected)).toThrow(GraineSignatureBatchError);
+    }
   });
 
   it('packs an empty batch as a zero count', () => {
