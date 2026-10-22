@@ -23,9 +23,9 @@ import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.s
  * when nothing was waiting.
  */
 export async function drainNativeShare(): Promise<{ lost: number } | null> {
-  let pendingShare: { manifest: string; epoch: number } | null;
+  let pendingShare: { manifest: string; epoch: number | null } | null;
   try {
-    pendingShare = await invoke<{ manifest: string; epoch: number } | null>(
+    pendingShare = await invoke<{ manifest: string; epoch: number | null } | null>(
       'read_and_clear_pending_share'
     );
   } catch (error) {
@@ -44,6 +44,18 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
   );
   // A CAPTURE THAT STARTED BEFORE A SIGN-OUT belongs to the session that ended: deleted unread,
   // never offered - and not reported, the member who made it is no longer signed in here.
+  // AN UNREADABLE EPOCH OFFERS NOTHING: this session's share and the last one's cannot be told
+  // apart, and offering the wrong one is the one outcome the erase exists to prevent.
+  if (pendingShare.epoch === null) {
+    console.error(
+      '[SHARE] the share epoch is unreadable - the waiting share is deleted, not offered'
+    );
+    await discardSharedFiles(
+      manifest.files.map((f) => f.path),
+      'share epoch unreadable'
+    );
+    return null;
+  }
   if (manifest.epoch < pendingShare.epoch) {
     appendLog(
       `[SHARE] a share from a signed-out session (epoch ${manifest.epoch} < ${pendingShare.epoch}) - deleted`

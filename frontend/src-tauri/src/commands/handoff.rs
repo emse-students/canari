@@ -67,24 +67,24 @@ fn take_handoff(dir: &std::path::Path, name: &str, tag: &str) -> Option<String> 
 /// account. An ORDER, not a clock: a manifest is stale exactly when a sign-out came after its start.
 const SHARE_EPOCH_FILE: &str = "share_epoch";
 
-/// The current epoch; 0 before the first sign-out ever (no file). An unreadable file is said.
-fn read_share_epoch(dir: &std::path::Path) -> u64 {
+/// The current epoch; 0 before the first sign-out ever (no file). AN UNREADABLE FILE IS AN ERROR,
+/// never 0: read as 0, every manifest would look current (a share of the account that left, offered
+/// to the next), and an advance from 0 would move the order BACKWARDS.
+fn read_share_epoch(dir: &std::path::Path) -> std::io::Result<u64> {
     match std::fs::read_to_string(dir.join(SHARE_EPOCH_FILE)) {
-        Ok(raw) => raw.trim().parse().unwrap_or_else(|e| {
-            log::warn!("[SHARE] the share epoch is unreadable ({e}), read as 0");
-            0
-        }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
-        Err(e) => {
-            log::warn!("[SHARE] the share epoch could not be read ({e}), read as 0");
-            0
-        }
+        Ok(raw) => raw
+            .trim()
+            .parse()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(e) => Err(e),
     }
 }
 
 /// Writes the next epoch, whole or not at all (a temporary file renamed into place), and returns it.
+/// Refuses when the current one cannot be read, rather than restarting the count.
 fn advance_share_epoch_in(dir: &std::path::Path) -> std::io::Result<u64> {
-    let next = read_share_epoch(dir) + 1;
+    let next = read_share_epoch(dir)? + 1;
     std::fs::create_dir_all(dir)?;
     let staging = dir.join(format!("{SHARE_EPOCH_FILE}.tmp"));
     std::fs::write(&staging, next.to_string())?;
@@ -92,11 +92,12 @@ fn advance_share_epoch_in(dir: &std::path::Path) -> std::io::Result<u64> {
     Ok(next)
 }
 
-/// A drained share manifest, with the epoch current when it was drained.
+/// A drained share manifest, with the epoch current when it was drained - `None` when it could not be
+/// read, and then the page offers nothing (it cannot tell this session's share from the last one's).
 #[derive(serde::Serialize)]
 pub(crate) struct PendingShare {
     manifest: String,
-    epoch: u64,
+    epoch: Option<u64>,
 }
 
 /// Drains `pending_share.json`, written by Android's `IncomingShare` when another app shares into
@@ -108,10 +109,12 @@ pub(crate) struct PendingShare {
 pub(crate) fn read_and_clear_pending_share(app: tauri::AppHandle) -> Option<PendingShare> {
     let manifest = read_and_clear_app_data_file(&app, "pending_share.json", "SHARE")?;
     let epoch = match app.path().app_data_dir() {
-        Ok(dir) => read_share_epoch(&dir),
+        Ok(dir) => read_share_epoch(&dir)
+            .inspect_err(|e| log::error!("[SHARE] the share epoch is unreadable: {e}"))
+            .ok(),
         Err(e) => {
-            log::warn!("[SHARE] app_data_dir() failed reading the epoch: {e}");
-            0
+            log::error!("[SHARE] app_data_dir() failed reading the share epoch: {e}");
+            None
         }
     };
     Some(PendingShare { manifest, epoch })
@@ -198,10 +201,23 @@ mod tests {
     #[test]
     fn the_share_epoch_starts_at_zero_and_each_sign_out_advances_it() {
         let dir = scratch("epoch");
-        assert_eq!(read_share_epoch(&dir), 0);
+        assert_eq!(read_share_epoch(&dir).expect("read"), 0);
         assert_eq!(advance_share_epoch_in(&dir).expect("advance"), 1);
         assert_eq!(advance_share_epoch_in(&dir).expect("advance"), 2);
-        assert_eq!(read_share_epoch(&dir), 2);
+        assert_eq!(read_share_epoch(&dir).expect("read"), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_share_epoch_is_an_error_and_never_restarts_the_count() {
+        let dir = scratch("epoch-corrupt");
+        std::fs::write(dir.join(super::SHARE_EPOCH_FILE), "not a number").expect("write");
+        assert!(read_share_epoch(&dir).is_err());
+        assert!(advance_share_epoch_in(&dir).is_err());
+        assert_eq!(
+            std::fs::read_to_string(dir.join(super::SHARE_EPOCH_FILE)).expect("read"),
+            "not a number"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

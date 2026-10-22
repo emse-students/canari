@@ -125,19 +125,21 @@ export const incomingShare = {
     this.drop('cancelled by the member');
   },
   /**
-   * Drops whatever share is held - waiting for its destination or for its destination to open -
-   * and deletes its copies unread. The picker's dismissal (`cancel`), and a SIGN-OUT
-   * (`eraseIncomingShare`): a share must never land in the account signed in next.
-   */
-  /**
    * A sign-out advanced the share epoch to `epoch`: from now on an offer from an older one is
-   * refused, and a held share from an older one is dropped.
+   * refused, and a held share from an older one is dropped. `Infinity` when the advance FAILED:
+   * nothing is offered again in this process, since this session's shares and the last one's can no
+   * longer be told apart.
    */
   fence(epoch: number, reason: string): void {
     floor = Math.max(floor, epoch);
     appendLog(`[SHARE] fenced at epoch ${floor} (${reason})`);
     if (pending && pendingEpoch < floor) this.drop(reason);
   },
+  /**
+   * Drops whatever share is held - waiting for its destination or for its destination to open -
+   * and deletes its copies unread. The picker's dismissal (`cancel`), and a SIGN-OUT
+   * (`eraseIncomingShare`): a share must never land in the account signed in next.
+   */
   drop(reason: string): void {
     if (!pending) return;
     appendLog(`[SHARE] dropped: ${reason}`);

@@ -107,7 +107,14 @@ builds on the IN half later and is not started.
     current epoch: a capture still running natively at the sign-out lands STALE, and the next drain
     deletes it unread and offers nothing. The store is FENCED at the new epoch
     (`incomingShare.fence`), so a drain that claimed its manifest before the sign-out and offers it
-    after is refused, its copies deleted;
+    after is refused, its copies deleted. **The epoch fails CLOSED and never moves back**: an
+    unreadable file is an error, not 0 - the drain then offers nothing, an advance refuses rather
+    than restart the count, and a failed advance fences this process at `Infinity`. **It orders the
+    native side too**: an older capture never replaces a newer session's waiting share (captures
+    queue on one lock in no set order), a refusal count never crosses a sign-out, and the sweep at
+    the first `onCreate` drops a waiting manifest from a signed-out session, so its copies do not
+    wait on disk for the next account. A manifest the erase finds with the NEW epoch - a capture
+    started in the instant after the advance - is the next session's, and is kept;
   - a staging in progress is checked against the sign-out generation read when the share was taken
     (`MainChatPage`): before each file (`stageSharedFiles`' `stillWanted`, the rest deleted unread),
     AFTER each file's preparation (`handleFilesSelected`'s, since a video re-encode takes seconds and
@@ -115,8 +122,9 @@ builds on the IN half later and is not started.
     (`whenSessionUp`) that is dropped or misdirected deletes its copies (`HeldSend.discard`). Nobody
     is told - nobody is signed in to be told.
   What is left: an unreadable claimed manifest keeps its copies until the next process start sweeps
-  what no manifest names; and when advancing the epoch FAILS (accused at `console.error`), a capture
-  running at that instant is not fenced. Tests: `incomingShareSignOut.test.ts` (nothing left in the
+  what no manifest names; and a persistently unreadable epoch file disables sharing INTO Canari (accused at
+  every drain) until the app data is cleared - the price of never guessing which session a share is
+  from. Tests: `incomingShareSignOut.test.ts` (nothing left in the
   page, on disk or as a copy; a running capture lands stale; a drain racing the sign-out cannot
   offer), `auth.shareErase.test.ts` (both sign-out exits reach it), `incomingShare.svelte.test.ts`
   (the fence), `useMessaging.mediaEnqueue.svelte.test.ts` (a sign-out mid-preparation stages

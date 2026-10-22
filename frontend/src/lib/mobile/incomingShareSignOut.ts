@@ -28,12 +28,16 @@ import { appendLog } from '$lib/utils/sessionLog';
 export async function eraseIncomingShare(reason: string): Promise<void> {
   incomingShare.drop(reason);
   if (!isAndroidTauriRuntime()) return;
+  let fenced: number | null = null;
   try {
-    incomingShare.fence(await invoke<number>('advance_share_epoch'), reason);
+    fenced = await invoke<number>('advance_share_epoch');
+    incomingShare.fence(fenced, reason);
   } catch (error) {
-    // The held share and the waiting manifest still go below; what is NOT closed is a copy still
-    // running natively, and a drain racing this one - said, at the level that accuses.
+    // FAILS CLOSED: with no new epoch, a share made before this sign-out cannot be told from one made
+    // after, so this process offers none again (the native drain refuses one too while the file
+    // stays unreadable - `commands/handoff.rs`). Said at the level that accuses.
     console.error(`[SHARE] the share epoch was not advanced (${reason}): ${String(error)}`);
+    incomingShare.fence(Number.POSITIVE_INFINITY, reason);
   }
   let pendingShare: { manifest: string } | null;
   try {
@@ -49,6 +53,13 @@ export async function eraseIncomingShare(reason: string): Promise<void> {
     console.error(
       `[SHARE] an unreadable waiting share was claimed (${reason}); its copies wait for the next start`
     );
+    return;
+  }
+  // A capture that STARTED after the advance - in the instant between it and this claim - is the next
+  // session's share: handed to the store, whose fence it passes, rather than deleted.
+  if (fenced !== null && manifest.epoch >= fenced) {
+    appendLog(`[SHARE] a share made after the sign-out (epoch ${manifest.epoch}) kept`);
+    incomingShare.offer({ text: manifest.text, files: manifest.files }, manifest.epoch);
     return;
   }
   appendLog(`[SHARE] an undrained share erased (${reason}): ${manifest.files.length} file(s)`);

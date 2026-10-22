@@ -80,18 +80,75 @@ describe('eraseIncomingShare', () => {
     expect(discarded()).toEqual(['/inbox/c/0_c.png']);
   });
 
-  it('a drain that claimed before the sign-out cannot offer after it', async () => {
-    waiting = JSON.stringify({ text: 'racing', files: [entry('/inbox/d/0_d.png')], epoch });
-    // The drain claims first; the sign-out runs while it is between its claim and its offer.
-    const claimed = (await invoke('read_and_clear_pending_share')) as { manifest: string };
-    await eraseIncomingShare('signed out');
-    const parsed = JSON.parse(claimed.manifest);
+  /** The real drain, held inside its native claim until `release` - the ordering under review. */
+  function drainHeldInItsClaim() {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const before = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd !== 'read_and_clear_pending_share') return before(cmd, args);
+      const claimed = await before(cmd, args); // claimed, with the epoch current at the claim...
+      invoke.mockImplementation(before);
+      await gate; // ...and answered only after the sign-out ran
+      return claimed;
+    });
+    return { drained: drainNativeShare(), release };
+  }
 
-    expect(incomingShare.offer({ text: parsed.text, files: parsed.files }, parsed.epoch)).toBe(
-      false
-    );
+  it('a drain claimed BEFORE the sign-out and answered after it offers nothing', async () => {
+    waiting = JSON.stringify({ text: 'racing', files: [entry('/inbox/d/0_d.png')], epoch });
+    const { drained, release } = drainHeldInItsClaim();
+    await eraseIncomingShare('signed out');
+    release();
+
+    expect(await drained).toEqual({ lost: 0 });
     expect(incomingShare.pending).toBeNull();
     expect(discarded()).toEqual(['/inbox/d/0_d.png']);
+  });
+
+  it('a drain that offered BEFORE the sign-out is dropped by it', async () => {
+    waiting = JSON.stringify({ text: 'early', files: [entry('/inbox/f/0_f.png')], epoch });
+    await drainNativeShare();
+    expect(incomingShare.pending?.text).toBe('early');
+    await eraseIncomingShare('signed out');
+    expect(incomingShare.pending).toBeNull();
+    expect(discarded()).toEqual(['/inbox/f/0_f.png']);
+  });
+
+  it('keeps a share captured in the instant after the advance, before the erase claims it', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'advance_share_epoch') {
+        ++epoch;
+        // A capture starts right after the advance and lands before the claim: it carries the new epoch.
+        waiting = JSON.stringify({ text: 'next', files: [entry('/inbox/g/0_g.png')], epoch });
+        return epoch;
+      }
+      if (cmd !== 'read_and_clear_pending_share') return undefined;
+      const manifest = waiting;
+      waiting = null;
+      return manifest === null ? null : { manifest, epoch };
+    });
+    await eraseIncomingShare('signed out');
+    expect(incomingShare.pending?.text).toBe('next');
+    expect(discarded()).toEqual([]);
+    incomingShare.drop('test reset');
+  });
+
+  it('offers nothing when the drain cannot read the epoch', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'read_and_clear_pending_share'
+        ? {
+            manifest: JSON.stringify({ text: 'x', files: [entry('/inbox/h/0_h.png')], epoch }),
+            epoch: null,
+          }
+        : undefined
+    );
+    expect(await drainNativeShare()).toBeNull();
+    expect(incomingShare.pending).toBeNull();
+    expect(discarded()).toEqual(['/inbox/h/0_h.png']);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('share epoch is unreadable'));
+    error.mockRestore();
   });
 
   it('offers a share captured after the sign-out to the account signed in next', async () => {
@@ -110,7 +167,7 @@ describe('eraseIncomingShare', () => {
     expect(invoke.mock.calls.map(([cmd]) => cmd)).not.toContain('advance_share_epoch');
   });
 
-  it('never throws when the native side fails, and still claims the waiting manifest', async () => {
+  it('never throws when the native side fails, still claims the waiting manifest, and fails closed', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     waiting = JSON.stringify({ text: 'x', files: [entry('/inbox/e/0_e.png')], epoch });
     invoke.mockImplementation(async (cmd: string) => {
@@ -129,5 +186,10 @@ describe('eraseIncomingShare', () => {
     });
     await expect(eraseIncomingShare('signed out')).resolves.toBeUndefined();
     error.mockRestore();
+
+    // FAILED CLOSED: nothing is offered again in this process. (Last in the file for that reason.)
+    expect(
+      incomingShare.offer({ text: 'after', files: [entry('/inbox/i/0_i.png')] }, epoch + 9)
+    ).toBe(false);
   });
 });
