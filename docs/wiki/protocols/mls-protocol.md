@@ -665,12 +665,63 @@ processed, never from a server message** (a server that stays silent must not si
 - contacts see a discreet line "X added a device" in **private conversations only** (1:1 and
   groups), **never in a community or salon key group**, where it would be noise.
 
-The rule is written once, `deviceEventAudience()` in `deviceTrust.ts`, and one device under one key
-is announced once (`deviceEventKey()`). **The UI is not built yet**: the strings, the conversation
-line, the in-app alert and the native local notification on the background path are their own work
-package ([backlog](../backlog.md#new-device-notices-decided-by-the-user-on-2026-10-22---the-ui-is-owed)).
-A remembered refusal is told to its reader only in the logs today; telling the refused device's
-owner in the app is part of that same UI work.
+**What counts as a new device** is decided where the event is recorded, as a fact
+(`DeviceEvent.memberAlreadyPresent`: the user already had a leaf before the commit) and one predicate,
+`announcesNewDevice()` / `DeviceEvent::announces_new_device`:
+
+| Event | Announced? |
+|---|---|
+| first sight, the user was already in the conversation | yes |
+| first sight, the user arrives with it (a new member, a new conversation) | no - that is the member-added line |
+| a resync, a heal, a kick and re-add under the pinned key | no - not even recorded (`pinned` is refused by the predicate as well) |
+| `key-changed` admitted by a commit | yes, wherever it is - nothing proves it |
+| `key-changed` found in a joined tree (`addedBy` null) | no - no commit admitted it |
+| the processing device itself | never |
+| an event recorded before `memberAlreadyPresent` existed | no |
+
+Then `deviceEventAudience()` (`deviceTrust.ts`) routes it: `owner-alert` for this account, from
+any group; `contact-line` for a contact, asked once PER CONVERSATION the line could go in, so a
+community or salon key group never gets it; `none` otherwise. Rust's
+`DeviceEvent::is_owner_alert` applies the owner half for the background engines, and both are held
+to ONE table, `frontend/mls-core/tests/fixtures/device_notices.json`, read by a Rust and a TypeScript
+test. One device under one key is announced once (`deviceEventKey()` = `notice_key()`).
+
+**Who consumes the events.** `BaseMlsService.setDeviceEventConsumer` hands the taken events to
+`deliverDeviceEvents` (`utils/chat/deviceNotices.svelte.ts`, registered by `registerDeviceNotices`
+at session start): after every drain, after this device's own Adds, and once at registration for
+what the sealed state already holds - so the 512-event store drains. With no consumer they stay.
+
+- **The contact line** is a client-written system row (`chat_system_device_added`), message id
+  `device-added:<groupId>:<key>` - one per conversation, idempotent, not unread, no sound, like every
+  `system` row. It is written in EVERY 1:1 and group row whose tree (`getGroupMemberIdentities`,
+  read locally) holds a leaf of the device's owner, whichever group admitted the device - a
+  contact's new device is often first seen in a community they share, and the line still reaches
+  the private conversations. Never in a channel row or a key group.
+- **The owner alert in the app** is `NewDeviceBanner.svelte` in the layout's banner column: the
+  device's name when the device list has one, when this device learned of it, and a link to
+  `/settings/security`. Durable per account (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the
+  last 256 announced keys) until dismissed or followed.
+- **A refused device of the owner's own** (`refusedDevices.ts`, a changed key under a kept id) is
+  told in the same banner column, with the remedy (`device_refused_remedy`: remove it from the
+  devices, sign in on it again, and it enrols as a new device). Built from the refusals this device
+  remembers at registration and from each new one (`setRefusedDeviceListener`); dismissed once, it
+  does not come back (`refusedSeen`). A contact's refused device is not told to anyone: its owner
+  learns of it only from a device of their own that refuses it too.
+- **The local notification** is raised by the native background engines only, from a commit they
+  merged in memory: the Android FCM service (a commit push, a catch-up, or its own background Add of
+  the account's new device once the server accepted it) and the iOS notification extension (a
+  catch-up before a message - the extension never sees a silent commit push, so an iPhone whose app
+  is closed learns of the device at the next message push or when the app opens). Each push-decrypt
+  answer carries `ownDeviceAdded` (`mobile/device_notice.rs`); the keys are claimed in a ledger of
+  one marker file per key (`create_new`, atomic across the app and the extension), in the app data
+  directory on Android and the App Group on iOS. The app claims the keys it showed
+  (`claim_device_notices`), so a later push replaying the commit notifies nothing. In the
+  foreground, Android posts nothing and leaves the alert to the app. The ledger is swept with the
+  account's push files on deletion.
+
+**Known limits, owed a decision or a reading:** a phone whose WebView is alive in the background
+processes the commit itself and so shows the in-app alert only, with no local notification; and a
+device first seen inside a tree this device JOINED (its leaf pinned silently) is never announced.
 
 ## Key packages
 

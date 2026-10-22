@@ -40,6 +40,7 @@ function makeCtx(verdict: KeyPackageVerdict) {
     vetKeyPackageNative: vi.fn(async () => verdict),
     stageAddMembers: vi.fn(async () => staged),
     exportRatchetTree: vi.fn(async () => new Uint8Array([4])),
+    handOverDeviceEvents: vi.fn(async () => {}),
     // Runs the stage function and hands back what the real transaction would after a merge.
     runCommitTransaction: vi.fn(async (_g: string, stage: () => Promise<typeof staged>) => {
       const s = await stage();

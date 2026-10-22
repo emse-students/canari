@@ -50,11 +50,12 @@ use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror
 use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
-    ack_fcm_cache, check_push_secret_health, delete_user_push_files, forget_graine_channel,
-    forget_graine_sessions, get_fcm_token, get_push_diagnostic, get_voip_token, load_push_context,
-    read_and_clear_outbox_sent, read_and_clear_pending_call_accept, read_and_clear_read_watermarks,
-    read_outbox_mirror, set_push_context_locale, store_device_identity, store_graine_seed,
-    store_outbox_mirror, store_push_context, store_push_secret, take_fcm_cache,
+    ack_fcm_cache, check_push_secret_health, claim_device_notices, delete_user_push_files,
+    forget_graine_channel, forget_graine_sessions, get_fcm_token, get_push_diagnostic,
+    get_voip_token, load_push_context, read_and_clear_outbox_sent,
+    read_and_clear_pending_call_accept, read_and_clear_read_watermarks, read_outbox_mirror,
+    set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
+    store_push_context, store_push_secret, take_fcm_cache,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
@@ -236,6 +237,37 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     let json: String = json.into();
 
     commands::push::store_graine_seeds_json(std::path::Path::new(&dir), &json)
+}
+
+/// Claims the `ownDeviceAdded` keys a push decrypt or a background Add answered in the shared
+/// device-notice ledger under `dataDir` (`MlsContextLoader.tauriDataDir`, the directory the app's
+/// own claim uses) and returns, as a JSON array, the keys nobody announced before - the ones the
+/// service raises its "a new device was added to your account" notification for. `[]` when the
+/// arguments cannot be read. See `mobile::device_notice`.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeClaimDeviceNotices<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    keys_json: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let claimed = (|| -> Option<String> {
+        let dir: String = env.get_string(&data_dir).ok()?.into();
+        let json: String = env.get_string(&keys_json).ok()?.into();
+        Some(mobile::device_notice::claim_device_notices_json(
+            std::path::Path::new(&dir),
+            &json,
+        ))
+    })()
+    .unwrap_or_else(|| {
+        log::error!("[DEVICE_NOTICE] jni arguments unreadable - nothing claimed");
+        "[]".to_string()
+    });
+    env.new_string(&claimed)
+        .unwrap_or_else(|_| env.new_string("[]").unwrap())
 }
 
 /// Opens a salon push against the seed mirror under `dataDir` - every v1 and v2 rule, in the one
@@ -1115,6 +1147,7 @@ pub fn run() {
             mls_state_absent,
             mls_state_owner,
             store_push_secret,
+            claim_device_notices,
             clear_app_data,
             delete_user_database,
             delete_user_push_files,

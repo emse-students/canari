@@ -56,8 +56,28 @@ export function isRefusedDevice(
 }
 
 /**
+ * Every device this device remembers as refused, as `userId:deviceId` (user half lower-cased),
+ * oldest first - what the owner's in-app notice of a refused device of their own is built from
+ * (`deviceNotices.svelte.ts`).
+ */
+export function listRefusedDevices(own: { userId: string; deviceId: string }): string[] {
+  return readRefused(own.userId, own.deviceId);
+}
+
+/** Who is told when a refusal is recorded; one listener, the new-device notices. */
+let refusalListener: ((identity: string) => void) | null = null;
+
+/**
+ * Registers the one listener told of every refusal {@link recordRefusedDevice} records (`null`
+ * removes it). A listener that throws is logged and costs only its own notice.
+ */
+export function setRefusedDeviceListener(listener: ((identity: string) => void) | null): void {
+  refusalListener = listener;
+}
+
+/**
  * Remembers a refusal when no retry can lift it (`signature-key-changed`); any other reason is left
- * to the next sweep.
+ * to the next sweep. The listener ({@link setRefusedDeviceListener}) is told of the refusal.
  *
  * @returns whether the refusal was recorded.
  */
@@ -74,6 +94,13 @@ export function recordRefusedDevice(
   console.warn(
     `[TRUST] ${sanitizeForLog(identity)} remembered as refused - no KeyPackage is fetched for it again`
   );
+  if (refusalListener) {
+    try {
+      refusalListener(identity);
+    } catch (e) {
+      console.error('[TRUST] the refused-device listener failed - no notice for this refusal:', e);
+    }
+  }
   return true;
 }
 

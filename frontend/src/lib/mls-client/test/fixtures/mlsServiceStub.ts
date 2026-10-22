@@ -17,6 +17,7 @@ export function createMlsServiceStub(
     // Default: the package is the device's pinned one - a test about a refusal overrides it.
     vetKeyPackage: vi.fn().mockResolvedValue('pinned'),
     takeDeviceEvents: vi.fn().mockResolvedValue([]),
+    setDeviceEventConsumer: vi.fn(),
     addMembersBulk: vi.fn().mockResolvedValue({
       addedDeviceIds: [],
       skipped: [],

@@ -676,10 +676,16 @@ export interface IMlsService {
   ): Promise<KeyPackageVerdict>;
   /**
    * The new devices (first sight or a changed key) recorded from merged signed commits since the
-   * last call, oldest first; taking them forgets them. The notices built from them are owed
-   * (`deviceEventAudience`).
+   * last call, oldest first; taking them forgets them. The new-device notices take them through
+   * `setDeviceEventConsumer`.
    */
   takeDeviceEvents(): Promise<DeviceEvent[]>;
+  /**
+   * Registers who device events are handed to - after each drain, after this device's own Adds,
+   * and once at registration for what the state already holds - or removes it with `null`. The
+   * new-device notices (`deviceNotices.svelte.ts`) are the one consumer.
+   */
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
   /**
    * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
    * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts

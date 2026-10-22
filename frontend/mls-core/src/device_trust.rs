@@ -99,6 +99,65 @@ pub struct DeviceEvent {
     pub trust: LeafTrust,
     /// The verified identity of the committer, `None` for a key change found in a joined tree.
     pub added_by: Option<String>,
+    /// Whether the admitted device's USER already had a leaf in the tree before the commit - so the
+    /// commit gave a member another device, rather than bringing a new member in with theirs.
+    /// `false` for an event recorded before the field existed: such an event is never announced.
+    #[serde(default)]
+    pub member_already_present: bool,
+}
+
+impl DeviceEvent {
+    /// Whether this event is "a device was added" - the fact both notices are built from (user
+    /// decision 2026-10-22, `docs/wiki/protocols/mls-protocol.md#new-device-notices`):
+    ///
+    /// - a signed commit admitted it (`added_by` is set - a key change found in a joined tree is not
+    ///   an admission);
+    /// - and the key is NEW to this device: either a first sight for a user who was already in the
+    ///   conversation (a member joining with all their devices is the member-added line, not N
+    ///   device lines), or a key other than the one pinned for that identity, which nothing proves
+    ///   and which is announced wherever it happens.
+    ///
+    /// A `pinned` re-add (the replace path, a rotation) is the same device and is never announced.
+    pub fn announces_new_device(&self) -> bool {
+        self.added_by.is_some()
+            && match self.trust {
+                LeafTrust::KeyChanged => true,
+                LeafTrust::FirstSight => self.member_already_present,
+                LeafTrust::Pinned => false,
+            }
+    }
+
+    /// Whether this event is the account owner's alert, "a new device was added to your account",
+    /// for the device `own_user_id:own_device_id` that processed it: an announced device of the same
+    /// account (user half ignoring ASCII case), and never the processing device itself - a device
+    /// does not alert itself about its own arrival.
+    ///
+    /// The native background engines decide with this; the app decides with its TypeScript twin
+    /// `deviceEventAudience`, and both are held to one table (`tests/fixtures/device_notices.json`).
+    pub fn is_owner_alert(&self, own_user_id: &str, own_device_id: &str) -> bool {
+        let Some((user, device)) = self.identity.split_once(':') else {
+            return false;
+        };
+        self.announces_new_device()
+            && user.eq_ignore_ascii_case(own_user_id)
+            && device != own_device_id
+    }
+
+    /// The key a notice is de-duplicated on: one device under one key is announced once, however
+    /// many groups admitted it and whichever engine (app or background) saw it first. Identical to
+    /// the TypeScript `deviceEventKey`: the user half lower-cased, the device half and the
+    /// fingerprint as they are.
+    pub fn notice_key(&self) -> String {
+        let (user, device) = self
+            .identity
+            .split_once(':')
+            .unwrap_or((self.identity.as_str(), ""));
+        format!(
+            "{}:{device}|{}",
+            user.to_ascii_lowercase(),
+            self.key_fingerprint
+        )
+    }
 }
 
 /// The persisted form of one identity's pinned keys.
@@ -154,6 +213,13 @@ pub fn identity_names(found: &str, expected: &str) -> bool {
     let (fu, fd) = found.split_once(':').unwrap_or_default();
     let (eu, ed) = expected.split_once(':').unwrap_or_default();
     fu.eq_ignore_ascii_case(eu) && fd == ed
+}
+
+/// Whether two identities name the same USER (the user half, ignoring ASCII case, as
+/// [`identity_names`] compares it).
+fn same_user(a: &str, b: &str) -> bool {
+    let user = |s: &str| s.split_once(':').map_or(s, |(u, _)| u).to_string();
+    user(a).eq_ignore_ascii_case(&user(b))
 }
 
 /// `events` as the JSON array a binding without serde of its own hands to TypeScript (the WASM
@@ -352,6 +418,8 @@ impl DeviceTrust {
                     key_fingerprint: key_fingerprint(key),
                     trust,
                     added_by: None,
+                    // A joined tree has no "before": nothing here was added by a commit we merged.
+                    member_already_present: false,
                 });
                 wrote = true;
             } else if identity == own_identity && trust != LeafTrust::Pinned {
@@ -416,6 +484,7 @@ impl DeviceTrust {
                     added_by.unwrap_or("an unreadable sender"),
                 ),
             }
+            let member_already_present = before.iter().any(|(_, id, _)| same_user(id, identity));
             self.push_event(DeviceEvent {
                 group_id: group_id.to_string(),
                 epoch,
@@ -423,6 +492,7 @@ impl DeviceTrust {
                 key_fingerprint: fingerprint,
                 trust,
                 added_by: added_by.map(str::to_string),
+                member_already_present,
             });
             wrote = true;
         }
@@ -492,6 +562,7 @@ mod tests {
             key_fingerprint: String::new(),
             trust: LeafTrust::FirstSight,
             added_by: None,
+            member_already_present: false,
         };
         let mut t = DeviceTrust::default();
         let reports = (0..(MAX_PENDING_DEVICE_EVENTS + 3))
@@ -539,10 +610,41 @@ mod tests {
             key_fingerprint: "00ff".into(),
             trust: LeafTrust::KeyChanged,
             added_by: Some("v:e".into()),
+            member_already_present: true,
         };
         assert_eq!(
             serde_json::to_string(&e).unwrap(),
-            r#"{"groupId":"g","epoch":4,"identity":"u:d","keyFingerprint":"00ff","trust":"key-changed","addedBy":"v:e"}"#
+            r#"{"groupId":"g","epoch":4,"identity":"u:d","keyFingerprint":"00ff","trust":"key-changed","addedBy":"v:e","memberAlreadyPresent":true}"#
         );
+    }
+
+    /// The owner-alert half of the notice rule and the dedup key, held to the SAME table the
+    /// TypeScript `deviceEventAudience` / `deviceEventKey` are (`deviceNotices.fixture.test.ts`):
+    /// the background engines decide here, the app there, and the two must never disagree.
+    #[test]
+    fn the_owner_alert_and_the_notice_key_follow_the_shared_table() {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Case {
+            name: String,
+            event: DeviceEvent,
+            own_user_id: String,
+            own_device_id: String,
+            audience: String,
+            key: String,
+        }
+        let cases: Vec<Case> =
+            serde_json::from_str(include_str!("../tests/fixtures/device_notices.json"))
+                .expect("fixture parses");
+        assert!(cases.len() >= 9);
+        for c in cases {
+            assert_eq!(
+                c.event.is_owner_alert(&c.own_user_id, &c.own_device_id),
+                c.audience == "owner-alert",
+                "{}",
+                c.name
+            );
+            assert_eq!(c.event.notice_key(), c.key, "{}", c.name);
+        }
     }
 }

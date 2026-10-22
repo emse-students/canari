@@ -324,6 +324,13 @@ impl MlsManager {
         events
     }
 
+    /// The pending device events, oldest first, LEFT in place - for a background engine that writes
+    /// this state back (`mls.bin`), so the app still takes them at its next drain while the engine
+    /// raises its own notice from the same events.
+    pub fn pending_device_events(&self) -> Vec<crate::device_trust::DeviceEvent> {
+        self.device_trust.persisted_events()
+    }
+
     /// The trust a leaf with `identity` and `key` would get, without pinning anything.
     pub fn device_key_trust(&self, identity: &str, key: &[u8]) -> LeafTrust {
         self.device_trust.verdict(identity, key)
