@@ -23,9 +23,9 @@ tester opt-in is a human click), so the release asset was installed with `adb`.
 | 1 | the app shows its version | **PASS** | Settings > About: "Version de Canari 1.4.0-alpha.4 - Vous utilisez la derniere version" |
 | 2 | the feed renders, three tabs | **PASS** | Associations (four association posts), Suivis, Tout (a video post with a play button) each render; the "Environnement de test" banner shows. The scroll-up behaviour was skipped (its PR is not merged) |
 | 3 | comments open in the full-screen sheet | **PASS** | the "Commentaires" sheet covers the screen with the post as its header and the composer above the keyboard; closed with its button. Nothing was posted |
-| 4 | DM, group message, salon message | **NOT READ** | the account holds no conversation and no community on dev ("Aucune discussion", "Selectionner ou creer une communaute"), and no counterpart client was unlocked to receive or answer. Nothing was created |
+| 4 | DM and group message, received and answered | **PASS** (salon NOT READ) | a second dev account drove a desktop browser. The conversation list showed both conversations with an unread count and the previews "DM-F4-01 ..." and "GRP-F4-01 ..."; both opened and displayed their message (the group also shows its "added to the group" notice). A reply typed in each was sent: the DM shows "Message envoye", and the group reply appeared with "Message lu par" the counterpart within 3 s. The counterpart agent was asked to confirm both replies on its side; that confirmation did not reach this reading, so the reverse direction rests on the read receipt alone. No salon exists on dev: not read |
 | 5 | camera tab, 5 s shot, publish a CanaReel, it plays | **PASS** | reached with a swipe to the right on the feed; camera and microphone permissions granted; a 5.5 s press on the shutter gave a preview and "Suivant"; the "Nouveau CanaReel" step (30-day notice) published and returned to the feed. The reels viewer then showed the new reel ("A l'instant") and the video decoder looped on a ~5 s period (flush indices 144, 288, 432 at ~30 fps) |
-| 6 | a push banner with the app killed | **NOT READ** | needs a message from a counterpart account, which item 4 lacks; a dev push cannot be provoked from the phone alone |
+| 6 | a push banner with the app killed | **NOT READ** | the app was stopped with `am force-stop`, which the runbook forbids (it puts the package in the STOPPED state and Android cancels every FCM delivery): logcat shows `GCM: broadcast intent callback: result=CANCELLED forIntent { act=com.google.android.c2dm.intent.RECEIVE ... pkg=fr.emse.canari }` at 17:55:02 and no notification of the app was posted in 200 s. That is the reader's error, not a finding about the app. The relaunch then met the PIN gate, where the reading stopped (the PIN was set by the lead and is not known to this reader). To redo: `input keyevent KEYCODE_HOME`, `am kill`, assert `pidof` is empty, then send |
 | 7 | logcat | **PASS, with the lines below** | 42 401 lines for the whole device, 2 028 for the app process after the relaunch, 0 `FATAL`, 0 `ANR`, 0 `SIGABRT`; the release build prints no console line to logcat, so web console errors are not covered |
 
 ## Log lines that were not explained away
@@ -57,5 +57,5 @@ content, always present in the tree; not confirmed against the markup.
 
 ## What this does NOT cover
 
-A DM and a group message in both directions, a salon message, a push banner with the app killed,
+A salon message, a push banner with the app killed (item 6),
 any live feature, share-in and share-out, the iPhone 12.
