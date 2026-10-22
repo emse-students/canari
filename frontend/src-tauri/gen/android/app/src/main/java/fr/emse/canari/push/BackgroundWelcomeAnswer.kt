@@ -26,6 +26,10 @@ object BackgroundWelcomeAnswer {
         CONCURRENT_COMMIT("concurrent_commit"),
         /** The target was removed from the group: no Welcome is owed. */
         NOT_A_MEMBER("not_a_member"),
+        /** No device is registered under the Welcome's target. */
+        WELCOME_TARGET_UNKNOWN("welcome_target_unknown"),
+        /** The Welcome's target is not on the roster, or not entitled to the key group. */
+        WELCOME_TARGET_NOT_MEMBER("welcome_target_not_member"),
         /** A token this build was not taught - said, and settled like a refusal. */
         OTHER("other");
 
@@ -59,8 +63,16 @@ object BackgroundWelcomeAnswer {
     sealed class Settlement {
         object Install : Settlement()
 
-        /** Discard it; [staleBase] and [serverEpoch] are set only for an `epoch_mismatch`. */
-        data class Discard(val staleBase: Long?, val serverEpoch: Long?) : Settlement()
+        /**
+         * Discard it. [staleBase] and [serverEpoch] are set only for an `epoch_mismatch`, recorded for
+         * the group; [targetRefused] only for a refused target, recorded for that target alone - both
+         * against the mls.bin the commit was built from, so the same bytes do not answer again.
+         */
+        data class Discard(
+            val staleBase: Long?,
+            val serverEpoch: Long?,
+            val targetRefused: Boolean = false,
+        ) : Settlement()
     }
 
     /**
@@ -90,12 +102,13 @@ object BackgroundWelcomeAnswer {
      */
     fun settle(outcome: Outcome, baseEpoch: Long): Settlement = when (outcome) {
         Outcome.Accepted -> Settlement.Install
-        is Outcome.Refused ->
-            if (outcome.reason == Refusal.EPOCH_MISMATCH && outcome.serverEpoch != null && baseEpoch >= 0) {
+        is Outcome.Refused -> when {
+            outcome.reason == Refusal.EPOCH_MISMATCH && outcome.serverEpoch != null && baseEpoch >= 0 ->
                 Settlement.Discard(baseEpoch, outcome.serverEpoch)
-            } else {
-                Settlement.Discard(null, null)
-            }
+            outcome.reason == Refusal.WELCOME_TARGET_UNKNOWN || outcome.reason == Refusal.WELCOME_TARGET_NOT_MEMBER ->
+                Settlement.Discard(null, null, targetRefused = true)
+            else -> Settlement.Discard(null, null)
+        }
         is Outcome.Failed, is Outcome.Unknown -> Settlement.Discard(null, null)
     }
 
@@ -113,8 +126,11 @@ object BackgroundWelcomeAnswer {
          */
         fun install(): InstallReport?
 
-        /** Deletes the staged file; records a stale base only when both epochs are given. */
-        fun discard(staleBase: Long?, serverEpoch: Long?)
+        /**
+         * Deletes the staged file; records a stale base when both epochs are given, or a refused
+         * target when [targetRefused].
+         */
+        fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean)
     }
 
     /** What became of the staged state once its settlement was applied. */
@@ -143,7 +159,7 @@ object BackgroundWelcomeAnswer {
             val report = staged.install()
             when {
                 report == null -> {
-                    staged.discard(null, null)
+                    staged.discard(null, null, targetRefused = false)
                     Applied.LockBusy
                 }
                 report.ok -> Applied.Installed
@@ -151,7 +167,7 @@ object BackgroundWelcomeAnswer {
             }
         }
         is Settlement.Discard -> {
-            staged.discard(settlement.staleBase, settlement.serverEpoch)
+            staged.discard(settlement.staleBase, settlement.serverEpoch, settlement.targetRefused)
             Applied.Discarded
         }
     }
@@ -180,6 +196,9 @@ object BackgroundWelcomeAnswer {
                     "this phone answered from a state the group left; nothing installed, left to the foreground"
             Refusal.CONCURRENT_COMMIT -> "REFUSED concurrent_commit - another commit won the lock; nothing installed"
             Refusal.NOT_A_MEMBER -> "REFUSED not_a_member - the target was removed; nothing installed"
+            Refusal.WELCOME_TARGET_UNKNOWN, Refusal.WELCOME_TARGET_NOT_MEMBER ->
+                "REFUSED ${outcome.token} - the server does not admit this target; nothing installed, " +
+                    "not answered again from this mls.bin"
             Refusal.OTHER -> "REFUSED ${outcome.token} - nothing installed"
         }
         is Outcome.Failed -> "FAILED HTTP ${outcome.httpCode} - not accepted, nothing installed"

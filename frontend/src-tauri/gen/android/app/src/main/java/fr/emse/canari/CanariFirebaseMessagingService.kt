@@ -2334,12 +2334,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Discards the state staged for [groupId]. [staleBase] and [serverEpoch] are both >= 0 for an
-     * `epoch_mismatch` refusal, which is recorded so the same bytes are not offered again; -1 otherwise.
+     * `epoch_mismatch` refusal, recorded for the group; -1 otherwise. [refusedTarget]
+     * (`userId:deviceId`) is non-null for a refused target, recorded for that target alone. Both
+     * are recorded against the bytes the commit was built from, so they are not offered again.
      */
-    external fun nativeDiscardStagedWelcome(filesDir: String, groupId: String, staleBase: Long, serverEpoch: Long)
+    external fun nativeDiscardStagedWelcome(
+        filesDir: String,
+        groupId: String,
+        staleBase: Long,
+        serverEpoch: Long,
+        refusedTarget: String?,
+    )
 
-    /** True when a Welcome for [groupId] built from [stateBytes] was already refused as stale. */
-    external fun nativeWelcomeRequestKnownStale(filesDir: String, stateBytes: ByteArray, groupId: String): Boolean
+    /**
+     * Why a Welcome for [target] (`userId:deviceId`) in [groupId], built from [stateBytes], would be
+     * refused again - `stale-epoch-known` or `target-refused-known` - or "" when not known.
+     */
+    external fun nativeWelcomeRequestKnownRefused(
+        filesDir: String,
+        stateBytes: ByteArray,
+        groupId: String,
+        target: String,
+    ): String
 
     /**
      * Applies a received MLS Welcome (RECEIVER side): joins the group and writes
@@ -3112,11 +3128,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
         val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
 
-        // 0. A Welcome built from these very bytes was already refused as stale: answering again
-        //    could only be refused again. mls.bin is replaced by rename, so this read is whole.
+        // 0. A Welcome built from these very bytes was already refused - as stale, or for this
+        //    target: answering again could only be refused again. mls.bin is replaced by rename, so
+        //    this read is whole.
         val current = MlsContextLoader.loadMlsState(this)
-        if (current != null && nativeWelcomeRequestKnownStale(filesDir, current, groupId)) {
-            Log.i(TAG, "processWelcomeRequestBackground: group=$groupId already refused as stale from this mls.bin -> not answered, left to the foreground")
+        val known = current?.let {
+            nativeWelcomeRequestKnownRefused(filesDir, it, groupId, "$requesterUserId:$requesterDeviceId")
+        }.orEmpty()
+        if (known.isNotEmpty()) {
+            Log.i(TAG, "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId already refused ($known) from this mls.bin -> not answered, left to the foreground")
             return
         }
 
@@ -3196,8 +3216,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         )
                     }
 
-                override fun discard(staleBase: Long?, serverEpoch: Long?) =
-                    nativeDiscardStagedWelcome(filesDir, groupId, staleBase ?: -1L, serverEpoch ?: -1L)
+                override fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) =
+                    nativeDiscardStagedWelcome(
+                        filesDir, groupId, staleBase ?: -1L, serverEpoch ?: -1L,
+                        if (targetRefused) "$requesterUserId:$requesterDeviceId" else null,
+                    )
             }
             val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(outcome, baseEpoch), staged)
             val (level, suffix) = BackgroundWelcomeAnswer.report(applied, outcome)

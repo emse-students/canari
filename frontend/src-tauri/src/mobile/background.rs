@@ -433,6 +433,48 @@ pub fn welcome_request_known_stale(files_dir: &Path, state_bytes: &[u8], group_i
     }
 }
 
+/// The ledger key of a refused TARGET of `group_id`, beside the group's own (stale) entry.
+fn refused_target_key(group_id: &str, target: &str) -> String {
+    format!("{group_id}|{target}")
+}
+
+/// Whether a Welcome for `target` (`userId:deviceId`) in `group_id`, built from THESE `mls.bin`
+/// bytes, was already refused - and if so the token saying why: `stale-epoch-known` (the base was
+/// behind the server, whoever the target) or `target-refused-known` (the server refused this
+/// target: `welcome_target_unknown` / `welcome_target_not_member`).
+///
+/// The same proof as [`welcome_request_known_stale`]: any write to `mls.bin` lifts both. A target
+/// the server admits after the refusal - a grant, a re-registration - is answered from the next
+/// bytes this phone holds, or by any other holder or the foreground, which keep no such memo.
+pub fn welcome_request_known_refused(
+    files_dir: &Path,
+    state_bytes: &[u8],
+    group_id: &str,
+    target: &str,
+) -> Option<&'static str> {
+    if welcome_request_known_stale(files_dir, state_bytes, group_id) {
+        return Some("stale-epoch-known");
+    }
+    let digest = hex(&crate::concurrency::mls_bin_digest(state_bytes));
+    let key = refused_target_key(group_id, target);
+    let known = with_stale_ledger(files_dir, |map| {
+        let known = map
+            .get(&key)
+            .and_then(|e| e.get("digest"))
+            .and_then(|d| d.as_str())
+            == Some(digest.as_str());
+        (known, false)
+    });
+    match known {
+        Ok(true) => Some("target-refused-known"),
+        Ok(false) => None,
+        Err(e) => {
+            log::warn!("[BG_WELCOME] stale ledger unreadable ({e}) - answered as not known");
+            None
+        }
+    }
+}
+
 /// A refusal of [`prepare_welcome_background_with_key`], as the token the native callers branch on.
 fn welcome_refused(reason: &str) -> serde_json::Value {
     log::warn!("[BG_WELCOME] prepare refused reason={reason}");
@@ -614,14 +656,24 @@ pub fn install_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::V
     }
 }
 
+/// What a discarded Welcome's refusal leaves in the stale ledger, so the same `mls.bin` bytes do not
+/// answer a request the server will refuse again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalMemo<'a> {
+    /// A refusal that says nothing about the next request: a racing commit, a removed requester, an
+    /// answer nobody read.
+    Nothing,
+    /// `epoch_mismatch`: recorded for the whole group, and only when `server_epoch > base_epoch`.
+    Stale { base_epoch: u64, server_epoch: u64 },
+    /// `welcome_target_unknown` / `welcome_target_not_member`: recorded for this target alone
+    /// (`userId:deviceId`).
+    TargetRefused { target: &'a str },
+}
+
 /// Deletes the state staged for `group_id` - the server refused the commit, or its answer was not
-/// an acceptance - and, when the refusal was `epoch_mismatch`, records the bytes the commit was built
-/// from in the stale ledger, so they are not offered again ([`welcome_request_known_stale`]).
-///
-/// `stale` is `Some((base_epoch, server_epoch))` for an `epoch_mismatch` and `None` otherwise: a
-/// racing commit or a removed target says nothing about the next request. It is recorded only when
-/// `server_epoch > base_epoch`.
-pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, stale: Option<(u64, u64)>) {
+/// an acceptance - and records what `memo` says against the bytes the commit was built from, so they
+/// are not offered again ([`welcome_request_known_refused`]).
+pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, memo: RefusalMemo<'_>) {
     let short: String = group_id.chars().take(8).collect();
     let path = staged_welcome_path(files_dir, group_id);
     let digest = std::fs::read(&path)
@@ -635,34 +687,49 @@ pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, stale: Option<(u
         }
         Err(e) => log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}"),
     }
-    let (Some((base_epoch, server_epoch)), Some(digest)) = (stale, digest) else {
+    let Some(digest) = digest else {
         return;
     };
-    // ONLY A BASE BEHIND THE SERVER IS STALE. A base at or ahead of the server's counter (a phone
-    // ahead of a lagging counter) is a refusal the same bytes may not meet again, so it is not
-    // remembered: the memo must never hold back an answer that could later be valid.
-    if server_epoch <= base_epoch {
-        log::warn!(
-            "[BG_WELCOME] group={short} refused at base {base_epoch} with the server at {server_epoch} - not behind, not recorded"
-        );
-        return;
-    }
+    let (key, entry, said) = match memo {
+        RefusalMemo::Nothing => return,
+        RefusalMemo::Stale {
+            base_epoch,
+            server_epoch,
+        } => {
+            // ONLY A BASE BEHIND THE SERVER IS STALE. A base at or ahead of the server's counter (a
+            // phone ahead of a lagging counter) is a refusal the same bytes may not meet again, so it
+            // is not remembered: the memo must never hold back an answer that could later be valid.
+            if server_epoch <= base_epoch {
+                log::warn!(
+                    "[BG_WELCOME] group={short} refused at base {base_epoch} with the server at {server_epoch} - not behind, not recorded"
+                );
+                return;
+            }
+            (
+                group_id.to_string(),
+                serde_json::json!({ "digest": digest, "baseEpoch": base_epoch, "serverEpoch": server_epoch }),
+                format!("stale: base {base_epoch}, server {server_epoch}"),
+            )
+        }
+        RefusalMemo::TargetRefused { target } => (
+            refused_target_key(group_id, target),
+            serde_json::json!({ "digest": digest, "targetRefused": true }),
+            "its target refused".to_string(),
+        ),
+    };
     let recorded = with_stale_ledger(files_dir, |map| {
-        if !map.contains_key(group_id) && map.len() >= STALE_WELCOME_LEDGER_CAPACITY {
+        if !map.contains_key(&key) && map.len() >= STALE_WELCOME_LEDGER_CAPACITY {
             log::warn!(
                 "[BG_WELCOME] stale ledger full ({STALE_WELCOME_LEDGER_CAPACITY}) - emptied before recording group={short}"
             );
             map.clear();
         }
-        map.insert(
-            group_id.to_string(),
-            serde_json::json!({ "digest": digest, "baseEpoch": base_epoch, "serverEpoch": server_epoch }),
-        );
+        map.insert(key, entry);
         ((), true)
     });
     match recorded {
         Ok(()) => log::info!(
-            "[BG_WELCOME] group={short} recorded stale: base {base_epoch}, server {server_epoch} - not answered again from these bytes"
+            "[BG_WELCOME] group={short} recorded {said} - not answered again from these bytes"
         ),
         Err(e) => log::warn!("[BG_WELCOME] stale ledger not written for group={short}: {e}"),
     }
@@ -1805,7 +1872,14 @@ mod tests {
         );
 
         // The server refused it as stale (epoch_mismatch, server at 2).
-        discard_staged_welcome(&dir, &gid, Some((1, 2)));
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 1,
+                server_epoch: 2,
+            },
+        );
 
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(41)).unwrap();
         let on_disk = std::fs::read(dir.join("mls.bin")).unwrap();
@@ -1971,7 +2045,14 @@ mod tests {
         );
         assert_eq!(first["ok"], true);
         assert!(!welcome_request_known_stale(&dir, &stale, &gid));
-        discard_staged_welcome(&dir, &gid, Some((1, 2)));
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 1,
+                server_epoch: 2,
+            },
+        );
         assert!(welcome_request_known_stale(&dir, &stale, &gid));
 
         let again = prepare_welcome_background_with_key(
@@ -2012,9 +2093,23 @@ mod tests {
             &kp,
         );
         assert_eq!(first["ok"], true);
-        discard_staged_welcome(&dir, &gid, Some((3, 2)));
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 3,
+                server_epoch: 2,
+            },
+        );
         assert!(!welcome_request_known_stale(&dir, &stale, &gid));
-        discard_staged_welcome(&dir, &gid, Some((2, 2)));
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::Stale {
+                base_epoch: 2,
+                server_epoch: 2,
+            },
+        );
         assert!(
             !welcome_request_known_stale(&dir, &stale, &gid),
             "equal is not stale either"
@@ -2038,9 +2133,62 @@ mod tests {
             &kp,
         );
         assert_eq!(first["ok"], true);
-        discard_staged_welcome(&dir, &gid, None);
+        discard_staged_welcome(&dir, &gid, RefusalMemo::Nothing);
         assert!(!welcome_request_known_stale(&dir, &stale, &gid));
         assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), stale);
+    }
+
+    /// A refused TARGET (`welcome_target_unknown` / `welcome_target_not_member`) is remembered like a
+    /// stale base, against the bytes the refused commit was built from: a holder does not commit and
+    /// get refused again on each of the newcomer's asks. Keyed to that target alone - another
+    /// newcomer of the same group is still answered - and lifted by any write to `mls.bin`.
+    #[test]
+    fn a_refused_target_is_not_answered_again_from_the_same_bytes() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("target", 51);
+        let dir = dir_holding("target", &stale);
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(51),
+            "target-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(first["ok"], true);
+        assert_eq!(
+            welcome_request_known_refused(&dir, &stale, &gid, "carol:phone-c"),
+            None
+        );
+
+        discard_staged_welcome(
+            &dir,
+            &gid,
+            RefusalMemo::TargetRefused {
+                target: "carol:phone-c",
+            },
+        );
+
+        assert_eq!(
+            welcome_request_known_refused(&dir, &stale, &gid, "carol:phone-c"),
+            Some("target-refused-known")
+        );
+        assert_eq!(
+            welcome_request_known_refused(&dir, &stale, &gid, "dave:phone-d"),
+            None,
+            "another target of the same group is still answered"
+        );
+        assert_eq!(
+            welcome_request_known_refused(&dir, b"any other mls.bin", &gid, "carol:phone-c"),
+            None,
+            "new bytes are answered again"
+        );
+        assert!(
+            !welcome_request_known_stale(&dir, &stale, &gid),
+            "a refused target says nothing about the group's epoch"
+        );
     }
 
     /// The foreground answers welcome_requests itself and owns the state while it runs.

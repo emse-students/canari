@@ -106,8 +106,8 @@ class BackgroundWelcomeAnswerTest {
             calls += "install"
             return install
         }
-        override fun discard(staleBase: Long?, serverEpoch: Long?) {
-            calls += "discard($staleBase,$serverEpoch)"
+        override fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) {
+            calls += if (targetRefused) "discard(target)" else "discard($staleBase,$serverEpoch)"
         }
     }
 
@@ -163,5 +163,20 @@ class BackgroundWelcomeAnswerTest {
         assertEquals(Level.WARN, BackgroundWelcomeAnswer.report(applied, refused).first)
         // An answer nobody read may have been an acceptance: said at error.
         assertEquals(Level.ERROR, BackgroundWelcomeAnswer.report(applied, Outcome.Unknown(null)).first)
+    }
+
+    @Test
+    fun aRefusedTargetIsRememberedForThatTargetAndNothingElse() {
+        // A holder answering the same target from the same mls.bin would commit and be refused again
+        // on each of the newcomer's asks.
+        listOf("welcome_target_unknown", "welcome_target_not_member").forEach { token ->
+            val refused = BackgroundWelcomeAnswer.classify(409, "rejected", token, 7)
+            assertTrue("$refused", refused is Outcome.Refused && refused.reason != Refusal.OTHER)
+            assertEquals(Settlement.Discard(null, null, targetRefused = true), BackgroundWelcomeAnswer.settle(refused, 7))
+
+            val staged = FakeStaged(install = null)
+            assertEquals(Applied.Discarded, BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(refused, 7), staged))
+            assertEquals(listOf("discard(target)"), staged.calls)
+        }
     }
 }
