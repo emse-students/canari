@@ -78,9 +78,10 @@ payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 ### P3 - one identity reader for rotation and device trust (#2263 / #2268)
 
 `user_of` in `frontend/mls-core/src/graine_run.rs` reads the canonical user of a leaf (well-formed
-`user:device`, user half ASCII-lowercased). Once #2268 merges, it becomes device trust's shared
-identity function (`is_well_formed_identity` plus the same canonical lowercase), done by whichever of
-#2263 and #2268 lands second, so rotation and trust never disagree on who a user is.
+`user:device`, user half ASCII-lowercased). It becomes #2268's shared reader `canonical_user_of`,
+done by whichever of #2263 and #2268 lands second, so rotation and trust never disagree on who a
+user is. One difference the swap changes: `canonical_user_of` reads a legacy bare `userId`
+credential as that user, while `user_of` treats it as malformed and so rotates on it.
 
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
 
