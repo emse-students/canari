@@ -95,6 +95,7 @@ describe('removals bounded by the actor', () => {
     jest.spyOn(service as never, 'departDistributionGroups' as never).mockImplementation((async (
       _cuts: unknown,
       _reason: string,
+      _workspaceId: string,
       rosterWrite: (m: unknown) => Promise<void>
     ) =>
       rosterWrite({

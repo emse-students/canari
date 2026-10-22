@@ -12,6 +12,13 @@
  * Parameters: `$1` groupId, `$2` userId, `$3` departure.
  */
 
+/**
+ * The community's removal lock, taken first in a departure's roster-write transaction and released
+ * by its commit or rollback - so a permission re-checked inside that transaction is read against
+ * writes serialised on the same community. `$1` is the workspace id.
+ */
+export const COMMUNITY_REMOVAL_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('community_removal:' || $1, 0))`;
+
 /** The roster write's record; RETURNING says whether it won (a row) or the drain did (none). */
 export const RECORD_DEPARTED_SQL = `INSERT INTO distribution_departures ("groupId", "userId", "departure", "outcome")
   VALUES ($1, $2, $3, 'departed')

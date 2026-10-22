@@ -40,6 +40,7 @@ import {
 } from './distribution-group.client';
 import {
   READ_OUTCOME_SQL,
+  COMMUNITY_REMOVAL_LOCK_SQL,
   DELETE_GROUP_DEPARTURES_SQL,
   RECORD_CANCELLED_SQL,
   RECORD_DEPARTED_SQL,
@@ -517,14 +518,23 @@ export class ChannelService implements OnApplicationBootstrap {
    * rolling deploy) is logged and followed, after the roster write, by a plain eviction - the
    * cut-twice shape that build understands.
    *
+   * THE COMMUNITY'S REMOVAL LOCK OPENS THE TRANSACTION ({@link COMMUNITY_REMOVAL_LOCK_SQL}), so a
+   * caller may re-check a permission inside `rosterWrite` against writes serialised on the same
+   * community. A refusal thrown there is an abandoned departure like any other: the transaction
+   * rolls back (no `departed` record, no roster change) and the departure is settled `cancelled`.
+   * The first evictions stay before the transaction, so no HTTP call runs under the lock.
+   *
    * channel-encryption, "WP-21, and the gate it had nowhere to live".
    *
    * @param cuts the groups and people to cut, one entry per person per scope
-   * @param rosterWrite the roster change, written through the transaction's manager
+   * @param workspaceId the community the departure belongs to, whose removal lock the roster write
+   *   holds
+   * @param rosterWrite the roster change, written through the transaction's manager, under the lock
    */
   private async departDistributionGroups(
     cuts: DepartureCut[],
     reason: string,
+    workspaceId: string,
     rosterWrite: (m: EntityManager) => Promise<void>
   ): Promise<void> {
     const begun: BegunDeparture[] = [];
@@ -564,6 +574,7 @@ export class ChannelService implements OnApplicationBootstrap {
       }
 
       await this.memberRepo.manager.transaction(async (m) => {
+        await m.query(COMMUNITY_REMOVAL_LOCK_SQL, [workspaceId]);
         for (const b of begun) {
           const recorded = (await m.query(RECORD_DEPARTED_SQL, [
             b.groupId,
@@ -886,7 +897,7 @@ export class ChannelService implements OnApplicationBootstrap {
       { scope: workspaceScope(workspaceId), userId },
       ...held.flatMap((c) => this.channelCuts(c, [userId])),
     ];
-    await this.departDistributionGroups(cuts, reason, async (m) => {
+    await this.departDistributionGroups(cuts, reason, workspaceId, async (m) => {
       await this.stripFromChannels(m, held, userId);
       await m.getRepository(ChannelMember).delete({ workspaceId, userId });
     });
@@ -2660,6 +2671,7 @@ export class ChannelService implements OnApplicationBootstrap {
     await this.departDistributionGroups(
       this.channelCuts(channel, dropped),
       'access_updated',
+      channel.workspaceId,
       async (m) => {
         channel.isPrivate = isPrivate;
         channel.allowedUsers = nextAllowed;
@@ -3092,6 +3104,7 @@ export class ChannelService implements OnApplicationBootstrap {
     await this.departDistributionGroups(
       this.channelCuts(channel, [input.userId]),
       'left_channel',
+      channel.workspaceId,
       (m) => this.stripFromChannels(m, [channel], input.userId)
     );
 
@@ -3328,6 +3341,7 @@ export class ChannelService implements OnApplicationBootstrap {
       await this.departDistributionGroups(
         this.channelCuts(channel, [targetUserId]),
         'removed_from_channel',
+        channel.workspaceId,
         (m) => this.stripFromChannels(m, [channel], targetUserId)
       );
     }

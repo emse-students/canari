@@ -601,6 +601,15 @@ window with a durable row and a lock:
   settles it under the seat lock and evicts nothing (`settleCancelledDeparture`). Each step logs; one
   that fails is left to the drain, and the original error is rethrown. The leaving user sees
   `DEPARTURE_SUPERSEDED` as a retry sentence (`chat_community_departure_retry_error`).
+- **The roster write holds the community's removal lock.** Its transaction opens with
+  `pg_advisory_xact_lock(hashtextextended('community_removal:' || <workspaceId>, 0))`
+  (`COMMUNITY_REMOVAL_LOCK_SQL`); every caller passes the community the departure belongs to. A
+  caller may re-check a permission inside `rosterWrite` against writes serialised on that lock; a
+  refusal thrown there rolls the transaction back (no `departed` record, no roster change) and ends
+  as an abandoned departure, settled `cancelled` above. The first evictions run before the
+  transaction, so no HTTP call is made under the lock. Proven on PostgreSQL
+  (`distribution-departure.integration.spec.ts`, "a refusal re-checked under the community removal
+  lock").
 - **Records end with their group.** A community's deletion deletes the `distribution_departures` rows
   of its group and its salons' groups in its transaction; a salon group retired deletes its own; an
   account erasure deletes the account's (`account-erasure.ts`). chat-delivery's `dm_seat_evictions`

@@ -728,6 +728,8 @@ describe('ChannelService - the community distribution group', () => {
         );
 
         expect(departures.decided.get(`g-1:${USER}:7`)).toBe('cancelled');
+        // The roster write ran, and failed, under the community's removal lock.
+        expect(departures.locks).toEqual([`community_removal:${WORKSPACE}`]);
         expect(calls()[1]).toBe(
           `POST /api/internal/mls/distribution-groups/workspace/${WORKSPACE}/members/${USER}/departures/7/cancel`
         );

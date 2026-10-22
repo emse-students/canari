@@ -19,8 +19,11 @@ export function fakeDepartureManager(repos: () => { channelRepo: unknown; member
   query: jest.Mock;
   transaction: jest.Mock;
   decided: DecidedDepartures;
+  /** Every community removal lock taken, in order. */
+  locks: string[];
 } {
   const decided: DecidedDepartures = new Map();
+  const locks: string[] = [];
   const keyOf = (params: unknown[]) => params.slice(0, 3).map(String).join(':');
   const query = jest.fn(async (sql: string, params: unknown[] = []) => {
     const key = keyOf(params);
@@ -28,6 +31,10 @@ export function fakeDepartureManager(repos: () => { channelRepo: unknown; member
       if (decided.has(key)) return [];
       decided.set(key, sql.includes("'departed'") ? 'departed' : 'cancelled');
       return [{ departure: params[2] }];
+    }
+    if (sql.includes('pg_advisory_xact_lock')) {
+      locks.push(`community_removal:${String(params[0])}`);
+      return [];
     }
     if (sql.includes('DELETE FROM distribution_departures')) {
       const groups = params[0] as string[];
@@ -58,5 +65,5 @@ export function fakeDepartureManager(repos: () => { channelRepo: unknown; member
       throw e;
     }
   });
-  return { query, transaction, decided };
+  return { query, transaction, decided, locks };
 }

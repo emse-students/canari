@@ -153,11 +153,11 @@ maybe('a key-group departure against the drain asking how it ended (PostgreSQL)'
     );
     await q(
       `INSERT INTO channels (id, "workspaceId", name, "isPrivate", "allowedUsers", "distributionGroupId")
-       VALUES ($1, $2, 'direction', true, 'leaver-a,leaver-b,leaver-c', $3)`,
+       VALUES ($1, $2, 'direction', true, 'leaver-a,leaver-b,leaver-c,leaver-d', $3)`,
       [SALON, WS, GROUP]
     );
     const members = ds.getRepository(ChannelMember);
-    for (const userId of ['leaver-a', 'leaver-b', 'leaver-c']) {
+    for (const userId of ['leaver-a', 'leaver-b', 'leaver-c', 'leaver-d', 'actor']) {
       await members.save(members.create({ workspaceId: WS, userId }));
     }
   });
@@ -232,6 +232,68 @@ maybe('a key-group departure against the drain asking how it ended (PostgreSQL)'
       );
     } finally {
       await release(question);
+    }
+  });
+
+  /**
+   * THE COMMUNITY REMOVAL LOCK, AND A REFUSAL UNDER IT. A caller re-checks its permission inside the
+   * roster write, which runs under `community_removal:<workspace>`; a write holding that lock (here,
+   * the actor losing their membership) is waited for, the re-check sees it, and the refusal ends the
+   * departure as an abandoned one: nothing recorded `departed`, the roster unchanged, and the
+   * departure decided `cancelled`.
+   */
+  it('a refusal re-checked under the community removal lock leaves the roster and settles cancelled', async () => {
+    deliveryBeginning(11);
+    const removal = await holder();
+    try {
+      await removal.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended('community_removal:' || $1, 0))`,
+        [WS]
+      );
+      await removal.query(
+        `DELETE FROM channel_members WHERE "workspaceId" = $1 AND "userId" = 'actor'`,
+        [WS]
+      );
+
+      const depart = (
+        service as unknown as {
+          departDistributionGroups: (
+            cuts: unknown[],
+            reason: string,
+            workspaceId: string,
+            rosterWrite: (m: import('typeorm').EntityManager) => Promise<void>
+          ) => Promise<void>;
+        }
+      ).departDistributionGroups.bind(service);
+      const departing = depart(
+        [{ scope: { kind: 'channel', id: SALON }, userId: 'leaver-d' }],
+        'removed_from_channel',
+        WS,
+        async (m) => {
+          const actor = await m
+            .getRepository(ChannelMember)
+            .findOne({ where: { workspaceId: WS, userId: 'actor' } });
+          if (!actor) throw new Error('REMOVAL_EXCEEDS_ACTOR');
+          await m.query(
+            `UPDATE channels SET "allowedUsers" = 'leaver-a,leaver-b,leaver-c' WHERE id = $1`,
+            [SALON]
+          );
+        }
+      ).catch((e: unknown) => e);
+      await parked(1);
+      await removal.query('COMMIT');
+
+      expect(await departing).toMatchObject({ message: 'REMOVAL_EXCEEDS_ACTOR' });
+      expect(await allowed()).toContain('leaver-d');
+      expect(await recorded('leaver-d', 11)).toBe('cancelled');
+      const cancelled = (global.fetch as unknown as jest.Mock).mock.calls.map(([url]) =>
+        String(url)
+      );
+      expect(cancelled.some((u) => u.endsWith('/members/leaver-d/departures/11/cancel'))).toBe(
+        true
+      );
+    } finally {
+      await release(removal);
     }
   });
 
