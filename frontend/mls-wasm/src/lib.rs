@@ -405,6 +405,27 @@ impl WasmMlsClient {
         Ok(outcome.forgotten)
     }
 
+    /// Stages ONE commit that removes the device `identity`'s leaf and adds it back from
+    /// `key_package`, without merging (C7-A). Returns `[commit, welcome, group_info]` - see
+    /// `MlsManager::replace_device_with_base`.
+    #[wasm_bindgen]
+    pub fn replace_device(
+        &mut self,
+        group_id: String,
+        identity: String,
+        key_package: Vec<u8>,
+    ) -> Result<js_sys::Array, JsValue> {
+        let (commit, welcome, group_info) = self
+            .manager
+            .replace_device_with_base(&group_id, &identity, &key_package)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let array = js_sys::Array::new();
+        array.push(&js_sys::Uint8Array::from(&commit[..]));
+        array.push(&js_sys::Uint8Array::from(&welcome[..]));
+        array.push(&js_sys::Uint8Array::from(&group_info[..]));
+        Ok(array)
+    }
+
     /// Add multiple members in a single commit (single epoch increment). Stage-only (C7-A): the
     /// commit is NOT merged - the caller validates it server-side then merge/clear, and reads the
     /// post-merge ratchet tree via `export_ratchet_tree`.
@@ -502,21 +523,36 @@ impl WasmMlsClient {
             .to_string()
     }
 
-    /// The signature keys this device pinned for `user_id:device_id` (an array of `Uint8Array`), or
-    /// `undefined` for a device never seen - `null` is "unverified", never "forged". See
+    /// The pin of `user_id:device_id` as `{ keys: Uint8Array[], anchored, reaffirmations }`, or
+    /// `undefined` for a device never seen - "unverified", never "forged". See
     /// `MlsManager::pinned_signature_keys`.
     #[wasm_bindgen]
     pub fn pinned_signature_keys(
         &self,
         user_id: String,
         device_id: String,
-    ) -> Option<js_sys::Array> {
+    ) -> Option<js_sys::Object> {
         self.manager
             .pinned_signature_keys(&user_id, &device_id)
-            .map(|keys| {
-                keys.iter()
+            .map(|pin| {
+                let keys: js_sys::Array = pin
+                    .keys
+                    .iter()
                     .map(|k| JsValue::from(js_sys::Uint8Array::from(k.as_slice())))
-                    .collect()
+                    .collect();
+                let obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("keys"), &keys);
+                let _ = js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("anchored"),
+                    &JsValue::from_bool(pin.anchored),
+                );
+                let _ = js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("reaffirmations"),
+                    &JsValue::from_f64(pin.reaffirmations as f64),
+                );
+                obj
             })
     }
 

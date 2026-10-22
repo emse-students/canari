@@ -6,6 +6,7 @@ import {
   type AdmissionPlace,
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
+import type { DevicePin } from '$lib/mls-client/deviceTrust';
 import { setGraineRuntime } from './runtime';
 import { admissionProven, observeAdmissionState } from './admissionGate';
 
@@ -51,7 +52,11 @@ let epoch = 5;
  * The MLS layer's pins (`pinnedSignatureKeys`, #2268): the keys it saw for a device in a signed
  * tree. carol:dev-c is pinned; a device the server invents is not.
  */
-const pins = new Map<string, Uint8Array[]>();
+const pins = new Map<string, DevicePin>();
+/** A pin as the MLS layer reports it; `anchored: false` is a pin re-learned after a prune. */
+function pin(pinned: Uint8Array[], anchored = true): DevicePin {
+  return { keys: pinned, anchored, reaffirmations: 0 };
+}
 /**
  * The MLS layer's departures (`removalEpochs`, #2268): the epochs at which a merged commit removed
  * a user's last leaf - live or caught up; a device repair is one commit and records none.
@@ -76,7 +81,7 @@ beforeEach(() => {
   epoch = 5;
   published = { kind: 'keys', keys: [] };
   pins.clear();
-  pins.set('carol:dev-c', [CAROL_PK]);
+  pins.set('carol:dev-c', pin([CAROL_PK]));
   departures.clear();
   setGraineRuntime({
     storage: {} as IStorage,
@@ -166,7 +171,7 @@ describe('a voucher signer is checked against the tree or the MLS layer pins, ne
   });
 
   it('accepts a signature that verifies under ANY of the keys pinned for the device', async () => {
-    pins.set('carol:dev-c2', [new Uint8Array(32).fill(4), CAROL_PK]);
+    pins.set('carol:dev-c2', pin([new Uint8Array(32).fill(4), CAROL_PK]));
     leaves.push('newcomer:dev-n');
     listWorkspaceMembers.mockResolvedValue([
       member('alice'),
@@ -181,6 +186,25 @@ describe('a voucher signer is checked against the tree or the MLS layer pins, ne
     ]);
 
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
+  });
+
+  it('leaves unproven a signer that verifies only under a pin re-learned after a prune', async () => {
+    // carol's phone left the tree, and its pin was pruned then re-learned from a later tree: the
+    // signature verifies, but under a pin nobody anchored. Fail closed - the newcomer reads from
+    // arrival on.
+    pins.set('carol:dev-c', pin([CAROL_PK], false));
+    listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol')]);
+    await observeAdmissionState('ws-1', KG);
+    leaves = ['alice:alice-laptop', 'newcomer:dev-n'];
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher('newcomer', carol, CAROL_SECRET),
+      }),
+    ]);
+
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(false);
   });
 });
 
@@ -255,7 +279,7 @@ describe('a removal the MLS layer recorded at merge ends the admissions before i
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
   });
 
-  it('a heal - the device removed and re-added by one member, two commits - keeps the admission', async () => {
+  it('a repair - the device removed and re-added in ONE commit (replaceMember) - keeps the admission', async () => {
     leaves.push('newcomer:dev-n');
     listWorkspaceMembers.mockResolvedValue([
       member('alice'),

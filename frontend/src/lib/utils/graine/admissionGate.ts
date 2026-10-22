@@ -28,7 +28,8 @@ import { historyVisibilityFor, requireGraineRuntime } from './runtime';
  *   reconciliation), never at a moment an ask chooses; a roster row with no leaf is never a root.
  * - SIGNER KEYS (the MLS layer, ONE trust source): a voucher is checked against its signer device's
  *   key in the key group's current tree, else the keys the MLS layer pinned for that device
- *   (`pinnedSignatureKeys`) - never a key the server publishes. An unpinned signer is unproven.
+ *   (`pinnedSignatureKeys`) - never a key the server publishes. An unpinned signer, or one pinned
+ *   only after a prune (`anchored: false`), is unproven.
  * - REMOVALS (the MLS layer): the epochs at which a merged commit - live or caught up - removed the
  *   user's last leaf from the key group (`removalEpochs`); a device repair is one commit and records none. An admission
  *   placed before a removal no longer admits: a removed member who comes back with the voucher they
@@ -393,8 +394,8 @@ function readVoucher(workspaceId: string, user: string, encoded: string): Admiss
 
 /**
  * The signer device's keys this device stands behind: the one the key group's tree holds for it
- * now, else the MLS layer's pins for it. `null` when neither knows it - an unpinned signer is
- * unproven, never forged.
+ * now, else the MLS layer's ANCHORED pin for it. `null` when neither holds - an unpinned signer, or
+ * one pinned only after a prune (`anchored: false`), is unproven, never forged: fail closed.
  */
 async function signerKeys(
   mls: IMlsService,
@@ -404,7 +405,14 @@ async function signerKeys(
 ): Promise<Uint8Array[] | null> {
   const inTree = await mls.memberSignatureKey(keyGroupId, `${userId}:${deviceId}`);
   if (inTree) return [inTree];
-  return mls.pinnedSignatureKeys(userId, deviceId);
+  const pin = await mls.pinnedSignatureKeys(userId, deviceId);
+  if (pin && !pin.anchored) {
+    console.info(
+      `[GRAINE] signer device ${userId}:${deviceId} is pinned only since a prune (unanchored) - its voucher is unproven`
+    );
+    return null;
+  }
+  return pin ? pin.keys : null;
 }
 
 /**

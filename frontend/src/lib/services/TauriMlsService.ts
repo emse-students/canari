@@ -22,7 +22,7 @@ import {
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
-import type { DeviceEvent, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -1289,6 +1289,23 @@ export class TauriMlsService extends BaseMlsService {
     };
   }
 
+  /** Tauri-native `invoke` wrapper - `remplacer_appareil`, staged not merged. */
+  protected async stageReplaceDevice(
+    groupId: string,
+    identity: string,
+    keyPackage: Uint8Array
+  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }> {
+    const [commit, welcome, groupInfo] = await invoke<[number[], number[], number[]]>(
+      'remplacer_appareil',
+      { groupId, identity, keyPackage: Array.from(keyPackage) }
+    );
+    return {
+      commit: Uint8Array.from(commit),
+      welcome: Uint8Array.from(welcome),
+      groupInfo: Uint8Array.from(groupInfo),
+    };
+  }
+
   /**
    * `mls_state_absent`: `true` only when `mls.bin` does not exist or is empty. An unreadable data
    * directory is an `Err`, which `reenrolLostState` reads as "not proven" - unlike `mls_state_size`,
@@ -1309,13 +1326,17 @@ export class TauriMlsService extends BaseMlsService {
     });
   }
 
-  /** Tauri-native `invoke` wrapper - `cles_signature_epinglees`, the pinned keys as byte arrays. */
+  /** Tauri-native `invoke` wrapper - `cles_signature_epinglees`, the keys as byte arrays. */
   protected async pinnedSignatureKeysNative(
     userId: string,
     deviceId: string
-  ): Promise<Uint8Array[] | null> {
-    const keys = await invoke<number[][] | null>('cles_signature_epinglees', { userId, deviceId });
-    return keys === null ? null : keys.map((k) => Uint8Array.from(k));
+  ): Promise<DevicePin | null> {
+    const pin = await invoke<{
+      keys: number[][];
+      anchored: boolean;
+      reaffirmations: number;
+    } | null>('cles_signature_epinglees', { userId, deviceId });
+    return pin === null ? null : { ...pin, keys: pin.keys.map((k) => Uint8Array.from(k)) };
   }
 
   /** Tauri-native `invoke` wrapper - `epoques_departs`, the epochs as JSON numbers. */
