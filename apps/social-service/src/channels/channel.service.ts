@@ -52,7 +52,6 @@ import {
   CreateChannelDto,
   CreateRoleDto,
   CreateWorkspaceDto,
-  ChannelJoinDto,
   ChannelLeaveDto,
   ChannelInviteDto,
   ChannelUpdateRoleDto,
@@ -2567,54 +2566,6 @@ export class ChannelService implements OnApplicationBootstrap {
     if (!member.roleIds?.length) return false;
     const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
     return roles.some((r) => roleGrantsChannelManagement(r.permissions));
-  }
-
-  /** Adds a user to a workspace channel. Creates the workspace membership with the default Member role if this is their first channel in the workspace. */
-  async joinChannel(channelId: string, input: ChannelJoinDto) {
-    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
-
-    const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
-
-    let member = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId: input.userId },
-    });
-    const isNewMember = !member;
-
-    if (!member) {
-      const defaultRole = await this.roleRepo.findOne({
-        where: { workspaceId: channel.workspaceId, name: 'Member' },
-      });
-      member = this.memberRepo.create({
-        workspaceId: channel.workspaceId,
-        userId: input.userId,
-        roleIds: defaultRole ? [defaultRole.id] : [],
-      });
-      await this.memberRepo.save(member);
-    }
-
-    // Publish event to notify connected clients. The payload names the salon, so it goes to the
-    // people who may see that salon - plus the joiner, who is told about their own arrival whether
-    // or not this channel turns out to be one they can read.
-    if (isNewMember) {
-      const audience = await this.channelAudience(channel);
-      await this.redis.publishChannelEvent(
-        'channel.member.joined',
-        {
-          channelId,
-          channelName: channel.name,
-          workspaceId: channel.workspaceId,
-          workspaceSlug: workspace?.slug,
-          workspaceName: workspace?.name,
-          visibility: channel.isPrivate ? 'private' : 'public',
-          roleName: input.roleName || 'Member',
-          joinedBy: input.userId,
-        },
-        [...new Set([...audience, input.userId])]
-      );
-    }
-
-    return { success: true };
   }
 
   /**

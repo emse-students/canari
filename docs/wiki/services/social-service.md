@@ -179,7 +179,6 @@ added later without the pipe fails there.
 | POST | `/api/channels` | Create channel in a workspace |
 | POST | `/api/channels/:channelId/messages` | Send encrypted channel message |
 | GET | `/api/channels/:channelId/messages` | List messages newest-first (`limit`≤200, `before` ISO cursor) |
-| POST | `/api/channels/:channelId/members/join` | Join channel |
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (drops the caller from `allowedUsers` and rotates the key). A public channel answers 400 - see "A channel-scoped action never touches community membership" |
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
