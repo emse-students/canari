@@ -126,6 +126,41 @@ today's behaviour, pinned by a test), read by `receiveCheckpointSkipBudget`
   `bun a1apk.mjs --debug` (the bench build does not set it, and a store tester WebView is not
   inspectable), then set `localStorage.canari_dev_checkpoint_skip_k` through the devtools socket.
 
+**MEASURED on the Mi 9T, 2026-10-22 (switch ON, local estate, bench accounts, dev debug build of
+`main` at the merge of #2078): NO FRAME LOST, NO `live-ahead`, NO DUPLICATE, NO `unreadable for good`
+in 6 valid switch-ON trials (plus a switch-OFF control), up to 60 skipped frames.** One DM between two bench accounts; the
+peer (Chrome) sends `live` frames while the phone is open, the app is `am force-stop`ped, the peer
+sends `dead` more, the app is relaunched and unlocked. Read from `adb logcat` and from the DM.
+
+| trial | K | live | dead | on the phone after resume | live-ahead | duplicates | unreadable for good |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| control, switch OFF | 0 | 5 | 3 | 8 of 8 | 0 | 0 | 0 |
+| ON | 20 | 5 | 3 | 8 of 8 | 0 | 0 | 0 |
+| ON | 20 | 15 | 5 | 20 of 20 | 0 | 0 | 0 |
+| ON (budget crossed once) | 20 | 25 | 5 | 30 of 30 | 0 | 0 | 0 |
+| ON, DM open | 100 | 60 | 10 | the newest 60 of 70 (the pane renders 60) | 0 | 0 | 0 |
+| ON, phone parked on the feed | 100 | 40 | 10 | 50 of 50 | 0 | 0 | 0 |
+| ON, log read | 100 | 10 | 3 | 13 of 13 | 0 | 0 | 0 |
+
+- **The skip really happened.** The log carried one `MEASUREMENT SWITCH ON: checkpoint skipped ...
+  (N/100 frames unsaved)` line per frame, N counting up to 60 at the kill, and no checkpoint line in
+  between. With K=20 and 25 live frames the 21st frame checkpointed (24 skips plus the init line).
+- **After the resume only the frames pushed while DEAD were decrypted** (10 `Message decrypted` lines
+  for 10 dead frames, none for the 40-60 live ones): the server does not redeliver what the phone had
+  consumed, and the stale ratchet decrypts the later frames by moving FORWARD, which is what
+  `maximum_forward_distance` (2000) allows. A lag of a few hundred frames is far from that bound.
+  The disk lag itself is INFERRED from the skip lines, not read from the file.
+- **A valid ON trial needs the key held after the restart.** A first "ON" run read the key back as
+  `null`: the WebView had not flushed `localStorage` before `am force-stop`. Wait ~5 s after the
+  `setItem` and assert the key after the relaunch, or the run is a second control.
+- **What this does NOT cover:** a kill DURING a drain of more than K frames (the worst case above), a
+  kill with a commit in the window (structural, never skipped by construction), K of 200-500, and a
+  phone that stays killed for hours. The decision to build is the user's, on these numbers.
+- **The device:** the phone carried the RELEASE build 1.3.1 (first install 2026-10-13 23:37:42, last
+  update 2026-10-21 00:25:39); it was uninstalled ON PURPOSE on 2026-10-22 to install the debug build,
+  which destroyed that install's enrolment and MLS store (a bench phone, Master's yes). The debug
+  install is a NEW device (2026-10-22 01:46:27) with the bench owner on the local estate.
+
 ### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
 
 Since the sender coalescing, a DM or group watermark is sent when the 2 s window after reading ends,
