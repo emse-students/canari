@@ -3,6 +3,8 @@ use openmls_rust_crypto::OpenMlsRustCrypto;
 use std::cell::RefCell;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
+use crate::authorship::{AuthorVerdict, vet_author_proof};
+use crate::fork_check::{ForkFindings, ForkVerdict, judge_fork_claim, record_fork_verdict};
 use crate::members::credential_identity;
 use crate::state::{MlsManager, StateSnapshotCache};
 use crate::{MAX_MLS_MESSAGE_BYTES, MlsError};
@@ -15,38 +17,51 @@ use crate::{MAX_MLS_MESSAGE_BYTES, MlsError};
 /// `None` only when the credential is not a readable basic credential, which is logged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncomingApplication {
+    /// The decrypted bytes. An author proof is still at their end ONLY when `author` is
+    /// `Verified`; a refused one has been cut off, so the application never relays it.
     pub plaintext: Vec<u8>,
     pub sender_identity: Option<String>,
+    /// Whether the frame carried its author's signature, and whether it held (`authorship.rs`).
+    pub author: AuthorVerdict,
 }
 
 impl MlsManager {
     // --- D. MESSAGERIE ---
 
+    /// Encrypts `message` for `group_id`, with this device's signed epoch fingerprint in the frame's
+    /// cleartext authenticated data (`fork_check.rs`) - every application frame is a fork witness.
     pub fn send_message(&mut self, group_id: &str, message: &[u8]) -> Result<Vec<u8>, MlsError> {
+        let fork_aad = self.fork_aad_for(group_id)?;
         let group = self
             .groups
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        let msg_out = group
-            .create_message(&self.provider, &self.keypair, message)
-            .map_err(|e| match e {
-                // Classified HERE, on the variant, rather than by matching `UseAfterEviction` out
-                // of a Debug string downstream: eviction is permanent and every other encrypt
-                // failure is not, so the two must not reach a caller as the same `OpenMls(String)`.
-                // The outbox read them as one and retried an evicted group on a backoff ladder for
-                // as long as the entry lived.
-                CreateMessageError::GroupStateError(MlsGroupStateError::UseAfterEviction) => {
-                    log::error!(
-                        "Send refused: this device was evicted from group {} and did not learn it \
+        // openmls clears the AAD after a frame it BUILDS, and leaves it set when it refuses
+        // (`application.rs`) - so it is cleared here on a refusal, or the next commit would carry
+        // a claim about an epoch it is about to leave.
+        group.set_aad(fork_aad);
+        let built = group.create_message(&self.provider, &self.keypair, message);
+        if built.is_err() {
+            group.set_aad(Vec::new());
+        }
+        let msg_out = built.map_err(|e| match e {
+            // Classified HERE, on the variant, rather than by matching `UseAfterEviction` out
+            // of a Debug string downstream: eviction is permanent and every other encrypt
+            // failure is not, so the two must not reach a caller as the same `OpenMls(String)`.
+            // The outbox read them as one and retried an evicted group on a backoff ladder for
+            // as long as the entry lived.
+            CreateMessageError::GroupStateError(MlsGroupStateError::UseAfterEviction) => {
+                log::error!(
+                    "Send refused: this device was evicted from group {} and did not learn it \
                          from the Remove commit - the commit was never received, or its \
                          `is_group_active` check did not run",
-                        group_id
-                    );
-                    MlsError::Evicted(group_id.to_string())
-                }
-                other => MlsError::OpenMls(format!("Encrypt error: {:?}", other)),
-            })?;
+                    group_id
+                );
+                MlsError::Evicted(group_id.to_string())
+            }
+            other => MlsError::OpenMls(format!("Encrypt error: {:?}", other)),
+        })?;
 
         self.mark_ratchet_advanced();
         msg_out
@@ -144,6 +159,7 @@ impl MlsManager {
             group_id,
             message_bytes,
             &self.state_snapshot,
+            &self.fork_findings,
         )
     }
 
@@ -163,10 +179,18 @@ impl MlsManager {
 
         let provider = &self.provider;
         let snapshot = &self.state_snapshot;
+        let fork_findings = &self.fork_findings;
         messages
             .iter()
             .map(|bytes| {
-                Self::process_incoming_on_group(group, provider, group_id, bytes, snapshot)
+                Self::process_incoming_on_group(
+                    group,
+                    provider,
+                    group_id,
+                    bytes,
+                    snapshot,
+                    fork_findings,
+                )
             })
             .collect()
     }
@@ -177,6 +201,7 @@ impl MlsManager {
         group_id: &str,
         message_bytes: &[u8],
         state_snapshot: &RefCell<StateSnapshotCache>,
+        fork_findings: &RefCell<ForkFindings>,
     ) -> Result<Option<IncomingApplication>, MlsError> {
         if message_bytes.len() > MAX_MLS_MESSAGE_BYTES {
             return Err(MlsError::InvalidData);
@@ -184,9 +209,15 @@ impl MlsManager {
         let msg_in = MlsMessageIn::tls_deserialize(&mut &message_bytes[..])
             .map_err(|_| MlsError::InvalidData)?;
 
+        // The fork claim (`fork_check.rs`) is the frame's cleartext AAD, copied out HERE because a
+        // refusal is exactly where it is needed and `process_message` consumes the frame first.
+        let mut claim_aad: Vec<u8> = Vec::new();
         let protocol_message: ProtocolMessage = match msg_in.extract() {
             MlsMessageBodyIn::PublicMessage(m) => m.into(),
-            MlsMessageBodyIn::PrivateMessage(m) => m.into(),
+            MlsMessageBodyIn::PrivateMessage(m) => {
+                claim_aad = m.aad().to_vec();
+                m.into()
+            }
             _ => return Err(MlsError::InvalidData),
         };
 
@@ -345,8 +376,20 @@ impl MlsManager {
                 // through this very return, and both classifiers key on those markers. So a frame
                 // can carry two, and the order is fixed on both sides - a specific marker names
                 // the ratchet position, this one names only what is left when none of them does.
+                // AND THE ONE PLACE A FORK CAN BE SEEN: a frame from the other side of a fork is
+                // this very refusal. Its claim says whether the sender's copy of this epoch is ours
+                // (`Agrees`: the bytes are bad) or another one (`fork_check.rs`).
+                match judge_fork_claim(group, group_id, &claim_aad, msg_epoch.as_u64(), false) {
+                    ForkVerdict::Agrees => log::warn!(
+                        "[FORK] not a fork: the refused frame on group {} claims our own epoch \
+                         fingerprint at epoch {} - the frame itself is damaged",
+                        group_id,
+                        msg_epoch
+                    ),
+                    verdict => record_fork_verdict(verdict, fork_findings),
+                }
                 log::error!(
-                    "MLS decryption failed at exactly its own epoch, so no redelivery can help:                      group={} msg_epoch={} group_epoch={} err={:?}",
+                    "MLS decryption failed at exactly its own epoch, so no redelivery can help:                     group={} msg_epoch={} group_epoch={} err={:?}",
                     group_id,
                     msg_epoch,
                     group_epoch,
@@ -375,12 +418,33 @@ impl MlsManager {
             }
         };
 
+        // The key of the leaf MLS just verified the frame with - the only key an author proof inside
+        // it may be checked against (`authorship.rs`).
+        let sender_key = match processed_message.sender() {
+            Sender::Member(index) => group.member_at(*index).map(|m| m.signature_key),
+            _ => None,
+        };
+
         match processed_message.into_content() {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
                 state_snapshot.borrow_mut().invalidate_ratchet();
+                // A frame MLS authenticated at OUR epoch must claim our fingerprint; a past-epoch
+                // frame is compared with nothing, since only the current authenticator is held.
+                if msg_epoch == group_epoch {
+                    let verdict =
+                        judge_fork_claim(group, group_id, &claim_aad, msg_epoch.as_u64(), true);
+                    record_fork_verdict(verdict, fork_findings);
+                }
+                let (plaintext, author) = vet_author_proof(
+                    app_msg.into_bytes(),
+                    group_id,
+                    sender_identity.as_deref(),
+                    sender_key.as_deref(),
+                );
                 Ok(Some(IncomingApplication {
-                    plaintext: app_msg.into_bytes(),
+                    plaintext,
                     sender_identity,
+                    author,
                 }))
             }
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {

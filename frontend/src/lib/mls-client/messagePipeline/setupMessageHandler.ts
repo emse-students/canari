@@ -5,6 +5,8 @@ import {
   resolveDirectPeerId,
 } from '$lib/utils/chat/conversations';
 import { decodeAppMessage } from '$lib/proto/codec';
+import { recordAuthorship } from '$lib/crypto/messageAuthorship';
+import { drainForkFindings } from '$lib/mls-client/integrityFindings';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import {
@@ -603,6 +605,8 @@ async function handleWelcome({
             noteFrameConsumed(userId, joinedGroupId, msg.content);
             if (decBytes) {
               const appMsg = decodeAppMessage(decBytes);
+              // Verified by mls-core like any live frame - see the live path below.
+              const authorship = recordAuthorship(decBytes, joinedGroupId);
               if (appMsg) {
                 const envelope = appMsgToEnvelope(appMsg);
                 if (envelope) {
@@ -611,17 +615,22 @@ async function handleWelcome({
                     // were held only because the Welcome had not landed yet. Nobody has been told
                     // about them, so the notification is owed.
                     await batchAddMessages(
-                      [{ senderId: msg.sender, content: envelope.content, ...envelope.options }],
+                      [
+                        {
+                          senderId: msg.sender,
+                          content: envelope.content,
+                          ...envelope.options,
+                          ...(authorship ? { authorship } : {}),
+                        },
+                      ],
                       joinedGroupId,
                       'arrival'
                     );
                   } else {
-                    await addMessageToChat(
-                      msg.sender,
-                      envelope.content,
-                      joinedGroupId,
-                      envelope.options
-                    );
+                    await addMessageToChat(msg.sender, envelope.content, joinedGroupId, {
+                      ...envelope.options,
+                      ...(authorship ? { authorship } : {}),
+                    });
                   }
                 } else if (appMsg.system) {
                   // FIX 2 — Replay the system messages buffered before the Welcome
@@ -641,6 +650,7 @@ async function handleWelcome({
                       senderNorm: msg.sender,
                       messageId: normalizeMessageId(appMsg.messageId),
                       deliveryMeta: undefined,
+                      ...(authorship ? { authorship } : {}),
                     });
                   }
                 }
@@ -1064,6 +1074,11 @@ async function handleKnownGroup({
     const liveAuthor = liveProofOfAuthor(sender, deliveryMeta, msg.system?.event);
     if (liveAuthor) retryPullsOwedTo(liveAuthor, deps);
 
+    // THE AUTHOR'S SIGNATURE, KEPT WITH WHAT IT PROVES. mls-core left it in the plaintext only
+    // because it verified it against this frame's MLS sender, so a history bundle this device writes
+    // later can prove the message, edit, deletion or reaction to a reader that never saw the frame.
+    const authorship = recordAuthorship(decrypted, groupId);
+
     if (msg.text || msg.reply || msg.media) {
       const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
       if (envelope) {
@@ -1074,6 +1089,7 @@ async function handleKnownGroup({
         await addMessageToChat(sender, envelope.content, convoKey, {
           ...envelope.options,
           serverTimestamp: deliveryMeta?.queuedCreatedAt,
+          ...(authorship ? { authorship } : {}),
         });
       } else {
         log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
@@ -1090,7 +1106,8 @@ async function handleKnownGroup({
         sender,
         emoji,
         Number(msg.reaction.at ?? 0),
-        msg.reaction.removed === true
+        msg.reaction.removed === true,
+        authorship
       );
       if (updated) {
         messageReactions.set(msgId, updated);
@@ -1142,6 +1159,7 @@ async function handleKnownGroup({
         senderNorm: sender,
         messageId: normalizeMessageId(msg.messageId),
         deliveryMeta,
+        ...(authorship ? { authorship } : {}),
       });
     }
 
@@ -1332,6 +1350,9 @@ async function handleKnownGroup({
     log(
       `[MLS] Decryption error for ${convoKey.slice(0, 8)}… (${kind}): ${err.slice(0, 100)} → re-add`
     );
+    // What a FORK looks like from here: mls-core judged the frame's signed epoch fingerprint on
+    // the refusal arm, and the verdict is taken now, before the re-add replaces our copy.
+    if (kind === 'same-epoch-refusal') await drainForkFindings(mlsService, log);
     startRecovery(groupId);
     return true;
   }

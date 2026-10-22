@@ -606,12 +606,15 @@ pub(crate) fn trailer_welcome(
         })
 }
 
+/// Encrypts a proto-encoded AppMessage WITH its author's signature appended
+/// (`mls_core::authorship`), returning the frame and the encoded proof the sender keeps on its own
+/// copy - the same proof its peers receive, so a history bundle it later writes carries it.
 #[tauri::command]
 pub(crate) fn envoyer_message_bytes(
     group_id: String,
     message_bytes: Vec<u8>,
     state: tauri::State<AppState>,
-) -> Result<Vec<u8>, String> {
+) -> Result<crate::state::AuthoredFramePayload, String> {
     let mut lock = state
         .mls_manager
         .lock()
@@ -619,8 +622,29 @@ pub(crate) fn envoyer_message_bytes(
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
 
     manager
-        .send_message(&group_id, &message_bytes)
-        .map_err(|e| e.to_string())
+        .send_authored_message(&group_id, &message_bytes)
+        .map(Into::into)
+        .map_err(|e| {
+            log::error!("[AUTHORSHIP] authored send failed for {group_id}: {e}");
+            e.to_string()
+        })
+}
+
+/// Hands over the fork findings recorded since the last call (`mls_core::fork_check`).
+#[tauri::command]
+pub(crate) fn prendre_constats_fork(
+    state: tauri::State<AppState>,
+) -> Result<Vec<crate::state::ForkFindingPayload>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager
+        .take_fork_findings()
+        .into_iter()
+        .map(Into::into)
+        .collect())
 }
 
 /// Advances the send ratchet by `count` generations without emitting anything, repairing an

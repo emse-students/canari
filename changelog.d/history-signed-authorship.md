@@ -1,0 +1,3 @@
+### Security - restored history carries each message's original author signature
+
+Private conversations now sign every message with the sender's device key, and a history bundle relays that signature: a restored message, edit, deletion or reaction is taken from its author's signature, an older unsigned message is marked "author unverified", and a forged one is refused and reported. Frames also carry a signed epoch fingerprint, so a forked conversation is logged and recorded ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22), [mls-protocol](docs/wiki/protocols/mls-protocol.md#fork-detection-a-signed-epoch-fingerprint-in-every-application-frame-2026-10-22)).

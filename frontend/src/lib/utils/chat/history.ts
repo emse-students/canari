@@ -13,6 +13,8 @@ import {
   type PendingHistoryMessage,
 } from './historySystemEvents';
 import { decodeAppMessage } from '$lib/proto/codec';
+import { recordAuthorship } from '$lib/crypto/messageAuthorship';
+import { drainForkFindings } from '$lib/mls-client/integrityFindings';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted } from '$lib/paraglide/messages';
 import { applyEditToBody, envelopeBodyText } from '$lib/envelope';
@@ -502,6 +504,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       ...(m.isEdited ? { isEdited: true } : {}),
       ...(m.editedAt ? { editedAt: toValidDate(m.editedAt) } : {}),
       ...(m.isFcmPreview ? { isFcmPreview: true } : {}),
+      ...(m.restoredUnverified ? { restoredUnverified: true } : {}),
     } satisfies ChatMessage;
   });
 }
@@ -977,6 +980,8 @@ export async function replayConversationHistory(params: {
           }
 
           const parsed = decodeAppMessage(decryptedBytes);
+          // Verified by mls-core against the frame's MLS sender, like a live frame (setupMessageHandler).
+          const authorship = recordAuthorship(decryptedBytes, id);
 
           const serverMs = parseServerTimestampMs(msg.timestamp);
           const envelope = parsed ? appMsgToEnvelope(parsed, serverMs) : null;
@@ -986,6 +991,7 @@ export async function replayConversationHistory(params: {
               content: envelope.content,
               ...envelope.options,
               ingestSequence: historyIngestSeq++,
+              ...(authorship ? { authorship } : {}),
             });
             addedMsg++;
             mlsUpdated = true;
@@ -1002,7 +1008,8 @@ export async function replayConversationHistory(params: {
               senderNorm,
               emoji,
               Number(parsed.reaction.at ?? 0),
-              parsed.reaction.removed === true
+              parsed.reaction.removed === true,
+              authorship
             );
             if (!updated) continue; // already held something at least as recent - no-op
             messageReactions.set(messageId, updated);
@@ -1134,6 +1141,11 @@ export async function replayConversationHistory(params: {
               console.warn(
                 `[History] frame never read here and unreadable for good (${kind}); will reconcile (group ${id}, frame ${frameKey}, row ${rowKey})`
               );
+            }
+            // A refusal at our own epoch is what a FORK looks like from here: mls-core judged the
+            // frame's signed epoch fingerprint on that arm, and the verdict is taken now.
+            if (kind === 'same-epoch-refusal') {
+              await drainForkFindings(mlsService, (line) => console.error(line));
             }
             continue;
           }

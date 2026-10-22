@@ -4,6 +4,7 @@
 
 import type { MediaIntent } from '$lib/media';
 import type { ConversationLifecycle, MessageReaction, ReadWatermarks } from '$lib/types';
+import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 
 /** Lightweight metadata row for a conversation stored in the local DB (no message payload). */
 export interface ConversationMeta {
@@ -79,6 +80,17 @@ export interface StoredMessage {
   editedAt?: number;
   /** True when stored from FCM notification preview (plain text). */
   isFcmPreview?: boolean;
+  /**
+   * The author's signed frame of this message (`$lib/crypto/messageAuthorship`), relayed in history
+   * bundles. `null` clears it on purpose: a deletion purges the original bytes at rest.
+   */
+  authorship?: RecordedAuthorship | null;
+  /** The author's signed `edit_message` that produced the current body; `null` clears it. */
+  editProof?: RecordedAuthorship | null;
+  /** The author's signed `delete_message` behind the tombstone. */
+  deleteProof?: RecordedAuthorship;
+  /** Restored from a bundle with no author proof: see `AddMessageToChatOptions.restoredUnverified`. */
+  restoredUnverified?: boolean;
 }
 
 /**

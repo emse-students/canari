@@ -1,7 +1,9 @@
 pub mod security;
 
+pub mod authorship;
 pub(crate) mod byte_compat;
 pub mod crypto;
+pub mod fork_check;
 pub mod graine_signature;
 pub mod group;
 pub mod keystore;

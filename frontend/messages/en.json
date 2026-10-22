@@ -574,6 +574,8 @@
   "msg_supprimer_message": "Delete message",
   "msg_supprimer_definitif": "Permanently delete this message? This action is irreversible.",
   "msg_modifie": "(edited)",
+  "msg_restored_unverified": "(author unverified)",
+  "msg_restored_unverified_hint": "Restored from another member's history without its author's signature.",
   "msg_en_attente": "Pending…",
   "msg_echec": "Failed",
   "msg_non_confirme": "Not confirmed",

@@ -19,6 +19,8 @@ import {
   type BatchDecryptRow,
 } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
+import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
+import type { ForkFinding } from '$lib/mls-client/integrityFindings';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
@@ -1366,14 +1368,28 @@ export class TauriMlsService extends BaseMlsService {
     return groupId;
   }
 
-  /** Tauri-native `invoke` wrapper - encrypts plaintext via `envoyer_message_bytes`, then POSTs the ciphertext to the delivery service. */
-  /** Native `invoke` wrapper - advances the live send ratchet. Ordering and persistence: `sendMessage`. */
-  protected async encryptForSend(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array> {
-    const res = await invoke<number[]>('envoyer_message_bytes', {
-      groupId,
-      messageBytes: Array.from(messageBytes),
-    });
-    return Uint8Array.from(res);
+  /**
+   * Native `invoke` wrapper - encrypts via `envoyer_message_bytes`, which appends this device's
+   * author signature (`mls-core/src/authorship.rs`) and advances the live send ratchet. Ordering
+   * and persistence: `sendMessage`.
+   */
+  protected async encryptForSend(
+    groupId: string,
+    messageBytes: Uint8Array
+  ): Promise<AuthoredFrame> {
+    const res = await invoke<{ ciphertext: number[]; authorProof: number[] }>(
+      'envoyer_message_bytes',
+      { groupId, messageBytes: Array.from(messageBytes) }
+    );
+    return {
+      sealed: Uint8Array.from(res.ciphertext),
+      authorProof: Uint8Array.from(res.authorProof),
+    };
+  }
+
+  /** Native `invoke` wrapper - see {@link IMlsService.takeForkFindings}. */
+  async takeForkFindings(): Promise<ForkFinding[]> {
+    return invoke<ForkFinding[]>('prendre_constats_fork');
   }
 
   /** Tauri-native `invoke` wrapper - decrypts a raw MLS ciphertext via `recevoir_message_bytes`; returns null for commit or proposal frames. */

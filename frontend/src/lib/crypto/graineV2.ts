@@ -272,8 +272,11 @@ export async function verifyGraineEndorsementV2(
   }
 }
 
-/** Appends length-prefixed fields and fixed-width integers, big-endian. */
-class Writer {
+/**
+ * Appends length-prefixed fields and fixed-width integers, big-endian - the descriptor encoding of
+ * Graine v2, shared with the author proofs of `messageAuthorship.ts`.
+ */
+export class Writer {
   private readonly parts: Uint8Array[] = [];
 
   field(bytes: Uint8Array): void {

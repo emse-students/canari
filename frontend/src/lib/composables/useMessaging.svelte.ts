@@ -851,6 +851,13 @@ export function useMessaging() {
       isFcmPreview: options.isFcmPreview,
       serverTimestamp: options.serverTimestamp,
       ...(options.salonEcho ? { awaitingServerId: true } : {}),
+      ...(options.restoredUnverified ? { restoredUnverified: true } : {}),
+    };
+    // The author's signature and the unverified marker live in the STORED row only (sealed), so
+    // every write of this message below carries them.
+    const proofFields = {
+      ...(options.authorship ? { authorship: options.authorship } : {}),
+      ...(options.restoredUnverified ? { restoredUnverified: true } : {}),
     };
 
     const dupIdx = convo.messages.findIndex((m) => m.id === newMsg.id);
@@ -885,6 +892,7 @@ export function useMessaging() {
                 isEdited: upgraded.isEdited,
                 ...(upgraded.editedAt ? { editedAt: upgraded.editedAt.getTime() } : {}),
                 isFcmPreview: false,
+                ...proofFields,
               },
               ctx.deviceKeyB64
             );
@@ -1017,6 +1025,7 @@ export function useMessaging() {
           timestamp: newMsg.timestamp.getTime(),
           serverTimestamp: options.serverTimestamp,
           ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
+          ...proofFields,
         };
         // AN OWN MESSAGE AND THE ENTRY THAT SENDS IT ARE ONE FACT, so they are one write. Persisting
         // the echo and then queuing it was two awaits, and a document torn down between them left a
@@ -1105,6 +1114,8 @@ export function useMessaging() {
             timestamp: upgraded.timestamp.getTime(),
             serverTimestamp: pm.serverTimestamp,
             isFcmPreview: false,
+            ...(pm.authorship ? { authorship: pm.authorship } : {}),
+            ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
           });
         }
         continue;
@@ -1122,6 +1133,7 @@ export function useMessaging() {
         replyTo: pm.replyTo,
         isSystem,
         ingestSequence: pm.ingestSequence,
+        ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
       };
       brandNew.push(newMsg);
       // The index is also the dedup set: a batch carrying the same id twice must add it once.
@@ -1139,6 +1151,8 @@ export function useMessaging() {
           ).getTime(),
           serverTimestamp: pm.serverTimestamp,
           ...(isSystem ? { readBy: [] } : {}),
+          ...(pm.authorship ? { authorship: pm.authorship } : {}),
+          ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
         });
       }
     }

@@ -195,6 +195,47 @@ export class MessagingController {
     return { recorded: true };
   }
 
+  /**
+   * A client stating it saw what a private conversation must never show: two trees at one epoch
+   * (`fork`, a frame whose signed epoch fingerprint is not the receiver's), or restored history whose
+   * author signature does not verify (`forged-history`). The UI comes later; this ERROR line is where
+   * the event is read today, since a client's console is collected nowhere. Protocol:
+   * history-reconciliation, "Restored history carries its author's signature", and mls-protocol,
+   * "Fork detection".
+   *
+   * Stores nothing, like `sender-mismatch`. Every field goes through `sanitizeLogValue`, `kind` is
+   * an allowlist and `epoch` a non-negative integer, so no body can write a line of its own. The
+   * reporter is the authenticated user, never a field of the body.
+   */
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @Post('mls/integrity-finding')
+  reportIntegrityFinding(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') reporterDeviceId: string | undefined,
+    @Body()
+    body: {
+      kind?: unknown;
+      groupId?: unknown;
+      epoch?: unknown;
+      peer?: unknown;
+      detail?: unknown;
+    }
+  ): { recorded: true } {
+    const kind = body.kind === 'fork' || body.kind === 'forged-history' ? body.kind : 'invalid';
+    const epoch =
+      body.epoch === undefined || body.epoch === null
+        ? 'none'
+        : Number.isSafeInteger(body.epoch) && (body.epoch as number) >= 0
+          ? String(body.epoch)
+          : 'invalid';
+    this.logger.error(
+      `[INTEGRITY] kind=${kind} reporter=${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)} ` +
+        `group=${sanitizeLogValue(body.groupId)} epoch=${epoch} peer=${sanitizeLogValue(body.peer)} ` +
+        `detail=${sanitizeLogValue(body.detail)}`
+    );
+    return { recorded: true };
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Post('mls/base-refresh-request')
   /**

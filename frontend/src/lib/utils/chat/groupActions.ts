@@ -598,6 +598,12 @@ function serializeForBundle(m: StoredMessage) {
     ...(m.editedAt ? { editedAt: m.editedAt } : {}),
     // Secondary timestamp: needed for stable post-migration sorting.
     ...(m.serverTimestamp ? { serverTimestamp: m.serverTimestamp } : {}),
+    // The authors' own signatures, so the reader takes the message, the edit and the deletion from
+    // their authors rather than from this relayer (history-reconciliation, authorship). A deleted
+    // message relays its signed tombstone and never its original bytes.
+    ...(m.authorship && !m.isDeleted ? { authorship: m.authorship } : {}),
+    ...(m.editProof && !m.isDeleted ? { editProof: m.editProof } : {}),
+    ...(m.deleteProof ? { deleteProof: m.deleteProof } : {}),
   };
 }
 

@@ -1134,6 +1134,48 @@ Two of these are corrections, not restatements of today's behaviour - see
 which is exactly what the floor is for: pruning below it is invisible to the merge, and pruning above
 it is forbidden.
 
+### Restored history carries its author's signature (2026-10-22)
+
+A `history_bundle` is written by whichever member answered, and until this change every field in it
+was taken on that member's word. Since this change the restored history of a private conversation
+(1:1 and group) carries each message's ORIGINAL author signature, and the reader decides from it.
+
+**The proof.** mls-core signs every application frame it sends (`send_authored_message`,
+`mls-core/src/authorship.rs`) with the device's MLS credential key - the key Graine v2's endorsement
+uses - over `lp("canari-mls-author-v1") lp(groupId) lp(userId:deviceId) lp(SHA-256(body))`, `body`
+being the exact `AppMessage` bytes (message id, the author's timestamp, the content). The proof
+travels INSIDE the plaintext, appended as `AppMessage` field 14 (`AuthorProof`), so MLS encrypts it
+with the message. On receipt mls-core keeps the proof only when it names the frame's MLS sender and
+verifies under that sender's leaf key; otherwise it strips it and logs `[AUTHORSHIP] REFUSED` at
+ERROR. A frame from an older build simply has none.
+
+**Kept beside the message.** The device records `{body, proof, group}` in the sealed row payload
+(`StoredMessage.authorship`; `editProof`, `deleteProof`, and `MessageReaction.proof` for the
+mutations), for frames it received AND frames it sent (the outbox records its own). `group` is the
+conversation the proof was signed in: a row can move between conversations (a merged DM, a re-key),
+and a proof checked against the wrong group would read as a forgery. A deletion purges the original
+bytes and keeps only the author's signed tombstone.
+
+**Relayed and checked.** `serializeForBundle` relays the proofs; `restoredAuthorship.ts` decides each
+entry ([`messageAuthorship.ts`](../../../frontend/src/lib/crypto/messageAuthorship.ts) does the
+crypto, with a shared vector against the Rust side):
+
+| Entry | Taken when | Otherwise |
+| --- | --- | --- |
+| message | the author's proof verifies and names this id and this author - content and timestamp are then read from the SIGNED bytes, never from the relayer's fields; or the relayer IS the author | no proof, or a proof signed in another conversation: kept and MARKED `restoredUnverified` ("author unverified" under the bubble); a proof that fails: REFUSED |
+| edit, deletion | the author's signed event names this message; or the relayer is the author | dropped, never applied on a third party's word |
+| reaction | the reactor's signed frame proves exactly this state; or the relayer is the reactor | dropped |
+
+**Keys.** A pin is authoritative when the key-pinning work provides one (`PinnedSignatureKeys`, the
+interface is DEFINED in `messageAuthorship.ts` and implemented there - nothing else is tried).
+Otherwise the author's leaf in the tree, then the keys the server published for that device, asked
+once per device per session. An unreachable server is not a forgery: the entry is kept as unproven.
+
+**A refusal is loud.** Every refused entry is an ERROR line and an integrity finding
+([`integrityFindings.ts`](../../../frontend/src/lib/mls-client/integrityFindings.ts)), reported once
+per session to `POST mls/integrity-finding`, which logs `[INTEGRITY]` at ERROR server side. The UI
+for findings comes later.
+
 ### Reactions
 
 Each `(user, emoji)` pair carries its own timestamp and an on/off state; the larger timestamp wins.

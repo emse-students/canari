@@ -606,6 +606,8 @@
   "msg_supprimer_message": "Supprimer le message",
   "msg_supprimer_definitif": "Supprimer définitivement ce message ? Cette action est irréversible.",
   "msg_modifie": "(modifié)",
+  "msg_restored_unverified": "(auteur non vérifié)",
+  "msg_restored_unverified_hint": "Restauré depuis l'historique d'un autre membre, sans la signature de son auteur.",
   "msg_en_attente": "En attente…",
   "msg_echec": "Échec",
   "msg_non_confirme": "Non confirmé",

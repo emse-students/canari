@@ -498,12 +498,16 @@ pub fn send_messages_background_with_key(
     let mut encrypted = 0usize;
     for entry in entries {
         match encrypt_one(&mut manager, entry) {
-            Ok(ciphertext) => {
+            Ok(frame) => {
                 encrypted += 1;
+                // `authorProof` rides along for a reader that keeps the sender's own copy; the
+                // native drains read `ciphertext` alone today (history-reconciliation, "Restored
+                // history carries its author's signature").
                 results.push(serde_json::json!({
                     "id": entry.id,
                     "ok": true,
-                    "ciphertext": STANDARD.encode(&ciphertext),
+                    "ciphertext": STANDARD.encode(&frame.ciphertext),
+                    "authorProof": STANDARD.encode(&frame.author_proof),
                 }));
             }
             Err(e) => {
@@ -536,15 +540,19 @@ pub fn send_messages_background_with_key(
     Ok(serde_json::json!({ "ok": true, "results": results }))
 }
 
-/// Encrypts a single entry against an already-loaded manager. Split out so the batch loop has one
-/// obvious failure boundary per entry.
-fn encrypt_one(manager: &mut MlsManager, entry: &OutboxEntry) -> Result<Vec<u8>, String> {
+/// Encrypts a single entry against an already-loaded manager, with its author's signature - the
+/// same authored send as the foreground, so a message drained here is as relayable as any other.
+/// Split out so the batch loop has one obvious failure boundary per entry.
+fn encrypt_one(
+    manager: &mut MlsManager,
+    entry: &OutboxEntry,
+) -> Result<mls_core::authorship::AuthoredFrame, String> {
     let proto_bytes = STANDARD
         .decode(entry.proto.trim())
         .map_err(|e| format!("base64 decode proto: {e}"))?;
     manager
-        .send_message(&entry.group_id, &proto_bytes)
-        .map_err(|e| format!("send_message: {e:?}"))
+        .send_authored_message(&entry.group_id, &proto_bytes)
+        .map_err(|e| format!("send_authored_message: {e:?}"))
 }
 
 /// Parses the batch JSON the platform drains pass across the FFI boundary:
@@ -994,7 +1002,7 @@ mod tests {
                 .process_incoming_message(&group_id, frame)
                 .unwrap_or_else(|e| panic!("bob decrypt {i}: {e:?}"))
                 .expect("application message");
-            assert_eq!(plain, plaintexts[i]);
+            assert_authored(&plain, &plaintexts[i]);
         }
 
         // The saved state must be ahead of all five, not of the first.
@@ -1012,7 +1020,7 @@ mod tests {
             .process_incoming_message(&group_id, &ciphertexts_of(&sixth)[0])
             .expect("bob decrypt 6th - a rewound save would fail here")
             .expect("application message");
-        assert_eq!(plain, b"msg-5");
+        assert_authored(&plain, b"msg-5");
     }
 
     /// One unjoined group must not strand the rest of the backlog: the failure is reported in its
@@ -1052,17 +1060,30 @@ mod tests {
 
         let frames = ciphertexts_of(&out);
         assert_eq!(frames.len(), 2);
-        assert_eq!(
-            bob.process_incoming_message(&group_id, &frames[0])
-                .expect("decrypt first")
-                .expect("application message"),
-            b"first"
-        );
-        assert_eq!(
-            bob.process_incoming_message(&group_id, &frames[1])
-                .expect("decrypt second")
-                .expect("application message"),
-            b"second"
+        let first = bob
+            .process_incoming_message(&group_id, &frames[0])
+            .expect("decrypt first")
+            .expect("application message");
+        assert_authored(&first, b"first");
+        let second = bob
+            .process_incoming_message(&group_id, &frames[1])
+            .expect("decrypt second")
+            .expect("application message");
+        assert_authored(&second, b"second");
+    }
+
+    /// A background send is AUTHORED: its plaintext is `body` followed by the author proof mls-core
+    /// appended as field 14. These test bodies are not protobuf, so the body is matched by prefix and
+    /// what follows it must be exactly one proof field.
+    fn assert_authored(plain: &[u8], body: &[u8]) {
+        assert!(plain.starts_with(body), "the body leads the plaintext");
+        let trailer = &plain[body.len()..];
+        assert!(
+            matches!(
+                mls_core::authorship::split_author_proof(trailer),
+                Some((0, _))
+            ),
+            "exactly one author proof follows the body"
         );
     }
 

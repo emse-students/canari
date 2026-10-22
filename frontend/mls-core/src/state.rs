@@ -164,6 +164,10 @@ pub struct MlsManager {
     pub(crate) forgotten_group_min_epochs: HashMap<String, u64>,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
+
+    /// Fork findings recorded by the decrypt path and not yet taken (`fork_check.rs`). Process
+    /// memory only: a finding is reported by the caller that takes it, never persisted here.
+    pub(crate) fork_findings: RefCell<crate::fork_check::ForkFindings>,
 }
 
 /// Every label `openmls_memory_storage` prefixes its storage keys with.
@@ -712,6 +716,7 @@ impl MlsManager {
                 // instead of dependent on what the user does next, and the cost is one
                 // serialization - never the decode this change exists to remove.
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
+                fork_findings: RefCell::default(),
             };
 
             // SHED WHAT THIS DEVICE CAN NO LONGER USE, ONCE PER LOAD.
@@ -811,6 +816,7 @@ impl MlsManager {
                 groups: HashMap::new(),
                 forgotten_group_min_epochs: HashMap::new(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
+                fork_findings: RefCell::default(),
             })
         }
     }

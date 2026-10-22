@@ -27,6 +27,17 @@ import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/cha
 import { owedPullTicket } from '$lib/utils/chat/historyOverheardPull';
 import { dropOwnExcludedMessages } from '$lib/utils/chat/historyEntitlement';
 import {
+  vetRestoredDelete,
+  vetRestoredEdit,
+  vetRestoredMessage,
+  vetRestoredReactions,
+  type RestoredDeleteVerdict,
+  type RestoredEditVerdict,
+} from '$lib/utils/chat/restoredAuthorship';
+import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
+import type { MessageReaction } from '$lib/types';
+import {
   historyRangeStartFor,
   readHistoryEntries,
   sendHistoryBundleForIds,
@@ -67,6 +78,12 @@ export interface SystemEventContext extends MessageHandlerDeps {
    * duplicate-prone row this build cannot repair: see `docs/wiki/legacy-compatibility.md`.
    */
   messageId?: string;
+  /**
+   * The event frame's own author proof, as mls-core verified it (`recordAuthorship`). Kept on the
+   * row an `edit_message` or `delete_message` changes, so a history bundle can prove the change to a
+   * device that never saw this frame. Absent for an unsigned frame (an older sender).
+   */
+  authorship?: RecordedAuthorship;
   /** Persist MLS state to storage immediately (used when group membership changes). */
   /** Queue metadata for messages received via the offline delivery queue. */
   deliveryMeta?: IncomingDeliveryMeta;
@@ -176,6 +193,7 @@ export async function handleSystemEvent(
     senderNorm,
     messageId,
     deliveryMeta,
+    authorship,
   } = ctx;
 
   // `decrypt_failed` was the narrow repair: a peer that could not decrypt asked every member to
@@ -782,10 +800,18 @@ export async function handleSystemEvent(
         if (storage) {
           try {
             // The tombstone and the replacement body, nothing else: the edit flags and the read
-            // state of the message being deleted are not this handler's to rewrite.
+            // state of the message being deleted are not this handler's to rewrite. The original
+            // signed bytes go with the body (`authorship`/`editProof: null`), and the author's
+            // signed deletion stays, so a bundle can prove the tombstone to a device that missed it.
             await storage.updateMessage(
               deletedMsg.id,
-              { isDeleted: true, content: deletedMsg.content },
+              {
+                isDeleted: true,
+                content: deletedMsg.content,
+                authorship: null,
+                editProof: null,
+                ...(authorship ? { deleteProof: authorship } : {}),
+              },
               deviceKey()
             );
           } catch (e) {
@@ -848,9 +874,15 @@ export async function handleSystemEvent(
         });
         if (storage) {
           try {
+            // The author's signed edit replaces any earlier one: it is what proves THIS body.
             await storage.updateMessage(
               editedMsg.id,
-              { content: editedContent, isEdited: true, editedAt: editedAt.getTime() },
+              {
+                content: editedContent,
+                isEdited: true,
+                editedAt: editedAt.getTime(),
+                editProof: authorship ?? null,
+              },
               deviceKey()
             );
           } catch {
@@ -889,8 +921,22 @@ export async function handleSystemEvent(
         isEdited?: boolean;
         editedAt?: number;
         serverTimestamp?: number;
+        authorship?: RecordedAuthorship;
+        editProof?: RecordedAuthorship;
+        deleteProof?: RecordedAuthorship;
       };
       const msgs: BundleMsg[] = Array.isArray(data.messages) ? data.messages : [];
+      // EVERY REFUSAL BELOW IS ONE OF THESE: a proof that does not hold is a member forging
+      // history, which is logged at ERROR and reported - never merely skipped.
+      const refuseForged = (what: string, id: string, why: string): void => {
+        log(
+          `[AUTHORSHIP] REFUSED a restored ${what} ${id.slice(0, 8)} relayed by ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}…: ${why}`
+        );
+        noteIntegrityFinding(
+          { kind: 'forged-history', groupId: convoKey, peer: senderNorm, detail: what },
+          log
+        );
+      };
 
       // 0) The conversation's own state - read watermarks and the shared history floor - which
       //    travels ONCE for the whole conversation rather than once per message. Merged before
@@ -944,15 +990,49 @@ export async function handleSystemEvent(
         // 1) Add only the genuinely new messages. The add-path (AddMessageToChatOptions) cannot
         //    carry reactions/tombstones, so that metadata is merged in step 2 for new AND existing
         //    messages alike.
-        const toAdd = (fresh ?? []).map((m) => ({
-          senderId: m.senderId.toLowerCase(),
-          content: m.content,
-          messageId: m.id,
-          timestamp: new Date(m.timestamp),
-          // The secondary sort key. Dropping it here - the replay path keeps it - left two
-          // messages sharing a client timestamp in an order that changed on every reload.
-          ...(typeof m.serverTimestamp === 'number' ? { serverTimestamp: m.serverTimestamp } : {}),
-        }));
+        //
+        //    EACH ONE ON ITS AUTHOR'S SIGNATURE OR ITS RELAYER'S OWN WORD (`restoredAuthorship`).
+        //    A signed message is taken from the signed bytes - content and time - whatever the
+        //    relayer wrote beside them; an unsigned one from somebody else is kept and MARKED; a
+        //    forged one is refused.
+        const toAdd: Array<{
+          senderId: string;
+          content: string;
+          messageId: string;
+          timestamp: Date;
+          serverTimestamp?: number;
+          authorship?: RecordedAuthorship;
+          restoredUnverified?: boolean;
+        }> = [];
+        let unverified = 0;
+        for (const m of fresh ?? []) {
+          const verdict = await vetRestoredMessage(mlsService, convoKey, m, senderNorm, log);
+          if (verdict.kind === 'forged') {
+            refuseForged('message', m.id, verdict.why);
+            continue;
+          }
+          if (verdict.kind === 'unverified') unverified += 1;
+          toAdd.push({
+            senderId: m.senderId.toLowerCase(),
+            content: verdict.kind === 'verified' ? verdict.content : m.content,
+            messageId: m.id,
+            timestamp: new Date(verdict.kind === 'verified' ? verdict.timestamp : m.timestamp),
+            // The secondary sort key. Dropping it here - the replay path keeps it - left two
+            // messages sharing a client timestamp in an order that changed on every reload.
+            ...(typeof m.serverTimestamp === 'number'
+              ? { serverTimestamp: m.serverTimestamp }
+              : {}),
+            // Kept whenever it was not refused - also when it could not be checked NOW - so this
+            // device relays it on and a later reader can still prove it.
+            ...(m.authorship ? { authorship: m.authorship } : {}),
+            ...(verdict.kind === 'unverified' ? { restoredUnverified: true } : {}),
+          });
+        }
+        if (unverified > 0) {
+          log(
+            `[AUTHORSHIP] ${unverified} restored message(s) in ${convoKey.slice(0, 8)}… relayed by ${senderNorm.slice(0, 8)} carry no author proof - kept, marked unverified`
+          );
+        }
         if (toAdd.length > 0) {
           // NAMES ITS CONVERSATION AND ITS SENDER, like the pin line above it. This said
           // "from the inviting peer" and nothing else - wrong twice on a device rejoining forty
@@ -981,22 +1061,78 @@ export async function handleSystemEvent(
         // 2) Merge transport-carried state (reactions, delete/edit) onto the conversation
         //    messages - both the ones just added and any that already existed.
         const bundleById = new Map(msgs.map((m) => [m.id, m]));
+        // WHAT EACH ENTRY MAY CHANGE, decided before the merge because a signature check is
+        // asynchronous and the merge below is not. Only the shapes a third party could forge are
+        // vetted - reactions, a tombstone, an edited body - each against the rows held NOW.
+        const vetted = new Map<
+          string,
+          {
+            reactions?: MessageReaction[];
+            del?: RestoredDeleteVerdict;
+            edit?: RestoredEditVerdict;
+          }
+        >();
+        const held = conversations.get(convoKey);
+        const heldById = new Map((held?.messages ?? []).map((row) => [row.id, row]));
+        for (const b of msgs) {
+          const row = heldById.get(b.id);
+          if (!row) continue;
+          const target = { id: row.id, senderId: row.senderId ?? '', content: row.content };
+          const decision: {
+            reactions?: MessageReaction[];
+            del?: RestoredDeleteVerdict;
+            edit?: RestoredEditVerdict;
+          } = {};
+          if (Array.isArray(b.reactions) && b.reactions.length > 0) {
+            const outcome = await vetRestoredReactions(
+              mlsService,
+              convoKey,
+              row.id,
+              b.reactions,
+              senderNorm,
+              log
+            );
+            if (outcome.forged > 0) refuseForged('reaction', row.id, `${outcome.forged} forged`);
+            decision.reactions = outcome.kept;
+          }
+          if (b.isDeleted === true && !row.isDeleted) {
+            decision.del = await vetRestoredDelete(
+              mlsService,
+              convoKey,
+              target,
+              b,
+              senderNorm,
+              log
+            );
+            if (decision.del.kind === 'forged') refuseForged('delete', row.id, decision.del.why);
+          }
+          if (b.isEdited === true && !row.isDeleted) {
+            decision.edit = await vetRestoredEdit(mlsService, convoKey, target, b, senderNorm, log);
+            if (decision.edit.kind === 'forged') refuseForged('edit', row.id, decision.edit.why);
+          }
+          vetted.set(row.id, decision);
+        }
         const c = conversations.get(convoKey);
         if (c) {
           const changedIds = new Set<string>();
           // The rows whose BODY the author's own bundle replaced - written at rest below.
           const bodyEditedIds = new Set<string>();
+          // The proofs a merge took, written at rest with the change they prove.
+          const editProofs = new Map<string, RecordedAuthorship>();
+          const deleteProofs = new Map<string, RecordedAuthorship>();
           const nextMessages = c.messages.map((existing) => {
             const b = bundleById.get(existing.id);
             if (!b) return existing;
+            const decision = vetted.get(existing.id) ?? {};
             let next = existing;
             // reactions: merged pair by pair, larger timestamp wins. This used to seed from the
             // bundle ONLY when we held none, so a removal never reached a device holding a stale
-            // placement and the two never converged (D3).
-            if (Array.isArray(b.reactions) && b.reactions.length > 0) {
+            // placement and the two never converged (D3). Only the pairs vetted above: the
+            // relayer's own, or another member's with that member's signature.
+            if (decision.reactions && decision.reactions.length > 0) {
               const merged = mergeReactions(
                 messageReactions.get(existing.id) ?? next.reactions ?? [],
-                b.reactions
+                decision.reactions
               );
               if (merged) {
                 next = { ...next, reactions: merged };
@@ -1006,9 +1142,32 @@ export async function handleSystemEvent(
             }
             // A deletion REPLACES the body. Setting the flag and keeping the text put the original
             // plaintext of a deleted message straight back on disk, where the tombstone was
-            // supposed to be the only thing left of it (D5).
-            if (b.isDeleted === true && !next.isDeleted) {
+            // supposed to be the only thing left of it (D5). And only on the author's word: the
+            // relayer IS the author, or the author's signed deletion rides with it. Any member's
+            // bundle used to erase any member's message here.
+            if (b.isDeleted === true && !next.isDeleted && decision.del?.kind === 'apply') {
               next = { ...next, isDeleted: true, content: m.chat_system_message_deleted() };
+              if (decision.del.deleteProof) deleteProofs.set(existing.id, decision.del.deleteProof);
+              changedIds.add(existing.id);
+            }
+            // THE AUTHOR'S SIGNED EDIT, from whoever relays it: the body and the time come from the
+            // signed frame, ordered by `editSupersedes` exactly as the live path orders them.
+            if (
+              decision.edit?.kind === 'apply' &&
+              !next.isDeleted &&
+              editSupersedes(
+                { editedAt: decision.edit.editedAt, content: decision.edit.content },
+                next
+              )
+            ) {
+              next = {
+                ...next,
+                content: decision.edit.content,
+                isEdited: true,
+                editedAt: new Date(decision.edit.editedAt),
+              };
+              editProofs.set(existing.id, decision.edit.editProof);
+              bodyEditedIds.add(existing.id);
               changedIds.add(existing.id);
             }
             // THE EDITED BODY, AND ONLY FROM ITS AUTHOR. A device that missed an `edit_message`
@@ -1021,6 +1180,7 @@ export async function handleSystemEvent(
             // `editSupersedes` exactly as that path orders it. Every other case stays as narrow as
             // it was; anything wider needs the author's own signed edit on the wire.
             if (
+              decision.edit?.kind === 'relayer' &&
               b.isEdited === true &&
               !next.isDeleted &&
               typeof b.content === 'string' &&
@@ -1085,9 +1245,20 @@ export async function handleSystemEvent(
                     {
                       reactions: messageReactions.get(msg.id) ?? msg.reactions,
                       serverTimestamp: msg.serverTimestamp,
-                      ...(msg.isDeleted ? { isDeleted: true, content: msg.content } : {}),
+                      // A tombstone purges the original signed bytes with the body.
+                      ...(msg.isDeleted
+                        ? {
+                            isDeleted: true,
+                            content: msg.content,
+                            authorship: null,
+                            editProof: null,
+                            ...(deleteProofs.has(msg.id)
+                              ? { deleteProof: deleteProofs.get(msg.id) }
+                              : {}),
+                          }
+                        : {}),
                       ...(!msg.isDeleted && bodyEditedIds.has(msg.id)
-                        ? { content: msg.content }
+                        ? { content: msg.content, editProof: editProofs.get(msg.id) ?? null }
                         : {}),
                       ...(msg.isEdited ? { isEdited: true } : {}),
                       ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
