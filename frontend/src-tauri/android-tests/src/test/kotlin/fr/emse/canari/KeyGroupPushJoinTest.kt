@@ -42,6 +42,7 @@ class KeyGroupPushJoinTest {
     @Test
     fun `no answer, a 503 or an odd status claims nothing about membership`() {
         for (status in listOf(null, 503, 500, 429)) {
+            // (a 2xx with no body is the separate "unparsable" case below)
             val after = KeyGroupPushJoin.afterBase(status, null) as AfterBase.Stop
             assertTrue("status=$status", after.settlement is Settlement.Retryable)
         }
@@ -68,9 +69,40 @@ class KeyGroupPushJoinTest {
     }
 
     @Test
-    fun `a terminal native refusal is final, any other is retryable`() {
-        assertEquals(Settlement.Refused("prepare-sender-not-in-tree"), KeyGroupPushJoin.afterPrepareRefusal("sender-not-in-tree", true))
-        assertEquals(Settlement.Retryable("prepare-epoch-mismatch"), KeyGroupPushJoin.afterPrepareRefusal("epoch-mismatch", false))
+    fun `a terminal native refusal is final, an expensive one is deferred on its base, any other retryable`() {
+        assertEquals(Settlement.Refused("prepare-sender-not-in-tree"), KeyGroupPushJoin.afterPrepareRefusal("sender-not-in-tree", true, false, 4))
+        assertEquals(Settlement.Deferred("prepare-epoch-mismatch", 4), KeyGroupPushJoin.afterPrepareRefusal("epoch-mismatch", false, true, 4))
+        assertEquals(Settlement.Retryable("prepare-warm-process"), KeyGroupPushJoin.afterPrepareRefusal("warm-process", false, false, 4))
+    }
+
+    @Test
+    fun `a base a previous prepare failed on is not prepared again, another one is`() {
+        val base = KeyGroupPushJoin.Base("workspace", "ws1", "Z2k=", 4)
+        assertEquals(Settlement.Deferred("base-unchanged", 4), KeyGroupPushJoin.beforePrepare(base, 4, "salon"))
+        assertNull(KeyGroupPushJoin.beforePrepare(base, 3, "salon"))
+        assertNull(KeyGroupPushJoin.beforePrepare(base, null, "salon"))
+    }
+
+    @Test
+    fun `a salon key group must be the salon the push is for`() {
+        val base = KeyGroupPushJoin.Base("channel", "SALON-1", "Z2k=", 4)
+        assertNull(KeyGroupPushJoin.beforePrepare(base, null, "salon-1"))
+        assertEquals(Settlement.Refused("scope-mismatch"), KeyGroupPushJoin.beforePrepare(base, null, "salon-2"))
+    }
+
+    @Test
+    fun `the claim answer is read, and anything else is not granted`() {
+        assertEquals(KeyGroupPushJoin.ClaimAnswer.Granted(null), KeyGroupPushJoin.readClaim("granted"))
+        assertEquals(KeyGroupPushJoin.ClaimAnswer.Granted(7), KeyGroupPushJoin.readClaim("granted-unless-base:7"))
+        assertEquals(KeyGroupPushJoin.ClaimAnswer.NotGranted("attempted:refused"), KeyGroupPushJoin.readClaim("attempted:refused"))
+        assertEquals(KeyGroupPushJoin.ClaimAnswer.NotGranted("claim-unparsable"), KeyGroupPushJoin.readClaim("granted-unless-base:x"))
+    }
+
+    @Test
+    fun `a 2xx that could not be read is named, never taken for no answer`() {
+        val after = KeyGroupPushJoin.afterBase(201, null) as AfterBase.Stop
+        assertEquals(Settlement.Retryable("base-unparsable"), after.settlement)
+        assertEquals(AfterCommit.ABANDON to Settlement.Retryable("commit-answer-unparsable"), KeyGroupPushJoin.afterCommit(201, null, null))
     }
 
     @Test
@@ -90,5 +122,7 @@ class KeyGroupPushJoinTest {
         val base = KeyGroupPushJoin.Base("channel", "salon1", "Z2k=", 2)
         assertEquals(Settlement.Joined("channel", "salon1"), KeyGroupPushJoin.afterInstall(true, base))
         assertEquals(Settlement.Lost("install-refused"), KeyGroupPushJoin.afterInstall(false, base))
+        // The state lock was never taken: not an answer, so nothing is settled.
+        assertNull(KeyGroupPushJoin.afterInstall(null, base))
     }
 }

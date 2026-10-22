@@ -32,6 +32,29 @@ object KeyGroupPushJoin {
         data class Lost(val reason: String) : Settlement("lost")
         /** Nothing was decided; a later push may try again. */
         data class Retryable(val reason: String) : Settlement("retryable")
+        /**
+         * The expensive prepare failed on the base at [baseEpoch]: a later push tries again only
+         * once the server serves another base, never on every salon push.
+         */
+        data class Deferred(val reason: String, val baseEpoch: Long) : Settlement("deferred")
+    }
+
+    /** What the ledger answered a claim, as the native side spells it. */
+    sealed class ClaimAnswer {
+        /** Go on; [skipBaseAt] is the base epoch a previous prepare failed on, or null. */
+        data class Granted(val skipBaseAt: Long?) : ClaimAnswer()
+        /** Not attempted: an earlier attempt stands, the ledger is full, or it could not be read. */
+        data class NotGranted(val why: String) : ClaimAnswer()
+    }
+
+    /** Reads `nativeKeyGroupJoinClaim`'s answer. */
+    fun readClaim(answer: String): ClaimAnswer = when {
+        answer == "granted" -> ClaimAnswer.Granted(null)
+        answer.startsWith("granted-unless-base:") ->
+            answer.removePrefix("granted-unless-base:").toLongOrNull()
+                ?.let { ClaimAnswer.Granted(it) }
+                ?: ClaimAnswer.NotGranted("claim-unparsable")
+        else -> ClaimAnswer.NotGranted(answer)
     }
 
     /** The base, as the server served it to a device that may build on it. */
@@ -59,7 +82,9 @@ object KeyGroupPushJoin {
         // 403 is the server ANSWERING: not a key group, or not entitled. Nothing a push changes.
         if (status == 403) return AfterBase.Stop(Settlement.Refused("base-forbidden"))
         // A NestJS POST answers 201; any 2xx is the answer.
-        if (status !in 200..299 || body == null) return AfterBase.Stop(Settlement.Retryable("base-status-$status"))
+        if (status !in 200..299) return AfterBase.Stop(Settlement.Retryable("base-status-$status"))
+        // An answer came and could not be read: not "no answer", and not a refusal either.
+        if (body == null) return AfterBase.Stop(Settlement.Retryable("base-unparsable"))
         // ONE DOOR AT A TIME: somebody is writing this device's leaf; a second writer is the
         // duplicate-leaf race. The Welcome is processed by its own push.
         if (body.welcomeOwed) return AfterBase.Stop(Settlement.Retryable("welcome-owed"))
@@ -87,11 +112,37 @@ object KeyGroupPushJoin {
     )
 
     /**
-     * Reads a refused native prepare: a `terminal` refusal (an inconsistent push) is [Settlement.Refused],
-     * any other [Settlement.Retryable]. The token is the native side's, never prose.
+     * Whether a base may be prepared on. Two cheap checks before seconds of native work:
+     *
+     * - a base at the epoch a previous prepare already failed on fails the same way
+     *   ([Settlement.Deferred] again, unchanged);
+     * - a salon's key group must be THE SALON THE PUSH IS FOR: a base whose channel scope names
+     *   another salon is an inconsistent push ([Settlement.Refused]). A community-wide group cannot
+     *   be checked here - the push carries no community id - and is the server gate's to answer.
+     *
+     * @return null to go on, or the settlement that ends the attempt
      */
-    fun afterPrepareRefusal(reason: String, terminal: Boolean): Settlement =
-        if (terminal) Settlement.Refused("prepare-$reason") else Settlement.Retryable("prepare-$reason")
+    fun beforePrepare(base: Base, skipBaseAt: Long?, pushChannelId: String): Settlement? {
+        if (skipBaseAt != null && skipBaseAt == base.baseEpoch) {
+            return Settlement.Deferred("base-unchanged", base.baseEpoch)
+        }
+        if (base.scopeKind == "channel" && !base.scopeId.equals(pushChannelId, ignoreCase = true)) {
+            return Settlement.Refused("scope-mismatch")
+        }
+        return null
+    }
+
+    /**
+     * Reads a refused native prepare: `terminal` (an inconsistent push) is [Settlement.Refused],
+     * `deferrable` (failed after the expensive load, on this base) is [Settlement.Deferred] at
+     * [baseEpoch], any other [Settlement.Retryable]. The token is the native side's, never prose.
+     */
+    fun afterPrepareRefusal(reason: String, terminal: Boolean, deferrable: Boolean, baseEpoch: Long): Settlement =
+        when {
+            terminal -> Settlement.Refused("prepare-$reason")
+            deferrable -> Settlement.Deferred("prepare-$reason", baseEpoch)
+            else -> Settlement.Retryable("prepare-$reason")
+        }
 
     /** What the commit step decided. */
     enum class AfterCommit {
@@ -112,6 +163,9 @@ object KeyGroupPushJoin {
     fun afterCommit(status: Int?, accepted: Boolean?, reason: String?): Pair<AfterCommit, Settlement?> =
         when {
             status != null && status in 200..299 && accepted == true -> AfterCommit.INSTALL to null
+            // An answer that could not be read says nothing about the commit either way.
+            status != null && status in 200..299 && accepted == null ->
+                AfterCommit.ABANDON to Settlement.Retryable("commit-answer-unparsable")
             status != null && status in 200..299 ->
                 AfterCommit.ABANDON to Settlement.Retryable("commit-refused-${reason ?: "unspecified"}")
             status == 403 -> AfterCommit.ABANDON to Settlement.Refused("commit-forbidden")
@@ -120,7 +174,14 @@ object KeyGroupPushJoin {
             else -> AfterCommit.ABANDON to Settlement.Retryable("commit-status-$status")
         }
 
-    /** The settlement of an accepted commit once the install was tried. */
-    fun afterInstall(installed: Boolean, base: Base): Settlement =
-        if (installed) Settlement.Joined(base.scopeKind, base.scopeId) else Settlement.Lost("install-refused")
+    /**
+     * The settlement of an accepted commit once the install was tried: [installed] is null when the
+     * state lock was never taken, which is NOT an answer - the attempt stays unsettled (`attempting`
+     * in the ledger, never repeated from a push) and the app's start discards the staged state.
+     */
+    fun afterInstall(installed: Boolean?, base: Base): Settlement? = when (installed) {
+        true -> Settlement.Joined(base.scopeKind, base.scopeId)
+        false -> Settlement.Lost("install-refused")
+        null -> null
+    }
 }

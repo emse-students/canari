@@ -5023,19 +5023,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
 
         val claim = try {
-            nativeKeyGroupJoinClaim(filesDir, groupId)
+            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, groupId))
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}")
             return
         }
-        if (claim != "granted") {
-            Log.i(TAG, "joinKeyGroupFromPush: not attempted ($claim) group=$tag")
-            return
+        val skipBaseAt = when (claim) {
+            is KeyGroupPushJoin.ClaimAnswer.NotGranted -> {
+                Log.i(TAG, "joinKeyGroupFromPush: not attempted (${claim.why}) group=$tag")
+                return
+            }
+            is KeyGroupPushJoin.ClaimAnswer.Granted -> claim.skipBaseAt
         }
-        Log.i(TAG, "joinKeyGroupFromPush: claimed group=$tag -> reading its base")
+        Log.i(TAG, "joinKeyGroupFromPush: claimed group=$tag skipBaseAt=${skipBaseAt ?: "none"} -> reading its base")
 
         val settlement = try {
-            runKeyGroupJoin(ctx, secret, filesDir, groupId, frame, senderId)
+            runKeyGroupJoin(ctx, secret, filesDir, groupId, frame, senderId, data["channelId"] ?: "", skipBaseAt)
         } catch (e: Exception) {
             // Anything thrown before the install is a join that did not happen; the staged state,
             // if any, is deleted so it can never be installed later by mistake.
@@ -5043,22 +5046,33 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             nativeAbandonKeyGroupJoin(filesDir)
             KeyGroupPushJoin.Settlement.Retryable("exception")
         }
+        if (settlement == null) {
+            // The install never ran (the state lock was not taken): not an answer, so not settled.
+            // The claim stays `attempting`, which no push repeats; the app's start discards the stage.
+            Log.e(TAG, "joinKeyGroupFromPush: ACCEPTED and not installed - MlsStateLock not taken; left unsettled for the app group=$tag")
+            return
+        }
         val (a, b) = when (settlement) {
             is KeyGroupPushJoin.Settlement.Joined -> settlement.scopeKind to settlement.scopeId
             is KeyGroupPushJoin.Settlement.Refused -> settlement.reason to ""
             is KeyGroupPushJoin.Settlement.Lost -> settlement.reason to ""
             is KeyGroupPushJoin.Settlement.Retryable -> settlement.reason to ""
+            is KeyGroupPushJoin.Settlement.Deferred -> settlement.reason to settlement.baseEpoch.toString()
         }
         val written = nativeKeyGroupJoinSettle(filesDir, groupId, settlement.token, a, b)
         val level = when (settlement) {
             is KeyGroupPushJoin.Settlement.Joined -> Log.INFO
             is KeyGroupPushJoin.Settlement.Retryable -> Log.INFO
+            is KeyGroupPushJoin.Settlement.Deferred -> Log.INFO
             else -> Log.WARN
         }
         Log.println(level, TAG, "joinKeyGroupFromPush: settled ${settlement.token} ($a) group=$tag ledger=${if (written) "written" else "NOT written"}")
     }
 
-    /** Steps 2 to 5 of [joinKeyGroupFromPush]; returns how the attempt ended. */
+    /**
+     * Steps 2 to 5 of [joinKeyGroupFromPush]; returns how the attempt ended, or null when an
+     * ACCEPTED commit's install never ran because the state lock was not taken.
+     */
     private fun runKeyGroupJoin(
         ctx: PushContext,
         secret: String,
@@ -5066,7 +5080,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         frame: String,
         senderId: String,
-    ): KeyGroupPushJoin.Settlement {
+        pushChannelId: String,
+        skipBaseAt: Long?,
+    ): KeyGroupPushJoin.Settlement? {
         val tag = groupId.take(8)
         val baseRequest = JSONObject().apply {
             put("userId", ctx.userId)
@@ -5090,6 +5106,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             is KeyGroupPushJoin.AfterBase.Stop -> return after.settlement
             is KeyGroupPushJoin.AfterBase.Proceed -> after.base
         }
+        KeyGroupPushJoin.beforePrepare(base, skipBaseAt, pushChannelId)?.let { stop ->
+            Log.i(TAG, "runKeyGroupJoin: not prepared (${stop.token}) base epoch=${base.baseEpoch} scope=${base.scopeKind} group=$tag")
+            return stop
+        }
         Log.d(TAG, "runKeyGroupJoin: base epoch=${base.baseEpoch} scope=${base.scopeKind} group=$tag -> preparing")
 
         val prepared = withMlsStateLock(10) {
@@ -5106,6 +5126,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return KeyGroupPushJoin.afterPrepareRefusal(
                 prepared.optString("reason", "unspecified"),
                 prepared.optBoolean("terminal", false),
+                prepared.optBoolean("deferrable", false),
+                base.baseEpoch,
             )
         }
         Log.d(TAG, "runKeyGroupJoin: commit staged group=$tag -> submitting")
@@ -5130,8 +5152,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
         // ACCEPTED: the server now holds this device's leaf. The install is the one step whose
         // failure leaves a leaf with no secrets behind it - LOST, and the app's join replaces it.
-        val installed = withMlsStateLock(10) { nativeFinishKeyGroupJoin(filesDir) } ?: false
-        if (!installed) nativeAbandonKeyGroupJoin(filesDir)
+        // A lock not taken is NOT a refusal: null, and the attempt is left unsettled.
+        val installed = withMlsStateLock(60) { nativeFinishKeyGroupJoin(filesDir) }
+        if (installed == false) nativeAbandonKeyGroupJoin(filesDir)
         return KeyGroupPushJoin.afterInstall(installed, base)
     }
 
@@ -5157,8 +5180,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 conn.outputStream.use { it.write(body.toString().toByteArray()) }
                 val status = conn.responseCode
+                // A 2xx whose body is not JSON is still an ANSWER: the status is kept, the body is
+                // null, and [KeyGroupPushJoin] names it - never "no answer came back".
                 val json = if (status in 200..299) {
-                    JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    val text = conn.inputStream.bufferedReader().use { it.readText() }
+                    try {
+                        JSONObject(text)
+                    } catch (e: org.json.JSONException) {
+                        Log.w(TAG, "postPushSecretJson: $route HTTP $status with a body that is not JSON (${text.length} chars)")
+                        null
+                    }
                 } else {
                     null
                 }

@@ -3975,19 +3975,28 @@ A salon push whose seed frame is refused and whose key group is ABSENT from this
 
 | Step | Where | What it decides |
 | --- | --- | --- |
-| Claim | `mobile/key_group_join.rs` `claim` (`key_group_push_joins.json`, file-locked) | ONE attempt per group until the app starts. Written `attempting` before anything is fetched, so a crash mid-join is never retried from a push; capped at 64 entries |
+| Claim | `mobile/key_group_join.rs` `claim` (`key_group_push_joins.json`, file-locked) | ONE attempt per group until the app starts. Written `attempting` before anything is fetched, so a crash mid-join is never retried from a push; capped at 64 entries. A `deferred` entry is claimed again with the base epoch its prepare failed on |
 | Base | `POST /api/mls/push/key-group-base` (PushSecret) -> `readKeyGroupBaseForPush` | Key group only (403 otherwise); the same entitlement ask as `assertCommitterMayCommit` (403 not entitled, 503 unanswered); `welcomeOwed` when a Welcome is queued or the add lock is held (one door at a time); the scope; the base |
-| Prepare | `prepare_key_group_join` under `MlsStateLock` | The client checks below; builds the external commit and STAGES `digest(mls.bin) + sealed post-join state` - nothing is installed |
+| Before the prepare | `KeyGroupPushJoin.beforePrepare` | A base at the epoch a previous prepare failed on is not prepared again (`deferred`, unchanged); a salon-scoped base must name the push's own salon (`scope-mismatch`) |
+| Prepare | `prepare_key_group_join` under `MlsStateLock` | Refused in a WARM process (below); the client checks below; builds the external commit and STAGES `digest(mls.bin) + sealed post-join state` - nothing is installed. A refusal reached after the load or the build is `deferred` on that base, so a stuck base does not cost every salon push seconds of work |
 | Commit | `POST /api/mls/push/key-group-join` (PushSecret) -> `submitKeyGroupJoinForPush` | External commits into key groups only (400/403 otherwise), then `validateCommit` unchanged: entitlement, strict epoch, base republished |
-| Install | `finish_key_group_join` -> `background_write_mls_bin_if_unchanged` | Under the write lock: refused while the app is in the foreground, refused if `mls.bin` changed since the prepare read it (a compare-and-swap, never a lost update) |
-| Settle | `settle`; `KeyGroupPushJoin.kt` maps every answer | `joined` (with the server's scope), `refused` (the server ANSWERED, or the push was inconsistent), `lost` (accepted, not installed), `retryable` (no answer, 503, stale or missing base, Welcome owed) |
+| Install | `finish_key_group_join` -> `background_write_mls_bin_if_unchanged` | Under the write lock: refused while the app is in the foreground or warm, refused if `mls.bin` changed since the prepare read it (a compare-and-swap, never a lost update). A state lock not taken is not an answer: the attempt stays `attempting` and the app discards the stage |
+| Settle | `settle`; `KeyGroupPushJoin.kt` maps every answer | `joined` (with the server's scope), `refused` (the server ANSWERED, or the push was inconsistent), `lost` (accepted, not installed), `deferred` (failed on this base), `retryable` (no answer, an unreadable answer, 503, stale or missing base, Welcome owed) |
+
+**No install lands under a foreground manager - cold or warm.** The login reads `mls.bin` through
+`foreground_load_mls_bin`: it marks the foreground active and the process WARM, then reads under the
+write lock, so an install either landed before the read (and the manager holds it) or sees a mark
+and is refused. A warm process - an app backgrounded with its manager still in memory - refuses the
+join outright, before the build: at its resume a manager holding a ratchet advance is persisted over
+the file (`LiveAhead`), which would erase the install. The app's own load joins the group there.
 
 Only the server answering is a refusal; a transport failure, a 503 or an unexpected status claims
 nothing about membership. The app takes and clears the ledger at its next start
-(`take_key_group_push_joins` -> `adoptKeyGroupPushJoins`, right after `hydrateDistributionGroups`):
-a `joined` group the loaded MLS state really holds is registered (workspace scope, or a salon whose
-community this start already knows; otherwise noted as a key group until its community loads);
-every other entry is left to the community load, which joins the ordinary way.
+(`take_key_group_push_joins` -> `adoptKeyGroupPushJoins`, right after `hydrateDistributionGroups`,
+and again after each resume reload): a `joined` group the loaded MLS state really holds is registered
+(workspace scope, or a salon whose community this start already knows; otherwise noted as a key
+group until its community loads) - never over a mapping the registry already holds; every other
+entry is left to the community load, which joins the ordinary way.
 
 ### What the client checks before committing
 
@@ -3995,7 +4004,9 @@ every other entry is left to the community load, which joins the ordinary way.
 - the base names that group too (`base-group-mismatch`) and sits at the epoch the server states
   (`epoch-mismatch`);
 - the push's author holds a leaf in the base's tree (`sender-not-in-tree`);
-- this device holds no leaf of the group already (`already-held`).
+- this device holds no leaf of the group already (`already-held`);
+- a salon-scoped base names the salon the push is for (`scope-mismatch`). A community-scoped base
+  cannot be compared here - the push carries no community id - and is left to the server's gate.
 
 Entitlement itself is the server's gate, asked on both round trips: a phone that never loaded the
 community has no roster of its own to compare with.

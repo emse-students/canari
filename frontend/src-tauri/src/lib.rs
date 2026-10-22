@@ -923,7 +923,8 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
 // compare-and-swap install are `mobile::key_group_join`'s. Every string crosses as a JNI string,
 // and the state bytes as the one byte array the caller already read.
 
-/// Claims one push-join attempt at a key group: `granted`, `attempted:<state>`, `full`, or `error`.
+/// Claims one push-join attempt at a key group: `granted`, `granted-unless-base:<epoch>`,
+/// `attempted:<state>`, `full`, or `error`.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGroupJoinClaim<'a>(
@@ -941,6 +942,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
         let gid: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
         Ok(match claim(std::path::Path::new(&dir), &gid)? {
             Claim::Granted => "granted".to_string(),
+            Claim::GrantedUnlessBaseAt(epoch) => format!("granted-unless-base:{epoch}"),
             Claim::AlreadyAttempted(state) => format!("attempted:{state}"),
             Claim::LedgerFull => "full".to_string(),
         })
@@ -954,7 +956,8 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
 }
 
 /// Settles a push-join attempt. `state` is `joined` (`a` = scope kind, `b` = scope id), `refused`,
-/// `lost` or `retryable` (`a` = the reason token). Returns whether the ledger was written.
+/// `lost` or `retryable` (`a` = the reason token), or `deferred` (`a` = the reason, `b` = the base
+/// epoch). Returns whether the ledger was written.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGroupJoinSettle(
@@ -984,6 +987,12 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeKeyGr
             "refused" => Settlement::Refused(a),
             "lost" => Settlement::Lost(a),
             "retryable" => Settlement::Retryable(a),
+            "deferred" => Settlement::Deferred {
+                reason: a,
+                base_epoch: b
+                    .parse::<u64>()
+                    .map_err(|e| format!("deferred base epoch '{b}': {e}"))?,
+            },
             other => return Err(format!("unknown settlement '{other}'")),
         };
         settle(std::path::Path::new(&dir), &gid, &settlement)

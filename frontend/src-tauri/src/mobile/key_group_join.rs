@@ -13,7 +13,8 @@
 //! - **The ledger** (`key_group_push_joins.json`) - ONE JOIN PER DEVICE PER GROUP, from durable state
 //!   and never from a clock. An attempt is CLAIMED before anything is fetched and SETTLED after; a
 //!   group whose last attempt was refused, lost or never settled (the process died inside it) is not
-//!   attempted again from a push. The app clears the ledger at its next start ([`take_all`]), because
+//!   attempted again from a push. A group whose prepare - the expensive step - failed on a base is
+//!   DEFERRED with that base's epoch, and tried again only for a different base. The app clears the ledger at its next start ([`take_all`]), because
 //!   from then on its own join owns the group. A server sending pushes for many groups cannot make the
 //!   phone commit more than once per group, nor grow the file past [`LEDGER_CAPACITY`].
 //! - **The prepare** ([`prepare_key_group_join`]) - builds the external commit and the base it
@@ -33,7 +34,8 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::MlsManager;
 
 use crate::concurrency::{
-    background_write_mls_bin_if_unchanged, foreground_is_active, mls_bin_digest,
+    background_write_mls_bin_if_unchanged, foreground_is_active, live_manager_in_process,
+    mls_bin_digest,
 };
 
 /// The ledger of joins attempted from a push, in the app data directory.
@@ -51,6 +53,9 @@ pub const LEDGER_CAPACITY: usize = 64;
 pub enum Claim {
     /// No earlier attempt: the caller may go on, and the group is now `attempting`.
     Granted,
+    /// The last prepare failed on the base at this epoch: the caller may go on, and must not
+    /// prepare again on a base at the same epoch ([`Settlement::Deferred`]).
+    GrantedUnlessBaseAt(u64),
     /// An earlier attempt stands in the ledger, in this state - not attempted again from a push.
     AlreadyAttempted(String),
     /// The ledger names [`LEDGER_CAPACITY`] groups already.
@@ -74,6 +79,10 @@ pub enum Settlement {
     /// Nothing was decided (no base yet, a Welcome on its way, the gate unanswered, a race): the
     /// entry is removed, so a later push may try again.
     Retryable(String),
+    /// The prepare - seconds of loading and building on the push lane - failed on the base served
+    /// at `base_epoch`. Kept, so a later push prepares again only once the server serves ANOTHER
+    /// base: the same base would fail the same way, on every salon push.
+    Deferred { reason: String, base_epoch: u64 },
 }
 
 /// Runs `edit` on the ledger map under the ledger's OS lock, writing it back by rename when `edit`
@@ -130,6 +139,16 @@ pub fn claim(data_dir: &Path, group_id: &str) -> Result<Claim, String> {
                 .and_then(|s| s.as_str())
                 .unwrap_or("unreadable")
                 .to_string();
+            let deferred_at = entry.get("baseEpoch").and_then(|e| e.as_u64());
+            if let ("deferred", Some(epoch)) = (state.as_str(), deferred_at) {
+                // Claimed again, the deferral kept: a process dying in this attempt leaves it
+                // `attempting`, which no push repeats.
+                map.insert(
+                    group_id.to_string(),
+                    serde_json::json!({ "state": "attempting", "deferredAt": epoch }),
+                );
+                return (Claim::GrantedUnlessBaseAt(epoch), true);
+            }
             return (Claim::AlreadyAttempted(state), false);
         }
         if map.len() >= LEDGER_CAPACITY {
@@ -157,6 +176,9 @@ pub fn settle(data_dir: &Path, group_id: &str, settlement: &Settlement) -> Resul
                 serde_json::json!({ "state": "refused", "reason": reason })
             }
             Settlement::Lost(reason) => serde_json::json!({ "state": "lost", "reason": reason }),
+            Settlement::Deferred { reason, base_epoch } => {
+                serde_json::json!({ "state": "deferred", "reason": reason, "baseEpoch": base_epoch })
+            }
             Settlement::Retryable(_) => {
                 let removed = map.remove(group_id).is_some();
                 return ((), removed);
@@ -208,13 +230,27 @@ pub fn take_all(data_dir: &Path) -> Result<Vec<TakenJoin>, String> {
     Ok(taken)
 }
 
-/// Why a prepare stopped, as the token the Kotlin caller branches on - never prose.
-///
-/// `terminal` decides the ledger: a terminal refusal is [`Settlement::Refused`] (no later push can
-/// make it true), any other is [`Settlement::Retryable`].
-fn refusal(reason: &str, terminal: bool) -> serde_json::Value {
-    log::warn!("[KG_PUSH_JOIN] prepare refused reason={reason} terminal={terminal}");
-    serde_json::json!({ "ok": false, "reason": reason, "terminal": terminal })
+/// What a prepare refusal does to the ledger.
+#[derive(Clone, Copy)]
+enum Refusal {
+    /// Cheap, and about this moment (the foreground runs): [`Settlement::Retryable`].
+    Retry,
+    /// Reached after the expensive load or build, and about THIS base:
+    /// [`Settlement::Deferred`] until the server serves another one.
+    Defer,
+    /// No later push can make it true (an inconsistent push): [`Settlement::Refused`].
+    Terminal,
+}
+
+/// Why a prepare stopped, as the token the Kotlin caller branches on - never prose. `terminal` and
+/// `deferrable` carry the [`Refusal`] kind.
+fn refusal(reason: &str, kind: Refusal) -> serde_json::Value {
+    let terminal = matches!(kind, Refusal::Terminal);
+    let deferrable = matches!(kind, Refusal::Defer);
+    log::warn!(
+        "[KG_PUSH_JOIN] prepare refused reason={reason} terminal={terminal} deferrable={deferrable}"
+    );
+    serde_json::json!({ "ok": false, "reason": reason, "terminal": terminal, "deferrable": deferrable })
 }
 
 /// The inputs of one prepare, as the push service read them.
@@ -265,22 +301,27 @@ pub fn prepare_key_group_join(
     );
     // The foreground owns the state while it runs, and it joins every community's group on load.
     if foreground_is_active() {
-        return refusal("foreground-active", false);
+        return refusal("foreground-active", Refusal::Retry);
+    }
+    // A warm process: its manager would persist over the install at the next resume. The app's own
+    // load joins the group instead.
+    if live_manager_in_process() {
+        return refusal("warm-process", Refusal::Retry);
     }
     let Ok(frame) = STANDARD.decode(inputs.seed_frame_b64.trim()) else {
-        return refusal("frame-unreadable", true);
+        return refusal("frame-unreadable", Refusal::Terminal);
     };
     if MlsManager::parse_message_group_id(&frame).as_deref() != Some(gid) {
-        return refusal("frame-group-mismatch", true);
+        return refusal("frame-group-mismatch", Refusal::Terminal);
     }
     let Ok(group_info) = STANDARD.decode(inputs.group_info_b64.trim()) else {
-        return refusal("base-unreadable", false);
+        return refusal("base-unreadable", Refusal::Retry);
     };
     let key = match mls_core::crypto::decode_base64_to_32_bytes(key_b64.trim()) {
         Ok(k) => k,
         Err(e) => {
             log::error!("[KG_PUSH_JOIN] device key unreadable: {e}");
-            return refusal("state-unreadable", false);
+            return refusal("state-unreadable", Refusal::Defer);
         }
     };
     let mut manager =
@@ -288,21 +329,21 @@ pub fn prepare_key_group_join(
             Ok(m) => m,
             Err(e) => {
                 log::error!("[KG_PUSH_JOIN] mls.bin unreadable with the device key: {e}");
-                return refusal("state-unreadable", false);
+                return refusal("state-unreadable", Refusal::Defer);
             }
         };
     if manager.get_epoch(gid).is_ok() {
-        return refusal("already-held", false);
+        return refusal("already-held", Refusal::Defer);
     }
     let (built, commit) = match manager.join_by_external_commit(&group_info) {
         Ok(pair) => pair,
         Err(e) => {
             log::warn!("[KG_PUSH_JOIN] external commit not built for group={short}: {e}");
-            return refusal("base-unusable", false);
+            return refusal("base-unusable", Refusal::Defer);
         }
     };
     if built != gid {
-        return refusal("base-group-mismatch", true);
+        return refusal("base-group-mismatch", Refusal::Terminal);
     }
     let own = format!("{user_id}:{device_id}");
     let author_prefix = format!("{}:", inputs.frame_sender_id);
@@ -316,7 +357,7 @@ pub fn prepare_key_group_join(
         }
     };
     if inputs.frame_sender_id.is_empty() || !author_in_tree {
-        return refusal("sender-not-in-tree", true);
+        return refusal("sender-not-in-tree", Refusal::Terminal);
     }
     match manager.get_epoch(gid) {
         Ok(e) if e == inputs.base_epoch + 1 => {}
@@ -326,7 +367,7 @@ pub fn prepare_key_group_join(
                 other.ok(),
                 inputs.base_epoch + 1
             );
-            return refusal("epoch-mismatch", false);
+            return refusal("epoch-mismatch", Refusal::Defer);
         }
     }
     // The base for the epoch this commit creates travels with it (COMM-22): exported now, while
@@ -335,18 +376,18 @@ pub fn prepare_key_group_join(
         Ok(b) => b,
         Err(e) => {
             log::warn!("[KG_PUSH_JOIN] next base not exported for group={short}: {e}");
-            return refusal("base-unusable", false);
+            return refusal("base-unusable", Refusal::Defer);
         }
     };
     if let Err(e) = manager.merge_pending_commit_for(gid) {
         log::warn!("[KG_PUSH_JOIN] pending commit not merged for group={short}: {e}");
-        return refusal("base-unusable", false);
+        return refusal("base-unusable", Refusal::Defer);
     }
     let sealed = match manager.save_encrypted_with_key(&key) {
         Ok(s) => s,
         Err(e) => {
             log::error!("[KG_PUSH_JOIN] post-join state not sealed for group={short}: {e}");
-            return refusal("stage-failed", false);
+            return refusal("stage-failed", Refusal::Defer);
         }
     };
     let mut staged = Vec::with_capacity(32 + sealed.len());
@@ -358,7 +399,7 @@ pub fn prepare_key_group_join(
         .and_then(|()| std::fs::rename(&staged_tmp, &staged_path));
     if let Err(e) = written {
         log::error!("[KG_PUSH_JOIN] post-join state not staged for group={short}: {e}");
-        return refusal("stage-failed", false);
+        return refusal("stage-failed", Refusal::Defer);
     }
     log::info!(
         "[KG_PUSH_JOIN] prepared group={short} commit={}B nextBase={}B staged={}B",
@@ -410,7 +451,13 @@ pub fn abandon_key_group_join(data_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::concurrency::{mark_foreground_inactive, test_support::serialise};
+    use crate::concurrency::{forget_live_manager_for_test, test_support::serialise};
+
+    /// The cold, backgrounded process every join test starts from.
+    fn mark_foreground_inactive() {
+        crate::concurrency::mark_foreground_inactive();
+        forget_live_manager_for_test();
+    }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("canari-kgjoin-{name}-{}", std::process::id()));
@@ -552,6 +599,67 @@ mod tests {
         let answer = prepare(&f, &i);
         assert_eq!(answer["reason"], "epoch-mismatch");
         assert_eq!(answer["terminal"], false);
+        // Reached after the load and the build: deferred on this base, not retried on every push.
+        assert_eq!(answer["deferrable"], true);
+    }
+
+    /// A WARM PROCESS NEVER INSTALLS: its manager would persist over the join at the next resume
+    /// (`LiveAhead`). Refused before the build, and again at the install for a manager loaded while
+    /// the join was in flight.
+    #[test]
+    fn a_warm_process_is_refused_before_the_build_and_at_the_install() {
+        let _g = serialise();
+        mark_foreground_inactive();
+        let f = fixture("warm");
+        let gid = "kg-warm".to_string();
+        assert_eq!(prepare(&f, &inputs(&f, &gid, &f.sender))["ok"], true);
+
+        // The app is opened during the round trip, and then backgrounded again before the answer.
+        crate::concurrency::foreground_load_mls_bin(&f.dir.join("mls.bin")).unwrap();
+        crate::concurrency::mark_foreground_inactive();
+        let err = finish_key_group_join(&f.dir).unwrap_err();
+        assert!(err.contains("foreground manager is loaded"), "{err}");
+        assert_eq!(std::fs::read(f.dir.join("mls.bin")).unwrap(), f.state);
+
+        let answer = prepare(&f, &inputs(&f, &gid, &f.sender));
+        mark_foreground_inactive();
+        assert_eq!(answer["reason"], "warm-process");
+        assert_eq!(answer["deferrable"], false);
+        assert!(!f.dir.join(STAGED_STATE_FILE).exists());
+    }
+
+    /// THE LOGIN'S READ AND A BACKGROUND INSTALL, IN BOTH ORDERS. Installed first: the login reads
+    /// the joined state. Login first: the install is refused, so the manager built from the read can
+    /// never persist over it.
+    #[test]
+    fn a_login_read_either_sees_the_install_or_refuses_it() {
+        let _g = serialise();
+        mark_foreground_inactive();
+        let f = fixture("login");
+        let gid = "kg-login".to_string();
+        assert_eq!(prepare(&f, &inputs(&f, &gid, &f.sender))["ok"], true);
+        finish_key_group_join(&f.dir).expect("cold process installs");
+        let read = crate::concurrency::foreground_load_mls_bin(&f.dir.join("mls.bin"))
+            .unwrap()
+            .unwrap();
+        let loaded = MlsManager::load_with_key("phone-user", "dev-p", Some(read), &key()).unwrap();
+        assert!(
+            loaded.get_epoch(&gid).is_ok(),
+            "the login read the joined state"
+        );
+
+        mark_foreground_inactive();
+        let g = fixture("login2");
+        let gid2 = "kg-login2".to_string();
+        assert_eq!(prepare(&g, &inputs(&g, &gid2, &g.sender))["ok"], true);
+        let before = crate::concurrency::foreground_load_mls_bin(&g.dir.join("mls.bin"))
+            .unwrap()
+            .unwrap();
+        // Even with the heartbeat lapsed, the warm mark holds.
+        crate::concurrency::mark_foreground_inactive();
+        assert!(finish_key_group_join(&g.dir).is_err());
+        assert_eq!(std::fs::read(g.dir.join("mls.bin")).unwrap(), before);
+        mark_foreground_inactive();
     }
 
     #[test]
@@ -619,6 +727,32 @@ mod tests {
         .unwrap();
         assert_eq!(claim(&dir, "g2").unwrap(), Claim::Granted);
         settle(&dir, "g2", &Settlement::Refused("not-entitled".into())).unwrap();
+        // A prepare failed on the base at epoch 4: claimed again, with the epoch to skip.
+        assert_eq!(claim(&dir, "g3").unwrap(), Claim::Granted);
+        settle(
+            &dir,
+            "g3",
+            &Settlement::Deferred {
+                reason: "epoch-mismatch".into(),
+                base_epoch: 4,
+            },
+        )
+        .unwrap();
+        assert_eq!(claim(&dir, "g3").unwrap(), Claim::GrantedUnlessBaseAt(4));
+        // That claim is an attempt like any other: a second push meanwhile is not granted.
+        assert_eq!(
+            claim(&dir, "g3").unwrap(),
+            Claim::AlreadyAttempted("attempting".into())
+        );
+        settle(
+            &dir,
+            "g3",
+            &Settlement::Deferred {
+                reason: "base-unchanged".into(),
+                base_epoch: 4,
+            },
+        )
+        .unwrap();
         assert_eq!(
             claim(&dir, "g2").unwrap(),
             Claim::AlreadyAttempted("refused".into())
@@ -642,6 +776,13 @@ mod tests {
                     scope_kind: None,
                     scope_id: None,
                     reason: Some("not-entitled".into()),
+                },
+                TakenJoin {
+                    group_id: "g3".into(),
+                    state: "deferred".into(),
+                    scope_kind: None,
+                    scope_id: None,
+                    reason: Some("base-unchanged".into()),
                 },
             ]
         );

@@ -23,7 +23,10 @@ import { workspaceForChannel } from './runtime';
 /** One ledger entry, as `take_key_group_push_joins` returns it. */
 export interface KeyGroupPushJoin {
   groupId: string;
-  /** `joined`, `refused`, `lost`, or `attempting` (a push service killed mid-attempt). */
+  /**
+   * `joined`, `refused`, `lost`, `deferred` (refused for a base the push will not retry until it
+   * changes), or `attempting` (a push service killed mid-attempt, or an install that never ran).
+   */
   state: string;
   scopeKind?: string | null;
   scopeId?: string | null;
@@ -40,6 +43,9 @@ export interface KeyGroupPushJoinAdoption {
 /**
  * Registers every key group the push service JOINED, and logs every other entry.
  *
+ * Never over an existing mapping: a group the registry already knows keeps the scope the app gave
+ * it, whatever the ledger says.
+ *
  * A `joined` entry is believed only when the MLS state loaded at this start holds the group - the
  * ledger is a claim, the tree is the fact. A workspace scope is registered with its community; a
  * private salon's scope needs the community behind the channel, which this early in a start is
@@ -49,7 +55,10 @@ export interface KeyGroupPushJoinAdoption {
  * Split from the invoke so it is tested without a Tauri runtime.
  */
 export function adoptKeyGroupPushJoins(
-  mlsService: Pick<IMlsService, 'registerDistributionGroup' | 'noteDistributionGroup'>,
+  mlsService: Pick<
+    IMlsService,
+    'registerDistributionGroup' | 'noteDistributionGroup' | 'isDistributionGroup'
+  >,
   entries: KeyGroupPushJoin[],
   log: (line: string) => void,
   holds: (groupId: string) => boolean
@@ -70,6 +79,16 @@ export function adoptKeyGroupPushJoins(
       // ledger says joined and the tree says no. The tree wins; the community load repairs it.
       log(
         `[KEY_GROUP_PUSH_JOIN] ${short} joined from a push but NOT in the loaded state - ignored, the community load joins it`
+      );
+      result.ignored++;
+      continue;
+    }
+    if (mlsService.isDistributionGroup(entry.groupId)) {
+      // THE APP'S OWN MAPPING WINS. The registry restored above already names this group (or the
+      // server named it to this session); a scope the push service was TOLD is never written over
+      // one the app established itself.
+      log(
+        `[KEY_GROUP_PUSH_JOIN] ${short} joined from a push and already registered - the existing mapping kept`
       );
       result.ignored++;
       continue;

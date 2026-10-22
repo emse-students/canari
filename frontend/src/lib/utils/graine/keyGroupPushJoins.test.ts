@@ -13,7 +13,7 @@ import { adoptKeyGroupPushJoins, type KeyGroupPushJoin } from './keyGroupPushJoi
  * joins it the ordinary way.
  */
 describe('adoptKeyGroupPushJoins', () => {
-  const run = (entries: KeyGroupPushJoin[], held: string[]) => {
+  const run = (entries: KeyGroupPushJoin[], held: string[], known: string[] = []) => {
     const registered: Array<{ scope: unknown; groupId: string }> = [];
     const noted: string[] = [];
     const lines: string[] = [];
@@ -21,6 +21,7 @@ describe('adoptKeyGroupPushJoins', () => {
       {
         registerDistributionGroup: (scope, groupId) => registered.push({ scope, groupId }),
         noteDistributionGroup: (groupId) => noted.push(groupId),
+        isDistributionGroup: (groupId) => known.includes(groupId),
       },
       entries,
       (line) => lines.push(line),
@@ -68,18 +69,30 @@ describe('adoptKeyGroupPushJoins', () => {
     expect(r.lines.join('\n')).toContain('NOT in the loaded state');
   });
 
+  it('never overwrites a mapping the registry already holds', () => {
+    const r = run(
+      [{ groupId: 'g-known', state: 'joined', scopeKind: 'workspace', scopeId: 'ws-from-push' }],
+      ['g-known'],
+      ['g-known']
+    );
+    expect(r.registered).toEqual([]);
+    expect(r.noted).toEqual([]);
+    expect(r.lines.some((line) => line.includes('existing mapping kept'))).toBe(true);
+  });
+
   it('registers nothing for refused, lost or interrupted attempts, and says each', () => {
     const r = run(
       [
         { groupId: 'g-ref', state: 'refused', reason: 'base-forbidden' },
         { groupId: 'g-lost', state: 'lost', reason: 'install-refused' },
         { groupId: 'g-att', state: 'attempting' },
+        { groupId: 'g-def', state: 'deferred', reason: 'prepare-epoch-mismatch' },
       ],
-      ['g-ref', 'g-lost', 'g-att']
+      ['g-ref', 'g-lost', 'g-att', 'g-def']
     );
     expect(r.registered).toEqual([]);
     expect(r.noted).toEqual([]);
-    expect(r.result.ignored).toBe(3);
-    expect(r.lines).toHaveLength(3);
+    expect(r.result.ignored).toBe(4);
+    expect(r.lines).toHaveLength(4);
   });
 });
