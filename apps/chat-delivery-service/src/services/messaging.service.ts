@@ -1870,10 +1870,10 @@ export class MessagingService {
       traceId
     );
     const admitAnswer = await this.claimKeyGroupAdmits(groupId, body.admits, baseEpoch, traceId);
-    if (admitAnswer && 'epochMismatch' in admitAnswer) {
+    if (admitAnswer && !(admitAnswer instanceof Map)) {
       return { accepted: false, currentEpoch: admitAnswer.epochMismatch, reason: 'epoch_mismatch' };
     }
-    const admitClaims = admitAnswer;
+    const admitClaims = admitAnswer instanceof Map ? admitAnswer : null;
 
     this.logger.log(
       `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`

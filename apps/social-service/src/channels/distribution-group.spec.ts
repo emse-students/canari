@@ -768,7 +768,7 @@ describe('ChannelService - the community distribution group', () => {
 
         expect(memberRepo.delete).not.toHaveBeenCalled();
         expect(departures.decided.get(`g-1:${USER}:3`)).toBe('cancelled');
-        expect(calls().at(-1)).toBe(
+        expect(calls().slice(-1)[0]).toBe(
           `POST /api/internal/mls/distribution-groups/workspace/${WORKSPACE}/members/${USER}/departures/3/cancel`
         );
       });
@@ -787,7 +787,7 @@ describe('ChannelService - the community distribution group', () => {
           response: { code: 'DEPARTURE_SUPERSEDED' },
         });
         expect(memberRepo.delete).not.toHaveBeenCalled();
-        expect(calls().at(-1)).toContain('/departures/7/cancel');
+        expect(calls().slice(-1)[0]).toContain('/departures/7/cancel');
       });
 
       it('a settlement that cannot reach chat-delivery is logged and the first error still surfaces', async () => {
