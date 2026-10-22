@@ -705,3 +705,336 @@ fn a_repair_refuses_an_unpinned_key_and_stages_nothing() {
         "nothing to replace is not an add"
     );
 }
+
+/// THE DUPLICATE-KEY CASE IS THE SAME REPAIR. A device that kept its key but lost the group offers a
+/// package whose key a leaf already carries: the plain Add does not put it beside that leaf, and the
+/// replacement of the same identity is one commit that records no departure, live or committed.
+#[test]
+fn a_duplicate_key_is_repaired_in_one_commit_with_no_departure() {
+    let gid = "g-repair-duplicate";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut carol = device("carol", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = carol.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut carol, gid, &kp, "carol:dev1");
+    let kp = bob.generate_key_package().unwrap();
+    let bob_in = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    carol.process_incoming_message(gid, &bob_in).unwrap();
+    let epoch = alice.get_epoch(gid).unwrap();
+
+    bob.forget_group(gid, 0);
+    let kp = bob.generate_key_package().unwrap();
+    match alice.add_members_bulk_with_base(gid, &[&kp], &["bob:dev1"]) {
+        Err(_) => {}
+        Ok(((_, _, added, _), _)) => assert!(added.is_empty(), "never beside the live leaf"),
+    }
+    assert_eq!(alice.get_epoch(gid).unwrap(), epoch, "nothing merged");
+    alice.clear_pending_commit_for(gid).expect("clear");
+
+    let (repair, welcome, _base) = alice
+        .replace_device_with_base(gid, "bob:dev1", &kp)
+        .expect("the same identity is replaced in one commit");
+    alice.merge_pending_commit_for(gid).expect("merge");
+    let tree = alice.export_ratchet_tree_for(gid).expect("tree");
+    bob.process_welcome(&welcome, Some(&tree))
+        .expect("the Welcome reaches the re-added device");
+    carol.process_incoming_message(gid, &repair).unwrap();
+    assert!(alice.removal_epochs(gid, "bob").is_empty(), "committer");
+    assert!(carol.removal_epochs(gid, "bob").is_empty(), "live");
+}
+
+/// ONE CANONICAL IDENTITY FOR THE PINS AND THE BINDING. The binding reads the user half without
+/// case, so the pin store and every lookup must too: a spelling the binding accepts as the pinned
+/// device IS that device, and another key under it is a changed key - for an Add, for a replace, and
+/// for a member merging somebody else's commit.
+#[test]
+fn a_spelling_of_a_pinned_device_is_that_device_everywhere() {
+    let gid = "g-canonical";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut carol = device("carol", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = carol.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut carol, gid, &kp, "carol:dev1");
+    let kp = bob.generate_key_package().unwrap();
+    let bob_in = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    carol.process_incoming_message(gid, &bob_in).unwrap();
+    carol.take_device_events();
+
+    let mut other = device("BOB", "dev1");
+    let kp = other.generate_key_package().unwrap();
+    assert_eq!(
+        alice.vet_key_package(&kp, "bob:dev1"),
+        "signature-key-changed"
+    );
+    let epoch = alice.get_epoch(gid).unwrap();
+    assert!(
+        alice
+            .add_members_bulk_with_base(gid, &[&kp], &["bob:dev1"])
+            .is_err(),
+        "an Add of that package alone adds nobody"
+    );
+    assert_eq!(alice.get_epoch(gid).unwrap(), epoch);
+    assert!(
+        alice
+            .replace_device_with_base(gid, "bob:dev1", &kp)
+            .is_err()
+    );
+
+    // Admitted by a commit carol only merges: it is a key change for her, never a first sight.
+    let info = alice.export_group_info(gid).expect("group info");
+    let (_g, join) = other.join_by_external_commit(&info).expect("join");
+    carol.process_incoming_message(gid, &join).unwrap();
+    let events = carol.take_device_events();
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].trust, LeafTrust::KeyChanged);
+}
+
+/// A PERSISTED PIN IS NEVER MERGED INTO ANOTHER: every pin this code writes is keyed canonically, so
+/// a record under another spelling is not this device's pin and lends it no key - a key conflict
+/// between two records must stay a conflict, never become trust.
+#[test]
+fn a_persisted_pin_under_another_spelling_lends_its_key_to_nobody() {
+    let gid = "g-no-merge-at-load";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+
+    // The impostor's key, read from a group that pinned it.
+    let impostor = device("bob", "dev1");
+    let impostor_kp = impostor.generate_key_package().unwrap();
+    let mut observer = device("zed", "dev1");
+    observer.create_group("g-observer".into()).expect("create");
+    observer
+        .add_members_bulk_with_base("g-observer", &[&impostor_kp], &["bob:dev1"])
+        .expect("stage");
+    observer
+        .merge_pending_commit_for("g-observer")
+        .expect("merge");
+    let impostor_key = observer
+        .pinned_signature_keys("bob", "dev1")
+        .expect("pinned")
+        .keys;
+
+    let mut state: PersistedState = from_reader(alice.save_state().unwrap().as_slice()).unwrap();
+    state
+        .device_pins
+        .push(mls_core::device_trust::PersistedPin {
+            identity: "BOB:dev1".into(),
+            keys: impostor_key,
+            anchored: true,
+            reaffirmations: 0,
+        });
+    let mut bytes = Vec::new();
+    into_writer(&state, &mut bytes).unwrap();
+    let reloaded = MlsManager::load_or_create("alice", "dev1", Some(bytes)).expect("reload");
+    assert_eq!(
+        reloaded.vet_key_package(&impostor_kp, "bob:dev1"),
+        "signature-key-changed"
+    );
+}
+
+/// A DUPLICATE KEY IS ATTRIBUTED FROM THE TREE: the leaf carrying a KeyPackage's signature key is
+/// named, so a caller never assumes the duplicate is the identity it asked for.
+#[test]
+fn the_leaf_holding_a_key_packages_key_is_named() {
+    let gid = "g-key-holder";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+
+    let again = bob.generate_key_package().unwrap();
+    assert_eq!(
+        alice.leaf_holding_key_of(gid, &again).unwrap().as_deref(),
+        Some("bob:dev1")
+    );
+    let stranger = device("carol", "dev1").generate_key_package().unwrap();
+    assert_eq!(alice.leaf_holding_key_of(gid, &stranger).unwrap(), None);
+    assert!(alice.leaf_holding_key_of(gid, b"not a package").is_err());
+}
+
+/// A GRAINE MINTER IS FOUND IN THE TREE UNDER ANY SPELLING THE BINDING ACCEPTS: a seed naming a
+/// device that IS a leaf is judged against that leaf's key, never against the server's published
+/// keys - which a different spelling missing the leaf would fall back to.
+#[test]
+fn a_spelling_of_a_device_in_the_tree_finds_its_leaf_key() {
+    let gid = "g-canonical-minter";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+
+    let leaf = alice
+        .member_signature_key(gid, "bob:dev1")
+        .unwrap()
+        .expect("bob is a leaf");
+    assert_eq!(
+        alice.member_signature_key(gid, "BOB:dev1").unwrap(),
+        Some(leaf)
+    );
+    assert_eq!(
+        alice.member_signature_key(gid, "bob:DEV1").unwrap(),
+        None,
+        "the device half is exact"
+    );
+}
+
+/// A LEAF WHOSE CREDENTIAL SPELLS THE USER HALF IN CAPITALS IS REMOVED by the roster's lower-cased
+/// user id, and by its device identity - the removal paths match as the binding admits.
+#[test]
+fn a_leaf_spelt_in_capitals_is_removed_by_the_canonical_ids() {
+    for by_user in [true, false] {
+        let gid = if by_user { "g-rm-user" } else { "g-rm-device" };
+        let mut alice = device("alice", "dev1");
+        let mut bob = device("BOB", "dev1");
+        alice.create_group(gid.into()).expect("create");
+        let kp = bob.generate_key_package().unwrap();
+        add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+        let staged = if by_user {
+            alice.remove_members_for_users(gid, &["bob"])
+        } else {
+            alice.remove_members_for_devices(gid, &["bob:dev1"])
+        };
+        staged.expect("the capitalised leaf is the device the roster names");
+        alice.merge_pending_commit_for(gid).expect("merge");
+        assert_eq!(alice.member_identities(gid).unwrap(), vec!["alice:dev1"]);
+    }
+}
+
+/// ONE BATCH MAY NOT ADD TWO LEAVES FOR ONE CANONICAL DEVICE: the dedupe reads identities as the
+/// binding does.
+#[test]
+fn one_batch_adds_one_leaf_per_canonical_device() {
+    let gid = "g-batch-dedupe";
+    let mut alice = device("alice", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let one = device("carol", "dev1").generate_key_package().unwrap();
+    let two = device("CAROL", "dev1").generate_key_package().unwrap();
+    let ((_, _, added, _), _) = alice
+        .add_members_bulk_with_base(gid, &[&one, &two], &["carol:dev1", "carol:dev1"])
+        .expect("stage");
+    assert_eq!(added, vec![0]);
+}
+
+/// A COMMIT ON A GROUP WHOSE EXTERNAL JOIN IS STILL PENDING IS NOT MERGED, so nothing is seeded from
+/// the tree the server served. Both commits were built on the same epoch and the joiner's group
+/// already stands at the epoch its own join creates, so the member's commit is dropped as a past
+/// handshake (`Ok(None)`), not refused with an error.
+#[test]
+fn a_members_commit_before_the_join_merges_is_not_merged_and_pins_nothing() {
+    let gid = "g-ext-pending-commit";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let info = alice.export_group_info(gid).expect("group info");
+
+    let mut carol = device("carol", "dev1");
+    carol.join_by_external_commit(&info).expect("stage join");
+    let commit = remove(&mut alice, gid, "bob:dev1");
+    let epoch = carol.get_epoch(gid).unwrap();
+    let outcome = carol.process_incoming_message(gid, &commit);
+    assert!(
+        matches!(outcome, Ok(None)),
+        "dropped as a past handshake: {outcome:?}"
+    );
+    assert_eq!(carol.get_epoch(gid).unwrap(), epoch, "nothing merged");
+    assert_eq!(
+        carol.vet_key_package(
+            &device("bob", "dev1").generate_key_package().unwrap(),
+            "bob:dev1"
+        ),
+        "first-sight",
+        "nothing pinned from the served tree"
+    );
+}
+
+/// `alice` holding `gid` with bob in it, reloaded from a state with NO pins and a commit staged -
+/// the group the load does not seed.
+fn unpinned_with_a_staged_commit(gid: &str) -> (MlsManager, MlsManager) {
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let carol = device("carol", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let kp = carol.generate_key_package().unwrap();
+    alice
+        .add_members_bulk_with_base(gid, &[&kp], &["carol:dev1"])
+        .expect("stage");
+    let mut state: PersistedState = from_reader(alice.save_state().unwrap().as_slice()).unwrap();
+    state.device_pins.clear();
+    let mut bytes = Vec::new();
+    into_writer(&state, &mut bytes).unwrap();
+    let reloaded = MlsManager::load_or_create("alice", "dev1", Some(bytes)).expect("reload");
+    assert_eq!(
+        reloaded.vet_key_package(
+            &device("bob", "dev1").generate_key_package().unwrap(),
+            "bob:dev1"
+        ),
+        "first-sight",
+        "the load did not seed a group with a staged commit"
+    );
+    (reloaded, bob)
+}
+
+/// A REPLACE PROVES ITSELF WITH THE TREE, NOT ONLY WITH A PIN: the new key must be the one the leaf
+/// it removes carries, so a device with no pin for it still refuses another key.
+#[test]
+fn a_replace_requires_the_key_of_the_leaf_it_removes_even_without_a_pin() {
+    let gid = "g-replace-unpinned";
+    let (mut alice, bob) = unpinned_with_a_staged_commit(gid);
+    alice.clear_pending_commit_for(gid).expect("clear");
+    let epoch = alice.get_epoch(gid).unwrap();
+
+    let other = device("bob", "dev1");
+    assert!(
+        alice
+            .replace_device_with_base(gid, "bob:dev1", &other.generate_key_package().unwrap())
+            .is_err(),
+        "another key than the leaf's is no repair"
+    );
+    assert_eq!(alice.get_epoch(gid).unwrap(), epoch);
+    alice
+        .replace_device_with_base(gid, "bob:dev1", &bob.generate_key_package().unwrap())
+        .expect("the leaf's own key is");
+}
+
+/// A GROUP THE LOAD DID NOT SEED IS SEEDED ONCE ITS COMMIT MERGES: the tree it had is one this
+/// device accepted, so its members are pinned from then on.
+#[test]
+fn a_group_left_unseeded_by_a_staged_commit_is_seeded_at_its_merge() {
+    let gid = "g-seed-at-merge";
+    let (mut alice, _bob) = unpinned_with_a_staged_commit(gid);
+    alice.merge_pending_commit_for(gid).expect("merge");
+    assert_eq!(
+        alice.vet_key_package(
+            &device("bob", "dev1").generate_key_package().unwrap(),
+            "bob:dev1"
+        ),
+        "signature-key-changed"
+    );
+}
+
+/// AND WHEN ITS STAGED COMMIT IS REFUSED: the tree it falls back to is the one this device held
+/// before staging, so it is seeded then - not left unpinned until the next load.
+#[test]
+fn a_group_left_unseeded_by_a_staged_commit_is_seeded_when_the_commit_is_cleared() {
+    let gid = "g-seed-at-clear";
+    let (mut alice, _bob) = unpinned_with_a_staged_commit(gid);
+    alice.clear_pending_commit_for(gid).expect("clear");
+    assert_eq!(
+        alice.vet_key_package(
+            &device("bob", "dev1").generate_key_package().unwrap(),
+            "bob:dev1"
+        ),
+        "signature-key-changed"
+    );
+}

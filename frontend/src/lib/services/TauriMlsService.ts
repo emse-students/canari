@@ -1551,6 +1551,14 @@ export class TauriMlsService extends BaseMlsService {
     return key ? new Uint8Array(key) : null;
   }
 
+  /** The leaf carrying a package's signature key, or null (`feuille_portant_cle`). */
+  async leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null> {
+    return invoke<string | null>('feuille_portant_cle', {
+      groupId,
+      keyPackage: Array.from(keyPackage),
+    });
+  }
+
   /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */
   async signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array> {
     return new Uint8Array(

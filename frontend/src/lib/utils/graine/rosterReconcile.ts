@@ -3,7 +3,7 @@ import { scopeLabel, type DistributionScope } from '$lib/mls-client/distribution
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { observeAdmissionState } from './admissionGate';
 
 /**
@@ -51,8 +51,10 @@ export function diffRosterAgainstTree(input: {
   rosterUserIds: string[];
   selfUserId: string;
 }): RosterDiff {
-  const roster = new Set(input.rosterUserIds.map((id) => id.toLowerCase()));
-  const self = input.selfUserId.toLowerCase();
+  // The SAME canonical form as the leaf's user half (`userIdOfLeaf`): two lowercasings that
+  // disagreed on one id would read a member as a stray, and this diff decides a removal.
+  const roster = new Set(input.rosterUserIds.map(canonicalUserId));
+  const self = canonicalUserId(input.selfUserId);
 
   const strays = new Set<string>();
   let keptLeafCount = 0;

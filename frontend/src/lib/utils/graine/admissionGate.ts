@@ -8,7 +8,7 @@ import {
   type AdmissionPlace,
   type AdmissionVoucher,
 } from '$lib/crypto/graineAdmission';
-import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { toBase64 } from '$lib/utils/hex';
 import { ACCOUNT_KEY } from '../accountLocalKeys';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
@@ -181,8 +181,8 @@ export async function admissionProven(
   subject: string
 ): Promise<boolean> {
   const { userId: self, mlsService } = requireGraineRuntime('cannot check an admission');
-  const who = subject.toLowerCase();
-  if (who === self) return true;
+  const who = canonicalUserId(subject);
+  if (who === canonicalUserId(self)) return true;
 
   const roster = rosterByUser(await channels().listWorkspaceMembers(workspaceId));
   if (!roster.has(who)) {
@@ -279,9 +279,9 @@ async function verifyRosterVouchers(
   while (moved && pending.size > 0) {
     moved = false;
     for (const [user, { voucher, encoded }] of pending) {
-      const signer = voucher.signer.userId.toLowerCase();
+      const signer = canonicalUserId(voucher.signer.userId);
       if (
-        signer !== self &&
+        signer !== canonicalUserId(self) &&
         !admittedAt(community, await removals(signer), signer, voucher.place, true)
       ) {
         continue;
@@ -348,7 +348,7 @@ function admittedAt(
 function rosterByUser(rows: readonly ChannelMemberDto[]): Map<string, RosterRow> {
   const out = new Map<string, RosterRow>();
   for (const row of rows) {
-    const user = String(row.userId ?? '').toLowerCase();
+    const user = canonicalUserId(String(row.userId ?? ''));
     const joinedAt = Date.parse(String(row.joinedAt ?? ''));
     if (!user || !Number.isFinite(joinedAt)) continue;
     out.set(user, {
@@ -378,9 +378,9 @@ function readVoucher(workspaceId: string, user: string, encoded: string): Admiss
   const why =
     voucher.workspaceId !== workspaceId
       ? 'it admits to another community'
-      : voucher.subjectUserId.toLowerCase() !== user
+      : canonicalUserId(voucher.subjectUserId) !== user
         ? 'it admits somebody else'
-        : voucher.signer.userId.toLowerCase() === user
+        : canonicalUserId(voucher.signer.userId) === user
           ? 'it is signed by the member it admits'
           : null;
   if (why) {
@@ -428,11 +428,11 @@ async function signaturesHold(
   voucher: AdmissionVoucher,
   encoded: string
 ): Promise<boolean> {
-  const signer = `${voucher.signer.userId.toLowerCase()}:${voucher.signer.deviceId}`;
+  const signer = `${canonicalUserId(voucher.signer.userId)}:${voucher.signer.deviceId}`;
   const keys = await signerKeys(
     mls,
     keyGroupId,
-    voucher.signer.userId.toLowerCase(),
+    canonicalUserId(voucher.signer.userId),
     voucher.signer.deviceId
   );
   if (!keys || keys.length === 0) {

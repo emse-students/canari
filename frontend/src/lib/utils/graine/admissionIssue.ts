@@ -9,6 +9,7 @@ import {
 import type { AdmissionPlace } from '$lib/crypto/graineAdmission';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { platformGraineSignatureEngine } from '$lib/mls-client/platformGraineSignatureEngine';
 import { requireGraineRuntime } from './runtime';
 
@@ -52,7 +53,7 @@ export async function signDirectAdmission(
   const { mlsService, userId } = requireGraineRuntime('cannot sign an admission');
   const statement = {
     workspaceId,
-    subjectUserId: subjectUserId.toLowerCase(),
+    subjectUserId: canonicalUserId(subjectUserId),
     signer: { userId, deviceId: mlsService.getDeviceId() },
     place: admissionPlaceNow(mlsService, workspaceId),
     issuedAt: Date.now(),
@@ -107,7 +108,7 @@ export async function voucherFromInviteFragment(fragment: string, userId: string
   const grant = decodeInviteLinkGrant(fragment);
   const voucher = await redeemInviteLinkGrant(
     grant,
-    userId.toLowerCase(),
+    canonicalUserId(userId),
     platformGraineSignatureEngine()
   );
   console.info(

@@ -7,6 +7,11 @@ import {
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import type { DevicePin } from '$lib/mls-client/deviceTrust';
+import {
+  canonicalIdentity,
+  canonicalUserId,
+  sameDeviceIdentity,
+} from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
 import { admissionProven, observeAdmissionState } from './admissionGate';
 
@@ -40,6 +45,8 @@ function member(
 const CAROL_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 100 + i);
 const FORGED_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 7 + i);
 const MALLORY_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 150 + i);
+const ALICE_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 60 + i);
+let ALICE_PK: Uint8Array;
 let CAROL_PK: Uint8Array;
 let FORGED_PK: Uint8Array;
 let MALLORY_PK: Uint8Array;
@@ -69,6 +76,7 @@ beforeAll(async () => {
   CAROL_PK = await ed25519PublicKeyOf(CAROL_SECRET);
   FORGED_PK = await ed25519PublicKeyOf(FORGED_SECRET);
   MALLORY_PK = await ed25519PublicKeyOf(MALLORY_SECRET);
+  ALICE_PK = await ed25519PublicKeyOf(ALICE_SECRET);
 });
 
 beforeEach(() => {
@@ -83,26 +91,35 @@ beforeEach(() => {
   pins.clear();
   pins.set('carol:dev-c', pin([CAROL_PK]));
   departures.clear();
+  installRuntime('alice');
+  vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+});
+
+/** This device's Graine runtime, signed in as `userId` - spelled as the session spells it. */
+function installRuntime(userId: string) {
   setGraineRuntime({
     storage: {} as IStorage,
     deviceKey: () => 'device-key',
-    userId: 'alice',
+    userId,
     mlsService: {
       getGroupMemberIdentities: async () => [...leaves],
-      memberSignatureKey: async (_g: string, identity: string) =>
-        leaves.includes(identity) ? (keys.get(identity) ?? null) : null,
+      // As Rust matches them: one canonical identity (`identity_names`, `pin_naming`).
+      memberSignatureKey: async (_g: string, identity: string) => {
+        const leaf = leaves.find((l) => sameDeviceIdentity(l, identity));
+        return leaf ? (keys.get(leaf) ?? null) : null;
+      },
       getEpoch: () => epoch,
-      pinnedSignatureKeys: async (userId: string, deviceId: string) =>
-        pins.get(`${userId}:${deviceId}`) ?? null,
-      removalEpochs: async (_g: string, userId: string) => departures.get(userId) ?? [],
+      pinnedSignatureKeys: async (user: string, deviceId: string) =>
+        pins.get(canonicalIdentity(`${user}:${deviceId}`) ?? '') ?? null,
+      removalEpochs: async (_g: string, user: string) =>
+        departures.get(canonicalUserId(user)) ?? [],
       fetchDeviceSignatureKeys: async () => published,
       graineSignatureEngine: () => webCryptoEngine,
       getDeviceId: () => 'alice-laptop',
     } as never,
   });
-  vi.spyOn(console, 'info').mockImplementation(() => undefined);
-  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-});
+}
 
 afterEach(() => {
   setGraineRuntime(null);
@@ -341,5 +358,54 @@ describe('a signer counts as of signing, not as of now', () => {
     ]);
 
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(false);
+  });
+});
+
+describe('identities compare in their ONE canonical form (leafIdentity.ts), as Rust compares them', () => {
+  it('roots a member whose id carries a non-ASCII capital, as the tree spells it', async () => {
+    // canonicalUserId lowercases ASCII only (Rust `to_ascii_lowercase`): 'ÉLODIE' is 'Élodie' on
+    // both sides, never the 'élodie' a plain toLowerCase would make of it.
+    keys.set('ÉLODIE:dev-e', new Uint8Array(32).fill(5));
+    leaves.push('ÉLODIE:dev-e');
+    listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol'), member('ÉLODIE')]);
+
+    expect(await admissionProven('ws-1', KG, 'ÉLODIE')).toBe(true);
+  });
+
+  it('counts a voucher this device signed, whatever case the session spells its user in', async () => {
+    // This device is always admitted; its session spells the user 'ALICE', whose own row is late.
+    installRuntime('ALICE');
+    keys.set('alice:alice-laptop', ALICE_PK);
+    leaves = ['alice:alice-laptop', 'newcomer:dev-n'];
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice', AFTER_THE_PROOF),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher(
+          'newcomer',
+          { userId: 'ALICE', deviceId: 'alice-laptop' },
+          ALICE_SECRET
+        ),
+      }),
+    ]);
+
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
+  });
+
+  it('finds a signer in the tree when the voucher spells its user in another case', async () => {
+    pins.clear();
+    leaves.push('newcomer:dev-n');
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher(
+          'NewComer',
+          { userId: 'Carol', deviceId: 'dev-c' },
+          CAROL_SECRET
+        ),
+      }),
+    ]);
+
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
   });
 });

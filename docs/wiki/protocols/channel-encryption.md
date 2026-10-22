@@ -3759,7 +3759,9 @@ pins, shared with every other caller that needs a device key it can stand behind
 verifies under any of them counts. Never a key the server publishes on its own: a signer device
 that is neither in the tree nor pinned is unproven, and one that has since left the tree keeps
 verifying under its pin. A pin re-learned after a prune (`anchored: false`) is weaker evidence, and a
-signer verified only under one is unproven: the newcomer reads from arrival on.
+signer verified only under one is unproven: the newcomer reads from arrival on. Every user id the
+gate and the voucher compare - roster rows, leaves, subject, signer - is in the one canonical form of
+`leafIdentity.ts` (`canonicalUserId`, Rust's `to_ascii_lowercase`), never a plain `toLowerCase`.
 
 A voucher is bound to a PLACE: the key group its signer held and that group's epoch. It admits when
 its signer was admitted AT THAT PLACE - a root, or admitted by an earlier voucher - with no removal of

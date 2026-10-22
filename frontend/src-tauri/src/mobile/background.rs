@@ -10,6 +10,7 @@ use std::path::Path;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::crypto::decode_base64_to_32_bytes;
+use mls_core::device_trust::{canonical_user_id, canonical_user_of};
 use mls_core::MlsManager;
 
 use super::proto_fields::extract_full_message_info;
@@ -236,7 +237,7 @@ pub fn open_graine_push(
     let Some((minter, signing_pk_b64)) = &held.v2 else {
         return open_graine_push_v1(&seed, push, &nonce, &ciphertext, language);
     };
-    if !push.sender_id.eq_ignore_ascii_case(minter) {
+    if canonical_user_id(push.sender_id) != canonical_user_id(minter) {
         log::error!(
             "[GraineBG] REFUSED: push names {} as the author of session {}, minted by {minter}",
             push.sender_id,
@@ -662,11 +663,10 @@ fn classify_verified(
     app: mls_core::IncomingApplication,
     language: PushLanguage,
 ) -> serde_json::Value {
-    let verified_user = app
-        .sender_identity
-        .as_deref()
-        .map(|identity| identity.split_once(':').map_or(identity, |(user, _)| user));
-    if !verified_user.is_some_and(|user| user.eq_ignore_ascii_case(envelope_sender)) {
+    // The user half of the ONE canonical identity the binding reads; a credential that is not a
+    // well-formed `user:device` names no user and is refused like a mismatch.
+    let verified_user = app.sender_identity.as_deref().and_then(canonical_user_of);
+    if verified_user != Some(canonical_user_id(envelope_sender)) {
         log::error!(
             "[PushBG] SENDER MISMATCH group={} envelope={envelope_sender} verified={} - REFUSED, the generic banner is shown",
             group_id.get(..8).unwrap_or(group_id),
@@ -1295,6 +1295,38 @@ mod tests {
         assert_eq!(open("mallory")["reason"], "sender-mismatch");
         // The case of an id is not a disagreement: the web compares lowercased too.
         assert_eq!(open("SENDER-ALICE")["ok"], true);
+    }
+
+    /// A LEGACY BARE CREDENTIAL (`userId`, no device - builds before device identities) names its
+    /// user: a push it signed is that user's, as it was before the canonical reader. A credential
+    /// naming nobody (two separators) is still refused.
+    #[test]
+    fn a_push_from_a_bare_legacy_leaf_is_its_users() {
+        let manager = MlsManager::load_or_create("me", "dev-m", None).expect("manager");
+        let frame =
+            super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
+        let classify = |sender: &str, envelope: &str| {
+            super::classify_verified(
+                &manager,
+                "group-legacy",
+                envelope,
+                mls_core::IncomingApplication {
+                    plaintext: frame.clone(),
+                    sender_identity: Some(sender.to_string()),
+                },
+                PushLanguage::French,
+            )
+        };
+
+        assert_eq!(classify("Legacy-User", "legacy-user")["ok"], true);
+        assert_eq!(
+            classify("legacy-user", "mallory")["reason"],
+            "sender-mismatch"
+        );
+        assert_eq!(
+            classify("legacy-user:a:b", "legacy-user")["reason"],
+            "sender-mismatch"
+        );
     }
 
     /// A frame whose generation the saved state already spent is refused FOR GOOD, and says so:
