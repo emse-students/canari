@@ -3708,6 +3708,16 @@ export class MessagingService {
    */
   private readonly accusedTombstones = new Set<string>();
 
+  /**
+   * The count of addressed rows last reported as withheld from each device, by `user:device`, so a
+   * device's older session is told about once per change of that count and not once per pull - see
+   * the line in {@link fetchMessages}. IN-PROCESS and not durable for the same reason as
+   * {@link accusedTombstones}: it answers "have I already said this here", and a restart re-announces
+   * what is still waiting. An entry is dropped as soon as nothing waits, so it holds one number per
+   * device that has a row waiting right now.
+   */
+  private readonly withheldReported = new Map<string, number>();
+
   async purgeOrphanGroups(
     groupIds: string[]
   ): Promise<{ deliverable: Set<string>; tombstoned: Set<string> }> {
@@ -4291,18 +4301,26 @@ export class MessagingService {
       );
     }
 
+    const withheldKey = `${safeUserId}:${safeDeviceId}`;
     if (!readsAddressed) {
       const withheld = await this.queuedMessageRepo.count({
         where: { recipientId: safeUserId, deviceId: safeDeviceId, addressed: true },
       });
-      if (withheld > 0) {
-        // An older session pulling while an addressed answer waits for a declared one: the window
-        // rule 6 names, closed here. Warned rather than errored - the row is not lost, it waits.
-        this.logger.warn(
+      if (withheld === 0) {
+        this.withheldReported.delete(withheldKey);
+      } else if (this.withheldReported.get(withheldKey) !== withheld) {
+        // An older session pulling while an addressed answer waits for a declared one - the
+        // expected consequence of an old client, and the row is not lost, it waits. ONCE per change
+        // of the count for this device: every pull of that session would otherwise repeat the same
+        // line until the row's retention ends.
+        this.withheldReported.set(withheldKey, withheld);
+        this.logger.log(
           `[MSG_FETCH][${traceId}] WITHHELD ${withheld} addressed row(s) from user=${safeUserId} ` +
             `device=${safeDeviceId} - this fetch did not declare ${ADDRESSED_HISTORY_CAPABILITY}`
         );
       }
+    } else {
+      this.withheldReported.delete(withheldKey);
     }
 
     this.logger.log(

@@ -173,6 +173,28 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
     expect(queuedMessageRepo.delete).not.toHaveBeenCalled();
   });
 
+  it('reports the withheld rows once for a device, not on every pull of an older session', async () => {
+    table = [row('a', 10, 0), { ...row('b', 10, 1), addressed: true }];
+    const logSpy = jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    const withheldLines = () =>
+      logSpy.mock.calls.filter(([m]) => String(m).includes('WITHHELD')).length;
+
+    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    expect(withheldLines()).toBe(1);
+
+    // A second row waiting is a change: told again, once.
+    table.push({ ...row('c', 10, 2), addressed: true });
+    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    expect(withheldLines()).toBe(2);
+
+    expect(warnSpy.mock.calls.filter(([m]) => String(m).includes('WITHHELD'))).toHaveLength(0);
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
   it('always sends at least one row, however big that row is', async () => {
     // A frame larger than the whole budget must remain deliverable. Trimming it to nothing would
     // block its device's queue for ever - the failure being fixed, not a smaller version of it.

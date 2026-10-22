@@ -141,8 +141,8 @@ a member of any age, and that push is filtered for its own reader like every oth
    **The PULL withholds it too.** The pending fetch carries the same `caps` the socket does, and a
    fetch that does not declare the capability is served no addressed row - filtered in the query,
    so the page and its cursor are untouched and the row waits for a session that can read it
-   (`WITHHELD ... addressed row(s)`, warn). *Added from the #2270 re-review: an older tab pulling the
-   queue was the other way in.*
+   (`WITHHELD ... addressed row(s)`, info, once per change of that device's count). *Added from the #2270
+   re-review: the queue pull is filtered like the realtime path.*
 
    **The gateway also filters at its EDGE** (`addressed_recipients`): the pub/sub loop hands an
    addressed frame only to the local sessions that declared the capability, and logs every one it
