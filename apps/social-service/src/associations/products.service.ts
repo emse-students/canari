@@ -1765,7 +1765,7 @@ export class ProductsService {
       lastName: string | null;
     }>
   > {
-    // A guest's payment on a public form names no buyer (migration 102): nobody to look up.
+    // A guest's payment on a public form names no buyer (migration 103): nobody to look up.
     const userIds = [...new Set(records.map((r) => r.userId).filter((id) => id != null))];
     const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
     if (userIds.length > 0) {

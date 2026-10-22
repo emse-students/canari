@@ -77,6 +77,7 @@ import {
   visibleItemIds,
   type ConditionalItem,
 } from './visibility';
+import { assertDeclaredOptionAnswers, freeFallbackCells, type PricedItem } from './answer-options';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
@@ -237,6 +238,20 @@ export class FormsService {
       throw new BadRequestException(
         'A public form can price only on answers: a guest has no profile to match a promo, a ' +
           'formation or a cotisation against.'
+      );
+    }
+    // A charging grid whose "everyone else" cell is FREE and reachable - a priced question left
+    // empty, hidden, or answered with an ungrouped option - would hand a guest a free seat by
+    // default, with none of the paid path's limits. The manager prices it or marks it unavailable.
+    const freeCells = freeFallbackCells(
+      input.priceMatrix as PriceMatrix | null | undefined,
+      (input.items ?? []) as PricedItem[]
+    );
+    if (freeCells.length > 0) {
+      throw new BadRequestException(
+        'A public form that charges cannot leave its "everyone else" price at 0: a guest who skips ' +
+          `or hides a priced question would answer for free (cell "${freeCells[0]}"). Price it or ` +
+          'mark it unavailable.'
       );
     }
     if (input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion)) {
@@ -1059,6 +1074,20 @@ export class FormsService {
     for (const [questionId, value] of Object.entries(selections)) {
       if (visible.has(questionId)) visibleAnswers[questionId] = value;
     }
+    // An answer that decides a price names the question's own options and nothing else: an unknown
+    // id would select no group and no supplement - the "everyone else" price - while reading as the
+    // choice it names. Member and guest alike (`answer-options.ts`).
+    assertDeclaredOptionAnswers(form.items ?? [], input.answers ?? {}, visible, form.priceMatrix);
+    // What is STORED is what was priced: the answer to a question this submitter did not see was
+    // neither charged nor required, so it is not kept either - it would read as a choice nobody
+    // paid for. A question the form does not declare is kept as it always was.
+    const declaredIds = new Set((form.items ?? []).map((item) => item.id));
+    const storedAnswers = Object.fromEntries(
+      Object.entries(input.answers ?? {}).filter(
+        ([key]) => !declaredIds.has(key) || visible.has(key)
+      )
+    );
+    const storedFileAnswers = fileAnswers.filter((file) => visible.has(file.itemId));
     const pricedQuestions = pricedQuestionIds(form.priceMatrix);
     const { baseCents } = this.priceFor(form, { ...facts, answers: visibleAnswers });
     // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
@@ -1225,7 +1254,7 @@ export class FormsService {
             formId: id,
             userId: null,
             email: undefined,
-            answers: input.answers,
+            answers: storedAnswers,
             totalPaid: 0,
             paymentStatus: 'free',
             paymentMethod: null,
@@ -1237,7 +1266,7 @@ export class FormsService {
       }
 
       if (existingPending) {
-        existingPending.answers = input.answers;
+        existingPending.answers = storedAnswers;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
         // Its old request is settled (above), so the row stops naming it: a late report about it
@@ -1261,7 +1290,7 @@ export class FormsService {
           formId: id,
           userId: input.userId ?? null,
           email: input.email,
-          answers: input.answers,
+          answers: storedAnswers,
           totalPaid: totalCents,
           paymentStatus: totalCents > 0 ? 'pending' : 'free',
           paymentMethod: null,
@@ -1269,8 +1298,8 @@ export class FormsService {
         });
         savedSubmission = await manager.save(submission);
       }
-      if (fileAnswers.length > 0) {
-        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, fileAnswers);
+      if (storedFileAnswers.length > 0) {
+        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, storedFileAnswers);
       }
     });
 

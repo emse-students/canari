@@ -206,6 +206,91 @@ describe('FormsService - public forms', () => {
       );
     });
 
+    // A PRICED ANSWER NAMES THE QUESTION'S OWN OPTIONS (`answer-options.ts`). Controls (2026-10-22):
+    // the `assertDeclaredOptionAnswers` call removed from `submit` -> the three refusals below fail
+    // (the grid case reaches the "everyone else" price, the supplement case a free row); the
+    // stored answers back to `input.answers` -> the hidden-question case fails.
+    describe('priced answers', () => {
+      const grid = {
+        dimensions: [
+          {
+            id: 'd1',
+            kind: 'answer',
+            questionId: 'q_menu',
+            buckets: [{ id: 'b1', label: 'Menu', values: ['opt_a', 'opt_b'] }],
+          },
+        ],
+        cells: { b1: 1200, [OTHERS_BUCKET_ID]: 0 },
+      };
+      const menu = {
+        id: 'q_menu',
+        label: 'Menu',
+        type: 'single_choice',
+        required: true,
+        options: [
+          { id: 'opt_a', label: 'A', priceModifier: 0 },
+          { id: 'opt_b', label: 'B', priceModifier: 0 },
+        ],
+      };
+      const extra = {
+        id: 'q_extra',
+        label: 'Supplement',
+        type: 'multiple_choice',
+        required: false,
+        options: [{ id: 'opt_wine', label: 'Vin', priceModifier: 500 }],
+      };
+
+      it.each([
+        ['an option id the grid question never declared', { q_menu: 'opt_premium' }],
+        ['a list where one choice is asked', { q_menu: ['opt_a', 'opt_b'] }],
+        ['an option id the supplement question never declared', { q_extra: ['opt_free_wine'] }],
+        ['the same supplement twice', { q_extra: ['opt_wine', 'opt_wine'] }],
+      ])('refuses %s', async (_name, answers) => {
+        const { service, saved } = makeService({
+          form: baseForm({ requiresPayment: true, priceMatrix: grid, items: [menu, extra] }),
+        });
+        await expect(
+          service.submit('f1', { answers: { q_menu: 'opt_a', ...answers } } as any, 'guest')
+        ).rejects.toThrow(/is not one of its options/);
+        expect(saved).toEqual([]);
+      });
+
+      it('holds a member to the same rule', async () => {
+        const { service, saved } = makeService({
+          form: baseForm({ isPublic: false, items: [extra] }),
+        });
+        await expect(
+          service.submit('f1', { answers: { q_extra: ['opt_free_wine'] }, userId: 'u1' } as any)
+        ).rejects.toThrow(/is not one of its options/);
+        expect(saved).toEqual([]);
+      });
+
+      it('does not store the answer to a priced question the guest did not see', async () => {
+        const premium = {
+          id: 'q_premium',
+          label: 'Formule',
+          type: 'single_choice',
+          required: false,
+          showIf: { answer: { questionId: 'q_come', optionIds: ['yes'] } },
+          options: [{ id: 'opt_vip', label: 'VIP', priceModifier: 5000 }],
+        };
+        const come = {
+          id: 'q_come',
+          label: 'Diner ?',
+          type: 'single_choice',
+          required: true,
+          options: [
+            { id: 'yes', label: 'Oui', priceModifier: 0 },
+            { id: 'no', label: 'Non', priceModifier: 0 },
+          ],
+        };
+        const { service, saved } = makeService({ form: baseForm({ items: [come, premium] }) });
+        await service.submit('f1', { answers: { q_come: 'no', q_premium: 'opt_vip' } }, 'guest');
+        expect(saved[0]).toMatchObject({ paymentStatus: 'free', totalPaid: 0 });
+        expect(saved[0].answers).toEqual({ q_come: 'no' });
+      });
+    });
+
     it('asks for no profile to decide what a guest sees', async () => {
       const { service, pricingFacts } = makeService();
       await service.submit('f1', { answers: { q1: 'Ada' } }, 'guest');
@@ -310,6 +395,87 @@ describe('FormsService - public forms', () => {
       const { service, formRepo } = makeService();
       await service.create(input(over));
       expect(formRepo.save).toHaveBeenCalled();
+    });
+
+    // A charging grid must not give a guest a FREE seat by default. Control (2026-10-22): the
+    // `freeFallbackCells` refusal removed from `assertPublicConfigValid` -> the three refusals save.
+    describe('the "everyone else" price of a charging grid', () => {
+      const grid = (others: number | null) => ({
+        dimensions: [
+          {
+            id: 'd1',
+            kind: 'answer',
+            questionId: 'q_menu',
+            buckets: [{ id: 'b1', label: 'Menu', values: ['opt_a', 'opt_b'] }],
+          },
+        ],
+        cells: { b1: 1200, [OTHERS_BUCKET_ID]: others },
+      });
+      const menu = (over: Record<string, unknown> = {}) => ({
+        id: 'q_menu',
+        label: 'Menu',
+        type: 'single_choice',
+        required: true,
+        options: [
+          { id: 'opt_a', label: 'A', priceModifier: 0 },
+          { id: 'opt_b', label: 'B', priceModifier: 0 },
+        ],
+        ...over,
+      });
+      const gate = {
+        id: 'q_come',
+        label: 'Diner ?',
+        type: 'single_choice',
+        options: [{ id: 'y' }],
+      };
+
+      it.each([
+        ['the priced question may be skipped', [menu({ required: false })]],
+        [
+          'the priced question may be hidden by an answer',
+          [gate, menu({ showIf: { answer: { questionId: 'q_come', optionIds: ['y'] } } })],
+        ],
+        [
+          'an option belongs to no group',
+          [menu({ options: [{ id: 'opt_a' }, { id: 'opt_b' }, { id: 'opt_c' }] })],
+        ],
+      ])('refuses it at 0 when %s', async (_name, items) => {
+        const { service, formRepo } = makeService();
+        await expect(
+          service.create(input({ requiresPayment: true, items, priceMatrix: grid(0) }))
+        ).rejects.toThrow(/"everyone else" price at 0/);
+        expect(formRepo.save).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['priced', [menu({ required: false })], grid(800)],
+        ['unavailable', [menu({ required: false })], grid(null)],
+        ['unreachable: required, shown to all, every option grouped', [menu()], grid(0)],
+      ])('accepts it %s', async (_name, items, priceMatrix) => {
+        const { service, formRepo } = makeService();
+        await service.create(input({ requiresPayment: true, items, priceMatrix }));
+        expect(formRepo.save).toHaveBeenCalled();
+      });
+
+      it('refuses to publish a stored grid that the edit leaves out', async () => {
+        const { service, formRepo } = makeService();
+        jest.spyOn(service, 'assertFormManager').mockResolvedValue(
+          baseForm({
+            isPublic: false,
+            items: [menu({ required: false })],
+            priceMatrix: grid(0),
+          }) as any
+        );
+        await expect(
+          service.update(
+            'f1',
+            { isPublic: true, allowMultipleSubmissions: true } as any,
+            'u1',
+            false
+          )
+        ).rejects.toThrow(/"everyone else" price at 0/);
+        expect(formRepo.save).not.toHaveBeenCalled();
+      });
     });
 
     it('checks the stored flag when an edit leaves it out', async () => {

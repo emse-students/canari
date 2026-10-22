@@ -479,6 +479,24 @@ the association's Achats tab names it "Invité". Both fill pages total with ONE 
 `lib/forms/fillPricing.ts`. Not yet built: the return page with a reference (WP-P2) and the
 per-visitor ceiling of pending paid answers (WP-P3).
 
+**What a priced answer may say (2026-10-22, `answer-options.ts`), for members and guests alike** -
+the price is only as good as the answer it is computed from:
+
+- **A visible question that decides a price** - one the grid prices on, or one whose options carry
+  a supplement - accepts only its own declared options:
+  - one id for a single choice or a dropdown, a list without duplicates for a multiple choice;
+  - anything else is a 400: an unknown id would match no group and no supplement, and land on the
+    "everyone else" price while reading as the choice it names.
+- **The stored answer is the priced one.** The answer to a question the submitter did not see
+  (`visibleItemIds`) is neither charged nor required, and it is no longer stored either, nor is its
+  file attached.
+- **A public form that charges cannot leave a reachable "everyone else" cell at 0**
+  (`freeFallbackCells`, checked at publication and on every edit of a public form). That cell is
+  reached when a priced question can be skipped (not required), hidden (it has a condition), or
+  answered with an option no group holds. The manager prices that cell or marks it unavailable; a
+  required, unconditional question whose every option is grouped never reaches it, so a 0 there is
+  accepted.
+
 ## The file question (2026-10-15)
 
 A question of type **`file`** asks the member for one file (a CV, a certificate). Unlike every other
