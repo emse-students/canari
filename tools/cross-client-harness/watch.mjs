@@ -470,6 +470,14 @@ const BENIGN = [
   // A group the OWNER deleted, seen by the other side. `del1.mjs` and the GRP teardowns both produce
   // it, and it is the discovery pass reporting a tombstone it handled correctly.
   /^\[DISCOVERY\] UI group ".*" deleted \(tombstone\) server-side - marked removed$/,
+  // TWO DECISION LINES THE CODING STANDARD REQUIRES, read 2026-10-22 on GRP. Every overlay a row
+  // opens over a ghost history entry REPLACES that entry rather than pushing a new one
+  // (`historyOverlayStack.ts`), and the line names which of the two it did; the composer reports its
+  // first measured height once per mount (`composerHeight.ts`). Both are expected on any healthy
+  // client that opens a panel or a conversation, and both are necessary: the first is the only trace
+  // of a back-stack hand-off, the second of the band the keyboard layout is computed from.
+  /^\[historyOverlay\] overlay \d+ takes the ghost entry under the pointer \(a hand-off\)$/,
+  /^\[ChatComposer\] composer height (?:unset|\d+px) -> \d+px$/,
 ];
 
 /**
@@ -2047,6 +2055,19 @@ export const PAGE_BOOT_NARRATION = [
   // The salon unread counts (2026-10-08) are read from the server at every boot, once when the
   // communities load and once when the live stream opens. Seen first on GRAINE-AUTH-6, 2026-10-13.
   /^\[UNREAD\] (?:communities loaded|live stream back): \d+ salon\(s\) unread on the server, \d+ count\(s\) moved here$/,
+  // THE REST OF A RELOADED PAGE'S DECISIONS, read on GRAINE-AUTH-1, -2 and -6 (2026-10-22), each a
+  // decision the coding standard requires logged: the restored list, the snapshot replacing it, the
+  // counts request joined, the avatars not asked for, the route preloads, the drain's checkpoint and
+  // the view's first page. `[STRAY]` is forgiven ONLY with nothing refused and nothing unanswered.
+  /^\[RESTORE\] kept \d+ salon row\(s\) the community load owns$/,
+  /^\[RESTORE\] \d+ conversation row\(s\) seeded - history follows$/,
+  /^\[WORKSPACE-SNAPSHOT\] the list on screen is the server's now \(\d+ community\(ies\)\)$/,
+  /^\[UNREAD\] communities loaded: joined the counts request already in flight$/,
+  /^\[AvatarPresence\] \d+ of \d+ have no photo - not requested$/,
+  /^\[RoutePreload\] \{"pathname":"\/[a-z]*","first":true\}$/,
+  /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/,
+  /^\[STRAY\] compared \d+ tree\(s\): \d+ roster\(s\) in one read, 0 refused, 0 not answered \(nobody removed in them\)$/,
+  /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z-]+\)$/,
 ];
 
 /**
