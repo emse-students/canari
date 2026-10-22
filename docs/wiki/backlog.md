@@ -363,10 +363,6 @@ WHERE type = 'membership' AND name = 'Cotisation'
 
 A row found this way is put on sale by its association's admin from the boutique, a manual `isActive` change and so the right owner of that decision.
 
-## P3 - The school CAS pins its OAuth cookie to the browser: production re-measure owed (2026-10-22)
-
-The school applied a setting on its TEST CAS and the IP-only and user-agent-only sign-ins went from 0 of 3 to 3 of 3 ([cas-callback-state](infrastructure/cas-callback-state.md)). Owed: the school confirms which setting it applied and whether production has it; then the same two blocks are re-run on the production CAS (one second-factor validation by a person). Production bare callbacks already fell from 14 % to 4 % of sign-ins from 2026-10-08 for a reason not yet separated. Nothing to build in this repository.
-
 ## Idea (owner, 2026-10-21): store videos and screenshots from the bench phones
 
 Reuse the bench phones with screen recording to make demo videos and screenshots for the stores and for communication, from the fictional dev seed (never production). Personal data blurred frame by frame and the result reviewed before delivery; Apple and Google formats. Capture and sizes: [store-listings](store-listings.md#6-capture). Not built.
