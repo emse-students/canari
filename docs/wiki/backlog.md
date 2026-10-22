@@ -223,6 +223,26 @@ runs it or approves it explicitly); sending the DPO dossier; the DSI log-retenti
 - **Firefox disabled scroll anchoring on the `/posts` feed.** Ten consecutive sub-pixel adjustments of about 0.1667 px preceded it; rounding at a fractional device-pixel ratio is suspected. Reproduce with a `ResizeObserver` log on the feed container before changing anything.
 - **A seed asked by two phones was declined by a web device** (`holding 0 - missing ... declining`). Open observation: separate the causes by who should have held it, which needs a read of production state (private operations notes), not a client change.
 
+## P2 - A killed phone answers a background Welcome from a stale epoch, and the route reports it as sent (read on the Mi 9T, 2026-10-22)
+
+Read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813`), on the local estate, app killed
+(no process), after one `mls_group_info` row of the group was deleted so the newcomer's external join
+found no GroupInfo and sent a `welcome_request`. Two facts, recorded separately:
+
+- **(a) The phone builds the Welcome from its stored state and the server refuses it.** The phone logged
+  `Welcome created ... baseEpoch=1` while the group was at epoch 3, so it had not applied the commits
+  that arrived while it was dead. chat-delivery logged `[BG_WELCOME] START ... baseEpoch=1`, then
+  `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1) - neither Welcome nor broadcast`. No
+  commit-caller refusal appeared: the caller checks passed.
+- **(b) The route answers HTTP 201 although it sent neither Welcome nor broadcast.** The phone logged
+  `sendWelcomeAndCommit: HTTP 201` and `Welcome sent`, so a refused delivery reads as a success on the
+  device. The answer must say what happened; this part is the more urgent one.
+
+**NOT verified:** whether the newcomer recovered by itself (it was not read afterwards), and which
+phone state the reading would have had with the pending commits drained first. A second request for the
+same newcomer ended `ALREADY_MEMBER` on the phone, a duplicate that is expected. **Not fixed here:** the
+fix is native and MLS, its own work package with an adversarial review.
+
 ## Hardware reading owed (user): one background Welcome on the Mi 9T (2026-10-22)
 
 The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the
@@ -270,12 +290,9 @@ ourselves`, then external join), so no `welcome_request` was sent: no
 `processWelcomeRequestBackground` line, no `[BG_WELCOME]` line, no REJECT. **What WAS read:** FCM woke
 the swiped-away phone for four `message` pushes and it applied the external-commit control frames
 ("control frame applied - state advanced") with no error, so background control-frame handling works
-on that build. **Unreachable by the rig under its permissions:** the one state that sends the request
-needs the newcomer's GroupInfo read to fail, by deleting one `mls_group_info` row of the group on the
-local estate or by blocking `GET /api/mls/group-info/*` in the newcomer through CDP, and the
-permission layer refused the delete. **Owed to the user: allow that one local-estate delete (or the
-block) once, then about 3 minutes of reading** (the phone stays on the debug build, signed in on the
-local estate only, which is stopped).
+on that build. **READ later the same day, with the user's agreement to delete one local-estate row:** the request was
+sent and the phone answered it from a stale epoch, see the P2 above. The phone stays on the debug
+build, signed in on the local estate only, which is stopped.
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
