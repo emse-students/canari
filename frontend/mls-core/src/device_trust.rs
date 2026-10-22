@@ -112,6 +112,22 @@ pub struct PersistedPin {
 /// One leaf as [`DeviceTrust`] reads it: index, identity, signature key.
 pub(crate) type LeafKey = (u32, String, Vec<u8>);
 
+/// One user LEAVING a group's tree, as a commit this device merged showed it: the commit removed the
+/// user's last leaf. Never shown to anybody - it is evidence for a verifier, not a notice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Departure {
+    pub group_id: String,
+    /// The user half of the identity, ASCII-lowercased (the half `identity_names` reads that way).
+    pub user_id: String,
+    /// The epoch the removing commit created: the first epoch the user is no longer in.
+    pub epoch: u64,
+}
+
+/// The most departures kept. Past it the departures of groups no held tree is any more are dropped
+/// at load and on `forget_group`, and a push past it drops the oldest (said once per filling).
+pub const MAX_RECORDED_DEPARTURES: usize = 8192;
+
 /// The pins and the pending events. Owned by [`crate::MlsManager`].
 #[derive(Debug, Default)]
 pub struct DeviceTrust {
@@ -122,6 +138,20 @@ pub struct DeviceTrust {
     events: VecDeque<DeviceEvent>,
     /// Whether this process already said the event queue is full (see `push_event`).
     full_reported: bool,
+    /// Every user departure seen in a merged commit, oldest first (see [`Departure`]).
+    departures: VecDeque<Departure>,
+    /// Whether this process already said the departure record is full.
+    departures_full_reported: bool,
+}
+
+/// The user half of `identity`, lowercased, or `None` for an identity that is not well formed.
+fn user_of(identity: &str) -> Option<String> {
+    if !is_well_formed_identity(identity) {
+        return None;
+    }
+    identity
+        .split_once(':')
+        .map(|(user, _)| user.to_ascii_lowercase())
 }
 
 /// The most pinned identities kept before those absent from every held tree are dropped
@@ -194,12 +224,106 @@ pub(crate) fn leaf_keys(group: &MlsGroup) -> Vec<LeafKey> {
 
 impl DeviceTrust {
     /// Rebuilds the in-memory record from the persisted one.
-    pub(crate) fn from_persisted(pins: Vec<PersistedPin>, events: Vec<DeviceEvent>) -> Self {
+    pub(crate) fn from_persisted(
+        pins: Vec<PersistedPin>,
+        events: Vec<DeviceEvent>,
+        departures: Vec<Departure>,
+    ) -> Self {
         Self {
             pins: pins.into_iter().map(|p| (p.identity, p.keys)).collect(),
             events: events.into_iter().collect(),
             full_reported: false,
+            departures: departures.into_iter().collect(),
+            departures_full_reported: false,
         }
+    }
+
+    /// The departures, oldest first, as they are persisted.
+    pub(crate) fn persisted_departures(&self) -> Vec<Departure> {
+        self.departures.iter().cloned().collect()
+    }
+
+    /// The epochs at which this device saw `user_id` leave `group_id`'s tree, oldest first.
+    pub fn removal_epochs(&self, group_id: &str, user_id: &str) -> Vec<u64> {
+        let user = user_id.to_ascii_lowercase();
+        self.departures
+            .iter()
+            .filter(|d| d.group_id == group_id && d.user_id == user)
+            .map(|d| d.epoch)
+            .collect()
+    }
+
+    /// Drops the departures of groups not in `held_groups`, only when past
+    /// [`MAX_RECORDED_DEPARTURES`] - the same rule as the pins.
+    pub(crate) fn prune_departures(
+        &mut self,
+        held_groups: &std::collections::HashSet<&str>,
+    ) -> usize {
+        if self.departures.len() <= MAX_RECORDED_DEPARTURES {
+            return 0;
+        }
+        let before = self.departures.len();
+        self.departures
+            .retain(|d| held_groups.contains(d.group_id.as_str()));
+        let dropped = before - self.departures.len();
+        log::info!(
+            "[TRUST] {dropped} departure(s) of groups this device no longer holds dropped \
+             ({} kept, bound {MAX_RECORDED_DEPARTURES})",
+            self.departures.len()
+        );
+        dropped
+    }
+
+    fn push_departure(&mut self, departure: Departure) {
+        if self.departures.len() >= MAX_RECORDED_DEPARTURES
+            && let Some(dropped) = self.departures.pop_front()
+            && !self.departures_full_reported
+        {
+            self.departures_full_reported = true;
+            log::warn!(
+                "[TRUST] {MAX_RECORDED_DEPARTURES} departures recorded - the oldest are dropped from \
+                 now on (first: {} from {} at epoch {})",
+                dropped.user_id,
+                dropped.group_id,
+                dropped.epoch
+            );
+        }
+        self.departures.push_back(departure);
+    }
+
+    /// Records every user whose LAST leaf a merged commit removed: present in `before`, absent from
+    /// `after`. Compared per USER, over the trees, so a heal that swaps a device's leaf in one commit
+    /// (an external rejoin, a remove-and-add) or the removal of one device among several records
+    /// nothing. Never an event: nothing user-visible comes of it.
+    ///
+    /// @returns whether anything was written.
+    fn record_departures(
+        &mut self,
+        group_id: &str,
+        epoch: u64,
+        before: &[LeafKey],
+        after: &[LeafKey],
+    ) -> bool {
+        let remaining: std::collections::HashSet<String> =
+            after.iter().filter_map(|(_, id, _)| user_of(id)).collect();
+        let mut gone: Vec<String> = before
+            .iter()
+            .filter_map(|(_, id, _)| user_of(id))
+            .filter(|u| !remaining.contains(u))
+            .collect();
+        gone.sort();
+        gone.dedup();
+        for user_id in &gone {
+            log::info!(
+                "[TRUST] {group_id} epoch {epoch}: {user_id} left the tree (last leaf removed)"
+            );
+            self.push_departure(Departure {
+                group_id: group_id.to_string(),
+                user_id: user_id.clone(),
+                epoch,
+            });
+        }
+        !gone.is_empty()
     }
 
     /// The persisted form of the pins, sorted so two saves of one record are byte-identical.
@@ -233,6 +357,33 @@ impl DeviceTrust {
     /// The keys pinned for `identity`, if any.
     pub fn pinned_keys(&self, identity: &str) -> Option<&[Vec<u8>]> {
         self.pins.get(identity).map(Vec::as_slice)
+    }
+
+    /// The keys pinned for the device `expected` names, matched as [`identity_names`] matches a
+    /// credential (user half ignoring ASCII case, device half exact), or `None` when no pin names it
+    /// or `expected` is not a well-formed identity.
+    ///
+    /// A pin is stored under the identity AS ITS CREDENTIAL SPELT IT, and a caller asking from a
+    /// roster may spell the user half differently - so an exact miss falls back to a scan, and the
+    /// keys of every spelling that names the device are returned together, without duplicates.
+    pub fn pinned_keys_naming(&self, expected: &str) -> Option<Vec<Vec<u8>>> {
+        if !is_well_formed_identity(expected) {
+            return None;
+        }
+        if let Some(keys) = self.pins.get(expected) {
+            return Some(keys.clone());
+        }
+        let mut out: Vec<Vec<u8>> = Vec::new();
+        for (identity, keys) in &self.pins {
+            if identity_names(identity, expected) {
+                for k in keys {
+                    if !out.contains(k) {
+                        out.push(k.clone());
+                    }
+                }
+            }
+        }
+        (!out.is_empty()).then_some(out)
     }
 
     /// Records a leaf seen in a signed tree: pins it on first sight, never moves an existing pin.
@@ -381,7 +532,7 @@ impl DeviceTrust {
         added_by: Option<&str>,
         own: (&str, &[u8]),
     ) -> bool {
-        let mut wrote = false;
+        let mut wrote = self.record_departures(group_id, epoch, before, after);
         for (_, identity, key) in after {
             let existed = before.iter().any(|(_, id, k)| id == identity && k == key);
             if existed {
@@ -528,6 +679,42 @@ mod tests {
             0,
             "under the bound, nothing is pruned"
         );
+    }
+
+    #[test]
+    fn departures_are_bounded_and_past_the_bound_keep_only_held_groups() {
+        let mut t = DeviceTrust::default();
+        let leaf = |id: &str| (0u32, id.to_string(), b"k".to_vec());
+        // One departure per group: a tree with "u:d" that loses it.
+        for i in 0..=MAX_RECORDED_DEPARTURES {
+            t.record_departures(&format!("g{i}"), 1, &[leaf("u:d")], &[]);
+        }
+        assert_eq!(
+            t.departures.len(),
+            MAX_RECORDED_DEPARTURES,
+            "the oldest went"
+        );
+        assert!(t.removal_epochs("g0", "u").is_empty());
+        assert_eq!(t.removal_epochs("g1", "U"), vec![1]);
+        assert!(t.events.is_empty(), "a departure is never an event");
+
+        t.push_departure(Departure {
+            group_id: "g-extra".into(),
+            user_id: "u".into(),
+            epoch: 2,
+        });
+        t.departures.push_back(Departure {
+            group_id: "g1".into(),
+            user_id: "v".into(),
+            epoch: 3,
+        });
+        // The push dropped g1's (the oldest left); g2 is the group still held.
+        assert!(t.removal_epochs("g1", "u").is_empty());
+        let held: std::collections::HashSet<&str> = ["g2", "g1"].into_iter().collect();
+        t.prune_departures(&held);
+        assert_eq!(t.removal_epochs("g2", "u"), vec![1]);
+        assert_eq!(t.removal_epochs("g1", "v"), vec![3]);
+        assert_eq!(t.departures.len(), 2);
     }
 
     #[test]

@@ -1308,6 +1308,20 @@ export class TauriMlsService extends BaseMlsService {
     });
   }
 
+  /** Tauri-native `invoke` wrapper - `cles_signature_epinglees`, the pinned keys as byte arrays. */
+  protected async pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<Uint8Array[] | null> {
+    const keys = await invoke<number[][] | null>('cles_signature_epinglees', { userId, deviceId });
+    return keys === null ? null : keys.map((k) => Uint8Array.from(k));
+  }
+
+  /** Tauri-native `invoke` wrapper - `epoques_departs`, the epochs as JSON numbers. */
+  protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
+    return invoke<number[]>('epoques_departs', { groupId, userId });
+  }
+
   /** Tauri-native `invoke` wrapper - `prendre_evenements_appareils` (`DeviceEvent`, camelCase). */
   protected async takeDeviceEventsNative(): Promise<DeviceEvent[]> {
     return invoke<DeviceEvent[]>('prendre_evenements_appareils');

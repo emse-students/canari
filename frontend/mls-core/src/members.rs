@@ -324,6 +324,47 @@ impl MlsManager {
         events
     }
 
+    /// The signature keys THIS DEVICE has seen for `user_id:device_id` in a tree it merged or
+    /// joined - the single source of trust for "a key this device has seen" - or `None` for a device
+    /// it never saw.
+    ///
+    /// For a verifier of a signature made by a device key (an admission voucher, a signed history
+    /// entry): a key the server published alone proves nothing, because the server is the party the
+    /// signature must hold against. A pinned key came from a signed tree this device processed.
+    ///
+    /// `None` MEANS UNVERIFIED, NEVER FORGED: pins are bounded, and past the bound the pin of a
+    /// device no held tree contains any more is dropped (`DeviceTrust::prune_absent`), so a device
+    /// once seen can come back unknown. Several keys are returned only for a state seeded from trees
+    /// that disagreed (`seed_from_tree`); a signature verifying under any of them was made by a key
+    /// this device saw for that identity.
+    pub fn pinned_signature_keys(&self, user_id: &str, device_id: &str) -> Option<Vec<Vec<u8>>> {
+        let keys = self
+            .device_trust
+            .pinned_keys_naming(&format!("{user_id}:{device_id}"));
+        if keys.is_none() {
+            log::debug!("[TRUST] no pinned key for {user_id}:{device_id} - unverified, not forged");
+        }
+        keys
+    }
+
+    /// The epochs at which this device saw `user_id` LEAVE `group_id`'s tree - a merged commit that
+    /// removed the user's last leaf, the epoch being the first one the user is no longer in - oldest
+    /// first.
+    ///
+    /// Recorded at MERGE time, in the one place every merged commit passes (live, replayed on
+    /// catch-up, or our own), so every device that merged the commit records it: a kick followed by
+    /// a re-add is seen even by a device that only ever observed the tree before and after both.
+    /// Compared per user over the trees, so a single commit that swaps a leaf (an external rejoin,
+    /// a remove-and-add) and the removal of one device among several record nothing. A kick and a
+    /// re-add in TWO commits is a departure, whatever the reason the kick was made.
+    ///
+    /// AN EMPTY ANSWER IS "NOT SEEN", NEVER "NEVER HAPPENED": a commit merged before this record
+    /// existed, by a state this device has since lost, or dropped past the bound
+    /// (`MAX_RECORDED_DEPARTURES`) is absent. Never a device event, never user-visible.
+    pub fn removal_epochs(&self, group_id: &str, user_id: &str) -> Vec<u64> {
+        self.device_trust.removal_epochs(group_id, user_id)
+    }
+
     /// The trust a leaf with `identity` and `key` would get, without pinning anything.
     pub fn device_key_trust(&self, identity: &str, key: &[u8]) -> LeafTrust {
         self.device_trust.verdict(identity, key)

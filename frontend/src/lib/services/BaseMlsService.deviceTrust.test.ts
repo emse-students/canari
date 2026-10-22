@@ -110,3 +110,45 @@ describe('BaseMlsService.addMembersBulk - every package travels with its identit
     ]);
   });
 });
+
+// THE ONE SOURCE OF A KEY THIS DEVICE HAS SEEN: the pins, read from the MLS layer and handed back
+// unchanged - a device never seen is `null` (unverified), never an empty list a verifier could read
+// as "no key matches, so forged".
+describe('BaseMlsService.pinnedSignatureKeys - the pins, nothing else', () => {
+  const pinned = (
+    BaseMlsService.prototype as unknown as {
+      pinnedSignatureKeys: (u: string, d: string) => Promise<Uint8Array[] | null>;
+    }
+  ).pinnedSignatureKeys;
+
+  it('hands back the keys the MLS layer pinned for exactly that device', async () => {
+    const key = new Uint8Array([1, 2, 3]);
+    const ctx = { pinnedSignatureKeysNative: vi.fn(async () => [key]) };
+    await expect(pinned.call(ctx, 'Bob', 'web-1')).resolves.toEqual([key]);
+    expect(ctx.pinnedSignatureKeysNative).toHaveBeenCalledWith('Bob', 'web-1');
+  });
+
+  it('answers null for a device never seen, and says it is unverified', async () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const ctx = { pinnedSignatureKeysNative: vi.fn(async () => null) };
+    await expect(pinned.call(ctx, 'Bob', 'web-2')).resolves.toBeNull();
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('unverified'));
+    debug.mockRestore();
+  });
+});
+
+// The departures are Rust's record (tests/device_binding.rs); the seam hands them back unchanged.
+describe('BaseMlsService.removalEpochs - the departures the MLS layer recorded', () => {
+  it('asks for exactly that group and user and returns the epochs as recorded', async () => {
+    const removal = (
+      BaseMlsService.prototype as unknown as {
+        removalEpochs: (g: string, u: string) => Promise<number[]>;
+      }
+    ).removalEpochs;
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const ctx = { removalEpochsNative: vi.fn(async () => [3, 7]) };
+    await expect(removal.call(ctx, 'g1', 'Bob')).resolves.toEqual([3, 7]);
+    expect(ctx.removalEpochsNative).toHaveBeenCalledWith('g1', 'Bob');
+    debug.mockRestore();
+  });
+});

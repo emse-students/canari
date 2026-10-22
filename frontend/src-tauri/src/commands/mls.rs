@@ -607,6 +607,38 @@ pub(crate) fn verifier_key_package(
         .to_string())
 }
 
+/// The signature keys this device pinned for `user_id:device_id`, or `None` for a device never seen
+/// (unverified, never forged) - see `MlsManager::pinned_signature_keys`.
+#[tauri::command]
+pub(crate) fn cles_signature_epinglees(
+    user_id: String,
+    device_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Option<Vec<Vec<u8>>>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.pinned_signature_keys(&user_id, &device_id))
+}
+
+/// The epochs at which this device saw `user_id` leave `group_id`'s tree, oldest first - see
+/// `MlsManager::removal_epochs`.
+#[tauri::command]
+pub(crate) fn epoques_departs(
+    group_id: String,
+    user_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Vec<u64>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.removal_epochs(&group_id, &user_id))
+}
+
 /// Every device event recorded since the last call, and forgets them - see
 /// `mls_core::device_trust::DeviceEvent`. Serialised with the field names the WASM binding uses.
 #[tauri::command]

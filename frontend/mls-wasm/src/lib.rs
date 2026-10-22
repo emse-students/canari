@@ -502,6 +502,35 @@ impl WasmMlsClient {
             .to_string()
     }
 
+    /// The signature keys this device pinned for `user_id:device_id` (an array of `Uint8Array`), or
+    /// `undefined` for a device never seen - `null` is "unverified", never "forged". See
+    /// `MlsManager::pinned_signature_keys`.
+    #[wasm_bindgen]
+    pub fn pinned_signature_keys(
+        &self,
+        user_id: String,
+        device_id: String,
+    ) -> Option<js_sys::Array> {
+        self.manager
+            .pinned_signature_keys(&user_id, &device_id)
+            .map(|keys| {
+                keys.iter()
+                    .map(|k| JsValue::from(js_sys::Uint8Array::from(k.as_slice())))
+                    .collect()
+            })
+    }
+
+    /// The epochs at which this device saw `user_id` leave `group_id`'s tree, oldest first, as
+    /// numbers (exact below 2^53, as `get_epoch`). See `MlsManager::removal_epochs`.
+    #[wasm_bindgen]
+    pub fn removal_epochs(&self, group_id: String, user_id: String) -> Vec<f64> {
+        self.manager
+            .removal_epochs(&group_id, &user_id)
+            .into_iter()
+            .map(|e| e as f64)
+            .collect()
+    }
+
     /// Every device event recorded since the last call, as a JSON array of
     /// `{ groupId, epoch, identity, keyFingerprint, trust, addedBy }`, and forgets them. See
     /// `mls_core::device_trust::DeviceEvent`.

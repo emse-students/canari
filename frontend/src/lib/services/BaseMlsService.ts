@@ -4792,6 +4792,64 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<KeyPackageVerdict>;
   /** Takes the pending device events from the MLS layer - see {@link takeDeviceEvents}. */
   protected abstract takeDeviceEventsNative(): Promise<DeviceEvent[]>;
+  /** Reads the pins of one device from the MLS layer - see {@link pinnedSignatureKeys}. */
+  protected abstract pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<Uint8Array[] | null>;
+
+  /**
+   * The signature keys THIS DEVICE has seen for `userId:deviceId` in a signed tree it merged or
+   * joined, or `null` for a device it never saw - THE SINGLE SOURCE OF TRUST for "a key this device
+   * has seen" (`MlsManager::pinned_signature_keys`, the device pins).
+   *
+   * WHY: a verifier of a signature made by a device key (a community admission voucher, a signed
+   * history entry) must not take the key from the server, which is the party the signature has to
+   * hold against. A pinned key came from a tree whose commits this device verified itself.
+   *
+   * `null` MEANS UNVERIFIED, NEVER FORGED. Pins are bounded, and past the bound the pin of a device
+   * no held tree contains any more is dropped, so a device seen once can come back unknown. A
+   * verifier shows such a signature as not checked, and never as a forgery. Several keys come back
+   * only for a state seeded from trees that disagreed; a signature verifying under ANY of them was
+   * made by a key this device saw for that device. The user half matches case-insensitively and the
+   * device half exactly, as the KeyPackage binding reads them.
+   */
+  /** Reads the recorded departures from the MLS layer - see {@link removalEpochs}. */
+  protected abstract removalEpochsNative(groupId: string, userId: string): Promise<number[]>;
+
+  /**
+   * The epochs at which this device saw `userId` LEAVE `groupId`'s tree - a merged commit removed
+   * the user's last leaf; each epoch is the first one the user is no longer in - oldest first.
+   *
+   * WHY: a verifier that must know whether a user was removed (and when) cannot ask the server, and
+   * observing the tree finds a removal only when it happens to look between a kick and a re-add.
+   * This is recorded at MERGE time in Rust, in the one place every merged commit passes - live,
+   * replayed on catch-up, or our own - so every device that merged the commit records it.
+   * Compared per user over the trees: a single commit that swaps a leaf (a resync, a heal) and the
+   * removal of one device among several record nothing; a kick and a re-add in TWO commits is a
+   * departure, whatever the kick was for.
+   *
+   * AN EMPTY LIST IS "NOT SEEN", NEVER "NEVER HAPPENED": commits merged before this record existed,
+   * by a state since lost, or dropped past its bound are absent. Kept in the sealed state; never a
+   * device event and never user-visible.
+   */
+  async removalEpochs(groupId: string, userId: string): Promise<number[]> {
+    const epochs = await this.removalEpochsNative(groupId, userId);
+    console.debug(
+      `[TRUST] departures of ${sanitizeForLog(userId).slice(0, 8)} from ${groupId.slice(0, 8)}...: ${epochs.length}`
+    );
+    return epochs;
+  }
+
+  async pinnedSignatureKeys(userId: string, deviceId: string): Promise<Uint8Array[] | null> {
+    const keys = await this.pinnedSignatureKeysNative(userId, deviceId);
+    if (keys === null) {
+      console.debug(
+        `[TRUST] no pinned key for ${sanitizeForLog(userId).slice(0, 8)}:${sanitizeForLog(deviceId)} - unverified`
+      );
+    }
+    return keys;
+  }
 
   /**
    * Whether `keyPackage` may be added as the device `userId:deviceId`, WITHOUT staging anything.
@@ -4817,7 +4875,7 @@ export abstract class BaseMlsService implements IMlsService {
    * Every device admission recorded since the last call (`DeviceEvent`), oldest first, and forgets
    * them. Computed in Rust from the signed commits this device merged - never from the server - and
    * kept in the sealed MLS state until taken, so the UI that will show "a device was added" is one
-   * caller of this. Nothing takes them yet: whether to show them is the user's decision.
+   * caller of this (decided by the user 2026-10-22; the UI is owed).
    */
   async takeDeviceEvents(): Promise<DeviceEvent[]> {
     return this.takeDeviceEventsNative();

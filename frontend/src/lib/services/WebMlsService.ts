@@ -1220,6 +1220,20 @@ export class WebMlsService extends BaseMlsService {
     return this.client.vet_key_package(keyPackage, identity) as KeyPackageVerdict;
   }
 
+  /** WASM client wrapper - `pinned_signature_keys`, an array of `Uint8Array` or `undefined`. */
+  protected async pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<Uint8Array[] | null> {
+    const keys = this.client.pinned_signature_keys(userId, deviceId) as Uint8Array[] | undefined;
+    return keys ?? null;
+  }
+
+  /** WASM client wrapper - `removal_epochs`, a `Float64Array` of epochs. */
+  protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
+    return Array.from(this.client.removal_epochs(groupId, userId));
+  }
+
   /** WASM client wrapper - `take_device_events`, JSON from Rust (`DeviceEvent`, camelCase). */
   protected async takeDeviceEventsNative(): Promise<DeviceEvent[]> {
     return JSON.parse(this.client.take_device_events()) as DeviceEvent[];
