@@ -621,7 +621,9 @@ window with a durable row and a lock:
 - **Records end with their group.** A community's deletion deletes the `distribution_departures` rows
   of its group and its salons' groups in its transaction; a salon group retired deletes its own; an
   account erasure deletes the account's (`account-erasure.ts`). chat-delivery's `dm_seat_evictions`
-  rows go with their group's purge and with the account's erasure.
+  rows go with their group's purge and with the account's erasure, whose chat-delivery part runs only
+  once social's part - the removals that write those rows - has completed
+  ([account-erasure](../account-erasure.md#ordering-failure-classes-and-operating-it)).
 - **A rolling deploy.** Both migrations (036, 108) are applied before any service is replaced
   (`deploy-environment.sh` runs `apply_migrations` first). A first eviction answered by an older
   chat-delivery names no departure: social-service logs `first eviction named NO departure` and evicts

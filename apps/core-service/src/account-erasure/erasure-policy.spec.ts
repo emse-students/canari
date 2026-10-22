@@ -1,5 +1,6 @@
 import {
   CORE_ERASURE_STATEMENTS,
+  ERASURE_ORDER,
   ERASURE_TARGETS,
   UNKNOWN_SERVICE,
   afterSuccess,
@@ -25,6 +26,18 @@ describe('erasure policy', () => {
     expect(urls[0]).toMatch(/\/api\/internal\/users\/u%2F1$/);
     expect(urls[1]).toMatch(/\/api\/internal\/users\/u%2F1$/);
     expect(urls[2]).toMatch(/\/api\/media\/internal\/users\/u%2F1$/);
+  });
+
+  it("runs chat-delivery's and media's parts only once social's has completed", () => {
+    // Social's part removes the person from every community, and each removal evicts their seats in
+    // chat-delivery, which records the eviction under their id. Run after it, chat-delivery's part -
+    // its final pass included - erases those records whatever order the services answered in.
+    expect(ERASURE_ORDER).toEqual(
+      expect.arrayContaining([
+        ['chat-delivery', 'social'],
+        ['media', 'social'],
+      ])
+    );
   });
 
   it('calls a refusal of the request itself permanent, and a service down or busy transient', () => {

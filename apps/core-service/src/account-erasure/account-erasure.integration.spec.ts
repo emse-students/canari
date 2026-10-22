@@ -142,6 +142,10 @@ maybe('account erasure queue against PostgreSQL', () => {
     );
     // Media waits for social: it would delete the media of the posts social keeps for an association.
     expect(axios.delete.mock.calls.some(([url]: [string]) => url.includes('media'))).toBe(false);
+    // Chat-delivery waits for social too: social's removals record seat evictions there.
+    expect(axios.delete.mock.calls.some(([url]: [string]) => url.includes('chat-delivery'))).toBe(
+      false
+    );
     // Nobody completes before every token of the account has expired.
     expect(jobs.every((j: { completedAt: Date | null }) => j.completedAt === null)).toBe(true);
 

@@ -243,7 +243,14 @@ account restored, a returner's new account kept, a pending one replayed, a secon
 **Four jobs per subject**: `core` (core's own rows, once more after the tokens expire), `chat-delivery`,
 `social` and `media`. `media` is claimed only once `social` has COMPLETED for the subject
 (`ERASURE_TARGETS`' `after`, enforced in the claim's `NOT EXISTS`): social re-classes the media of
-the posts that stay, and media deleting first would delete them under a live post. The claim is
+the posts that stay, and media deleting first would delete them under a live post. **`chat-delivery`
+waits for `social` the same way (2026-10-22)**: social's part removes the person from every
+community, each removal evicts their key-group seats in chat-delivery, and that eviction writes a
+`dm_seat_evictions` row under their id. Run after social's part completed, chat-delivery's part - its
+final pass included - erases those rows whatever order the services answered in; run independently,
+a social part that succeeded late (a service down past the token expiry) would leave a row naming the
+erased id. The cost is that an account's MLS data waits for social's final pass, the account itself
+being deactivated at once. The claim is
 `FOR UPDATE SKIP LOCKED` with a lease, so several workers never run one job twice at once; a
 completion write is guarded by `"completedAt" IS NULL`, so a pass that outlived its lease cannot
 reopen a finished row. A job naming a service this build does not know fails as `UNKNOWN_SERVICE`.
