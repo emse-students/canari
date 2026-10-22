@@ -38,6 +38,7 @@ import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -1001,7 +1002,7 @@ export async function replayConversationHistory(params: {
             continue;
           } else if (parsed?.reaction) {
             const messageId = parsed.reaction.messageId ?? '';
-            const senderNorm = msg.sender_id.toLowerCase();
+            const senderNorm = canonicalUserId(msg.sender_id);
             const reactions = messageReactions.get(messageId) || [];
             const emoji = parsed.reaction.emoji ?? '';
             // Replay applies both legs: the frame carries `removed`, and the merge is ordered by

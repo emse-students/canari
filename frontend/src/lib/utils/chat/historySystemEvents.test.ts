@@ -62,7 +62,8 @@ async function replay(
   // a device with no pin state has to ask under a name no earlier test has written.
   groupId: string = GROUP,
   dropOwnExcluded: Parameters<typeof applyReplaySystemEvent>[0]['dropOwnExcluded'] = async (m) => m,
-  authorship?: RecordedAuthorship
+  authorship?: RecordedAuthorship,
+  me: string = OWNER
 ): Promise<{
   convo: Conversation;
   deletedMessages: Map<string, { by: string; proof?: RecordedAuthorship }>;
@@ -91,7 +92,7 @@ async function replay(
     parsed,
     msg: row(sender),
     contactName: CONVO,
-    userId: OWNER,
+    userId: me,
     conversationId: groupId,
     getConversation: () => convo,
     setConversation: (_name, next) => {
@@ -190,6 +191,50 @@ describe('replaying a deletion', () => {
     const result = await replay(systemEvent('delete_message', { messageId: 'gone' }), OTHER, []);
 
     expect(result.deletedMessages.get('gone')).toEqual({ by: OTHER });
+  });
+});
+
+describe('one canonical user id (leafIdentity.ts): a non-ASCII case variant is another user', () => {
+  // `canonicalUserId` lowercases ASCII letters only, as Rust does: 'Élise' and 'élise' differ.
+  it('refuses a deletion and an edit sent under a case variant of the author', async () => {
+    const deleted = await replay(systemEvent('delete_message', { messageId: 'm1' }), 'élise', [
+      message('m1', 'Élise'),
+    ]);
+    expect(deleted.deletedMessages.size).toBe(0);
+    const edited = await replay(
+      systemEvent('edit_message', { messageId: 'm1', newContent: 'x', editedAt: 5 }),
+      'élise',
+      [message('m1', 'Élise')]
+    );
+    expect(edited.editedMessages.size).toBe(0);
+  });
+
+  it('still takes an ASCII case variant as the author', async () => {
+    const deleted = await replay(systemEvent('delete_message', { messageId: 'm1' }), 'USER-A', [
+      message('m1', OWNER),
+    ]);
+    expect(deleted.deletedMessages.size).toBe(1);
+  });
+
+  it('renders no departure a member announced for a case variant of itself', async () => {
+    const result = await replay(systemEvent('memberLeft', { userId: 'Élise' }), 'élise', []);
+    expect(result.pushed).toEqual([]);
+  });
+
+  it('reads an invitation from a case variant of me as received, not as one I sent', async () => {
+    const result = await replay(
+      systemEvent('channel_invitation', { channelId: 'c1', channelName: 'C', inviteeId: 'x' }),
+      'élise',
+      [],
+      GROUP,
+      undefined,
+      undefined,
+      'Élise'
+    );
+    const entry = result.pushed[0] as { content: string };
+    expect(parseEnvelope(entry.content)).toMatchObject({
+      channelInvite: { channelId: 'c1', invitedName: undefined },
+    });
   });
 });
 

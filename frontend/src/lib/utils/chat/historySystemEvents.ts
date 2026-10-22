@@ -32,6 +32,7 @@ import {
   mkChannelInviteSentEnvelope,
   channelInviteMessageId,
 } from '$lib/envelope';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 
 /**
  * System events that are live negotiation only and must never be acted on during a replay.
@@ -134,8 +135,8 @@ export function replayMutationIsAuthorised(
   senderNorm: string,
   kind: 'edit' | 'delete'
 ): boolean {
-  const owner = (target.senderId ?? '').toLowerCase();
-  if (owner && owner === senderNorm.toLowerCase()) return true;
+  const owner = canonicalUserId(target.senderId ?? '');
+  if (owner && owner === canonicalUserId(senderNorm)) return true;
   console.warn(
     `[HISTORY_REPLAY] Refused ${kind === 'edit' ? 'an edit' : 'a delete'} of a message owned by ` +
       `${owner.slice(0, 8) || 'unknown'} from ${senderNorm.slice(0, 8)} - only the author may mutate it`
@@ -182,7 +183,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
   // unhandled, so that adding a branch for them later has to be a decision instead of an accident.
   if (REPLAY_IGNORED_EVENTS.has(parsed.system.event ?? '')) return;
 
-  const senderNorm = msg.sender_id.toLowerCase();
+  // The ONE canonical user id (leafIdentity.ts, Rust's): every comparison below goes through it.
+  const senderNorm = canonicalUserId(msg.sender_id);
   // Plain text for a membership notice, a serialized envelope for a card (channel invitation).
   let systemContent: string | null = null;
   // Defaults to the MLS frame id; a card overrides it with an id derived from the invitation so
@@ -213,7 +215,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // the id is a self-asserted payload field, the stream row's sender is the identity MLS
       // authenticated, and only the party that left may say so. Rendering nothing is what an
       // unusable payload already gets here.
-      if (String(data.userId).toLowerCase() === senderNorm) {
+      if (canonicalUserId(String(data.userId)) === senderNorm) {
         const getName = await resolveDisplayNames([data.userId]);
         systemContent = chat_system_member_left({ user: getName(data.userId) });
       }
@@ -242,7 +244,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         : undefined;
       systemMessageId = channelInviteMessageId(channelId, String(data.inviteeId || ''));
       systemContent = serializeEnvelope(
-        senderNorm === userId.toLowerCase()
+        senderNorm === canonicalUserId(userId)
           ? mkChannelInviteSentEnvelope(
               channelId,
               workspaceName ?? channelName,

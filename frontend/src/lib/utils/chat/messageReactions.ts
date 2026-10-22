@@ -1,5 +1,6 @@
 import type { MessageReaction } from '$lib/types';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 
 /**
  * Reactions as a convergent set: one entry per `(user, emoji)` pair, each carrying the time it last
@@ -52,7 +53,7 @@ export function canAddDistinctReactionEmoji(reactions: MessageReaction[], emoji:
 
 /** Normalise an entry from the wire or from disk: the user id is the pair's identity. */
 function normalise(reaction: MessageReaction): MessageReaction {
-  return { ...reaction, userId: reaction.userId.toLowerCase() };
+  return { ...reaction, userId: canonicalUserId(reaction.userId) };
 }
 
 /**
