@@ -15,6 +15,11 @@ import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import type { LiveChatReportedLine } from '../lives/entities/live-chat-reported-line.entity';
 import { openLiveChatLine } from '../lives/live-chat-seal';
 import {
+  openLiveKeyOr503,
+  storedLiveKeyColumns,
+  type StoredLiveKey,
+} from '../lives/live-key-at-rest';
+import {
   type ReportedLineIntegrity,
   signReportedLine,
   signingKey,
@@ -229,20 +234,22 @@ export class ModerationService {
    * (`liveVisibleToViewerSql`), with no block between them - otherwise 404 `LIVE_NOT_FOUND`, the
    * live API's own answer, so the report route is no oracle for a live the reporter could not watch.
    * A live ended and purged has nothing left to review (no replay, L3): report the person instead.
-   * Returns the broadcaster (stored as the report's `reportedUserId`) and the live key, which a chat
-   * line's report checks the reporter's plaintext with. `FOR SHARE` when `lock`: the live's row then
-   * cannot be purged, nor a chat line of it hidden, before the caller's transaction commits.
+   * Returns the broadcaster (stored as the report's `reportedUserId`) and the live key AS STORED
+   * (sealed, migration 110), which a chat line's report opens through `openLiveKey` alone to check the
+   * reporter's plaintext. `FOR SHARE` when `lock`: the live's row then cannot be purged, nor a chat
+   * line of it hidden, before the caller's transaction commits.
    */
   private async reportableLive(
     manager: EntityManager,
     reporterId: string,
     liveId: string,
     lock = false
-  ): Promise<{ broadcasterId: string; liveKey: string }> {
+  ): Promise<{ broadcasterId: string; storedKey: StoredLiveKey }> {
     if (!UUID_RE.test(liveId)) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
-    const rows: { broadcasterId: string; liveKey: string; visible: boolean }[] =
+    const rows: (StoredLiveKey & { broadcasterId: string; visible: boolean })[] =
       await manager.query(
-        `SELECT "broadcasterId", "liveKey", ${liveVisibleToViewerSql('lives', '$2')} AS visible
+        `SELECT "broadcasterId", ${storedLiveKeyColumns()},
+                ${liveVisibleToViewerSql('lives', '$2')} AS visible
            FROM lives WHERE id = $1${lock ? ' FOR SHARE' : ''}`,
         [liveId.toLowerCase(), reporterId]
       );
@@ -257,7 +264,14 @@ export class ModerationService {
       );
       throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     }
-    return { broadcasterId: live.broadcasterId, liveKey: live.liveKey };
+    return {
+      broadcasterId: live.broadcasterId,
+      storedKey: {
+        liveKeyCiphertext: live.liveKeyCiphertext,
+        liveKeyVersion: live.liveKeyVersion,
+        liveKey: live.liveKey,
+      },
+    };
   }
 
   /**
@@ -334,8 +348,10 @@ export class ModerationService {
       if (await isBlockedBetween(tx, data.reporterId, line.authorId)) {
         throw notFound('a block with the author');
       }
+      // An unreadable stored key is a 503 (logged at ERROR by `openLiveKey`), never a mismatch: the
+      // reporter's text was not found false, it could not be checked.
       const opened = openLiveChatLine(
-        live.liveKey,
+        openLiveKeyOr503(liveId, live.storedKey),
         liveId,
         line.clientId,
         line.authorId,

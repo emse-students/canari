@@ -176,6 +176,8 @@ jobs:
           # Encrypts the Business keys managers enter on dev. Dev's OWN value: the copy of
           # production's rows then holds keys dev cannot open, by design.
           DEV_LYDIA_KEY_ENCRYPTION_SECRET: ${{ secrets.DEV_LYDIA_KEY_ENCRYPTION_SECRET }}
+          # Seals each live's key at rest (migration 110). Dev's OWN value, for the same reason.
+          DEV_LIVE_KEY_ENCRYPTION_SECRET: ${{ secrets.DEV_LIVE_KEY_ENCRYPTION_SECRET }}
           DEV_APNS_VOIP_KEY_P8: ${{ secrets.DEV_APNS_VOIP_KEY_P8 }}
           DEV_APNS_VOIP_KEY_ID: ${{ secrets.DEV_APNS_VOIP_KEY_ID }}
           DEV_APNS_VOIP_TEAM_ID: ${{ secrets.DEV_APNS_VOIP_TEAM_ID }}

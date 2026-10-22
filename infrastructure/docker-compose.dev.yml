@@ -496,6 +496,7 @@ services:
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
       LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
+      LIVE_KEY_ENCRYPTION_SECRET: ${LIVE_KEY_ENCRYPTION_SECRET:-}
       # PRESENT ON PROD AND LOCAL AND MISSING HERE UNTIL 2026-09-09, which is the whole of the
       # defect: `RedisService` falls back to `redis://localhost:6379`, so this service dialled
       # itself, failed, and retried for ever - 3 657 error lines in one hour, and `POST /api/posts`
