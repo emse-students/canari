@@ -1,4 +1,4 @@
--- Migration 033: whether a queued row was ADDRESSED to its device rather than fanned out to the group
+-- Migration 035: whether a queued row was ADDRESSED to its device rather than fanned out to the group
 -- (step A of "a new member of a group conversation receives its whole past", 2026-10-22).
 --
 -- A history answer on a conversation is now sent to the asking device alone (`recipientDevices`).

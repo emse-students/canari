@@ -69,7 +69,7 @@ Making the answer unreadable to everyone but the asker is option B below, and it
      online now and never enters the history stream;
    - **every addressed member device declared, on its live socket, that it applies rule 5** (rule 6).
    Otherwise `400 { error: 'addressed_unsupported', devices }`. Key groups are unchanged.
-4. **The server marks an addressed row.** `queued_message.addressed` (migration `033`), set whenever
+4. **The server marks an addressed row.** `queued_message.addressed` (migration `035`), set whenever
    the send was addressed, on any group. The live frame carries it (`chat:messages`, and the gateway
    forwards it), and so does the pull. It never enters the shared history stream (already the rule).
 5. **The receiver accepts an addressed frame only as the answer to its own question**

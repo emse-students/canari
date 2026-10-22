@@ -34,8 +34,8 @@ years), which no decision ever chose. 6 of 15 live group conversations had admit
 2026-10-21. Decided by the user: a newcomer reads nothing from before their arrival (WhatsApp, Signal),
 and the remove-then-re-add rule of 2026-10-14 stays. Step C (the push withholds the invitee's span,
 the receiver drops its own) is on `main`. **Step A is BUILT (draft PR): every history answer, the
-push included, is addressed to the asking device and filtered on its own windows; migration `033`
-waits for the user's yes.** Owed, in order: the rig row GRP-ADDR-1; a `minClientVersion` carrying A
+push included, is addressed to the asking device and filtered on its own windows; migration `035`
+is applied by the deploy, so the user's yes is the release.** Owed, in order: the rig row GRP-ADDR-1; a `minClientVersion` carrying A
 once both stores serve it (older clients broadcast until then); option B, sealing the answer to the
 asker (X25519 in `mls-core`), which is what makes it hold against a malicious server. **A decision
 owed to the user:** a reply quoting a pre-arrival message still carries the quoted text to a newcomer;
