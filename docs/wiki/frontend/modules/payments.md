@@ -185,6 +185,8 @@ from the boutique button and the form page ONLY when `GET /api/payments/provider
 address travels as `payerEmail` (social-service -> `POST /api/payments/create-checkout-session`),
 core-service turns it into the provider's `payerRecipient`, and nothing keeps it. A malformed one is
 refused before any provider call. The recipient is NOT an invoice address: Canari issues no invoices.
+A GUEST on a public form (no account, WP-P1) types it the same way, through the same prompt, and it
+is the guest's only contact with the payment: it is forwarded once and stored nowhere (decision PP2).
 
 **OWED MEASUREMENT (2026-10-22): whether Lydia writes to the recipient of a `request/do` on its
 own, and which documented field turns that off.** `request/do` sends no notification field today,
@@ -236,6 +238,13 @@ looks; the cancel page shows a paid answer as paid and a still-open request as s
 The boutique has the same shape since 2026-10-21: its return URLs carry the attempt
 (`checkout_id`), and the shop page asks about it
 ([below](#a-product-checkout-is-a-row-one-per-attempt-2026-10-21)).
+
+**A GUEST comes back elsewhere (WP-P2, 2026-10-22).** A guest on a public form has no session for
+`/forms/success` to authorise, and a submission id is no proof. Its request is created with
+`/f/:formId/receipt?receipt=<random>` as both return URLs, and that page confirms through
+`POST /api/public/forms/receipts/confirm`, which finds the row by the receipt's SHA-256 and runs the
+same `confirmPayment` - Lydia read about the row's own request, server to server. The verified
+callback settles a guest row exactly as a member's ([forms](forms.md#the-guests-return-from-lydia-a-receipt-not-an-id-wp-p2---a-security-surface)).
 
 **Not verified, and owed to Lydia or a phone**: whether Lydia appends parameters to
 `browser_success_url`, whether it accepts the `fr.emse.canari://` deep link the phone app sends,

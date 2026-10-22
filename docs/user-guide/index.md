@@ -9,6 +9,7 @@
 |---|---|
 | Etudiant ou personnel EMSE utilisant Canari | [Guide membre](membre.md) |
 | Secretaire, tresorier ou president d'une association | [Guide responsable d'association](responsable-association.md) |
+| Organisateur d'un evenement ouvert a des personnes sans compte (inscription payante) | [Formulaires publics](formulaires-publics.md) |
 | Responsable qui doit donner des droits a ses membres | [Les permissions d'une association](permissions-association.md) |
 | Membre qui reserve une salle ou un rendez-vous, ou organisateur d'un espace de reservation | [Reservations](reservations.md) |
 | Curieux de savoir comment vos messages sont protégés (PIN, nouvel appareil, historique) | [Comprendre le chiffrement de vos messages](chiffrement-et-historique.md) |
