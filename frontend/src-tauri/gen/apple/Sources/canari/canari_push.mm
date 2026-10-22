@@ -241,6 +241,16 @@ NSString *CanariTauriDataDir(void) {
   return dir;
 }
 
+NSString *CanariTauriCacheDir(void) {
+  NSArray<NSString *> *paths =
+      NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
+  NSString *base = paths.firstObject;
+  if (base == nil) {
+    return nil;
+  }
+  return [base stringByAppendingPathComponent:kCanariBundleId];
+}
+
 static bool CanariPushSecretStore(NSString *secret) {
   if (secret.length == 0) {
     return false;
@@ -3768,12 +3778,29 @@ static void CanariInstallApnsTokenHook(void) {
 @interface CanariNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
 @end
 
+/**
+ * Whether a notification is the Share Extension's "choose the conversation" banner
+ * (`canari_Share/ShareViewController.swift`). It is LOCAL and carries no push data and no deep link
+ * by design: its tap only has to bring Canari forward, where the share is imported on activation.
+ * Recognised first, so neither the push handling nor the "payload names no target" accusation sees it.
+ */
+static BOOL CanariIsShareNotification(NSDictionary *userInfo) {
+  return [userInfo[@"canariLocal"] isKindOfClass:[NSString class]] &&
+         [userInfo[@"canariLocal"] isEqualToString:@"incoming_share"];
+}
+
 @implementation CanariNotificationDelegate
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
          withCompletionHandler:
              (void (^)(UNNotificationPresentationOptions options))completionHandler {
   (void)center;
+  if (CanariIsShareNotification(notification.request.content.userInfo)) {
+    // The app is on screen: the share-ready signal has already imported the share and told the page.
+    NSLog(@"[CanariShare] share banner while in the foreground - not shown, the page already has it");
+    completionHandler(UNNotificationPresentationOptionNone);
+    return;
+  }
   CanariPushProcessRemoteNotificationUserInfo(notification.request.content.userInfo);
   if (canari_ios_is_in_foreground()) {
     completionHandler(UNNotificationPresentationOptionNone);
@@ -3787,6 +3814,11 @@ static void CanariInstallApnsTokenHook(void) {
              withCompletionHandler:(void (^)(void))completionHandler {
   (void)center;
   NSDictionary *userInfo = response.notification.request.content.userInfo;
+  if (CanariIsShareNotification(userInfo)) {
+    NSLog(@"[CanariShare] share banner tapped - the share is imported on activation");
+    completionHandler();
+    return;
+  }
   CanariPushProcessRemoteNotificationUserInfo(userInfo);
 
   // Notification quick actions (WP-XP-1): reply / mark as read fire even from a killed app - the

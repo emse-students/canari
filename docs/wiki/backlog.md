@@ -510,14 +510,19 @@ The school applied a setting on its TEST CAS and the IP-only and user-agent-only
 
 Reuse the bench phones with screen recording to make demo videos and screenshots for the stores and for communication, from the fictional dev seed (never production). Personal data blurred frame by frame and the result reviewed before delivery; Apple and Google formats. Capture and sizes: [store-listings](store-listings.md#6-capture). Not built.
 
-## Sharing into and out of Canari - S1-S3 and S5 (Android) built, S4 in review (user, 2026-10-11, a priority 2026-10-21)
+## Sharing into and out of Canari - S1-S4 and S5 (Android) built (user, 2026-10-11, a priority 2026-10-21)
 
 Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
 waiting share is erased at sign-out (user, 2026-10-22). The Android share-sheet suggestions (S5) are
-built too: recent conversations as direct targets, erased at sign-out, behind a setting. **S4, share
-IN on iOS**: the App ID and both profiles exist (user, 2026-10-22); the Share Extension is a draft
-pull request, and it carries the iOS suggestions next. CanaRun waits. Owed: the Mi 9T and iPhone 12
-readings. [sharing](frontend/sharing.md)
+built too: recent conversations as direct targets, erased at sign-out, behind a setting. Owed: the
+Mi 9T and iPhone 12 readings.
+**S4, share IN on iOS, is BUILT (2026-10-22)** now that the App ID `fr.emse.canari.share` (App
+Group) and its `CanariShare` profiles exist: a Share Extension writes into the App Group and the app
+carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
+is its first compile and the iPhone readings listed under Owed on
+[sharing](frontend/sharing.md#owed) are its first proof - including the secret
+`APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
+suggestions (`INSendMessageIntent`). CanaRun waits.
 
 ## Owed a VERIFICATION, and nothing else
 

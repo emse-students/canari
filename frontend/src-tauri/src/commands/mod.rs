@@ -3,6 +3,10 @@
 pub mod at_rest_key;
 #[cfg(any(feature = "bench-observables", test))]
 pub mod bench;
+// The iOS Share Extension's share, carried out of the App Group; the pure halves compile for the
+// host test run so CI pins the replacement rules without a device.
+#[cfg(any(target_os = "ios", test))]
+pub mod app_group_share;
 pub mod cookies;
 pub mod display_names;
 pub mod handoff;

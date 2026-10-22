@@ -568,6 +568,54 @@ static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
   }
 }
 
+/// The Share Extension's banner (`canari_Share/ShareViewController.swift`), removed once its share is
+/// in the app: it has done its one job.
+static NSString *const kCanariShareNotificationId = @"canari.share.ready";
+
+/// The Darwin notification the Share Extension posts when a share waits in the App Group.
+static CFStringRef const kCanariShareReadyNotification = CFSTR("fr.emse.canari.share-ready");
+
+/// Carries a share another app made INTO Canari out of the App Group, where the Share Extension left
+/// it, into the app's own handoff (`canari_ios_import_app_group_share`, commands/app_group_share.rs),
+/// then tells a live page - `canari:incoming-share`, the event Android's MainActivity dispatches. A
+/// page not loaded yet drains the file at mount instead. `why` names the call site in the log.
+static void CanariImportAppGroupShare(NSString *why) {
+  NSString *dataDir = CanariTauriDataDir();
+  NSString *cacheDir = CanariTauriCacheDir();
+  if (dataDir == nil || cacheDir == nil) {
+    NSLog(@"[CanariShare] import (%@) NOT run: the app data or cache directory is unresolved", why);
+    return;
+  }
+  if (canari_ios_import_app_group_share(dataDir.UTF8String, cacheDir.UTF8String) != 1) {
+    return;
+  }
+  [[UNUserNotificationCenter currentNotificationCenter]
+      removeDeliveredNotificationsWithIdentifiers:@[ kCanariShareNotificationId ]];
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariShare] share imported (%@) before the WebView: the page drains it at mount", why);
+    return;
+  }
+  [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:incoming-share'));"
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                NSLog(@"[CanariShare] the page was not told of the share (%@): it drains at its next mount",
+                      error.localizedDescription);
+              }
+            }];
+  NSLog(@"[CanariShare] share imported (%@), the page was told", why);
+}
+
+/// The extension's "share ready" signal, for an app that is running when the share finishes (an
+/// iPad beside the sending app). Darwin notifications arrive on an arbitrary thread.
+static void CanariOnShareReady(__unused CFNotificationCenterRef center, __unused void *observer,
+                               __unused CFNotificationName name, __unused const void *object,
+                               __unused CFDictionaryRef userInfo) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    CanariImportAppGroupShare(@"share ready");
+  });
+}
+
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   CanariSetAppGroupForegroundFlag(YES);
@@ -591,6 +639,8 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   // puts those entries where take_fcm_cache will find them, and it must happen before
   // the frontend asks for the cache at login.
   CanariDrainAppGroupFcmCache();
+  // A share the Share Extension made while Canari was away - the banner's tap lands here.
+  CanariImportAppGroupShare(@"activation");
   // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
   // active moment (the foreground advances mls.bin; there is no Rust write hook to mirror on).
   CanariMirrorPushStateToAppGroup();
@@ -752,6 +802,21 @@ void canari_ios_bootstrap(void) {
   // Cold start: drain before the WebView exists, so the very first take_fcm_cache of
   // this launch already sees the pushes handled while the app was killed.
   CanariDrainAppGroupFcmCache();
+  // A share into Canari: first the sweep, once per process and before any page exists to be staging
+  // a copy (Android sweeps at its first onCreate for the same reason), then the import, so the
+  // page's first drain finds it.
+  NSString *shareDataDir = CanariTauriDataDir();
+  NSString *shareCacheDir = CanariTauriCacheDir();
+  if (shareDataDir != nil && shareCacheDir != nil) {
+    int swept = canari_ios_sweep_shared_inboxes(shareDataDir.UTF8String, shareCacheDir.UTF8String);
+    NSLog(@"[CanariShare] launch sweep: %d orphan share(s) deleted", swept);
+  } else {
+    NSLog(@"[CanariShare] launch sweep NOT run: the app data or cache directory is unresolved");
+  }
+  CanariImportAppGroupShare(@"launch");
+  CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, CanariOnShareReady,
+                                  kCanariShareReadyNotification, NULL,
+                                  CFNotificationSuspensionBehaviorDeliverImmediately);
   // Start the keyboard media bridge (WP-XP-6). The WKWebView is not yet created at this point
   // (Tauri/wry creates it inside ffi::start_app() which runs after us), so we pass nil and the
   // bridge will find the WebView lazily on the first UIApplicationDidBecomeActiveNotification.

@@ -13,8 +13,9 @@
 //! A COMMAND THAT READS AND DELETES A PATH THE PAGE NAMES TAKES AN ALLOWLIST, NEVER A DENYLIST: only
 //! a file under the canonical caches or temporary directory - the two places the pickers write - is
 //! touched, and `..` or a symlink cannot reach outside them because the CANONICAL path is compared.
-//! The same command reads the copies of a share INTO Canari (Android), from the one directory those
-//! are made in - see `docs/wiki/frontend/sharing.md`.
+//! The same command reads the copies of a share INTO Canari (Android, and iOS once the app has carried
+//! the Share Extension's copies out of the App Group), from the one directory those are made in -
+//! see `docs/wiki/frontend/sharing.md`.
 //! See `docs/wiki/frontend/modules/chat.md` (the attachment menu).
 
 use std::path::{Path, PathBuf};
@@ -53,8 +54,9 @@ fn picker_roots<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
             Err(e) => log::warn!("[PickedFiles] {name} directory unresolved: {e}"),
         }
     }
-    // The copies Android's `IncomingShare.kt` makes of what another app shared into Canari. That
-    // directory, and NOT the whole app cache around it: the cache also holds the WebView's own files
+    // The copies Android's `IncomingShare.kt` makes of what another app shared into Canari (and that
+    // iOS moves there out of the App Group, `app_group_share`). That directory, and NOT the whole app
+    // cache around it: the cache also holds the WebView's own files
     // and the gallery's decrypted staging, none of which the page may read or delete by name.
     if let Ok(inbox) = app.path().app_cache_dir().map(|d| d.join(SHARED_INBOX)) {
         match inbox.canonicalize() {
@@ -67,8 +69,10 @@ fn picker_roots<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
     roots
 }
 
-/// The directory under the app cache that `IncomingShare.kt` copies shared streams into.
-const SHARED_INBOX: &str = "shared_inbox";
+/// The directory under the app cache that `IncomingShare.kt` copies shared streams into - and, on
+/// iOS, the name of the Share Extension's directory in the App Group, whose share directories the
+/// app moves under the app cache by the same name.
+pub(crate) const SHARED_INBOX: &str = "shared_inbox";
 
 /// The canonical form of `path` when it lies under a picker directory; an error (logged) otherwise.
 fn allowed_path<R: Runtime>(app: &AppHandle<R>, path: &str) -> Result<PathBuf, String> {

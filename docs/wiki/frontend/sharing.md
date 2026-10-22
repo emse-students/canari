@@ -12,7 +12,7 @@ builds on the IN half later and is not started.
 | --- | --- | --- |
 | S1+S2 | Share IN on Android: the intent filter, the native copy, the "Envoyer a..." picker, the composer staging | built (this page) |
 | S3 | Share OUT (Android + iOS): `share_text` / `share_staged`, message and post menus | built - [share-out](share-out.md) |
-| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a new signing profile; **the iOS conversation suggestions (`INSendMessageIntent`) follow it**, since they need that extension | in review - the App ID and both profiles exist (user, 2026-10-22) |
+| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a third signing profile; **the iOS conversation suggestions (`INSendMessageIntent`) follow it**, since they need that extension | **built (2026-10-22), owed the iPhone readings** - [the iOS path](#share-in-ios---the-path) |
 | S5 | Conversation suggestions in the Android sheet (Direct Share / sharing shortcuts) | built (Android), [below](#share-suggestions-android---lot-s5) |
 | S6 | A post's or a reel's share sheet, Instagram's: send into a conversation, copy the link, the system sheet; a shared reel's card opens the viewer | built, design decided 2026-10-23 - [below](#a-post-or-a-reel-shared-from-its-sheet---lot-s6) |
 
@@ -242,6 +242,50 @@ sees "unavailable"; "Copier le lien" and "Partager via..." from both. Tests:
 `LinkPreviewCard.reel.svelte.test.ts` and `canariLinkPreview.test.ts` (a reel's card opens the
 viewer, a post's its page).
 
+## Share IN, iOS - the path
+
+iOS has no intent: another app's sheet runs a SEPARATE process, the Share Extension, which cannot
+reach the app's sandbox. So the extension writes into the App Group (`group.fr.emse.canari`, the
+container the NSE already shares), and the app carries the share out of it into exactly the layout
+Android leaves - from there, steps 3 to 6 above are the same code.
+
+1. **The extension** (`gen/apple/canari_Share/`, target `CanariShare`, bundle
+   `fr.emse.canari.share`, App Groups entitlement only, no keychain) is activated for text, one web
+   URL, and up to 10 images, movies or files (`Info.plist`). `ShareCapture.swift` is
+   `IncomingShare.kt`'s twin: it takes `<AppGroup>/shared_inbox.lock` (`flock`, exclusive) for the
+   whole capture, reads `<AppGroup>/share_epoch` ONCE it holds it, streams each item
+   (`loadFileRepresentation`, 64 KiB chunks, never whole in memory) into
+   `<AppGroup>/shared_inbox/<uuid>/` under Android's caps and names (`ShareRules.swift` - 10 files,
+   200 MB each, 300 MB in all; a `file://` URL as TEXT and a file inside the App Group are refused),
+   then writes `<AppGroup>/pending_share.json` in Android's schema (tmp + rename), with Android's
+   claim/replace/refusal-merge rules by epoch. Every branch logs (`os_log`, subsystem
+   `fr.emse.canari`, category `share`). Drift against the Kotlin is a vitest:
+   `src/lib/mobile/iosShareExtension.test.ts`.
+2. **It does not open the app.** An extension has no public API to launch its host app, and the
+   responder-chain `openURL:` trick is undocumented private behaviour App Review may refuse, so it posts a
+   LOCAL notification, "Choisissez la conversation" (fr/en from its own `Localizable.strings`, in
+   the SYSTEM language - the extension cannot read the app's chosen locale), and says on its card to
+   open Canari when notifications are off. The banner carries `canariLocal: incoming_share` and no
+   `deepLink`: `canari_push.mm` recognises it, shows nothing while the app is on screen, and its tap
+   only opens the app - it never reaches the push routing (which would accuse a missing target).
+   A running app also gets the Darwin notification `fr.emse.canari.share-ready`.
+3. **The app imports** (`commands/app_group_share.rs`, Rust so it is tested here and so ONE
+   implementation serves every caller): at bootstrap, on `didBecomeActive`, on the Darwin signal, and
+   inside `read_and_clear_pending_share` itself before its claim. It TRIES the lock (never waits: a
+   capture in progress is `Busy`, and the next activation imports), claims the group manifest by
+   rename, MOVES `<AppGroup>/shared_inbox/<id>` to the app cache's `shared_inbox/<id>` (one volume,
+   a rename - a failed move deletes the source and errors, there is no copy fallback), rewrites each
+   path to the moved file of the same name, and hands over to the data directory's
+   `pending_share.json` with Android's replace-by-epoch semantics. When it imported, `canari_ios.mm`
+   removes the banner and dispatches `canari:incoming-share`. The once-per-process orphan sweep
+   covers BOTH inboxes (the App Group one only when the lock is free).
+4. **Sign-out leaves nothing in the App Group** with the same two page commands as Android:
+   `advance_share_epoch` also writes `<AppGroup>/share_epoch` and FAILS CLOSED when it cannot
+   (a stale group epoch would let an old capture look current), and `read_and_clear_pending_share`
+   imports before it claims, so the erase deletes the group's share too. `share_epoch` is now kept
+   across the app-data wipe (`storage.rs`, `KEPT_AT_TOP_LEVEL`): a reset count would make an old
+   share look current against the group's copy - and on Android against a capture in flight.
+
 ## Decisions
 
 - **Destinations are conversations and salons, never a post** (user, 2026-10-11): a post's text is
@@ -304,3 +348,14 @@ viewer, a post's its page).
   refused while one waits (that one stays, the refusal is told), and a kill then relaunch (orphans
   swept, the waiting share kept). `adb logcat -s IncomingShare` and the
   page's `[SHARE]` lines tell each step.
+- **S4, on the iPhone - nothing on Windows compiles Swift, Objective-C or the iOS `cfg` of the
+  Rust**, so CI's archive is the first compile and these are the first proof: Canari in the share
+  sheet of Photos (one screenshot, several pictures, a video), Safari (a URL), Notes (text) and Files
+  (a PDF); the banner when notifications are allowed, the card's "open Canari" line when they are
+  not; a tap on the banner opening the picker, cold and warm, with the PIN gate up; a share while the
+  app is on screen (the Darwin signal, no banner); a second share while the first waits; a share
+  then a sign-out (nothing offered to the next account, the App Group's `shared_inbox` empty); and
+  the logs - Console filtered on subsystem `fr.emse.canari`, category `share`, plus the app's
+  `[SHARE]` lines. Unproven until then: the cross-container rename staying one volume, `flock`
+  between the two processes, `loadFileRepresentation` on Photos assets, and the activation rule.
+  Suggested next lot: iOS conversation suggestions (`INSendMessageIntent`, the S5 twin).

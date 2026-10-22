@@ -111,6 +111,13 @@ int canari_native_cleanup_pending_db(const char *files_dir);
 void canari_ios_on_resume(void);
 void canari_ios_on_pause(void);
 
+/* A share INTO Canari left by the Share Extension in the App Group (commands/app_group_share.rs):
+   carried into the app data and cache directories. 1 when a share now waits for the page. */
+int canari_ios_import_app_group_share(const char *data_dir, const char *cache_dir);
+/* Once per process, before the page exists: deletes the share copies no current manifest names.
+   Returns how many it deleted. */
+int canari_ios_sweep_shared_inboxes(const char *data_dir, const char *cache_dir);
+
 #ifdef __cplusplus
 }
 #endif

@@ -6,6 +6,10 @@
 /// Tauri `app_data_dir` (Application Support/fr.emse.canari) of the CALLING process.
 FOUNDATION_EXPORT NSString *_Nullable CanariTauriDataDir(void);
 
+/// Tauri `app_cache_dir` (Library/Caches/fr.emse.canari) of the CALLING process: where the copies of
+/// a share into Canari are moved for `take_picked_file` to read.
+FOUNDATION_EXPORT NSString *_Nullable CanariTauriCacheDir(void);
+
 /// Reads the push secret. pending_push_secret.txt WINS over the Keychain when present -
 /// it is newer by construction; see the implementation for why the reverse order 403s.
 FOUNDATION_EXPORT NSString *_Nullable CanariRetrievePushSecret(void);
