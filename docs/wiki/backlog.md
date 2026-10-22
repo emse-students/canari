@@ -2031,6 +2031,11 @@ Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come 
 12. **Lives on R2 (#2211), decisions O-1 to O-7.** The lead decides following the recommendations in that pull request and records EACH decision here with the measurement that justifies it. No visible viewer cap; the technique follows.
 13. **Store questionnaires and pieces** (App Store privacy answers and the review video for lives, #2196; Play data safety, calls B14, #2188). The lead submits only what accompanies a stable it cut, and NEVER changes a data declaration without the user.
 14. **Production incident during the window.** The lead may cut a kill switch, restart a container, or redeploy the previous stable. Nothing destructive: no data deletion, no reverse migration, and no admin bypass without writing to the user first in the conversation.
+15. **More migrations (2026-10-22).** chat-delivery 033, 034, 035 (#2254, #2260, #2270) and social-service 106 (#2265) MAY ride the next stable. **034 makes chat-delivery forward-only**, and the release notes say so.
+16. **Store listings (2026-10-22).** Redo everything, texts AND images, with FICTIONAL demo accounts created on dev and no personal data. The user sees the texts and the images BEFORE any submission.
+17. **The next pre-release (`1.4.1-alpha.1`)** is cut as soon as the ready batch of security and sharing pull requests has merged, without waiting for the rest.
+18. **Standing reminder from the user:** *"il faut toujours vider le backlog, et assez rapidement avoir les lives et les appels en production"*. The backlog is always drained, and lives and calls reach production quickly ([live-production](frontend/modules/live-production.md), [calls](frontend/modules/calls.md)).
+19. **Phone at-rest key (#2274): option B** - the PIN also enters the key on the device. Constraints: the SAME PIN on every device and NO added friction (staying signed in without the PIN, and biometrics, still work). "Stay signed in" stays ON by default, so B protects only the devices that turn it off.
 
 ## P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167
 
