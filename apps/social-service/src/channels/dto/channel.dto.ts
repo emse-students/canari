@@ -103,12 +103,6 @@ export interface UpdateWorkspaceMemberRoleDto {
   roleName: string;
 }
 
-export interface ChannelJoinDto {
-  userId: string;
-  roleName?: string;
-  actorUserId: string;
-}
-
 export interface ChannelLeaveDto {
   userId: string;
 }

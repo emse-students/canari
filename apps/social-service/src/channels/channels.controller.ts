@@ -17,7 +17,6 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ChannelService } from './channel.service';
 import {
   type AcceptWorkspaceInviteDto,
-  type ChannelJoinDto,
   type ChannelInviteDto,
   type ChannelLeaveDto,
   type ChannelUpdateRoleDto,
@@ -341,18 +340,6 @@ export class ChannelsController {
   @Get('workspace/:workspaceId/user/me')
   listChannels(@Headers('x-user-id') xUserId: string, @Param('workspaceId') workspaceId: string) {
     return this.service.listChannelsForUser(workspaceId, xUserId.trim().toLowerCase());
-  }
-
-  /** Adds the calling user as a member of the specified channel. */
-  @UseGuards(NginxAuthGuard)
-  @Post(':channelId/members/join')
-  join(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string,
-    @Body() body: ChannelJoinDto
-  ) {
-    const userId = xUserId.trim().toLowerCase();
-    return this.service.joinChannel(channelId, { ...body, userId, actorUserId: userId });
   }
 
   /** Invites a target user to a channel on behalf of the calling user. */
