@@ -772,7 +772,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       const sent = fanOut();
 
       await expect(commit({}, 'user-1')).rejects.toMatchObject({
-        response: { error: 'committer_not_member' },
+        response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
       });
       expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
         where: [
@@ -807,7 +807,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       tables({ keyPackages: [ownKey] });
 
       await expect(commit({}, 'user-1')).rejects.toMatchObject({
-        response: { error: 'committer_not_member' },
+        response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
       });
       expect(transaction).not.toHaveBeenCalled();
     });
@@ -828,7 +828,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       tables({ keyPackages: [ownKey], roster: [{ groupId: 'group-1', userId: 'user-2' }] });
 
       await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
-        response: { error: 'committer_not_member' },
+        response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
       });
       expect(transaction).not.toHaveBeenCalled();
     });
@@ -895,7 +895,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         const sent = fanOut();
 
         await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
-          response: { error: 'committer_not_member' },
+          response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
         });
         expect(transaction).not.toHaveBeenCalled();
         expect(activate).not.toHaveBeenCalled();

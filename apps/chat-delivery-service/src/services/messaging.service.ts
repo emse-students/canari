@@ -2556,10 +2556,12 @@ export class MessagingService {
         `device=${sanitizeLogValue(userId)}:${deviceId} ` +
         `kind=${scope ? `key-group-external ${scope.kind}=${scope.id}` : external ? 'external' : 'member'}`
     );
-    throw new ForbiddenException({
-      error: 'committer_not_member',
-      message: 'this commit is not accepted',
-    });
+    // `code` is what a client's typed refusal reads; `error` is kept for the clients that read it.
+    throw new ForbiddenException(
+      refusalBody(RefusalCode.NOT_A_MEMBER, 'this commit is not accepted', {
+        error: 'committer_not_member',
+      })
+    );
   }
 
   /** Whether `groupId` is a Graine key-distribution group (a community's or a private salon's). */

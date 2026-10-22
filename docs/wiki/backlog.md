@@ -258,6 +258,25 @@ an unanswered call is a `503 entitlement_unavailable`, never an acceptance
 Owed before a stable: the rate of `[ENTITLEMENT] UNANSWERED` lines on dev, then production, against
 the ~77 key-group joins/day.
 
+## P3 - An external commit's activation can follow an eviction it raced (2026-10-22)
+
+The entitlement or roster answer is read before the commit lock, and the activation runs inside it. An
+eviction that lands between the two leaves an `active` row behind, cut only by the next member
+removal commit. The bound and the reasoning are in [channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live).
+The fix makes the eviction and the activation exclude each other. Before choosing between a shared
+lock and a conditional activation, count how often `[DISTRIBUTION_GROUP] evict` and an `ADMITS` or
+activation line for the same user and group fall within one second of each other on production.
+
+## P3 - `POST /mls/commit` has no rate limit (2026-10-22)
+
+Neither an edge `limit_req` nor the configured `ThrottlerModule` applies to the commit route. A key
+group's external commit costs a social-service call, one or two queries and a log line on each
+service, so a crafted stream of them costs every one of those. A limit must not refuse legitimate
+bursts: a device that rejoins many groups after a restore commits once per group in quick succession.
+Measure first: the maximum number of commits per user per minute on production over 30 days
+(`mls_commit_log`, grouped by sender device and minute). Set the limit above that maximum, then add a
+test that the route answers `429` past it and never below it.
+
 ## P3 - A refused membership report is silent on the client (2026-10-22)
 
 A report of `active` now promotes an existing seat only, and is refused (`403 NOT_A_MEMBER`, with
