@@ -29,11 +29,17 @@ import { flushMacrotask } from '../../test/flush';
 /** Mutable: the audio-only describe turns video off; every other test runs a build that has it. */
 const features = vi.hoisted(() => ({ CALLS_ENABLED: true, CALLS_VIDEO_ENABLED: true }));
 vi.mock('$lib/features', () => features);
-/** What the server's kill switch says; mutable so a test can close calls. */
-const serverSwitch = vi.hoisted(() => ({ mode: 'audio' as 'off' | 'audio' | 'audio_video' }));
+/** What the server's kill switch says and whether /api/version answered; mutable per test. */
+const serverSwitch = vi.hoisted(() => ({
+  mode: 'audio' as 'off' | 'audio' | 'audio_video',
+  answered: true,
+  refresh: async (): Promise<void> => {},
+}));
 vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/stores/appVersionCheck.svelte')>()),
   serverCallsMode: () => serverSwitch.mode,
+  getAppVersionCheck: () => (serverSwitch.answered ? {} : null),
+  refreshAppVersionCheck: () => serverSwitch.refresh(),
 }));
 vi.mock('$lib/users/blocks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/users/blocks')>()),
@@ -1790,6 +1796,39 @@ describe('the ring window, both sides', () => {
       expect(get(service.callState)).toBe('idle');
     } finally {
       serverSwitch.mode = 'audio';
+    }
+  });
+
+  it('waits for a pending version check, then rings on audio and not on off', async () => {
+    for (const answer of ['audio', 'off'] as const) {
+      serverSwitch.mode = 'off';
+      serverSwitch.answered = false;
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      serverSwitch.refresh = async () => {
+        await gate;
+        serverSwitch.mode = answer;
+        serverSwitch.answered = true;
+      };
+      try {
+        const service = new CallService(fakeMls);
+        const handled = service.handleCallSignal(
+          'peer@example.org',
+          'group-1',
+          invite(5),
+          'me@example.org',
+          'device-1'
+        );
+        await Promise.resolve();
+        expect(get(service.callState)).toBe('idle');
+        release();
+        await handled;
+        expect(get(service.callState)).toBe(answer === 'audio' ? 'incoming' : 'idle');
+      } finally {
+        serverSwitch.mode = 'audio';
+        serverSwitch.answered = true;
+        serverSwitch.refresh = async () => {};
+      }
     }
   });
 

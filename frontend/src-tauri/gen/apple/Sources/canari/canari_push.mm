@@ -3652,7 +3652,9 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
                                      : CXCallEndedReasonRemoteEnded);
     // The generic ring ALERT an iPhone with no VoIP token gets (the NSE tags it with
     // `canariCallId`) is taken off the lock screen too, so a call already over is not left ringing
-    // there. Best effort: a background push can be dropped, and the alert expires after 60 s.
+    // there. Best effort: a background push can be dropped. The alert's `apns-expiration` only bounds APNs
+    // store-and-forward; a DELIVERED banner stays until removed - here, or on app activation, where
+    // `CanariPushCancelMessageNotifications` clears it (its `deepLink` is a chat link).
     if (callId.length > 0) {
       UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
       [center getDeliveredNotificationsWithCompletionHandler:^(

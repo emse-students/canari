@@ -168,6 +168,14 @@ describe(`in-app calls and the background follow CALLS_COMPILED (= ${COMPILED})`
   });
 });
 
+/** Whether a workflow line WRITES the UIBackgroundModes array (a read-only Print does not). */
+function writesBackgroundModes(line: string): boolean {
+  return (
+    /\b(Add|Set|Delete|Merge|Import|Clear)\s+:UIBackgroundModes/.test(line) ||
+    /plutil\s+-(insert|replace|remove)\s+UIBackgroundModes/.test(line)
+  );
+}
+
 describe('the committed files are the ONLY carriers: no build step patches a call switch in', () => {
   // Before the flip a pre-release got `audio` from a PlistBuddy branch of ios.yml and the Android
   // service from a gradle overlay on VITE_DEPLOY_ENVIRONMENT. Both are deleted: a build that
@@ -175,15 +183,24 @@ describe('the committed files are the ONLY carriers: no build step patches a cal
   it('ios.yml WRITES no UIBackgroundModes entry (it may print the built ones)', () => {
     // Write commands only: PlistBuddy Add/Set/Delete/Merge/Import and plutil insert/replace/remove.
     // A read-only `Print :UIBackgroundModes` is the CI step that shows what the archive declares.
-    const writes = iosWorkflow
-      .split('\n')
-      .filter((line) => line.includes('UIBackgroundModes'))
-      .filter(
-        (line) =>
-          /(Add|Set|Delete|Merge|Import|Clear)s+:UIBackgroundModes/.test(line) ||
-          /plutil\s+-(insert|replace|remove)\s+UIBackgroundModes/.test(line)
-      );
+    const writes = iosWorkflow.split('\n').filter((line) => writesBackgroundModes(line));
     expect(writes, 'ios.yml writes UIBackgroundModes').toEqual([]);
+  });
+
+  it('the write detector bites: synthetic write lines are caught, a Print is not', () => {
+    // Guards the guard: a lost backslash once made the pattern match nothing, and every ios.yml passed.
+    expect(
+      writesBackgroundModes(
+        '/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST"'
+      )
+    ).toBe(true);
+    expect(
+      writesBackgroundModes('/usr/libexec/PlistBuddy -c "Set :UIBackgroundModes:1 audio" "$PLIST"')
+    ).toBe(true);
+    expect(writesBackgroundModes('plutil -insert UIBackgroundModes -array "$PLIST"')).toBe(true);
+    expect(
+      writesBackgroundModes('/usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST"')
+    ).toBe(false);
   });
 
   it('ios.yml prints the built background modes and microphone string, read-only', () => {
@@ -242,6 +259,11 @@ describe('the generic ring alert of an iPhone with no VoIP token is filed, not o
     );
     expect(end).toContain('removeDeliveredNotificationsWithIdentifiers');
     expect(end).toContain('canariCallId');
+  });
+
+  it('app activation clears the banner too: its deep link is the chat prefix the sweep matches', () => {
+    expect(pushMm).toContain('[deepLink hasPrefix:@"fr.emse.canari://chat"]');
+    expect(nse).toContain('content.userInfo["deepLink"] = "fr.emse.canari://chat/');
   });
 });
 

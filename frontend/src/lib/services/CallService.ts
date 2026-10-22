@@ -34,7 +34,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
-import { callsAvailable } from '$lib/utils/callsAvailability';
+import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
 import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
@@ -577,7 +577,7 @@ export class CallService {
       // The server's kill switch (`calls_mode`, B12): with calls closed the server refuses every
       // call request, so an invite that reaches us anyway (a caller on an older client, or one
       // that skipped the server) must not ring a call this estate does not allow.
-      if (!callsAvailable(serverCallsMode())) {
+      if (!(await callsAvailableAnswered())) {
         appendLog(
           `[Call] invite ${callMsg.callId} in ${groupId} not rung - calls are off on the server (mode=${serverCallsMode()})`
         );

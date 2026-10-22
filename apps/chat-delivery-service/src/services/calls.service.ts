@@ -1041,8 +1041,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
             ? {
                 'apns-push-type': 'alert',
                 'apns-priority': '10',
-                // Dead after the ring window, like Android's 60 s ttl: a phone that was off must not
-                // show a ring for a call long over. The collapse id replaces a re-sent ring.
+                // Bounds APNs store-and-forward like Android's 60 s ttl: a phone that was off must not
+                // be handed a ring for a call long over. A DELIVERED banner is not touched by this -
+                // call_ring_end and app activation remove it. The collapse id replaces a re-sent ring.
                 'apns-expiration': String(Math.floor(Date.now() / 1000) + CALL_RING_TIMEOUT_SEC),
                 // APNs refuses a collapse id over 64 bytes (a callId may be up to 128): none then.
                 ...(Buffer.byteLength(dataFields.callId) <= 64
