@@ -1909,6 +1909,11 @@ export class MessagingService {
         // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
         // row; the update is guarded on `pending` so an `active` device - already routed by its
         // status - is never touched.
+        //
+        // `kickedAt: null` HERE, AND NOWHERE ELSE BUT ACTIVATION. A kick records a removed leaf that
+        // a member owes an Add; this accepted commit IS that Add, made by a member through the gate
+        // above. A Welcome used to clear it instead, and a Welcome is bytes anyone in the group can
+        // address to any device - so it could undo a kick that no commit had answered.
         for (const a of admitted) {
           await m
             .getRepository(DeviceGroupMembership)
@@ -1920,8 +1925,8 @@ export class MessagingService {
           await m
             .getRepository(DeviceGroupMembership)
             .update(
-              { deviceId: a.deviceId, groupId, status: 'pending' as const },
-              { admittedAtEpoch: baseEpoch + 1 }
+              { userId: a.userId, deviceId: a.deviceId, groupId, status: 'pending' as const },
+              { admittedAtEpoch: baseEpoch + 1, kickedAt: null }
             );
         }
       });
@@ -1946,17 +1951,18 @@ export class MessagingService {
       // neither the history bundle it is about to solicit nor any subsequent live message, while
       // its own sends work - a silent one-way group. Checked first so the promotion (and its log
       // line) stays an event rather than a no-op on every ordinary commit.
-      if (body.senderId) {
-        const membership = await this.deviceGroupRepo.findOne({
-          where: { deviceId, groupId },
-        });
-        if (membership?.status !== 'active') {
-          await this.activateDeviceMembership(body.senderId, deviceId, groupId).catch((e) =>
-            this.logger.warn(
-              `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
-            )
-          );
-        }
+      //
+      // Every identity downstream of the gate is the CALLER's (`committer`), never the body's
+      // spelling of it, and every row is read by the pair, never by the device id alone.
+      const committerRow = await this.deviceGroupRepo.findOne({
+        where: { userId: committer, deviceId, groupId },
+      });
+      if (committerRow?.status !== 'active') {
+        await this.activateDeviceMembership(committer, deviceId, groupId).catch((e) =>
+          this.logger.warn(
+            `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
+          )
+        );
       }
 
       // Fan out the commit to members. Kept inside the locked section so validate + store +
@@ -1966,16 +1972,12 @@ export class MessagingService {
       // A device back in the tree - admitted by this commit, or committing itself (an external
       // rejoin) - is no longer parting: an entry left for it would hand a LATER removal's commit to
       // nobody who needs it, so it ends here, on that state.
-      await this.clearParting(
-        groupId,
-        [...admitted, ...(body.senderId ? [{ userId: body.senderId, deviceId }] : [])],
-        traceId
-      );
+      await this.clearParting(groupId, [...admitted, { userId: committer, deviceId }], traceId);
       const parting = await this.declaredPartingDevices(groupId, body.removes, traceId);
       await this.sendMessage(
         {
           groupId,
-          senderId: body.senderId,
+          senderId: committer,
           senderDeviceId: deviceId,
           proto: commitProto,
           isCommit: true,
@@ -2558,8 +2560,8 @@ export class MessagingService {
     // Welcome their devices; asked of the user table, every one of those Welcomes would be refused.
     // A sender holding an ACTIVE leaf row may Welcome: it already reads every seed on the group.
     const authUserId = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id');
+    const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
     if (authUserId) {
-      const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
       const { isMember, isKeyDistribution } = await this.memberOfGroupKind(
         group,
         safeGroupId,
@@ -2593,6 +2595,23 @@ export class MessagingService {
       throw new Error(
         `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`
       );
+    }
+
+    // THE TARGET OF A CONVERSATION'S WELCOME IS ON ITS ROSTER. Every client path registers the
+    // member (`registerMember`) before it delivers the Welcome, so this refuses only a device whose
+    // owner the group does not name - the row written below would otherwise make it a device of
+    // the group. A key-distribution group has no user roster here; its target is checked against
+    // social-service with its external joins (WP-KEYGROUP-JOIN-GATE).
+    const keyDistribution = !!(group?.distributionWorkspaceId || group?.distributionChannelId);
+    if (!keyDistribution && !(await this.isOnRoster(safeGroupId, deviceInfo.userId))) {
+      this.logger.warn(
+        `[WELCOME][${traceId}] REJECT welcome_target_not_member group=${safeGroupId} ` +
+          `target=${sanitizeLogValue(deviceInfo.userId)}:${targetDeviceId}`
+      );
+      throw new ForbiddenException({
+        error: 'welcome_target_not_member',
+        message: 'this Welcome is not accepted',
+      });
     }
 
     const queuedWelcome = this.queuedMessageRepo.create({
@@ -2638,17 +2657,13 @@ export class MessagingService {
     // would touch 0 rows in that case, leaving the device without a record ->
     // processPendingInvitations would incorrectly kick it.
     //
-    // **THE CONFLICT CLAUSE OVERWRITES `kickedAt` AND NOTHING ELSE.** It used to overwrite `status`
-    // too, with the literal `'pending'`, and `skipUpdateIfNoValuesChanged` does not protect a row
-    // whose value CHANGES - so sending a Welcome to a device that was already `active` DEMOTED it.
-    // A demoted row is dropped by the fan-out (`WHERE status = 'active'`), which is how a working
-    // device stopped receiving the messages of a group it was still in. A Welcome is a delivery,
-    // not a demotion: only `activateDeviceMembership` moves this column, in one direction.
-    //
-    // `kickedAt: null` IS THE PROOF A KICK WAS FOLLOWED THROUGH. A Welcome in the queue means the
-    // Add the kick promised actually landed, so the row stops being one the stranded report should
-    // accuse - it is now an ordinary device owed a delivery. Left set, every successful
-    // kick-and-re-add would be reported as a failed one for as long as the row stayed pending.
+    // **AN EXISTING ROW IS NEVER TOUCHED.** The conflict clause used to overwrite `status` with the
+    // literal `'pending'` - and `skipUpdateIfNoValuesChanged` does not protect a row whose value
+    // CHANGES - so a Welcome to an `active` device DEMOTED it out of the fan-out. Then it overwrote
+    // `kickedAt` with null, which let a Welcome undo a kick no commit had answered: a kicked device
+    // is refused at the commit gate, and a Welcome is bytes, not an Add. The Add that answers a
+    // kick is the admitting commit, which clears `kickedAt` itself (`validateCommit`), and
+    // `activateDeviceMembership` clears it on activation.
     await this.deviceGroupRepo
       .createQueryBuilder()
       .insert()
@@ -2660,7 +2675,7 @@ export class MessagingService {
         status: 'pending' as const,
         kickedAt: null,
       })
-      .orUpdate(['kickedAt'], ['deviceId', 'groupId'])
+      .orIgnore()
       .execute();
 
     // THE ROUTING SET IS NOT WRITTEN HERE, AND THE `sadd` THAT USED TO BE ON THIS LINE IS THE

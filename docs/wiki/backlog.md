@@ -204,7 +204,7 @@ runs it or approves it explicitly); sending the DPO dossier; the DSI log-retenti
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join has no entitlement gate yet (2026-10-22)
 
-A key-group external join has no entitlement check yet; each one is logged `[COMMIT] key-group external join`. The roster of a key group is held by social-service. Owed next, as its own pull request with an opus review: a social-service internal route answering "is this person entitled to this scope", called by chat-delivery for a key-group external commit only. A failed call refuses with a retryable 503 and never accepts, and its rate is measured against the ~77 joins/day before a stable.
+A key-group external join has no entitlement check yet; each one is logged `[COMMIT] key-group external join`. An accepted external commit also promotes its committing device to `active`, as every external join must, so the check belongs before both. A key group's Welcome target is not checked either: a conversation's Welcome target must be on its roster, and a key group has no roster here. The roster of a key group is held by social-service. Owed next, as its own pull request with an opus review: a social-service internal route answering "is this person entitled to this scope", called by chat-delivery for a key-group external commit only. A failed call refuses with a retryable 503 and never accepts, and its rate is measured against the ~77 joins/day before a stable.
 
 ## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
 

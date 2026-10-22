@@ -829,8 +829,13 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).not.toHaveBeenCalled();
     });
 
-    it("accepts a key group's external commit, and logs each one", async () => {
+    it("KNOWN GAP (WP-KEYGROUP-JOIN-GATE): a key group's external commit is accepted, logged and activates its committer", async () => {
+      // This asserts today's behaviour so the gate that replaces it changes this test on purpose:
+      // no entitlement is checked, and acceptance promotes the committing device.
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const activate = jest
+        .spyOn(service, 'activateDeviceMembership')
+        .mockResolvedValue({ ok: true });
       tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
       fanOut();
 
@@ -840,7 +845,33 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
         'key-group external join'
       );
+      expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1');
       warn.mockRestore();
+    });
+
+    it("writes the CALLER's id downstream of the gate, never the body's spelling of it", async () => {
+      const activate = jest
+        .spyOn(service, 'activateDeviceMembership')
+        .mockResolvedValue({ ok: true });
+      tables({
+        keyPackages: [ownKey],
+        roster: [{ groupId: 'group-1', userId: 'user-1' }],
+      });
+      const sent = fanOut();
+
+      await expect(
+        commit({ proto: EXTERNAL_COMMIT, senderId: 'USER-1' }, 'user-1')
+      ).resolves.toMatchObject({ accepted: true });
+      // The committer's own row is read by the pair, then activated under the caller's id...
+      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
+        where: { userId: 'user-1', deviceId: 'device-1', groupId: 'group-1' },
+      });
+      expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1');
+      // ...and the fan-out names the caller as the commit's author.
+      expect(sent.mock.calls[0][0]).toMatchObject({
+        senderId: 'user-1',
+        senderDeviceId: 'device-1',
+      });
     });
 
     it('lets the fan-out skip only the devices it admits and the committer', async () => {
@@ -904,7 +935,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       ['another epoch', memberCommitFrame('group-1', 4n)],
       ['an unframed body', 'Y29tbWl0'],
       ['a truncated external commit', externalCommitFrame('group-1', 5n).slice(0, 24)],
-    ])('refuses a commit whose header is %s, before anything is read', async (_name, proto) => {
+    ])('refuses a commit whose header is %s, before the membership gate', async (_name, proto) => {
       tables({
         keyPackages: [ownKey],
         devices: [ownDevice],
@@ -959,10 +990,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         groupId: 'group-1',
         status: 'pending',
       });
-      // Guarded on `pending`: an active device is routed by its status and never touched.
+      // Guarded on `pending` and read by the PAIR: an active device is routed by its status and never
+      // touched. The admitting commit is the Add a kick was owed, so it ends the kick.
       expect(txMembershipRepo.update).toHaveBeenCalledWith(
-        { deviceId: 'phone-2', groupId: 'group-1', status: 'pending' },
-        { admittedAtEpoch: 6 }
+        { userId: 'user-2', deviceId: 'phone-2', groupId: 'group-1', status: 'pending' },
+        { admittedAtEpoch: 6, kickedAt: null }
       );
     });
 
