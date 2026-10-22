@@ -1,3 +1,0 @@
-### Changed - Lydia callbacks are verified with the association's own Business key, and only trigger a read of the row's request - a cancel or an expiry included
-
-The key is entered write-only by the payout manager and encrypted at rest (migration 100, new REQUIRED secret `LYDIA_KEY_ENCRYPTION_SECRET`); an association without one has its callbacks refused and its form payments confirmed on the payer's return. A boutique purchase is no longer fulfilled from a callback until its checkout is a stored row. A cancel or expiry releases a seat only once Lydia reads the request closed, and the public callback route is rate-limited at nginx. The dev-only observation of #1928 is removed ([payments](docs/wiki/frontend/modules/payments.md#what-confirms-a-payment-2026-10-16)).
