@@ -8,11 +8,12 @@ export type DecidedDepartures = Map<string, 'departed' | 'cancelled'>;
  * A fake of the manager `ChannelService.departDistributionGroups` and `decideDistributionDeparture`
  * run on - `memberRepo.manager` in the specs.
  *
- * `distribution_departures` is the map `decided`, with its primary key's one rule: the first writer
- * of a `groupId:userId:departure` wins and every later insert does nothing. That rule is the whole
- * mechanism (a cancelled departure's roster write is refused), so the fake keeps it and nothing else.
- * The transaction hands its callback a manager whose `getRepository` returns the spec's own channel
- * and member fakes, so the roster write lands where the spec's assertions read.
+ * WIRING, NOT THE RACE. Its job is to let the unit specs run the roster write: the transaction hands
+ * its callback a manager whose `getRepository` returns the spec's own channel and member fakes, so
+ * the write lands where the spec's assertions read. `distribution_departures` is the map `decided`,
+ * keeping only its primary key's rule (the first writer of a `groupId:userId:departure` wins) so the
+ * error path's steps can be pinned. The concurrency itself is proven on PostgreSQL, in
+ * `distribution-departure.integration.spec.ts`.
  */
 export function fakeDepartureManager(repos: () => { channelRepo: unknown; memberRepo: unknown }): {
   query: jest.Mock;
@@ -28,6 +29,13 @@ export function fakeDepartureManager(repos: () => { channelRepo: unknown; member
       decided.set(key, sql.includes("'departed'") ? 'departed' : 'cancelled');
       return [{ departure: params[2] }];
     }
+    if (sql.includes('DELETE FROM distribution_departures')) {
+      const groups = params[0] as string[];
+      for (const k of decided.keys()) {
+        if (groups.includes(k.split(':')[0])) decided.delete(k);
+      }
+      return [];
+    }
     if (sql.includes('SELECT "outcome" FROM distribution_departures')) {
       const outcome = decided.get(key);
       return outcome ? [{ outcome }] : [];
@@ -39,8 +47,16 @@ export function fakeDepartureManager(repos: () => { channelRepo: unknown; member
     if (entity === ChannelMember) return repos().memberRepo;
     throw new Error(`fakeDepartureManager: no repository for ${String(entity)}`);
   };
-  const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
-    cb({ query, getRepository })
-  );
+  // A callback that throws rolls back what it recorded, as the real transaction does.
+  const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) => {
+    const before = new Map(decided);
+    try {
+      return await cb({ query, getRepository });
+    } catch (e) {
+      decided.clear();
+      before.forEach((outcome, key) => decided.set(key, outcome));
+      throw e;
+    }
+  });
   return { query, transaction, decided };
 }

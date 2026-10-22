@@ -11,6 +11,11 @@
 -- Schema only: a new empty table. No row is changed, nothing is backfilled, nothing is dropped.
 --
 -- Idempotent for CD: IF NOT EXISTS.
+--
+-- LOCK TIMEOUT: the same rule as chat-delivery's 035 - a migration gives up rather than queue
+-- behind a long transaction and stall everything queued behind its lock request; the deploy then
+-- fails loudly and a re-run is safe (idempotent above).
+SET lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS distribution_departures (
   "groupId"   uuid NOT NULL,

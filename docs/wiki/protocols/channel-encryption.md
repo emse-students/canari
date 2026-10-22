@@ -557,12 +557,22 @@ window with a durable row and a lock:
   Under the lock `seatClaimHolds` re-reads it - a database read only - and the seat is written only if
   the generation has not moved and no departure is owed. An eviction therefore ran before the claim
   (the check sees it), between claim and write (nothing is written), or after the write (it deletes
-  the seat). An activation without a claim is refused and logged at error.
+  the seat). An activation without a claim is refused and logged at error. The commit gate reads the
+  claim too: a key-group external commit whose author has a departure in progress is refused there
+  (`NOT_A_MEMBER`, logged `reason=departure_in_progress`) before the epoch moves, without asking.
+- **A report promotes under the same lock, and every Redis route follows the commit.** The report's
+  one conditional UPDATE (`promoteReportedSeat`) runs under the seat lock. The route
+  (`group:members:<g>`) is then written by `routeActiveSeat`, after the seat's own transaction
+  committed, under the lock again and only if the seat is still `active`. The gateway reads that set
+  alone - its live broadcast and its election of a peer to answer a request re-check nothing in the
+  database (chat-delivery's queued fan-out reads the active rows) - so a route written for a seat an
+  eviction already deleted would keep a device reached.
 - **A key group's admits are asked like a join.** An admit writes a `pending` seat its device later
   promotes by reporting itself, so in a key group each admitted person is asked of social-service
   (`claimKeyGroupAdmits`, before the commit lock) against a claim re-read under the seat lock: not
-  entitled, evicted since, or departing is `ADMIT_REFUSED`. Unanswered is a 503 for the whole commit,
-  before the epoch moves.
+  entitled, evicted since, or departing is `ADMIT_REFUSED`. The group's epoch is read first, so a
+  commit on another epoch is answered `epoch_mismatch` without asking anyone; the distinct people are
+  then asked in parallel. Unanswered is a 503 for the whole commit, before the epoch moves.
 - **One departure function, two evictions, a named outcome.** Every departure in social-service -
   `leaveWorkspace`, `kickFromWorkspace` and the account erasure (`removeFromWorkspace`, the community's
   group and every private salon naming the person), `leaveChannel`, `removeMemberFromChannel`,
@@ -580,18 +590,40 @@ window with a durable row and a lock:
   yet, social-service writes `cancelled` under the same primary key, so the roster write can no
   longer commit under that name (it is refused with `DEPARTURE_SUPERSEDED` and rolls back; the person
   stays a member). The drain applies the outcome under the seat lock only if that departure is still
-  the one owed: `departed` cuts again and settles, `cancelled` settles.
+  the one owed: `departed` cuts again and settles, `cancelled` settles. It re-reads the row right
+  before asking and skips one that is gone (an account erasure deletes it). A person no longer
+  entitled with nothing recorded is answered `departed` and NOTHING is written - no roster write can
+  restore them under that name, and an erased account's id is not written back after its erasure.
+- **An abandoned departure is settled at once.** When a later first eviction or the roster
+  transaction fails, `departDistributionGroups` decides each departure it had begun (`cancelled`, the
+  person still on the roster) and calls
+  `POST mls/distribution-groups/:scope/:scopeId/members/:userId/departures/:departure/cancel`, which
+  settles it under the seat lock and evicts nothing (`settleCancelledDeparture`). Each step logs; one
+  that fails is left to the drain, and the original error is rethrown. The leaving user sees
+  `DEPARTURE_SUPERSEDED` as a retry sentence (`chat_community_departure_retry_error`).
+- **Records end with their group.** A community's deletion deletes the `distribution_departures` rows
+  of its group and its salons' groups in its transaction; a salon group retired deletes its own; an
+  account erasure deletes the account's (`account-erasure.ts`). chat-delivery's `dm_seat_evictions`
+  rows go with their group's purge and with the account's erasure.
+- **A rolling deploy.** Both migrations (036, 108) are applied before any service is replaced
+  (`deploy-environment.sh` runs `apply_migrations` first). A first eviction answered by an older
+  chat-delivery names no departure: social-service logs `first eviction named NO departure` and evicts
+  plainly after the roster write. An older social-service never names one either, so a newer
+  chat-delivery's departure begun by it stays owed until the drain asks, and is answered from the
+  roster as above.
 
 The interleavings are asserted without a clock in `messaging.commit-log.spec.ts` ("against a
 departure that races it": an eviction while the activation holds the lock, a stale HTTP answer after
 the whole departure, an activation between the two evictions, a late settlement against a newer
-departure, the drain, the admits), in `members.controller.exclusions.spec.ts` (the removal's order
-under the lock), and in social-service's `distribution-group.spec.ts`: the order
-`evict -> roster -> evict&departure`, the erasure taking the same path, and the drain's question
-landing before the roster write (the departure is cancelled) or after it (it reads `departed`). The
-first-writer-wins rule is modelled by a fake (`departure-transaction.fake-spec.ts`); the Postgres
-wait that makes it hold under concurrency is the primary key's, and no integration run against a
-real database covers it yet.
+departure, the drain, the admits), in `messaging.one-active-writer.spec.ts` (a report under the lock,
+no route for a seat evicted after its commit), in `members.controller.exclusions.spec.ts` (the
+removal's order under the lock), and in social-service's `distribution-group.spec.ts`: the order
+`evict -> roster -> evict&departure`, the erasure taking the same path, the abandoned departure's
+settlement and the rolling-deploy path. The first-writer-wins race is run against PostgreSQL in
+`distribution-departure.integration.spec.ts` (a transaction held open, the other side waited on
+through `pg_blocking_pids`, then committed or rolled back): the question asked while the roster write
+is in flight reads `departed`, or `cancelled` when it rolls back; a roster write arriving while the
+question is in flight is refused with `DEPARTURE_SUPERSEDED` and the member stays.
 
 **`POST /mls/commit` is rate-limited per user (2026-10-22):** `MLS_COMMIT_LIMIT_PER_MINUTE` (600)
 through `UserThrottlerGuard`, after `HeaderAuthGuard`. A refusal is the throttler's `429` before the

@@ -27,6 +27,7 @@ import { isBlockedBetween } from '../common/user-blocks';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
 import { fetchUserDeviceCount } from '../internal/delivery.client';
 import {
+  cancelDistributionDeparture,
   channelScope,
   createDistributionGroup,
   deleteDistributionGroup,
@@ -37,6 +38,12 @@ import {
   type DistributionGroupRef,
   type DistributionScope,
 } from './distribution-group.client';
+import {
+  READ_OUTCOME_SQL,
+  DELETE_GROUP_DEPARTURES_SQL,
+  RECORD_CANCELLED_SQL,
+  RECORD_DEPARTED_SQL,
+} from './distribution-departures';
 
 import {
   CHANNEL_PERMISSIONS,
@@ -70,6 +77,12 @@ import {
 interface DepartureCut {
   scope: DistributionScope;
   userId: string;
+}
+
+/** A cut whose first eviction began a departure on chat-delivery, with the name it answered. */
+interface BegunDeparture extends DepartureCut {
+  groupId: string;
+  departure: number;
 }
 
 /** Manages workspaces, channels, roles, members and encrypted messages. */
@@ -490,6 +503,15 @@ export class ChannelService implements OnApplicationBootstrap {
    *    abort anything - the roster write is done - so a failure is logged at error, and
    *    chat-delivery's hourly drain asks {@link decideDistributionDeparture} how it ended.
    *
+   * ABANDONED, IT IS SETTLED AT ONCE. When a later first eviction or the transaction fails, every
+   * departure already begun is decided `cancelled` here ({@link decideDistributionDeparture}) and
+   * chat-delivery is told, so the person - still a member - is not held seatless until the drain.
+   * The original error is rethrown; a step that fails here is logged and left to the drain.
+   *
+   * AN UNNAMED FIRST EVICTION (a chat-delivery build that does not name departures, during a
+   * rolling deploy) is logged and followed, after the roster write, by a plain eviction - the
+   * cut-twice shape that build understands.
+   *
    * channel-encryption, "WP-21, and the gate it had nowhere to live".
    *
    * @param cuts the groups and people to cut, one entry per person per scope
@@ -500,54 +522,86 @@ export class ChannelService implements OnApplicationBootstrap {
     reason: string,
     rosterWrite: (m: EntityManager) => Promise<void>
   ): Promise<void> {
-    const begun: Array<DepartureCut & { groupId: string; departure: number }> = [];
-    for (const cut of cuts) {
-      const first = await evictFromDistributionGroup(this.internalSecret, cut.scope, cut.userId);
-      if (!first.evicted) {
-        // NOT the same line as a cut that found nothing, and the difference is the whole report: a
-        // scope with no distribution group has no key distribution to stop, while three zeros under
-        // the line below would read as one that was cut clean. A community warns, because on a
-        // post-Graine community it means the group is missing and every seed frame is unrouted.
-        const line =
-          `[KEY_DISTRIBUTION] no distribution group to cut scope=${cut.scope.kind}:${cut.scope.id} ` +
-          `user=${cut.userId.slice(0, 8)} reason=${reason}`;
-        if (cut.scope.kind === 'workspace')
-          this.logger.warn(`${line} - pre-Graine community, or its group is gone`);
-        else this.logger.log(line);
-        continue;
-      }
-      // ALL THREE COUNTS, EACH UNDER ITS OWN NAME: rows are what a reconnect reads, the Redis set
-      // is what a live fanout reads, and the queue is what an offline device collects next.
-      this.logger.log(
-        `[KEY_DISTRIBUTION] key distribution cut scope=${cut.scope.kind}:${cut.scope.id} ` +
-          `user=${cut.userId.slice(0, 8)} reason=${reason} memberships=${first.memberships} ` +
-          `routes=${first.routes} queued=${first.queued} departure=${first.begun?.departure ?? 'none'}`
-      );
-      if (first.begun) begun.push({ ...cut, ...first.begun });
-    }
-
-    await this.memberRepo.manager.transaction(async (m) => {
-      for (const b of begun) {
-        const recorded = (await m.query(
-          `INSERT INTO distribution_departures ("groupId", "userId", "departure", "outcome")
-           VALUES ($1, $2, $3, 'departed')
-           ON CONFLICT ("groupId", "userId", "departure") DO NOTHING
-           RETURNING "departure"`,
-          [b.groupId, b.userId, b.departure]
-        )) as unknown[];
-        if (recorded.length === 0) {
+    const begun: BegunDeparture[] = [];
+    const unnamed: DepartureCut[] = [];
+    try {
+      for (const cut of cuts) {
+        const first = await evictFromDistributionGroup(this.internalSecret, cut.scope, cut.userId);
+        if (!first.evicted) {
+          // NOT the same line as a cut that found nothing, and the difference is the whole report: a
+          // scope with no distribution group has no key distribution to stop, while three zeros
+          // under the line below would read as one that was cut clean. A community warns, because on
+          // a post-Graine community it means the group is missing and every seed frame is unrouted.
+          const line =
+            `[KEY_DISTRIBUTION] no distribution group to cut scope=${cut.scope.kind}:${cut.scope.id} ` +
+            `user=${cut.userId.slice(0, 8)} reason=${reason}`;
+          if (cut.scope.kind === 'workspace')
+            this.logger.warn(`${line} - pre-Graine community, or its group is gone`);
+          else this.logger.log(line);
+          continue;
+        }
+        // ALL THREE COUNTS, EACH UNDER ITS OWN NAME: rows are what a reconnect reads, the Redis set
+        // is what a live fanout reads, and the queue is what an offline device collects next.
+        this.logger.log(
+          `[KEY_DISTRIBUTION] key distribution cut scope=${cut.scope.kind}:${cut.scope.id} ` +
+            `user=${cut.userId.slice(0, 8)} reason=${reason} memberships=${first.memberships} ` +
+            `routes=${first.routes} queued=${first.queued} departure=${first.begun?.departure ?? 'none'}`
+        );
+        if (first.begun) begun.push({ ...cut, ...first.begun });
+        else {
           this.logger.warn(
-            `[KEY_DISTRIBUTION] departure CANCELLED before its roster write scope=${b.scope.kind}:${b.scope.id} ` +
-              `user=${b.userId.slice(0, 8)} departure=${b.departure} reason=${reason} - rolled back, retryable`
+            `[KEY_DISTRIBUTION] first eviction named NO departure scope=${cut.scope.kind}:${cut.scope.id} ` +
+              `user=${cut.userId.slice(0, 8)} reason=${reason} - an older chat-delivery; a plain ` +
+              `eviction follows the roster write`
           );
-          throw new ConflictException({
-            code: 'DEPARTURE_SUPERSEDED',
-            message: 'The departure could not be completed, retry.',
-          });
+          unnamed.push(cut);
         }
       }
-      await rosterWrite(m);
-    });
+
+      await this.memberRepo.manager.transaction(async (m) => {
+        for (const b of begun) {
+          const recorded = (await m.query(RECORD_DEPARTED_SQL, [
+            b.groupId,
+            b.userId,
+            b.departure,
+          ])) as unknown[];
+          if (recorded.length === 0) {
+            this.logger.warn(
+              `[KEY_DISTRIBUTION] departure CANCELLED before its roster write scope=${b.scope.kind}:${b.scope.id} ` +
+                `user=${b.userId.slice(0, 8)} departure=${b.departure} reason=${reason} - rolled back, retryable`
+            );
+            throw new ConflictException({
+              code: 'DEPARTURE_SUPERSEDED',
+              message: 'The departure could not be completed, retry.',
+            });
+          }
+        }
+        await rosterWrite(m);
+      });
+    } catch (e) {
+      this.logger.warn(
+        `[KEY_DISTRIBUTION] departure ABANDONED reason=${reason} begun=${begun.length}: ` +
+          `${e instanceof Error ? e.message : String(e)} - settling what it began`
+      );
+      await this.settleAbandonedDepartures(begun, reason);
+      throw e;
+    }
+
+    for (const cut of unnamed) {
+      try {
+        const second = await evictFromDistributionGroup(this.internalSecret, cut.scope, cut.userId);
+        this.logger.log(
+          `[KEY_DISTRIBUTION] second eviction (unnamed) scope=${cut.scope.kind}:${cut.scope.id} ` +
+            `user=${cut.userId.slice(0, 8)} reason=${reason} evicted=${second.evicted} ` +
+            `departure=${second.begun?.departure ?? 'none'}`
+        );
+      } catch (e) {
+        this.logger.error(
+          `[KEY_DISTRIBUTION] second eviction (unnamed) FAILED scope=${cut.scope.kind}:${cut.scope.id} ` +
+            `user=${cut.userId.slice(0, 8)} reason=${reason}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
 
     for (const b of begun) {
       try {
@@ -574,14 +628,58 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * Settles the departures an abandoned {@link departDistributionGroups} had begun: each is decided
+   * ({@link decideDistributionDeparture}) and chat-delivery is told - `cancelled` settles it with
+   * nothing evicted, `departed` (a roster write that did commit before the error) gets its second
+   * eviction. Each step is caught and logged on its own; one left unsettled is the drain's.
+   */
+  private async settleAbandonedDepartures(begun: BegunDeparture[], reason: string): Promise<void> {
+    for (const b of begun) {
+      const where =
+        `scope=${b.scope.kind}:${b.scope.id} user=${b.userId.slice(0, 8)} ` +
+        `departure=${b.departure} reason=${reason}`;
+      try {
+        const outcome = await this.decideDistributionDeparture(b.groupId, b.userId, b.departure);
+        const settled =
+          outcome === 'cancelled'
+            ? await cancelDistributionDeparture(this.internalSecret, b.scope, b.userId, b.departure)
+            : (
+                await evictFromDistributionGroup(
+                  this.internalSecret,
+                  b.scope,
+                  b.userId,
+                  b.departure
+                )
+              ).evicted;
+        this.logger.log(
+          `[KEY_DISTRIBUTION] abandoned departure settled ${where} outcome=${outcome} settled=${settled}`
+        );
+      } catch (e) {
+        this.logger.error(
+          `[KEY_DISTRIBUTION] abandoned departure NOT settled ${where}: ` +
+            `${e instanceof Error ? e.message : String(e)} - chat-delivery's hourly drain settles it`
+        );
+      }
+    }
+  }
+
+  /**
    * How the departure `departure` of `userId` from chat-delivery's group `groupId` ended - asked by
-   * chat-delivery's hourly drain for a departure whose second eviction never arrived.
+   * chat-delivery's hourly drain for a departure whose second eviction never arrived, and by an
+   * abandoned departure ({@link settleAbandonedDepartures}).
    *
    * IT DECIDES AS IT ANSWERS. When the roster write has not recorded the departure, this records it
    * `cancelled`, and the shared primary key then refuses the roster write's record, rolling the
    * departure back ({@link departDistributionGroups}). So the answer is final, never "not yet". Two
    * statements, not one: the insert waits for a roster write in flight to commit or roll back, and
    * only a statement started AFTER that wait sees its row.
+   *
+   * A PERSON NO LONGER ENTITLED, WITH NOTHING RECORDED, IS ANSWERED `departed` AND NOTHING IS
+   * WRITTEN. Their roster rows are gone - by another departure, by the group's scope ending, or by an
+   * account erasure - so no roster write can restore them under this name, and cutting their seats
+   * is right whatever ended it. Recording nothing is what keeps an erased account's id out of this
+   * table after its erasure deleted its rows. A roster write still in flight leaves the person
+   * visible as entitled, so it takes the recording path and waits for it.
    */
   async decideDistributionDeparture(
     groupId: string,
@@ -589,17 +687,25 @@ export class ChannelService implements OnApplicationBootstrap {
     departure: number
   ): Promise<'departed' | 'cancelled'> {
     const manager = this.memberRepo.manager;
-    await manager.query(
-      `INSERT INTO distribution_departures ("groupId", "userId", "departure", "outcome")
-       VALUES ($1, $2, $3, 'cancelled')
-       ON CONFLICT ("groupId", "userId", "departure") DO NOTHING`,
-      [groupId, userId, departure]
-    );
-    const rows = (await manager.query(
-      `SELECT "outcome" FROM distribution_departures
-       WHERE "groupId" = $1 AND "userId" = $2 AND "departure" = $3`,
-      [groupId, userId, departure]
-    )) as Array<{ outcome: 'departed' | 'cancelled' }>;
+    if (!(await this.isEntitledToDistributionGroupId(groupId, userId))) {
+      const recorded = (await manager.query(READ_OUTCOME_SQL, [
+        groupId,
+        userId,
+        departure,
+      ])) as Array<{
+        outcome: 'departed' | 'cancelled';
+      }>;
+      const outcome = recorded[0]?.outcome ?? 'departed';
+      this.logger.log(
+        `[KEY_DISTRIBUTION] departure outcome group=${groupId} user=${userId.slice(0, 8)} departure=${departure} ` +
+          `outcome=${outcome} entitled=false recorded=${recorded.length > 0}`
+      );
+      return outcome;
+    }
+    await manager.query(RECORD_CANCELLED_SQL, [groupId, userId, departure]);
+    const rows = (await manager.query(READ_OUTCOME_SQL, [groupId, userId, departure])) as Array<{
+      outcome: 'departed' | 'cancelled';
+    }>;
     const outcome = rows[0]?.outcome;
     if (outcome !== 'departed' && outcome !== 'cancelled') {
       this.logger.error(
@@ -667,6 +773,7 @@ export class ChannelService implements OnApplicationBootstrap {
       await deleteDistributionGroup(this.internalSecret, channelScope(channel.id));
       channel.distributionGroupId = null;
       await this.channelRepo.save(channel);
+      await this.memberRepo.manager.query(DELETE_GROUP_DEPARTURES_SQL, [[groupId]]);
       this.logger.log(
         `[CHANNEL_GRAINE] group retired channel=${channel.id} group=${groupId} reason=${reason}`
       );
@@ -815,7 +922,17 @@ export class ChannelService implements OnApplicationBootstrap {
       await deleteDistributionGroup(this.internalSecret, channelScope(channel.id));
     }
 
+    const workspace = await this.workspaceRepo.findOne({
+      where: { id: workspaceId },
+      select: { id: true, distributionGroupId: true },
+    });
+    const groupIds = [
+      workspace?.distributionGroupId,
+      ...channels.map((c) => c.distributionGroupId),
+    ].filter((g): g is string => !!g);
+
     await this.workspaceRepo.manager.transaction(async (mgr) => {
+      if (groupIds.length > 0) await mgr.query(DELETE_GROUP_DEPARTURES_SQL, [groupIds]);
       await mgr.delete(ChannelMessage, { workspaceId });
       await mgr.delete(ChannelMember, { workspaceId });
       await mgr.delete(ChannelRole, { workspaceId });
@@ -1454,6 +1571,25 @@ export class ChannelService implements OnApplicationBootstrap {
    * accepted exactly when the base it was built on could have been served to its author. A scope
    * that no longer exists, or a salon that is no longer private, entitles nobody.
    */
+  /**
+   * {@link isDistributionGroupEntitled} for chat-delivery's group id: the community or private salon
+   * holding that group, and none - so nobody entitled - when no scope holds it any more.
+   */
+  private async isEntitledToDistributionGroupId(groupId: string, userId: string): Promise<boolean> {
+    const normalised = userId.trim().toLowerCase();
+    const workspace = await this.workspaceRepo.findOne({
+      where: { distributionGroupId: groupId },
+      select: { id: true },
+    });
+    if (workspace) return this.isDistributionGroupEntitled('workspace', workspace.id, normalised);
+    const channel = await this.channelRepo.findOne({
+      where: { distributionGroupId: groupId },
+      select: { id: true },
+    });
+    if (channel) return this.isDistributionGroupEntitled('channel', channel.id, normalised);
+    return false;
+  }
+
   async isDistributionGroupEntitled(
     kind: 'workspace' | 'channel',
     scopeId: string,

@@ -75,11 +75,17 @@ describe('the ONE writer of an active membership', () => {
     delete: jest.fn().mockResolvedValue({ affected: 0 }),
     create: jest.fn().mockImplementation((e: unknown) => e),
   });
-  const groupRepo = emptyRepo();
+  const groupRepo: ReturnType<typeof emptyRepo> & { manager?: unknown } = emptyRepo();
   const groupMemberRepo = emptyRepo();
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // The seat lock's transaction: the lock statement answers nothing, the seat table is the
+    // in-memory one below - so a write and the route's re-read see the same rows.
+    groupRepo.manager = {
+      transaction: async (cb: (m: unknown) => Promise<unknown>) =>
+        cb({ query: async () => [], getRepository: () => deviceGroupRepo }),
+    };
     groupRepo.findOne.mockResolvedValue(null);
     groupMemberRepo.findOne.mockResolvedValue(null);
     revokedDeviceRepo.findOne.mockResolvedValue(null);
@@ -113,6 +119,8 @@ describe('the ONE writer of an active membership', () => {
   });
 
   it('writes the row AND the routing set - the two facts a reachable device needs', async () => {
+    // The route is written after the seat's commit, against the seat re-read under the lock.
+    deviceGroupRepo.findOne.mockResolvedValue({ deviceId: 'd1' });
     const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
 
     expect(outcome.ok).toBe(true);
@@ -415,7 +423,39 @@ describe('the ONE writer of an active membership', () => {
         ).resolves.toEqual({ ok: true });
       }
       expect(seats).toHaveLength(1);
-      // The two claimed authorities wrote under the group's seat lock; the creator needs none.
+      // The creator's write needs no lock; each claimed write takes it, and each of the three
+      // routes takes it again after its seat committed.
+      expect(locks).toEqual(Array(5).fill('seat:g1'));
+      expect(redis.sadd).toHaveBeenCalledTimes(3);
+    });
+
+    it('writes no route for a promoted seat an eviction deleted after its commit', async () => {
+      // The eviction lands between the promotion's commit and the route's re-read under the lock.
+      const transaction = (
+        groupRepo.manager as { transaction: (cb: (m: unknown) => Promise<unknown>) => unknown }
+      ).transaction;
+      let calls = 0;
+      (groupRepo as unknown as { manager: unknown }).manager = {
+        transaction: async (cb: (m: unknown) => Promise<unknown>) => {
+          if (++calls === 2) seats = [];
+          return transaction(cb);
+        },
+      };
+
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: true,
+      });
+      expect(seats).toEqual([]);
+      expect(redis.sadd).not.toHaveBeenCalled();
+      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('route NOT written');
+    });
+
+    it('promotes a reported seat under the group seat lock', async () => {
+      const locks = lockedManager(null);
+
+      await service.activateDeviceMembership('u1', 'd1', 'g1', REPORT);
+
+      // The promotion, then the route after it committed.
       expect(locks).toEqual(['seat:g1', 'seat:g1']);
     });
 

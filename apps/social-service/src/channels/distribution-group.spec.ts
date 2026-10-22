@@ -416,6 +416,34 @@ describe('ChannelService - the community distribution group', () => {
       expect(repos.workspaceRepo.manager.transaction).toHaveBeenCalled();
     });
 
+    it("deletes the departure records of the community's group and its salons' groups with it", async () => {
+      const repos = makeService();
+      asAdmin(repos);
+      repos.workspaceRepo.findOne.mockResolvedValue({
+        id: WORKSPACE,
+        name: WORKSPACE_NAME,
+        slug: 'test',
+        distributionGroupId: 'g-1',
+      });
+      repos.channelRepo.find.mockResolvedValue([
+        { id: 'c-1', isPrivate: true, distributionGroupId: 'g-chan' },
+        { id: 'c-2', isPrivate: false, distributionGroupId: null },
+      ]);
+      const query = jest.fn().mockResolvedValue([]);
+      repos.workspaceRepo.manager.transaction.mockImplementation(
+        (cb: (m: { delete: jest.Mock; query: jest.Mock }) => Promise<void>) =>
+          cb({ delete: jest.fn().mockResolvedValue({ affected: 1 }), query })
+      );
+      global.fetch = answerWith({ deleted: true }) as unknown as typeof fetch;
+
+      await repos.service.deleteWorkspace(WORKSPACE, USER, WORKSPACE_NAME);
+
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM distribution_departures'),
+        [['g-1', 'g-chan']]
+      );
+    });
+
     it('leaves the community intact when the group cannot be deleted', async () => {
       const repos = makeService();
       asAdmin(repos);
@@ -662,7 +690,7 @@ describe('ChannelService - the community distribution group', () => {
 
       await expect(service.removeAccountFromWorkspaces(USER)).resolves.toBe(1);
 
-      // The community's own key group is cut too - an erasure used to cut only the private salons.
+      // The community's own key group is cut, like any other departure.
       const evictions = (global.fetch as unknown as jest.Mock).mock.calls.map(([url]) =>
         String(url)
       );
@@ -673,50 +701,117 @@ describe('ChannelService - the community distribution group', () => {
     });
 
     /**
-     * THE DRAIN'S QUESTION DECIDES. chat-delivery asks how a departure ended when its second eviction
-     * never arrived; the entitlement could not tell "not committed yet" from "came back", so the
-     * question writes the answer: a departure not yet recorded is `cancelled`, and its roster write
-     * is then refused. Interleaved by hand, at the exact point the race needs.
+     * AN ABANDONED DEPARTURE IS SETTLED AT ONCE. The race against the drain itself (first writer
+     * wins on `distribution_departures`) is proven on PostgreSQL in
+     * `distribution-departure.integration.spec.ts`; these pin the error path's own steps.
      */
-    describe('against the drain asking how it ended', () => {
-      it('a question landing between the first eviction and the roster write cancels the departure', async () => {
-        const { service, memberRepo, workspaceRepo, redis } = makeService();
+    describe('abandoned before its roster write committed', () => {
+      /** Every call chat-delivery received, as `METHOD path`. */
+      const calls = () =>
+        (global.fetch as unknown as jest.Mock).mock.calls.map(
+          ([url, init]) =>
+            `${String(init?.method)} ${new URL(String(url)).pathname}${new URL(String(url)).search}`
+        );
+
+      it('a roster write that fails cancels the departure it began and tells chat-delivery', async () => {
+        const { service, memberRepo, workspaceRepo, departures } = makeService();
         communityWith(memberRepo, workspaceRepo);
-        let asked: 'departed' | 'cancelled' | undefined;
-        global.fetch = jest.fn(async () => {
-          // The first eviction has begun departure 7, and the drain asks before the roster write.
-          asked = await service.decideDistributionDeparture('g-1', USER, 7);
-          return new Response(JSON.stringify(begun(7)), { status: 200 });
+        global.fetch = jest.fn(async (url: unknown) =>
+          String(url).endsWith('/cancel')
+            ? new Response(JSON.stringify({ settled: true }), { status: 200 })
+            : new Response(JSON.stringify(begun(7)), { status: 200 })
+        ) as never;
+        memberRepo.delete.mockRejectedValue(new Error('roster write failed'));
+
+        await expect(service.leaveWorkspace(WORKSPACE, USER)).rejects.toThrow(
+          'roster write failed'
+        );
+
+        expect(departures.decided.get(`g-1:${USER}:7`)).toBe('cancelled');
+        expect(calls()[1]).toBe(
+          `POST /api/internal/mls/distribution-groups/workspace/${WORKSPACE}/members/${USER}/departures/7/cancel`
+        );
+        expect(calls()).toHaveLength(2);
+      });
+
+      it('a later first eviction that fails settles the one already begun', async () => {
+        const { service, memberRepo, workspaceRepo, channelRepo, roleRepo, departures } =
+          makeService();
+        channelRepo.find.mockResolvedValue([
+          {
+            id: 'c-secret',
+            workspaceId: WORKSPACE,
+            isPrivate: true,
+            allowedUsers: [USER],
+            distributionGroupId: 'g-chan',
+          },
+        ]);
+        workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
+        memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
+        memberRepo.find.mockResolvedValue([
+          { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] },
+          { workspaceId: WORKSPACE, userId: 'u2', roleIds: ['r-admin'] },
+        ]);
+        roleRepo.find.mockResolvedValue([
+          { id: 'r-admin', permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE], priority: 10 },
+        ]);
+        global.fetch = jest.fn(async (url: unknown) => {
+          if (String(url).includes('/channel/')) throw new Error('ECONNREFUSED');
+          if (String(url).endsWith('/cancel'))
+            return new Response(JSON.stringify({ settled: true }), { status: 200 });
+          return new Response(JSON.stringify(begun(3)), { status: 200 });
         }) as never;
+
+        await expect(service.leaveWorkspace(WORKSPACE, USER)).rejects.toBeInstanceOf(
+          ServiceUnavailableException
+        );
+
+        expect(memberRepo.delete).not.toHaveBeenCalled();
+        expect(departures.decided.get(`g-1:${USER}:3`)).toBe('cancelled');
+        expect(calls().at(-1)).toBe(
+          `POST /api/internal/mls/distribution-groups/workspace/${WORKSPACE}/members/${USER}/departures/3/cancel`
+        );
+      });
+
+      it('a departure the drain already cancelled is refused, settled, and the person stays', async () => {
+        const { service, memberRepo, workspaceRepo, departures } = makeService();
+        communityWith(memberRepo, workspaceRepo);
+        departures.decided.set(`g-1:${USER}:7`, 'cancelled');
+        global.fetch = jest.fn(async (url: unknown) =>
+          String(url).endsWith('/cancel')
+            ? new Response(JSON.stringify({ settled: false }), { status: 200 })
+            : new Response(JSON.stringify(begun(7)), { status: 200 })
+        ) as never;
 
         await expect(service.leaveWorkspace(WORKSPACE, USER)).rejects.toMatchObject({
           response: { code: 'DEPARTURE_SUPERSEDED' },
         });
-
-        // Final both ways: the drain read `cancelled`, and the person is still a member.
-        expect(asked).toBe('cancelled');
         expect(memberRepo.delete).not.toHaveBeenCalled();
-        expect(redis.publishChannelEvent).not.toHaveBeenCalled();
-        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(calls().at(-1)).toContain('/departures/7/cancel');
       });
 
-      it('a question landing after the roster write committed reads departed', async () => {
+      it('a settlement that cannot reach chat-delivery is logged and the first error still surfaces', async () => {
         const { service, memberRepo, workspaceRepo } = makeService();
         communityWith(memberRepo, workspaceRepo);
-        let calls = 0;
-        global.fetch = jest.fn(async () => {
-          calls++;
-          if (calls === 1) return new Response(JSON.stringify(begun(7)), { status: 200 });
-          throw new Error('ECONNREFUSED'); // the second eviction is lost
+        global.fetch = jest.fn(async (url: unknown) => {
+          if (String(url).endsWith('/cancel')) throw new Error('ECONNREFUSED');
+          return new Response(JSON.stringify(begun(7)), { status: 200 });
         }) as never;
+        memberRepo.delete.mockRejectedValue(new Error('roster write failed'));
 
-        await expect(service.leaveWorkspace(WORKSPACE, USER)).resolves.toEqual({ success: true });
-
-        await expect(service.decideDistributionDeparture('g-1', USER, 7)).resolves.toBe('departed');
+        await expect(service.leaveWorkspace(WORKSPACE, USER)).rejects.toThrow(
+          'roster write failed'
+        );
+        expect(
+          (service['logger'].error as jest.Mock).mock.calls.map((c) => String(c[0]))
+        ).toContainEqual(expect.stringContaining('abandoned departure NOT settled'));
       });
+    });
 
-      it('a question about a departure that never began a roster write reads cancelled, for good', async () => {
-        const { service } = makeService();
+    describe('how a departure ended, asked by name', () => {
+      it('records cancelled for a member whose departure never reached its roster write, for good', async () => {
+        const { service, memberRepo, workspaceRepo, departures } = makeService();
+        communityWith(memberRepo, workspaceRepo);
 
         await expect(service.decideDistributionDeparture('g-1', USER, 9)).resolves.toBe(
           'cancelled'
@@ -724,7 +819,56 @@ describe('ChannelService - the community distribution group', () => {
         await expect(service.decideDistributionDeparture('g-1', USER, 9)).resolves.toBe(
           'cancelled'
         );
+        expect(departures.decided.get(`g-1:${USER}:9`)).toBe('cancelled');
       });
+
+      it('answers departed and records nothing for a person no longer entitled', async () => {
+        // Off the roster by another departure, the scope's end or an account erasure: nothing can
+        // restore them under this name, and no row naming them is written after their erasure.
+        const { service, workspaceRepo, departures } = makeService();
+        workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
+
+        await expect(service.decideDistributionDeparture('g-1', USER, 9)).resolves.toBe('departed');
+        expect(departures.decided.size).toBe(0);
+        expect(departures.query).not.toHaveBeenCalledWith(
+          expect.stringContaining('INSERT'),
+          expect.anything()
+        );
+      });
+
+      it('answers what was recorded, even once the person is off the roster', async () => {
+        const { service, workspaceRepo, departures } = makeService();
+        workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
+        departures.decided.set(`g-1:${USER}:9`, 'cancelled');
+
+        await expect(service.decideDistributionDeparture('g-1', USER, 9)).resolves.toBe(
+          'cancelled'
+        );
+      });
+    });
+
+    it('follows an unnamed first eviction with a plain one after the roster write', async () => {
+      // An older chat-delivery during a rolling deploy answers no departure name.
+      const { service, memberRepo, workspaceRepo } = makeService();
+      communityWith(memberRepo, workspaceRepo);
+      const order: string[] = [];
+      global.fetch = jest.fn(async (url: unknown) => {
+        order.push(String(url).includes('phase=') ? 'named' : 'evict');
+        return new Response(
+          JSON.stringify({ evicted: true, memberships: 1, queued: 0, routes: 1 }),
+          { status: 200 }
+        );
+      }) as never;
+      memberRepo.delete.mockImplementation(async () => {
+        order.push('roster');
+        return { affected: 1 };
+      });
+
+      await expect(service.leaveWorkspace(WORKSPACE, USER)).resolves.toEqual({ success: true });
+      expect(order).toEqual(['evict', 'roster', 'evict']);
+      expect(
+        (service['logger'].warn as jest.Mock).mock.calls.map((c) => String(c[0]))
+      ).toContainEqual(expect.stringContaining('first eviction named NO departure'));
     });
 
     it('logs a failed second eviction at error and completes the departure it cannot undo', async () => {
@@ -976,6 +1120,11 @@ describe('ChannelService - the community distribution group', () => {
       expect(deletes.length).toBe(1);
       expect(String(deletes[0][0])).toContain('distribution-groups/channel/' + CHANNEL);
       expect(channel.distributionGroupId).toBeNull();
+      // Its departure records go with it.
+      expect(repos.departures.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM distribution_departures'),
+        [['g-chan']]
+      );
     });
 
     it('mints a group when a PUBLIC salon becomes private, which the row cannot yet say', async () => {

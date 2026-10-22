@@ -76,6 +76,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     // A claimed activation writes its seat in the seat lock's transaction; it lands on the same
     // `upsert` the assertions read.
     upsert: (...args: unknown[]) => deviceGroupRepo.upsert(...(args as [])),
+    // The seat re-read under the lock before its route is written: still active here.
+    findOne: jest.fn().mockResolvedValue({ deviceId: 'routed' }),
   };
   // `query` answers the seat claim read before the gate (`claimSeat`): no eviction on record.
   const groupRepo = {
@@ -1054,6 +1056,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
               }),
               createQueryBuilder: () => membershipInsertBuilder,
               update: jest.fn().mockResolvedValue({ affected: 0 }),
+              findOne: jest.fn(
+                async ({ where }: { where: { userId: string; deviceId: string } }) =>
+                  seats.get(`${where.userId}:${where.deviceId}`) ?? null
+              ),
             };
             const m = {
               query: async (sql: string, params: unknown[]) => {
@@ -1115,9 +1121,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           await expect(committed).resolves.toMatchObject({ accepted: true });
           await evicted;
 
-          // Activation and its route under the lock, then the eviction - and no seat survives.
-          expect(events).toEqual(['activate', 'route', 'evict']);
+          // The activation, then the eviction queued on the lock - and the route, re-read after
+          // both, finds no seat and is never written.
+          expect(events).toEqual(['activate', 'evict']);
           expect(seats.size).toBe(0);
+          expect(redis.sadd).not.toHaveBeenCalled();
           // And no HTTP call was made under any lock: the gate's one question, before it.
           expect(fetchSpy).toHaveBeenCalledTimes(1);
         });
@@ -1147,19 +1155,23 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           expect(redis.sadd).not.toHaveBeenCalled();
         });
 
-        it('an activation between the two evictions finds the departure in progress, and writes nothing', async () => {
+        it('a join between the two evictions is refused by the gate, before the epoch moves', async () => {
           tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
-          fanOut();
-          // The first eviction has run, the roster row is still there, so social-service still says
-          // yes - the gap a lock alone could not close.
+          const sent = fanOut();
+          // The first eviction has run, the roster row is still there, so social-service would
+          // still say yes - the departure in progress is read from the claim instead.
           await service.evictSeats('group-1', 'user-1', 'begin');
-          fetchSpy.mockResolvedValueOnce(entitled(true));
+          fetchSpy.mockResolvedValue(entitled(true));
 
-          await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).resolves.toMatchObject({
-            accepted: true,
+          await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
+            response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
           });
+          // Nothing moved: no epoch, no seat, no fan-out - and nobody was asked.
+          expect(groupUpdate).not.toHaveBeenCalled();
           expect(events).toEqual(['evict']);
           expect(seats.size).toBe(0);
+          expect(sent).not.toHaveBeenCalled();
+          expect(fetchSpy).not.toHaveBeenCalled();
         });
 
         it('a person who leaves and comes back is seated again once the departure is settled', async () => {
@@ -1239,6 +1251,25 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             expect(evictions.get('group-1:user-1')).toEqual({ generation: 1, owedDeparture: 1 });
           });
 
+          it('asks nothing about a row an account erasure removed after the batch was read', async () => {
+            const manager = groupRepo.manager as unknown as { query: jest.Mock };
+            const answer = manager.query.getMockImplementation() as (
+              sql: string,
+              params: unknown[]
+            ) => Promise<unknown>;
+            manager.query.mockImplementation(async (sql: string, params: unknown[]) => {
+              const rows = await answer(sql, params);
+              // The erasure lands just after the drain read its batch.
+              if (sql.includes('WHERE "owedDeparture" IS NOT NULL')) evictions.clear();
+              return rows;
+            });
+
+            await expect(service.drainOwedSeatEvictions()).resolves.toBe(0);
+            expect(fetchSpy).not.toHaveBeenCalled();
+            // And nothing was written back for it.
+            expect(evictions.size).toBe(0);
+          });
+
           it('a cancelled answer for an old departure leaves a NEWER one owed', async () => {
             // While the drain asks about departure 1, it is settled and the person leaves again.
             fetchSpy.mockImplementationOnce(async () => {
@@ -1304,6 +1335,53 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
             await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
             expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
+          });
+
+          it('asks nobody for a commit built on another epoch', async () => {
+            tables({
+              keyPackages: [ownKey, { userId: 'user-2', deviceId: 'device-2' }],
+              devices: [ownDevice],
+              group: { distributionWorkspaceId: 'ws-1', activeEpoch: 6 },
+            });
+
+            await expect(admitUser2()).resolves.toEqual({
+              accepted: false,
+              currentEpoch: 6,
+              reason: 'epoch_mismatch',
+            });
+            expect(fetchSpy).not.toHaveBeenCalled();
+            expect(groupUpdate).not.toHaveBeenCalled();
+          });
+
+          it('asks about every admitted person at once, not one after another', async () => {
+            tables({
+              keyPackages: [
+                ownKey,
+                { userId: 'user-2', deviceId: 'device-2' },
+                { userId: 'user-3', deviceId: 'device-3' },
+              ],
+              devices: [ownDevice],
+              group: { distributionWorkspaceId: 'ws-1' },
+            });
+            const answers: Array<(r: Response) => void> = [];
+            fetchSpy.mockImplementation(
+              () => new Promise<Response>((resolve) => answers.push(resolve))
+            );
+
+            const committed = commit(
+              {
+                admits: [
+                  { userId: 'user-2', deviceId: 'device-2' },
+                  { userId: 'user-3', deviceId: 'device-3' },
+                ],
+              },
+              'user-1'
+            );
+            await settle();
+            // Both questions are in flight before either is answered.
+            expect(fetchSpy).toHaveBeenCalledTimes(2);
+            answers.forEach((answer) => answer(entitled(true)));
+            await expect(committed).resolves.toMatchObject({ accepted: true });
           });
 
           it('is a retryable 503 for the whole commit when social-service cannot answer', async () => {

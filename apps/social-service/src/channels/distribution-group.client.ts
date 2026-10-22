@@ -264,6 +264,32 @@ export async function evictFromDistributionGroup(
   };
 }
 
+/**
+ * Tells chat-delivery that the departure `departure` was abandoned before its roster write and
+ * recorded `cancelled` here, so it settles it with nothing evicted - the person is still a member.
+ *
+ * @returns whether that departure was the one in progress there and is now settled
+ */
+export async function cancelDistributionDeparture(
+  secret: string,
+  scope: DistributionScope,
+  userId: string,
+  departure: number
+): Promise<boolean> {
+  const payload = (await callDelivery(
+    secret,
+    'DISTRIBUTION_GROUP',
+    `internal/mls/distribution-groups/${seg(scope)}/members/${encodeURIComponent(userId)}` +
+      `/departures/${departure}/cancel`,
+    { method: 'POST' }
+  )) as { settled?: unknown } | null;
+  logger.log(
+    `[DISTRIBUTION_GROUP] cancel ${label(scope)} user=${userId.slice(0, 8)} departure=${departure} ` +
+      `settled=${payload?.settled === true}`
+  );
+  return payload?.settled === true;
+}
+
 /** Tombstones a scope's distribution group. Returns false when there was none to delete. */
 export async function deleteDistributionGroup(
   secret: string,

@@ -582,6 +582,42 @@ export class InternalController {
   }
 
   /**
+   * Settles a departure social-service abandoned before its roster write committed - recorded
+   * `cancelled` there, so it can never commit under that name
+   * ({@link MessagingService.settleCancelledDeparture}). Social-service calls this from the error
+   * path of the departure; the hourly drain settles any it could not reach.
+   */
+  @Post('mls/distribution-groups/:scope/:scopeId/members/:userId/departures/:departure/cancel')
+  async cancelDistributionDeparture(
+    @Param('scope') scope: string,
+    @Param('scopeId') scopeId: string,
+    @Param('userId') userId: string,
+    @Param('departure') departureParam: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ): Promise<{ settled: boolean }> {
+    this.assertInternalSecret(headerSecret);
+    const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
+    const departure = Number(departureParam);
+    if (!Number.isInteger(departure) || departure < 1) {
+      throw new BadRequestException('departure must be a positive integer');
+    }
+    const group = await this.groupRepo.findOne({ where });
+    if (!group) {
+      this.logger.log(
+        `[DISTRIBUTION_GROUP] cancel departure scope=${scope}:${scopeId} user=${userId.slice(0, 8)} ` +
+          `departure=${departure} - no group`
+      );
+      return { settled: false };
+    }
+    const settled = await this.messagingService.settleCancelledDeparture(
+      group.id,
+      userId,
+      departure
+    );
+    return { settled };
+  }
+
+  /**
    * Tombstones the distribution group of a scope that is going away - a community being deleted, or
    * a private salon deleted or turned public. Deliberately the same soft delete every other group
    * dies of, so `cleanupSoftDeletedGroups` reaps it on the same schedule and no second lifecycle

@@ -580,9 +580,13 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'minesweeper_banned',
     sql: `UPDATE minesweeper_bans SET "bannedBy" = $2 WHERE "bannedBy" = $1`,
   },
-  // `simple-array`: comma-joined text, ids stored lower-cased (`cutOffEveryPrivateChannel`). The
-  // salons of communities the account was still in are cut with their key distribution before
-  // this runs; this catches a grant left in any other salon.
+  // `simple-array`: comma-joined text, ids stored lower-cased (`ChannelService.stripFromChannels`).
+  // NOT a departure, deliberately: the salons of every community the account was still in were left
+  // through `ChannelService.removeFromWorkspace` (step 1 of the erasure route), which cut their key
+  // groups and stripped these lists in its own departure. What remains here is a grant in a salon of
+  // a community the account had already left - a name no key group can act on, because a salon's
+  // group entitles only members of its community (`isDistributionGroupEntitled`) and that earlier
+  // departure already cut its seats. So there is no key distribution to cut, only the name to drop.
   {
     label: 'channel_allowed_users',
     sql: `UPDATE channels

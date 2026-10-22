@@ -746,6 +746,63 @@ describe('InternalController - the community distribution group', () => {
       expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
     });
   });
+
+  describe('cancelling a departure social-service abandoned', () => {
+    const USER = 'u-stays';
+    /** The REAL settlement, against this file's fakes, with its log line silenced. */
+    const realSettlement = () => {
+      (
+        messagingService as unknown as { settleCancelledDeparture: unknown }
+      ).settleCancelledDeparture = (g: string, u: string, d: number) =>
+        (
+          MessagingService.prototype.settleCancelledDeparture as (
+            this: unknown,
+            g: string,
+            u: string,
+            d: number
+          ) => Promise<boolean>
+        ).call({ groupRepo, logger: { log: () => undefined } }, g, u, d);
+    };
+
+    it('settles that departure under the seat lock, and evicts nothing', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+      realSettlement();
+
+      await expect(
+        controller.cancelDistributionDeparture('workspace', WORKSPACE, USER, '3', SECRET)
+      ).resolves.toEqual({ settled: true });
+      expect(seatLockQueries[0]).toBe(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) ["seat:g-1"]'
+      );
+      expect(seatLockQueries[1]).toContain('"owedDeparture" = NULL');
+      expect(seatLockQueries[1]).toContain(`["g-1","${USER}",3]`);
+      expect(seatLockQueries).toHaveLength(2);
+      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+      expect(redis.srem).not.toHaveBeenCalled();
+    });
+
+    it.each([['0'], ['two'], ['1.5']])('refuses a departure named %s', async (departure) => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+      realSettlement();
+
+      await expect(
+        controller.cancelDistributionDeparture('workspace', WORKSPACE, USER, departure, SECRET)
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(seatLockQueries).toHaveLength(0);
+    });
+
+    it('answers plainly for a scope with no group, and refuses the wrong secret', async () => {
+      realSettlement();
+      await expect(
+        controller.cancelDistributionDeparture('workspace', WORKSPACE, USER, '3', SECRET)
+      ).resolves.toEqual({ settled: false });
+      await expect(
+        controller.cancelDistributionDeparture('workspace', WORKSPACE, USER, '3', 'nope')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(seatLockQueries).toHaveLength(0);
+    });
+  });
+
   describe('the scope, which decides which roster is served', () => {
     const CHANNEL = 'c-private';
 
