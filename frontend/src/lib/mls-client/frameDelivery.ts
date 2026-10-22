@@ -94,15 +94,27 @@ export function addressedHistoryAnswer(device: string): FrameDelivery {
 /**
  * The capability this build declares on its socket (`caps=` on `/api/ws`): it refuses an addressed
  * conversation frame that is not a solicited, bounded history answer (`historyAddressing.ts`). The
- * gateway publishes it only while every live session of the device declares it, and chat-delivery
- * addresses a conversation frame only to such a device. The same literal is in chat-delivery
- * (`ADDRESSED_HISTORY_CAPABILITY`) and the gateway (`state.rs`).
+ * gateway records each session's declaration in a store every gateway process shares, chat-delivery
+ * addresses a conversation frame only to a device ALL of whose sessions declared it, and the gateway
+ * drops an addressed frame on a session that did not. The same literal is in chat-delivery
+ * (`ADDRESSED_HISTORY_CAPABILITY`) and the gateway (`addressing.rs`).
  */
 export const ADDRESSED_HISTORY_CAPABILITY = 'addressed-history-1';
 
 /**
- * The capabilities query both socket openers append to `/api/ws` (web and Tauri), so the two cannot
- * declare different things. Declared by every session: a tab is a reader of every frame routed to
- * the device, so each one says what it applies.
+ * The gateway socket URL, built in ONE place for both openers (web and Tauri) so the two cannot
+ * declare different capabilities. Every session declares: a tab is a reader of every frame routed
+ * to the device, so each one says what it applies. `redacted` is the same URL with the token masked,
+ * the only form that may reach a log line.
  */
-export const GATEWAY_CAPS_QUERY = `&caps=${encodeURIComponent(ADDRESSED_HISTORY_CAPABILITY)}`;
+export function gatewaySocketUrl(
+  wsBase: string,
+  deviceId: string,
+  token?: string
+): { url: string; redacted: string } {
+  const base = `${wsBase}/api/ws?device_id=${encodeURIComponent(deviceId)}&caps=${encodeURIComponent(ADDRESSED_HISTORY_CAPABILITY)}`;
+  return {
+    url: token ? `${base}&token=${encodeURIComponent(token)}` : base,
+    redacted: token ? `${base}&token=***` : `${base} (no token)`,
+  };
+}

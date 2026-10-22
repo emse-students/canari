@@ -1,7 +1,7 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import { getClientAppVersion } from '$lib/utils/appVersion';
-import { GATEWAY_CAPS_QUERY } from '$lib/mls-client/frameDelivery';
+import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
 import { MLS_STATE_SEAL_V2_WRITER_ENABLED } from '$lib/mls-client/mlsStateSeal';
@@ -460,9 +460,11 @@ export class WebMlsService extends BaseMlsService {
         /* rely on canari_ws_token cookie only */
       }
     }
-    const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-    const fullWsUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${GATEWAY_CAPS_QUERY}${tokenParam}`;
-    const logUrl = `${wsUrl}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam ? '&token=***' : ''}`;
+    const { url: fullWsUrl, redacted: logUrl } = gatewaySocketUrl(
+      wsUrl,
+      this.deviceId,
+      resolvedToken || undefined
+    );
 
     return new Promise((resolve, reject) => {
       console.log(`[WS] Opening connection → ${logUrl}`);

@@ -909,13 +909,19 @@ export async function handleSystemEvent(
       const claimsJoin = data?.join === true && requestId === undefined;
       const ask =
         addressee.toLowerCase() === me && (requestId !== undefined || claimsJoin)
-          ? takeAddressedAsk(convoKey, requestId, data?.last === true)
+          ? takeAddressedAsk(
+              convoKey,
+              requestId,
+              `${senderNorm}:${deliveryMeta.senderDeviceId ?? ''}`,
+              data?.last === true
+            )
           : null;
       if (ask === null || (ask.kind === 'join') !== claimsJoin) {
-        // At error: an honest peer answers only an ask that carried an id, so this is a forged frame,
-        // a defect, or an ask this page no longer holds (a reload between ask and answer, or more
-        // than MAX_OPEN_ASKS_PER_GROUP open at once) - each worth a reader's attention, and the
-        // comparison runs again on the next connection either way.
+        // At error: an honest peer answers only an ask that carried an id, and closes it once, so
+        // this is a forged frame, a defect, or an ask this page no longer holds (a reload between
+        // ask and answer, or more than MAX_OPEN_ASKS_PER_GROUP open at once) - each worth a
+        // reader's attention, and the comparison runs again on the next connection either way. A
+        // SECOND responder to the same ask is not here: asks close per answering device.
         console.error(
           `[HISTORY_ADDRESSED] REFUSED an addressed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - ${addressee.toLowerCase() !== me ? `addressed to ${addressee.slice(0, 8) || 'nobody'}…, not us` : requestId === undefined && !claimsJoin ? 'it names no ask' : 'it answers no ask this device has open'} (${incoming.length} message(s) not ingested)`
         );

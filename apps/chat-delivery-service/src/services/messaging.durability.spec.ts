@@ -38,8 +38,10 @@ describe('MessagingService - visibility vs durability', () => {
     xrange: jest.fn().mockResolvedValue([]),
     sadd: jest.fn().mockResolvedValue(1),
     exists: jest.fn().mockResolvedValue(0),
-    // The presence key's VALUE: what the device's live sessions declared (`caps=` on the socket).
+    // The presence key's VALUE: `sessions-1` when a current gateway wrote it, `true` from an older one.
     get: jest.fn().mockResolvedValue(null),
+    // The device's per-session declarations, `addressing:sessions:{u}:{d}` (one field per session).
+    hvals: jest.fn().mockResolvedValue([]),
     publish: jest.fn().mockResolvedValue(1),
     smembers: jest.fn().mockResolvedValue([]),
     pipeline: jest.fn(() => pipelineDouble()),
@@ -160,6 +162,7 @@ describe('MessagingService - visibility vs durability', () => {
     groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'w1' });
     redis.exists.mockResolvedValue(0);
     redis.get.mockResolvedValue(null);
+    redis.hvals.mockResolvedValue([]);
     execResult = [
       [null, '1-0'],
       [null, 0],
@@ -647,10 +650,23 @@ describe('MessagingService - visibility vs durability', () => {
         // Every device is online - a transport frame reaches nobody else.
         redis.exists.mockResolvedValue(1);
       };
-      const declares = (...devices: string[]) =>
+      /**
+       * The gateway's two writes for a device: the presence VALUE (`sessions-1` from a current
+       * gateway, `true` from an older one) and one field per live session on a current gateway.
+       */
+      const sessions = (device: string, presence: string, fields: string[]) => {
+        const get = redis.get.getMockImplementation();
+        const hvals = redis.hvals.getMockImplementation();
         redis.get.mockImplementation(async (key: string) =>
-          devices.some((d) => key === `user:online:${d}`) ? 'addressed-history-1' : 'true'
+          key === `user:online:${device}` ? presence : ((await get?.(key)) ?? null)
         );
+        redis.hvals.mockImplementation(async (key: string) =>
+          key === `addressing:sessions:${device}` ? fields : ((await hvals?.(key)) ?? [])
+        );
+      };
+      const declares = (...devices: string[]) => {
+        for (const d of devices) sessions(d, 'sessions-1', ['addressed-history-1']);
+      };
 
       it('queues the answer for the asking device ONLY - another device of the group gets no row', async () => {
         conversation();
@@ -713,6 +729,60 @@ describe('MessagingService - visibility vs durability', () => {
         });
         expect(queuedMessageRepo.save).not.toHaveBeenCalled();
         expect(redis.publish).not.toHaveBeenCalled();
+      });
+
+      /**
+       * THE CAPABILITY IS A CROSS-PROCESS FACT. Two sessions of one device may sit on two gateway
+       * processes (a deploy overlap): each records its own declaration in the shared hash, and ONE
+       * undeclared session anywhere makes the device unaddressable.
+       */
+      it('refuses a device ONE of whose sessions, on any gateway, did not declare it', async () => {
+        conversation();
+        sessions('u2:dB', 'sessions-1', ['addressed-history-1', '-']);
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: false, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({
+          response: { error: 'addressed_unsupported', devices: ['u2:dB'] },
+        });
+        expect(redis.publish).not.toHaveBeenCalled();
+      });
+
+      it('refuses a device an OLDER gateway also serves - its presence value is `true`', async () => {
+        conversation();
+        // The current gateway's session declared; an older gateway's session writes no field at
+        // all, and the presence value it writes is the only trace of it.
+        sessions('u2:dB', 'true', ['addressed-history-1']);
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: false, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({
+          response: { error: 'addressed_unsupported', devices: ['u2:dB'] },
+        });
+      });
+
+      it('refuses a device with no recorded session, even under a current presence value', async () => {
+        conversation();
+        sessions('u2:dB', 'sessions-1', []);
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: false, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({
+          response: { error: 'addressed_unsupported', devices: ['u2:dB'] },
+        });
+      });
+
+      it('marks a KEY-GROUP answer nothing - the flag is the conversation rule, and the edge filters on it', async () => {
+        groupOfThree();
+        redis.exists.mockResolvedValue(1);
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        const rows = queuedMessageRepo.save.mock.calls[0][0] as unknown as { addressed: boolean }[];
+        expect(rows.map((r) => r.addressed)).toEqual([false]);
+        expect('addressed' in JSON.parse(String(redis.publish.mock.calls[0][1]))).toBe(false);
       });
     });
 

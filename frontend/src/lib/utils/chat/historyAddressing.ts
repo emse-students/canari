@@ -12,9 +12,11 @@
  *   here with the BOUND it stated; the answer echoes it;
  * - the inviter's push is solicited by this device's own admission: processing a Welcome records a
  *   `join` ask for the group;
- * - an ask is consumed by the answer's chunk marked `last`. The open asks are a bounded FIFO per
- *   conversation ({@link MAX_OPEN_ASKS_PER_GROUP}) - state, never a clock - and a restarted page has
- *   asked nothing, so it accepts nothing addressed.
+ * - an ask is closed PER ANSWERING DEVICE by that device's chunk marked `last`: the rendezvous may
+ *   hand one ask to a second responder (a re-election over a stored probe), whose answer is held to
+ *   the same bound and only adds, so it is taken rather than refused. The open asks are a bounded
+ *   FIFO per conversation ({@link MAX_OPEN_ASKS_PER_GROUP}) - state, never a clock - and leave only
+ *   through it; a restarted page has asked nothing, so it accepts nothing addressed.
  *
  * What an accepted answer may DO is decided by the bundle handler (add messages, nothing else); what
  * it may CARRY is decided here ({@link boundAddressedMessages}).
@@ -50,8 +52,11 @@ export const MAX_OPEN_ASKS_PER_GROUP = 32;
 /** The key a `join` ask is kept under - the push carries no request id, nobody asked it one. */
 const JOIN_ASK = '__join__';
 
+/** One open ask, and the answering devices (`sender:senderDeviceId`) whose `last` chunk closed it. */
+type OpenAsk = { ask: HistoryAsk; closedBy: Set<string> };
+
 /** Open asks, per conversation, in the order they were made. Insertion order is the FIFO. */
-const openAsks = new Map<string, Map<string, HistoryAsk>>();
+const openAsks = new Map<string, Map<string, OpenAsk>>();
 
 /** A fresh request id for one ask. */
 export function mintHistoryRequestId(): string {
@@ -75,7 +80,7 @@ function remember(groupId: string, requestId: string, ask: HistoryAsk): void {
     openAsks.set(groupId, asks);
   }
   asks.delete(requestId);
-  asks.set(requestId, ask);
+  asks.set(requestId, { ask, closedBy: new Set() });
   while (asks.size > MAX_OPEN_ASKS_PER_GROUP) {
     const oldest = asks.keys().next().value;
     if (oldest === undefined) break;
@@ -99,21 +104,21 @@ export function noteJoinSolicited(groupId: string, now: number = Date.now()): vo
 /**
  * The ask an addressed answer in `groupId` claims to answer, or `null` when this device asked no
  * such thing - the frame is then refused by the caller. `requestId` absent is the inviter's push.
- * The chunk marked `last` consumes the ask, so a later chunk naming it is refused.
+ * `answerer` is the device the answer came from (`sender:senderDeviceId`): its chunk marked `last`
+ * closes the ask FOR IT, so a later chunk of its own naming the ask is refused while another
+ * responder's answer is still taken. A forged device id only buys its sender another answer held
+ * to the same bound, which one answer of many chunks already gives it.
  */
 export function takeAddressedAsk(
   groupId: string,
   requestId: string | undefined,
+  answerer: string,
   last: boolean
 ): HistoryAsk | null {
-  const asks = openAsks.get(groupId);
-  const id = requestId ?? JOIN_ASK;
-  const ask = asks?.get(id) ?? null;
-  if (ask && last) {
-    asks?.delete(id);
-    if (asks?.size === 0) openAsks.delete(groupId);
-  }
-  return ask;
+  const open = openAsks.get(groupId)?.get(requestId ?? JOIN_ASK);
+  if (!open || open.closedBy.has(answerer)) return null;
+  if (last) open.closedBy.add(answerer);
+  return open.ask;
 }
 
 /** Forgets every open ask - a sign-out, and the tests. */

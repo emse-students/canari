@@ -316,11 +316,27 @@ const MAX_ADDRESSED_DEVICES = 16;
 /**
  * The capability a device's live sessions declare on their socket (`caps=` on `/api/ws`) when their
  * code refuses an addressed conversation frame that is not a solicited history answer. The gateway
- * writes it as the presence key's VALUE while every session of the device declared it, `true`
- * otherwise. The same literal is in `apps/chat-gateway/src/state.rs` and the client's
- * `historyAddressing.ts`; a new rule 5 would be a new capability, never a reinterpretation of this one.
+ * records each session's declaration as one field of {@link addressingSessionsKey} - this literal, or
+ * `-`. The same literal is in `apps/chat-gateway/src/addressing.rs` and the client's
+ * `frameDelivery.ts`; a new rule 5 would be a new capability, never a reinterpretation of this one.
  */
 export const ADDRESSED_HISTORY_CAPABILITY = 'addressed-history-1';
+
+/**
+ * The presence key's value written by a gateway that records every session in
+ * {@link addressingSessionsKey}. An older gateway writes `true` and records nothing, and a current
+ * one never overwrites that `true` - so any other value means a session this service cannot see the
+ * declaration of may be live (`apps/chat-gateway/src/addressing.rs`).
+ */
+export const PRESENCE_SESSIONS = 'sessions-1';
+
+/**
+ * The hash holding one field per live session of a device, on every gateway process, valued with
+ * what that session declared. Deliberately outside `user:*`, which the presence scans match.
+ */
+export function addressingSessionsKey(userId: string, deviceId: string): string {
+  return `addressing:sessions:${userId}:${deviceId}`;
+}
 
 /**
  * Reads `SendMessageBody.recipientDevices` into lower-cased `userId:deviceId` keys, or `null` when
@@ -1103,13 +1119,15 @@ export class MessagingService {
    * docs/wiki/protocols/history-answer-addressing.md - refuse any addressed frame that is not a
    * solicited, bounded history answer.
    *
-   * THE EVIDENCE IS DECLARED BY THE CODE THAT WILL DECRYPT THE FRAME, not by a version. The gateway
-   * writes the presence key's value as {@link ADDRESSED_HISTORY_CAPABILITY} only while every live
-   * session of the device opened its socket declaring it (`AppState::presence_value`), so a tab left
-   * open on an older build makes its device unaddressable for as long as it is connected. The frame
-   * is transport-only (checked by the caller), so its addressee is online by construction and the
-   * live sessions are exactly the readers. An offline addressee answers no capability and is refused
-   * too: a transport frame would not have been queued for it anyway.
+   * THE EVIDENCE IS DECLARED BY THE CODE THAT WILL DECRYPT THE FRAME, not by a version, and it is
+   * read ACROSS GATEWAY PROCESSES: every session of the device, on whichever gateway holds it, owns
+   * one field of {@link addressingSessionsKey}, and ONE field that is not the capability makes the
+   * device unaddressable - a tab left open on an older build, wherever it is connected. A session on
+   * an OLDER gateway records no field; its only trace is the presence value `true`, which a current
+   * gateway never overwrites, so anything but {@link PRESENCE_SESSIONS} is refused too. The frame is
+   * transport-only (checked by the caller), so its addressee is online by construction and the live
+   * sessions are exactly the readers. An offline addressee answers no capability and is refused too:
+   * a transport frame would not have been queued for it anyway.
    *
    * @throws BadRequestException `{ error: 'addressed_unsupported', devices }` naming the devices that
    *   did not declare it - the answerer then answers nobody, and never by broadcast.
@@ -1121,8 +1139,13 @@ export class MessagingService {
   ): Promise<void> {
     const incapable: string[] = [];
     for (const t of targets) {
-      const declared = await this.redis.get(this.presenceKey(t.userId, t.deviceId));
-      if (declared !== ADDRESSED_HISTORY_CAPABILITY) incapable.push(`${t.userId}:${t.deviceId}`);
+      const presence = await this.redis.get(this.presenceKey(t.userId, t.deviceId));
+      const declared = await this.redis.hvals(addressingSessionsKey(t.userId, t.deviceId));
+      const addressable =
+        presence === PRESENCE_SESSIONS &&
+        declared.length > 0 &&
+        declared.every((d) => d === ADDRESSED_HISTORY_CAPABILITY);
+      if (!addressable) incapable.push(`${t.userId}:${t.deviceId}`);
     }
     if (incapable.length === 0) {
       this.logger.log(
@@ -1136,7 +1159,7 @@ export class MessagingService {
     // nobody, and the older device is served by an older peer as before.
     this.logger.log(
       `[SEND][${traceId}] REJECT addressed_unsupported group=${groupId} devices=${incapable.join(',')}` +
-        ` - no live session declared ${ADDRESSED_HISTORY_CAPABILITY}`
+        ` - not every live session declared ${ADDRESSED_HISTORY_CAPABILITY}`
     );
     throw new BadRequestException({
       error: 'addressed_unsupported',
@@ -1531,7 +1554,9 @@ export class MessagingService {
               createdAt: receivedAt,
               // The ROUTING fact the receiver needs: MLS encrypts for the whole group, so only the
               // server can say this copy went to this device alone (history-answer-addressing, 4).
-              addressed: addressed !== null,
+              // Conversation frames only: it is what the receiver's rule 5 and the gateway's edge
+              // filter act on, and a key-group seed answer is held to neither.
+              addressed: addressedConversation,
             })
           );
         }

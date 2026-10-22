@@ -19,30 +19,47 @@ import type { IStorage } from '$lib/db';
  */
 const GROUP = 'g1';
 const ASKED_AT = 1_700_000_000_000;
+/** The device an answer came from (`sender:senderDeviceId`). */
+const ANSWERER = 'bob:bob-phone';
 
 const at = (id: string, timestamp: number) => ({ id, timestamp });
 
 describe('historyAddressing - the open asks', () => {
   beforeEach(() => forgetHistoryAsks());
 
+  /**
+   * Review of #2270: the rendezvous may hand one ask to a second responder (a re-election over a
+   * stored probe), so an ask is consumed PER ANSWERER. A second device's answer is accepted - it is
+   * held to the same bound - and the same device after its `last` is refused.
+   */
+  it('a second answerer is accepted after the first one closed the ask, the first is not', () => {
+    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true)?.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', false)?.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', true)?.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, false)).toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', false)).toBeNull();
+  });
+
   it('an ask is taken by its answer, and consumed only by the chunk marked last', () => {
     noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT });
 
-    expect(takeAddressedAsk(GROUP, 'req-a', false)?.kind).toBe('digest');
-    expect(takeAddressedAsk(GROUP, 'req-a', true)?.kind).toBe('digest');
-    expect(takeAddressedAsk(GROUP, 'req-a', true)).toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, false)?.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true)?.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true)).toBeNull();
   });
 
   it('an ask belongs to its conversation', () => {
     noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT });
 
-    expect(takeAddressedAsk('other-group', 'req-a', true)).toBeNull();
+    expect(takeAddressedAsk('other-group', 'req-a', ANSWERER, true)).toBeNull();
   });
 
   it('the push is solicited by an admission, and by nothing else', () => {
-    expect(takeAddressedAsk(GROUP, undefined, true)).toBeNull();
+    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)).toBeNull();
     noteJoinSolicited(GROUP, ASKED_AT);
-    expect(takeAddressedAsk(GROUP, undefined, true)?.kind).toBe('join');
+    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)?.kind).toBe('join');
   });
 
   it(`keeps at most ${MAX_OPEN_ASKS_PER_GROUP} asks per conversation - the oldest goes first, no clock`, () => {
@@ -50,9 +67,11 @@ describe('historyAddressing - the open asks', () => {
       noteHistoryAsk(GROUP, `req-${i}`, { kind: 'digest', since: 0, askedAt: ASKED_AT });
     }
 
-    expect(takeAddressedAsk(GROUP, 'req-0', false)).toBeNull();
-    expect(takeAddressedAsk(GROUP, 'req-1', false)).not.toBeNull();
-    expect(takeAddressedAsk(GROUP, `req-${MAX_OPEN_ASKS_PER_GROUP}`, false)).not.toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-0', ANSWERER, false)).toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-1', ANSWERER, false)).not.toBeNull();
+    expect(
+      takeAddressedAsk(GROUP, `req-${MAX_OPEN_ASKS_PER_GROUP}`, ANSWERER, false)
+    ).not.toBeNull();
   });
 
   it('a request id is letters, digits and hyphens - anything else is no id', () => {
@@ -123,7 +142,7 @@ describe('every ask carries a fresh request id, recorded before it leaves', () =
     );
 
     const [{ requestId }] = payloads(mlsService);
-    expect(takeAddressedAsk(GROUP, requestId, true)).toMatchObject({
+    expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true)).toMatchObject({
       kind: 'range',
       since: 100,
       before: 2000,
@@ -145,7 +164,7 @@ describe('every ask carries a fresh request id, recorded before it leaves', () =
     });
 
     const [{ requestId }] = payloads(mlsService);
-    expect(takeAddressedAsk(GROUP, requestId, true)?.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true)?.kind).toBe('digest');
   });
 
   it('a pull - one ask per frame, each naming its own ids', async () => {
@@ -158,7 +177,7 @@ describe('every ask carries a fresh request id, recorded before it leaves', () =
     );
 
     const [{ requestId }] = payloads(mlsService);
-    expect(takeAddressedAsk(GROUP, requestId, true)).toMatchObject({
+    expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true)).toMatchObject({
       kind: 'pull',
       ids: ['a', 'b'],
     });

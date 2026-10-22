@@ -246,13 +246,17 @@ private community would have gone to every socket on the server.
 
 Presence keys are stored in Redis as `user:online:{userId}:{deviceId}` with a 90-second TTL (`PRESENCE_TTL_SECS`, a compile-time-asserted margin over the 75 s ping/missed-pong detection window), refreshed on each WebSocket Pong. When delivery fails for a device and all senders are gone, the gateway proactively deletes the presence key so `chat-delivery-service` stops routing via pub/sub.
 
-**The VALUE carries one capability (step A, 2026-10-22).** A socket opened with
-`caps=addressed-history-1` declares that its code refuses an addressed conversation frame that is not
-a solicited, bounded history answer. The key's value is `addressed-history-1` only while EVERY live
-session of the device declared it (`AppState::presence_value`), `true` otherwise; every reader that
-only tests existence is unchanged. chat-delivery addresses a history answer only to a device whose
-value is the capability ([history-answer-addressing](../protocols/history-answer-addressing.md), rule 6).
-The live frame also forwards the row's `addressed` flag.
+**Each session's declared capability is kept across processes (step A, 2026-10-22; `addressing.rs`).**
+A socket opened with `caps=addressed-history-1` declares that its code refuses an addressed
+conversation frame that is not a solicited, bounded history answer. Every presence write is one Lua
+script: the session's field in `addressing:sessions:{userId}:{deviceId}` (`{process}:{connection}`,
+the capability or `-`, its own `HEXPIRE`), then the presence value `sessions-1` - unless an older
+gateway's `true` is there, which is neither overwritten nor deleted, because it is the only trace of
+a session whose declaration nobody can read. Every reader that only tests existence is unchanged.
+chat-delivery addresses a history answer only to a device whose value is `sessions-1` and every field
+of whose hash is the capability ([history-answer-addressing](../protocols/history-answer-addressing.md),
+rule 6). The pub/sub loop forwards the row's `addressed` flag, and hands an addressed frame only to the
+local sessions that declared - every one withheld is logged at error.
 
 ### The key is per DEVICE, the event is per CONNECTION
 

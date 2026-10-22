@@ -88,9 +88,7 @@ pub async fn handle_disconnect(
     device_id: &str,
     conn_id: u64,
 ) {
-    use redis::AsyncCommands;
     let conn_key = format!("{}:{}", user_id, device_id);
-    let redis_key = format!("user:online:{}", conn_key);
 
     if state.has_other_sessions(&conn_key, conn_id) {
         tracing::info!(
@@ -108,7 +106,10 @@ pub async fn handle_disconnect(
     );
     match state.redis_client.get_multiplexed_async_connection().await {
         Ok(mut con) => {
-            if let Err(e) = con.del::<_, ()>(&redis_key).await {
+            // The session's own field goes with its ConnectionGuard; this removes the presence only
+            // (and never an older gateway's `true`, crate::addressing).
+            if let Err(e) = crate::addressing::leave_session(&mut con, &conn_key, None, true).await
+            {
                 tracing::warn!(
                     "[presence] DEL failed on explicit disconnect for {}:{}: {}",
                     user_id,

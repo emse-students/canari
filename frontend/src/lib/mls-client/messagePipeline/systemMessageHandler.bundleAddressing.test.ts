@@ -268,7 +268,9 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
  * that ask asked, and only to ADD messages.
  */
 describe('history_bundle - an addressed answer is the answer to OUR ask or nothing', () => {
-  const ADDRESSED = { deliveryMeta: { channel: 'live', addressed: true } };
+  const ADDRESSED = {
+    deliveryMeta: { channel: 'live', addressed: true, senderDeviceId: 'responder-1' },
+  };
   const TO_ME = digestIdentity(ME, MY_DEVICE);
   const ASKED_AT = 1_700_000_000_000;
 
@@ -328,6 +330,29 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
 
     expect(ctx.batchAddMessages).toHaveBeenCalledTimes(1);
     expect(refusedLines(error)).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  /**
+   * Review of #2270: the rendezvous can hand one ask to a second responder (a re-election over a
+   * stored probe). Its answer is held to the same bound and ADDS the same way, so refusing it at
+   * error was noise that could lose content - an ask is closed per answering DEVICE.
+   */
+  it('a second responder to the same ask is ingested - the ask is closed per answering device', async () => {
+    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const frame = { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true };
+    const first = makeCtx(ADDRESSED);
+    const second = makeCtx({
+      deliveryMeta: { ...ADDRESSED.deliveryMeta, senderDeviceId: 'responder-2' },
+    });
+
+    await handleSystemEvent('history_bundle', frame, first as any);
+    await handleSystemEvent('history_bundle', frame, second as any);
+
+    expect(first.batchAddMessages).toHaveBeenCalledTimes(1);
+    expect(second.batchAddMessages).toHaveBeenCalledTimes(1);
+    expect(refusedLines(error)).toHaveLength(0);
     error.mockRestore();
   });
 
