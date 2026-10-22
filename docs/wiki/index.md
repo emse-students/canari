@@ -20,7 +20,7 @@
 - [The one-time key-package pool, measured](protocols/key-package-pool.md) - every count, every population, and every rule refuted against the pool nothing reclaims
 - [MLS protocol](protocols/mls-protocol.md) — RFC 9420 integration, epochs, forward secrecy, device sync
 - [History reconciliation](protocols/history-reconciliation.md) — how a device works out it is missing messages and gets them: the replacement for the non-terminating `history_request` machinery, and the decisions taken
-- [Addressing a history answer (design, step A)](protocols/history-answer-addressing.md) — DESIGN ONLY, reviewed before code: answers sent to the asking device alone, the equivocation threat of lifting the `recipientDevices` allowlist, and why HPKE sealing comes next
+- [Addressing a history answer (design, step A)](protocols/history-answer-addressing.md) — DESIGN ONLY, revised after its opus review: answers addressed to the asking device and accepted only when solicited, bounded and add-only; A protects against honest servers and answerers only; sealing to an ephemeral X25519 key from `mls-core` comes next
 - [MLS defects the campaign measured](protocols/campaign-measured-defects.md) — The reasoning, numbers, recurrences and refuted readings behind the open MLS healing and delivery entries of the backlog
 - [MLS desync prevention](protocols/mls-desync-prevention.md) — Server + client tactics to avoid state drift
 - [MLS recovery ladder](protocols/mls-recovery-ladder.md) — Step-by-step recovery (commit replay → external join → welcome_request)

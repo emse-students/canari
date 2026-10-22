@@ -1,8 +1,9 @@
 # Addressing a history answer to the device that asked - design (step A, 2026-10-22)
 
-**Status: DESIGN ONLY, nothing is built.** Master's verdict of 2026-10-22: this page gets an opus
-review BEFORE any code. It is step A of the P1 "a new member of a group conversation receives its
-whole past". Step C is described, with the decision and its numbers, in
+**Status: DESIGN ONLY, nothing is built. Revised after its opus review of 2026-10-22, whose verdict was
+REVISE with the direction kept: address first, seal later, and do not skip A.** It is step A of the P1
+"a new member of a group conversation receives its whole past". Step C is described, with the
+decision and its numbers, in
 [history-reconciliation](history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
 
 ## The problem C leaves
@@ -18,56 +19,101 @@ single filter is right for every reader of a broadcast, so the answer must stop 
 Until it does, the residual of C stands: a newcomer can still read pre-arrival messages from broadcast
 answers meant for others' new devices.
 
+## What A protects against, and what it does not
+
+**A protects against an HONEST server and an HONEST answerer, and against nothing else.** It stops
+correct software from handing a newcomer what the newcomer was never meant to read. It is not a
+confidentiality boundary:
+
+- MLS encrypts an addressed answer for the whole group, so every member can decrypt it. A malicious
+  server can deliver an addressed answer to the newcomer as easily as to its addressee.
+- A malicious answerer can send the newcomer its plaintext history in any shape it likes. A member
+  can always leak what it holds.
+
+Making the answer unreadable to everyone but the asker is option B below, and it is the follow-up.
+
 ## The proposal
 
-1. **The answer is addressed.** All three answer paths send with
-   `recipientDevices = [the asking device]` (`to`, already `userId:deviceId`). The push keeps its
-   addressee, the invitee, too.
+1. **The answer is addressed.** Both answer paths (the diff and the scrollback) send with
+   `recipientDevices = [the asking device]` (`to`, already `userId:deviceId`). **The inviter's push
+   stays a broadcast.** Nobody asked for it, so rule 5 could never accept it. It needs no address,
+   because step C already filters it for the invitee, and every other member is entitled to a
+   superset of what it carries.
 2. **The answer is filtered for its ONE reader.** The windows are the asking person's own `withheld`
    ones (gaps plus the span before their arrival), and no longer the union of every member's. The
    union stays only for the quote rule, which is a real broadcast (a reply reaches every member).
 3. **chat-delivery accepts an addressed frame on a conversation group**, where today it refuses one
-   outright (`messaging.service.ts`, `REJECT addressed_not_key_group`). Rules 4 and 5 below are what
+   outright (`messaging.service.ts`, `REJECT addressed_not_key_group`). Rules 4 to 6 below are what
    make that safe.
 4. **The server marks an addressed row.** `queued_message` gains `addressed boolean NOT NULL DEFAULT
    false`, and the delivery frame carries it. It is set whenever `readAddressedDevices` returned a
    set. An addressed frame never enters the shared history stream, which is already the rule on key
    groups.
-5. **The receiver refuses an addressed frame that is not a history control.** On a conversation
-   group, a frame delivered with `addressed: true` whose decoded content is anything other than a
-   `history_bundle` system frame is NOT rendered, NOT stored and NOT acknowledged as content. It is
-   logged at **error**, naming the group, the sender's verified credential and the content kind
-   (`[HISTORY_ADDRESSED] REFUSED`). The ACK still happens, so the row does not loop. On a key group
-   the existing Graine rule is unchanged.
-6. **The server refuses to address a device that predates rule 5.** The device's published
-   `key_package.deviceAppVersion` is the evidence. Addressing such a device on a conversation group
-   is refused with a typed `400`, and the answerer does not answer that device. It says so in its log
-   and sends no broadcast in place of the refused answer. The older device is served by older peers
-   exactly as today, and it asks again at its next connection. This holds until `minClientVersion`
-   passes the release carrying rule 5.
+5. **The receiver accepts an addressed frame only as the answer to its own question.** On a
+   conversation group, a frame delivered with `addressed: true` is applied only if ALL of these hold.
+   Otherwise it is not rendered and not stored, and it is logged at **error**
+   (`[HISTORY_ADDRESSED] REFUSED`, naming the group, the sender's verified credential, the content
+   kind and which clause failed). The ACK still happens, so the row does not loop.
+   - **It is a `history_bundle`.** No other content may be addressed on a conversation.
+   - **It is SOLICITED.** The request carries a fresh `requestId`, which the asker keeps in memory as
+     outstanding for that conversation. The bundle must echo it. The id is consumed by the answer's
+     last chunk, or dropped at the device's next connection, whichever comes first. That is state,
+     never a clock: a restarted device has asked nothing, so it accepts nothing addressed.
+   - **It is BOUNDED by the request.** A pull's bundle may carry only the ids the asker named, or ids
+     inside the prefixes it named. A range bundle may carry only messages inside the window the
+     request stated (`since`). Every message's timestamp must be at or before the moment the
+     request was sent. A message outside these bounds is dropped and counted in the error line, while
+     the rest of the bundle is applied.
+   - **It may ADD messages and do NOTHING ELSE.** The broadcast path's metadata merges are barred to
+     an addressed bundle, because each one lets a single peer rewrite state the asker already holds,
+     invisibly to every other member:
+     - deletion (`isDeleted`, applied today with no author check);
+     - the conversation's `readWatermarks` and `historyFloor` (both max-merged);
+     - pins (`mergePinEntries`);
+     - reactions.
 
-## The threat it opens, and how far rules 4-6 close it
+     Those converge through the broadcast frames that carry them. A later work package may admit a
+     merge whose author is checked against the verified sender, but none is admitted now.
 
-**Equivocation.** Today, on a conversation group, every application frame reaches every active device
-as ONE ciphertext. That is why chat-delivery allowlists addressing to key groups: on a conversation,
-`recipientDevices` would let a member (a modified client) show message X to Alice and message Y to
-Bob, and keep both out of the shared stream - a split view that the ordinary fan-out makes
-impossible.
+   On a key group the existing Graine rule is unchanged.
+6. **The server refuses to address a device that predates rule 5.**
+   - **The evidence is the device's published version.** A `key_package.deviceAppVersion` below the
+     release carrying rule 5 is refused, and so is a NULL one: a device that never said what it runs
+     is treated as the oldest. Addressing such a device on a conversation group is refused with a
+     typed `400`. The answerer then does not answer that device: it says so in its log and sends no
+     broadcast in place of the refused answer. The older device is served by older peers exactly as
+     today, and it asks again at its next connection.
+   - **The web multi-tab case.** On the web, one `deviceId` is shared by every tab of a browser
+     profile, and only the tab leader (`tabLeader.ts`) holds the socket and decrypts. A tab left open
+     on an old build can therefore remain leader while a reloaded tab publishes the new version, and
+     the server would then address a device whose decrypting code predates rule 5. So the version
+     rule 6 reads is the version of the code that DECRYPTS:
+     - the leader reports its own build when its socket authenticates, and again when leadership
+       changes hands;
+     - the server takes the LOWER of that report and the key package's version;
+     - a tab that finds a leader on an older build than its own does not wait for it. It asks the
+       leader to reload over `canari-mls-tab`, and leadership passes once the reload completes.
+   - **How long it lasts.** Rule 6 holds until `minClientVersion` passes the release carrying rule 5.
+     That floor moves only once both stores serve the reader.
 
-- **Visible messages: closed by rules 4-6.** An addressed user message is refused by every receiver
-  that has rule 5, and rule 6 keeps addressed frames away from every receiver that does not.
-- **History contents: NOT closed, and this is the residual to accept or refuse.** A `history_bundle`
-  carries messages as JSON (`id`, `senderId`, `content`, timestamps), restated by a peer and checked
-  only for duplicate ids. A member can already put a forged message, attributed to anyone, into a
-  bundle broadcast to everybody. What addressing adds is TARGETING: such a forgery could reach one
-  device and nobody else, so no other member could notice it. History has always trusted the peer
-  that answers. Addressing turns "a peer can lie to everyone" into "a peer can lie to one device".
-  Closing it means binding each relayed message to its original sender. That would be the original
-  MLS ciphertext and its sender signature, which a peer cannot re-encrypt, or a per-message signature
-  in the Graine v2 shape. It is out of scope here and named so that the review can weigh it.
-- **Server trust is unchanged.** Addressing is a ROUTING control. MLS encrypts for the whole group, so
-  a malicious server could hand an addressed answer to any member. The server can already admit a
-  device it controls, so this adds no power it lacks.
+## Why the allowlist exists, and how far rules 4-6 keep it
+
+**Equivocation.** On a conversation group, chat-delivery fans an application frame out to every
+active device as ONE ciphertext, and that is why it allowlists addressing to key groups. Addressing
+lets a sender show one frame to one device and keep it out of the shared stream, which is a split
+view.
+
+- **Visible messages: closed by rules 5 and 6.** An addressed frame that is not a solicited, bounded
+  `history_bundle` is refused by every receiver that has rule 5. Rule 6 keeps addressed frames away
+  from every receiver that lacks it.
+- **History contents: narrowed, NOT closed.** A `history_bundle` carries messages as JSON (`id`,
+  `senderId`, `content`, timestamps), restated by a peer and checked only for duplicate ids. A member
+  can already put a forged message, attributed to anyone, into a bundle broadcast to everybody.
+  Addressing adds TARGETING: a forgery could reach one device and nobody else. The solicitation and
+  bounds of rule 5 shrink that to "the answerer the server elected, inside the window the asker
+  stated, and only as messages the asker did not hold". Closing it requires binding each relayed
+  message to its original sender, either through the original MLS ciphertext and its sender
+  signature or through a per-message signature in the Graine v2 shape. That is out of scope here.
 
 ## The ratchet cost of addressing
 
@@ -82,32 +128,33 @@ bound for its addressed answers
 ([channel-encryption §23](channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
 That docstring changes with this work package.
 
-## Why sealing to a key (option B) is deferred, not rejected
+## Sealing to the asker (option B) is the follow-up, and its key is decided
 
-Option B keeps the broadcast and makes it unreadable to everyone but the asker. The answerer seals
-the bundle payload to a key only the asking device holds. It needs no server trust and no allowlist
-change, and it closes the routing residual. Two shapes were considered:
+Option B keeps the broadcast and makes it unreadable to everyone but the asker. It needs no server
+trust and no allowlist change, and it closes what A leaves to an honest server.
 
-| Shape | What it needs | Why not first |
-| --- | --- | --- |
-| **B1: an ephemeral X25519 key in the request**, sealed with WebCrypto ECDH + HKDF + AES-GCM | X25519 in `crypto.subtle` on every engine | No code here uses X25519 today. The iOS app targets iOS 14.0 (`IPHONEOS_DEPLOYMENT_TARGET`), and WKWebView's WebCrypto follows the OS: X25519 reached WebKit only in a much later release (to be verified on the bench iPhone before relying on any version number). The inviter's push has no request to carry the key, either. |
-| **B2: HPKE in `mls-core`** (Rust, openmls's crypto provider already implements it), sealed to the asker's LEAF encryption key from the ratchet tree, or to the invitee's KeyPackage init key for the push | A new WASM export and its native mirror (Android, iOS), plus a domain-separated HPKE `info` label so the leaf key's use outside MLS cannot collide with MLS's own | The stronger design, and the one that also closes the routing residual. It is a protocol change on three platforms, so it costs a reader-first release pair. It reuses an MLS key outside MLS, which needs its own review. |
+**The key, decided by the review on 2026-10-22: a dedicated ephemeral X25519 key generated in
+`mls-core`, carried inside the MLS-signed request.**
 
-**The recommendation is A now and B2 next**, because A closes the user-visible leak in one release
-with machinery that already exists (Graine §23). B2 can later replace rules 3-6 entirely, and the
-allowlist then returns to key groups only.
+- **Generated in Rust.** On the web it reaches the page through WASM, and it is mirrored on Android
+  and iOS. This removes the WebCrypto question entirely: the iOS app targets iOS 14.0, and WKWebView's
+  `crypto.subtle` gained X25519 only much later.
+- **Carried inside the MLS-signed request.** The asker's signature covers the key, so the server
+  cannot swap it for one of its own.
+- **Not the leaf encryption key.** That key rotates on every commit that touches the path, and its
+  private half has no public API to open with outside MLS. Reusing an MLS key outside MLS would also
+  need a review of its own.
+
+The push is untouched by B, as it is by A: it is a broadcast that step C already made safe.
+
+**B is an opus work package across three platforms, after A.** It covers the WASM export and its
+native mirrors, and its rollout is a reader-first release pair. Once it ships, it can replace rules
+3 to 6, and the allowlist then returns to key groups only.
 
 ## What A does not close
 
-- The split view through history contents (above). It needs bound history, not addressing.
+- Anything against a malicious server or a malicious answerer (above).
+- The split view through history contents, narrowed by rule 5. It needs bound history, not
+  addressing.
 - Older clients keep pushing and broadcasting until `minClientVersion` passes the release carrying A.
-  That floor moves only once both stores serve the reader.
 - What a newcomer has already received cannot be taken back.
-
-## Questions for the review
-
-1. Is rule 6 (refusing by `deviceAppVersion`) sound evidence, or should the server refuse addressing
-   on a conversation until `minClientVersion` alone covers rule 5?
-2. Is the split-view residual acceptable for A, given that bundles already allow forgery to everyone?
-3. B2's key reuse: is HPKE to the leaf encryption key with a distinct `info` label acceptable, or must
-   the asker publish a dedicated key?
