@@ -134,14 +134,17 @@ forgetting.
 
 | Trigger | What it buys |
 |---|---|
-| **A member leaves** | The only structural one. The leaver keeps what they could already read and gets **nothing said after they left**. Without it, leaving a community would change nothing |
-| **100 messages** | Slices a talkative sender, so one recovered seed does not yield years |
-| **7 days** | The same for a rare sender, whom a message counter would never slice |
+| **A leaf is removed** (any Remove merged since the mint, read from the key group's clean run since 2026-10-22: [graine-removal-tracker](graine-removal-tracker.md)) | The structural one. The leaver keeps what they could already read and gets **nothing said after they left**. Without it, leaving a community would change nothing |
+| **A new user joins** (`ROTATE_ON_NEW_USER`, pending decision D5) | A newcomer is never handed a seed minted before it arrived, whose earlier indices it could derive. A new DEVICE of a user already present does not rotate: the session is re-distributed at the new epoch |
+| **100 messages** (50 once re-distributed) | Slices a talkative sender, so one recovered seed does not yield years |
+| **7 days** (24 hours once re-distributed) | The same for a rare sender, whom a message counter would never slice |
 
 The last two cost only their bytes in the bundle. Values are Matrix's, which are field-proven.
 
-**This table is where the three triggers are distinguished, and the only place.** The client's
-`shouldRotateGraineSession` answers yes or no. It carried WHICH of the three fired as a typed value
+**This table is where the triggers are distinguished, and the only place.** The client's
+`graineOutboundVerdict` answers reuse, re-distribute or rotate, and the MLS layer logs WHY a run
+reset (`[GRAINE] run reset reason=departure|new-user|gap|none`); before 2026-10-22,
+`shouldRotateGraineSession` answered yes or no. It carried WHICH of the three fired as a typed value
 until 2026-09-14 - `'no-session' | 'message-count' | 'age' | 'roster'` - and the sweep that removed it
 found the value had no runtime consumer at all: nothing branched on it, the one string interpolating
 it went to `console.info`, and nothing in this product captures a browser console into a durable log,
@@ -2597,7 +2600,7 @@ logcat, NO `frame HELD` and no redraw, the plaintext on the first and only post.
 
 | Where | What it does |
 | --- | --- |
-| `sessionManager.ts`, `seedDistribution.ts` | `distributeGraineSeed` returns the sealed frame `{groupId, protoB64}`; the session keeps it in the SEALED half of its row (`graineCodec`); `shouldRotateGraineSession` rotates a session without one |
+| `sessionManager.ts`, `seedDistribution.ts` | `distributeGraineSeed` returns the sealed frame `{groupId, protoB64}`; the session keeps it in the SEALED half of its row (`graineCodec`); `graineOutboundVerdict` rotates a session without one |
 | `channelSeal.ts`, `channelCrypto.ts` | every non-silent send carries `seedFrame` + `seedGroupId`; a silent one (a reaction) carries neither, since it pushes nobody |
 | social-service `assertSeedFrame` | both or neither, base64, at most `MAX_SEED_FRAME_CHARS` (2048); `seedGroupId` must be the private salon's own group, the community's otherwise - `CHANNEL_SEED_FRAME_INVALID` / `CHANNEL_SEED_FRAME_GROUP_MISMATCH`. Never stored, never in `channel.message.created`. The controller used to REBUILD every refusal from its status and message, dropping `code`; a typed refusal now leaves as thrown |
 | social-service `notifyChannelRecipients` | hands `{ciphertext, seedFrame, seedGroupId}` to `internal/push/notify` as `inline`, apart from the fields every push carries; the fixed `ciphertext <= 3000` is gone |
@@ -3046,7 +3049,7 @@ then persisted:
   refused by every reader, so the order is load-bearing;
 - a failed endorsement distributes and persists NOTHING, exactly like a failed distribution.
 
-**Rotation** (`shouldRotateGraineSession`) adds one cause: a session with no signing secret. That
+**Rotation** (`graineOutboundVerdict`, `shouldRotateGraineSession` until 2026-10-22) adds one cause: a session with no signing secret. That
 covers every v1 session (one rotation per salon and sender, at the first send after the upgrade) and
 a v2 session restored somewhere its secret is not.
 
@@ -3165,7 +3168,7 @@ still gets its 403), then the session and index, then the seed frame, then the s
 **Why nothing legitimate is refused.** This route has exactly ONE caller in the repository,
 `ChannelService.sendMessage` (frontend), reached only from `sendEncryptedChannelMessage`, which seals
 through `sealChannelMessage`. That function throws before the POST when the session holds no signing
-secret, and `shouldRotateGraineSession` mints a new session for any that lacks one. Text, polls,
+secret, and `graineOutboundVerdict` mints a new session for any that lacks one. Text, polls,
 mentions, reactions, edits and a community's system notice all go through it, and the `v1.0.3` tag
 already posted `signature: sealed.signature` on every one (read from the tag, 2026-10-13). What does
 NOT use this route, and is therefore untouched:

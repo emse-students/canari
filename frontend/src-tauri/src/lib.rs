@@ -37,7 +37,7 @@ use crate::commands::handoff::read_and_clear_pending_share;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
     creer_groupe, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
-    exporter_secret, generer_key_packages_et_persister, graine_member_signature_key,
+    exporter_secret, generer_key_packages_et_persister, graine_member_signature_key, graine_run,
     graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
     graine_verify_signature, groupe_actif, initialiser_mls, key_package_a_clef_privee,
     lister_groupes, lister_identites_membres, obtenir_epoch, oublier_groupe, oublier_key_packages,
@@ -1070,6 +1070,7 @@ pub fn run() {
             graine_verify_signature,
             graine_sign_with_device_credential,
             graine_member_signature_key,
+            graine_run,
             recuperer_cle_session_mls,
             sauvegarder_mls_et_persister,
             creer_groupe,
