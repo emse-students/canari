@@ -127,11 +127,19 @@ replaced object deleted is the one the SAME slot held, and that the validation i
 service holds it to an allowlist - that own-media shape, or an absolute `https:` URL with no quote,
 angle bracket or whitespace - and refuses anything else with `400 ASSOCIATION_IMAGE_URL_INVALID`
 (`apps/social-service/src/associations/association-image-url.ts`; a blank value clears it). Migration
-`106` brings any stored value outside the allowlist back to the row's own media, or clears it. The
-reader's half is `imageSrcOrNull` (`frontend/src/lib/utils/imageSrc.ts`), called by
-`associationLogoSrc`: only a path or an http(s) URL is ever drawn. The two export sheets built as
-HTML strings (`calendarExport.ts`, `trombinoscope.ts`) escape every interpolated value, attributes
-included, through the one `escapeHtmlAttribute` (`frontend/src/lib/utils/escapeHtml.ts`).
+`106` brings any stored value outside the allowlist back to the row's own media, or clears it -
+**and loses nothing silently**: each changed row's id, old value and `updatedAt` are copied first
+into `association_logo_url_rewrites`, and the count is raised as a `NOTICE` in the deploy log
+(`association-logo-url-migration.integration.spec.ts` runs it against PostgreSQL). The deploy applies
+migrations by itself (`infrastructure/lib/migrations.sh`), so releasing it IS applying it. Its SQL
+patterns are at least as strict as the reader, not a byte-for-byte copy of the writer (which also
+parses the URL). The reader's half is `imageSrcOrNull` (`frontend/src/lib/utils/imageSrc.ts`), called
+by `associationLogoSrc`: only a path or an http(s) URL is ever drawn, and a dropped value is said
+through `Log.i`. The two export sheets built as HTML strings (`calendarExport.ts`, `trombinoscope.ts`)
+escape every interpolated value, attributes included, through the one `escapeHtmlAttribute`
+(`frontend/src/lib/utils/escapeHtml.ts`), and carry no inline event handler: a trombinoscope photo
+that does not load is swapped for its initials by an `error` listener on each
+`img[data-avatar-fallback]` (`showInitialsInstead`).
 
 ### What a list's card says, and what it stopped saying
 

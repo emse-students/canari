@@ -1,3 +1,5 @@
+import { Log } from './Log';
+
 /**
  * `value` when it may be used as an image source drawn from server data, `null` otherwise.
  *
@@ -12,8 +14,8 @@ export function imageSrcOrNull(value: string | null | undefined): string | null 
   if (!v) return null;
   if (v.startsWith('/') && !v.startsWith('//')) return v;
   if (/^https?:\/\//i.test(v)) return v;
-  console.warn(
-    `[imageSrc] dropped an image URL that is neither a path nor http(s) (length ${v.length})`
-  );
+  // Info, not debug: the server refuses such a value on write, so reaching this branch means a row
+  // predating that rule - a line a device reading must be able to name. The value is not printed.
+  Log.i('imageSrc', `dropped an image URL that is neither a path nor http(s) (length ${v.length})`);
   return null;
 }

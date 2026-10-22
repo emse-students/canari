@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/pdf/searchableRaster', () => ({ exportSearchablePdf: vi.fn() }));
 
-import { buildTrombinoscopeHtml } from './trombinoscope';
+import { buildTrombinoscopeHtml, showInitialsInstead } from './trombinoscope';
 import type { Association, AssociationMember } from '$lib/associations/api';
 
 /**
@@ -52,6 +52,24 @@ describe('buildTrombinoscopeHtml', () => {
     expect(host.querySelector('img')?.getAttribute('src')).toMatch(
       /^https?:\/\/[^/]+\/api\/media\/public\/m-1\?v=2$/
     );
+  });
+
+  it('carries no inline event handler, and marks each member photo for the error listener', () => {
+    const html = buildTrombinoscopeHtml(asso({}), [member({}), member({ userId: 'u-2' })], {});
+    expect(html).not.toMatch(/\son[a-z]+\s*=/i);
+    expect(render(html).querySelectorAll('img[data-avatar-fallback]')).toHaveLength(2);
+  });
+
+  it('replaces a member photo that does not load with the initials after it', () => {
+    const card = render(
+      '<img src="/missing" data-avatar-fallback /><div style="display:none">AB</div>'
+    );
+    const initials = card.querySelector('div')!;
+
+    showInitialsInstead(card.querySelector('img')!);
+
+    expect(card.querySelector('img')).toBeNull();
+    expect(initials.style.display).toBe('flex');
   });
 
   it('renders the initials of a markup-like name as text', () => {
