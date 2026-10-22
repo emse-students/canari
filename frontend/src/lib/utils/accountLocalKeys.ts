@@ -49,9 +49,8 @@ export const ACCOUNT_KEY = {
    */
   historyHeldNothing: (userId: string) => `canari_graine_history_held_nothing:v1:${userId}`,
   /**
-   * `graine/admissionGate.ts`: what this device saw by itself about who is admitted - per
-   * community the roots, the members present in the tree, the removals it saw and the admissions
-   * it verified. Other members' ids, written by this
+   * `graine/admissionGate.ts`: what this device recorded by itself about who is admitted - per
+   * community the roots and the admissions it verified. Other members' ids, written by this
    * account's device.
    */
   admissionLedger: (userId: string) => `canari_graine_admission_ledger:v1:${userId}`,

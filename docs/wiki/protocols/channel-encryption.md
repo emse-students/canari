@@ -3739,22 +3739,26 @@ who - holding the past - could hand it over directly (section 7).
 
 ### The trust rule (`frontend/src/lib/utils/graine/admissionGate.ts`)
 
-Each device keeps an ADMISSION LEDGER per account, fed from what it merged and read itself:
+An answering device reads only what it holds itself - its ADMISSION LEDGER (roots and verified
+admissions, per account) and its MLS layer (pins and departures):
 
 - **Roots**, fixed at the first community sync after the proof existed (the roster reconciliation
   calls `observeAdmissionState`): the members who arrived before `ADMISSION_PROOF_SINCE`
   (2026-10-22) or created the community, AND have a leaf in the community's key group at that sync.
   A roster row with no leaf is never a root, and a root counts now only while the roster still
   shows the arrival it was rooted with.
-- **Removals**: a member whose every leaf has gone from the tree between two observations is
-  recorded as removed at the epoch this device saw it.
 - **Verified admissions**: each voucher that held, at the place it was signed.
+- **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
+  user's last leaf from the key group (`removalEpochs`,
+  [mls-protocol](mls-protocol.md)), the two-commit repair of a device excepted. No removal seen
+  means UNKNOWN, never proof that none happened.
 
 **A signer's key has ONE trust source**: the key the community's key-group tree holds for that
-device now, else the key the MLS layer PINNED for it on first sight (`pinnedSignatureKey`, the
-device-binding work's pins, shared with every other caller that needs a device key it can stand
-behind). Never a key the server publishes on its own: a signer device that is neither in the tree
-nor pinned is unproven, and one that has since left the tree keeps verifying under its pin.
+device now, else the keys the MLS layer PINNED for it (`pinnedSignatureKeys`, the device-binding
+pins, shared with every other caller that needs a device key it can stand behind); a signature that
+verifies under any of them counts. Never a key the server publishes on its own: a signer device
+that is neither in the tree nor pinned is unproven, and one that has since left the tree keeps
+verifying under its pin.
 
 A voucher is bound to a PLACE: the key group its signer held and that group's epoch. It admits when
 its signer was admitted AT THAT PLACE - a root, or admitted by an earlier voucher - with no removal of
@@ -3803,11 +3807,12 @@ R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(
 - A device key is pinned on first sight, and a tree admits devices the way MLS
   BasicCredential does (section 21): the proof is as strong as the tree. Device cross-signing is
   that work.
-- A removal is seen by a device that observes the tree between the removal and a return; a device
-  that saw neither keeps the earlier admission.
+- A removal counts on the devices that merged its commit; a member that arrived later holds no
+  record of it.
 - A device that first syncs a community after the cut records its roots from the members present
   then.
-- A member whose every device left the tree, even briefly, needs a fresh admission for the past.
+- A member whose every device left the tree, other than by the two-commit repair, needs a fresh
+  admission for the past.
 - An invite link is a bearer proof: whoever holds the full link, `#` part included, can be admitted
   with the past. Share it as you would the community itself.
 - A newcomer admitted by an older client, or through a link without its `#` part, reads from their
@@ -3824,8 +3829,11 @@ Tests: `graineAdmission.test.ts` (the leading `0x00`, round trips, every tamperi
 community, place, signer, forged link key, malformed bytes), `admissionGate.test.ts` (a device the
 server publishes for a rooted member is refused; a lost signer device keeps verifying under its pin;
 a roster row with no leaf is never a root; the roots are fixed at the first sync; a removed member's
-old voucher no longer admits, a fresh one does; a former bureau's voucher still admits, one signed
-after its signer's removal does not), `frameHandler.test.ts` (both answer paths floor an unproven
+old voucher no longer admits, a fresh one does, a repaired device keeps its admission; a former
+bureau's voucher still admits, one signed after its signer's removal does not; any pinned key
+verifies), `device_trust.rs` and `tests/device_binding.rs` (the two-commit repair records no
+departure, live or caught up; an external rejoin, a re-add by another member, a later one or one
+under a new key stays a departure), `frameHandler.test.ts` (both answer paths floor an unproven
 newcomer; direct, link and chained admissions hand the past; copied, foreign or forged vouchers do
 not; the creator is a root; an unreadable roster fails closed), `rosterReconcile.test.ts` (the sync
 feeds the ledger), `inviteFragment.test.ts`, `historyOverlayStack.test.ts` and

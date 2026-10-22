@@ -48,10 +48,15 @@ const keys = new Map<string, Uint8Array>();
 let leaves: string[] = [];
 let epoch = 5;
 /**
- * The MLS layer's pins (`pinnedSignatureKey`, #2268): a key it saw for a device on first sight.
- * carol:dev-c is pinned; a device the server invents is not.
+ * The MLS layer's pins (`pinnedSignatureKeys`, #2268): the keys it saw for a device in a signed
+ * tree. carol:dev-c is pinned; a device the server invents is not.
  */
-const pins = new Map<string, Uint8Array>();
+const pins = new Map<string, Uint8Array[]>();
+/**
+ * The MLS layer's departures (`removalEpochs`, #2268): the epochs at which a merged commit removed
+ * a user's last leaf - live or caught up, a two-commit heal excepted.
+ */
+const departures = new Map<string, number[]>();
 /** What the SERVER publishes for a device - never to be believed for a voucher signer. */
 let published: DeviceSignatureKeys = { kind: 'keys', keys: [] };
 
@@ -71,7 +76,8 @@ beforeEach(() => {
   epoch = 5;
   published = { kind: 'keys', keys: [] };
   pins.clear();
-  pins.set('carol:dev-c', CAROL_PK);
+  pins.set('carol:dev-c', [CAROL_PK]);
+  departures.clear();
   setGraineRuntime({
     storage: {} as IStorage,
     deviceKey: () => 'device-key',
@@ -81,8 +87,9 @@ beforeEach(() => {
       memberSignatureKey: async (_g: string, identity: string) =>
         leaves.includes(identity) ? (keys.get(identity) ?? null) : null,
       getEpoch: () => epoch,
-      pinnedSignatureKey: async (userId: string, deviceId: string) =>
+      pinnedSignatureKeys: async (userId: string, deviceId: string) =>
         pins.get(`${userId}:${deviceId}`) ?? null,
+      removalEpochs: async (_g: string, userId: string) => departures.get(userId) ?? [],
       fetchDeviceSignatureKeys: async () => published,
       graineSignatureEngine: () => webCryptoEngine,
       getDeviceId: () => 'alice-laptop',
@@ -157,6 +164,24 @@ describe('a voucher signer is checked against the tree or the MLS layer pins, ne
 
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
   });
+
+  it('accepts a signature that verifies under ANY of the keys pinned for the device', async () => {
+    pins.set('carol:dev-c2', [new Uint8Array(32).fill(4), CAROL_PK]);
+    leaves.push('newcomer:dev-n');
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher(
+          'newcomer',
+          { userId: 'carol', deviceId: 'dev-c2' },
+          CAROL_SECRET
+        ),
+      }),
+    ]);
+
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
+  });
 });
 
 describe('roots are recorded at the first sync, from members present in the key group', () => {
@@ -193,7 +218,7 @@ describe('roots are recorded at the first sync, from members present in the key 
   });
 });
 
-describe('a removal this device saw in the tree ends the admissions before it', () => {
+describe('a removal the MLS layer recorded at merge ends the admissions before it', () => {
   it('a removed member who comes back with their old voucher reads from arrival on', async () => {
     const old = await voucher('newcomer', carol, CAROL_SECRET, { keyGroupId: KG, epoch: 5 });
     leaves.push('newcomer:dev-n');
@@ -204,15 +229,11 @@ describe('a removal this device saw in the tree ends the admissions before it', 
     ]);
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
 
-    // Kicked: off the roster, and their leaves removed from the tree.
-    epoch = 8;
-    leaves = ['alice:alice-laptop', 'carol:dev-c'];
-    listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol')]);
-    await observeAdmissionState('ws-1', KG);
-
-    // Back, with the voucher they had before.
+    // Kicked at epoch 8 - a commit this device merged, live or on catch-up - then back by an
+    // external commit with the voucher they had before.
+    departures.set('newcomer', [8]);
     epoch = 10;
-    leaves.push('newcomer:dev-n2');
+    leaves = ['alice:alice-laptop', 'carol:dev-c', 'newcomer:dev-n2'];
     listWorkspaceMembers.mockResolvedValue([
       member('alice'),
       member('carol'),
@@ -233,6 +254,27 @@ describe('a removal this device saw in the tree ends the admissions before it', 
     ]);
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
   });
+
+  it('a heal - the device removed and re-added by one member, two commits - keeps the admission', async () => {
+    leaves.push('newcomer:dev-n');
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher('newcomer', carol, CAROL_SECRET, {
+          keyGroupId: KG,
+          epoch: 5,
+        }),
+      }),
+    ]);
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
+
+    // The MLS layer records no departure for a heal (`cancel_healed_departures`): the leaf moved.
+    epoch = 7;
+    leaves = ['alice:alice-laptop', 'carol:dev-c', 'newcomer:dev-n'];
+
+    expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
+  });
 });
 
 describe('a signer counts as of signing, not as of now', () => {
@@ -244,7 +286,8 @@ describe('a signer counts as of signing, not as of now', () => {
       epoch: 5,
     });
 
-    // carol leaves the community: off the roster, out of the tree.
+    // carol leaves the community at epoch 7: off the roster, out of the tree.
+    departures.set('carol', [7]);
     epoch = 7;
     leaves = ['alice:alice-laptop', 'newcomer:dev-n'];
     listWorkspaceMembers.mockResolvedValue([
@@ -258,10 +301,8 @@ describe('a signer counts as of signing, not as of now', () => {
   it('a voucher signed after the signer was removed admits nobody', async () => {
     listWorkspaceMembers.mockResolvedValue([member('alice'), member('carol')]);
     await observeAdmissionState('ws-1', KG);
-    epoch = 7;
+    departures.set('carol', [7]);
     leaves = ['alice:alice-laptop'];
-    listWorkspaceMembers.mockResolvedValue([member('alice')]);
-    await observeAdmissionState('ws-1', KG);
 
     epoch = 9;
     leaves.push('newcomer:dev-n');

@@ -654,7 +654,11 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   the departures of groups no longer held are dropped). Recorded at merge time, so a device that
   only caught up on a kick and a re-add still sees the removal. Compared per user over the trees: a
   one-commit leaf swap (an external rejoin, a heal) and one device among several leaving record
-  nothing; a kick and a re-add in two commits is a departure whatever the kick was for. Never a
+  nothing; a kick and a re-add in two commits is a departure, with ONE exception: the two-commit
+  REPAIR of `handleWelcomeRequest` (`cancel_healed_departures`) - the user re-enters in the commit
+  right after the one that removed them, committed by the member who made that removal (never the
+  returning user, so never an external rejoin), with every leaf under a key already pinned for its
+  device. Its departure is cancelled; a return by any other way stays one. Never a
   device event and never shown. An empty answer is NOT SEEN, never "never happened". Rust
   `MlsManager::removal_epochs`, Tauri `epoques_departs`.
 
