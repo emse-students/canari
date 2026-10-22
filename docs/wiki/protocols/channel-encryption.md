@@ -549,8 +549,28 @@ lock would narrow the gap and not close it, because the eviction does not take t
 bound is the one every departure already has: the leaver's leaf is in the tree either way, and the
 removal commit that a remaining member makes when it next opens the community deactivates the row.
 Until then the device keeps receiving the group's frames. That leaver loses the immediate,
-server-enforced cut an eviction gives, and keeps only the cryptographic cut of the commit. The window is the duration of one commit's transaction, and closing it
-means making the eviction and the activation exclude each other.
+server-enforced cut an eviction gives, and keeps only the cryptographic cut of the commit.
+
+**A lock shared by the eviction and the activation does not close it on its own (read
+2026-10-22).** Every departure in social-service (`leaveWorkspace`, `kickFromWorkspace`, `leaveChannel`,
+`removeMemberFromChannel` and `updateChannelAccess`) evicts BEFORE it removes the roster row, so that a
+failed eviction aborts a departure that is still retryable. Between the two, the entitlement
+predicate still answers `true` for the leaver - correctly, since they are still on the roster. A
+commit whose entitlement is read in that gap is entitled whatever chat-delivery locks, and its
+activation lands after the eviction. Closing it needs the entitlement to turn `false` no later than
+the eviction begins, which is a change to social-service's departure order or state: for example a
+second, idempotent eviction AFTER the roster row goes, mutually exclusive with an activation whose
+entitlement is read inside the same exclusion. That is a design decision, tracked in
+[backlog](../backlog.md).
+
+**`POST /mls/commit` is rate-limited per user (2026-10-22):** `MLS_COMMIT_LIMIT_PER_MINUTE` (600)
+through `UserThrottlerGuard`, after `HeaderAuthGuard`. A refusal is the throttler's `429` before the
+gate, so the epoch has not moved: the staged-commit path rolls its commit back and throws
+`CommitRefusedError('rate_limited')`, and an external join reads it like any failed submission,
+`unreachable`. The number sits above what a client's serial commit path produces during a restore
+and is owed a check against the production maximum per user and minute (`mls_commit_log`). The
+background Welcome's commit (`POST /mls/push/send-welcome-and-commit`, PushSecret) is not limited, since it
+is one commit per Welcome and not a stream the client chooses.
 
 **What creation writes, and what it deliberately does not.** The `dm_groups` row, and nothing else:
 no `dm_group_members`, no `DeviceGroupMembership`. Both absences are asserted directly in

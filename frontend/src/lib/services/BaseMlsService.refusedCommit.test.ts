@@ -11,6 +11,8 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 import { BaseMlsService } from './BaseMlsService';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { isInEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /**
  * The WRITE-side entrance to the recovery ladder: a commit the server refuses because our base
@@ -165,6 +167,39 @@ describe('BaseMlsService - a commit refused for a stale epoch', () => {
     await expect(runCommit(ctx, 'g')).rejects.toThrow('Staged commit rejected');
 
     expect(ctx.refreshGroupInfo).not.toHaveBeenCalled();
+  });
+});
+
+describe('BaseMlsService - a commit refused by the rate limit (429)', () => {
+  beforeEach(() => resetEpochGapRegistry());
+
+  it('rolls the staged commit back and throws a typed refusal, never a loss of state', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockRejectedValue(
+      new ApiRefusalError(429, null, 'Commit submission HTTP error (429)')
+    );
+
+    const refused = await runCommit(ctx, 'g').catch((e: unknown) => e);
+
+    // The throttler answers before the gate: the epoch did not move, so the staged commit is
+    // cleared exactly as on a business refusal - left pending, it would block every later commit.
+    expect(refused).toBeInstanceOf(CommitRefusedError);
+    expect((refused as CommitRefusedError).reason).toBe('rate_limited');
+    expect((refused as CommitRefusedError).currentEpoch).toBeUndefined();
+    expect(ctx.clearPendingCommit).toHaveBeenCalledWith('g');
+    expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
+    // No epoch is known ahead of ours, so the recovery ladder is not entered.
+    expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+    expect(isInEpochGap('g')).toBe(false);
+  });
+
+  it('leaves every other failed submission as it was: unanswered is not refused', async () => {
+    const ctx = makeCtx();
+    const unanswered = new ApiRefusalError(502, null, 'Commit submission HTTP error (502)');
+    ctx.delivery.submitCommit.mockRejectedValue(unanswered);
+
+    await expect(runCommit(ctx, 'g')).rejects.toBe(unanswered);
+    expect(ctx.clearPendingCommit).not.toHaveBeenCalled();
   });
 });
 

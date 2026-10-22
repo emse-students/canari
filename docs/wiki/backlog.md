@@ -291,29 +291,27 @@ the ~77 key-group joins/day.
 The entitlement or roster answer is read before the commit lock, and the activation runs inside it. An
 eviction that lands between the two leaves an `active` row behind, cut only by the next member
 removal commit. The bound and the reasoning are in [channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live).
-The fix makes the eviction and the activation exclude each other. Before choosing between a shared
-lock and a conditional activation, count how often `[DISTRIBUTION_GROUP] evict` and an `ADMITS` or
-activation line for the same user and group fall within one second of each other on production.
+A lock shared by the eviction and the activation inside chat-delivery is NOT enough: social-service
+evicts before it removes the roster row, so a commit whose entitlement is read in that gap is
+legitimately entitled (2026-10-22, the reasoning in the same section). **Owed: a design decision** -
+the entitlement must turn `false` no later than the eviction begins, for example by a second
+idempotent eviction after the roster row goes, exclusive with an activation whose entitlement is read
+inside the same exclusion. Before choosing, count how often `[DISTRIBUTION_GROUP] evict` and an
+`ADMITS` or activation line for the same user and group fall within one second of each other on
+production.
 
-## P3 - `POST /mls/commit` has no rate limit (2026-10-22)
+## P3 - The commit rate limit is not yet checked against production (2026-10-22)
 
-Neither an edge `limit_req` nor the configured `ThrottlerModule` applies to the commit route. A key
-group's external commit costs a social-service call, one or two queries and a log line on each
-service, so a crafted stream of them costs every one of those. A limit must not refuse legitimate
-bursts: a device that rejoins many groups after a restore commits once per group in quick succession.
-Measure first: the maximum number of commits per user per minute on production over 30 days
-(`mls_commit_log`, grouped by sender device and minute). Set the limit above that maximum, then add a
-test that the route answers `429` past it and never below it.
+`POST /mls/commit` is limited to 600 commits per user per minute since 2026-10-22
+([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+Owed: the production maximum per user and minute over 30 days (`mls_commit_log` joined to its sender
+device's user, grouped by minute), and the count of `[THROTTLE] REFUSED
+MessagingController.validateCommit` lines on dev then production, expected 0.
 
-## P3 - A refused membership report is silent on the client (2026-10-22)
+## Note - a kicked device's membership report (2026-10-22)
 
-A report of `active` now promotes an existing seat only, and is refused (`403 NOT_A_MEMBER`, with
-`reason` `no_seat`, `kicked` or `not_on_roster`) otherwise. `updateInvitationStatus` in
-`mlsDeliveryApi.ts` ignores the status code, so a device whose pending row was purged (the 14-day
-cleanup) before it processed its Welcome stays unrouted with no client-side line; the server's
-`REFUSED ... reason=` warn is the only trace. Owed: log a non-2xx answer at warn on the client.
-
-A kicked device's report is refused until an ADMITTING commit clears the kick, and only clients from
+A refused report of `active` is warned on the client since 2026-10-22 (`[MEMBERSHIP] report of
+active REFUSED`, with the status, code and reason). A kicked device's report is refused until an ADMITTING commit clears the kick, and only clients from
 `0.18.28` (`commitAdmits.ts`) send admits. Measured on production 2026-10-22: `min_client_version` is
 `1.2.7` (enforced by the client, which refuses to sign in below it), and of the 398 devices that
 committed in the 30 days before, 0 reporting a version below `0.18.28` and 0 reporting none committed

@@ -140,6 +140,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
@@ -3454,17 +3455,39 @@ export abstract class BaseMlsService implements IMlsService {
         // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
         // between this accept and the local merge below, our epoch lags the server by one - a gap the
         // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
-        const validation = await this.delivery.submitCommit(
-          groupId,
-          baseEpoch,
-          toBase64(staged.commit),
-          opts.excludeDeviceIds,
-          toBase64(staged.groupInfo),
-          admits,
-          // Whom this commit removes, so the server queues it to the devices its half of the
-          // removal already parted (`commitRemovals`).
-          opts.removes
-        );
+        let validation: Awaited<ReturnType<MlsDeliveryApi['submitCommit']>>;
+        try {
+          validation = await this.delivery.submitCommit(
+            groupId,
+            baseEpoch,
+            toBase64(staged.commit),
+            opts.excludeDeviceIds,
+            toBase64(staged.groupInfo),
+            admits,
+            // Whom this commit removes, so the server queues it to the devices its half of the
+            // removal already parted (`commitRemovals`).
+            opts.removes
+          );
+        } catch (e) {
+          // A 429 IS A REFUSAL, NOT A SILENCE: the per-user limit on `POST /mls/commit` answers
+          // before the epoch gate, so the server provably did not advance. The staged commit is
+          // rolled back exactly as on a business refusal - left pending, it would block every later
+          // commit on this group - and the caller gets the same typed refusal, which says nothing
+          // about our state. Every other failure is left as it was: unanswered is not refused.
+          if (e instanceof ApiRefusalError && e.status === 429) {
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... refused by the commit rate limit at epoch ${baseEpoch} - staged commit rolled back`
+            );
+            await this.clearPendingCommit(groupId).catch((clearErr) =>
+              console.error(
+                `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the rate-limited commit:`,
+                String(clearErr).slice(0, 120)
+              )
+            );
+            throw new CommitRefusedError('rate_limited', baseEpoch, undefined);
+          }
+          throw e;
+        }
         if (!validation.accepted) {
           // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
           // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
