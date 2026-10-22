@@ -207,11 +207,14 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
 /// implementation both platforms share (`background::open_graine_push`). `signature_b64` is an
 /// empty string when the push carried none. Returns the same JSON as
 /// `canari_native_decrypt_message`. Read-only and lock-free. FFI mirror of the Android JNI
-/// `nativeOpenGrainePush`. `locale` as for `canari_native_decrypt_message`.
+/// `nativeOpenGrainePush`. `locale` as for `canari_native_decrypt_message`. `cache_key_b64` is the
+/// install's native cache key the caller read from the shared Keychain item (`native_cache`), or an
+/// empty string when it could not.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn canari_native_open_graine_push(
     data_dir: *const c_char,
+    cache_key_b64: *const c_char,
     channel_id: *const c_char,
     session_id: *const c_char,
     message_index: u32,
@@ -223,6 +226,7 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
 ) -> *mut c_char {
     if [
         data_dir,
+        cache_key_b64,
         channel_id,
         session_id,
         sender_id,
@@ -236,6 +240,7 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
     {
         return json_to_c_string(serde_json::json!({ "ok": false, "reason": "ffi-null" }));
     }
+    let cache_key = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64));
     let dir = str_from_c_str(data_dir);
     let channel = str_from_c_str(channel_id);
     let session = str_from_c_str(session_id);
@@ -245,6 +250,7 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
     let signature = str_from_c_str(signature_b64);
     json_to_c_string(open_graine_push(
         std::path::Path::new(&dir),
+        cache_key.as_ref(),
         &GrainePush {
             channel_id: &channel,
             session_id: &session,
@@ -265,20 +271,76 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
 /// `canari_native_decrypt_message` returned it. The extension calls this when it opens the seed
 /// frame a salon push carries (channel-encryption section 19). `data_dir` is the App Group
 /// directory both the app and the extension read the mirror from. FFI mirror of the Android JNI
-/// `nativeStoreGraineSeeds`, and the same implementation behind it.
+/// `nativeStoreGraineSeeds`, and the same implementation behind it. `cache_key_b64` as for
+/// [`canari_native_open_graine_push`]; with none, nothing is written (-1).
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_store_graine_seeds(
     data_dir: *const c_char,
+    cache_key_b64: *const c_char,
     seeds_json: *const c_char,
 ) -> i32 {
-    if data_dir.is_null() || seeds_json.is_null() {
+    if data_dir.is_null() || cache_key_b64.is_null() || seeds_json.is_null() {
         log::error!("[GRAINE_PUSH] ffi: null argument");
         return -1;
     }
+    let cache_key = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64));
     crate::commands::push::store_graine_seeds_json(
         &path_from_c_str(data_dir),
+        cache_key.as_ref(),
         &str_from_c_str(seeds_json),
     )
+}
+
+/// Whether the seed mirror under `data_dir` holds a session: 1 yes, 0 no, -1 it cannot be read.
+/// What the push paths ask before choosing between the mirror and a seed frame, so the seed itself
+/// never leaves Rust. FFI mirror of the Android JNI `nativeGraineSeedHeld`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_graine_seed_held(
+    data_dir: *const c_char,
+    cache_key_b64: *const c_char,
+    channel_id: *const c_char,
+    session_id: *const c_char,
+) -> i32 {
+    if [data_dir, cache_key_b64, channel_id, session_id]
+        .iter()
+        .any(|p| p.is_null())
+    {
+        log::error!("[GRAINE_MIRROR] ffi: null argument");
+        return -1;
+    }
+    let cache_key = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64));
+    crate::commands::push::graine_seed_held(
+        &path_from_c_str(data_dir),
+        cache_key.as_ref(),
+        &str_from_c_str(channel_id),
+        &str_from_c_str(session_id),
+    )
+}
+
+/// Seals one push-cache line (`native_cache`) and returns it as a heap C string to free with
+/// `canari_free_string`, or NULL when there is no usable key - in which case the caller writes
+/// NOTHING. Never a line in the clear. FFI mirror of the Android JNI `nativeSealCacheLine`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_seal_cache_line(
+    cache_key_b64: *const c_char,
+    line: *const c_char,
+) -> *mut c_char {
+    if cache_key_b64.is_null() || line.is_null() {
+        log::error!("[FCM_CACHE] ffi: null argument");
+        return std::ptr::null_mut();
+    }
+    let Some(key) = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64)) else {
+        return std::ptr::null_mut();
+    };
+    let sealed = crate::native_cache::seal_line(
+        &key,
+        crate::native_cache::Purpose::PushCache,
+        &str_from_c_str(line),
+    );
+    match std::ffi::CString::new(sealed) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
