@@ -57,7 +57,7 @@ function created(signature: string | null) {
   return {
     type: 'channel.message.created',
     data: {
-      id: 'row-1',
+      messageId: 'row-1',
       channelId: CHANNEL,
       senderId: 'mallory',
       ciphertext: 'Y2lwaGVy',

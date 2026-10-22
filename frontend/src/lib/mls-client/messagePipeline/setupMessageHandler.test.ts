@@ -66,6 +66,10 @@ import {
 } from '../test/fixtures/conversationMap';
 
 describe('setupMessageHandler (MLS inbound + channel events)', () => {
+  // Console spies a test installs, restored even when one of its assertions fails.
+  const restores: (() => void)[] = [];
+  afterEach(() => restores.splice(0).forEach((restore) => restore()));
+
   const groupId = '11111111-1111-4111-8111-111111111111';
 
   function baseDeps(overrides: Record<string, unknown> = {}) {
@@ -359,7 +363,11 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     });
   });
 
-  it('routes plaintext channel.message.created to addMessageToChat', async () => {
+  // The ROUTING is the subject: the frame reaches the salon handler. A frame without a ciphertext
+  // names an author nobody proved, so the handler it reaches refuses it rather than rendering it.
+  it('routes channel.message.created to the salon handler, which refuses one without a ciphertext', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    restores.push(() => error.mockRestore());
     const channelKey = 'channel_chan-99';
     const conversations = createTestConversations([
       [
@@ -380,12 +388,12 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
         messageId: 'ext-1',
       },
     });
-    expect(deps.addMessageToChat).toHaveBeenCalledWith(
-      'u-sender',
-      expect.any(String),
-      channelKey,
-      expect.objectContaining({ messageId: 'ext-1' })
-    );
+    expect(deps.addMessageToChat).not.toHaveBeenCalled();
+    expect(
+      error.mock.calls.some(
+        (c) => String(c[0]).includes('REFUSED') && String(c[0]).includes('ext-1')
+      )
+    ).toBe(true);
   });
 
   it('propagates channel.member.kicked with the removed user', async () => {
@@ -446,8 +454,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       type: 'channel.message.created',
       data: {
         channelId: 'unknown',
+        messageId: 'm-unknown',
         senderId: 'x',
-        plaintext: 'n',
+        ciphertext: 'Y2lwaGVy',
         createdAt: new Date().toISOString(),
       },
     });
