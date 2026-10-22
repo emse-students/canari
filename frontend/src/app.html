@@ -139,6 +139,34 @@
     <title>Canari - Mines Saint-Étienne</title>
     <meta name="canari-seo-placeholder" data-canari-seo />
     <meta name="canari-wasm-preload" data-canari-wasm />
+    <!-- Starts the MLS WASM download beside the JavaScript (lib/server/wasmPreload.ts). The server
+         writes the content-hashed URL and the enrolled-device key prefix into the meta above; this
+         script stays the same text in every build, so the Content-Security-Policy allows it by its
+         hash (lib/security/cspPolicy.js). In the native shell the meta is never filled. -->
+    <script>
+      (function () {
+        try {
+          if (window.__TAURI_INTERNALS__) return;
+          var meta = document.querySelector('meta[name="canari-wasm-preload"]');
+          var href = meta && meta.getAttribute('content');
+          var prefix = meta && meta.getAttribute('data-device-prefix');
+          if (!href || !prefix) return;
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (k && k.indexOf(prefix) === 0) {
+              var l = document.createElement('link');
+              l.rel = 'preload';
+              l.as = 'fetch';
+              l.crossOrigin = 'anonymous';
+              l.fetchPriority = 'low';
+              l.href = href;
+              document.head.appendChild(l);
+              return;
+            }
+          }
+        } catch (_) {}
+      })();
+    </script>
     <meta name="application-name" content="Canari" />
     %sveltekit.head%
   </head>
