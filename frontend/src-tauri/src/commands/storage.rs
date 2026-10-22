@@ -394,6 +394,33 @@ pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
     read_mls_state_blob(&app)
 }
 
+/// Whether `mls.bin` at `path` is PROVABLY absent: `Ok(true)` when the file does not exist or is
+/// empty, `Ok(false)` when it holds bytes, `Err` when the filesystem could not say.
+///
+/// THE ALLOWLIST OF A DESTRUCTIVE DECISION. A device whose id survived but whose state did not
+/// re-enrols under a new id and retires the old one; only a state KNOWN to be gone may start that.
+/// [`mls_state_size`] answers 0 on an unreadable directory too, which is right for "is there
+/// something to load" and wrong for this, so the error stays an error here.
+pub(crate) fn state_file_absent(path: &std::path::Path) -> Result<bool, String> {
+    match std::fs::metadata(path) {
+        Ok(m) => Ok(m.len() == 0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(e) => Err(format!("stat mls.bin: {e}")),
+    }
+}
+
+/// The frontend's view of [`state_file_absent`] for this install's `mls.bin`.
+#[tauri::command]
+pub(crate) fn mls_state_absent(app: tauri::AppHandle) -> Result<bool, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    let absent = state_file_absent(&data_dir.join("mls.bin"));
+    log::debug!("[MLS] mls.bin provably absent: {absent:?}");
+    absent
+}
+
 /// The SIZE of {app_data_dir}/mls.bin, 0 when there is none.
 ///
 /// "Is there a saved state" is a question three call sites asked by loading the whole file: the
@@ -862,6 +889,21 @@ pub(crate) fn get_native_flags(app: tauri::AppHandle) -> serde_json::Value {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    /// Only a missing or empty file is "absent"; a file with bytes is not.
+    #[test]
+    fn state_file_absent_is_true_only_for_a_missing_or_empty_file() {
+        let dir = std::env::temp_dir().join(format!("canari-absent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mls.bin");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(state_file_absent(&path), Ok(true));
+        std::fs::write(&path, b"").unwrap();
+        assert_eq!(state_file_absent(&path), Ok(true));
+        std::fs::write(&path, b"x").unwrap();
+        assert_eq!(state_file_absent(&path), Ok(false));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A device key that is 32 bytes, base64, and constant - the reload takes it as text.
     const DEV_KEY_B64: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";

@@ -31,6 +31,11 @@ export const ACCOUNT_KEY = {
    * is the prefix `wasmPrefetch.ts` and `deviceReset.ts` enumerate.
    */
   deviceId: (userId: string) => `mls_device_id_${userId}`,
+  /**
+   * `BaseMlsService.retireAbandonedDevices`: this install's OWN previous device ids, abandoned by a
+   * rotation and not yet confirmed deleted on the server - a JSON array, emptied as each delete lands.
+   */
+  retiringDeviceIds: (userId: string) => `mls_retiring_device_ids_${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
@@ -121,6 +126,7 @@ function exactKeys(userId: string): string[] {
   return [
     ACCOUNT_KEY.sendRatchetLedger(userId),
     ACCOUNT_KEY.deviceId(userId),
+    ACCOUNT_KEY.retiringDeviceIds(userId),
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),

@@ -144,6 +144,7 @@ import {
   snapshotPendingHistoryMarks,
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
+import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
@@ -2431,6 +2432,12 @@ export abstract class BaseMlsService implements IMlsService {
         const published = await this.generateKeyPackageImpl(deviceKeyB64);
         // A published round proves this page's identity is accepted: any refused-rotation run ended.
         forgetRefusedRotationReloads();
+        // And the server is reachable: an abandoned id a rotation could not delete is retried here.
+        void retireAbandonedDevices({
+          userId: this.userId,
+          liveDeviceId: this.deviceId,
+          deleteDevice: (u, d) => this.deleteDevice(u, d),
+        });
         return published;
       } catch (e) {
         if (!(e instanceof DeviceRevokedError)) throw e;
@@ -2714,12 +2721,63 @@ export abstract class BaseMlsService implements IMlsService {
     // that, from the peers' side, this device has never made.
     resetSendRatchetLedger(this.userId);
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
-    // our fresh state no longer holds (NoMatchingKeyPackage). Best-effort: a revoked id is already
-    // gone server-side, and a mismatch must not block on the network.
-    this.deleteDevice(this.userId, oldDeviceId).catch((err) =>
-      console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
-    );
+    // our fresh state no longer holds (NoMatchingKeyPackage). RECORDED BEFORE IT IS ASKED, so a
+    // failed delete is retried at the next published round rather than forgotten; never awaited, so
+    // a rotation does not block on the network.
+    recordAbandonedDevice(this.userId, oldDeviceId);
+    void retireAbandonedDevices({
+      userId: this.userId,
+      liveDeviceId: this.deviceId,
+      deleteDevice: (u, d) => this.deleteDevice(u, d),
+    });
     return oldDeviceId;
+  }
+
+  /**
+   * Whether this device's saved MLS state is PROVABLY absent - no file / no record, or an empty one.
+   * `false` on anything the store could not answer: an error is not an absence.
+   *
+   * Gates {@link reenrolLostState}, the one rotation that starts from a MISSING state rather than an
+   * unusable one, so it must never fire on a state that is merely unread (a locked keystore, a
+   * failing disk, a PIN problem - those reach `_initImpl` with a state, or throw).
+   */
+  protected abstract savedStateProvenAbsent(): Promise<boolean>;
+
+  /**
+   * A DEVICE THAT KEPT ITS ID BUT LOST ITS STATE IS A NEW DEVICE (lead decision, 2026-10-22). Its old
+   * signature key went with the state, so peers that pinned it refuse a re-add under the old name
+   * (`docs/wiki/protocols/mls-protocol.md#device-binding`); a new id is a first sight for them, and
+   * the owner's devices announce it as a new device. The old id is retired through the ordinary
+   * device deletion, for that id only (`abandonedDevices.ts`).
+   *
+   * Taken only when ALL of these hold: an id pre-existed this boot (`stateWasExpected`), the caller
+   * did not claim a state exists (`noFreshStart`), and the store PROVES there is none.
+   *
+   * @returns whether the identity was rotated (the fresh client is then loaded and persisted).
+   */
+  protected async reenrolLostState(
+    deviceKeyB64: string,
+    opts?: { noFreshStart?: boolean }
+  ): Promise<boolean> {
+    if (!this.stateWasExpected || opts?.noFreshStart) return false;
+    let absent = false;
+    try {
+      absent = await this.savedStateProvenAbsent();
+    } catch (e) {
+      console.warn(`[MLS] could not prove the saved state absent - not rotating: ${String(e)}`);
+      return false;
+    }
+    if (!absent) {
+      console.warn(
+        `[MLS] ${sanitizeForLog(this.deviceId)} expected a saved state, none was passed, and the store did not prove it absent - not rotating`
+      );
+      return false;
+    }
+    await this.rotateDeviceIdentity(
+      deviceKeyB64,
+      'saved state lost - the device re-enrols as a new device'
+    );
+    return true;
   }
 
   /**

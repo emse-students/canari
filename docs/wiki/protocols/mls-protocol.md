@@ -600,7 +600,8 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
 - **Binding.** Every Add carries, beside each package, the `userId:deviceId` it was fetched for
   (`add_members_bulk_with_base(.., expected_identities)`). A credential naming anything else is
   skipped as `identity-mismatch`. The user half compares case-insensitively, the device half
-  exactly, and an identity holds exactly one `:`.
+  exactly, and an identity holds exactly one `:` - the TypeScript parsers (`leafIdentity.ts`) read
+  an identity with more as naming nobody.
 - **Pins.** Each identity maps to the SET of signature keys this device has seen for it, kept in the
   sealed MLS state (`PersistedState.device_pins`, CBOR, `#[serde(default)]`). A state written before
   pins existed is seeded at load from every tree it holds, so nothing already trusted is refused. A
@@ -627,7 +628,7 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
 | Web device ids (`web-<user>-...`) | Ordinary identities, pinned like any other. |
 | Reinstall or factory wipe (new id) | A new device: first sight, admitted. |
 | Restore (WP-RESTORE-1) | Enrols as a new device, first sight. |
-| A device that kept its id but lost its state | Comes back with a new key under the old name: its re-add is refused, and it is not kicked. It re-enrols by a reset, which mints a new id. Whether such a device should rotate its id by itself is a user decision (below). |
+| A device that kept its id but lost its state | **It is a new device** (decided 2026-10-22): at start-up it rotates to a new id (`reenrolLostState`) and its owner's devices see a new device. Taken only when the id pre-existed this boot AND the store PROVES the state absent - no `mls.bin` or an empty one (`mls_state_absent`), no IndexedDB record - never on a decryption failure, a PIN problem or a read the store could not answer. The old id is recorded (`abandonedDevices.ts`) before its deletion is asked and leaves the record only once the server confirms it, so it is retired exactly once; the live id is never deleted. A device that did a same-id fresh start on an older build is refused re-adds by upgraded peers until it resets. |
 | Downgrade to a build without pins, then upgrade | The older build drops the pins it cannot read; the upgrade re-seeds them from the trees. |
 | A Tauri resume reload | Events not yet persisted in `mls.bin` can be lost with the reload, as any unsaved state is. |
 
@@ -645,11 +646,6 @@ The rule is written once, `deviceEventAudience()` in `deviceTrust.ts`, and one d
 is announced once (`deviceEventKey()`). **The UI is not built yet**: the strings, the conversation
 line, the in-app alert and the native local notification on the background path are their own work
 package ([backlog](../backlog.md#new-device-notices-decided-by-the-user-on-2026-10-22---the-ui-is-owed)).
-
-**Still a user decision:** whether a device that expected a saved state and found none should rotate
-its own id at start-up (it would then re-enrol as a new device instead of being refused), at the
-cost of the old leaf staying in trees until it is removed and of a changed device id.
-
 ## Key packages
 
 ### The two kinds of key package

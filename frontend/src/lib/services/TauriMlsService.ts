@@ -665,13 +665,25 @@ export class TauriMlsService extends BaseMlsService {
     // is idempotent: a no-op when login already resolved it before the pin-check.
     await this.resolveDeviceId(userId);
 
+    // A KEPT ID WITH A LOST STATE RE-ENROLS AS A NEW DEVICE (`reenrolLostState`). The rotation loads
+    // and persists the fresh client itself; the post-init steps below (push context, groups cache)
+    // still run, under the new id.
+    const reenrolled = !savedStateExists && (await this.reenrolLostState(deviceKeyB64, opts));
+
     // THE NAME IS THE SAME ON BOTH PLATFORMS ON PURPOSE. `WebMlsService` brackets its own decrypt
     // with `mls-load-state` too, so an Android report and a browser report answer the same question
     // with the same word - which is the only way the two can be compared at all, and the phone is
     // where this block was measured at 1621.9 ms with nothing inside it named.
     beginBootSpan('mls-load-state');
     try {
-      await this.loadStateWithKey(deviceKeyB64, state, opts?.stateOnDisk, opts?.unattendedKeyRead);
+      if (!reenrolled) {
+        await this.loadStateWithKey(
+          deviceKeyB64,
+          state,
+          opts?.stateOnDisk,
+          opts?.unattendedKeyRead
+        );
+      }
       endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
       // CLOSED HERE RATHER THAN IN A `finally`, because the two exits are not the same measurement:
@@ -1274,6 +1286,15 @@ export class TauriMlsService extends BaseMlsService {
       skipped: result[3] ?? [],
       groupInfo: Uint8Array.from(result[4]),
     };
+  }
+
+  /**
+   * `mls_state_absent`: `true` only when `mls.bin` does not exist or is empty. An unreadable data
+   * directory is an `Err`, which `reenrolLostState` reads as "not proven" - unlike `mls_state_size`,
+   * which answers 0 for it.
+   */
+  protected async savedStateProvenAbsent(): Promise<boolean> {
+    return invoke<boolean>('mls_state_absent');
   }
 
   /** Tauri-native `invoke` wrapper - `verifier_key_package`, the Rust verdict on binding and pin. */

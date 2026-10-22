@@ -37,6 +37,7 @@ import {
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import {
+  loadMlsState,
   saveMlsState,
   MlsStateWriteRefusedError,
   type MlsStateWriteLatch,
@@ -797,6 +798,10 @@ export class WebMlsService extends BaseMlsService {
     // the pin-check.
     await this.resolveDeviceId(userId);
 
+    // A KEPT ID WITH A LOST STATE RE-ENROLS AS A NEW DEVICE (`reenrolLostState`): the rotation loads
+    // and persists the fresh client itself, so nothing below has anything left to load.
+    if (!state && (await this.reenrolLostState(deviceKeyB64, opts))) return;
+
     // Same span name as `TauriMlsService`, and for the reason written there: a browser report and
     // an Android report have to answer the same question with the same word to be comparable.
     beginBootSpan('mls-load-state');
@@ -1197,6 +1202,14 @@ export class WebMlsService extends BaseMlsService {
       skipped: (res[3] as SkippedKeyPackage[] | undefined) ?? [],
       groupInfo: res[4] as Uint8Array,
     };
+  }
+
+  /**
+   * IndexedDB answered, and answered "nothing" (an empty record counts as nothing - `stateOrAbsent`).
+   * A failed read throws out of `loadMlsState`, which `reenrolLostState` reads as "not proven".
+   */
+  protected async savedStateProvenAbsent(): Promise<boolean> {
+    return (await loadMlsState(this.userId)) === null;
   }
 
   /** WASM client wrapper - `vet_key_package`, the Rust verdict on binding and pin. */
