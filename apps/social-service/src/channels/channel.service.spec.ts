@@ -2770,6 +2770,17 @@ describe('ChannelService security hardening', () => {
       rows.push(m as never);
       return Promise.resolve(m);
     });
+    // The claim is ONE conditional UPDATE that wins here; the membership is written in its
+    // transaction, through the same member repository.
+    Object.assign(repos.inviteRepo, {
+      manager: {
+        transaction: (cb: (tx: unknown) => Promise<unknown>) =>
+          cb({
+            query: () => Promise.resolve([[{ id: 'inv1' }], 1]),
+            getRepository: () => repos.memberRepo,
+          }),
+      },
+    });
     return rows;
   }
 

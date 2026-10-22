@@ -1720,13 +1720,10 @@ export function useChannelWorkspaces() {
     const workspaceImageMediaId = currentWorkspace?.imageMediaId || undefined;
 
     try {
-      // Map frontend role names to backend role names (capitalized)
+      // An ordinary invitation names NO role: the server grants the community's base role, whatever
+      // it is called there. A role is named only when the inviter picked one above it.
       const backendRoleName =
-        roleName === 'admin'
-          ? 'Administrateur'
-          : roleName === 'moderator'
-            ? 'Modérateur'
-            : 'Membre';
+        roleName === 'admin' ? 'Administrateur' : roleName === 'moderator' ? 'Modérateur' : null;
       // THE PROOF THAT LETS A MEMBER HAND THE NEWCOMER THE PAST (channel-encryption section 25),
       // signed by this device and stored with the membership. Without it the invitation still
       // admits; the newcomer then reads from their arrival on, so a failure is said, not hidden.
@@ -1742,7 +1739,7 @@ export function useChannelWorkspaces() {
       }
       const invited = await service.inviteToChannel(channelId, {
         targetUserId: memberId,
-        roleName: backendRoleName,
+        ...(backendRoleName ? { roleName: backendRoleName } : {}),
         ...(admissionVoucher ? { admissionVoucher } : {}),
       });
 
