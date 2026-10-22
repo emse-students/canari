@@ -102,19 +102,37 @@ class KeyGroupPushJoinTest {
     fun `a 2xx that could not be read is named, never taken for no answer`() {
         val after = KeyGroupPushJoin.afterBase(201, null) as AfterBase.Stop
         assertEquals(Settlement.Retryable("base-unparsable"), after.settlement)
-        assertEquals(AfterCommit.ABANDON to Settlement.Retryable("commit-answer-unparsable"), KeyGroupPushJoin.afterCommit(201, null, null))
+        assertEquals(AfterCommit.ABANDON to Settlement.Retryable("commit-answer-unparsable"), KeyGroupPushJoin.afterCommit(201, null, null, 4))
     }
 
     @Test
     fun `only an accepted commit installs the staged state`() {
-        val (step, settlement) = KeyGroupPushJoin.afterCommit(201, true, null)
+        val (step, settlement) = KeyGroupPushJoin.afterCommit(201, true, null, 4)
         assertEquals(AfterCommit.INSTALL, step)
         assertNull(settlement)
-        assertEquals(AfterCommit.ABANDON to Settlement.Retryable("commit-refused-epoch_mismatch"), KeyGroupPushJoin.afterCommit(200, false, "epoch_mismatch"))
-        assertEquals(AfterCommit.ABANDON to Settlement.Refused("commit-forbidden"), KeyGroupPushJoin.afterCommit(403, null, null))
-        assertEquals(AfterCommit.ABANDON to Settlement.Refused("commit-malformed"), KeyGroupPushJoin.afterCommit(400, null, null))
-        assertEquals(AfterCommit.ABANDON to Settlement.Retryable("commit-unreachable"), KeyGroupPushJoin.afterCommit(null, null, null))
-        assertEquals(AfterCommit.ABANDON to Settlement.Retryable("commit-status-503"), KeyGroupPushJoin.afterCommit(503, null, null))
+        assertEquals(AfterCommit.ABANDON to Settlement.Retryable("commit-refused-epoch_mismatch"), KeyGroupPushJoin.afterCommit(200, false, "epoch_mismatch", 4))
+        assertEquals(AfterCommit.ABANDON to Settlement.Refused("commit-forbidden"), KeyGroupPushJoin.afterCommit(403, null, null, 4))
+        assertEquals(AfterCommit.ABANDON to Settlement.Refused("commit-malformed"), KeyGroupPushJoin.afterCommit(400, null, null, 4))
+        assertEquals(AfterCommit.ABANDON to Settlement.Retryable("commit-unreachable"), KeyGroupPushJoin.afterCommit(null, null, null, 4))
+        assertEquals(AfterCommit.ABANDON to Settlement.Retryable("commit-status-503"), KeyGroupPushJoin.afterCommit(503, null, null, 4))
+    }
+
+    @Test
+    fun `a rate-limited commit is deferred on its base, never lost`() {
+        // The throttler answers before the commit is validated: nothing was accepted, and the same
+        // base must not cost the next push another prepare.
+        assertEquals(
+            AfterCommit.ABANDON to Settlement.Deferred("commit-rate-limited", 4),
+            KeyGroupPushJoin.afterCommit(429, null, null, 4),
+        )
+        val base = KeyGroupPushJoin.Base("workspace", "ws1", "Z2k=", 4)
+        assertEquals(
+            Settlement.Deferred("base-unchanged", 4),
+            KeyGroupPushJoin.beforePrepare(base, 4, "salon"),
+        )
+        // The base read refused by the throttler: no work was done, the next push's read retries.
+        val after = KeyGroupPushJoin.afterBase(429, null) as AfterBase.Stop
+        assertEquals(Settlement.Retryable("base-rate-limited"), after.settlement)
     }
 
     @Test

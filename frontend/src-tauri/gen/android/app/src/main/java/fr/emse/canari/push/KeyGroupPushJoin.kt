@@ -81,6 +81,9 @@ object KeyGroupPushJoin {
         if (status == null) return AfterBase.Stop(Settlement.Retryable("base-unreachable"))
         // 403 is the server ANSWERING: not a key group, or not entitled. Nothing a push changes.
         if (status == 403) return AfterBase.Stop(Settlement.Refused("base-forbidden"))
+        // The throttler, before any work: nothing was prepared, so there is no base to defer on and
+        // the next push's base read is the cheap retry.
+        if (status == 429) return AfterBase.Stop(Settlement.Retryable("base-rate-limited"))
         // A NestJS POST answers 201; any 2xx is the answer.
         if (status !in 200..299) return AfterBase.Stop(Settlement.Retryable("base-status-$status"))
         // An answer came and could not be read: not "no answer", and not a refusal either.
@@ -159,9 +162,14 @@ object KeyGroupPushJoin {
      * nothing is claimed about membership, and if it did, the leaf it holds is replaced by the next
      * join (an external commit evicts a leaf carrying the same signature key) - the app's at its
      * next start, or the next push's.
+     *
+     * A 429 is the per-user throttler refusing BEFORE any work (the commit was never validated):
+     * [Settlement.Deferred] on [baseEpoch], so the next push does not pay the prepare again on the
+     * same base - and never [Settlement.Lost], since nothing was accepted.
      */
-    fun afterCommit(status: Int?, accepted: Boolean?, reason: String?): Pair<AfterCommit, Settlement?> =
+    fun afterCommit(status: Int?, accepted: Boolean?, reason: String?, baseEpoch: Long): Pair<AfterCommit, Settlement?> =
         when {
+            status == 429 -> AfterCommit.ABANDON to Settlement.Deferred("commit-rate-limited", baseEpoch)
             status != null && status in 200..299 && accepted == true -> AfterCommit.INSTALL to null
             // An answer that could not be read says nothing about the commit either way.
             status != null && status in 200..299 && accepted == null ->

@@ -5145,6 +5145,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             commitStatus,
             commitJson?.takeIf { it.has("accepted") }?.optBoolean("accepted"),
             commitJson?.optString("reason")?.takeIf { it.isNotEmpty() },
+            base.baseEpoch,
         )
         if (step == KeyGroupPushJoin.AfterCommit.ABANDON) {
             nativeAbandonKeyGroupJoin(filesDir)
