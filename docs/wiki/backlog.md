@@ -278,6 +278,29 @@ conversation and no community on dev, and nothing was created there), the live f
 behind their kill switches), share-in/out, push (a dev push cannot be read), the feed left-edge and
 tab-swipe gestures (no touch input was driven).
 
+**SECOND PASS, same day: the gestures are read on the Mi 9T, the iPhone is blocked at its PIN gate.**
+- **Gestures, driven as real touch with `adb shell input swipe` on the `/posts` feed, each from a fresh
+  feed (7 variants, 7 outcomes as designed):** a swipe to the right opens `/camera` from the left edge
+  at 200 ms and at 900 ms, over 730 px and 300 px, and from mid-screen at 1200 ms (never Back); a swipe
+  to the left goes to `/communities` at 900 ms from the right edge band, at 1200 ms and at 200 ms. One
+  earlier 900 ms edge swipe, first batch, did NOTHING (1 of 2 identical trials: the second batch ran it
+  again and it opened the camera): not reproduced, not explained.
+- **The iPhone 12 carries a TestFlight build** (signer `TestFlight Beta Distribution`, `aps-environment`
+  production): it held 1.3.1 (100300105), TestFlight served `1.4.0 (100400001)`, and an in-place update
+  (data kept, the same device) installed it. **It is now 1.4.0, still behind the encryption PIN gate,
+  and NOT READ**: the `owner` bench account's PIN was refused ("PIN incorrect : ce PIN ne correspond
+  pas a celui enregistre pour ce compte") on one or two attempts, so the account enrolled on that
+  phone is not `owner` or its PIN differs. The accounts file maps no device to an account
+  (`ownerByDevice()` is empty) and a TestFlight build has no inspector bridge. The other bench PINs
+  were NOT tried: an automated session's attempt to type a second account's PIN was refused by its
+  permission layer, and the wrong-PIN policy is documented only for the web client (PIN-2: five wrong
+  PINs, no lockout a correct one cannot clear, `mls.bin` untouched), not measured on the iPhone.
+- **The dev DM reading is blocked for the same reason.** Chrome w2's dev origin holds a saved session
+  whose subject matches the bench account key `third` (not `peer`), and its PIN gate refused the `peer`
+  PIN once. Nothing was created on dev. **OWED TO THE USER: say which bench account the iPhone and the
+  w2 profile hold on dev (the file wants a `clients` list per account, which today says nothing for
+  them), or type the PIN once on the phone yourself.**
+
 | What | The measurement that closes it |
 | --- | --- |
 | the organiser alert for a payment over capacity (#2228, D3; owed only once `FORM_ORGANISER_ALERT_ENABLED` is `true`) | first the client floor: `minClientVersion` at or above the version carrying #2228 on both estates, both stores serving it; then on the Mi 9T AND the iPhone 12, one payment landing on a full form on dev: the push arrives with the title only, a tap (app killed AND backgrounded) opens `/forms` with that form's responses accordion open and in view, and the bell row reads the alert sentence ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)) |
