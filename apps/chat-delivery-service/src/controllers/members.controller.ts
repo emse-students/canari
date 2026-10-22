@@ -731,14 +731,20 @@ export class MembersController {
     // they send is accepted; the interval is what makes this removal hold against a later re-add
     // (user, 2026-10-14); and a Welcome left behind would let the removed person enter the epoch it
     // was built for ({@link endDeviceMemberships}) - a self-leave makes no commit that would undo it.
-    const { devices, ended } = await this.dataSource.transaction(async (manager) => ({
-      devices: await endDeviceMemberships(
+    //
+    // THE ROSTER ROW FIRST, THEN THE DEVICE ROWS - the order `addGroupMember` takes them in, so an
+    // add and a removal of the same person wait for each other instead of deadlocking; and the
+    // order a Welcome store re-checks the seat in (`validateCommit`, `sendWelcome`), so a store
+    // racing this removal either commits first and is deleted here, or finds no seat.
+    const { devices, ended } = await this.dataSource.transaction(async (manager) => {
+      const ended = await endGroupMembership(manager, safeGroupId, safeUserId);
+      const devices = await endDeviceMemberships(
         manager,
         { userId: safeUserId, groupId: safeGroupId },
         'welcomes'
-      ),
-      ended: await endGroupMembership(manager, safeGroupId, safeUserId),
-    }));
+      );
+      return { devices, ended };
+    });
     if (ended.deleted > 0 && ended.closed === 0) {
       // A member with no open interval: enrolled by a writer running pre-030 code during the deploy
       // that applied the migration. Their exclusion window starts nowhere, so a re-add will NOT

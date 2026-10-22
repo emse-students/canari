@@ -447,7 +447,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    expect(order).toEqual(['parting-recorded', 'devices-deleted', 'interval-closed']);
+    expect(order).toEqual(['parting-recorded', 'interval-closed', 'devices-deleted']);
   });
 
   it('a crash rolls the whole removal back, and the entry written before it is still there', async () => {
