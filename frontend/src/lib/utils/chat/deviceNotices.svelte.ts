@@ -1,7 +1,13 @@
-import { SvelteMap } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions } from '$lib/types';
-import { deviceEventAudience, deviceEventKey, type DeviceEvent } from '$lib/mls-client/deviceTrust';
+import {
+  deviceEventAudience,
+  deviceEventId,
+  deviceEventKey,
+  isNewToItsOwner,
+  type DeviceEvent,
+} from '$lib/mls-client/deviceTrust';
 import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -40,6 +46,13 @@ export interface OwnDeviceNotice {
   label?: string;
 }
 
+/**
+ * The server's first sight of one key: `dated`, `undated` (the key predates the server's history,
+ * or is not among the device's published keys at all - old either way), or `unanswered` (the server
+ * could not be asked, which establishes nothing).
+ */
+export type KeyAge = { kind: 'dated'; at: number } | { kind: 'undated' } | { kind: 'unanswered' };
+
 /** What delivering the notices needs from the session, handed in so nothing here pins one. */
 export interface DeviceNoticeContext {
   ownUserId: string;
@@ -65,6 +78,15 @@ export interface DeviceNoticeContext {
   resolveDisplayNames: (ids: string[]) => Promise<(id: string) => string>;
   /** The account's own name for one of its devices, best effort. */
   deviceLabel: (deviceId: string) => Promise<string | undefined>;
+  /** When the server first saw the device's key with this fingerprint (`fetchDeviceSignatureKeys`). */
+  keyAge: (userId: string, deviceId: string, fingerprint: string) => Promise<KeyAge>;
+  /** When the server first saw THIS device's own key - its enrolment; `null` if never dated. */
+  ownEnrolledAt: () => Promise<number | null | 'unanswered'>;
+  /**
+   * Takes the ids (`deviceEventId`) of the events a background Add recorded and the server then
+   * REFUSED (`take_withdrawn_device_events`, Android) - announced by nobody.
+   */
+  withdrawnEvents?: () => Promise<string[]>;
   /** Claims alert keys in the native ledger the background engines share (phones only). */
   claimNative?: (keys: string[]) => Promise<void>;
   now: () => number;
@@ -73,23 +95,50 @@ export interface DeviceNoticeContext {
 /** How many announced keys an account remembers; past it the oldest go (a device long known). */
 export const MAX_ANNOUNCED_DEVICE_KEYS = 256;
 
+/** How many events whose evidence could not be read are kept for the next delivery. */
+export const MAX_UNDECIDED_DEVICE_EVENTS = 64;
+
 interface Stored {
   pending: OwnDeviceNotice[];
   announced: string[];
+  /** Contact devices (`deviceEventKey`) whose lines were written - never written again. */
+  lined: string[];
+  /** Events whose key age the server did not answer, decided at the next delivery. */
+  undecided: DeviceEvent[];
   /** Refused own devices whose notice was dismissed (`dismissRefusedDeviceNotice`). */
   refusedSeen: string[];
 }
 
-const EMPTY: Stored = { pending: [], announced: [], refusedSeen: [] };
+const EMPTY: Stored = { pending: [], announced: [], lined: [], undecided: [], refusedSeen: [] };
 
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string') : [];
 
+function isEvent(v: unknown): v is DeviceEvent {
+  if (!v || typeof v !== 'object') return false;
+  const e = v as Record<string, unknown>;
+  return (
+    typeof e.groupId === 'string' &&
+    typeof e.epoch === 'number' &&
+    typeof e.identity === 'string' &&
+    typeof e.keyFingerprint === 'string' &&
+    typeof e.trust === 'string' &&
+    (e.addedBy === null || typeof e.addedBy === 'string')
+  );
+}
+
 const pending = new SvelteMap<string, OwnDeviceNotice>();
 let announced: string[] = [];
+let lined: string[] = [];
+let undecided: DeviceEvent[] = [];
 const refusedNotices = new SvelteMap<string, RefusedDeviceNotice>();
 let refusedSeen: string[] = [];
 let boundAccount: string | null = null;
+/**
+ * Ids of the events refused Adds left behind, taken from the native side once (it deletes what it
+ * hands over), so kept for the session: the event may reach a later delivery than the withdrawal.
+ */
+const withdrawn = new SvelteSet<string>();
 
 function isNotice(v: unknown): v is OwnDeviceNotice {
   if (!v || typeof v !== 'object') return false;
@@ -116,6 +165,8 @@ function readStored(userId: string): Stored {
     return {
       pending: Array.isArray(parsed.pending) ? parsed.pending.filter(isNotice) : [],
       announced: strings(parsed.announced),
+      lined: strings(parsed.lined),
+      undecided: Array.isArray(parsed.undecided) ? parsed.undecided.filter(isEvent) : [],
       refusedSeen: strings(parsed.refusedSeen),
     };
   } catch (e) {
@@ -125,7 +176,13 @@ function readStored(userId: string): Stored {
 }
 
 function writeStored(userId: string): void {
-  const stored: Stored = { pending: [...pending.values()], announced, refusedSeen };
+  const stored: Stored = {
+    pending: [...pending.values()],
+    announced,
+    lined,
+    undecided,
+    refusedSeen,
+  };
   try {
     localStorage.setItem(ACCOUNT_KEY.deviceNotices(userId), JSON.stringify(stored));
   } catch (e) {
@@ -142,6 +199,8 @@ export function loadDeviceNotices(userId: string): void {
   boundAccount = userId;
   const stored = readStored(userId);
   announced = stored.announced;
+  lined = stored.lined;
+  undecided = stored.undecided;
   refusedSeen = stored.refusedSeen;
   for (const n of stored.pending) pending.set(n.key, n);
   if (stored.pending.length > 0) {
@@ -154,7 +213,10 @@ export function forgetDeviceNotices(): void {
   pending.clear();
   refusedNotices.clear();
   announced = [];
+  lined = [];
+  undecided = [];
   refusedSeen = [];
+  withdrawn.clear();
   boundAccount = null;
 }
 
@@ -183,6 +245,15 @@ function recordOwnDeviceNotice(notice: OwnDeviceNotice): boolean {
   return true;
 }
 
+/**
+ * Keeps an event whose evidence the server did not answer for the next delivery - a notice is
+ * neither raised without the evidence nor lost for want of it. Bounded; past it the oldest go.
+ */
+function keepUndecided(event: DeviceEvent): void {
+  undecided = [...undecided, event].slice(-MAX_UNDECIDED_DEVICE_EVENTS);
+  console.warn('[DEVICE_NOTICE] key age unanswered - the event waits for the next delivery');
+}
+
 /** The message id of a contact line: one per conversation, device and key. */
 function contactLineId(groupId: string, key: string): string {
   return `device-added:${groupId}:${key}`;
@@ -196,12 +267,31 @@ export async function deliverDeviceEvents(
   events: DeviceEvent[],
   ctx: DeviceNoticeContext
 ): Promise<void> {
-  console.debug(`[DEVICE_NOTICE] ${events.length} device event(s) to sort`);
+  if (!boundAccount) {
+    console.error(`[DEVICE_NOTICE] no account bound - ${events.length} device event(s) dropped`);
+    return;
+  }
+  if (ctx.withdrawnEvents) {
+    try {
+      for (const id of await ctx.withdrawnEvents()) withdrawn.add(id);
+    } catch (e) {
+      console.error('[DEVICE_NOTICE] withdrawn events unreadable:', e);
+    }
+  }
+  // The events a previous delivery could not decide come first, oldest first.
+  const retried = undecided;
+  undecided = [];
+  const all = [...retried, ...events];
+  console.debug(
+    `[DEVICE_NOTICE] ${events.length} device event(s) to sort (+${retried.length} undecided)`
+  );
   const claimed: string[] = [];
   // One tree read per conversation per delivery, whatever the number of events (not reactive).
   const trees: Record<string, Promise<string[]>> = {};
+  let ownEnrolled: Promise<number | null | 'unanswered'> | null = null;
   let silent = 0;
-  for (const event of events) {
+  let old = 0;
+  for (const event of all) {
     try {
       // WHO is told, before WHERE: the group that admitted the device is not where a line goes
       // (`writeContactLines` asks the rule once per conversation), so it is not asked here.
@@ -211,24 +301,59 @@ export async function deliverDeviceEvents(
         isKeyDistributionGroup: false,
       });
       const key = deviceEventKey(event);
+      if (audience === 'none') {
+        silent++;
+        continue;
+      }
+      if (withdrawn.has(deviceEventId(event))) {
+        console.log('[DEVICE_NOTICE] an event of an Add the server refused - announced by nobody');
+        continue;
+      }
+      if ((audience === 'owner-alert' ? announced : lined).includes(key)) continue;
+      // THE EVIDENCE THAT THE DEVICE IS NEW TO ITS OWNER, not merely new to this device.
+      ownEnrolled ??= ctx.ownEnrolledAt();
+      const [age, enrolledAt] = await Promise.all([
+        ctx.keyAge(
+          userIdOfLeaf(event.identity),
+          deviceIdOfLeaf(event.identity),
+          event.keyFingerprint
+        ),
+        ownEnrolled,
+      ]);
+      if (age.kind === 'unanswered' || enrolledAt === 'unanswered') {
+        keepUndecided(event);
+        continue;
+      }
+      const isNew = isNewToItsOwner(age.kind === 'dated' ? age.at : null, {
+        learnedAt: ctx.now(),
+        ownEnrolledAt: enrolledAt,
+        isOwnAccount: audience === 'owner-alert',
+      });
+      if (!isNew) {
+        old++;
+        continue;
+      }
       if (audience === 'owner-alert') {
         const deviceId = deviceIdOfLeaf(event.identity);
-        if (announced.includes(key)) continue;
         const label = await ctx.deviceLabel(deviceId);
         if (recordOwnDeviceNotice({ key, deviceId, at: ctx.now(), label })) {
           console.log(`[DEVICE_NOTICE] a new device was added to this account (${event.trust})`);
           claimed.push(key);
         }
-      } else if (audience === 'contact-line') {
-        await writeContactLines(event, key, ctx, trees);
       } else {
-        silent++;
+        await writeContactLines(event, key, ctx, trees);
+        lined = [...lined, key].slice(-MAX_ANNOUNCED_DEVICE_KEYS);
+        writeStored(boundAccount);
       }
     } catch (e) {
       console.error('[DEVICE_NOTICE] one device event not delivered:', e);
     }
   }
   if (silent > 0) console.debug(`[DEVICE_NOTICE] ${silent} event(s) announce nothing`);
+  if (old > 0) {
+    console.log(`[DEVICE_NOTICE] ${old} device(s) seen for the first time here are not new`);
+  }
+  if (retried.length > 0 || undecided.length > 0) writeStored(boundAccount);
   if (claimed.length > 0 && ctx.claimNative) {
     try {
       await ctx.claimNative(claimed);

@@ -2323,6 +2323,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     external fun nativeClaimDeviceNotices(dataDir: String, keysJson: String): String
 
+    /**
+     * Withdraws the device events a background Add recorded (`addedEvents`, a JSON array) when the
+     * server refused its commit, so the app never announces them - `mobile/device_notice.rs`.
+     * Returns how many were withdrawn.
+     */
+    external fun nativeWithdrawDeviceEvents(dataDir: String, idsJson: String): Int
+
     // Opens a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) against
     // the seed mirror in `dataDir`. Rust reads the session itself and applies every rule the app
     // applies to a row - the floor, and under a v2 session the author, the signature and the AAD
@@ -3204,11 +3211,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             )
             if (sent) {
                 Log.d(TAG, "processWelcomeRequestBackground: ✓ Welcome sent for group=$groupId target=$requesterUserId:$requesterDeviceId")
-                // The device this phone just admitted may be a new device of its OWN account.
-                // Announced once the commit is accepted, never for an Add the server refused.
+                // The device this phone just admitted may be a new device of its OWN account: the
+                // local notification is raised only now that the server accepted the commit. The
+                // events stay in mls.bin for the app's in-app notices.
                 announceOwnDevicesAdded(result, "processWelcomeRequestBackground")
             } else {
                 Log.e(TAG, "processWelcomeRequestBackground: sendWelcomeAndCommit failed for group=$groupId")
+                // A refused (or unconfirmed) Add admitted nobody: no notification, and the events
+                // it left in mls.bin are withdrawn so the app announces none of them.
+                val added = result.optJSONArray("addedEvents")
+                if (added != null && added.length() > 0) {
+                    val dataDir = MlsContextLoader.tauriDataDir(this).absolutePath
+                    val withdrawn = nativeWithdrawDeviceEvents(dataDir, added.toString())
+                    Log.w(TAG, "processWelcomeRequestBackground: $withdrawn device event(s) withdrawn for group=$groupId")
+                }
             }
         } finally {
             // 5. Release the Redis lock in all cases

@@ -129,6 +129,63 @@ export function deviceEventKey(event: DeviceEvent): string {
   return `${userIdOfLeaf(event.identity)}:${deviceIdOfLeaf(event.identity)}|${event.keyFingerprint}`;
 }
 
+/**
+ * The fingerprint `DeviceEvent.keyFingerprint` carries, computed from a key's bytes: the first 8
+ * bytes of its SHA-256, hex - Rust's `key_fingerprint`, held to one table
+ * (`mls-core/tests/fixtures/key_fingerprints.json`). How the app finds, among a device's published
+ * keys, the one an event names.
+ */
+export async function keyFingerprintOf(key: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', key as BufferSource));
+  return Array.from(digest.slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * How recently a CONTACT's key must have been first seen by the server, against the moment this
+ * device learns of it, to be "X added a device". A device a heal brings back into a conversation
+ * was registered long before; one its owner just added was registered minutes or hours before.
+ * Past it the line is not written - a missed line rather than a false one (user: notices must not
+ * become noise). The owner's alert has no such bound (`isNewToItsOwner`).
+ */
+export const CONTACT_NEW_DEVICE_WINDOW_MS = 7 * 24 * 3600_000;
+
+/**
+ * Whether a device this device just saw is NEW TO ITS OWNER - the evidence a notice needs beyond
+ * `announcesNewDevice`, because "first sight by THIS device" is not "new": a fresh install, a
+ * restore, a pin dropped by the bound, or a heal re-adding a device that was never in a tree this
+ * device holds all show old devices for the first time.
+ *
+ * The evidence is the server's first sight of the device's key (`fetchDeviceSignatureKeys`'
+ * `firstSeen`), used ONLY TO SUPPRESS a notice, never to raise one - the signed commit stays the
+ * only source of a notice:
+ * - an undated key (`null`) predates the server's key history: old, never announced;
+ * - the owner's alert needs a key first seen after THIS device enrolled (`ownEnrolledAt`, the first
+ *   sight of its own key) - an old device of the account re-added on a young device says nothing,
+ *   and a device registered since this one enrolled is announced however late this device learns
+ *   of it;
+ * - a contact's line needs both that and a key first seen within
+ *   {@link CONTACT_NEW_DEVICE_WINDOW_MS} of `learnedAt`.
+ *
+ * Unknown own enrolment announces nothing: the rule has no baseline to compare with.
+ */
+export function isNewToItsOwner(
+  keyFirstSeenAt: number | null,
+  ctx: { learnedAt: number; ownEnrolledAt: number | null; isOwnAccount: boolean }
+): boolean {
+  if (keyFirstSeenAt === null || ctx.ownEnrolledAt === null) return false;
+  if (keyFirstSeenAt < ctx.ownEnrolledAt) return false;
+  return ctx.isOwnAccount || keyFirstSeenAt >= ctx.learnedAt - CONTACT_NEW_DEVICE_WINDOW_MS;
+}
+
+/**
+ * The id one admission is withdrawn by - its group, the epoch its commit created, the device - the
+ * same string Rust's `device_notice::device_event_id` writes when the server refused a background
+ * Add.
+ */
+export function deviceEventId(event: DeviceEvent): string {
+  return `${event.groupId}|${event.epoch}|${event.identity}`;
+}
+
 /** Whether a verdict lets the package be added. */
 export function verdictAdmits(verdict: KeyPackageVerdict): verdict is 'first-sight' | 'pinned' {
   return verdict === 'first-sight' || verdict === 'pinned';

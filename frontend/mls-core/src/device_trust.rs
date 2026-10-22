@@ -647,4 +647,27 @@ mod tests {
             assert_eq!(c.event.notice_key(), c.key, "{}", c.name);
         }
     }
+
+    /// The app computes a key's fingerprint itself (`keyFingerprintOf`) to find the server's date
+    /// for the key an event names: the two computations are held to one table.
+    #[test]
+    fn the_key_fingerprint_follows_the_shared_table() {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Case {
+            key_hex: String,
+            fingerprint: String,
+        }
+        let cases: Vec<Case> =
+            serde_json::from_str(include_str!("../tests/fixtures/key_fingerprints.json"))
+                .expect("fixture parses");
+        assert!(!cases.is_empty());
+        for c in cases {
+            let key: Vec<u8> = (0..c.key_hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&c.key_hex[i..i + 2], 16).expect("hex"))
+                .collect();
+            assert_eq!(key_fingerprint(&key), c.fingerprint, "{}", c.key_hex);
+        }
+    }
 }

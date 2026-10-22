@@ -34,6 +34,8 @@ class NotificationService: UNNotificationServiceExtension {
   private static let pushContextFile = "push_context.json"
   private static let graineSeedsFile = "graine_seeds.json"
   private static let pushSecretFile = "push_secret.txt"
+  /// Present while the app is in the foreground (`CanariSetAppGroupForegroundFlag`, canari_ios.mm).
+  static let appInForegroundFile = "app_in_foreground"
 
   /// Cap the decrypted preview length, matching the 200-char clamp the in-app path uses.
   private static let maxPreviewLength = 200
@@ -689,6 +691,14 @@ class NotificationService: UNNotificationServiceExtension {
       let keysJson = String(data: keysData, encoding: .utf8)
     else {
       NSLog("[CanariNSE] \(where): device(s) added to this account - App Group unavailable, not announced")
+      return
+    }
+    // IN THE FOREGROUND THE APP TELLS IT (its in-app alert), as on Android: nothing is posted and
+    // nothing claimed, so the app's own claim stays the first. The app keeps the flag file in the
+    // App Group (`CanariSetAppGroupForegroundFlag`); a flag a crash left behind costs this one
+    // notification, never the in-app alert.
+    if FileManager.default.fileExists(atPath: dir.appendingPathComponent(appInForegroundFile).path) {
+      NSLog("[CanariNSE] \(where): device(s) added to this account - the app is in the foreground, it tells")
       return
     }
     guard let raw = canari_native_claim_device_notices(dir.path, keysJson) else {

@@ -686,17 +686,41 @@ community or salon key group never gets it; `none` otherwise. Rust's
 to ONE table, `frontend/mls-core/tests/fixtures/device_notices.json`, read by a Rust and a TypeScript
 test. One device under one key is announced once (`deviceEventKey()` = `notice_key()`).
 
+**First sight by THIS device is not "new to its owner"** (#2278 review): a fresh install, a restore,
+a pin dropped by the bound, or a heal re-adding a device that was never in a tree this device holds
+all show OLD devices for the first time - and heals happen daily. So the app weighs one more piece
+of evidence, `isNewToItsOwner()` (`deviceTrust.ts`): the server's first sight of the device's key
+(`DeviceSignatureKey.firstSeenAt`, served as `firstSeen` by `GET /api/mls/devices/:u/:d/signature-keys`).
+It is used ONLY TO SUPPRESS, never to raise - the signed commit stays the only source of a notice,
+and the device list stays the place to audit the account:
+
+| Key first seen by the server | Owner alert | Contact line |
+|---|---|---|
+| never dated (published before the key history began) | no | no |
+| before THIS device enrolled (first sight of its own key) | no | no |
+| since this device enrolled | yes, however late this device learns of it | only within 7 days (`CONTACT_NEW_DEVICE_WINDOW_MS`) of learning of it |
+
+Chosen over a per-contact baseline of pins, which cannot tell a contact's old laptop a heal brings
+into a DM from a new one; the window trades a late line for no false one (the user: notices must not
+become noise). An age the server did not answer keeps the event for the next delivery
+(`undecided`, durable, 64 at most) - neither raised without evidence nor lost for want of it. The
+app finds the key by fingerprint (`keyFingerprintOf()`, Rust's `key_fingerprint`, held to
+`mls-core/tests/fixtures/key_fingerprints.json`).
+
 **Who consumes the events.** `BaseMlsService.setDeviceEventConsumer` hands the taken events to
 `deliverDeviceEvents` (`utils/chat/deviceNotices.svelte.ts`, registered by `registerDeviceNotices`
 at session start): after every drain, after this device's own Adds, and once at registration for
-what the sealed state already holds - so the 512-event store drains. With no consumer they stay.
+what the sealed state already holds - so the 512-event store drains. With no consumer they stay:
+sign-out removes it (`unregisterDeviceNotices`), so the events wait in the state for the account
+that consumes them next.
 
 - **The contact line** is a client-written system row (`chat_system_device_added`), message id
   `device-added:<groupId>:<key>` - one per conversation, idempotent, not unread, no sound, like every
   `system` row. It is written in EVERY 1:1 and group row whose tree (`getGroupMemberIdentities`,
   read locally) holds a leaf of the device's owner, whichever group admitted the device - a
   contact's new device is often first seen in a community they share, and the line still reaches
-  the private conversations. Never in a channel row or a key group.
+  the private conversations. Never in a channel row or a key group. Written once per device and
+  key, durably (`lined`, the last 256), not only against the messages a conversation has loaded.
 - **The owner alert in the app** is `NewDeviceBanner.svelte` in the layout's banner column: the
   device's name when the device list has one, when this device learned of it, and a link to
   `/settings/security`. Durable per account (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the
@@ -716,12 +740,24 @@ what the sealed state already holds - so the 512-event store drains. With no con
   one marker file per key (`create_new`, atomic across the app and the extension), in the app data
   directory on Android and the App Group on iOS. The app claims the keys it showed
   (`claim_device_notices`), so a later push replaying the commit notifies nothing. In the
-  foreground, Android posts nothing and leaves the alert to the app. The ledger is swept with the
-  account's push files on deletion.
+  foreground neither engine posts: Android reads `MainActivity.isInForeground`, the iOS extension
+  the `app_in_foreground` file the app keeps in the App Group (`CanariSetAppGroupForegroundFlag`).
+  The engines have no key ages, so at registration the app PRE-CLAIMS every key of the account's
+  other listed devices that `isNewToItsOwner` calls old - an old device a heal brings back is then
+  never posted. The ledger is swept with the account's push files on deletion.
+- **A background Add the server refused** (Android `processWelcomeRequestBackground`) admitted
+  nobody, yet merged and saved its events: the answer names them (`addedEvents`, ids
+  `group|epoch|identity`), the service posts nothing and withdraws them
+  (`nativeWithdrawDeviceEvents`, `w-` markers beside the ledger), and the app skips them
+  (`take_withdrawn_device_events`).
 
 **Known limits, owed a decision or a reading:** a phone whose WebView is alive in the background
 processes the commit itself and so shows the in-app alert only, with no local notification; and a
 device first seen inside a tree this device JOINED (its leaf pinned silently) is never announced.
+The pre-claim reads the device list, which omits devices idle for 30 days, so a background engine
+can still post for such a device when a heal brings it back; the app does not announce it. A
+contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
+the history began carry that date, not their device's enrolment.
 
 ## Key packages
 

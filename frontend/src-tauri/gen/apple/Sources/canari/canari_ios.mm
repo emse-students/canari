@@ -567,8 +567,33 @@ static void CanariHideKeyboardAccessoryBar(void) {
   }
 }
 
+/// Mirrors `g_isInForeground` into the App Group as a file the Notification Service Extension
+/// reads (`appInForegroundFile`): in the foreground the app tells a new device on the account in
+/// its own alert, and the extension posts nothing. A separate process cannot read the static.
+static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
+  NSURL *container = [[NSFileManager defaultManager]
+      containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"];
+  if (!container) {
+    NSLog(@"[CanariIOS] App Group unavailable - foreground flag not written");
+    return;
+  }
+  NSURL *flag = [container URLByAppendingPathComponent:@"app_in_foreground"];
+  if (inForeground) {
+    if (![[NSData data] writeToURL:flag atomically:YES]) {
+      NSLog(@"[CanariIOS] foreground flag not written");
+    }
+  } else {
+    NSError *error = nil;
+    if (![[NSFileManager defaultManager] removeItemAtURL:flag error:&error] &&
+        error.code != NSFileNoSuchFileError) {
+      NSLog(@"[CanariIOS] foreground flag not removed: %@", error);
+    }
+  }
+}
+
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
+  CanariSetAppGroupForegroundFlag(YES);
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
   CanariApplyEdgeToEdge();
@@ -600,6 +625,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
 
 static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
+  CanariSetAppGroupForegroundFlag(NO);
   canari_ios_on_pause();
   // Snapshot the latest decrypt state into the App Group container before suspending, so a push
   // arriving while backgrounded is decrypted by the NSE against fresh state.

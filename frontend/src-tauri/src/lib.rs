@@ -55,7 +55,7 @@ use crate::commands::push::{
     get_voip_token, load_push_context, read_and_clear_outbox_sent,
     read_and_clear_pending_call_accept, read_and_clear_read_watermarks, read_outbox_mirror,
     set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
-    store_push_context, store_push_secret, take_fcm_cache,
+    store_push_context, store_push_secret, take_fcm_cache, take_withdrawn_device_events,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
@@ -268,6 +268,35 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     });
     env.new_string(&claimed)
         .unwrap_or_else(|_| env.new_string("[]").unwrap())
+}
+
+/// Withdraws the events a background Add recorded (`addedEvents` of its answer, a JSON array) when
+/// the server REFUSED its commit, so the app never announces them - see
+/// `mobile::device_notice::withdraw_device_events_json`. Returns how many were withdrawn; 0 when the
+/// arguments cannot be read.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeWithdrawDeviceEvents<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    ids_json: jni::objects::JString<'a>,
+) -> jni::sys::jint {
+    let withdrawn = (|| -> Option<usize> {
+        let dir: String = env.get_string(&data_dir).ok()?.into();
+        let json: String = env.get_string(&ids_json).ok()?.into();
+        Some(mobile::device_notice::withdraw_device_events_json(
+            std::path::Path::new(&dir),
+            &json,
+        ))
+    })()
+    .unwrap_or_else(|| {
+        log::error!("[DEVICE_NOTICE] jni arguments unreadable - nothing withdrawn");
+        0
+    });
+    jni::sys::jint::try_from(withdrawn).unwrap_or(jni::sys::jint::MAX)
 }
 
 /// Opens a salon push against the seed mirror under `dataDir` - every v1 and v2 rule, in the one
@@ -1148,6 +1177,7 @@ pub fn run() {
             mls_state_owner,
             store_push_secret,
             claim_device_notices,
+            take_withdrawn_device_events,
             clear_app_data,
             delete_user_database,
             delete_user_push_files,

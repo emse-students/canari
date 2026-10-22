@@ -47,6 +47,31 @@ describe('new-device notice - the native seams', () => {
     expect(swift).toContain('announceOwnDevicesAdded(json, ctx: ctx, where: "catchup")');
   });
 
+  it('Android: a refused background Add withdraws its events through a matching JNI symbol', () => {
+    expect(libRs).toContain(
+      'Java_fr_emse_canari_CanariFirebaseMessagingService_nativeWithdrawDeviceEvents'
+    );
+    expect(kotlin).toMatch(
+      /external fun nativeWithdrawDeviceEvents\(dataDir: String, idsJson: String\): Int/
+    );
+    const failed = kotlin.slice(
+      kotlin.indexOf('sendWelcomeAndCommit failed for group=$groupId")'),
+      kotlin.indexOf('sendWelcomeAndCommit failed for group=$groupId")') + 700
+    );
+    expect(failed).toContain('result.optJSONArray("addedEvents")');
+    expect(failed).toContain('nativeWithdrawDeviceEvents(dataDir, added.toString())');
+  });
+
+  it('iOS: the extension raises nothing while the app is in the foreground (shared flag)', () => {
+    const ios = read('gen/apple/Sources/canari/canari_ios.mm');
+    // The app writes the flag into the App Group on entering the foreground, removes it on leaving.
+    expect(ios).toContain('CanariSetAppGroupForegroundFlag(YES)');
+    expect(ios).toContain('CanariSetAppGroupForegroundFlag(NO)');
+    expect(swift).toContain('static let appInForegroundFile = "app_in_foreground"');
+    const announce = swift.slice(swift.indexOf('static func announceOwnDevicesAdded('));
+    expect(announce.slice(0, 1500)).toContain('appInForegroundFile');
+  });
+
   it('both NSE tables carry the two strings the extension reads', () => {
     for (const lang of ['fr', 'en']) {
       const table = read(`gen/apple/canari_NSE/${lang}.lproj/Localizable.strings`);

@@ -359,6 +359,8 @@ pub fn create_welcome_background_with_key(
         .map_err(|e| format!("base64 decode key_package: {e}"))?;
 
     let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
+    // The events already waiting in the state are not this Add's; only those after them are.
+    let events_before = manager.pending_device_events().len();
 
     let base_epoch = manager.get_epoch(group_id).map_err(|e| e.to_string())?;
 
@@ -393,19 +395,24 @@ pub fn create_welcome_background_with_key(
     );
 
     // The device this Add admitted may be a new device of THIS account - the phone serving its own
-    // account's new laptop. The events stay in the saved state for the app's in-app alert; the
-    // keys go to the caller for the local notification (`ownDeviceAdded`, as on the decrypt paths).
-    let own_alerts = super::device_notice::owner_alert_keys_of(
-        &manager.pending_device_events(),
-        user_id,
-        device_id,
-    );
+    // account's new laptop. The events stay in the saved state for the app's notices; the keys go
+    // to the caller for the local notification (`ownDeviceAdded`, as on the decrypt paths), which it
+    // raises only once the server ACCEPTED the commit. `addedEvents` names this Add's events, so a
+    // refusal withdraws them (`device_notice::withdraw_device_events_json`) before the app reads them.
+    let pending = manager.pending_device_events();
+    let added = &pending[events_before.min(pending.len())..];
+    let own_alerts = super::device_notice::owner_alert_keys_of(added, user_id, device_id);
+    let added_ids: Vec<String> = added
+        .iter()
+        .map(super::device_notice::device_event_id)
+        .collect();
     let mut answer = serde_json::json!({
         "ok": true,
         "welcome": STANDARD.encode(&welcome),
         "ratchetTree": STANDARD.encode(&ratchet_tree),
         "commit": STANDARD.encode(&commit),
         "baseEpoch": base_epoch,
+        "addedEvents": added_ids,
     });
     if !own_alerts.is_empty() {
         answer["ownDeviceAdded"] = serde_json::json!(own_alerts);
@@ -1634,6 +1641,20 @@ mod tests {
             .as_array()
             .expect("named for the notice");
         assert_eq!(keys.len(), 1, "{out}");
+        // The events this Add recorded, named so a refusal by the server can withdraw them.
+        let added = out["addedEvents"].as_array().expect("events named");
+        assert_eq!(added.len(), 1, "{out}");
+        assert!(
+            added[0]
+                .as_str()
+                .unwrap()
+                .ends_with(&format!("|{tag}-alice:dev-laptop")),
+            "{out}"
+        );
+        assert!(added[0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{group_id}|")));
 
         let saved = std::fs::read(dir.join("mls.bin")).expect("mls.bin written");
         let mut reloaded =

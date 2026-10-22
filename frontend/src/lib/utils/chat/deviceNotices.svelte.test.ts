@@ -11,6 +11,7 @@ import {
   pendingDeviceNotices,
   pendingRefusedDeviceNotices,
   type DeviceNoticeContext,
+  type KeyAge,
 } from './deviceNotices.svelte';
 
 /**
@@ -43,6 +44,11 @@ const TREES: Record<string, string[]> = {
   'dm-carol': ['alice:phone-a', 'carol:p'],
 };
 
+const DAY = 24 * 3600_000;
+const NOW = 100 * DAY;
+/** This device enrolled ten days ago. */
+const ENROLLED = 90 * DAY;
+
 function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
   const conversations = new Map<string, { conversationType?: string; messages: { id: string }[] }>([
     ['dm-1', { conversationType: 'direct', messages: [] }],
@@ -70,8 +76,11 @@ function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
     addMessageToChat,
     resolveDisplayNames: async () => (id: string) => (id === 'bob' ? 'Bob' : id),
     deviceLabel: async () => undefined,
+    // By default every key was first seen by the server five minutes ago - a NEW device.
+    keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'dated', at: NOW - 5 * 60_000 })),
+    ownEnrolledAt: async () => ENROLLED,
     claimNative: vi.fn(async () => {}),
-    now: () => 1_000,
+    now: () => NOW,
     ...over,
   };
   return { ctx, addMessageToChat, conversations };
@@ -145,7 +154,7 @@ describe('deliverDeviceEvents - the owner alert', () => {
     await deliverDeviceEvents([own, { ...own, groupId: 'community-key' }], ctx);
     expect(addMessageToChat).not.toHaveBeenCalled();
     expect(pendingDeviceNotices()).toEqual([
-      { key: 'alice:laptop-9|cc', deviceId: 'laptop-9', at: 1_000, label: 'Firefox on Linux' },
+      { key: 'alice:laptop-9|cc', deviceId: 'laptop-9', at: NOW, label: 'Firefox on Linux' },
     ]);
     expect(ctx.claimNative).toHaveBeenCalledWith(['alice:laptop-9|cc']);
 
@@ -185,6 +194,107 @@ describe('deliverDeviceEvents - the owner alert', () => {
     expect(pendingDeviceNotices()).toHaveLength(1);
     expect(error).toHaveBeenCalled();
     error.mockRestore();
+  });
+});
+
+/**
+ * "First sight by this device" is not "a new device" (#2278 review): a fresh install, a restore or a
+ * heal shows OLD devices this device never pinned, and a heal happens daily. The server's first
+ * sight of the key is the evidence, used only to suppress (`isNewToItsOwner`).
+ */
+describe('deliverDeviceEvents - only a device new to its owner is announced', () => {
+  const own = event({ identity: 'alice:laptop-9', keyFingerprint: 'cc', addedBy: 'bob:phone-1' });
+
+  it('fresh install joins a group, then a heal re-adds an old device of a contact: no line', async () => {
+    const { ctx, addMessageToChat } = makeCtx({
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'dated', at: 30 * DAY })),
+    });
+    await deliverDeviceEvents([event()], ctx);
+    expect(addMessageToChat).not.toHaveBeenCalled();
+  });
+
+  it("a contact's device the server first saw long after this device enrolled, but weeks ago: no line", async () => {
+    const { ctx, addMessageToChat } = makeCtx({
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'dated', at: NOW - 8 * DAY })),
+    });
+    await deliverDeviceEvents([event({ groupId: 'group-1' })], ctx);
+    expect(addMessageToChat).not.toHaveBeenCalled();
+  });
+
+  it('a key the server history never dated is old: no line, no alert', async () => {
+    const { ctx, addMessageToChat } = makeCtx({
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'undated' })),
+    });
+    await deliverDeviceEvents([event(), own], ctx);
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(pendingDeviceNotices()).toEqual([]);
+  });
+
+  it('a real new device: a line, and the key it names is the one dated', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([event()], ctx);
+    expect(addMessageToChat).toHaveBeenCalled();
+    expect(ctx.keyAge).toHaveBeenCalledWith('bob', 'web-2', '00ff');
+  });
+
+  it("the owner's old web device re-added on a young device: no alert", async () => {
+    const { ctx } = makeCtx({
+      keyAge: vi.fn(async (): Promise<KeyAge> => ({ kind: 'dated', at: ENROLLED - DAY })),
+    });
+    await deliverDeviceEvents([own], ctx);
+    expect(pendingDeviceNotices()).toEqual([]);
+  });
+
+  it('an unanswered age keeps the event, and the next delivery decides it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const keyAge = vi
+      .fn<() => Promise<KeyAge>>()
+      .mockResolvedValueOnce({ kind: 'unanswered' })
+      .mockResolvedValue({ kind: 'dated', at: NOW - 60_000 });
+    const { ctx } = makeCtx({ keyAge });
+    await deliverDeviceEvents([own], ctx);
+    expect(pendingDeviceNotices()).toEqual([]);
+
+    // Kept across a reload too.
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    await deliverDeviceEvents([], ctx);
+    expect(pendingDeviceNotices()).toHaveLength(1);
+    warn.mockRestore();
+  });
+});
+
+describe('deliverDeviceEvents - an Add the server refused announces nothing', () => {
+  it('skips the events a refused background Add withdrew, and only those', async () => {
+    const own = event({
+      identity: 'alice:laptop-9',
+      keyFingerprint: 'cc',
+      groupId: 'dm-1',
+      epoch: 7,
+    });
+    const { ctx, addMessageToChat } = makeCtx({
+      withdrawnEvents: vi.fn(async () => ['dm-1|7|alice:laptop-9', 'dm-1|5|bob:web-2']),
+    });
+    await deliverDeviceEvents([own, event()], ctx);
+    expect(pendingDeviceNotices()).toEqual([]);
+    expect(addMessageToChat).not.toHaveBeenCalled();
+
+    // The same device admitted again, by a commit the server took, is announced.
+    await deliverDeviceEvents([{ ...own, epoch: 8 }], ctx);
+    expect(pendingDeviceNotices()).toHaveLength(1);
+  });
+});
+
+describe('deliverDeviceEvents - a contact line is written once, durably', () => {
+  it('does not come back when the conversation has not loaded the earlier line', async () => {
+    const { ctx, addMessageToChat, conversations } = makeCtx();
+    await deliverDeviceEvents([event()], ctx);
+    const written = addMessageToChat.mock.calls.length;
+    for (const convo of conversations.values()) convo.messages.length = 0;
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    await deliverDeviceEvents([event({ groupId: 'group-1', epoch: 9 })], ctx);
+    expect(addMessageToChat).toHaveBeenCalledTimes(written);
   });
 });
 

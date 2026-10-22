@@ -1310,6 +1310,26 @@ pub(crate) fn claim_device_notices(
     }
 }
 
+/// Takes the ids of the device events a background Add recorded and the server then REFUSED
+/// (`mobile::device_notice::take_withdrawn_device_events`) - the app skips them when it announces.
+/// Android only writes them (iOS has no background Add); elsewhere there are none.
+#[tauri::command]
+pub(crate) fn take_withdrawn_device_events(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    #[cfg(target_os = "android")]
+    {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        Ok(crate::mobile::device_notice::take_withdrawn_device_events(
+            &dir,
+        ))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        log::debug!("[DEVICE_NOTICE] no background Add on this platform - nothing withdrawn");
+        Ok(Vec::new())
+    }
+}
+
 /// The file that NAMES whose the files above are - removed last, since it is the proof.
 const PUSH_CONTEXT_FILE: &str = "push_context.json";
 

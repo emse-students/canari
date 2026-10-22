@@ -41,7 +41,9 @@ notification on each (the iPhone at its next message push), then the in-app aler
 no second notification; a line "X added a device" in a DM with a contact who adds a device; NO line
 in a community or salon. Owed decisions: whether a phone whose WebView is alive in the background
 should also raise the local notification (today the in-app alert only), and whether a device first
-seen in a tree this device joined should be announced.
+seen in a tree this device joined should be announced; and whether 7 days is the right bound for
+a contact's line (a device first seen by the server earlier is a heal, not a new device - see the
+evidence table in mls-protocol).
 
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 
