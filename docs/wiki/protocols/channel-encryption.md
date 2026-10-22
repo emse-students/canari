@@ -574,7 +574,19 @@ window with a durable row and a lock:
   committed, under the lock again and only if the seat is still `active`. The gateway reads that set
   alone - its live broadcast and its election of a peer to answer a request re-check nothing in the
   database (chat-delivery's queued fan-out reads the active rows) - so a route written for a seat an
-  eviction already deleted would keep a device reached.
+  eviction already deleted would keep a device reached. The two other route writers - a send's
+  reconciliation of the set (`MEMBERS_CACHE_REPAIRED`) and an election door's reload of an empty one
+  (`MEMBERS_CACHE_RELOADED`) - find the missing entries first (`SMISMEMBER`) and add only those still
+  `active` when re-read under the seat lock (`restoreRoutes`).
+- **A send's queued rows cannot outlive a seat.** A send reads its recipients with no lock; its queue
+  write (`enqueueForLiveGroup`) takes the seat lock SHARED before the group row, re-reads who still
+  holds a seat and queues and delivers only to them (a commit's removed devices excepted, logged
+  `SEAT_GONE_NOT_QUEUED`). An eviction waits for the write and its delete then takes those rows; sends
+  into one group never wait for each other.
+- **An external commit re-reads its claim in the advance's transaction.** Under the seat lock, before
+  the epoch moves, a claim an eviction or a departure overtook since the gate refuses the join
+  (`NOT_A_MEMBER`, `reason=evicted_since_claim` or `departure_in_progress`): no leaf enters the tree
+  for a person with no seat.
 - **A key group's admits are asked like a join.** An admit writes a `pending` seat its device later
   promotes by reporting itself, so in a key group each admitted person is asked of social-service
   (`claimKeyGroupAdmits`, before the commit lock) against a claim re-read under the seat lock: not
@@ -602,6 +614,14 @@ window with a durable row and a lock:
   before asking and skips one that is gone (an account erasure deletes it). A person no longer
   entitled with nothing recorded is answered `departed` and NOTHING is written - no roster write can
   restore them under that name, and an erased account's id is not written back after its erasure.
+- **A rejoin after a lost second eviction waits for the drain - deliberately.** While a departure is
+  owed, every claim of that person is refused (`departure_in_progress`), so a person who left, whose
+  second eviction was lost, and who is then re-admitted cannot join the key group until the next
+  hourly pass settles that departure. It is NOT settled at the claim: settling means asking the
+  departure's outcome, and the question DECIDES an undecided departure `cancelled` - so a join
+  attempted by the departing person's own client, while an admin's removal of them is still in flight,
+  would cancel that removal. The drain asks only of a departure its second eviction left behind, at
+  most an hour late; the client's recovery pass retries the join, and nothing is lost but the wait.
 - **An abandoned departure is settled at once.** When a later first eviction or the roster
   transaction fails, `departDistributionGroups` decides each departure it had begun (`cancelled`, the
   person still on the roster) and calls
@@ -642,7 +662,12 @@ settlement and the rolling-deploy path. The first-writer-wins race is run agains
 `distribution-departure.integration.spec.ts` (a transaction held open, the other side waited on
 through `pg_blocking_pids`, then committed or rolled back): the question asked while the roster write
 is in flight reads `departed`, or `cancelled` when it rolls back; a roster write arriving while the
-question is in flight is refused with `DEPARTURE_SUPERSEDED` and the member stays.
+question is in flight is refused with `DEPARTURE_SUPERSEDED` and the member stays. chat-delivery's
+seat lock is run against PostgreSQL (migration 036 applied) in `seat-lock.integration.spec.ts`, CI job
+`test-delivery-integration`: a claim overtaken while it waits on the lock, a departure refusing claims
+until settled, a send's queue write waiting for an eviction and queueing nothing for that seat, an
+eviction waiting for a send and deleting what it queued, two sends not waiting for each other, and a
+route restore waiting for an eviction and writing nothing.
 
 **`POST /mls/commit` is rate-limited per user (2026-10-22):** `MLS_COMMIT_LIMIT_PER_MINUTE` (600)
 through `UserThrottlerGuard`, after `HeaderAuthGuard`. A refusal is the throttler's `429` before the

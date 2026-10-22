@@ -373,11 +373,14 @@ eviction share one per-group advisory lock and one durable row, `dm_seat_evictio
 migration 036); every key-group departure, account erasure included, goes through one function and
 records its outcome in `distribution_departures` (social migration 108), which the hourly drain asks
 for ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
-Both migrations are applied by the release's deploy before the new containers start. The
-first-writer-wins race runs against PostgreSQL in CI (`distribution-departure.integration.spec.ts`).
+Both migrations are applied by the release's deploy before the new containers start, and may ride the
+next stable (user, 2026-10-22). The first-writer-wins race runs against PostgreSQL in CI
+(`distribution-departure.integration.spec.ts`), and chat-delivery's seat lock orderings too
+(`seat-lock.integration.spec.ts`, `test-delivery-integration`). A rejoin after a lost second eviction
+waits for the hourly drain, by design ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 Owed: (1) the counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `departure ABANDONED`,
 `abandoned departure NOT settled`, `first eviction named NO departure`, `DEPARTURE_SUPERSEDED`,
-`route NOT written` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
+`route NOT written`, `ROUTE_NOT_RESTORED`, `SEAT_GONE_NOT_QUEUED` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
 unnamed line only during the deploy itself); (2) the latency of a key group's commit with admits
 (the questions are asked in parallel, one round trip) measured on dev.
 

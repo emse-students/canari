@@ -12,9 +12,9 @@
 -- Additive: a new table, empty at creation - no data rewrite, and an absent row reads as "never
 -- evicted". Idempotent: IF NOT EXISTS (synchronize creates the table in dev; this is for prod).
 --
--- LOCK TIMEOUT: the same rule as 035 - a migration gives up rather than queue behind a long
--- transaction and stall everything queued behind its lock request; the deploy then fails loudly
--- and a re-run is safe (idempotent above).
+-- LOCK TIMEOUT: if a lock it needs is held by a long transaction, this migration gives up after five
+-- seconds rather than wait - a waiting lock request would stall every query queued behind it. The
+-- deploy then fails loudly, and a re-run is safe (idempotent above).
 SET lock_timeout = '5s';
 
 BEGIN;

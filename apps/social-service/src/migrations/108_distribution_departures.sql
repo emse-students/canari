@@ -12,9 +12,9 @@
 --
 -- Idempotent for CD: IF NOT EXISTS.
 --
--- LOCK TIMEOUT: the same rule as chat-delivery's 035 - a migration gives up rather than queue
--- behind a long transaction and stall everything queued behind its lock request; the deploy then
--- fails loudly and a re-run is safe (idempotent above).
+-- LOCK TIMEOUT: if a lock it needs is held by a long transaction, this migration gives up after five
+-- seconds rather than wait - a waiting lock request would stall every query queued behind it. The
+-- deploy then fails loudly, and a re-run is safe (idempotent above).
 SET lock_timeout = '5s';
 
 CREATE TABLE IF NOT EXISTS distribution_departures (
