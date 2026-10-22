@@ -128,9 +128,12 @@
           chez Lydia. L'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas
           conservée par Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de
           retour (jamais le lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse
-          payante attend son paiement, elle porte une empreinte chiffrée avec une clé secrète de
-          l'adresse IP et du formulaire, qui limite à trois les réponses en attente depuis une même
-          connexion ; cette empreinte est effacée dès que la réponse n'attend plus.
+          payante attend son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC)
+          à partir du formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64
+          d'une adresse IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert
+          uniquement à limiter à trois les réponses en attente de paiement depuis un même réseau ;
+          elle est effacée par une tâche planifiée, dans les cinq minutes qui suivent le règlement,
+          l'annulation ou l'expiration de la réponse.
         </dd>
       </div>
       <div>
@@ -461,7 +464,10 @@
             <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
           </tr>
           <tr>
-            <td>Empreinte de l'adresse IP d'une réponse payante sans compte</td>
+            <td>
+              Empreinte (HMAC) du réseau d'une réponse payante sans compte (adresse IPv4 ou préfixe
+              /64 IPv6, jamais l'adresse elle-même)
+            </td>
             <td>
               Tant que la réponse attend son paiement (30 minutes en ligne, jusqu'à l'échéance fixée
               pour un paiement en espèces), puis effacée dans les cinq minutes
