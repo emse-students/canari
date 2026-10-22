@@ -29,6 +29,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
   let txUpdates: Array<{ entity: unknown; where: Record<string, unknown> }>;
   let intervalFind: jest.Mock;
   let deviceRows: Array<{ userId: string; deviceId: string; createdAt?: Date; status?: string }>;
+  let deviceQuery: string[];
   let order: string[];
   let failTx: boolean;
   let redis: { smembers: jest.Mock; srem: jest.Mock; hset: jest.Mock };
@@ -59,6 +60,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
     failTx = false;
     intervalFind = jest.fn(() => Promise.resolve(intervals));
     order = [];
+    deviceQuery = [];
     deviceRows = [
       { userId: 'alice', deviceId: 'a1' },
       { userId: 'bob', deviceId: 'b1' },
@@ -173,12 +175,14 @@ describe('MembersController - membership intervals and the exclusions read', () 
             }),
             // The exclusions read: each user holding a device row, whatever its status, with the
             // earliest and the latest row's time.
+            // Every clause is recorded, so a test can assert what the SQL does NOT filter on.
             createQueryBuilder: () => {
               const qb = {
-                select: () => qb,
-                addSelect: () => qb,
-                where: () => qb,
-                groupBy: () => qb,
+                select: (c: string) => (deviceQuery.push(c), qb),
+                addSelect: (c: string) => (deviceQuery.push(c), qb),
+                where: (c: string) => (deviceQuery.push(c), qb),
+                andWhere: (c: string) => (deviceQuery.push(c), qb),
+                groupBy: (c: string) => (deviceQuery.push(c), qb),
                 getRawMany: async () =>
                   [...new Set(deviceRows.map((d) => d.userId))].map((userId) => {
                     const times = deviceRows
@@ -264,6 +268,9 @@ describe('MembersController - membership intervals and the exclusions read', () 
     const got = await controller.getGroupExclusions('g-1', 'alice', 'carol');
 
     expect(got.withheld.carol).toEqual([{ from: 0, until: T('2026-10-07T00:00:00Z').getTime() }]);
+    // The mock ignores the SQL, so the SQL is asserted too: no status filter may creep back in.
+    expect(deviceQuery.length).toBeGreaterThan(0);
+    expect(deviceQuery.join(' ')).not.toMatch(/status/i);
   });
 
   it("answers `for` a founding member's NEW device, added after the caller arrived", async () => {

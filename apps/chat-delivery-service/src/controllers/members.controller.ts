@@ -905,6 +905,13 @@ export class MembersController {
       where: { id: safeGroupId },
       select: { isGroup: true, distributionWorkspaceId: true, distributionChannelId: true },
     });
+    if (!group) {
+      // A roster with no group row: answered as a 1:1 (gaps only), which withholds nothing before
+      // an arrival - so it is said, not swallowed.
+      this.logger.warn(
+        `[EXCLUSIONS] group=${safeGroupId} has members but NO group row - answered as a 1:1`
+      );
+    }
     const beforeFirstArrival =
       group?.isGroup === true && !group.distributionWorkspaceId && !group.distributionChannelId;
 

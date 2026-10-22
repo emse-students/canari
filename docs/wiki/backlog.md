@@ -40,6 +40,24 @@ page and its review, then A; then a `minClientVersion` carrying C once both stor
 limits:
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
 
+## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)
+
+`purgeDeviceFootprint` deletes a revoked device's rows in every group. For a member whose interval
+opened late, their first device row is the only record of when they really arrived. After the purge,
+`MIN(createdAt)` moves later and `withheldWindows` falls back to the late interval, so their next
+device is denied the span between the two. Nothing leaks to anyone: the member loses history.
+Production held 4 such late-interval members on 2026-10-22. Fix direction: keep the arrival as a fact
+outside the device rows (on the membership interval, for instance) so a purge cannot move it.
+
+## P3 - `for` is decided against the caller's EARLIEST arrival (review of #2226, 2026-10-22)
+
+The exclusions read honours `for` when the named person's latest device is no older than the
+caller's first arrival. A caller who left and came back can therefore read the arrival of a person
+added while they were away. A founder who adds a device also makes their own arrival readable to
+members who came later. Each answer is a time, never a message. The rule
+[history-reconciliation](protocols/history-reconciliation.md) states is the right one, and the
+predicate should follow it to the caller's current interval.
+
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
 Every device joining a community's key group commits, and `shouldRotateGraineSession` rotates on any
