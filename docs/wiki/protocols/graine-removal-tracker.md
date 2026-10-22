@@ -65,6 +65,9 @@ re-added by the same commit.
   [§22.2](channel-encryption.md#222-a-key-group-held-with-its-own-leaf-removed-is-not-held---fixed-2026-09-29)),
   so a device rejoining by external commit both removes and re-adds its own `(identity, key)`. The
   key material that held the seed is the same, and it is still a member.
+- **A removal always rotates unless BOTH halves of the pair come back.** The same signature key
+  re-added under a different identity is a departure, as is the same identity re-added under a
+  different key.
 - **A reinstalled device is a departure.** It keeps its device id but has a new signature key, so the
   pair differs.
 - **A lost phone replaced by a new one is a departure.** It has a new device id.
