@@ -324,6 +324,10 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const data = event.data;
     const channelId = `channel_${data.channelId}`;
     const sender = data.senderId;
+    // THE ROW'S SERVER ID, the one key every path names it by - the frame carries it as `messageId`
+    // and nothing else (`ChannelService.runFanout`). Without it the bubble has no address.
+    const messageId = data.messageId ? String(data.messageId) : '';
+    if (!messageId) return unaddressable(log, event.type, 'messageId');
     const convoKey: string | undefined = conversations.has(channelId) ? channelId : undefined;
 
     if (convoKey) {
@@ -339,7 +343,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           const bytes = await openChannelMessage(data.channelId, {
             // The same id the bubble is keyed by below, and the history load reads: a row opened
             // on both paths is one row, never its own replay.
-            id: String(data.messageId || data.id),
+            id: messageId,
             senderId: String(sender || ''),
             signature: data.signature ?? null,
             ciphertext: data.ciphertext,
@@ -403,9 +407,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           // A SALON MESSAGE IS SEALED, ALWAYS: its author is proven only by opening it, and neither
           // the server nor the history path has anything else. A frame without a ciphertext names an
           // author nobody proved, so it accuses the server and is rendered nowhere.
-          console.error(
-            `[CHANNEL] Message ${String(data.messageId || data.id)} of ${String(data.channelId).slice(0, 8)} is REFUSED and not rendered - a live frame without a ciphertext (sender named: ${String(sender || '')})`
-          );
+          const refused = `[CHANNEL] Message ${messageId} of ${String(data.channelId).slice(0, 8)} is REFUSED and not rendered - a live frame without a ciphertext (sender named: ${String(sender || '').slice(0, 8)})`;
+          log(`[ERROR] ${refused}`);
+          console.error(refused);
           return;
         }
       } catch (e) {
@@ -415,7 +419,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         // repair announces it - which is the behaviour the comment below already described.
         reportUnreadableChannelMessage(
           data.channelId,
-          String(data.messageId || data.id),
+          messageId,
           String(sender || ''),
           channelServerMs,
           e
@@ -430,7 +434,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // Every server-side operation on a channel message - delete, pin, poll vote, reaction -
       // addresses it by that id; the author's own echo, shown under the AppMessage id, is
       // re-keyed to it just below (WP-OFF-2), so the AppMessage id never names a live bubble.
-      const renderedId = String(data.messageId || data.id);
+      const renderedId = messageId;
       const poll = data.poll as ChannelPollMeta | undefined;
       if (poll) setPollMeta(renderedId, poll);
 

@@ -46,7 +46,7 @@ describe('a live salon frame without a ciphertext', () => {
       {
         type: 'channel.message.created',
         data: {
-          id: 'row-1',
+          messageId: 'row-1',
           channelId: CHANNEL,
           senderId: 'alice',
           plaintext: 'hello',
@@ -57,10 +57,39 @@ describe('a live salon frame without a ciphertext', () => {
     );
 
     expect(addMessageToChat).not.toHaveBeenCalled();
+    // Said in the app's own log as well, which is the one the rig reads - and the user id it names
+    // is cut like every sibling line's.
+    expect(context.log).toHaveBeenCalledWith(expect.stringContaining('REFUSED'));
+    expect(error.mock.calls.some((c) => String(c[0]).includes('alice'))).toBe(true);
     expect(
       error.mock.calls.some(
         (c) => String(c[0]).includes('REFUSED') && String(c[0]).includes('row-1')
       )
     ).toBe(true);
+  });
+});
+
+describe('a live salon frame without a messageId', () => {
+  it('is unaddressable: said as lost, and rendered nowhere', async () => {
+    const { context, addMessageToChat } = ctx();
+
+    await handleChannelEvent(
+      {
+        type: 'channel.message.created',
+        data: {
+          id: 'row-1',
+          channelId: CHANNEL,
+          senderId: 'alice',
+          ciphertext: 'Y2lwaGVy',
+          createdAt: '2026-10-22T12:00:00.000Z',
+        },
+      },
+      context
+    );
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(context.log).toHaveBeenCalledWith(
+      expect.stringContaining('channel.message.created arrived with no messageId')
+    );
   });
 });

@@ -1545,6 +1545,16 @@ GRAINE-AUTH's trail now keeps the load lines and every line naming the tampered 
 
 A row under a v1 session this device still holds carries no author proof. That is the documented legacy of [channel-encryption](protocols/channel-encryption.md), and it ends with the v1 reader.
 
+### P2 - the salon notification's fallback banner still names an author nobody proved (native, 2026-10-22)
+
+When the background service cannot open a salon push (no seed, no ciphertext, or the open refused), it shows the generic banner. It still draws the avatar of the sender the push names, and the "mentioned you" line when the push says so (`postChannelNotification`, `CanariFirebaseMessagingService.kt`). The fallback should show no author and no mention, only the generic line. Check the iOS notification service extension for the same fallback. Test the decision as a pure function on both platforms if it can be extracted.
+
+### P3 - two salon ingest seams with no guard of their own (2026-10-22)
+
+- `fcmMemoryMerge.ts` has no `channel_` guard. It is unreachable today, because the native side never caches a salon push; the guard would be defence in depth.
+- The live frame and the history page used to key a row by different fields. The live path now reads `messageId` alone (#2248). Should the server ever give one row two ids, the first path to open it claims the key, and the other is refused as a replay.
+
+
 ### P3 - MULTI-9 cannot pass on a healthy estate: its precondition is a pending device, and none stays pending (2026-10-22)
 
 A new device reached `active` in 107 ms, so there was no window to send into, and the row recorded `VACUOUS`. That matches its only earlier verdict. The row needs a way to hold a device `pending` (a held Welcome or a stopped responder) before it can say anything. Until then it is a precondition the estate cannot create, not a verdict.
