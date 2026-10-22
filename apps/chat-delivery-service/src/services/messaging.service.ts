@@ -2012,6 +2012,23 @@ export class MessagingService {
         // (`claimKeyGroupAdmits`); here the claim is re-read, a database read only, and a person
         // not entitled, evicted since, or departing is not admitted.
         await takeSeatLock(m, groupId);
+        // AN EXTERNAL COMMIT IS A SEAT TOO: its leaf enters the tree with this advance. Its claim
+        // was taken before the gate asked, so a departure that ran since is read here, under the
+        // lock, and refuses the join before the epoch moves - never after, with a leaf and no seat.
+        if (frame.external) {
+          const refusal = await seatClaimHolds(m, committerClaim);
+          if (refusal !== null) {
+            this.logger.warn(
+              `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
+                `device=${sanitizeLogValue(committer)}:${deviceId} kind=external reason=${refusal}`
+            );
+            throw new ForbiddenException(
+              refusalBody(RefusalCode.NOT_A_MEMBER, 'this commit is not accepted', {
+                error: 'committer_not_member',
+              })
+            );
+          }
+        }
         if (admitClaims) {
           const kept: typeof declaredAdmits = [];
           for (const a of declaredAdmits) {

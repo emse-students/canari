@@ -1130,9 +1130,9 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           expect(fetchSpy).toHaveBeenCalledTimes(1);
         });
 
-        it('an entitlement answer arriving AFTER the whole departure writes no seat', async () => {
+        it('an entitlement answer arriving AFTER the whole departure is refused before the epoch moves', async () => {
           tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
-          fanOut();
+          const sent = fanOut();
           // The gate's question is in flight when the departure runs: social-service answered
           // `true` from a roster that still held the leaver, and the answer lands afterwards.
           const answer = deferred<Response>();
@@ -1148,8 +1148,14 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           await service.evictSeats('group-1', 'user-1', { settles: 1 }); // after it
           answer.resolve(entitled(true));
 
-          // The commit stands (it is a valid MLS commit), but the seat claim was overtaken.
-          await expect(committed).resolves.toMatchObject({ accepted: true });
+          // The claim the gate took was overtaken, and the external commit's own claim is re-read
+          // under the seat lock in the advance's transaction: the join is refused there, so no
+          // leaf enters the tree for a person with no seat.
+          await expect(committed).rejects.toMatchObject({
+            response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
+          });
+          expect(groupUpdate).not.toHaveBeenCalled();
+          expect(sent).not.toHaveBeenCalled();
           expect(events).toEqual(['evict', 'evict']);
           expect(seats.size).toBe(0);
           expect(redis.sadd).not.toHaveBeenCalled();
