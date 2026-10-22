@@ -36,7 +36,10 @@ object BackgroundWelcomeAnswer {
 
     /** The classified answer. */
     sealed class Outcome {
-        /** The commit passed the gate and the Welcome is queued: install the staged state. */
+        /**
+         * The commit passed the gate, and its Welcome was stored in the same transaction: install the
+         * staged state.
+         */
         object Accepted : Outcome()
 
         /** The gate refused: nothing was recorded, fanned out or sent. */
@@ -94,6 +97,78 @@ object BackgroundWelcomeAnswer {
                 Settlement.Discard(null, null)
             }
         is Outcome.Failed, is Outcome.Unknown -> Settlement.Discard(null, null)
+    }
+
+    /** What the native install reported, read from its JSON. */
+    data class InstallReport(val ok: Boolean, val reason: String?, val error: String?)
+
+    /**
+     * The staged post-add state, as the service holds it: the seam a JVM test drives in place of the
+     * JNI and the MLS state lock.
+     */
+    interface StagedWelcome {
+        /**
+         * Installs the staged state under the MLS state lock. `null` when the lock was not acquired,
+         * so the install never ran and the staged file is still on disk.
+         */
+        fun install(): InstallReport?
+
+        /** Deletes the staged file; records a stale base only when both epochs are given. */
+        fun discard(staleBase: Long?, serverEpoch: Long?)
+    }
+
+    /** What became of the staged state once its settlement was applied. */
+    sealed class Applied {
+        object Installed : Applied()
+
+        /** The native install ran and refused; it removed its own staged file. */
+        data class NotInstalled(val reason: String?, val error: String?) : Applied()
+
+        /** The MLS state lock was busy: the install never ran, and the staged file was deleted here. */
+        object LockBusy : Applied()
+
+        object Discarded : Applied()
+    }
+
+    /** The level a line is logged at, so the decision is tested here and only printed by the service. */
+    enum class Level { DEBUG, WARN, ERROR }
+
+    /**
+     * Applies a settlement to the staged state. A busy lock on an install is the one case the
+     * staged file would outlive the attempt - it holds the group's old epoch secret - so it is
+     * deleted here, never left for a later attempt to find.
+     */
+    fun apply(settlement: Settlement, staged: StagedWelcome): Applied = when (settlement) {
+        Settlement.Install -> {
+            val report = staged.install()
+            when {
+                report == null -> {
+                    staged.discard(null, null)
+                    Applied.LockBusy
+                }
+                report.ok -> Applied.Installed
+                else -> Applied.NotInstalled(report.reason, report.error)
+            }
+        }
+        is Settlement.Discard -> {
+            staged.discard(settlement.staleBase, settlement.serverEpoch)
+            Applied.Discarded
+        }
+    }
+
+    /**
+     * The level and suffix of the line that ends a background Welcome. An acceptance not installed
+     * is an error: the server holds a commit this device does not, and the foreground's replay meets
+     * it and recovers through the usual ladder. An answer nobody read may have been an acceptance.
+     */
+    fun report(applied: Applied, outcome: Outcome): Pair<Level, String> = when (applied) {
+        Applied.Installed -> Level.DEBUG to "state installed"
+        Applied.LockBusy -> Level.ERROR to
+            "ACCEPTED AND NOT INSTALLED reason=lock busy - the staged file was deleted"
+        is Applied.NotInstalled -> Level.ERROR to
+            "ACCEPTED AND NOT INSTALLED reason=${applied.reason} ${applied.error ?: ""}".trimEnd()
+        Applied.Discarded ->
+            (if (outcome is Outcome.Unknown) Level.ERROR else Level.WARN) to "staged state discarded"
     }
 
     /** The one line the phone logs for an answer, naming what happened. */

@@ -1,9 +1,13 @@
 package fr.emse.canari
 
 import fr.emse.canari.push.BackgroundWelcomeAnswer
+import fr.emse.canari.push.BackgroundWelcomeAnswer.Applied
+import fr.emse.canari.push.BackgroundWelcomeAnswer.InstallReport
+import fr.emse.canari.push.BackgroundWelcomeAnswer.Level
 import fr.emse.canari.push.BackgroundWelcomeAnswer.Outcome
 import fr.emse.canari.push.BackgroundWelcomeAnswer.Refusal
 import fr.emse.canari.push.BackgroundWelcomeAnswer.Settlement
+import fr.emse.canari.push.BackgroundWelcomeAnswer.StagedWelcome
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -93,5 +97,71 @@ class BackgroundWelcomeAnswerTest {
         )
         assertTrue(line, line.startsWith("REFUSED epoch_mismatch"))
         assertTrue(line, !line.contains("sent"))
+    }
+
+    /** The staged state as the service drives it, recording what was asked of it. */
+    private class FakeStaged(private val install: InstallReport?) : StagedWelcome {
+        val calls = mutableListOf<String>()
+        override fun install(): InstallReport? {
+            calls += "install"
+            return install
+        }
+        override fun discard(staleBase: Long?, serverEpoch: Long?) {
+            calls += "discard($staleBase,$serverEpoch)"
+        }
+    }
+
+    @Test
+    fun anAcceptanceWhoseInstallFindsTheLockBusyDeletesTheStagedFileAndSaysSo() {
+        // The MLS state lock was not acquired, so the install never ran and the staged file - which
+        // holds the group's old epoch secret - is still there: it must not outlive this attempt.
+        val staged = FakeStaged(install = null)
+
+        val applied = BackgroundWelcomeAnswer.apply(Settlement.Install, staged)
+
+        assertEquals(Applied.LockBusy, applied)
+        assertEquals(listOf("install", "discard(null,null)"), staged.calls)
+        val (level, line) = BackgroundWelcomeAnswer.report(applied, Outcome.Accepted)
+        assertEquals(Level.ERROR, level)
+        assertTrue(line, line.contains("ACCEPTED AND NOT INSTALLED") && line.contains("lock busy"))
+    }
+
+    @Test
+    fun anAcceptanceInstallsAndDeletesNothingMore() {
+        val staged = FakeStaged(install = InstallReport(ok = true, reason = null, error = null))
+
+        val applied = BackgroundWelcomeAnswer.apply(Settlement.Install, staged)
+
+        assertEquals(Applied.Installed, applied)
+        assertEquals(listOf("install"), staged.calls)
+        assertEquals(Level.DEBUG, BackgroundWelcomeAnswer.report(applied, Outcome.Accepted).first)
+    }
+
+    @Test
+    fun anInstallTheNativeSideRefusesIsAnErrorNamingItsReason() {
+        // The native install removes its own staged file on every path it runs; nothing more here.
+        val staged = FakeStaged(install = InstallReport(ok = false, reason = "install-refused", error = "moved"))
+
+        val applied = BackgroundWelcomeAnswer.apply(Settlement.Install, staged)
+
+        assertEquals(Applied.NotInstalled("install-refused", "moved"), applied)
+        assertEquals(listOf("install"), staged.calls)
+        val (level, line) = BackgroundWelcomeAnswer.report(applied, Outcome.Accepted)
+        assertEquals(Level.ERROR, level)
+        assertTrue(line, line.contains("install-refused"))
+    }
+
+    @Test
+    fun aDiscardNeverInstallsAndCarriesTheStaleEpochs() {
+        val staged = FakeStaged(install = InstallReport(ok = true, reason = null, error = null))
+        val refused = Outcome.Refused(Refusal.EPOCH_MISMATCH, "epoch_mismatch", 3)
+
+        val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(refused, 1), staged)
+
+        assertEquals(Applied.Discarded, applied)
+        assertEquals(listOf("discard(1,3)"), staged.calls)
+        assertEquals(Level.WARN, BackgroundWelcomeAnswer.report(applied, refused).first)
+        // An answer nobody read may have been an acceptance: said at error.
+        assertEquals(Level.ERROR, BackgroundWelcomeAnswer.report(applied, Outcome.Unknown(null)).first)
     }
 }

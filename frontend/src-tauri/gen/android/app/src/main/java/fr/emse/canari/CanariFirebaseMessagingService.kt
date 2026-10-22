@@ -3183,27 +3183,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val line = "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId " +
                 BackgroundWelcomeAnswer.describe(outcome, baseEpoch)
 
-            // 5. Install or discard the staged state, by the answer's TYPE.
-            when (val settlement = BackgroundWelcomeAnswer.settle(outcome, baseEpoch)) {
-                BackgroundWelcomeAnswer.Settlement.Install -> {
-                    val installed = withMlsStateLock(10) { JSONObject(nativeInstallStagedWelcome(filesDir, groupId)) }
-                    if (installed == null) {
-                        // The lock was not acquired, so the install never ran and its staged file is
-                        // still there: deleted now, so no old epoch secret outlives this attempt.
-                        nativeDiscardStagedWelcome(filesDir, groupId, -1L, -1L)
+            // 5. Install or discard the staged state, by the answer's TYPE. The decision - including
+            //    deleting the staged file when the install finds the lock busy - is
+            //    [BackgroundWelcomeAnswer.apply], tested on the JVM; this only wires the JNI to it.
+            val staged = object : BackgroundWelcomeAnswer.StagedWelcome {
+                override fun install(): BackgroundWelcomeAnswer.InstallReport? =
+                    withMlsStateLock(10) { JSONObject(nativeInstallStagedWelcome(filesDir, groupId)) }?.let {
+                        BackgroundWelcomeAnswer.InstallReport(
+                            ok = it.optBoolean("ok", false),
+                            reason = it.optString("reason").takeIf { r -> r.isNotEmpty() },
+                            error = it.optString("error").takeIf { e -> e.isNotEmpty() },
+                        )
                     }
-                    if (installed?.optBoolean("ok", false) == true) {
-                        Log.d(TAG, "$line - state installed")
-                    } else {
-                        // The server holds a commit this device does not: the foreground's replay
-                        // meets its own commit and the device recovers through the usual ladder.
-                        Log.e(TAG, "$line - ACCEPTED AND NOT INSTALLED reason=${installed?.optString("reason") ?: "lock"} ${installed?.optString("error") ?: ""}")
-                    }
-                }
-                is BackgroundWelcomeAnswer.Settlement.Discard -> {
-                    nativeDiscardStagedWelcome(filesDir, groupId, settlement.staleBase ?: -1L, settlement.serverEpoch ?: -1L)
-                    if (outcome is BackgroundWelcomeAnswer.Outcome.Unknown) Log.e(TAG, line) else Log.w(TAG, line)
-                }
+
+                override fun discard(staleBase: Long?, serverEpoch: Long?) =
+                    nativeDiscardStagedWelcome(filesDir, groupId, staleBase ?: -1L, serverEpoch ?: -1L)
+            }
+            val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(outcome, baseEpoch), staged)
+            val (level, suffix) = BackgroundWelcomeAnswer.report(applied, outcome)
+            when (level) {
+                BackgroundWelcomeAnswer.Level.DEBUG -> Log.d(TAG, "$line - $suffix")
+                BackgroundWelcomeAnswer.Level.WARN -> Log.w(TAG, "$line - $suffix")
+                BackgroundWelcomeAnswer.Level.ERROR -> Log.e(TAG, "$line - $suffix")
             }
         } finally {
             // 6. Release the Redis lock in all cases
@@ -3365,11 +3366,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val text = stream?.bufferedReader()?.use { it.readText() }
                 val json = try { text?.let { JSONObject(it) } } catch (e: Exception) { null }
                 Log.d(TAG, "sendWelcomeAndCommit: HTTP $code status=${json?.optString("status")} group=$groupId target=$targetUserId:$targetDeviceId")
-                if (json?.optBoolean("welcomeQueued", true) == false) {
-                    // Accepted, and the server could not queue the Welcome: the commit stands, so the
-                    // staged state is still installed; the newcomer recovers on its own re-ask cadence.
-                    Log.e(TAG, "sendWelcomeAndCommit: commit accepted and the Welcome NOT queued group=$groupId target=$targetUserId:$targetDeviceId")
-                }
                 BackgroundWelcomeAnswer.classify(
                     code,
                     json?.optString("status")?.takeIf { it.isNotEmpty() },
