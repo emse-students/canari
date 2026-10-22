@@ -204,7 +204,11 @@ runs it or approves it explicitly); sending the DPO dossier; the DSI log-retenti
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join has no entitlement gate yet (2026-10-22)
 
-`POST /mls/commit` accepts a member commit only from a device the group routes to, and a conversation's external commit only from a person on its roster. A key group's roster is community or salon membership, held by social-service alone, so its external commit is accepted unchecked and logged `[COMMIT] UNGATED key-group external commit` each time. Owed, as its own pull request with an opus review: a social-service internal route answering "is this person entitled to this scope", called by chat-delivery for a key-group external commit only. A failed call refuses with a retryable 503 and never accepts, and its rate is measured against the ~77 joins/day before a stable.
+A key-group external join has no entitlement check yet; each one is logged `[COMMIT] key-group external join`. The roster of a key group is held by social-service. Owed next, as its own pull request with an opus review: a social-service internal route answering "is this person entitled to this scope", called by chat-delivery for a key-group external commit only. A failed call refuses with a retryable 503 and never accepts, and its rate is measured against the ~77 joins/day before a stable.
+
+## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
+
+Registration refuses a device id another account holds (`device_id_taken`) by a read before its write; `key_package` is unique on the pair only, so two concurrent registrations of one id by two accounts could both pass. Production held 0 shared ids on 2026-10-22, and a client mints its id per account. The fix is a unique index on `key_package."deviceId"`, a migration of its own.
 
 ## P3 - The distribution path's device check: ship on an alpha, read `[SENDER_MISMATCH] path=distribution` first
 

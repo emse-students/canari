@@ -86,19 +86,39 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     // THE REGRESSION THIS FILE EXISTS FOR: without `proto`, validateCommit throws a 400 and the
     // Welcome below never happens. Asserted by value, not by presence - the proto must be the very
     // commit that gets broadcast, or the commit log records something nobody replayed.
-    expect(validateCommit).toHaveBeenCalledWith({
-      groupId: 'g1',
-      deviceId: 'd1',
-      baseEpoch: 7,
-      proto: 'Q09NTUlU',
-      // The re-added device is recorded with the advance, before its Welcome or the broadcast.
-      admits: [{ userId: 'u2', deviceId: 'd2' }],
-    });
+    // The committer is the device the PushSecret authenticated, held to the foreground gate.
+    expect(validateCommit).toHaveBeenCalledWith(
+      {
+        groupId: 'g1',
+        deviceId: 'd1',
+        senderId: 'u1',
+        baseEpoch: 7,
+        proto: 'Q09NTUlU',
+        // The re-added device is recorded with the advance, before its Welcome or the broadcast.
+        admits: [{ userId: 'u2', deviceId: 'd2' }],
+      },
+      'u1'
+    );
     expect(sendWelcome).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ proto: 'Q09NTUlU', groupId: 'g1', isCommit: true })
     );
     expect(res).toEqual({ status: 'done' });
+  });
+
+  it('sends neither Welcome nor broadcast when the gate refuses the committer', async () => {
+    validateCommit.mockRejectedValue(
+      new ForbiddenException({
+        error: 'committer_not_member',
+        message: 'this commit is not accepted',
+      })
+    );
+
+    await expect(controller.sendWelcomeAndCommitPush(AUTH, body)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(sendWelcome).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it('broadcasts the SAME bytes it asked the commit log to record', async () => {

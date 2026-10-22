@@ -1,10 +1,10 @@
 import {
   MLS_MAX_PAST_EPOCHS,
   isBeyondPastEpochWindow,
-  isExternalCommitFrame,
   mlsFrameEpoch,
+  readCommitFrame,
 } from './mls-frame-epoch';
-import { mlsFrame as frame } from '../testing/mlsFrameFixture';
+import { externalCommitFrame, mlsFrame as frame } from '../testing/mlsFrameFixture';
 
 const GROUP = '68227a77-0515-43d7-b7ee-2943bfa78f1f';
 
@@ -33,19 +33,38 @@ describe('mlsFrameEpoch', () => {
   });
 });
 
-describe('isExternalCommitFrame', () => {
-  it('reads a PublicMessage whose sender is new_member_commit as an external commit', () => {
-    expect(isExternalCommitFrame(frame(1, GROUP, 9n, 1, 4))).toBe(true);
-    expect(isExternalCommitFrame(frame(1, GROUP, 9n, 2, 4))).toBe(true);
+describe('readCommitFrame', () => {
+  it('reads a member commit (PrivateMessage) as its group and epoch', () => {
+    expect(readCommitFrame(frame(2, GROUP, 9n))).toEqual({
+      groupId: GROUP,
+      epoch: 9,
+      external: false,
+    });
   });
 
-  it('reads a member commit, a PrivateMessage and anything unparsable as NOT one', () => {
-    expect(isExternalCommitFrame(frame(1, GROUP, 9n, 1, 1))).toBe(false);
-    // A PrivateMessage encrypts its sender: the byte after the epoch is not a sender type.
-    expect(isExternalCommitFrame(frame(2, GROUP, 9n, 1, 4))).toBe(false);
-    expect(isExternalCommitFrame(frame(3, GROUP, 9n, 1, 4))).toBe(false);
-    expect(isExternalCommitFrame(frame(1, GROUP, 9n, 1, 4).slice(0, 20))).toBe(false);
-    expect(isExternalCommitFrame('cGF5bG9hZA==')).toBe(false);
+  it('reads a well-formed external commit as one, whatever the length prefixes', () => {
+    expect(readCommitFrame(externalCommitFrame(GROUP, 9n))).toEqual({
+      groupId: GROUP,
+      epoch: 9,
+      external: true,
+    });
+    expect(readCommitFrame(externalCommitFrame(GROUP, 9n, 2))?.external).toBe(true);
+    // A non-empty authenticated_data is skipped by its own length.
+    expect(readCommitFrame(frame(1, GROUP, 9n, 1, [4, 2, 0xaa, 0xbb, 3]))?.external).toBe(true);
+  });
+
+  it('refuses a PublicMessage that is not a well-formed external commit - Canari sends none', () => {
+    // A member sender in the clear, an external commit whose content is not a commit, a truncation.
+    expect(readCommitFrame(frame(1, GROUP, 9n, 1, [1, 0, 3]))).toBeNull();
+    expect(readCommitFrame(frame(1, GROUP, 9n, 1, [4, 0, 1]))).toBeNull();
+    expect(readCommitFrame(frame(1, GROUP, 9n, 1, [4]))).toBeNull();
+    expect(readCommitFrame(frame(1, GROUP, 9n, 1, [4, 5, 0]))).toBeNull();
+  });
+
+  it('refuses anything that is not a framed commit', () => {
+    expect(readCommitFrame(frame(3, GROUP, 9n))).toBeNull();
+    expect(readCommitFrame(externalCommitFrame(GROUP, 9n).slice(0, 20))).toBeNull();
+    expect(readCommitFrame('cGF5bG9hZA==')).toBeNull();
   });
 });
 

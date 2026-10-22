@@ -3,6 +3,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { FindOperator, IsNull } from 'typeorm';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -14,7 +15,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
-import { mlsFrame } from '../testing/mlsFrameFixture';
+import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
 
 describe('MessagingService - commit-log (rung-1 backbone)', () => {
   let service: MessagingService;
@@ -190,14 +191,17 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
-      const res = await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-1',
-        baseEpoch: 5,
-        proto: 'Y29tbWl0',
-        senderId: 'user-1',
-        excludeDeviceIds: ['user-1:device-1'],
-      });
+      const res = await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: memberCommitFrame('group-1', 5n),
+          senderId: 'user-1',
+          excludeDeviceIds: ['user-1:device-1'],
+        },
+        'user-1'
+      );
 
       expect(res.accepted).toBe(true);
       expect(res.newEpoch).toBe(6);
@@ -208,7 +212,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(commitInsertBuilder.values).toHaveBeenCalledWith({
         groupId: 'group-1',
         baseEpoch: 5,
-        commit: 'Y29tbWl0',
+        commit: memberCommitFrame('group-1', 5n),
         senderDeviceId: 'device-1',
       });
       expect(commitInsertBuilder.orIgnore).toHaveBeenCalled();
@@ -216,7 +220,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(fanOut).toHaveBeenCalledWith(
         expect.objectContaining({
           groupId: 'group-1',
-          proto: 'Y29tbWl0',
+          proto: memberCommitFrame('group-1', 5n),
           isCommit: true,
           excludeDeviceIds: ['user-1:device-1'],
         }),
@@ -239,14 +243,17 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
-      const res = await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-1',
-        baseEpoch: 5,
-        proto: 'Y29tbWl0',
-        senderId: 'user-1',
-        groupInfo: 'Z2k=',
-      });
+      const res = await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: memberCommitFrame('group-1', 5n),
+          senderId: 'user-1',
+          groupInfo: 'Z2k=',
+        },
+        'user-1'
+      );
 
       expect(res.accepted).toBe(true);
       // Under the epoch the commit CREATES, not the one it was built on: a base stored at 5 is the
@@ -271,13 +278,16 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
-      const res = await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-1',
-        baseEpoch: 5,
-        proto: 'Y29tbWl0',
-        senderId: 'user-1',
-      });
+      const res = await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: memberCommitFrame('group-1', 5n),
+          senderId: 'user-1',
+        },
+        'user-1'
+      );
 
       expect(res.accepted).toBe(true);
       expect(groupUpdate).toHaveBeenCalledWith({ id: 'group-1' }, { activeEpoch: 6 });
@@ -290,14 +300,17 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       // happened would strand the group permanently - worse than the staleness it replaces.
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 7 });
 
-      const res = await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-1',
-        baseEpoch: 5,
-        proto: 'Y29tbWl0',
-        senderId: 'user-1',
-        groupInfo: 'Z2k=',
-      });
+      const res = await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: memberCommitFrame('group-1', 5n),
+          senderId: 'user-1',
+          groupInfo: 'Z2k=',
+        },
+        'user-1'
+      );
 
       expect(res).toEqual({ accepted: false, currentEpoch: 7, reason: 'epoch_mismatch' });
       expect(transaction).not.toHaveBeenCalled();
@@ -310,18 +323,22 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       // receives neither the history bundle it solicits nor any later message.
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
       deviceGroupRepo.findOne.mockResolvedValue(null);
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'user-2' });
       jest
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
-      const res = await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-new',
-        baseEpoch: 1,
-        proto: 'Y29tbWl0',
-        senderId: 'user-2',
-        excludeDeviceIds: ['user-2:device-new'],
-      });
+      const res = await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-new',
+          baseEpoch: 1,
+          proto: externalCommitFrame('group-1', 1n),
+          senderId: 'user-2',
+          excludeDeviceIds: ['user-2:device-new'],
+        },
+        'user-2'
+      );
 
       expect(res.accepted).toBe(true);
       // `kickedAt: null` is part of the payload since 2026-09-04: activating a device answers
@@ -351,13 +368,16 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
-      await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-1',
-        baseEpoch: 5,
-        proto: 'Y29tbWl0',
-        senderId: 'user-1',
-      });
+      await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: memberCommitFrame('group-1', 5n),
+          senderId: 'user-1',
+        },
+        'user-1'
+      );
 
       expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
     });
@@ -369,18 +389,22 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     it('refuses to promote a device on the revocation denylist', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
       deviceGroupRepo.findOne.mockResolvedValue(null);
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'user-2' });
       revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
       jest
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
-      const res = await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-revoked',
-        baseEpoch: 1,
-        proto: 'Y29tbWl0',
-        senderId: 'user-2',
-      });
+      const res = await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-revoked',
+          baseEpoch: 1,
+          proto: externalCommitFrame('group-1', 1n),
+          senderId: 'user-2',
+        },
+        'user-2'
+      );
 
       // The COMMIT itself is still accepted - it is cryptographically valid and other members
       // must apply it. Only the routing membership is refused.
@@ -389,22 +413,27 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(redis.sadd).not.toHaveBeenCalledWith('group:members:group-1', 'user-2:device-revoked');
     });
 
-    it('refuses to promote a device with no static KeyPackage', async () => {
+    it('refuses a commit from a device with no static KeyPackage, before promoting anything', async () => {
+      // It is registered to nobody, so it is not the committer's device: refused at the door, where
+      // it used to be accepted and only its promotion refused.
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
       deviceGroupRepo.findOne.mockResolvedValue(null);
       keyPackageRepo.findOne.mockResolvedValue(null);
-      jest
-        .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
-      await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-ghost',
-        baseEpoch: 1,
-        proto: 'Y29tbWl0',
-        senderId: 'user-2',
-      });
+      await expect(
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-ghost',
+            baseEpoch: 1,
+            proto: externalCommitFrame('group-1', 1n),
+            senderId: 'user-2',
+          },
+          'user-2'
+        )
+      ).rejects.toMatchObject({ response: { error: 'device_not_owned' } });
 
+      expect(transaction).not.toHaveBeenCalled();
       expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
     });
 
@@ -412,12 +441,16 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 9 });
       const fanOut = jest.spyOn(service, 'sendMessage');
 
-      const res = await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-1',
-        baseEpoch: 5,
-        proto: 'Y29tbWl0',
-      });
+      const res = await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: memberCommitFrame('group-1', 5n),
+          senderId: 'user-1',
+        },
+        'user-1'
+      );
 
       expect(res.accepted).toBe(false);
       expect(res.reason).toBe('epoch_mismatch');
@@ -433,7 +466,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       const fanOut = jest.spyOn(service, 'sendMessage');
 
       await expect(
-        service.validateCommit({ groupId: 'group-1', deviceId: 'device-1', baseEpoch: 5 })
+        service.validateCommit(
+          { groupId: 'group-1', deviceId: 'device-1', baseEpoch: 5, senderId: 'user-1' },
+          'user-1'
+        )
       ).rejects.toBeInstanceOf(BadRequestException);
 
       expect(groupUpdate).not.toHaveBeenCalled();
@@ -450,13 +486,16 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       commitInsertBuilder.execute.mockRejectedValueOnce(new Error('deadlock detected'));
 
       await expect(
-        service.validateCommit({
-          groupId: 'group-1',
-          deviceId: 'device-1',
-          baseEpoch: 5,
-          proto: 'Y29tbWl0',
-          senderId: 'user-1',
-        })
+        service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-1',
+            baseEpoch: 5,
+            proto: memberCommitFrame('group-1', 5n),
+            senderId: 'user-1',
+          },
+          'user-1'
+        )
       ).rejects.toThrow('deadlock detected');
 
       // The fan-out is the LAST step for exactly this reason: nobody is handed a commit whose
@@ -614,7 +653,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     /** Every key of `where` must match: a lookup on the wrong columns finds nothing. */
     const hits = (rows: Row[], where: Row | Row[]): Row[] =>
       (Array.isArray(where) ? where : [where]).flatMap((w) =>
-        rows.filter((r) => Object.entries(w).every(([k, v]) => r[k] === v))
+        rows.filter((r) =>
+          Object.entries(w).every(([k, v]) =>
+            v instanceof FindOperator && v.type === 'isNull' ? r[k] == null : r[k] === v
+          )
+        )
       );
     /**
      * The three tables the gate reads, as rows the mocks answer from by their `where` - so a test
@@ -646,8 +689,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       status: 'active',
     };
     /** A member commit and an external commit, as their clear headers say (RFC 9420 section 6). */
-    const MEMBER_COMMIT = mlsFrame(1, 'group-1', 5n, 1, 1);
-    const EXTERNAL_COMMIT = mlsFrame(1, 'group-1', 5n, 1, 4);
+    const MEMBER_COMMIT = memberCommitFrame('group-1', 5n);
+    const EXTERNAL_COMMIT = externalCommitFrame('group-1', 5n);
     const fanOut = () =>
       jest
         .spyOn(service, 'sendMessage')
@@ -717,22 +760,46 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).not.toHaveBeenCalled();
     });
 
-    it('refuses a member commit from a REMOVED member - its row was demoted', async () => {
-      tables({ keyPackages: [ownKey], devices: [{ ...ownDevice, status: 'pending' }] });
+    it('refuses a member commit from a KICKED device - its row is pending and stamped', async () => {
+      tables({
+        keyPackages: [ownKey],
+        devices: [{ ...ownDevice, status: 'pending', kickedAt: new Date('2026-10-20T00:00:00Z') }],
+      });
       const sent = fanOut();
 
       await expect(commit({}, 'user-1')).rejects.toMatchObject({
         response: { error: 'committer_not_member' },
       });
       expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
-        where: { groupId: 'group-1', userId: 'user-1', deviceId: 'device-1', status: 'active' },
+        where: [
+          { groupId: 'group-1', userId: 'user-1', deviceId: 'device-1', status: 'active' },
+          {
+            groupId: 'group-1',
+            userId: 'user-1',
+            deviceId: 'device-1',
+            status: 'pending',
+            kickedAt: IsNull(),
+          },
+        ],
         select: { deviceId: true },
       });
       expect(transaction).not.toHaveBeenCalled();
       expect(sent).not.toHaveBeenCalled();
     });
 
-    it('refuses a member commit from a device that was never in the group', async () => {
+    it('accepts a member commit from a device whose Welcome is processed but not yet reported', async () => {
+      // `updateInvitationStatus(..., 'active')` is not awaited after a Welcome, so the device's first
+      // commit can reach the gate while its row is still `pending` - never kicked.
+      tables({
+        keyPackages: [ownKey],
+        devices: [{ ...ownDevice, status: 'pending', kickedAt: null }],
+      });
+      fanOut();
+
+      await expect(commit({}, 'user-1')).resolves.toMatchObject({ accepted: true });
+    });
+
+    it('refuses a member commit from a REMOVED member - the removal deleted its rows', async () => {
       tables({ keyPackages: [ownKey] });
 
       await expect(commit({}, 'user-1')).rejects.toMatchObject({
@@ -762,7 +829,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).not.toHaveBeenCalled();
     });
 
-    it("accepts a key group's external commit UNGATED, and says so", async () => {
+    it("accepts a key group's external commit, and logs each one", async () => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
       tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
       fanOut();
@@ -771,7 +838,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         accepted: true,
       });
       expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
-        'UNGATED key-group external commit'
+        'key-group external join'
       );
       warn.mockRestore();
     });
@@ -832,28 +899,51 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       );
     });
 
-    it('still serves an internal caller, which names no header', async () => {
-      tables({});
+    it.each([
+      ['another group', memberCommitFrame('group-2', 5n)],
+      ['another epoch', memberCommitFrame('group-1', 4n)],
+      ['an unframed body', 'Y29tbWl0'],
+      ['a truncated external commit', externalCommitFrame('group-1', 5n).slice(0, 24)],
+    ])('refuses a commit whose header is %s, before anything is read', async (_name, proto) => {
+      tables({
+        keyPackages: [ownKey],
+        devices: [ownDevice],
+        roster: [{ groupId: 'group-1', userId: 'user-1' }],
+      });
       const sent = fanOut();
 
-      const res = await commit({ excludeDeviceIds: ['user-1:device-1'] });
+      await expect(commit({ proto }, 'user-1')).rejects.toMatchObject({
+        response: { error: 'commit_malformed' },
+      });
+      expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
+      expect(sent).not.toHaveBeenCalled();
+    });
 
-      expect(res.accepted).toBe(true);
-      expect(sent).toHaveBeenCalled();
+    it("holds a key group's external commit to the same header: its own group and epoch", async () => {
+      tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
+
+      await expect(
+        commit({ proto: externalCommitFrame('group-2', 5n) }, 'user-1')
+      ).rejects.toMatchObject({ response: { error: 'commit_malformed' } });
+      expect(transaction).not.toHaveBeenCalled();
     });
   });
 
   describe('the newcomers a commit admits', () => {
     const accept = (admits?: { userId: string; deviceId: string }[]) => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
-      return service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-1',
-        baseEpoch: 5,
-        proto: 'Y29tbWl0',
-        senderId: 'user-1',
-        admits,
-      });
+      return service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: memberCommitFrame('group-1', 5n),
+          senderId: 'user-1',
+          admits,
+        },
+        'user-1'
+      );
     };
 
     it('writes each admitted device pending at the epoch the commit creates, inside the advance', async () => {
@@ -924,14 +1014,17 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
-      await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-1',
-        baseEpoch: 5,
-        proto: 'Y29tbWl0',
-        senderId: 'user-1',
-        removes: [{ userId: 'bob' }],
-      });
+      await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: memberCommitFrame('group-1', 5n),
+          senderId: 'user-1',
+          removes: [{ userId: 'bob' }],
+        },
+        'user-1'
+      );
 
       expect(fanOut).toHaveBeenCalledWith(expect.objectContaining({ isCommit: true }), undefined, [
         { userId: 'bob', deviceId: 'b1' },
@@ -945,13 +1038,16 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
-      await service.validateCommit({
-        groupId: 'group-1',
-        deviceId: 'device-1',
-        baseEpoch: 5,
-        proto: 'Y29tbWl0',
-        senderId: 'user-1',
-      });
+      await service.validateCommit(
+        {
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: memberCommitFrame('group-1', 5n),
+          senderId: 'user-1',
+        },
+        'user-1'
+      );
 
       expect(fanOut).toHaveBeenCalledWith(expect.anything(), undefined, []);
     });

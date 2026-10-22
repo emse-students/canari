@@ -8,7 +8,15 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThanOrEqual, LessThan, LessThanOrEqual, EntityManager } from 'typeorm';
+import {
+  Repository,
+  In,
+  MoreThanOrEqual,
+  LessThan,
+  LessThanOrEqual,
+  EntityManager,
+  IsNull,
+} from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
@@ -30,8 +38,8 @@ import { activeRevocationWhere } from '../utils/revocation';
 import {
   MLS_MAX_PAST_EPOCHS,
   isBeyondPastEpochWindow,
-  isExternalCommitFrame,
   mlsFrameEpoch,
+  readCommitFrame,
 } from '../utils/mls-frame-epoch';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
@@ -1704,43 +1712,40 @@ export class MessagingService {
    */
   async validateCommit(
     body: ValidateCommitBody,
-    authUserIdRaw?: string
+    authUserIdRaw: string
   ): Promise<ValidateCommitResult> {
     const traceId = this.makeTraceId('commit');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    // THE COMMITTER IS THE CALLER. `senderId` names the author of the fan-out and the member whose
-    // device this commit activates, so a client route must name itself. Absent header = an internal
-    // caller (the background Welcome), which authenticated the device on its own route.
-    /** The authenticated committer of a client commit; undefined for the internal caller. */
-    let committer: string | undefined;
-    if (authUserIdRaw !== undefined) {
-      if (typeof body.senderId !== 'string' || body.senderId.length === 0) {
-        this.logger.warn(`[COMMIT][${traceId}] REJECT no_sender group=${groupId}`);
-        throw new BadRequestException({
-          error: 'sender_required',
-          message: 'senderId is required',
-        });
-      }
-      this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'COMMIT');
-      committer = sanitizeQueryValue(authUserIdRaw, 'x-user-id');
-      // AND THE DEVICE IS THE CALLER'S: the commit activates `senderId:deviceId`, so a device
-      // registered to anyone else is refused. The static KeyPackage row is the registry, and it is
-      // unique on the PAIR - read by the pair, never by the device id alone.
-      const registered = await this.keyPackageRepo.findOne({
-        where: { userId: committer, deviceId },
-        select: { id: true },
+    // THE COMMITTER IS THE CALLER, ON BOTH ROUTES THAT REACH HERE. `senderId` names the author of the
+    // fan-out and the member whose device this commit activates, so it must be the authenticated
+    // caller: the `x-user-id` of `POST /mls/commit`, or the device a PushSecret authenticated on the
+    // background Welcome. There is no unauthenticated caller to exempt.
+    const committer = sanitizeQueryValue(authUserIdRaw, 'committer');
+    if (typeof body.senderId !== 'string' || body.senderId.length === 0) {
+      this.logger.warn(`[COMMIT][${traceId}] REJECT no_sender group=${groupId}`);
+      throw new BadRequestException({
+        error: 'sender_required',
+        message: 'senderId is required',
       });
-      if (!registered) {
-        this.logger.warn(
-          `[COMMIT][${traceId}] REJECT device_not_owned group=${groupId} device=${deviceId} ` +
-            `sender=${sanitizeLogValue(committer)}`
-        );
-        throw new ForbiddenException({
-          error: 'device_not_owned',
-          message: 'this device is not registered to the committer',
-        });
-      }
+    }
+    this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'COMMIT');
+    // AND THE DEVICE IS THE CALLER'S: the commit activates `senderId:deviceId`, so a device
+    // registered to anyone else is refused. The static KeyPackage row is the registry, and it is
+    // unique on the PAIR - read by the pair, never by the device id alone.
+    const registered = await this.keyPackageRepo.findOne({
+      where: { userId: committer, deviceId },
+      select: { id: true },
+    });
+    if (!registered) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT device_not_owned group=${groupId} device=${deviceId} ` +
+          `sender=${sanitizeLogValue(committer)}`
+      );
+      throw new ForbiddenException({
+        error: 'device_not_owned',
+        message: 'this device is not registered to the committer',
+      });
     }
     const baseEpoch =
       typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)
@@ -1781,9 +1786,22 @@ export class MessagingService {
         'proto is required: a commit that cannot be replayed may not advance the epoch'
       );
     }
-    if (committer !== undefined) {
-      await this.assertCommitterMayCommit(groupId, committer, deviceId, commitProto, traceId);
+    // THE COMMIT MUST SAY WHAT THE REQUEST SAYS: its clear header names this group and this base
+    // epoch, and it has the shape of a member or an external commit (`readCommitFrame`). The gate
+    // below decides who may commit on the header's word, so the header is not left free.
+    const frame = readCommitFrame(commitProto);
+    if (!frame || frame.groupId !== groupId || frame.epoch !== baseEpoch) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT commit_malformed group=${groupId} device=${deviceId} ` +
+          `baseEpoch=${baseEpoch} framed=${!!frame} groupMatch=${frame?.groupId === groupId} ` +
+          `epochMatch=${frame?.epoch === baseEpoch}`
+      );
+      throw new BadRequestException({
+        error: 'commit_malformed',
+        message: 'this commit is not accepted',
+      });
     }
+    await this.assertCommitterMayCommit(groupId, committer, deviceId, frame.external, traceId);
 
     this.logger.log(
       `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`
@@ -2454,40 +2472,40 @@ export class MessagingService {
   /**
    * Whether the caller may commit to `groupId` at all, decided before the epoch gate.
    *
-   * - A MEMBER COMMIT comes from a device the group routes to: an `active` row of the caller's own.
-   *   A removed member's device was demoted when it was removed, so it is refused here.
+   * - A MEMBER COMMIT comes from a device of the caller's that the group holds: `active`, or
+   *   `pending` and never kicked - a device that has processed its Welcome reports itself `active`
+   *   without waiting (`updateInvitationStatus` is not awaited), so a commit can precede that report.
+   *   A removal deletes the removed member's rows and a kick stamps `kickedAt`: both are refused.
    * - AN EXTERNAL COMMIT is the one commit made from outside the tree (an external join or rejoin),
-   *   recognised by its own clear header ({@link isExternalCommitFrame}), never by a client flag. It
-   *   is accepted from whoever may read the base it is built on - the roster predicate of
+   *   recognised by its own clear header ({@link readCommitFrame}), never by a client flag. It is
+   *   accepted from whoever may read the base it is built on - the roster predicate of
    *   {@link getGroupInfo} - so the gate and the door it guards answer the same question.
    *
-   * A KEY-DISTRIBUTION GROUP'S EXTERNAL COMMIT IS NOT GATED YET: its roster is community or salon
-   * membership, held by social-service, and it carries no `dm_group_members` row by construction.
-   * Each one is accepted and SAID, until that service answers the question
-   * (`docs/wiki/backlog.md`, WP-KEYGROUP-JOIN-GATE).
-   *
-   * Client commits only: the internal background Welcome authenticates the device on its own route.
+   * A key-distribution group's external join has no entitlement check here yet (WP-KEYGROUP-JOIN-GATE
+   * in `docs/wiki/backlog.md`); each one is logged.
    */
   private async assertCommitterMayCommit(
     groupId: string,
     userId: string,
     deviceId: string,
-    proto: string,
+    external: boolean,
     traceId: string
   ): Promise<void> {
-    const external = isExternalCommitFrame(proto);
     if (external && (await this.isKeyDistributionGroup(groupId))) {
       this.logger.warn(
-        `[COMMIT][${traceId}] UNGATED key-group external commit group=${groupId} ` +
-          `device=${sanitizeLogValue(userId)}:${deviceId} - no entitlement check until ` +
-          `social-service answers it (WP-KEYGROUP-JOIN-GATE)`
+        `[COMMIT][${traceId}] key-group external join group=${groupId} ` +
+          `device=${sanitizeLogValue(userId)}:${deviceId} - no entitlement check yet ` +
+          `(WP-KEYGROUP-JOIN-GATE)`
       );
       return;
     }
     const allowed = external
       ? await this.isOnRoster(groupId, userId)
       : !!(await this.deviceGroupRepo.findOne({
-          where: { groupId, userId, deviceId, status: 'active' as const },
+          where: [
+            { groupId, userId, deviceId, status: 'active' as const },
+            { groupId, userId, deviceId, status: 'pending' as const, kickedAt: IsNull() },
+          ],
           select: { deviceId: true },
         }));
     if (allowed) return;
