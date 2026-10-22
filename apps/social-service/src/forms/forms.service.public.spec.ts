@@ -478,23 +478,26 @@ describe('FormsService - public forms', () => {
       });
 
       // Two questions with one id: one reader judged the first, another the last, so a required,
-      // shown-to-all copy hid a skippable one. Ids are unique at save. Control (2026-10-22):
-      // `assertUniqueItemIds` removed -> the create and the edit both save.
+      // shown-to-all copy hid a skippable one. Ids are unique at create, and on an edit whose
+      // questions' ids differ from the stored ones; a duplicate ALREADY STORED never blocks an edit
+      // that leaves those ids as they are. Controls (2026-10-22): the refusal removed -> the create
+      // and the two edit refusals save; the edit judged on the stored list as before (`input.items ??
+      // form.items`, no stored comparison) -> the four edits that keep the ids are refused.
       const twinMenus = [
         gate,
         menu(),
         menu({ showIf: { answer: { questionId: 'q_come', optionIds: ['y'] } } }),
       ];
 
-      it('refuses two questions with one id, at create', async () => {
+      it('refuses two questions with one id at create, naming both', async () => {
         const { service, formRepo } = makeService();
         await expect(
           service.create(input({ requiresPayment: true, items: twinMenus, priceMatrix: grid(0) }))
-        ).rejects.toThrow(/share the id q_menu/);
+        ).rejects.toThrow('Questions 2 ("Menu") and 3 ("Menu") share the id q_menu');
         expect(formRepo.save).not.toHaveBeenCalled();
       });
 
-      it('refuses two questions with one id, on an edit', async () => {
+      it('refuses an edit that makes two questions share an id', async () => {
         const { service, formRepo } = makeService();
         jest
           .spyOn(service, 'assertFormManager')
@@ -503,6 +506,47 @@ describe('FormsService - public forms', () => {
           service.update('f1', { items: twinMenus } as any, 'u1', false)
         ).rejects.toThrow(/share the id q_menu/);
         expect(formRepo.save).not.toHaveBeenCalled();
+      });
+
+      describe('a form STORED with two questions sharing an id', () => {
+        const stored = () => baseForm({ isPublic: false, items: twinMenus }) as any;
+        /** A service whose form is `stored()`, past the cotisation lookup an edit of items makes. */
+        const editing = () => {
+          const made = makeService();
+          jest.spyOn(made.service, 'assertFormManager').mockResolvedValue(stored());
+          jest
+            .spyOn(made.service as any, 'assertCotisationConfigValid')
+            .mockResolvedValue(undefined);
+          return made;
+        };
+
+        it.each([
+          ['its title', { title: 'Gala 2027' }],
+          ['its cash deadline', { cashPaymentExpiryDays: 3 }],
+          ['its closing', { closedAt: '2026-11-01T00:00:00.000Z' }],
+          // What the edit page sends for a title change: the whole list, converted for the API.
+          ['its title, the questions resent as they are', { title: 'Gala 2027', items: twinMenus }],
+        ])('stays editable for %s', async (_name, edit) => {
+          const { service, formRepo } = editing();
+          await service.update('f1', edit as any, 'u1', false);
+          expect(formRepo.save).toHaveBeenCalled();
+        });
+
+        it('is refused when its questions are edited and the duplicate kept', async () => {
+          const { service, formRepo } = editing();
+          const extra = { id: 'q_note', label: 'Remarque', type: 'short_text' };
+          await expect(
+            service.update('f1', { items: [...twinMenus, extra] } as any, 'u1', false)
+          ).rejects.toThrow(/share the id q_menu/);
+          expect(formRepo.save).not.toHaveBeenCalled();
+        });
+
+        it('saves the edit that fixes the duplicate', async () => {
+          const { service, formRepo } = editing();
+          const fixed = [twinMenus[0], twinMenus[1], { ...twinMenus[2], id: 'q_menu_2' }];
+          await service.update('f1', { items: fixed } as any, 'u1', false);
+          expect(formRepo.save).toHaveBeenCalled();
+        });
       });
 
       it('refuses to publish a stored grid that the edit leaves out', async () => {

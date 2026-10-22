@@ -38,20 +38,47 @@ export function decidesPrice(item: PricedItem, gridQuestions: Set<string>): bool
   return isChoice && (item.options ?? []).some((o) => (o.priceModifier ?? 0) > 0);
 }
 
+/** The subset of an item the duplicate-id check reads. */
+interface IdentifiedItem {
+  id?: string;
+  label?: string;
+}
+
 /**
- * Refuses two questions with one id. Every reader of a form resolves a question by its id, and two
- * readers resolving a duplicate differently (the first, or the last) would judge one question and
- * price another.
+ * Refuses two questions with one id, naming both so the organiser can fix them. Every reader of a
+ * form resolves a question by its id, and two readers resolving a duplicate differently (the first,
+ * or the last) would judge one question and price another.
+ *
+ * On an edit, pass the STORED items: a duplicate already stored never blocks an edit that leaves the
+ * questions' ids as they are. The edit page resends the whole list on every save - a title, a
+ * deadline, closing the form - converted for the API (`itemsPayload.ts`), so the list sent is never
+ * byte-equal to the stored one; its ID SEQUENCE is. Only a list whose ids differ from the stored ones
+ * (a question added, removed, reordered or re-identified) is held to the rule.
  */
-export function assertUniqueItemIds(items: readonly { id?: string }[] | null | undefined): void {
-  const seen = new Set<string>();
-  for (const item of items ?? []) {
-    if (!item.id) continue;
-    if (seen.has(item.id)) {
-      throw new BadRequestException(`Two questions share the id ${item.id}; each needs its own.`);
+export function assertUniqueItemIds(
+  items: readonly IdentifiedItem[] | null | undefined,
+  stored?: readonly IdentifiedItem[] | null
+): void {
+  const list = items ?? [];
+  if (stored && sameIdSequence(list, stored)) return;
+  const firstAt = new Map<string, number>();
+  list.forEach((item, index) => {
+    if (!item.id) return;
+    const first = firstAt.get(item.id);
+    if (first === undefined) {
+      firstAt.set(item.id, index);
+      return;
     }
-    seen.add(item.id);
-  }
+    throw new BadRequestException(
+      `Questions ${first + 1} ("${list[first].label ?? ''}") and ${index + 1} ` +
+        `("${item.label ?? ''}") share the id ${item.id}; each needs its own.`
+    );
+  });
+}
+
+/** Whether two question lists carry the same ids, in the same order. */
+function sameIdSequence(a: readonly IdentifiedItem[], b: readonly IdentifiedItem[]): boolean {
+  return a.length === b.length && a.every((item, i) => item.id === b[i].id);
 }
 
 /** Whether a value is "no answer": what the fill page sends for a choice left empty. */

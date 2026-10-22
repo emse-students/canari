@@ -658,7 +658,9 @@ export class FormsService {
     }
     // The questions the form WILL have: an absent list keeps the stored one, file questions included.
     const items = input.items ?? form.items;
-    assertUniqueItemIds(items);
+    // Only the questions this edit SENDS are judged, against the stored ones: a duplicate already
+    // stored never blocks an edit that leaves the questions' ids as they are.
+    if (input.items !== undefined) assertUniqueItemIds(input.items, form.items);
     this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
     // the answers already stored. An absent value means "leave it", so the stored one is checked -

@@ -491,9 +491,20 @@ the price is only as good as the answer it is computed from:
   or a dropdown. A question turned into a matrix keeps its old options as columns; its answer is an
   object that never charged, so it is not judged, and the editor stores those columns at no price
   (`itemsPayload.ts`).
-- **Two questions never share an id** (`assertUniqueItemIds`, at create and on every edit): every
-  reader resolves a question by its id, and two readers resolving a duplicate differently would
-  judge one question and price another.
+- **Two questions never share an id** (`assertUniqueItemIds`): every reader resolves a question by
+  its id, and two readers resolving a duplicate differently would judge one question and price
+  another.
+  - **When it applies:** at create, and on an edit whose questions' ids differ from the stored ones
+    (a question added, removed, reordered or re-identified). The refusal names both questions, by
+    position and label, so the organiser can fix them.
+  - **What it never blocks:** a duplicate ALREADY STORED never blocks an edit that leaves the ids as
+    they are - a title, a deadline, closing the form. The edit page resends the whole list on every
+    save, converted for the API (`itemsPayload.ts`), so the list is compared by its ID SEQUENCE,
+    never byte for byte.
+  - **What that costs:** an edit that changes a duplicated question's CONTENT but keeps its id is
+    not refused either; the next change to the ids is.
+  - **It depends on no count.** How many production forms hold a duplicate today is a reading the
+    user owes, for information only.
 - **The stored answer is the priced one.** The answer to a question the submitter did not see
   (`visibleItemIds`) is neither charged nor required, and it is no longer stored either, nor is its
   file attached.
