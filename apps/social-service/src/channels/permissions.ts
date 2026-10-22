@@ -122,8 +122,8 @@ export function roleGrantsRoleManagement(permissions: readonly string[]): boolea
 
 /**
  * Whether an actor holding `actorPermissions` (the union over all their roles) may hand somebody a
- * role granting `grantedPermissions` - THE ONLY definition, asked wherever a role is granted outside
- * the role-management screen.
+ * role granting `grantedPermissions` - THE ONLY definition, asked wherever a role is granted: an
+ * invitation naming a role, an assignment, a permission edit, a new role.
  *
  * Two conditions. The actor manages roles (`roleGrantsRoleManagement`), the same right the
  * role-management endpoints require. AND the role grants nothing the actor does not hold, so a grant
@@ -147,6 +147,12 @@ export function actorMayGrantRole(
  * A CODE, so a client maps the refusal from what the server typed rather than from its prose.
  */
 export const INVITE_ROLE_NOT_GRANTABLE = 'INVITE_ROLE_NOT_GRANTABLE';
+
+/**
+ * The refusal code of a role change - an assignment, a permission edit, a new role - that would
+ * grant, or touch, more than the actor holds (`actorMayGrantRole`).
+ */
+export const ROLE_CHANGE_EXCEEDS_ACTOR = 'ROLE_CHANGE_EXCEEDS_ACTOR';
 
 /**
  * The refusal code of a pin or unpin by a member who may not moderate - whoever wrote the message.

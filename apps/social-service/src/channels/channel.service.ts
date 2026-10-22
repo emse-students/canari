@@ -45,6 +45,7 @@ import {
   DEFAULT_MEMBER_PERMISSIONS,
   INVITE_ROLE_NOT_GRANTABLE,
   PIN_REQUIRES_MODERATION,
+  ROLE_CHANGE_EXCEEDS_ACTOR,
   roleGrantsChannelManagement,
   roleGrantsModeration,
   roleGrantsRoleManagement,
@@ -1966,20 +1967,18 @@ export class ChannelService implements OnApplicationBootstrap {
 
   // ================= ROLES =================
 
-  /** Creates a new workspace role. Only members with MANAGE_WORKSPACE or MANAGE_ROLES permission may call this. */
+  /**
+   * Creates a new workspace role. The actor manages roles, and the role grants nothing the actor
+   * does not hold (`actorMayGrantRole`): creating a role is granting what it carries.
+   */
   async createRole(input: CreateRoleDto & { actorUserId: string }) {
-    // Only workspace admins (MANAGE_WORKSPACE or MANAGE_ROLES) may create roles.
-    const actorMember = await this.memberRepo.findOne({
-      where: { workspaceId: input.workspaceId, userId: input.actorUserId },
-    });
-    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
-
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some((r) => roleGrantsRoleManagement(r.permissions));
+    const actorPermissions = await this.assertActorManagesRoles(
+      input.workspaceId,
+      input.actorUserId
+    );
+    if (!actorMayGrantRole(actorPermissions, input.permissions ?? [])) {
+      this.refuseRoleChangeBeyondActor('create', input.workspaceId, input.actorUserId);
     }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
     const role = this.roleRepo.create({
       workspaceId: input.workspaceId,
@@ -2938,7 +2937,10 @@ export class ChannelService implements OnApplicationBootstrap {
   /**
    * Replaces a workspace member's roleIds with the single specified role (removes all existing
    * roles). Roles are a workspace-level concept, so this is keyed by workspaceId directly.
-   * Requires the actor to hold MANAGE_WORKSPACE or MANAGE_ROLES in the workspace.
+   * Requires the actor to manage roles, and bounds them by what they hold (`actorMayGrantRole`):
+   * the new role grants nothing they lack, and the target's CURRENT roles do not either - changing
+   * a member who holds more than the actor would be taking away what the actor could never give.
+   * The actor themselves is a target like any other, so nobody can promote themselves past it.
    */
   async updateWorkspaceMemberRole(
     workspaceId: string,
@@ -2946,17 +2948,7 @@ export class ChannelService implements OnApplicationBootstrap {
     roleName: string,
     actorUserId: string
   ) {
-    const adminMember = await this.memberRepo.findOne({
-      where: { workspaceId, userId: actorUserId },
-    });
-    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
-
-    let hasPerm = false;
-    if (adminMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
-      hasPerm = roles.some((r) => roleGrantsRoleManagement(r.permissions));
-    }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+    const actorPermissions = await this.assertActorManagesRoles(workspaceId, actorUserId);
 
     const targetMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: targetUserId },
@@ -2970,6 +2962,18 @@ export class ChannelService implements OnApplicationBootstrap {
       },
     });
     if (!role) throw new NotFoundException('Role not found');
+
+    const targetRoles =
+      targetMember.roleIds?.length > 0
+        ? await this.roleRepo.find({ where: { id: In(targetMember.roleIds) } })
+        : [];
+    const targetPermissions = targetRoles.flatMap((r) => r.permissions);
+    if (
+      !actorMayGrantRole(actorPermissions, role.permissions) ||
+      !actorMayGrantRole(actorPermissions, targetPermissions)
+    ) {
+      this.refuseRoleChangeBeyondActor(`assign role=${role.name}`, workspaceId, actorUserId);
+    }
 
     // A demotion is an exit from the admin set, so it faces the same postcondition as a departure.
     // MANAGE_ROLES alone used to be enough to strip the last Administrateur - including oneself -
@@ -4935,25 +4939,51 @@ export class ChannelService implements OnApplicationBootstrap {
     };
   }
 
-  /** Updates a role's base permissions at the workspace level. */
   /**
-   * The actor's right to edit this workspace's roles - refused here, never returned.
+   * The actor's right to manage this workspace's roles - refused here, never returned - and, when
+   * they have it, the permissions they hold (the union over their roles), which is what bounds
+   * every role change they make (`actorMayGrantRole`).
    *
-   * Shared by the whole-list write and the single-key one so the two can never disagree about who
-   * may edit a role, which is the drift `writePolicyAllows` was extracted to end one feature over.
+   * THE ONE GATE of every role-management write - creating a role, assigning one, editing what one
+   * grants - so they can never disagree about who may do it, which is the drift
+   * `writePolicyAllows` was extracted to end one feature over.
    */
-  private async assertCanManageRoles(role: ChannelRole, actorUserId: string): Promise<void> {
+  private async assertActorManagesRoles(
+    workspaceId: string,
+    actorUserId: string
+  ): Promise<string[]> {
     const actorMember = await this.memberRepo.findOne({
-      where: { workspaceId: role.workspaceId, userId: actorUserId },
+      where: { workspaceId, userId: actorUserId },
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const actorRoles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = actorRoles.some((r) => roleGrantsRoleManagement(r.permissions));
+    const actorRoles =
+      actorMember.roleIds?.length > 0
+        ? await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } })
+        : [];
+    const permissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
+    if (!roleGrantsRoleManagement(permissions)) {
+      throw new ForbiddenException('Missing MANAGE_ROLES permission');
     }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+    return permissions;
+  }
+
+  /**
+   * Refuses a role change that would grant, or touch, more than the actor holds. Logged at warn
+   * with what was attempted, and typed, so a client maps it from the code and never the prose.
+   */
+  private refuseRoleChangeBeyondActor(
+    what: string,
+    workspaceId: string,
+    actorUserId: string
+  ): never {
+    this.logger.warn(
+      `[ROLE] refused ${what} - beyond the actor's own permissions workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+    );
+    throw new ForbiddenException({
+      code: ROLE_CHANGE_EXCEEDS_ACTOR,
+      message: 'This role change goes beyond your own permissions.',
+    });
   }
 
   /**
@@ -5061,7 +5091,7 @@ export class ChannelService implements OnApplicationBootstrap {
   async setRoleBasePermission(roleId: string, actorUserId: string, key: string, granted: boolean) {
     const role = await this.roleRepo.findOne({ where: { id: roleId } });
     if (!role) throw new NotFoundException('Role not found');
-    await this.assertCanManageRoles(role, actorUserId);
+    const actorPermissions = await this.assertActorManagesRoles(role.workspaceId, actorUserId);
 
     const validPermissions = Object.values(CHANNEL_PERMISSIONS) as string[];
     if (!validPermissions.includes(key)) {
@@ -5087,7 +5117,20 @@ export class ChannelService implements OnApplicationBootstrap {
       });
       if (!locked) throw new NotFoundException('Role not found');
 
+      // BOUNDED BY THE ACTOR, read on the LOCKED row so a concurrent grant cannot slip a role past
+      // the check: the role must grant nothing the actor lacks (their own role included), and a
+      // granted key must be one the actor holds.
       const current = locked.permissions ?? [];
+      if (
+        !actorMayGrantRole(actorPermissions, current) ||
+        (granted && !actorMayGrantRole(actorPermissions, [key]))
+      ) {
+        this.refuseRoleChangeBeyondActor(
+          `${granted ? 'grant' : 'revoke'} ${key} on role=${roleId}`,
+          role.workspaceId,
+          actorUserId
+        );
+      }
       locked.permissions = granted
         ? [...new Set([...current, key])]
         : current.filter((p) => p !== key);

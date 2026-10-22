@@ -1318,6 +1318,20 @@ role grants nothing the actor does not hold (`workspace.manage` holds everything
 `403 { code: 'INVITE_ROLE_NOT_GRANTABLE' }`, decided before the device lookup, never a silent
 downgrade. The panel offers the role picker only to `viewerCanManage`, so no client path changed.
 
+**Role changes are bounded by the actor's own permissions, by the same function.** Every
+role-management write goes through `assertActorManagesRoles` (the `roleGrantsRoleManagement` gate,
+returning the union of what the actor holds) and then `actorMayGrantRole`:
+
+| Write | Bound | Refusal |
+|---|---|---|
+| `updateWorkspaceMemberRole` | the new role AND the target's current roles grant nothing the actor lacks - the actor's own membership included | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `setRoleBasePermission` | the role being edited grants nothing the actor lacks (their own role included), and a granted key is one they hold; checked on the LOCKED row | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `createRole` | the new role grants nothing the actor lacks | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+
+`workspace.manage` holds every permission, so an administrator keeps all of it; the bound only
+ever applies to a custom role carrying `role.manage` without `workspace.manage`. Pinned by
+`role-change-bound.spec.ts`.
+
 ### A user id becomes a property name, and four sites spelled the refusal differently (2026-09-23)
 
 Reactions and poll answers are both stored as a map KEYED BY USER ID (`reactions`, `votesByUser`),
