@@ -41,6 +41,14 @@ export interface IncomingSharePayload {
 
 let pending = $state<IncomingSharePayload | null>(null);
 let target = $state<string | null>(null);
+/** The share epoch of the held share (0 outside the Android app, which has none). */
+let pendingEpoch = 0;
+/**
+ * The epoch of the last sign-out this page saw (`fence`): an offer from an older epoch is refused.
+ * It closes the race the erase alone leaves - a drain that claimed its manifest before the sign-out
+ * and offers it after the store was emptied.
+ */
+let floor = 0;
 
 export const incomingShare = {
   /** The share waiting for a destination or for its destination to be displayed. */
@@ -55,8 +63,16 @@ export const incomingShare = {
    * Offers a new share. It REPLACES one not yet taken: the member shared again, and only the latest
    * is what they mean. An empty share (no text, no file) is refused.
    */
-  offer(payload: IncomingSharePayload): boolean {
+  offer(payload: IncomingSharePayload, epoch = 0): boolean {
     const text = payload.text.trim();
+    if (epoch < floor) {
+      appendLog(`[SHARE] a share from before a sign-out (epoch ${epoch} < ${floor}) - deleted`);
+      void discardSharedFiles(
+        payload.files.map((f) => f.path),
+        'offered after a sign-out'
+      );
+      return false;
+    }
     if (!text && payload.files.length === 0) {
       appendLog('[SHARE] an empty share was not offered');
       return false;
@@ -70,6 +86,7 @@ export const incomingShare = {
     }
     appendLog(`[SHARE] offered: ${text.length} chars, ${payload.files.length} file(s)`);
     pending = { text, files: payload.files };
+    pendingEpoch = epoch;
     target = null;
     return true;
   },
@@ -112,6 +129,15 @@ export const incomingShare = {
    * and deletes its copies unread. The picker's dismissal (`cancel`), and a SIGN-OUT
    * (`eraseIncomingShare`): a share must never land in the account signed in next.
    */
+  /**
+   * A sign-out advanced the share epoch to `epoch`: from now on an offer from an older one is
+   * refused, and a held share from an older one is dropped.
+   */
+  fence(epoch: number, reason: string): void {
+    floor = Math.max(floor, epoch);
+    appendLog(`[SHARE] fenced at epoch ${floor} (${reason})`);
+    if (pending && pendingEpoch < floor) this.drop(reason);
+  },
   drop(reason: string): void {
     if (!pending) return;
     appendLog(`[SHARE] dropped: ${reason}`);

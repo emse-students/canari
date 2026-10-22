@@ -33,6 +33,11 @@ export interface SharedManifest {
   files: SharedFileEntry[];
   /** Streams the native side did not keep (unreadable, too large, past a cap, not the sender's). */
   refused: number;
+  /**
+   * The share epoch when the capture STARTED (`IncomingShare.kt`); 0 when absent. A manifest older
+   * than the current epoch was made in a session that has since signed out.
+   */
+  epoch: number;
 }
 
 /**
@@ -64,5 +69,6 @@ export function parseSharedManifest(raw: string): SharedManifest | null {
     text: typeof record.text === 'string' ? record.text : '',
     files,
     refused: typeof record.refused === 'number' && record.refused > 0 ? record.refused : 0,
+    epoch: typeof record.epoch === 'number' && record.epoch > 0 ? record.epoch : 0,
   };
 }

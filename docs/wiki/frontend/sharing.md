@@ -43,7 +43,9 @@ builds on the IN half later and is not started.
    never reads half of it. `read_and_clear_pending_share` (`commands/handoff.rs`, the same helper as
    the CallKit answer's `pending_call_accept.json`) hands it over exactly once: it **claims the file
    by renaming it before reading it**, so a newer manifest renamed into place meanwhile waits for
-   the next drain instead of being deleted unread. A capture replacing an undrained share claims
+   the next drain instead of being deleted unread. It answers `{ manifest, epoch }`: the manifest
+   carries the share epoch its capture started in, and an older one than the current is stale (see
+   the sign-out decision below). A capture replacing an undrained share claims
    the older manifest the same way, so each manifest has exactly one taker.
    **Nothing older is deleted until a new share is handed over**: a capture that throws or keeps
    nothing leaves the share before it intact (refusals of an all-refused share are added to the
@@ -98,15 +100,28 @@ builds on the IN half later and is not started.
   other risk. `clearAuthUnderway` calls `eraseIncomingShare` (`mobile/incomingShareSignOut.ts`):
   - the page's share is dropped and its copies deleted unread (`incomingShare.drop`);
   - a manifest not yet drained is CLAIMED through the drain's own command
-    (`read_and_clear_pending_share`, so a capture racing it is either claimed or lands after) and
-    the copies it names are deleted unread;
-  - a staging in progress stops at its next file (`stageSharedFiles`' `stillWanted`, the sign-out
-    generation) and deletes the rest, telling nobody - nobody is signed in to be told.
-  What is NOT covered: a share whose copy is still RUNNING natively when the sign-out lands writes
-  its manifest afterwards, and the next account is offered it. It was made after the member tapped
-  "sign out", by whoever holds the phone. An unreadable claimed manifest leaves its copies until the
-  next process start sweeps what no manifest names. Tests: `incomingShareSignOut.test.ts` (a share
-  pending, then a sign-out: nothing left in the page, on disk or as a copy).
+    (`read_and_clear_pending_share`) and the copies it names are deleted unread;
+  - what neither can see is closed by an ORDER, the share EPOCH (`share_epoch` in the app data
+    directory, `commands/handoff.rs`). The erase ADVANCES it first. `IncomingShare.kt` reads it when
+    a capture STARTS and stamps it on the manifest, and the drain returns the manifest with the
+    current epoch: a capture still running natively at the sign-out lands STALE, and the next drain
+    deletes it unread and offers nothing. The store is FENCED at the new epoch
+    (`incomingShare.fence`), so a drain that claimed its manifest before the sign-out and offers it
+    after is refused, its copies deleted;
+  - a staging in progress is checked against the sign-out generation read when the share was taken
+    (`MainChatPage`): before each file (`stageSharedFiles`' `stillWanted`, the rest deleted unread),
+    AFTER each file's preparation (`handleFilesSelected`'s, since a video re-encode takes seconds and
+    `forgetAccount` has already emptied the queues), and a share held for the session
+    (`whenSessionUp`) that is dropped or misdirected deletes its copies (`HeldSend.discard`). Nobody
+    is told - nobody is signed in to be told.
+  What is left: an unreadable claimed manifest keeps its copies until the next process start sweeps
+  what no manifest names; and when advancing the epoch FAILS (accused at `console.error`), a capture
+  running at that instant is not fenced. Tests: `incomingShareSignOut.test.ts` (nothing left in the
+  page, on disk or as a copy; a running capture lands stale; a drain racing the sign-out cannot
+  offer), `auth.shareErase.test.ts` (both sign-out exits reach it), `incomingShare.svelte.test.ts`
+  (the fence), `useMessaging.mediaEnqueue.svelte.test.ts` (a sign-out mid-preparation stages
+  nothing), `heldSends.test.ts`, and the `share_epoch` name pinned on both sides
+  (`androidShareManifest.test.ts`).
 
 - **The confused-deputy check is narrow, and that is accepted (Master review, 2026-10-21).** It
   refuses our own authorities and the grants Canari holds; a sender holding `READ_MEDIA_*` can

@@ -12,6 +12,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { Log } from '$lib/utils/Log';
+import { appendLog } from '$lib/utils/sessionLog';
 import { refusedBeforePreparation } from '$lib/media';
 import { discardSharedFiles, parseSharedManifest } from '$lib/mobile/sharedInbox';
 import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.svelte';
@@ -22,15 +23,17 @@ import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.s
  * when nothing was waiting.
  */
 export async function drainNativeShare(): Promise<{ lost: number } | null> {
-  let raw: string | null;
+  let pendingShare: { manifest: string; epoch: number } | null;
   try {
-    raw = await invoke<string | null>('read_and_clear_pending_share');
+    pendingShare = await invoke<{ manifest: string; epoch: number } | null>(
+      'read_and_clear_pending_share'
+    );
   } catch (error) {
     console.error(`[SHARE] the native share could not be drained: ${String(error)}`);
     return null;
   }
-  if (!raw) return null;
-  const manifest = parseSharedManifest(raw);
+  if (!pendingShare) return null;
+  const manifest = parseSharedManifest(pendingShare.manifest);
   if (!manifest) {
     console.error('[SHARE] the native share manifest is unreadable - dropped');
     return { lost: 1 };
@@ -39,7 +42,19 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
     'IncomingShare',
     `drained: ${manifest.text.length} chars, ${manifest.files.length} file(s), ${manifest.refused} refused natively`
   );
-  incomingShare.offer({ text: manifest.text, files: manifest.files });
+  // A CAPTURE THAT STARTED BEFORE A SIGN-OUT belongs to the session that ended: deleted unread,
+  // never offered - and not reported, the member who made it is no longer signed in here.
+  if (manifest.epoch < pendingShare.epoch) {
+    appendLog(
+      `[SHARE] a share from a signed-out session (epoch ${manifest.epoch} < ${pendingShare.epoch}) - deleted`
+    );
+    await discardSharedFiles(
+      manifest.files.map((f) => f.path),
+      'captured before a sign-out'
+    );
+    return null;
+  }
+  incomingShare.offer({ text: manifest.text, files: manifest.files }, manifest.epoch);
   return { lost: manifest.refused };
 }
 

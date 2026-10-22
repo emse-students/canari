@@ -11,19 +11,21 @@ import { incomingShare } from '$lib/stores/incomingShare.svelte';
  * composer must be COUNTED, because the member was shown nothing else that would say so.
  */
 describe('parseSharedManifest', () => {
-  it('reads text, files and the refused count', () => {
+  it('reads text, files, the refused count and the capture epoch', () => {
     const parsed = parseSharedManifest(
       JSON.stringify({
         id: 'x',
         text: 'hi',
         files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
         refused: 2,
+        epoch: 5,
       })
     );
     expect(parsed).toEqual({
       text: 'hi',
       files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
       refused: 2,
+      epoch: 5,
     });
   });
 
@@ -66,11 +68,14 @@ describe('drainNativeShare', () => {
   it('offers the text and the file NAMES, and reads no bytes before staging', async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'read_and_clear_pending_share') {
-        return JSON.stringify({
-          text: 'look',
-          files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
-          refused: 1,
-        });
+        return {
+          manifest: JSON.stringify({
+            text: 'look',
+            files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
+            refused: 1,
+          }),
+          epoch: 0,
+        };
       }
       return undefined;
     });
@@ -83,9 +88,28 @@ describe('drainNativeShare', () => {
   });
 
   it('counts a corrupt manifest as one lost share', async () => {
-    invoke.mockResolvedValueOnce('{not json');
+    invoke.mockResolvedValueOnce({ manifest: '{not json', epoch: 0 });
     expect(await drainNativeShare()).toEqual({ lost: 1 });
     expect(incomingShare.pending).toBeNull();
+  });
+
+  it('deletes a manifest captured before a sign-out, offers and reports nothing of it', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'read_and_clear_pending_share'
+        ? {
+            manifest: JSON.stringify({
+              text: 'old',
+              files: [{ path: '/c/0_a.png', name: 'a.png', mime: 'image/png', size: 3 }],
+              refused: 2,
+              epoch: 3,
+            }),
+            epoch: 4,
+          }
+        : undefined
+    );
+    expect(await drainNativeShare()).toBeNull();
+    expect(incomingShare.pending).toBeNull();
+    expect(invoke.mock.calls).toContainEqual(['discard_picked_file', { path: '/c/0_a.png' }]);
   });
 });
 
@@ -199,8 +223,10 @@ describe('stageSharedFiles', () => {
       'g',
       limits,
       async (file) => {
+        // Staged only because the sign-out comes after it: one DURING its preparation is refused by
+        // `handleFilesSelected`'s own `stillWanted` (useMessaging.mediaEnqueue).
         staged.push(file.name);
-        signedIn = false; // the member signs out while the first file is being prepared
+        signedIn = false;
       },
       () => signedIn
     );

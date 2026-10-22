@@ -38,6 +38,7 @@ object IncomingShare {
     private const val TAG = "IncomingShare"
     private const val PENDING_FILE = "pending_share.json"
     private const val INBOX_DIR = "shared_inbox"
+    private const val EPOCH_FILE = "share_epoch"
 
     /** Whether `intent` is a share this activity accepts. */
     fun isShare(intent: Intent?): Boolean =
@@ -56,9 +57,13 @@ object IncomingShare {
             return
         }
         val appContext = context.applicationContext
+        // READ WHEN THE CAPTURE STARTS, not when it ends: a copy still running when the member signs
+        // out belongs to the session that ended, and its manifest must say so (`share_epoch`,
+        // advanced by every sign-out - see `commands/handoff.rs`).
+        val epoch = shareEpoch(appContext)
         Thread {
             try {
-                if (runCapture(appContext, text, uris, intent.type)) onReady()
+                if (runCapture(appContext, text, uris, intent.type, epoch)) onReady()
             } catch (e: Exception) {
                 Log.e(TAG, "share capture failed: ${e.message}", e)
             }
@@ -77,7 +82,7 @@ object IncomingShare {
      * its files, and a staging in progress is never cut.
      */
     @Synchronized
-    private fun runCapture(context: Context, text: String, uris: List<Uri>, intentType: String?): Boolean {
+    private fun runCapture(context: Context, text: String, uris: List<Uri>, intentType: String?, epoch: Long): Boolean {
         val shareId = UUID.randomUUID().toString()
         val dir = File(inboxDir(context), shareId).also { it.mkdirs() }
         try {
@@ -107,10 +112,11 @@ object IncomingShare {
             }
             if (text.isEmpty() && files.length() == 0) {
                 deleteDir(dir, "share $shareId kept nothing")
-                return reportRefusals(context, refused)
+                return reportRefusals(context, refused, epoch)
             }
             val payload = JSONObject()
                 .put("id", shareId)
+                .put("epoch", epoch)
                 .put("text", text)
                 .put("files", files)
                 .put("refused", refused)
@@ -139,14 +145,31 @@ object IncomingShare {
      * A share that kept nothing still has refusals the member must hear about. They are added to the
      * share still waiting, if there is one - which stays as it was - or handed over alone.
      */
-    private fun reportRefusals(context: Context, refused: Int): Boolean {
+    private fun reportRefusals(context: Context, refused: Int, epoch: Long): Boolean {
         if (refused == 0) return false
         val waiting = claimPending(context)
+        // The waiting share keeps its own epoch; refusals alone carry this capture's.
         val payload = waiting?.put("refused", waiting.optInt("refused", 0) + refused)
-            ?: JSONObject().put("id", UUID.randomUUID().toString()).put("text", "")
+            ?: JSONObject().put("id", UUID.randomUUID().toString()).put("epoch", epoch).put("text", "")
                 .put("files", JSONArray()).put("refused", refused)
         Log.w(TAG, "a share kept nothing: $refused refusal(s) reported")
         return writePending(context, payload)
+    }
+
+    /**
+     * The share epoch the page's sign-outs advance (`share_epoch` in the Tauri data directory, written
+     * whole by a rename); 0 before the first sign-out. Unreadable is said and read as 0 - which makes
+     * this share stale at the next drain if any sign-out ever happened, never offered wrongly.
+     */
+    private fun shareEpoch(context: Context): Long {
+        val file = File(MlsContextLoader.tauriDataDir(context), EPOCH_FILE)
+        if (!file.exists()) return 0
+        return try {
+            file.readText().trim().toLong()
+        } catch (e: Exception) {
+            Log.w(TAG, "the share epoch is unreadable: ${e.message}")
+            0
+        }
     }
 
     private fun pendingFile(context: Context) = File(MlsContextLoader.tauriDataDir(context), PENDING_FILE)
