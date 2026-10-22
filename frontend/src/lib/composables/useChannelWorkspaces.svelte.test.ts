@@ -1481,4 +1481,27 @@ describe('useChannelWorkspaces - the membership notice', () => {
     expect(channelId).toBe('channel_c1');
     expect(options).toEqual({ silent: true });
   });
+
+  // An ordinary invitation names no role: the server grants the community's base role, whatever
+  // that role is called there. A role is named only when the inviter picked one.
+  it('names no role for an ordinary invitation, and the picked one otherwise', async () => {
+    await useChannelWorkspaces().inviteMemberToChannel(
+      'channel_c1',
+      'newcomer',
+      'member',
+      makeContext()
+    );
+    expect(inviteToChannel.mock.calls[0][1]).toEqual({ targetUserId: 'newcomer' });
+
+    await useChannelWorkspaces().inviteMemberToChannel(
+      'channel_c1',
+      'second',
+      'moderator',
+      makeContext()
+    );
+    expect(inviteToChannel.mock.calls[1][1]).toEqual({
+      targetUserId: 'second',
+      roleName: 'Modérateur',
+    });
+  });
 });

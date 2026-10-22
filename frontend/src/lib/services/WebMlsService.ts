@@ -8,7 +8,7 @@ import { MLS_STATE_SEAL_V2_WRITER_ENABLED } from '$lib/mls-client/mlsStateSeal';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
-import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
   loadAndInitWasm,
   migrateLegacyMlsStateBlob,
@@ -1517,6 +1517,16 @@ export class WebMlsService extends BaseMlsService {
     if (!this.client)
       throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
     return (this.client.leaf_holding_key_of(groupId, keyPackage) as string | undefined) ?? null;
+  }
+
+  /**
+   * WASM client wrapper - the key group's clean run at its current epoch. The run may be (re)started
+   * by this read, which dirties the state; the next checkpoint persists it with the tree.
+   */
+  async graineRun(groupId: string): Promise<GraineRunReading> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s Graine run`);
+    return this.client.graine_run(groupId) as GraineRunReading;
   }
 
   /** The WASM crate's Ed25519 free functions (`wasmGraineSignatureEngine`). */

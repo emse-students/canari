@@ -1719,16 +1719,13 @@ export function useChannelWorkspaces() {
     const workspaceImageMediaId = currentWorkspace?.imageMediaId || undefined;
 
     try {
-      // Map frontend role names to backend role names (capitalized)
+      // An ordinary invitation names NO role: the server grants the community's base role, whatever
+      // it is called there. A role is named only when the inviter picked one above it.
       const backendRoleName =
-        roleName === 'admin'
-          ? 'Administrateur'
-          : roleName === 'moderator'
-            ? 'Modérateur'
-            : 'Membre';
+        roleName === 'admin' ? 'Administrateur' : roleName === 'moderator' ? 'Modérateur' : null;
       const invited = await service.inviteToChannel(channelId, {
         targetUserId: memberId,
-        roleName: backendRoleName,
+        ...(backendRoleName ? { roleName: backendRoleName } : {}),
       });
 
       // WHOEVER ADMITS A NEWCOMER WELCOMES THEM (channel-encryption section 20). This device is

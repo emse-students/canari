@@ -1290,6 +1290,35 @@ pub(crate) fn graine_sign_with_device_credential(
         .map_err(|e| e.to_string())
 }
 
+/// The clean run covering `group_id`'s current epoch, for Graine's outbound rotation
+/// (`mls-core/src/graine_run.rs`). Read under the manager lock, from the same manager that seals the
+/// next distribution frame.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GraineRunDto {
+    run_id: String,
+    epoch: u64,
+    epoch_fingerprint: String,
+}
+
+#[tauri::command]
+pub(crate) fn graine_run(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<GraineRunDto, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let reading = manager.graine_run(&group_id).map_err(|e| e.to_string())?;
+    Ok(GraineRunDto {
+        run_id: reading.run_id,
+        epoch: reading.epoch,
+        epoch_fingerprint: reading.epoch_fingerprint,
+    })
+}
+
 /// The signature key the tree of `group_id` holds for the leaf `identity`, or `None` when no leaf
 /// carries it (channel-encryption section 21: what a v2 endorsement is checked against).
 #[tauri::command]

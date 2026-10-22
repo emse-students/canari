@@ -170,6 +170,7 @@ impl MlsManager {
         // NO PRUNING HERE: a forget is also the first half of a forget-and-re-Welcome HEAL, and a pin
         // dropped now would be re-written from whatever tree the re-Welcome brings. The pins and the
         // departures are bounded at load, past their cap only (`load_or_create`).
+        self.drop_graine_run(group_id);
         if min_epoch > 0 {
             self.forgotten_group_min_epochs
                 .insert(group_id.to_string(), min_epoch);

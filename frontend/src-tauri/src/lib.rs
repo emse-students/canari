@@ -33,19 +33,20 @@ use crate::state::{AppState, PendingDb};
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
-use crate::commands::handoff::read_and_clear_pending_share;
+use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit,
     cles_signature_epinglees, confirmer_commit, creer_groupe, envoyer_message_bytes,
     epoques_departs, exporter_group_info, exporter_ratchet_tree, exporter_secret,
     feuille_portant_cle, generer_key_packages_et_persister, graine_member_signature_key,
-    graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
-    graine_verify_signature, groupe_actif, initialiser_mls, key_package_a_clef_privee,
-    lister_groupes, lister_identites_membres, obtenir_epoch, oublier_groupe, oublier_key_packages,
-    prendre_evenements_appareils, recenser_key_packages, recevoir_message_bytes,
-    recevoir_messages_batch, recuperer_cle_session_mls, rejoindre_par_commit_externe,
-    remplacer_appareil, retirer_membres, retirer_membres_par_appareil,
-    sauvegarder_mls_et_persister, skip_send_generations, trailer_welcome, verifier_key_package,
+    graine_run, graine_session_keypair, graine_sign_with_device_credential,
+    graine_sign_with_session_key, graine_verify_signature, groupe_actif, initialiser_mls,
+    key_package_a_clef_privee, lister_groupes, lister_identites_membres, obtenir_epoch,
+    oublier_groupe, oublier_key_packages, prendre_evenements_appareils, recenser_key_packages,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
+    retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
+    trailer_welcome, verifier_key_package,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
@@ -1071,6 +1072,7 @@ pub fn run() {
             graine_verify_signature,
             graine_sign_with_device_credential,
             graine_member_signature_key,
+            graine_run,
             recuperer_cle_session_mls,
             sauvegarder_mls_et_persister,
             creer_groupe,
@@ -1136,6 +1138,7 @@ pub fn run() {
             read_and_clear_outbox_sent,
             read_and_clear_pending_call_accept,
             read_and_clear_pending_share,
+            advance_share_epoch,
             get_voip_token,
             store_graine_seed,
             forget_graine_channel,
