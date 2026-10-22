@@ -8,7 +8,15 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThanOrEqual, LessThan, LessThanOrEqual, EntityManager } from 'typeorm';
+import {
+  Repository,
+  In,
+  MoreThanOrEqual,
+  LessThan,
+  LessThanOrEqual,
+  EntityManager,
+  IsNull,
+} from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
@@ -31,6 +39,7 @@ import {
   MLS_MAX_PAST_EPOCHS,
   isBeyondPastEpochWindow,
   mlsFrameEpoch,
+  readCommitFrame,
 } from '../utils/mls-frame-epoch';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
@@ -332,6 +341,98 @@ export function readAddressedDevices(body: SendMessageBody): Set<string> | null 
     keys.add(`${key.slice(0, at).toLowerCase()}:${key.slice(at + 1)}`);
   }
   return keys;
+}
+
+/**
+ * The fields a CLIENT may set on `POST /mls/send` - an allowlist, not a denylist.
+ *
+ * Everything else on {@link SendMessageBody} is set by this service's own callers (the commit
+ * fan-out, the background Welcome), which call {@link MessagingService.sendMessage} directly and never
+ * cross this route. `recipientDevices` is here because {@link readAddressedDevices} validates it.
+ */
+const CLIENT_SEND_FIELDS: ReadonlySet<string> = new Set([
+  'proto',
+  'groupId',
+  'senderId',
+  'senderDeviceId',
+  'silent',
+  'durable',
+  'recipientDevices',
+]);
+
+/**
+ * The devices a commit's fan-out may skip: the ones THIS commit admits (they join by Welcome and
+ * cannot process it) and the committing device itself - nobody else. A declared exclusion naming
+ * any other member would keep the commit from a device that must apply it, splitting the group's
+ * epoch; such entries are dropped (the device receives the commit) and reported through `onDropped`.
+ * A device staged out for an invalid KeyPackage is also dropped: it is in no tree, so receiving
+ * the commit costs it one unreadable frame.
+ */
+export function commitExclusions(
+  body: Pick<ValidateCommitBody, 'excludeDeviceIds' | 'senderId'>,
+  admitted: ReadonlyArray<{ userId: string; deviceId: string }>,
+  committerDeviceId: string,
+  onDropped: (dropped: string[]) => void
+): string[] {
+  const declared = Array.isArray(body.excludeDeviceIds) ? body.excludeDeviceIds : [];
+  const allowed = new Set(admitted.map((a) => `${a.userId}:${a.deviceId}`));
+  if (body.senderId) allowed.add(`${body.senderId}:${committerDeviceId}`);
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  for (const entry of declared) {
+    if (typeof entry === 'string' && allowed.has(entry)) kept.push(entry);
+    else dropped.push(typeof entry === 'string' ? entry.slice(0, 128) : 'invalid');
+  }
+  if (dropped.length > 0) onDropped(dropped);
+  return kept;
+}
+
+/** Why a client send was refused before anything was read: the `error` of its 400/403 body. */
+export type ClientSendRefusal =
+  | { error: 'send_body_invalid'; status: 400; detail: string }
+  | { error: 'send_field_refused'; status: 400; detail: string }
+  | { error: 'proto_required'; status: 400; detail: string }
+  | { error: 'sender_mismatch'; status: 403; detail: string };
+
+/**
+ * Whether a client send is one this route accepts, or why not - decided before anything is read.
+ *
+ * - Only {@link CLIENT_SEND_FIELDS}: who receives a frame, and whether it is a handshake, are decided
+ *   here (the recipient set from the membership table, a commit by `POST /mls/commit`).
+ * - A `proto`: the pre-MLS content path is retired (measured unused 2026-10-22,
+ *   `docs/wiki/legacy-compatibility.md`).
+ * - The caller as sender, with a device: a frame is attributed to its sender by every reader of the
+ *   group's log, and the membership gate below is keyed on that device.
+ *
+ * `detail` is for the server's log only, already sanitised and bounded: a refused field's NAME is
+ * the caller's text, and it never reaches the response body.
+ */
+export function clientSendRefusal(body: unknown, caller: string): ClientSendRefusal | null {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { error: 'send_body_invalid', status: 400, detail: 'not an object' };
+  }
+  const refused = Object.keys(body).filter((field) => !CLIENT_SEND_FIELDS.has(field));
+  if (refused.length > 0) {
+    const names = refused.slice(0, 8).map((f) => sanitizeLogValue(f.slice(0, 64)));
+    return { error: 'send_field_refused', status: 400, detail: `fields=${names.join(',')}` };
+  }
+  const { proto, senderId, senderDeviceId } = body as SendMessageBody;
+  if (typeof proto !== 'string' || proto.length === 0) {
+    return { error: 'proto_required', status: 400, detail: 'no proto' };
+  }
+  if (
+    typeof senderId !== 'string' ||
+    typeof senderDeviceId !== 'string' ||
+    senderDeviceId.length === 0 ||
+    senderId.toLowerCase() !== caller.toLowerCase()
+  ) {
+    return {
+      error: 'sender_mismatch',
+      status: 403,
+      detail: `sender=${sanitizeLogValue(senderId)}:${sanitizeLogValue(senderDeviceId)}`,
+    };
+  }
+  return null;
 }
 
 export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
@@ -1135,11 +1236,7 @@ export class MessagingService {
         // different members and keep each out of the shared history stream - an equivocation the
         // ordinary fan-out (one ciphertext, every member) makes impossible.
         if (addressed) {
-          const group = await this.groupRepo.findOne({
-            where: { id: groupId },
-            select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
-          });
-          if (!group?.distributionWorkspaceId && !group?.distributionChannelId) {
+          if (!(await this.isKeyDistributionGroup(groupId))) {
             this.logger.warn(
               `[SEND][${traceId}] REJECT addressed_not_key_group group=${groupId} - ` +
                 `recipientDevices is accepted on a key-distribution group only`
@@ -1152,15 +1249,31 @@ export class MessagingService {
 
         const isHandshake = !!body.isCommit || !!body.isWelcome;
         if (!isHandshake && body.senderId && body.senderDeviceId) {
+          // KEYED ON THE SENDER AS WELL AS ITS DEVICE: a row is a (person, device) pair, and a device
+          // id alone would let one person send as another member's device. The authenticated caller
+          // when there is one - the id its own rows were written under.
+          const senderUserId =
+            sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id') ?? body.senderId;
           const senderMembership = await this.deviceGroupRepo.findOne({
-            where: { groupId, deviceId: body.senderDeviceId },
+            where: { groupId, userId: senderUserId, deviceId: body.senderDeviceId },
           });
           if (!senderMembership) {
-            // Not refused: a missing row is a different defect from a `pending` one, with causes
-            // this seam cannot see. It is logged because nothing else would ever show it.
-            this.logger.warn(
-              `[SEND][${traceId}] sender has NO membership row group=${groupId} device=${body.senderDeviceId}`
+            // REFUSED (2026-10-22): a device with no row in this group is no member of it, and
+            // queueing its frame would let any signed-in device write into any group. Measured
+            // before the refusal: 0 such sends in the live production log.
+            //
+            // A DELETED GROUP IS ASKED FIRST: its deletion swept every row, so its members land here
+            // too, and the client's outbox reads `group_deleted` (410) to drop the conversation -
+            // a 403 would leave it retrying a group that no longer exists.
+            await this.enqueueForLiveGroup([], groupId, 'SEND', traceId, undefined);
+            this.logger.error(
+              `[SEND][${traceId}] REJECT sender_not_member group=${groupId} device=${body.senderDeviceId}`
             );
+            throw new ForbiddenException({
+              error: 'sender_not_member',
+              groupId,
+              deviceId: body.senderDeviceId,
+            });
           } else if (senderMembership.status !== 'active') {
             this.logger.error(
               `[SEND][${traceId}] REJECT sender_not_active group=${groupId} ` +
@@ -1352,78 +1465,13 @@ export class MessagingService {
         }
       }
     } else {
-      // ── Legacy path (frontend fallback / group fan-out) ───────────────────
-      //
-      // A FALLBACK IS A SIGNAL, NEVER A PATH. This branch predates MLS and writes `content` instead
-      // of `proto`; the database says nothing has taken it - 817 of 817 queued rows carry `proto`
-      // and `content` is NULL on every one, back to 2026-07-28. That is strong but it is not a
-      // census: the queue holds only what was UNDELIVERED, so a legacy message delivered instantly
-      // leaves no row behind, and the service log window is one container lifetime. So the branch
-      // accuses instead of answering silently, and its removal date is set from what this line does
-      // or does not print (see docs/wiki/legacy-compatibility.md).
-      this.logger.warn(
-        `[SEND][${traceId}] LEGACY_CONTENT_PATH sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} ` +
-          `group=${body.groupId ?? 'none'} - a client sent no proto; this path is retired and its caller must be found`
+      // THE PRE-MLS CONTENT PATH IS GONE (2026-10-22): measured unused - 0 rows in two months of the
+      // queue, 0 sends in the live log - and a client route already refuses a send with no proto.
+      // An internal caller reaching here is a defect in that caller.
+      this.logger.error(
+        `[SEND][${traceId}] REJECT proto_required group=${body.groupId ?? 'none'} - the content path is retired`
       );
-      const senderId = sanitizeQueryValue(body.senderId, 'senderId');
-      const senderDeviceId = sanitizeOptionalQueryValue(body.senderDeviceId, 'senderDeviceId');
-      const groupId = sanitizeQueryValue(body.groupId, 'groupId');
-      const rawContent: unknown = body.content;
-      const rawType: unknown = body.type;
-
-      if (typeof rawContent !== 'string' || rawContent.length === 0) {
-        throw new BadRequestException('content is required');
-      }
-
-      const safeContent: string = rawContent;
-      const safeType: string =
-        typeof rawType === 'string' && rawType.length > 0 ? rawType : 'message';
-
-      const targetList: { userId: string; deviceId: string }[] = [];
-
-      if (!body.recipients || body.recipients.length === 0) {
-        const members = await this.groupMemberRepo.find({ where: { groupId } });
-        const memberUserIds = members.map((m) => m.userId).filter((id) => id !== senderId);
-
-        if (memberUserIds.length > 0) {
-          const devices = await this.keyPackageRepo.find({
-            where: { userId: In(memberUserIds) },
-          });
-          for (const d of devices) {
-            targetList.push({ userId: d.userId, deviceId: d.deviceId });
-          }
-        }
-      } else {
-        for (const r of body.recipients) {
-          const recipientUserId = sanitizeQueryValue(r.userId, 'recipients.userId');
-          if (r.deviceId) {
-            const recipientDeviceId = sanitizeQueryValue(r.deviceId, 'recipients.deviceId');
-            targetList.push({
-              userId: recipientUserId,
-              deviceId: recipientDeviceId,
-            });
-          } else {
-            console.warn(
-              'Skipping recipient without deviceId. Fan-out is disabled for MLS security.'
-            );
-          }
-        }
-      }
-
-      for (const r of targetList) {
-        ops.push(
-          this.queuedMessageRepo.create({
-            recipientId: r.userId,
-            deviceId: r.deviceId,
-            senderId,
-            senderDeviceId,
-            groupId,
-            content: safeContent,
-            type: safeType,
-            createdAt: receivedAt,
-          })
-        );
-      }
+      throw new BadRequestException({ error: 'proto_required', message: 'proto is required' });
     }
 
     // The sender declares durability (`body.durable`); the server sees ciphertext and can classify
@@ -1662,10 +1710,43 @@ export class MessagingService {
    * Returns accepted=true with newEpoch on success, or accepted=false with
    * currentEpoch and a reason string when the commit is rejected.
    */
-  async validateCommit(body: ValidateCommitBody): Promise<ValidateCommitResult> {
+  async validateCommit(
+    body: ValidateCommitBody,
+    authUserIdRaw: string
+  ): Promise<ValidateCommitResult> {
     const traceId = this.makeTraceId('commit');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    // THE COMMITTER IS THE CALLER, ON BOTH ROUTES THAT REACH HERE. `senderId` names the author of the
+    // fan-out and the member whose device this commit activates, so it must be the authenticated
+    // caller: the `x-user-id` of `POST /mls/commit`, or the device a PushSecret authenticated on the
+    // background Welcome. There is no unauthenticated caller to exempt.
+    const committer = sanitizeQueryValue(authUserIdRaw, 'committer');
+    if (typeof body.senderId !== 'string' || body.senderId.length === 0) {
+      this.logger.warn(`[COMMIT][${traceId}] REJECT no_sender group=${groupId}`);
+      throw new BadRequestException({
+        error: 'sender_required',
+        message: 'senderId is required',
+      });
+    }
+    this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'COMMIT');
+    // AND THE DEVICE IS THE CALLER'S: the commit activates `senderId:deviceId`, so a device
+    // registered to anyone else is refused. The static KeyPackage row is the registry, and it is
+    // unique on the PAIR - read by the pair, never by the device id alone.
+    const registered = await this.keyPackageRepo.findOne({
+      where: { userId: committer, deviceId },
+      select: { id: true },
+    });
+    if (!registered) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT device_not_owned group=${groupId} device=${deviceId} ` +
+          `sender=${sanitizeLogValue(committer)}`
+      );
+      throw new ForbiddenException({
+        error: 'device_not_owned',
+        message: 'this device is not registered to the committer',
+      });
+    }
     const baseEpoch =
       typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)
         ? Math.floor(body.baseEpoch)
@@ -1705,6 +1786,22 @@ export class MessagingService {
         'proto is required: a commit that cannot be replayed may not advance the epoch'
       );
     }
+    // THE COMMIT MUST SAY WHAT THE REQUEST SAYS: its clear header names this group and this base
+    // epoch, and it has the shape of a member or an external commit (`readCommitFrame`). The gate
+    // below decides who may commit on the header's word, so the header is not left free.
+    const frame = readCommitFrame(commitProto);
+    if (!frame || frame.groupId !== groupId || frame.epoch !== baseEpoch) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT commit_malformed group=${groupId} device=${deviceId} ` +
+          `baseEpoch=${baseEpoch} framed=${!!frame} groupMatch=${frame?.groupId === groupId} ` +
+          `epochMatch=${frame?.epoch === baseEpoch}`
+      );
+      throw new BadRequestException({
+        error: 'commit_malformed',
+        message: 'this commit is not accepted',
+      });
+    }
+    await this.assertCommitterMayCommit(groupId, committer, deviceId, frame.external, traceId);
 
     this.logger.log(
       `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`
@@ -1812,6 +1909,11 @@ export class MessagingService {
         // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
         // row; the update is guarded on `pending` so an `active` device - already routed by its
         // status - is never touched.
+        //
+        // `kickedAt: null` HERE, AND NOWHERE ELSE BUT ACTIVATION. A kick records a removed leaf that
+        // a member owes an Add; this accepted commit IS that Add, made by a member through the gate
+        // above. A Welcome used to clear it instead, and a Welcome is bytes anyone in the group can
+        // address to any device - so it could undo a kick that no commit had answered.
         for (const a of admitted) {
           await m
             .getRepository(DeviceGroupMembership)
@@ -1823,8 +1925,8 @@ export class MessagingService {
           await m
             .getRepository(DeviceGroupMembership)
             .update(
-              { deviceId: a.deviceId, groupId, status: 'pending' as const },
-              { admittedAtEpoch: baseEpoch + 1 }
+              { userId: a.userId, deviceId: a.deviceId, groupId, status: 'pending' as const },
+              { admittedAtEpoch: baseEpoch + 1, kickedAt: null }
             );
         }
       });
@@ -1849,17 +1951,18 @@ export class MessagingService {
       // neither the history bundle it is about to solicit nor any subsequent live message, while
       // its own sends work - a silent one-way group. Checked first so the promotion (and its log
       // line) stays an event rather than a no-op on every ordinary commit.
-      if (body.senderId) {
-        const membership = await this.deviceGroupRepo.findOne({
-          where: { deviceId, groupId },
-        });
-        if (membership?.status !== 'active') {
-          await this.activateDeviceMembership(body.senderId, deviceId, groupId).catch((e) =>
-            this.logger.warn(
-              `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
-            )
-          );
-        }
+      //
+      // Every identity downstream of the gate is the CALLER's (`committer`), never the body's
+      // spelling of it, and every row is read by the pair, never by the device id alone.
+      const committerRow = await this.deviceGroupRepo.findOne({
+        where: { userId: committer, deviceId, groupId },
+      });
+      if (committerRow?.status !== 'active') {
+        await this.activateDeviceMembership(committer, deviceId, groupId).catch((e) =>
+          this.logger.warn(
+            `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
+          )
+        );
       }
 
       // Fan out the commit to members. Kept inside the locked section so validate + store +
@@ -1869,20 +1972,25 @@ export class MessagingService {
       // A device back in the tree - admitted by this commit, or committing itself (an external
       // rejoin) - is no longer parting: an entry left for it would hand a LATER removal's commit to
       // nobody who needs it, so it ends here, on that state.
-      await this.clearParting(
-        groupId,
-        [...admitted, ...(body.senderId ? [{ userId: body.senderId, deviceId }] : [])],
-        traceId
-      );
+      await this.clearParting(groupId, [...admitted, { userId: committer, deviceId }], traceId);
       const parting = await this.declaredPartingDevices(groupId, body.removes, traceId);
       await this.sendMessage(
         {
           groupId,
-          senderId: body.senderId,
+          senderId: committer,
           senderDeviceId: deviceId,
           proto: commitProto,
           isCommit: true,
-          excludeDeviceIds: body.excludeDeviceIds,
+          excludeDeviceIds: commitExclusions(body, admitted, deviceId, (dropped) =>
+            this.logger.warn(
+              `[COMMIT][${traceId}] EXCLUSION_DROPPED group=${groupId} count=${dropped.length} ` +
+                `devices=${dropped
+                  .slice(0, 8)
+                  .map((d) => sanitizeLogValue(d))
+                  .join(',')} - ` +
+                `not admitted by this commit, so they receive it`
+            )
+          ),
         },
         undefined,
         parting
@@ -2131,10 +2239,7 @@ export class MessagingService {
     groupInfo: string,
     baseEpoch: number
   ): Promise<{ stored: boolean }> {
-    const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId: requesterUserId },
-    });
-    if (!membership) {
+    if (!(await this.isOnRoster(groupId, requesterUserId))) {
       throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
     return this.putGroupInfo(groupId, groupInfo, baseEpoch);
@@ -2239,10 +2344,7 @@ export class MessagingService {
     groupId: string,
     requesterUserId: string
   ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
-    const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId: requesterUserId },
-    });
-    if (!membership) {
+    if (!(await this.isOnRoster(groupId, requesterUserId))) {
       throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
     return this.readGroupInfo(groupId);
@@ -2338,21 +2440,99 @@ export class MessagingService {
       candidates.push({ userId, deviceId });
     }
     if (candidates.length === 0) return [];
+    const pairs = candidates.map((c) => ({ userId: c.userId, deviceId: c.deviceId }));
     const known = new Set(
       (
         await this.keyPackageRepo.find({
-          where: candidates.map((c) => ({ userId: c.userId, deviceId: c.deviceId })),
+          where: pairs,
           select: { userId: true, deviceId: true },
         })
       ).map((kp) => `${kp.userId}:${kp.deviceId}`)
     );
+    // A DEVICE ALREADY ROUTED IS NOT ADMITTED. An admit is what lets the commit's fan-out skip a
+    // device, and an `active` row is one that receives every frame of the group - admitting it would
+    // let a committer take a member's device out of the fan-out of a commit it must process.
+    const routed = new Set(
+      (
+        await this.deviceGroupRepo.find({
+          where: pairs.map((p) => ({ ...p, groupId, status: 'active' as const })),
+          select: { userId: true, deviceId: true },
+        })
+      ).map((m) => `${m.userId}:${m.deviceId}`)
+    );
     return candidates.filter((c) => {
-      if (known.has(`${c.userId}:${c.deviceId}`)) return true;
+      const key = `${c.userId}:${c.deviceId}`;
+      const reason = !known.has(key) ? 'no_key_package' : routed.has(key) ? 'already_active' : null;
+      if (reason === null) return true;
       this.logger.warn(
-        `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${c.userId}:${c.deviceId} reason=no_key_package`
+        `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${key} reason=${reason}`
       );
       return false;
     });
+  }
+
+  /**
+   * Whether the caller may commit to `groupId` at all, decided before the epoch gate.
+   *
+   * - A MEMBER COMMIT comes from a device of the caller's that the group holds: `active`, or
+   *   `pending` and never kicked - a device that has processed its Welcome reports itself `active`
+   *   without waiting (`updateInvitationStatus` is not awaited), so a commit can precede that report.
+   *   A removal deletes the removed member's rows and a kick stamps `kickedAt`: both are refused.
+   * - AN EXTERNAL COMMIT is the one commit made from outside the tree (an external join or rejoin),
+   *   recognised by its own clear header ({@link readCommitFrame}), never by a client flag. It is
+   *   accepted from whoever may read the base it is built on - the roster predicate of
+   *   {@link getGroupInfo} - so the gate and the door it guards answer the same question.
+   *
+   * A key-distribution group's external join has no entitlement check here yet (WP-KEYGROUP-JOIN-GATE
+   * in `docs/wiki/backlog.md`); each one is logged.
+   */
+  private async assertCommitterMayCommit(
+    groupId: string,
+    userId: string,
+    deviceId: string,
+    external: boolean,
+    traceId: string
+  ): Promise<void> {
+    if (external && (await this.isKeyDistributionGroup(groupId))) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] key-group external join group=${groupId} ` +
+          `device=${sanitizeLogValue(userId)}:${deviceId} - no entitlement check yet ` +
+          `(WP-KEYGROUP-JOIN-GATE)`
+      );
+      return;
+    }
+    const allowed = external
+      ? await this.isOnRoster(groupId, userId)
+      : !!(await this.deviceGroupRepo.findOne({
+          where: [
+            { groupId, userId, deviceId, status: 'active' as const },
+            { groupId, userId, deviceId, status: 'pending' as const, kickedAt: IsNull() },
+          ],
+          select: { deviceId: true },
+        }));
+    if (allowed) return;
+    this.logger.warn(
+      `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
+        `device=${sanitizeLogValue(userId)}:${deviceId} kind=${external ? 'external' : 'member'}`
+    );
+    throw new ForbiddenException({
+      error: 'committer_not_member',
+      message: 'this commit is not accepted',
+    });
+  }
+
+  /** Whether `groupId` is a Graine key-distribution group (a community's or a private salon's). */
+  private async isKeyDistributionGroup(groupId: string): Promise<boolean> {
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+    });
+    return !!(group?.distributionWorkspaceId || group?.distributionChannelId);
+  }
+
+  /** Whether `userId` is on the user roster of `groupId` - who may read its external-join base. */
+  private async isOnRoster(groupId: string, userId: string): Promise<boolean> {
+    return !!(await this.groupMemberRepo.findOne({ where: { groupId, userId } }));
   }
 
   /**
@@ -2380,8 +2560,8 @@ export class MessagingService {
     // Welcome their devices; asked of the user table, every one of those Welcomes would be refused.
     // A sender holding an ACTIVE leaf row may Welcome: it already reads every seed on the group.
     const authUserId = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id');
+    const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
     if (authUserId) {
-      const group = await this.groupRepo.findOne({ where: { id: safeGroupId } });
       const { isMember, isKeyDistribution } = await this.memberOfGroupKind(
         group,
         safeGroupId,
@@ -2415,6 +2595,23 @@ export class MessagingService {
       throw new Error(
         `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`
       );
+    }
+
+    // THE TARGET OF A CONVERSATION'S WELCOME IS ON ITS ROSTER. Every client path registers the
+    // member (`registerMember`) before it delivers the Welcome, so this refuses only a device whose
+    // owner the group does not name - the row written below would otherwise make it a device of
+    // the group. A key-distribution group has no user roster here; its target is checked against
+    // social-service with its external joins (WP-KEYGROUP-JOIN-GATE).
+    const keyDistribution = !!(group?.distributionWorkspaceId || group?.distributionChannelId);
+    if (!keyDistribution && !(await this.isOnRoster(safeGroupId, deviceInfo.userId))) {
+      this.logger.warn(
+        `[WELCOME][${traceId}] REJECT welcome_target_not_member group=${safeGroupId} ` +
+          `target=${sanitizeLogValue(deviceInfo.userId)}:${targetDeviceId}`
+      );
+      throw new ForbiddenException({
+        error: 'welcome_target_not_member',
+        message: 'this Welcome is not accepted',
+      });
     }
 
     const queuedWelcome = this.queuedMessageRepo.create({
@@ -2460,17 +2657,13 @@ export class MessagingService {
     // would touch 0 rows in that case, leaving the device without a record ->
     // processPendingInvitations would incorrectly kick it.
     //
-    // **THE CONFLICT CLAUSE OVERWRITES `kickedAt` AND NOTHING ELSE.** It used to overwrite `status`
-    // too, with the literal `'pending'`, and `skipUpdateIfNoValuesChanged` does not protect a row
-    // whose value CHANGES - so sending a Welcome to a device that was already `active` DEMOTED it.
-    // A demoted row is dropped by the fan-out (`WHERE status = 'active'`), which is how a working
-    // device stopped receiving the messages of a group it was still in. A Welcome is a delivery,
-    // not a demotion: only `activateDeviceMembership` moves this column, in one direction.
-    //
-    // `kickedAt: null` IS THE PROOF A KICK WAS FOLLOWED THROUGH. A Welcome in the queue means the
-    // Add the kick promised actually landed, so the row stops being one the stranded report should
-    // accuse - it is now an ordinary device owed a delivery. Left set, every successful
-    // kick-and-re-add would be reported as a failed one for as long as the row stayed pending.
+    // **AN EXISTING ROW IS NEVER TOUCHED.** The conflict clause used to overwrite `status` with the
+    // literal `'pending'` - and `skipUpdateIfNoValuesChanged` does not protect a row whose value
+    // CHANGES - so a Welcome to an `active` device DEMOTED it out of the fan-out. Then it overwrote
+    // `kickedAt` with null, which let a Welcome undo a kick no commit had answered: a kicked device
+    // is refused at the commit gate, and a Welcome is bytes, not an Add. The Add that answers a
+    // kick is the admitting commit, which clears `kickedAt` itself (`validateCommit`), and
+    // `activateDeviceMembership` clears it on activation.
     await this.deviceGroupRepo
       .createQueryBuilder()
       .insert()
@@ -2482,7 +2675,7 @@ export class MessagingService {
         status: 'pending' as const,
         kickedAt: null,
       })
-      .orUpdate(['kickedAt'], ['deviceId', 'groupId'])
+      .orIgnore()
       .execute();
 
     // THE ROUTING SET IS NOT WRITTEN HERE, AND THE `sadd` THAT USED TO BE ON THIS LINE IS THE

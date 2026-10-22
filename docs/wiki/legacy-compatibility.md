@@ -288,34 +288,20 @@ this entry deliberately has no date: a date would be a guess about a platform no
 is that a client sending neither looks identical to one sending a stale cookie, which is why the
 refusal already logs the cookie names it received.
 
-### 2026-11-19 - the pre-MLS send path, and the `content` column it is the only writer of
+### Removed 2026-10-22 - the pre-MLS send path; the `content` column and its read arm wait for a migration
 
-**Site:** the `else` arm of `MessagingService.sendMessage`
-([`messaging.service.ts`](../../apps/chat-delivery-service/src/services/messaging.service.ts)), taken
-when a caller posts no `proto`; `QueuedMessage.content`
-([`queued-message.entity.ts`](../../apps/chat-delivery-service/src/entities/queued-message.entity.ts));
-and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`.
-**Shim:** every client since MLS sends `proto`, a base64 MLS ciphertext. This branch takes
-`body.content` with a `type` tag and fans out over `dm_group_members` instead of the device
-membership table. Nothing else writes the column.
-**What the evidence actually says:** on 2026-08-19 `queued_message` held 817 rows back to
-2026-07-28, `proto` non-null on **817**, `content` non-null on **0**. That is strong and it is not a
-census - **the queue records only what was UNDELIVERED**, so a legacy message delivered instantly
-leaves no row, and it is only evidence for the question it was written to answer. The service log
-would settle it, but its window is one container lifetime and a deploy restarts the container: on
-2026-08-19 it held six `[SEND]` lines over three hours.
-**Why a date rather than a deletion now:** the fleet is mixed by construction - A1's APK carries its
-own bundle and a deploy never reaches it - and deleting a send path that one old client still takes
-turns a working install into one that cannot send, silently. Three months is one campaign plus the
-margin for a phone nobody has updated.
-**On removal:** delete the `else` arm, the `content` column (migration), the `?? queued.content`
-arm, and this entry. Both sites now log - `LEGACY_CONTENT_PATH` on write and `LEGACY_CONTENT_ROW` on
-read, both at warn - so the date is checked by reading whether either ever fired, not by arguing
-about it. **If either has fired, the caller is found and fixed before the branch goes**, because
-reaching a fallback means the primary path failed.
-**Cost of keeping it:** a nullable column on the largest MLS table, and a read-side `??` that made
-the column look load-bearing to anyone auditing it - which is how it survived unnoticed until the
-storage panel raised the question.
+**Removed per measurement, 2026-10-22**, ahead of the 2026-11-19 date, which was conditional on
+silence: `POST /mls/send` refuses a send with no `proto` (`proto_required`, 400), and the `else` arm of
+`MessagingService.sendMessage` refuses too instead of fanning out over `dm_group_members`.
+**The measurement that replaced the date:** `queued_message` held 0 rows with `proto` NULL and 0 with
+`content` set out of 278 717, from 2026-08-21 to 2026-10-21; the live chat-delivery log held 0
+`LEGACY_CONTENT_PATH` lines against 596 sends. The queue records only what was undelivered, so this
+is strong rather than a census. An optional confirmation, not a blocker, is the user's one-off count
+over the 30-day deploy-log archive ([backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+**Still owed, in their own migration:** the `QueuedMessage.content` column
+([`queued-message.entity.ts`](../../apps/chat-delivery-service/src/entities/queued-message.entity.ts))
+and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`, which logs
+`LEGACY_CONTENT_ROW` at warn if a row ever carries it. Then this entry goes.
 
 ### 2027-02-19 - a server-composed `title` / `body` on social and form pushes
 

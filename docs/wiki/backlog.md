@@ -223,6 +223,40 @@ runs it or approves it explicitly); sending the DPO dossier; the DSI log-retenti
 - **Firefox disabled scroll anchoring on the `/posts` feed.** Ten consecutive sub-pixel adjustments of about 0.1667 px preceded it; rounding at a fractional device-pixel ratio is suspected. Reproduce with a `ResizeObserver` log on the feed container before changing anything.
 - **A seed asked by two phones was declined by a web device** (`holding 0 - missing ... declining`). Open observation: separate the causes by who should have held it, which needs a read of production state (private operations notes), not a client change.
 
+## Owed before the stable that carries the commit-caller checks: one background Welcome read on the Mi 9T, on the local estate (2026-10-22)
+
+The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the
+push-secret-authenticated committer, so a native path changed and no gate here runs native code. It is
+read on the LOCAL estate, with the server and a Mi 9T debug build made from ONE commit: the head that
+stacks this change with the seat-promotion and key-group join changes. Any stable carrying them is
+held until the reading is in; this replaces the reading on `dev` planned first.
+
+The reading has one setup and three checks:
+
+- **Setup.** The Mi 9T is killed, not force-stopped (swiped away), and is a member of a group
+  conversation. Another member adds a new device of a third person, which makes the phone answer a
+  `welcome_request` in the background.
+- **Phone (logcat).** Both of these lines appear:
+  - `processWelcomeRequestBackground: Welcome created ... baseEpoch=N`;
+  - `processWelcomeRequestBackground: ✓ Welcome sent for group=... target=...`.
+
+  No `sendWelcomeAndCommit failed` line appears.
+- **Server (chat-delivery on the local estate).** For the same group, these three lines appear:
+  - `[BG_WELCOME][bg-wlc-...] START ... baseEpoch=N`;
+  - `commit accepted -> activeEpoch=N+1`;
+  - `DONE`.
+
+  No `REJECT` appears, and in particular no commit-caller refusal.
+- **The newcomer.** It opens the group and reads the next message.
+
+## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join has no entitlement gate yet (2026-10-22)
+
+A key-group external join has no entitlement check yet; each one is logged `[COMMIT] key-group external join`. An accepted external commit also promotes its committing device to `active`, as every external join must, so the check belongs before both. A key group's Welcome target is not checked either: a conversation's Welcome target must be on its roster, and a key group has no roster here. The roster of a key group is held by social-service. Owed next, as its own pull request with an opus review: a social-service internal route answering "is this person entitled to this scope", called by chat-delivery for a key-group external commit only. A failed call refuses with a retryable 503 and never accepts, and its rate is measured against the ~77 joins/day before a stable.
+
+## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
+
+Registration refuses a device id another account holds (`device_id_taken`) by a read before its write; `key_package` is unique on the pair only, so two concurrent registrations of one id by two accounts could both pass. Production held 0 shared ids on 2026-10-22, and a client mints its id per account. The fix is a unique index on `key_package."deviceId"`, a migration of its own.
+
 ## P3 - The distribution path's device check: ship on an alpha, read `[SENDER_MISMATCH] path=distribution` first
 
 On a key-group frame `openDistributionFrame` compares only the envelope's USER with the MLS credential; the envelope's `senderDeviceId` stays self-asserted ([channel-encryption section 21.1](protocols/channel-encryption.md#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)). Handing it to the sender check would REFUSE every frame whose device disagrees, and production has never been read for `path=distribution kind=device`, so it was taken out of #2027 (user, 2026-10-18). What it would buy: a device could no longer answer "I hold nothing" in a sibling's name ([section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)). Order: ship the comparison on an alpha, read `[SENDER_MISMATCH] path=distribution` on chat-delivery on dev, then on production, before any stable carries it.
@@ -383,6 +417,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
 | **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
 | **send the DPO dossier to the school's DPO** and bring back the answers to its three questions (the school's role, the hosting agreement with the DSI, the MiGallery DPIA); MiTV keeps the proof of each member's face-recognition consent | 1 e-mail, 1 conversation | [the GDPR entry](#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16), [dso-dossier](compliance/dso-dossier.md) |

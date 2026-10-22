@@ -818,14 +818,20 @@ export class PushController {
     // `validateCommit` refuses outright - a commit it cannot record may not move the counter,
     // because `IDX_mls_commit_log_group_epoch` is UNIQUE and no later call can refill a skipped
     // epoch.
-    const validation = await this.messagingService.validateCommit({
-      groupId,
-      deviceId,
-      baseEpoch: body.baseEpoch,
-      proto: body.commitPayload,
-      // The one device this re-add commit puts in the tree, recorded with the advance.
-      admits: [{ userId: targetUserId, deviceId: targetDeviceId }],
-    });
+    // THE COMMITTER IS THE DEVICE THE PUSHSECRET AUTHENTICATED, held to the same gate as a
+    // foreground commit: its own device, a member of this group, a commit naming this group and epoch.
+    const validation = await this.messagingService.validateCommit(
+      {
+        groupId,
+        deviceId,
+        senderId: userId,
+        baseEpoch: body.baseEpoch,
+        proto: body.commitPayload,
+        // The one device this re-add commit puts in the tree, recorded with the advance.
+        admits: [{ userId: targetUserId, deviceId: targetDeviceId }],
+      },
+      userId
+    );
     if (!validation.accepted) {
       this.logger.warn(
         `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - neither Welcome nor broadcast`
