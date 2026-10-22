@@ -476,7 +476,51 @@ return URL is `/f/:id`, never one the client names. `getPublic` is an allowlist 
 cash, the answer-grid slice) and the submit reply is one too (`toGuestSubmitReply`: the payer page or
 "cash owed", never the submission id). A guest's purchase record has `userId` NULL (migration 103);
 the association's Achats tab names it "Invité". Both fill pages total with ONE rule,
-`lib/forms/fillPricing.ts`. Not yet built: the per-visitor ceiling of pending paid answers (WP-P3).
+`lib/forms/fillPricing.ts`.
+
+### At most three answers waiting per visitor (WP-P3, decision PP5)
+
+A guest's paid answer holds a seat while it waits (30 minutes online, until the cash deadline in
+cash), and a public form takes any number of answers from one link - so one script could fill an
+event with answers nobody pays. `submit` refuses a visitor's FOURTH waiting answer on a form with a
+429 `GUEST_PENDING_LIMIT` (`guest-visitor.ts`, worded by `paymentRefusal.ts`).
+
+- **Counted from the rows, under the form's seat lock**, like the capacity count: a guest's paid
+  answer carries `guestVisitorKey` (migration 105) and the count is its rows still WAITING - an online
+  one within its hold (`livePendingWhere`), a cash one not validated. A paid, cancelled or expired
+  answer frees its place at once, with no job.
+- **A cash answer has a deadline, always**: a public form that accepts cash is refused without
+  `cashPaymentExpiryDays` (at publication and on every edit; the editor says so under the field).
+  An edit that sends an explicit `null` is judged on that null, since that is what it saves. A form
+  that charges nothing is not asked: it never reaches cash, so a cash flag left over from when it
+  charged is not read (`chargesMoney`). Without a deadline, an unpaid cash answer would hold its seat and its visitor's place for ever, and three
+  of them from one shared network would shut that network out of the form.
+- **The visitor is its address** (`clientAddress`, the `X-Real-IP` nginx sets - the throttle's own
+  key, one function for both). An IPv6 address counts as its **/64** (`visitorNetwork`): a host is
+  routinely given a whole /64 and picks its address in it at will, so keyed on the full address one
+  visitor would be 2^64 visitors to the throttle and the ceiling. An IPv4-mapped address is its
+  IPv4. The key is never the address: an HMAC-SHA256 of the form id and
+  the address (keyed, because a plain hash of 32 bits is reversed by trying them all; per form, so
+  two forms' rows cannot be joined). Its HMAC key is DEDICATED: HKDF-SHA256 of `INTERNAL_SECRET`
+  under the label `canari:guest-visitor-key:v1` (`guestVisitorHmacKey`), never the raw secret, which
+  authenticates calls between services. No secret, no key: `submit` throws rather than store an
+  unkeyed hash.
+- **Kept only while it counts**: `forgetSettledGuestVisitors`, in the 5-minute expiry tick (its own
+  `try`), clears the key of every answer no longer waiting. Register row C8 and the privacy policy
+  say so.
+- **The paid path keeps the free path's guards**: the honeypot drops a paid answer before any row or
+  payment, and the route keeps `ClientIpThrottlerGuard` at 30 per minute (both asserted in
+  `public-forms.controller.spec.ts`).
+- **Known cost**: guests behind ONE address (an event hall's network) share the ceiling - three
+  can wait to pay at once, the fourth waits a moment or pays later. Not measured ("to evaluate" in
+  PP5).
+- **Known cost, kept on purpose**: a filled honeypot answers `{ ok: true }`, which on a PAID form a
+  bot can tell from a real reply (no payer page): the honeypot catches form-fillers, it does not
+  deceive them. Making the two identical was weighed and refused (2026-10-22): a real online reply
+  carries Lydia's payer page, which exists only once a payment request was created AT LYDIA - for a
+  bot, to an e-mail it typed, which would make the honeypot a relay of Lydia's e-mails - and a forged
+  URL is found out by fetching it. A bot that compares replies also reads past a hidden field, so
+  the ceiling and the throttle, not the honeypot, are what bound it.
 
 ### The guest's return from Lydia: a receipt, not an id (WP-P2) - A SECURITY SURFACE
 

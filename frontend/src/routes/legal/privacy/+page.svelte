@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="21/10/2026"
+  updated="22/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -118,6 +118,22 @@
           (montant, produit, statut, identifiant de la transaction chez Lydia). Aucune donnée
           bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un formulaire (par
           exemple un CV) sont lisibles par l'association qui l'a créé.
+        </dd>
+      </div>
+      <div>
+        <dt>Formulaires publics (réponses sans compte)</dt>
+        <dd>
+          Une personne sans compte qui répond à un formulaire public laisse ses réponses, et, si le
+          formulaire est payant, le montant, le statut du paiement et l'identifiant de la demande
+          chez Lydia. L'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas
+          conservée par Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de
+          retour (jamais le lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse
+          payante attend son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC)
+          à partir du formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64
+          d'une adresse IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert
+          uniquement à limiter à trois les réponses en attente de paiement depuis un même réseau ;
+          elle est effacée par une tâche planifiée, dans les cinq minutes qui suivent le règlement,
+          l'annulation ou l'expiration de la réponse.
         </dd>
       </div>
       <div>
@@ -446,6 +462,16 @@
           <tr>
             <td>Réponses aux formulaires</td>
             <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
+          </tr>
+          <tr>
+            <td>
+              Empreinte (HMAC) du réseau d'une réponse payante sans compte (adresse IPv4 ou préfixe
+              /64 IPv6, jamais l'adresse elle-même)
+            </td>
+            <td>
+              Tant que la réponse attend son paiement (30 minutes en ligne, jusqu'à l'échéance fixée
+              pour un paiement en espèces), puis effacée dans les cinq minutes
+            </td>
           </tr>
           <tr>
             <td>Réponses et fichiers d'une réservation</td>

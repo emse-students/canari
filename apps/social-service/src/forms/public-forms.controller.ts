@@ -8,9 +8,12 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
+import { clientAddress } from '../common/client-address';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import { GuestReceiptDto, GuestSubmitFormDto } from './dto/form.dto';
 import { CONFIRM_PAYMENT_PER_MINUTE } from './forms.controller';
@@ -48,9 +51,14 @@ export class PublicFormsController {
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post(':id/submit')
   @HttpCode(200)
-  async submit(@Param('id', ParseUUIDPipe) id: string, @Body() dto: GuestSubmitFormDto) {
-    // A filled honeypot is answered exactly like a real answer, so the bot learns nothing, and
-    // logged, so a rise in them is seen rather than guessed.
+  async submit(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: GuestSubmitFormDto,
+    @Req() req: Request
+  ) {
+    // A filled honeypot is answered like a FREE answer, stored nowhere, and logged, so a rise in
+    // them is seen rather than guessed. On a paid form a bot can tell it from a real reply (no payer
+    // page): an identical one would need a real Lydia request for the bot (forms.md, WP-P3).
     if (dto.website) {
       this.logger.warn(`[FORMS] guest answer dropped by the honeypot form=${id.slice(0, 8)}`);
       return { ok: true };
@@ -58,7 +66,9 @@ export class PublicFormsController {
     const result = await this.service.submit(
       id,
       { answers: dto.answers, payerEmail: dto.payerEmail, paymentMethod: dto.paymentMethod },
-      'guest'
+      'guest',
+      // The visitor a paid answer is counted against (PP5): the address the throttle counts too.
+      clientAddress(req)
     );
     const reply = toGuestSubmitReply(result);
     this.logger.log(

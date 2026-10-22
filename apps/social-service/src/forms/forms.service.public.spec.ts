@@ -401,7 +401,10 @@ describe('FormsService - public forms', () => {
     // PP1: a guest keeps everything that needs no account.
     it.each([
       ['a base price', { requiresPayment: true, basePrice: 500 }],
-      ['cash', { requiresPayment: true, basePrice: 500, allowCashPayment: true }],
+      [
+        'cash, with its deadline',
+        { requiresPayment: true, basePrice: 500, allowCashPayment: true, cashPaymentExpiryDays: 3 },
+      ],
       ['an option supplement', { items: [menuQuestion] }],
       [
         'a grid on an answer',
@@ -568,6 +571,65 @@ describe('FormsService - public forms', () => {
         ).rejects.toThrow(/"everyone else" price at 0/);
         expect(formRepo.save).not.toHaveBeenCalled();
       });
+    });
+
+    // A guest's cash answer holds a seat and a place under the visitor ceiling until its deadline.
+    // Controls (2026-10-22, WP-P3): the cash-deadline refusal removed -> the three refusals save;
+    // the edit's deadline read with `??` again -> the explicit-null case saves; the refusal no longer
+    // asking whether the form charges -> the free form is refused.
+    it('refuses a public form that takes cash with no deadline', async () => {
+      const { service, formRepo } = makeService();
+      await expect(
+        service.create(input({ requiresPayment: true, basePrice: 500, allowCashPayment: true }))
+      ).rejects.toThrow(/needs a cash deadline/);
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses to publish a stored cash setting with no deadline that the edit leaves out', async () => {
+      const { service, formRepo } = makeService();
+      jest.spyOn(service, 'assertFormManager').mockResolvedValue(
+        baseForm({
+          isPublic: false,
+          requiresPayment: true,
+          basePrice: 500,
+          allowCashPayment: true,
+          cashPaymentExpiryDays: null,
+        }) as any
+      );
+      await expect(
+        service.update('f1', { isPublic: true, allowMultipleSubmissions: true } as any, 'u1', false)
+      ).rejects.toThrow(/needs a cash deadline/);
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses an edit that clears the deadline of a public form taking cash', async () => {
+      const { service, formRepo } = makeService();
+      jest.spyOn(service, 'assertFormManager').mockResolvedValue(
+        baseForm({
+          requiresPayment: true,
+          basePrice: 500,
+          allowCashPayment: true,
+          cashPaymentExpiryDays: 3,
+        }) as any
+      );
+      await expect(
+        service.update('f1', { cashPaymentExpiryDays: null } as any, 'u1', false)
+      ).rejects.toThrow(/needs a cash deadline/);
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('does not ask a free public form for a cash deadline, whatever its old cash flag', async () => {
+      const { service, formRepo } = makeService();
+      jest.spyOn(service, 'assertFormManager').mockResolvedValue(
+        baseForm({
+          requiresPayment: false,
+          basePrice: 0,
+          allowCashPayment: true,
+          cashPaymentExpiryDays: null,
+        }) as any
+      );
+      await service.update('f1', { title: 'Gala' } as any, 'u1', false);
+      expect(formRepo.save).toHaveBeenCalled();
     });
 
     it('checks the stored flag when an edit leaves it out', async () => {

@@ -94,6 +94,15 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(err)).toBe(m.form_already_answered());
   });
 
+  it("words a guest's ceiling of waiting answers from its code, never the server English", () => {
+    const err = new SocialApiError(
+      'This visitor already has 3 answers waiting for payment on this form.',
+      'GUEST_PENDING_LIMIT',
+      429
+    );
+    expect(providerRefusalMessage(err)).toBe(m.form_guest_pending_limit());
+  });
+
   it("words a boutique attempt still open with the shop's own bound, not the form's 30 minutes", () => {
     const err = new SocialApiError(
       'The previous payment request for this product is still open.',

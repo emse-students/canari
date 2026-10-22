@@ -4,23 +4,61 @@ import { hashGuestReceipt, newGuestReceipt } from './guest-receipt';
 import { GuestReceiptThrottlerGuard } from './guest-receipt-throttler.guard';
 import { PublicFormsController } from './public-forms.controller';
 
+/** A request as nginx forwards it: the visitor's address in `X-Real-IP`, the hop in `ip`. */
+const visitor = { ip: '172.25.0.1', headers: { 'x-real-ip': '203.0.113.7' } } as any;
+
 describe('PublicFormsController', () => {
   it('drops a filled honeypot without storing, and answers as it would a real answer', async () => {
     const service: any = { submit: jest.fn() };
     const controller = new PublicFormsController(service);
-    const res = await controller.submit('f1', { answers: { q1: 'x' }, website: 'http://spam' });
+    const res = await controller.submit(
+      'f1',
+      { answers: { q1: 'x' }, website: 'http://spam' },
+      visitor
+    );
     expect(res).toEqual({ ok: true });
     expect(service.submit).not.toHaveBeenCalled();
+  });
+
+  // The PAID path is behind the same honeypot (WP-P3): a bot that fills it starts no payment and
+  // takes no seat. Control (2026-10-22): the honeypot check removed -> this test failed.
+  it('drops a filled honeypot on a PAID answer too: no row, no payment request', async () => {
+    const service: any = { submit: jest.fn() };
+    const res = await new PublicFormsController(service).submit(
+      'f1',
+      {
+        answers: { q1: 'x' },
+        payerEmail: 'bot@example.org',
+        paymentMethod: 'online',
+        website: 'http://spam',
+      },
+      visitor
+    );
+    expect(res).toEqual({ ok: true });
+    expect(service.submit).not.toHaveBeenCalled();
+  });
+
+  // Throttled per visitor (WP-P3): the paid answer is the same route, so the guard and the limit
+  // are read off the route itself. Control (2026-10-22): `@UseGuards` removed -> this test failed.
+  it('keeps the submit route - the paid path - behind the per-visitor throttle', () => {
+    // The method itself, read as metadata and never called: no `this` is involved.
+    const handler = Object.getOwnPropertyDescriptor(PublicFormsController.prototype, 'submit')
+      ?.value as object;
+    expect(Reflect.getMetadata('__guards__', handler)).toEqual([ClientIpThrottlerGuard]);
+    expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler)).toBe(30);
+    expect(Reflect.getMetadata('THROTTLER:TTLdefault', handler)).toBe(60_000);
   });
 
   it('hands a real answer to the guest path', async () => {
     const service: any = { submit: jest.fn(() => Promise.resolve({ submissionId: 's1' })) };
     const controller = new PublicFormsController(service);
-    const res = await controller.submit('f1', { answers: { q1: 'Ada' } });
+    const res = await controller.submit('f1', { answers: { q1: 'Ada' } }, visitor);
     expect(service.submit).toHaveBeenCalledWith(
       'f1',
       { answers: { q1: 'Ada' }, payerEmail: undefined, paymentMethod: undefined },
-      'guest'
+      'guest',
+      // The visitor nginx names, never the hop: the ceiling counts this address (PP5).
+      '203.0.113.7'
     );
     expect(res).toEqual({ ok: true });
   });
@@ -33,15 +71,16 @@ describe('PublicFormsController', () => {
         Promise.resolve({ checkoutUrl: 'https://lydia.example/pay', submissionId: 's1' })
       ),
     };
-    const res = await new PublicFormsController(service).submit('f1', {
-      answers: { q1: 'Ada' },
-      payerEmail: 'ada@example.org',
-      paymentMethod: 'online',
-    });
+    const res = await new PublicFormsController(service).submit(
+      'f1',
+      { answers: { q1: 'Ada' }, payerEmail: 'ada@example.org', paymentMethod: 'online' },
+      visitor
+    );
     expect(service.submit).toHaveBeenCalledWith(
       'f1',
       { answers: { q1: 'Ada' }, payerEmail: 'ada@example.org', paymentMethod: 'online' },
-      'guest'
+      'guest',
+      '203.0.113.7'
     );
     expect(res).toEqual({ ok: true, checkoutUrl: 'https://lydia.example/pay' });
   });
@@ -52,10 +91,11 @@ describe('PublicFormsController', () => {
         Promise.resolve({ submissionId: 's1', cashPayment: true, reference: '1A2B-3C4D' })
       ),
     };
-    const res = await new PublicFormsController(service).submit('f1', {
-      answers: {},
-      paymentMethod: 'cash',
-    });
+    const res = await new PublicFormsController(service).submit(
+      'f1',
+      { answers: {}, paymentMethod: 'cash' },
+      visitor
+    );
     expect(res).toEqual({ ok: true, cashPayment: true, reference: '1A2B-3C4D' });
   });
 
@@ -73,9 +113,9 @@ describe('PublicFormsController', () => {
     const service: any = {
       submit: jest.fn(() => Promise.resolve({ submissionId: 's1', message: 'no URL' })),
     };
-    await expect(new PublicFormsController(service).submit('f1', { answers: {} })).rejects.toThrow(
-      BadGatewayException
-    );
+    await expect(
+      new PublicFormsController(service).submit('f1', { answers: {} }, visitor)
+    ).rejects.toThrow(BadGatewayException);
   });
 });
 

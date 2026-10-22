@@ -34,6 +34,7 @@ import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { FormsService } from './forms.service';
 import { GUEST_RECEIPT_NOT_FOUND, hashGuestReceipt } from './guest-receipt';
+import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -60,7 +61,11 @@ const ASSO = '00000000-0000-4000-8000-0000000000a7';
 /** A Lydia `request_uuid`: 32 hex digits, no dash. */
 const UUID = '0123456789abcdef0123456789abcdef';
 
-maybe('a guest who pays, against PostgreSQL (migrations 103 and 104)', () => {
+/** A fresh visitor address per call, so a test meets the per-visitor ceiling only where it means to. */
+let visitors = 0;
+const freshVisitor = () => `198.51.100.${++visitors}`;
+
+maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () => {
   const schema = `guest_payment_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -71,8 +76,11 @@ maybe('a guest who pays, against PostgreSQL (migrations 103 and 104)', () => {
   let stateReads = 0;
   /** The return URL of the last request issued - where the guest's receipt travels. */
   let lastSuccessUrl = '';
+  const savedSecret = process.env.INTERNAL_SECRET;
 
   beforeAll(async () => {
+    // The visitor key is an HMAC under the internal secret (`guest-visitor.ts`).
+    process.env.INTERNAL_SECRET = 'internal-secret-for-it';
     admin = new Client({ connectionString: URL });
     await admin.connect();
     await admin.query(`CREATE SCHEMA ${schema}`);
@@ -103,6 +111,15 @@ maybe('a guest who pays, against PostgreSQL (migrations 103 and 104)', () => {
     );
     await ds.query(receiptMigration);
     await ds.query(receiptMigration);
+    // Migration 105 the same way.
+    await ds.query(`DROP INDEX submissions_guest_visitor_idx`);
+    await ds.query(`ALTER TABLE submissions DROP COLUMN "guestVisitorKey"`);
+    const visitorMigration = readFileSync(
+      join(__dirname, '../migrations/105_submissions_guest_visitor.sql'),
+      'utf8'
+    );
+    await ds.query(visitorMigration);
+    await ds.query(visitorMigration);
 
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
@@ -147,6 +164,8 @@ maybe('a guest who pays, against PostgreSQL (migrations 103 and 104)', () => {
   });
 
   afterAll(async () => {
+    if (savedSecret === undefined) delete process.env.INTERNAL_SECRET;
+    else process.env.INTERNAL_SECRET = savedSecret;
     jest.restoreAllMocks();
     await ds?.destroy();
     await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
@@ -186,7 +205,12 @@ maybe('a guest who pays, against PostgreSQL (migrations 103 and 104)', () => {
     slowInserts = true;
     const results = await Promise.allSettled(
       Array.from({ length: 8 }, () =>
-        service.submit(formId, { answers: {}, payerEmail: 'g@example.org' } as any, 'guest')
+        service.submit(
+          formId,
+          { answers: {}, payerEmail: 'g@example.org' } as any,
+          'guest',
+          freshVisitor()
+        )
       )
     ).finally(() => (slowInserts = false));
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
@@ -203,7 +227,8 @@ maybe('a guest who pays, against PostgreSQL (migrations 103 and 104)', () => {
     const { checkoutUrl } = (await service.submit(
       formId,
       { answers: {}, payerEmail: 'g@example.org' } as any,
-      'guest'
+      'guest',
+      freshVisitor()
     )) as { checkoutUrl: string };
     expect(checkoutUrl).toBe('https://lydia.example/pay/1');
     const [{ id }] = await ds.query(`SELECT id FROM submissions WHERE "formId" = $1`, [formId]);
@@ -237,7 +262,12 @@ maybe('a guest who pays, against PostgreSQL (migrations 103 and 104)', () => {
     async function guestAnswer(): Promise<{ formId: string; id: string; receipt: string }> {
       lydia = { state: 'paid', raw: '1' };
       const formId = await publicPaidForm(null);
-      await service.submit(formId, { answers: {}, payerEmail: 'g@example.org' } as any, 'guest');
+      await service.submit(
+        formId,
+        { answers: {}, payerEmail: 'g@example.org' } as any,
+        'guest',
+        freshVisitor()
+      );
       const url = new globalThis.URL(lastSuccessUrl);
       expect(url.pathname).toBe(`/f/${formId}/receipt`);
       const receipt = url.searchParams.get('receipt')!;
@@ -339,6 +369,96 @@ maybe('a guest who pays, against PostgreSQL (migrations 103 and 104)', () => {
       });
       const [row] = await ds.query(`SELECT "paymentStatus" FROM submissions WHERE id = $1`, [id]);
       expect(row.paymentStatus).toBe('paid');
+    });
+  });
+
+  /**
+   * THE PER-VISITOR CEILING (WP-P3, PP5): counted from the ROWS, under the form's seat lock - so
+   * the proof is concurrent submits on a real database, not a mutex in memory.
+   */
+  describe('the answers one visitor may leave waiting', () => {
+    const submitAs = (formId: string, address: string) =>
+      service.submit(formId, { answers: {}, payerEmail: 'g@example.org' } as any, 'guest', address);
+
+    // Controls (2026-10-22): the ceiling check removed from `submit`, or `lockFormSeats` removed
+    // (each racer counts before any insert lands) -> more than three rows waiting, this test failed.
+    it(`leaves exactly ${GUEST_PENDING_CEILING} answers waiting when one visitor sends eight at once`, async () => {
+      const formId = await publicPaidForm(null);
+      const address = freshVisitor();
+      slowInserts = true;
+      const results = await Promise.allSettled(
+        Array.from({ length: 8 }, () => submitAs(formId, address))
+      ).finally(() => (slowInserts = false));
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(GUEST_PENDING_CEILING);
+      for (const refused of results.filter((r) => r.status === 'rejected')) {
+        const err = (refused as PromiseRejectedResult).reason;
+        expect(err.getStatus()).toBe(429);
+        expect(err.getResponse()).toMatchObject({ code: GUEST_PENDING_LIMIT });
+      }
+      const rows = await ds.query(
+        `SELECT "guestVisitorKey" FROM submissions WHERE "formId" = $1 AND "paymentStatus" = 'pending'`,
+        [formId]
+      );
+      expect(rows).toHaveLength(GUEST_PENDING_CEILING);
+      // The key, never the address.
+      for (const row of rows) {
+        expect(row.guestVisitorKey).toBe(guestVisitorKey(formId, address));
+        expect(row.guestVisitorKey).not.toContain(address);
+      }
+      // Another visitor, and the same visitor on another form, are other counts.
+      await expect(submitAs(formId, freshVisitor())).resolves.toHaveProperty('checkoutUrl');
+      await expect(submitAs(await publicPaidForm(null), address)).resolves.toHaveProperty(
+        'checkoutUrl'
+      );
+    });
+
+    it('frees a place as soon as a waiting answer is paid or past its hold - no job needed', async () => {
+      const formId = await publicPaidForm(null);
+      const address = freshVisitor();
+      for (let i = 0; i < GUEST_PENDING_CEILING; i++) await submitAs(formId, address);
+      await expect(submitAs(formId, address)).rejects.toMatchObject({ status: 429 });
+
+      const [first, second] = await ds.query(
+        `SELECT id FROM submissions WHERE "formId" = $1 ORDER BY "createdAt"`,
+        [formId]
+      );
+      lydia = { state: 'paid', raw: '1' };
+      await service.confirmPayment(first.id);
+      await expect(submitAs(formId, address)).resolves.toHaveProperty('checkoutUrl');
+
+      await ds.query(
+        `UPDATE submissions SET "paymentRequestedAt" = now() - interval '1 hour' WHERE id = $1`,
+        [second.id]
+      );
+      await expect(submitAs(formId, address)).resolves.toHaveProperty('checkoutUrl');
+      await expect(submitAs(formId, address)).rejects.toMatchObject({ status: 429 });
+    });
+
+    // Control (2026-10-22): the `paymentStatus NOT IN` clause removed -> the waiting rows lost their
+    // key too, and this test failed.
+    it('forgets the visitor of an answer once it stops waiting, and only then', async () => {
+      const formId = await publicPaidForm(null);
+      const address = freshVisitor();
+      await submitAs(formId, address);
+      await submitAs(formId, address);
+      const [paid] = await ds.query(
+        `SELECT id FROM submissions WHERE "formId" = $1 ORDER BY "createdAt" LIMIT 1`,
+        [formId]
+      );
+      lydia = { state: 'paid', raw: '1' };
+      await service.confirmPayment(paid.id);
+
+      expect(await service.forgetSettledGuestVisitors()).toBeGreaterThanOrEqual(1);
+      const rows = await ds.query(
+        `SELECT "paymentStatus", "guestVisitorKey" FROM submissions WHERE "formId" = $1 ORDER BY "createdAt"`,
+        [formId]
+      );
+      expect(rows).toEqual([
+        { paymentStatus: 'paid', guestVisitorKey: null },
+        { paymentStatus: 'pending', guestVisitorKey: guestVisitorKey(formId, address) },
+      ]);
+      // A second run finds nothing left to forget.
+      expect(await service.forgetSettledGuestVisitors()).toBe(0);
     });
   });
 });
