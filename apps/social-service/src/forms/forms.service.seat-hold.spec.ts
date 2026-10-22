@@ -61,6 +61,11 @@ describe('FormsService - the seat a pending payment holds', () => {
     provider?: 'lydia' | 'disabled';
     /** The organiser alert switched on (it ships off: `FORM_ORGANISER_ALERT_ENABLED`). */
     organiserAlert?: boolean;
+    /** A public form, answered by guests (WP-P1); default false. */
+    isPublic?: boolean;
+    allowCashPayment?: boolean;
+    /** Default true: most rows here are members whose payment grants a cotisation. */
+    grantsCotisation?: boolean;
   }) {
     let now = T0;
     const rows: Row[] = opts.rows.map((row) => ({ ...row }));
@@ -70,15 +75,15 @@ describe('FormsService - the seat a pending payment holds', () => {
       title: 'Gala',
       maxSubmissions: opts.maxSubmissions,
       associationId: 'asso1',
-      grantsCotisation: true,
+      grantsCotisation: opts.grantsCotisation ?? true,
       cotisationVariantKey: null,
       basePrice: opts.basePrice ?? 0,
       priceMatrix: null,
       submitCondition: null,
       anonymous: false,
-      isPublic: false,
+      isPublic: opts.isPublic ?? false,
       allowMultipleSubmissions: opts.allowMultipleSubmissions ?? false,
-      allowCashPayment: false,
+      allowCashPayment: opts.allowCashPayment ?? false,
       currency: 'eur',
       opensAt: null,
       closedAt: null,
@@ -1850,6 +1855,153 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(r.transitions).toEqual(['s1:pending->cancelled', 's1:cancelled->paid_over_capacity']);
       expect(r.userTagService.grantCotisant).not.toHaveBeenCalled();
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // WP-P1 of `public-paid-forms-chantier.md`: a guest (a public form, no account) pays as a member
+  // does - the same row, the same hold, the same settle - with `userId` NULL throughout.
+  describe('a guest who pays (public form)', () => {
+    const GUEST_UUID = 'abcdefabcdefabcdefabcdefabcdef01';
+    const guestRow = (over: Partial<Row> = {}) =>
+      row({
+        id: 'guest',
+        userId: null,
+        paymentRequestedAt: ago(60_000),
+        paymentRequestId: '777',
+        stripeSessionId: GUEST_UUID,
+        ...over,
+      });
+
+    it('writes a pending row with no account and issues the request to the address typed', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 5,
+        rows: [],
+        basePrice: 1500,
+        provider: 'lydia',
+        isPublic: true,
+        allowMultipleSubmissions: true,
+        grantsCotisation: false,
+      });
+      const result = await service.submit(
+        'f1',
+        // Whatever a caller passes, a guest names nobody: `userId` and `email` are dropped.
+        { userId: 'forged', email: 'x@y.z', payerEmail: 'guest@example.org', answers: {} } as any,
+        'guest'
+      );
+      expect(result).toMatchObject({ checkoutUrl: 'https://lydia.example/pay/1' });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        userId: null,
+        paymentStatus: 'pending',
+        totalPaid: 1500,
+        stripeSessionId: 'uuid-1',
+        paymentRequestId: '1001',
+      });
+      expect(rows[0]).not.toHaveProperty('email', 'x@y.z');
+      const [checkout] = core.calls;
+      expect(checkout.route).toBe('create-checkout-session');
+      expect(checkout.body).toMatchObject({
+        payerEmail: 'guest@example.org',
+        connectAccountId: 'vendor',
+        expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
+        metadata: { userId: '' },
+        // The server chooses where a guest comes back: the public form, never /forms/success.
+        successUrl: 'http://localhost/f/f1',
+        cancelUrl: 'http://localhost/f/f1',
+      });
+    });
+
+    it('ignores a return URL a guest names', async () => {
+      const { service, core } = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        rows: [],
+        provider: 'lydia',
+        isPublic: true,
+        allowMultipleSubmissions: true,
+      });
+      await service.submit(
+        'f1',
+        { answers: {}, successUrl: 'http://localhost/forms/success?x=1' } as any,
+        'guest'
+      );
+      expect(core.calls[0].body.successUrl).toBe('http://localhost/f/f1');
+    });
+
+    it('records cash owed by a guest as waiting for the organiser, with no account', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: null,
+        basePrice: 800,
+        rows: [],
+        provider: 'lydia',
+        isPublic: true,
+        allowMultipleSubmissions: true,
+        allowCashPayment: true,
+      });
+      await expect(
+        service.submit('f1', { answers: {}, paymentMethod: 'cash' } as any, 'guest')
+      ).resolves.toMatchObject({ cashPayment: true });
+      expect(rows[0]).toMatchObject({ userId: null, paymentStatus: 'pending_cash' });
+      expect(core.calls).toHaveLength(0);
+    });
+
+    it('lets two guests take the last seat ONCE', async () => {
+      const { service, rows } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        rows: [],
+        provider: 'lydia',
+        isPublic: true,
+        allowMultipleSubmissions: true,
+      });
+      const results = await Promise.allSettled([
+        service.submit('f1', { answers: {} } as any, 'guest'),
+        service.submit('f1', { answers: {} } as any, 'guest'),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+      expect(rows.filter((r) => r.paymentStatus === 'pending')).toHaveLength(1);
+    });
+
+    it('records a guest payment: paid, a purchase record with no buyer, no grant', async () => {
+      const { service, rows, core, userTagService, purchaseRecordService } = makeStore({
+        maxSubmissions: 1,
+        provider: 'lydia',
+        isPublic: true,
+        allowMultipleSubmissions: true,
+        grantsCotisation: false,
+        rows: [guestRow()],
+      });
+      core.stateAnswer = 'paid';
+      await service.confirmPayment('guest');
+      await service.markPaid('guest', '777');
+      expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: GUEST_UUID });
+      expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: null, source: 'form', amountCents: 1500 })
+      );
+      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+    });
+
+    // A granting form holding a guest row was made private after the guest answered (a public form
+    // cannot be saved with a grant). Control: drop the guest branch in `fulfilPayment` and the
+    // grant is attempted for `null` (fails `not.toHaveBeenCalled`).
+    it('grants nothing to nobody, says so at ERROR ONCE, and still records the money', async () => {
+      const { service, rows, core, userTagService, purchaseRecordService } = makeStore({
+        maxSubmissions: null,
+        provider: 'lydia',
+        grantsCotisation: true,
+        rows: [guestRow()],
+      });
+      const error = jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+      core.stateAnswer = 'paid';
+      await service.confirmPayment('guest');
+      await service.markPaid('guest', '777');
+      await service.markPaid('guest', GUEST_UUID);
+      expect(rows[0].paymentStatus).toBe('paid');
+      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('no account to grant it to'));
+      expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -45,6 +45,7 @@
     matrixOf,
     matrixPayload,
     matrixProblem,
+    pricesOnProfile,
     type PriceMatrix,
   } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
@@ -119,7 +120,13 @@
   let mayGrantCotisation = $state(false);
 
   const grantBlocker = $derived(
-    cotisationGrantBlocker(requiresPayment, association?.id ?? '', tiers.length, mayGrantCotisation)
+    cotisationGrantBlocker(
+      requiresPayment,
+      association?.id ?? '',
+      tiers.length,
+      mayGrantCotisation,
+      isPublic
+    )
   );
 
   function pad2(n: number) {
@@ -445,6 +452,7 @@
       bind:anonymous
       anonymousFixed
       bind:isPublic
+      profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
       {requiresPayment}
       bind:opensAt
       bind:submitCondition

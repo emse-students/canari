@@ -77,6 +77,12 @@ import {
   visibleItemIds,
   type ConditionalItem,
 } from './visibility';
+import {
+  assertDeclaredOptionAnswers,
+  assertUniqueItemIds,
+  freeFallbackCells,
+  type PricedItem,
+} from './answer-options';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
@@ -109,8 +115,8 @@ function formRequiresStripeReadyAssociation(input: {
 }
 
 /**
- * Whether a form takes money or grants something - the two things that need to know WHO answered.
- * Both an anonymous and a public form refuse them, for that one reason.
+ * Whether a form takes money or grants something. An anonymous form refuses both: a payment names
+ * its payer to the processor and to the submission, the identity it promised not to keep.
  */
 function takesMoneyOrGrants(input: CreateFormDto): boolean {
   return (
@@ -216,15 +222,41 @@ export class FormsService {
 
   /**
    * Refuses a public form that would need to know who a guest is. A guest has no account, so there
-   * is nobody to charge, to grant a cotisation to, to match a profile criterion against, or to count
-   * once - each is refused where it is chosen, rather than being a setting that quietly does
-   * nothing for the people the link reaches. Paying guests are parked behind Lydia (backlog).
+   * is nobody to grant a cotisation to, to match a profile criterion against, or to count once -
+   * each is refused where it is chosen, rather than being a setting that quietly does nothing for
+   * the people the link reaches.
+   *
+   * A guest CAN pay (decision PP1, `public-paid-forms-chantier.md`): a base price, option
+   * supplements, cash, and a price grid whose every criterion is an ANSWER (a menu, a formula).
+   * Lydia needs only the e-mail the guest types. A grid criterion on promo, formation or cotisation
+   * is WHO the person is, which a guest has not got, so it stays refused.
    */
   private assertPublicConfigValid(input: CreateFormDto): void {
     if (input.isPublic !== true) return;
-    if (takesMoneyOrGrants(input)) {
+    if (input.grantsCotisation === true) {
       throw new BadRequestException(
-        'A public form must be free: a guest has no account to charge or to grant a cotisation to.'
+        'A public form cannot grant a cotisation: a guest has no account to grant it to.'
+      );
+    }
+    const dimensions = (input.priceMatrix as PriceMatrix | null | undefined)?.dimensions ?? [];
+    if (dimensions.some((d) => d.kind !== 'answer')) {
+      throw new BadRequestException(
+        'A public form can price only on answers: a guest has no profile to match a promo, a ' +
+          'formation or a cotisation against.'
+      );
+    }
+    // A charging grid whose "everyone else" cell is FREE and reachable - a priced question left
+    // empty, hidden, or answered with an ungrouped option - would hand a guest a free seat by
+    // default, with none of the paid path's limits. The manager prices it or marks it unavailable.
+    const freeCells = freeFallbackCells(
+      input.priceMatrix as PriceMatrix | null | undefined,
+      (input.items ?? []) as PricedItem[]
+    );
+    if (freeCells.length > 0) {
+      throw new BadRequestException(
+        'A public form that charges cannot leave its "everyone else" price at 0: a guest who skips ' +
+          `or hides a priced question would answer for free (cell "${freeCells[0]}"). Price it or ` +
+          'mark it unavailable.'
       );
     }
     if (input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion)) {
@@ -418,6 +450,7 @@ export class FormsService {
         throw new ForbiddenException('You are not a member of this association.');
       }
     }
+    assertUniqueItemIds(input.items);
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
     this.assertFileQuestionConfigValid(input);
@@ -540,6 +573,15 @@ export class FormsService {
     }
     const formFull =
       !!form.maxSubmissions && (await this.countActiveSubmissions(id)) >= form.maxSubmissions;
+    // The guest's slice of the grid, exactly as a member's is built (`hasSubmission`), from facts
+    // that know nobody: a public form's grid prices on answers only (`assertPublicConfigValid`),
+    // so the slice is the whole grid. The page totals from it; `submit` recomputes what is charged.
+    const pricing = form.priceMatrix
+      ? pricingViewFor(form.priceMatrix, await this.factsFor(form, undefined))
+      : null;
+    // AN ALLOWLIST, like `submission.projection.ts`: a column added to the form later is not served
+    // to anybody holding the link until someone adds it here. The price fields are what the page
+    // needs to show a total; nothing names the owner, the association or its payment account.
     return {
       id: form.id,
       title: form.title,
@@ -550,6 +592,10 @@ export class FormsService {
       closedAt: form.closedAt,
       anonymous: form.anonymous,
       formFull,
+      basePrice: form.basePrice,
+      currency: form.currency,
+      allowCashPayment: form.allowCashPayment,
+      pricing,
     };
   }
 
@@ -612,10 +658,22 @@ export class FormsService {
     }
     // The questions the form WILL have: an absent list keeps the stored one, file questions included.
     const items = input.items ?? form.items;
+    assertUniqueItemIds(items);
     this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
-    // the answers already stored. An absent value means "leave it", so the stored one is checked.
-    this.assertPublicConfigValid({ ...input, items, isPublic: input.isPublic ?? form.isPublic });
+    // the answers already stored. An absent value means "leave it", so the stored one is checked -
+    // for every field the check reads, or an edit sending only `isPublic: true` would publish a
+    // stored cotisation grant or a promo-priced grid nobody re-checked.
+    this.assertPublicConfigValid({
+      ...input,
+      items,
+      isPublic: input.isPublic ?? form.isPublic,
+      grantsCotisation: input.grantsCotisation ?? form.grantsCotisation,
+      priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : form.priceMatrix,
+      submitCondition:
+        input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+      allowMultipleSubmissions: input.allowMultipleSubmissions ?? form.allowMultipleSubmissions,
+    });
     // An absent condition keeps the stored one, which still meets the questions sent now.
     this.assertFileQuestionConfigValid({
       items,
@@ -773,14 +831,27 @@ export class FormsService {
       );
       return;
     }
+    // A guest's payment (a public form, `userId` null) has nobody to grant a cotisation to. A public
+    // form cannot be saved with a grant (`assertPublicConfigValid`), so a granting form holding a
+    // guest row was made private after the guest answered: the money is real, the grant cannot be.
+    // ERROR, once: the flag is claimed and kept, so a replay of the payment does not say it again.
     if (seatGiven && (await this.claimFulfilment(submission.id, 'cotisationGrantedAt'))) {
-      const granted = await this.grantCotisationIfConfigured(
-        form,
-        submission.userId,
-        how.grantedBy,
-        how.metadata
-      );
-      if (!granted) await this.releaseFulfilment(submission.id, 'cotisationGrantedAt');
+      if (!submission.userId) {
+        if (form.grantsCotisation) {
+          this.logger.error(
+            `[Forms] submission ${submission.id} was paid by a guest on form ${form.id}, which ` +
+              'grants a cotisation: there is no account to grant it to - nothing granted'
+          );
+        }
+      } else {
+        const granted = await this.grantCotisationIfConfigured(
+          form,
+          submission.userId,
+          how.grantedBy,
+          how.metadata
+        );
+        if (!granted) await this.releaseFulfilment(submission.id, 'cotisationGrantedAt');
+      }
     }
     if (
       form.associationId &&
@@ -958,6 +1029,9 @@ export class FormsService {
   /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a checkout URL. */
   async submit(id: string, input: SubmitFormDto, origin: SubmitOrigin = 'member') {
     const guest = origin === 'guest';
+    // A guest names nobody, whatever reached this call: the row and the payment are written with
+    // no account and no stored address, by construction rather than by each caller's care.
+    if (guest) input = { ...input, userId: undefined, email: undefined };
     const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
     if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
@@ -1007,6 +1081,20 @@ export class FormsService {
     for (const [questionId, value] of Object.entries(selections)) {
       if (visible.has(questionId)) visibleAnswers[questionId] = value;
     }
+    // An answer that decides a price names the question's own options and nothing else: an unknown
+    // id would select no group and no supplement - the "everyone else" price - while reading as the
+    // choice it names. Member and guest alike (`answer-options.ts`).
+    assertDeclaredOptionAnswers(form.items ?? [], input.answers ?? {}, visible, form.priceMatrix);
+    // What is STORED is what was priced: the answer to a question this submitter did not see was
+    // neither charged nor required, so it is not kept either - it would read as a choice nobody
+    // paid for. A question the form does not declare is kept as it always was.
+    const declaredIds = new Set((form.items ?? []).map((item) => item.id));
+    const storedAnswers = Object.fromEntries(
+      Object.entries(input.answers ?? {}).filter(
+        ([key]) => !declaredIds.has(key) || visible.has(key)
+      )
+    );
+    const storedFileAnswers = fileAnswers.filter((file) => visible.has(file.itemId));
     const pricedQuestions = pricedQuestionIds(form.priceMatrix);
     const { baseCents } = this.priceFor(form, { ...facts, answers: visibleAnswers });
     // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
@@ -1140,17 +1228,15 @@ export class FormsService {
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
       }
 
-      if (form.anonymous || guest) {
+      // A guest's FREE answer, and every anonymous answer. A guest who owes money takes the paid
+      // path below with no account (`userId` null), like a member's: the payer is the e-mail they
+      // typed for Lydia, never stored (decision PP2).
+      if (form.anonymous || (guest && totalCents === 0)) {
         if (!guest && !input.userId) throw new BadRequestException('Sign in to answer this form.');
-        // An option supplement could still charge on a form saved free; a charge would need the
-        // payer, which is the one thing this branch has none of - by promise, or because a guest
-        // has no account at all.
+        // An option supplement could still charge on an anonymous form saved free; a charge would
+        // need the payer, which is the one thing an anonymous answer promised not to keep.
         if (totalCents > 0) {
-          throw new BadRequestException(
-            guest
-              ? 'A public form cannot charge for an option.'
-              : 'An anonymous form cannot charge for an option.'
-          );
+          throw new BadRequestException('An anonymous form cannot charge for an option.');
         }
         // The registry insert and the answer are ONE transaction, and the answer carries nothing
         // that names the respondent: no account, no address, and a time cut to the day, because a
@@ -1175,7 +1261,7 @@ export class FormsService {
             formId: id,
             userId: null,
             email: undefined,
-            answers: input.answers,
+            answers: storedAnswers,
             totalPaid: 0,
             paymentStatus: 'free',
             paymentMethod: null,
@@ -1187,7 +1273,7 @@ export class FormsService {
       }
 
       if (existingPending) {
-        existingPending.answers = input.answers;
+        existingPending.answers = storedAnswers;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
         // Its old request is settled (above), so the row stops naming it: a late report about it
@@ -1209,9 +1295,9 @@ export class FormsService {
       } else {
         const submission = manager.create(Submission, {
           formId: id,
-          userId: input.userId,
+          userId: input.userId ?? null,
           email: input.email,
-          answers: input.answers,
+          answers: storedAnswers,
           totalPaid: totalCents,
           paymentStatus: totalCents > 0 ? 'pending' : 'free',
           paymentMethod: null,
@@ -1219,8 +1305,8 @@ export class FormsService {
         });
         savedSubmission = await manager.save(submission);
       }
-      if (fileAnswers.length > 0) {
-        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, fileAnswers);
+      if (storedFileAnswers.length > 0) {
+        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, storedFileAnswers);
       }
     });
 
@@ -1296,16 +1382,24 @@ export class FormsService {
         const idempotencyKey = `form:${savedSubmission.id}`;
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
-        const successUrl = resolveCheckoutCallbackUrl(
-          input.successUrl,
-          `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
-          frontendUrl
-        );
-        const cancelUrl = resolveCheckoutCallbackUrl(
-          input.cancelUrl,
-          `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
-          frontendUrl
-        );
+        // A guest is sent back to the public form's own address, never to `/forms/success`: that
+        // page reads the answer through a session the guest has not got. The server chooses it;
+        // a guest names no return URL (`GuestSubmitFormDto` carries none).
+        const guestReturn = `${frontendUrl}/f/${encodeURIComponent(id)}`;
+        const successUrl = guest
+          ? guestReturn
+          : resolveCheckoutCallbackUrl(
+              input.successUrl,
+              `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
+              frontendUrl
+            );
+        const cancelUrl = guest
+          ? guestReturn
+          : resolveCheckoutCallbackUrl(
+              input.cancelUrl,
+              `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
+              frontendUrl
+            );
         const res = await axios.post(
           checkoutUrl,
           {

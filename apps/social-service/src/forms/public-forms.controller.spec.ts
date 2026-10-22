@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { BadGatewayException, Logger } from '@nestjs/common';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import { PublicFormsController } from './public-forms.controller';
 
@@ -15,8 +15,53 @@ describe('PublicFormsController', () => {
     const service: any = { submit: jest.fn(() => Promise.resolve({ submissionId: 's1' })) };
     const controller = new PublicFormsController(service);
     const res = await controller.submit('f1', { answers: { q1: 'Ada' } });
-    expect(service.submit).toHaveBeenCalledWith('f1', { answers: { q1: 'Ada' } }, 'guest');
+    expect(service.submit).toHaveBeenCalledWith(
+      'f1',
+      { answers: { q1: 'Ada' }, payerEmail: undefined, paymentMethod: undefined },
+      'guest'
+    );
     expect(res).toEqual({ ok: true });
+  });
+
+  // The reply is an allowlist. Control (2026-10-22): return `result` itself and the submission id
+  // reaches a guest - the three tests below fail.
+  it('answers a paid guest the payer page and nothing else of what submit returned', async () => {
+    const service: any = {
+      submit: jest.fn(() =>
+        Promise.resolve({ checkoutUrl: 'https://lydia.example/pay', submissionId: 's1' })
+      ),
+    };
+    const res = await new PublicFormsController(service).submit('f1', {
+      answers: { q1: 'Ada' },
+      payerEmail: 'ada@example.org',
+      paymentMethod: 'online',
+    });
+    expect(service.submit).toHaveBeenCalledWith(
+      'f1',
+      { answers: { q1: 'Ada' }, payerEmail: 'ada@example.org', paymentMethod: 'online' },
+      'guest'
+    );
+    expect(res).toEqual({ ok: true, checkoutUrl: 'https://lydia.example/pay' });
+  });
+
+  it('answers a guest who owes cash that it is owed, and no id', async () => {
+    const service: any = {
+      submit: jest.fn(() => Promise.resolve({ submissionId: 's1', cashPayment: true })),
+    };
+    const res = await new PublicFormsController(service).submit('f1', {
+      answers: {},
+      paymentMethod: 'cash',
+    });
+    expect(res).toEqual({ ok: true, cashPayment: true });
+  });
+
+  it('refuses, rather than calls taken, a paid answer whose request was not issued', async () => {
+    const service: any = {
+      submit: jest.fn(() => Promise.resolve({ submissionId: 's1', message: 'no URL' })),
+    };
+    await expect(new PublicFormsController(service).submit('f1', { answers: {} })).rejects.toThrow(
+      BadGatewayException
+    );
   });
 });
 

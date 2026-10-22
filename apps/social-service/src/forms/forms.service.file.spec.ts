@@ -202,6 +202,30 @@ describe('FormsService - the file question', () => {
       expect(saved).toHaveLength(0);
     });
 
+    // A file question the submitter does not see is neither stored nor attached: only the VISIBLE
+    // file answers reach `attach`. Control (2026-10-22): `attach` handed every file answer -> fails.
+    it('attaches no file for a file question the submitter did not see', async () => {
+      const menu = {
+        id: 'q_menu',
+        label: 'Menu',
+        required: true,
+        type: 'single_choice',
+        options: [
+          { id: 'a', label: 'A', priceModifier: 0 },
+          { id: 'b', label: 'B', priceModifier: 0 },
+        ],
+      };
+      const hiddenCv = {
+        ...CV,
+        required: false,
+        showIf: { answer: { questionId: 'q_menu', optionIds: ['a'] } },
+      };
+      const { service, saved, formFiles } = makeService(baseForm({ items: [menu, hiddenCv] }));
+      await service.submit('f1', { userId: 'u1', answers: { q_menu: 'b', q_cv: FILE_ID } });
+      expect(saved[0].answers).toEqual({ q_menu: 'b' });
+      expect(formFiles.attach).not.toHaveBeenCalled();
+    });
+
     it('enforces a required file question', async () => {
       const { service } = makeService();
       await expect(service.submit('f1', { userId: 'u1', answers: {} })).rejects.toThrow(

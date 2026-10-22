@@ -14,7 +14,7 @@
   import type { PickerOption } from '$lib/components/ui/picker';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { Log } from '$lib/utils/Log';
 
@@ -75,13 +75,6 @@
     } finally {
       purchasesLoading = false;
     }
-  }
-
-  function purchaseBuyerName(purchase: AssociationPurchase): string {
-    if (purchase.firstName || purchase.lastName) {
-      return `${purchase.firstName ?? ''} ${purchase.lastName ?? ''}`.trim();
-    }
-    return getUserDisplayNameSync(purchase.userId);
   }
 
   /** Maps a payment method identifier to its display label. */

@@ -282,10 +282,25 @@ export class CreateFormDto {
 
 export class UpdateFormDto extends CreateFormDto {}
 
-/** A guest's answer to a public form: the answers, and nothing that could name or charge anyone. */
+/**
+ * A guest's answer to a public form: the answers, how they pay when the form charges, and nothing
+ * that could name anyone. No account, no stored address, no return URL - the server chooses where
+ * Lydia sends a guest back (`FormsService.submit`).
+ */
 export class GuestSubmitFormDto {
   @IsValidAnswers()
   answers: Record<string, string | string[] | number>;
+
+  /** Where Lydia sends the payment request. Forwarded to core-service, never persisted (PP2). */
+  @IsEmail()
+  @IsOptional()
+  payerEmail?: string;
+
+  /** `online` (default) or `cash` (when the form allows it). */
+  @IsString()
+  @IsIn(['online', 'cash'])
+  @IsOptional()
+  paymentMethod?: string;
 
   /**
    * A HONEYPOT: a field the page hides from people, which a form-filling bot fills. Anything in it

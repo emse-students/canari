@@ -447,8 +447,9 @@ time with the sentence shown on the save bar):
 
 | A guest has no... | so a public form... |
 |---|---|
-| account to charge or to grant to | is free: no price, grid, cash, cotisation grant, and an option supplement is refused at submit |
-| profile to match | has no `submitCondition` and no question shown by promo, formation or cotisation (an ANSWER condition is fine) |
+| account to grant to | grants no cotisation (refused at save, and `fulfilPayment` refuses it again for a guest row - ERROR, no grant) |
+| profile to match | has no `submitCondition`, no question shown by promo, formation or cotisation (an ANSWER condition is fine), and a price grid on ANSWER dimensions only |
+| account to charge | still CHARGES (WP-P1, decision PP1): a base price, an answer grid, option supplements, online payment to the e-mail it types, or cash |
 | identity to recognise twice | takes several answers (`allowMultipleSubmissions` is forced on) - identify guests with a "Nom prénom" question |
 
 A guest's answer is a `submissions` row with `userId` NULL and its real time (cut to the day when the
@@ -468,7 +469,40 @@ the page calls them with plain `fetch`, never `apiFetch`, whose refresh-and-retr
 - **A honeypot** field (`website`), off-screen and out of the tab order. A filled one is answered
   `{ ok: true }` like a real answer, stored nowhere, and logged.
 
-Paying guests are **parked behind Lydia** ([backlog](../../backlog.md)).
+**A guest pays (WP-P1, [chantier](../../public-paid-forms-chantier.md))** through the member's
+paid path, with `userId` NULL: the same seat lock and 30-minute hold, the same `markPaid`. What a
+guest cannot steer, the server sets: a `userId` or `email` in the body is dropped, and the Lydia
+return URL is `/f/:id`, never one the client names. `getPublic` is an allowlist (price, currency,
+cash, the answer-grid slice) and the submit reply is one too (`toGuestSubmitReply`: the payer page or
+"cash owed", never the submission id). A guest's purchase record has `userId` NULL (migration 103);
+the association's Achats tab names it "Invité". Both fill pages total with ONE rule,
+`lib/forms/fillPricing.ts`. Not yet built: the return page with a reference (WP-P2) and the
+per-visitor ceiling of pending paid answers (WP-P3).
+
+**What a priced answer may say (2026-10-22, `answer-options.ts`), for members and guests alike** -
+the price is only as good as the answer it is computed from:
+
+- **A visible question that decides a price** - one the grid prices on, or one whose options carry
+  a supplement - accepts only its own declared options:
+  - one id for a single choice or a dropdown, a list without duplicates for a multiple choice;
+  - anything else is a 400: an unknown id would match no group and no supplement, and land on the
+    "everyone else" price while reading as the choice it names.
+- **The question's TYPE says whether its options charge**: only a single choice, a multiple choice
+  or a dropdown. A question turned into a matrix keeps its old options as columns; its answer is an
+  object that never charged, so it is not judged, and the editor stores those columns at no price
+  (`itemsPayload.ts`).
+- **Two questions never share an id** (`assertUniqueItemIds`, at create and on every edit): every
+  reader resolves a question by its id, and two readers resolving a duplicate differently would
+  judge one question and price another.
+- **The stored answer is the priced one.** The answer to a question the submitter did not see
+  (`visibleItemIds`) is neither charged nor required, and it is no longer stored either, nor is its
+  file attached.
+- **A public form that charges cannot leave a reachable "everyone else" cell at 0**
+  (`freeFallbackCells`, checked at publication and on every edit of a public form). That cell is
+  reached when a priced question can be skipped (not required), hidden (it has a condition), or
+  answered with an option no group holds. The manager prices that cell or marks it unavailable; a
+  required, unconditional question whose every option is grouped never reaches it, so a 0 there is
+  accepted.
 
 ## The file question (2026-10-15)
 
@@ -862,9 +896,10 @@ Found while scoping it, so it is not re-derived (the paid half itself waits for 
   documents the 401 it used to answer). This line said "no credential" until 2026-10-15, which was
   stale. A guest needs no `X-User-Id` for the checkout itself; what is still NOT verified is one
   observed paid form on dev.
-- **Fulfilment must work without a `userId`**: `markPaid` and the cotisation grant both read it.
-- A fixed price only (no grid, no cotisation grant, no cash). The rate limit and the honeypot the
-  free half added (`PublicFormsController`) already cover the submission.
+- **Fulfilment works without a `userId`** since WP-P1: the purchase record takes NULL and the
+  cotisation grant is skipped (and refused at save).
+- The scope widened on 2026-10-15 (PP1): price, ANSWER grid, supplements and cash; never a grid on
+  the profile nor a grant.
 
 ## Four defects found on dev v1.1.2-alpha.2 (2026-10-07)
 

@@ -186,6 +186,14 @@ address travels as `payerEmail` (social-service -> `POST /api/payments/create-ch
 core-service turns it into the provider's `payerRecipient`, and nothing keeps it. A malformed one is
 refused before any provider call. The recipient is NOT an invoice address: Canari issues no invoices.
 
+**OWED MEASUREMENT (2026-10-22): whether Lydia writes to the recipient of a `request/do` on its
+own, and which documented field turns that off.** `request/do` sends no notification field today,
+so Lydia's default applies, and nothing here has measured that default. It matters most for a
+public form's guest (`forms.md`), whose recipient is typed on a public page and verified by no
+one. No field is added until it is measured: on homologation, once the dev Business is relinked
+(owed by the user), send one request per candidate value to an inbox someone watches, and record
+here what arrived. Until then, a guest's payment request may reach the typed address from Lydia.
+
 **The prompt and `PaymentModal` are portalled to `body` and sit on `--z-modal` (2026-10-07).** Both
 were written in place at a raw `z-50`. The form page renders them inside `.page-scroll-wrap`, whose
 `will-change: transform` makes it the containing block and a stacking context

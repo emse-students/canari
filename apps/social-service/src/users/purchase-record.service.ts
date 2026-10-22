@@ -4,7 +4,8 @@ import { EntityManager, Repository } from 'typeorm';
 import { PurchaseRecord, type PurchasePaymentMethod } from './entities/purchase-record.entity';
 
 export interface CreatePurchaseData {
-  userId: string;
+  /** NULL for a guest's payment on a public form: a guest has no account. */
+  userId: string | null;
   source: 'form' | 'product';
   formId?: string | null;
   productId?: string | null;
