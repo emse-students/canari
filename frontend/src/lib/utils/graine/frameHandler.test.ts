@@ -165,10 +165,17 @@ async function v2SeedFor(channelId: string, sessionId: string, firstIndex: numbe
  * a device that has left it. carol:dev-c is in the tree unless a test takes her out.
  */
 const tree = new Map<string, Uint8Array>();
+/**
+ * The leaves of the community's key group, as the admission gate observes them (section 25): every
+ * member of the default roster has a device in it, so each is rooted the first time it is read.
+ */
+let leaves: string[] = [];
 let published: DeviceSignatureKeys = { kind: 'keys', keys: [] };
 function graineMls(extra: Record<string, unknown> = {}) {
   return {
     memberSignatureKey: async (_groupId: string, identity: string) => tree.get(identity) ?? null,
+    getGroupMemberIdentities: async () => [...leaves],
+    getEpoch: () => 5,
     fetchDeviceSignatureKeys: async () => published,
     graineSignatureEngine: () => webCryptoEngine,
     getDeviceId: () => 'alice-laptop',
@@ -178,6 +185,7 @@ function graineMls(extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   tree.clear();
   tree.set('carol:dev-c', CAROL_DEVICE_PK);
+  leaves = ['alice:alice-laptop', 'bob:dev-b', 'carol:dev-c', 'newcomer:newcomer-web'];
   published = { kind: 'keys', keys: [] };
 });
 function fakeStorage(seed: StoredGraineSession[] = []) {
@@ -1766,6 +1774,7 @@ describe('the past goes only to an admission this device can verify (section 25)
   });
   beforeEach(() => {
     tree.set('dave:dev-d', DAVE_DEVICE_PK);
+    leaves.push('dave:dev-d');
     registerCommunityHistoryVisibility('ws-1', 'shared');
     graineHistoryFloor.mockReset();
   });
@@ -1827,7 +1836,13 @@ describe('the past goes only to an admission this device can verify (section 25)
     secret: Uint8Array,
     workspaceId = 'ws-1'
   ) {
-    const statement = { workspaceId, subjectUserId: subject, signer, issuedAt: 1_800_000_000_000 };
+    const statement = {
+      workspaceId,
+      subjectUserId: subject,
+      signer,
+      place: { keyGroupId: 'g-1', epoch: 5 },
+      issuedAt: 1_800_000_000_000,
+    };
     return encodeAdmissionVoucher({
       kind: 'direct',
       ...statement,
@@ -1874,6 +1889,7 @@ describe('the past goes only to an admission this device can verify (section 25)
     const grant = await mintInviteLinkGrant(
       'ws-1',
       carolDevice,
+      { keyGroupId: 'g-1', epoch: 5 },
       1_800_000_000_000,
       webCryptoEngine,
       (m) => webCryptoEngine.signWithSessionKey(CAROL_DEVICE_SECRET, m)

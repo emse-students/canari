@@ -59,12 +59,25 @@ export interface AdmissionSigner {
   deviceId: string;
 }
 
+/**
+ * WHERE in the community's history an admission was signed: the key group the signer held and its
+ * epoch then. The shared clock every member of the key group agrees on - so a member that saw the
+ * newcomer's leaves LEAVE the tree at a later epoch knows the voucher predates that removal and
+ * admits nobody any more (a kicked member coming back with their old voucher), and a voucher whose
+ * signer was admitted at that epoch still counts after the signer leaves.
+ */
+export interface AdmissionPlace {
+  keyGroupId: string;
+  epoch: number;
+}
+
 /** A member's device admitted `subjectUserId` from the community panel. */
 export interface DirectAdmissionVoucher {
   kind: 'direct';
   workspaceId: string;
   subjectUserId: string;
   signer: AdmissionSigner;
+  place: AdmissionPlace;
   /** Milliseconds since the epoch: the signer's claim, bound into `A`, deciding nothing. */
   issuedAt: number;
   /** The signer device's credential signature over `A`. */
@@ -78,6 +91,8 @@ export interface LinkAdmissionVoucher {
   subjectUserId: string;
   /** The device that showed the link and signed `L`. */
   signer: AdmissionSigner;
+  /** Where the link was signed - an admission through it is placed there, however late it is used. */
+  place: AdmissionPlace;
   /** When `L` was signed - the signer's claim, bound into `L`. */
   issuedAt: number;
   linkPublicKey: Uint8Array;
@@ -93,15 +108,19 @@ export type AdmissionVoucher = DirectAdmissionVoucher | LinkAdmissionVoucher;
 export interface InviteLinkGrant {
   workspaceId: string;
   signer: AdmissionSigner;
+  place: AdmissionPlace;
   issuedAt: number;
   linkPublicKey: Uint8Array;
   linkSignature: Uint8Array;
   linkSecret: Uint8Array;
 }
 
-/** `A = lp(label) || lp(workspaceId) || lp(subject) || lp(signerUser) || lp(signerDevice) || be64(issuedAt)`. */
+/**
+ * `A = lp(label) || lp(workspaceId) || lp(subject) || lp(signerUser) || lp(signerDevice) ||
+ * lp(keyGroupId) || be64(epoch) || be64(issuedAt)`.
+ */
 export function encodeDirectAdmission(
-  v: Pick<DirectAdmissionVoucher, 'workspaceId' | 'subjectUserId' | 'signer' | 'issuedAt'>
+  v: Pick<DirectAdmissionVoucher, 'workspaceId' | 'subjectUserId' | 'signer' | 'place' | 'issuedAt'>
 ): Uint8Array {
   const out = new GraineFieldWriter();
   out.field(utf8(ADMISSION_DIRECT_LABEL));
@@ -109,19 +128,24 @@ export function encodeDirectAdmission(
   out.field(text('subjectUserId', v.subjectUserId));
   out.field(text('signer.userId', v.signer.userId));
   out.field(text('signer.deviceId', v.signer.deviceId));
+  writePlace(out, v.place);
   out.u64(instant(v.issuedAt));
   return out.bytes();
 }
 
-/** `L = lp(label) || lp(workspaceId) || lp(signerUser) || lp(signerDevice) || lp(linkPublicKey) || be64(issuedAt)`. */
+/**
+ * `L = lp(label) || lp(workspaceId) || lp(signerUser) || lp(signerDevice) || lp(keyGroupId) ||
+ * be64(epoch) || lp(linkPublicKey) || be64(issuedAt)`.
+ */
 export function encodeLinkAdmission(
-  v: Pick<InviteLinkGrant, 'workspaceId' | 'signer' | 'issuedAt' | 'linkPublicKey'>
+  v: Pick<InviteLinkGrant, 'workspaceId' | 'signer' | 'place' | 'issuedAt' | 'linkPublicKey'>
 ): Uint8Array {
   const out = new GraineFieldWriter();
   out.field(utf8(ADMISSION_LINK_LABEL));
   out.field(text('workspaceId', v.workspaceId));
   out.field(text('signer.userId', v.signer.userId));
   out.field(text('signer.deviceId', v.signer.deviceId));
+  writePlace(out, v.place);
   out.field(sized('linkPublicKey', v.linkPublicKey, GRAINE_PUBLIC_KEY_BYTES));
   out.u64(instant(v.issuedAt));
   return out.bytes();
@@ -149,17 +173,19 @@ export function encodeLinkRedemption(
 export async function mintInviteLinkGrant(
   workspaceId: string,
   signer: AdmissionSigner,
+  place: AdmissionPlace,
   issuedAt: number,
   engine: GraineSignatureEngine,
   signWithDevice: (message: Uint8Array) => Promise<Uint8Array>
 ): Promise<InviteLinkGrant> {
   const { secret, publicKey } = await engine.newSessionKeyPair();
   const linkSignature = await signWithDevice(
-    encodeLinkAdmission({ workspaceId, signer, issuedAt, linkPublicKey: publicKey })
+    encodeLinkAdmission({ workspaceId, signer, place, issuedAt, linkPublicKey: publicKey })
   );
   return {
     workspaceId,
     signer,
+    place,
     issuedAt,
     linkPublicKey: publicKey,
     linkSignature,
@@ -182,6 +208,7 @@ export async function redeemInviteLinkGrant(
     workspaceId: grant.workspaceId,
     subjectUserId,
     signer: grant.signer,
+    place: grant.place,
     issuedAt: grant.issuedAt,
     linkPublicKey: grant.linkPublicKey,
     linkSignature: grant.linkSignature,
@@ -190,8 +217,8 @@ export async function redeemInviteLinkGrant(
 }
 
 /**
- * Checks a voucher's signatures against `signerKey`, the signer device's credential key (from the
- * key group's tree, or published by the server for a device that has left it). Who the signer IS -
+ * Checks a voucher's signatures against `signerKey`, the signer device's credential key - the one the
+ * caller pinned from a key-group tree, never one the server publishes alone. Who the signer IS -
  * whether their own admission holds - is the caller's question, not this function's.
  *
  * @returns whether every signature the voucher carries verifies.
@@ -233,6 +260,7 @@ export function encodeAdmissionVoucher(voucher: AdmissionVoucher): string {
   out.field(text('subjectUserId', voucher.subjectUserId));
   out.field(text('signer.userId', voucher.signer.userId));
   out.field(text('signer.deviceId', voucher.signer.deviceId));
+  writePlace(out, voucher.place);
   out.u64(instant(voucher.issuedAt));
   if (voucher.kind === 'direct') {
     out.field(sized('signature', voucher.signature, GRAINE_SIGNATURE_BYTES));
@@ -252,6 +280,7 @@ export function decodeAdmissionVoucher(encoded: string): AdmissionVoucher {
   const workspaceId = r.string();
   const subjectUserId = r.string();
   const signer = { userId: r.string(), deviceId: r.string() };
+  const place = r.place();
   const issuedAt = r.u64();
   let voucher: AdmissionVoucher;
   if (kind === KIND_DIRECT) {
@@ -260,6 +289,7 @@ export function decodeAdmissionVoucher(encoded: string): AdmissionVoucher {
       workspaceId,
       subjectUserId,
       signer,
+      place,
       issuedAt,
       signature: r.sized(GRAINE_SIGNATURE_BYTES),
     };
@@ -269,6 +299,7 @@ export function decodeAdmissionVoucher(encoded: string): AdmissionVoucher {
       workspaceId,
       subjectUserId,
       signer,
+      place,
       issuedAt,
       linkPublicKey: r.sized(GRAINE_PUBLIC_KEY_BYTES),
       linkSignature: r.sized(GRAINE_SIGNATURE_BYTES),
@@ -278,7 +309,7 @@ export function decodeAdmissionVoucher(encoded: string): AdmissionVoucher {
     throw new AdmissionFormatError(`voucher: unknown kind ${kind}`);
   }
   r.end();
-  if (!workspaceId || !subjectUserId || !signer.userId || !signer.deviceId) {
+  if (!workspaceId || !subjectUserId || !signer.userId || !signer.deviceId || !place.keyGroupId) {
     throw new AdmissionFormatError('voucher: an empty identity');
   }
   return voucher;
@@ -291,6 +322,7 @@ export function encodeInviteLinkGrant(grant: InviteLinkGrant): string {
   out.field(text('workspaceId', grant.workspaceId));
   out.field(text('signer.userId', grant.signer.userId));
   out.field(text('signer.deviceId', grant.signer.deviceId));
+  writePlace(out, grant.place);
   out.u64(instant(grant.issuedAt));
   out.field(sized('linkPublicKey', grant.linkPublicKey, GRAINE_PUBLIC_KEY_BYTES));
   out.field(sized('linkSignature', grant.linkSignature, GRAINE_SIGNATURE_BYTES));
@@ -305,13 +337,19 @@ export function decodeInviteLinkGrant(fragment: string): InviteLinkGrant {
   const grant: InviteLinkGrant = {
     workspaceId: r.string(),
     signer: { userId: r.string(), deviceId: r.string() },
+    place: r.place(),
     issuedAt: r.u64(),
     linkPublicKey: r.sized(GRAINE_PUBLIC_KEY_BYTES),
     linkSignature: r.sized(GRAINE_SIGNATURE_BYTES),
     linkSecret: r.sized(LINK_SECRET_BYTES),
   };
   r.end();
-  if (!grant.workspaceId || !grant.signer.userId || !grant.signer.deviceId) {
+  if (
+    !grant.workspaceId ||
+    !grant.signer.userId ||
+    !grant.signer.deviceId ||
+    !grant.place.keyGroupId
+  ) {
     throw new AdmissionFormatError('fragment: an empty identity');
   }
   return grant;
@@ -361,6 +399,10 @@ class FieldReader {
     return new TextDecoder('utf-8', { fatal: true }).decode(this.field());
   }
 
+  place(): AdmissionPlace {
+    return { keyGroupId: this.string(), epoch: this.u64() };
+  }
+
   end(): void {
     if (this.at !== this.bytes.length) throw new AdmissionFormatError('trailing bytes');
   }
@@ -386,9 +428,16 @@ function sized(name: string, value: Uint8Array, length: number): Uint8Array {
   return value;
 }
 
+function writePlace(out: GraineFieldWriter, place: AdmissionPlace): void {
+  out.field(text('place.keyGroupId', place.keyGroupId));
+  out.u64(instant(place.epoch));
+}
+
 function instant(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new AdmissionFormatError(`an instant must be a non-negative integer, got ${value}`);
+    throw new AdmissionFormatError(
+      `an instant or an epoch must be a non-negative integer, got ${value}`
+    );
   }
   return value;
 }

@@ -44,11 +44,12 @@ export const ACCOUNT_KEY = {
    */
   historyHeldNothing: (userId: string) => `canari_graine_history_held_nothing:v1:${userId}`,
   /**
-   * `graine/admissionGate.ts`: per community, the members this device recorded as admitted before
-   * the admission proof existed, with their arrival dates - other members' ids, written by this
+   * `graine/admissionGate.ts`: what this device saw by itself about who is admitted - per
+   * community the roots, the members present in the tree, the removals it saw and the admissions
+   * it verified. Other members' ids, written by this
    * account's device.
    */
-  admissionRoots: (userId: string) => `canari_graine_admission_roots:v1:${userId}`,
+  admissionLedger: (userId: string) => `canari_graine_admission_ledger:v1:${userId}`,
   /**
    * `salonUnsent.ts`: the PLAINTEXT of salon messages not yet sent (lower-cased, as it always was) -
    * the one key here whose content alone makes leaving it behind a leak.
@@ -131,7 +132,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.archivedConversations(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
-    ACCOUNT_KEY.admissionRoots(userId),
+    ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.salonUnsent(userId),
     ACCOUNT_KEY.salonReadMarks(userId),
     ACCOUNT_KEY.dmReadMarks(userId),

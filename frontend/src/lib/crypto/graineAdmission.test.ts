@@ -23,6 +23,7 @@ import {
 const DEVICE_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 10 + i);
 const OTHER_SECRET = Uint8Array.from({ length: 32 }, (_, i) => 90 + i);
 const signer = { userId: 'carol', deviceId: 'dev-c' };
+const place = { keyGroupId: 'kg-1', epoch: 7 };
 let DEVICE_PK: Uint8Array;
 
 beforeAll(async () => {
@@ -36,6 +37,7 @@ async function direct(
     workspaceId: 'ws-1',
     subjectUserId: 'newcomer',
     signer,
+    place,
     issuedAt: 1_800_000_000_000,
   };
   return {
@@ -50,7 +52,7 @@ async function direct(
 }
 
 async function linkGrant() {
-  return mintInviteLinkGrant('ws-1', signer, 1_800_000_000_000, webCryptoEngine, (m) =>
+  return mintInviteLinkGrant('ws-1', signer, place, 1_800_000_000_000, webCryptoEngine, (m) =>
     webCryptoEngine.signWithSessionKey(DEVICE_SECRET, m)
   );
 }
@@ -58,10 +60,11 @@ async function linkGrant() {
 describe('the statements a device signs', () => {
   it('begin with a zero byte, so a device signature over them is never an MLS SignContent', () => {
     for (const bytes of [
-      encodeDirectAdmission({ workspaceId: 'w', subjectUserId: 's', signer, issuedAt: 0 }),
+      encodeDirectAdmission({ workspaceId: 'w', subjectUserId: 's', signer, place, issuedAt: 0 }),
       encodeLinkAdmission({
         workspaceId: 'w',
         signer,
+        place,
         issuedAt: 0,
         linkPublicKey: new Uint8Array(32),
       }),
@@ -76,6 +79,7 @@ describe('the statements a device signs', () => {
       workspaceId: 'w',
       subjectUserId: 's',
       signer,
+      place,
       issuedAt: 0,
     });
     const redeem = encodeLinkRedemption('w', 's', new Uint8Array(32));
@@ -99,6 +103,18 @@ describe('a direct voucher', () => {
     expect(
       await voucherSignaturesHold({ ...voucher, workspaceId: 'ws-2' }, DEVICE_PK, webCryptoEngine)
     ).toBe(false);
+  });
+
+  it('does not verify once moved to another place in the history (a later epoch, another group)', async () => {
+    const voucher = await direct();
+    for (const moved of [
+      { ...place, epoch: 8 },
+      { ...place, keyGroupId: 'kg-2' },
+    ]) {
+      expect(
+        await voucherSignaturesHold({ ...voucher, place: moved }, DEVICE_PK, webCryptoEngine)
+      ).toBe(false);
+    }
   });
 
   it('does not verify under another device key', async () => {
@@ -130,16 +146,23 @@ describe('a link voucher', () => {
     expect(await voucherSignaturesHold(back, DEVICE_PK, webCryptoEngine)).toBe(true);
   });
 
-  it('does not verify once moved to another person', async () => {
+  it('does not verify once moved to another person or another place', async () => {
     const voucher = await redeemInviteLinkGrant(await linkGrant(), 'newcomer', webCryptoEngine);
     expect(
       await voucherSignaturesHold({ ...voucher, subjectUserId: 'dave' }, DEVICE_PK, webCryptoEngine)
+    ).toBe(false);
+    expect(
+      await voucherSignaturesHold(
+        { ...voucher, place: { ...place, epoch: 99 } },
+        DEVICE_PK,
+        webCryptoEngine
+      )
     ).toBe(false);
   });
 
   it('does not verify when the link key is not one the signer stood behind', async () => {
     const real = await linkGrant();
-    const forged = await mintInviteLinkGrant('ws-1', signer, 1, webCryptoEngine, (m) =>
+    const forged = await mintInviteLinkGrant('ws-1', signer, place, 1, webCryptoEngine, (m) =>
       webCryptoEngine.signWithSessionKey(OTHER_SECRET, m)
     );
     // A forger's own link key, under the real link's device signature.

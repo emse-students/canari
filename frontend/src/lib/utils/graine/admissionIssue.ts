@@ -6,6 +6,9 @@ import {
   mintInviteLinkGrant,
   redeemInviteLinkGrant,
 } from '$lib/crypto/graineAdmission';
+import type { AdmissionPlace } from '$lib/crypto/graineAdmission';
+import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 import { platformGraineSignatureEngine } from '$lib/mls-client/platformGraineSignatureEngine';
 import { requireGraineRuntime } from './runtime';
 
@@ -16,6 +19,24 @@ import { requireGraineRuntime } from './runtime';
  * Each signs with THIS device's MLS credential key, the key its leaf in the community's key group
  * carries, so a member checks it against a key it already agreed on.
  */
+
+/**
+ * Where this device stands in `workspaceId`'s history now: its key group and that group's epoch.
+ * Bound into every admission it signs, so a member who later sees the newcomer removed knows the
+ * voucher came before (channel-encryption section 25).
+ *
+ * @throws When this device holds no key group for the community: it cannot place an admission, so
+ *   it signs none - the caller says so, and the newcomer reads from their arrival on.
+ */
+export function admissionPlaceNow(mlsService: IMlsService, workspaceId: string): AdmissionPlace {
+  const keyGroupId = mlsService.distributionGroupFor(workspaceScope(workspaceId));
+  if (!keyGroupId) {
+    throw new Error(
+      `this device holds no key group for community ${workspaceId.slice(0, 8)} - no admission can be placed`
+    );
+  }
+  return { keyGroupId, epoch: mlsService.getEpoch(keyGroupId) };
+}
 
 /**
  * The voucher this device signs when its member adds `subjectUserId` from the community panel,
@@ -33,11 +54,12 @@ export async function signDirectAdmission(
     workspaceId,
     subjectUserId: subjectUserId.toLowerCase(),
     signer: { userId, deviceId: mlsService.getDeviceId() },
+    place: admissionPlaceNow(mlsService, workspaceId),
     issuedAt: Date.now(),
   };
   const signature = await mlsService.signWithDeviceCredential(encodeDirectAdmission(statement));
   console.info(
-    `[GRAINE] admission of ${statement.subjectUserId.slice(0, 8)} to community ${workspaceId.slice(0, 8)} signed by device ${statement.signer.deviceId.slice(0, 8)}`
+    `[GRAINE] admission of ${statement.subjectUserId.slice(0, 8)} to community ${workspaceId.slice(0, 8)} signed by device ${statement.signer.deviceId.slice(0, 8)} at key-group epoch ${statement.place.epoch}`
   );
   return encodeAdmissionVoucher({ kind: 'direct', ...statement, signature });
 }
@@ -59,6 +81,7 @@ export async function mintInviteFragment(workspaceId: string): Promise<string> {
   const grant = await mintInviteLinkGrant(
     workspaceId,
     signer,
+    admissionPlaceNow(mlsService, workspaceId),
     Date.now(),
     mlsService.graineSignatureEngine(),
     (message) => mlsService.signWithDeviceCredential(message)

@@ -1300,7 +1300,7 @@ since `inviteIsValid` would otherwise hand back a token dead on arrival with not
 ### A membership carries the admission a member signed (2026-10-22)
 
 `channel_members."admissionVoucher"` (migration `107`, nullable text) holds the voucher a member's
-device signed for this membership: sent as `admissionVoucher` with an admin's add
+device signed for this membership: sent as `admissionVoucher` with a member's add
 (`POST /api/channels/:channelId/members/invite`) and with a link's accept (body of
 `POST /api/channels/invites/:token/accept`, written onto an existing row too). The service checks
 only that it is base64url and at most 4096 characters (`ADMISSION_VOUCHER_INVALID` otherwise) - it
