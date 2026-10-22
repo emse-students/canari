@@ -2,6 +2,7 @@
 
 import type { EntityManager } from 'typeorm';
 import {
+  endDeviceMemberships,
   endGroupMembership,
   ensureGroupMember,
   exclusionWindows,
@@ -11,6 +12,8 @@ import {
 } from './group-membership';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { QueuedMessage } from '../entities/queued-message.entity';
 
 /**
  * The statement this helper builds is the whole of what it does, so the statement is what is
@@ -463,5 +466,69 @@ describe('withholdExcludedHistoryRows', () => {
     expect(withholdExcludedHistoryRows([row('x', null)], W).rows).toEqual([]);
     const untouched = [row('x', null)];
     expect(withholdExcludedHistoryRows(untouched, []).rows).toBe(untouched);
+  });
+});
+
+/**
+ * EVERY PATH THAT ENDS A DEVICE'S MEMBERSHIP TAKES ITS QUEUED WELCOMES WITH IT, through this one
+ * helper. A device pulls its queue whatever the roster says, so a Welcome left behind lets a device
+ * that is out enter the epoch the Welcome was built for.
+ */
+describe('endDeviceMemberships', () => {
+  function recordingManager(): {
+    manager: EntityManager;
+    deletes: Array<{ entity: unknown; where: unknown }>;
+  } {
+    const deletes: Array<{ entity: unknown; where: unknown }> = [];
+    const manager = {
+      getRepository: (entity: unknown) => ({
+        delete: (where: unknown) => {
+          deletes.push({ entity, where });
+          return Promise.resolve({ affected: entity === QueuedMessage ? 3 : 2 });
+        },
+      }),
+    } as unknown as EntityManager;
+    return { manager, deletes };
+  }
+
+  it('deletes the device rows and the queued Welcomes of exactly the scope it is given', async () => {
+    const { manager, deletes } = recordingManager();
+
+    const ended = await endDeviceMemberships(
+      manager,
+      { userId: 'bob', deviceId: 'b1', groupId: 'g-1' },
+      'welcomes'
+    );
+
+    expect(deletes).toEqual([
+      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1', groupId: 'g-1' } },
+      {
+        entity: QueuedMessage,
+        where: { recipientId: 'bob', deviceId: 'b1', groupId: 'g-1', isWelcome: true },
+      },
+    ]);
+    expect(ended).toEqual({ memberships: 2, queued: 3 });
+  });
+
+  it('widens to the whole queue of that scope when the departure takes everything', async () => {
+    const { manager, deletes } = recordingManager();
+
+    await endDeviceMemberships(manager, { userId: 'bob', groupId: 'g-1' }, 'all');
+
+    expect(deletes[1]).toEqual({
+      entity: QueuedMessage,
+      where: { recipientId: 'bob', groupId: 'g-1' },
+    });
+  });
+
+  it('never widens an unscoped call past the person it names', async () => {
+    const { manager, deletes } = recordingManager();
+
+    await endDeviceMemberships(manager, { userId: 'bob' }, 'welcomes');
+
+    expect(deletes).toEqual([
+      { entity: DeviceGroupMembership, where: { userId: 'bob' } },
+      { entity: QueuedMessage, where: { recipientId: 'bob', isWelcome: true } },
+    ]);
   });
 });

@@ -705,10 +705,16 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   costs nothing: the row is the delivery, and the device takes it on its next pull.
   `welcome` is the background route's alone: `POST /mls/commit` hands the gate an allowlist of the
   fields `submitCommit` sends (`foregroundCommitBody` in `messaging.controller.ts`), so a foreground
-  body carrying one stores nothing. And a removal (`removeGroupMember`) deletes the Welcomes still
-  queued for the removed person in the transaction that ends their membership: a device pulls its
-  queue whatever the roster says, so a Welcome left behind would let them enter the epoch it was
-  built for.
+  body carrying one stores nothing. And **every path that ends a device's membership deletes the
+  Welcomes still queued for it, in the transaction that ends it**, through one helper,
+  `endDeviceMemberships` (`utils/group-membership.ts`): a device pulls its queue whatever the roster
+  says, so a Welcome left behind would let it enter the epoch it was built for. The paths: a removal
+  or self-leave (`removeGroupMember`), a key-group eviction - community kick, leave, salon removal -
+  (`evictFromDistributionGroup`, whole queue), account erasure (`deleteUserData`, whole queue), a
+  deleted, revoked or collected device (`purgeDeviceFootprint`, whole queue), and the three device
+  routes `DELETE device-memberships/...` and `force_leave`. Deliberately NOT: a kick back to
+  `pending` and the cron's purge of a stale pending seat, where the person stays on the roster and a
+  queued Welcome is the Add the device is owed.
 - **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
   to broadcast it a second time.
 - **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a

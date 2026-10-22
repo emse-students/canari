@@ -49,6 +49,7 @@ import {
 } from '../internal/distribution-entitlement';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
+  endDeviceMemberships,
   exclusionWindows,
   openMissingIntervals,
   partingKey,
@@ -703,17 +704,20 @@ export class MessagingService {
     });
     const groupIds = [...new Set(memberships.map((m) => m.groupId))];
 
-    await this.deviceGroupRepo.delete({ userId, deviceId });
+    // The device rows and everything queued for the device - Welcomes included - go in ONE
+    // transaction ({@link endDeviceMemberships}).
+    const ended = await this.deviceGroupRepo.manager.transaction((manager) =>
+      endDeviceMemberships(manager, { userId, deviceId }, 'all')
+    );
 
     const memberKey = `${userId}:${deviceId}`;
     for (const gid of groupIds) {
       await this.redis.srem(`group:members:${gid}`, memberKey);
     }
 
-    const [kpResult, otkpResult, queuedResult] = await Promise.all([
+    const [kpResult, otkpResult] = await Promise.all([
       this.keyPackageRepo.delete({ userId, deviceId }),
       this.oneTimeKeyPackageRepo.delete({ userId, deviceId }),
-      this.queuedMessageRepo.delete({ recipientId: userId, deviceId }),
       this.pushTokenRepo.delete({ userId, deviceId }),
     ]);
 
@@ -721,7 +725,7 @@ export class MessagingService {
       groupsCleaned: groupIds.length,
       keyPackagesDeleted: kpResult.affected ?? 0,
       oneTimeKeyPackagesDeleted: otkpResult.affected ?? 0,
-      queuedMessagesDeleted: queuedResult.affected ?? 0,
+      queuedMessagesDeleted: ended.queued,
     };
   }
 
