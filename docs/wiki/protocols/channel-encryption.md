@@ -1746,8 +1746,11 @@ Pinned by `frameHandler.test.ts`, "the salon scope of an answer".
 **The native mirror cannot make that check** - it knows neither which salons are private nor which
 key group a frame came on. So a bundle's seeds are marked `relayed` by `proto_fields::graine_seeds`,
 and `store_graine_seeds_json` mirrors a relayed seed only for a salon the mirror already holds a
-session of; any other is left to the app, which reads the same answer from its durable queue. A
-sender's own distributed seed is mirrored as before. Bundles reach the native path only on Android
+session of; any other is left to the app, which reads the same answer from its durable queue. That
+check opens the SEALED mirror with the cache key, through the one reader `read_graine_mirror`: a
+plain-text read of it failed on every sealed file, so no relayed seed was mirrored at all
+(`a_relayed_seed_is_mirrored_only_for_a_salon_the_device_already_reads`). A sender's own distributed
+seed is mirrored as before. Bundles reach the native path only on Android
 (`handleMlsFrame`, a key-group push with its ciphertext inline); the iOS extension opens only the
 `seedFrame` a salon push carries, which is a single seed.
 

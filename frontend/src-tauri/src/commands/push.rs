@@ -759,10 +759,12 @@ pub(crate) fn store_graine_seeds_json(
 
 /// Whether the mirror holds at least one session of `channel_id` - a salon whose seeds the app has
 /// admitted. Read without the lock, as [`read_graine_seed`] reads: every writer renames a whole
-/// file over the old one. Opened with the cache key through [`read_graine_mirror`], the one reader:
-/// the mirror is SEALED since `native_cache`, and a plaintext read here saw every salon as unknown,
-/// so no relayed seed was ever mirrored. An absent file holds nothing; an unreadable one is logged
-/// and holds nothing - the seed is then left to the app, which checks it fully.
+/// file over the old one.
+///
+/// THE MIRROR IS SEALED, so it is opened with `key` through [`read_graine_mirror`], the one reader -
+/// a plain-text parse fails on every sealed file, and every relayed seed would then be left to the
+/// app. An absent file holds nothing; an unreadable one holds nothing either, and says so at ERROR,
+/// because a mirror this device wrote and cannot open is not an expected state.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 fn mirror_holds_channel(data_dir: &std::path::Path, key: &CacheKey, channel_id: &str) -> bool {
     match read_graine_mirror(data_dir, Some(key)) {
