@@ -107,20 +107,39 @@ preselection, never a destination by itself.
 - **When**: `IncomingShareHost` calls `syncShareTargets` whenever the list, the setting or the session
   changes; the list is sent only when its ordered ids and names differ from what the native side
   was last told (`shareTargetsNative.ts`) - idempotence from that state, no debounce and no clock.
-  A signed-out or still-loading session publishes nothing and erases nothing.
+  A signed-out or still-loading session publishes nothing and erases nothing: the gate is
+  `conversationSourcesSettled`, whose restore half (`conversationsRestored`) is reset at sign-out
+  with the map (`invalidateRestores`), so the next account never publishes from a list still
+  loading. The conversation map is read only when a publish is due, so a disabled or signed-out
+  state does not re-run on every message.
 - **Native** (`tauri-plugin-gallery`, `ShareTargets.kt`, beside S3's commands): `publish_share_targets`
   adds by its own ids and removes the ids it published before and no longer names;
   `clear_share_targets` removes every id it ever recorded. The ids are recorded in the plugin's
-  preferences BEFORE the platform is touched, so a later process removes exactly them - an
-  allowlist, never a pattern. It never calls `setDynamicShortcuts` or `removeAllDynamicShortcuts`:
+  preferences (`ShortcutRecord`) BEFORE the platform is touched, and a record that cannot be
+  written aborts the call, so a later process removes exactly them - an allowlist, never a
+  pattern. A publish answers what the platform LISTS afterwards (`present`, read back with
+  `getDynamicShortcuts`, since the per-activity cap can evict a push at once) and the stale ids it
+  could not remove (`leftover`); a leftover makes the page forget what it told the native side, so
+  the next call is sent whatever it asks. It never calls `setDynamicShortcuts` or `removeAllDynamicShortcuts`:
   the long-lived `chat_<group>` shortcuts that make message notifications conversations
   (`CanariFirebaseMessagingService.publishConversationShortcut`) share the dynamic set. NOT
   long-lived: the sheet needs no cached copy, so removing the dynamic shortcut removes it
   everywhere. Capped at `getMaxShortcutCountPerActivity`.
-- **Erased at sign-out** (an account switch included, the user's rule for the pending share too):
-  `clearAuthUnderway` calls `clearShareTargets` beside `discardSharedOut`, for `clearAuth` and
-  `clearAuthLocally` alike, and the "last told" state resets so the next account publishes its own.
-  The calls are queued, so a clear lands after any publish already in flight.
+- **Erased at sign-out, with the notifications' conversation shortcuts** (an account switch
+  included, the user's rule for the pending share too: nothing of an account stays for the next
+  one). `clearAuthUnderway` calls `eraseAccountShortcuts` beside `discardSharedOut`, for
+  `clearAuth` and `clearAuthLocally` alike. It ALWAYS asks the native side to clear the
+  suggestions (only the native record knows for certain; the setting's own clear may skip when the
+  page knows it published nothing), resets the "last told" state so the next account publishes its
+  own, and calls `clear_conversation_shortcuts`. The calls are queued, so they land after any
+  publish already in flight.
+- **The conversation shortcuts** (`chat_<group>`, long-lived, a name and a Person each): the
+  messaging service pushes them only through `ConversationShortcuts.push` (in the plugin, which the
+  app module depends on), which records the id before pushing - an unrecorded push is refused - and
+  keeps at most `ConversationShortcuts.CAP` (30): past it, the conversation whose notification is
+  the oldest is removed. The sign-out clear removes every recorded id with
+  `removeLongLivedShortcuts` (the dynamic shortcut and, on API 30+, the system's cached copy),
+  disables the pinned ones, and empties the record only on success.
 - **The hint is checked against the account**: `IncomingShare.kt` copies `EXTRA_SHORTCUT_ID` into
   `pending_share.json` as `target` only when it has the `c:` shape; the page parses it
   (`conversationIdFromShareTarget`) and preselects it only if the signed-in account's list holds
@@ -156,7 +175,8 @@ suggestions need the Share Extension, so they are part of S4.
 
 - **S5 on the Mi 9T**: the suggestions appear in the sheet after a few conversations; picking one
   opens the picker with it preselected; the toggle off removes them; a sign-out removes them; a
-  second account never sees the first's. `adb logcat -s ShareTargets GalleryPlugin IncomingShare`
+  second account never sees the first's - nor its conversation shortcuts (a notification's
+  conversation header, the launcher's long-press menu). `adb logcat -s ShareTargets GalleryPlugin IncomingShare`
   and the page's `[SHARE]` lines tell each step.
 
 - A reading on the Mi 9T: text from Chrome, one and several pictures from the gallery, a PDF from

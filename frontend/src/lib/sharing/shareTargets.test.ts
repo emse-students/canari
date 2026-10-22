@@ -18,6 +18,7 @@ const { selectShareTargets, syncShareTargets, MAX_SHARE_TARGETS } = await import
 const {
   clearShareTargets,
   conversationIdFromShareTarget,
+  eraseAccountShortcuts,
   publishShareTargets,
   resetShareTargetsStateForTests,
   shareTargetId,
@@ -43,6 +44,17 @@ function group(id: string, name: string, at: number, extra: Partial<Conversation
 
 const PUBLISH = 'plugin:gallery|publish_share_targets';
 const CLEAR = 'plugin:gallery|clear_share_targets';
+const CLEAR_CONVERSATIONS = 'plugin:gallery|clear_conversation_shortcuts';
+
+/** The native publish's answer when every stale suggestion was removed. */
+const CLEAN = { present: 1, leftover: 0 };
+
+/** A native answer the test releases by hand: the call stays IN FLIGHT until then. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
 
 function calls(cmd: string) {
   return invoke.mock.calls.filter(([c]) => c === cmd);
@@ -53,9 +65,9 @@ function input(conversations: [string, Conversation][], over: Record<string, unk
     enabled: true,
     signedIn: true,
     conversationsReady: true,
-    conversations,
+    conversations: () => conversations,
     currentUserId: ME,
-    workspaces: [],
+    workspaces: () => [],
     ...over,
   };
 }
@@ -68,7 +80,7 @@ async function settle() {
 beforeEach(() => {
   android = true;
   invoke.mockReset();
-  invoke.mockResolvedValue(0);
+  invoke.mockImplementation(async (cmd: string) => (cmd === PUBLISH ? CLEAN : 0));
   resetShareTargetsStateForTests();
 });
 
@@ -149,11 +161,23 @@ describe('publishing on change', () => {
     expect(calls(PUBLISH)).toHaveLength(2);
   });
 
-  it('publishes nothing while signed out or before the list is read', async () => {
-    syncShareTargets(input([group('a', 'A', 1)], { signedIn: false }));
-    syncShareTargets(input([group('a', 'A', 1)], { conversationsReady: false }));
-    await Promise.resolve();
+  it('publishes nothing, and reads no conversation, while signed out or before the list is read', async () => {
+    const conversations = vi.fn(() => [group('a', 'A', 1)]);
+    syncShareTargets({ ...input([]), signedIn: false, conversations });
+    // The next account's list still loading: its sources are not settled (reset at sign-out).
+    syncShareTargets({ ...input([]), conversationsReady: false, conversations });
+    await settle();
     expect(invoke).not.toHaveBeenCalled();
+    expect(conversations).not.toHaveBeenCalled();
+  });
+
+  it('sends the same list again when the native side left stale suggestions behind', async () => {
+    invoke.mockImplementationOnce(async () => ({ present: 1, leftover: 2 }));
+    const list = [group('a', 'A', 1)];
+    syncShareTargets(input(list));
+    syncShareTargets(input(list));
+    await settle();
+    expect(calls(PUBLISH)).toHaveLength(2);
   });
 });
 
@@ -178,6 +202,48 @@ describe('clearing', () => {
     expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH, CLEAR, PUBLISH]);
   });
 
+  it('the sign-out reaches native even after an EMPTY publish, which already reads as "nothing"', async () => {
+    syncShareTargets(input([]));
+    await settle();
+    expect(calls(PUBLISH)).toHaveLength(1);
+    // The setting path would skip here; the sign-out never does - only the native record knows.
+    await clearShareTargets('suggestions turned off');
+    expect(calls(CLEAR)).toHaveLength(0);
+    await eraseAccountShortcuts('signed out');
+    expect(calls(CLEAR)).toHaveLength(1);
+    expect(calls(CLEAR_CONVERSATIONS)).toHaveLength(1);
+  });
+
+  it('a sign-out issued while a publish is IN FLIGHT lands after it', async () => {
+    const publish = deferred<typeof CLEAN>();
+    invoke.mockImplementation((cmd: string) =>
+      cmd === PUBLISH ? publish.promise : Promise.resolve(0)
+    );
+    syncShareTargets(input([group('a', 'A', 1)]));
+    await settle();
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH]);
+
+    const erased = eraseAccountShortcuts('signed out');
+    await settle();
+    // Still in flight: nothing else has reached the native side yet.
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH]);
+
+    publish.resolve(CLEAN);
+    await erased;
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH, CLEAR, CLEAR_CONVERSATIONS]);
+  });
+
+  it('a failed erase of the conversation shortcuts is said, never thrown', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === CLEAR_CONVERSATIONS) throw new Error('kept on record');
+      return 0;
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(eraseAccountShortcuts('signed out')).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
   it('clears even in a fresh process, where nothing says what was published', async () => {
     await clearShareTargets('signed out');
     expect(calls(CLEAR)).toHaveLength(1);
@@ -190,6 +256,7 @@ describe('anywhere but Android', () => {
     syncShareTargets(input([group('a', 'A', 1)]));
     syncShareTargets(input([group('a', 'A', 1)], { enabled: false }));
     await clearShareTargets('signed out');
+    await eraseAccountShortcuts('signed out');
     await publishShareTargets([{ id: 'c:a', label: 'A', link: 'x' }], 'test');
     expect(invoke).not.toHaveBeenCalled();
   });

@@ -20,7 +20,7 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.ShortcutInfoCompat
-import androidx.core.content.pm.ShortcutManagerCompat
+import app.tauri.gallery.ConversationShortcuts
 import androidx.core.graphics.drawable.IconCompat
 import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -433,6 +433,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * small icon the corner badge, so the notification shows ONE identity. Re-published on every
          * post so a changed avatar replaces the old one; the shortcut id is stable per conversation.
          *
+         * Pushed through `ConversationShortcuts` (tauri-plugin-gallery), which RECORDS the id first
+         * so the sign-out can erase it - the shortcut carries the conversation's name and a face of
+         * this account - and bounds how many are kept (docs/wiki/frontend/sharing.md).
+         *
          * @param label the conversation's name: the group title, or the other person for a DM.
          * @return the shortcut id to hand to `setShortcutId`, or null when the platform refused
          *         (logged), in which case the caller keeps the plain large icon.
@@ -445,7 +449,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             person: Person,
             tapIntent: Intent,
         ): String? {
-            val id = "chat_$groupId"
+            val id = "${ConversationShortcuts.ID_PREFIX}$groupId"
             return try {
                 val info = ShortcutInfoCompat.Builder(context, id)
                     .setShortLabel(label.ifEmpty { context.getString(R.string.app_name) })
@@ -455,8 +459,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .setPerson(person)
                     .setCategories(setOf("androidx.core.content.pm.SHORTCUT_CATEGORY_CONVERSATION"))
                     .build()
-                ShortcutManagerCompat.pushDynamicShortcut(context, info)
-                id
+                if (ConversationShortcuts.push(context, info)) id else null
             } catch (e: Exception) {
                 Log.e(TAG, "publishConversationShortcut: refused for group=${groupId.take(8)}: ${e.message}")
                 null

@@ -6,9 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * them to the next one. Both ways out go through `clearAuthUnderway`, and both are pinned here -
  * the deliberate sign-out and the local one a tab takes when another tab deleted the account.
  */
-const clearShareTargets = vi.fn(async (_reason: string) => {});
+const eraseAccountShortcuts = vi.fn(async (_reason: string) => {});
 vi.mock('$lib/sharing/shareTargetsNative', () => ({
-  clearShareTargets: (reason: string) => clearShareTargets(reason),
+  eraseAccountShortcuts: (reason: string) => eraseAccountShortcuts(reason),
 }));
 
 const discardSharedOut = vi.fn(async (_reason: string) => {});
@@ -19,7 +19,7 @@ vi.mock('$lib/sharing/shareOutCleanup', () => ({
 const { clearAuth, clearAuthLocally } = await import('$lib/stores/auth');
 
 beforeEach(() => {
-  clearShareTargets.mockClear();
+  eraseAccountShortcuts.mockClear();
   discardSharedOut.mockClear();
   vi.stubGlobal(
     'fetch',
@@ -28,15 +28,15 @@ beforeEach(() => {
 });
 
 describe('a sign-out erases the share sheet suggestions', () => {
-  it('clearAuth clears them, beside the shared-out file', async () => {
+  it('clearAuth clears them, beside the shared-out file and with the conversation shortcuts', async () => {
     await clearAuth();
-    expect(clearShareTargets).toHaveBeenCalledTimes(1);
-    expect(clearShareTargets).toHaveBeenCalledWith('signed out');
+    expect(eraseAccountShortcuts).toHaveBeenCalledTimes(1);
+    expect(eraseAccountShortcuts).toHaveBeenCalledWith('signed out');
     expect(discardSharedOut).toHaveBeenCalledTimes(1);
   });
 
   it('clearAuthLocally clears them too', async () => {
     await clearAuthLocally();
-    expect(clearShareTargets).toHaveBeenCalledTimes(1);
+    expect(eraseAccountShortcuts).toHaveBeenCalledTimes(1);
   });
 });

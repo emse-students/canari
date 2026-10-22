@@ -224,7 +224,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
         shareTargetsThread.execute {
             try {
                 val published = ShareTargets.publish(activity, targets)
-                invoke.resolve(JSObject().put("published", published))
+                invoke.resolve(JSObject().put("present", published.present).put("leftover", published.leftover))
             } catch (e: Exception) {
                 Log.e(TAG, "publishShareTargets failed", e)
                 invoke.reject("publishShareTargets failed: ${e.message}")
@@ -243,6 +243,25 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
             } catch (e: Exception) {
                 Log.e(TAG, "clearShareTargets failed", e)
                 invoke.reject("clearShareTargets failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Removes every `chat_<group>` conversation shortcut the message notifications published
+     * (`ConversationShortcuts.clear`) - at sign-out, so no conversation name or face of this
+     * account stays with the system for the next one.
+     */
+    @Command
+    fun clearConversationShortcuts(invoke: Invoke) {
+        Log.d(TAG, "clearConversationShortcuts")
+        shareTargetsThread.execute {
+            try {
+                val removed = ConversationShortcuts.clear(activity)
+                invoke.resolve(JSObject().put("removed", removed))
+            } catch (e: Exception) {
+                Log.e(TAG, "clearConversationShortcuts failed", e)
+                invoke.reject("clearConversationShortcuts failed: ${e.message}")
             }
         }
     }

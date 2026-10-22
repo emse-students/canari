@@ -1,6 +1,6 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::commands::ShareTarget;
+use crate::commands::{PublishAnswer, ShareTarget};
 use tauri::{
     plugin::{PluginApi, PluginHandle},
     AppHandle, Runtime,
@@ -50,12 +50,6 @@ struct PublishShareTargetsPayload {
     targets: Vec<ShareTarget>,
 }
 
-/// How many suggestions the platform took (`publish_share_targets`).
-#[derive(Serialize, Deserialize)]
-pub struct PublishOutcome {
-    pub published: u32,
-}
-
 /// How many suggestions were removed (`clear_share_targets`).
 #[derive(Serialize, Deserialize)]
 pub struct ClearOutcome {
@@ -89,10 +83,7 @@ impl<R: Runtime> Gallery<R> {
             .map_err(Into::into)
     }
 
-    pub fn publish_share_targets(
-        &self,
-        targets: Vec<ShareTarget>,
-    ) -> crate::Result<PublishOutcome> {
+    pub fn publish_share_targets(&self, targets: Vec<ShareTarget>) -> crate::Result<PublishAnswer> {
         self.0
             .run_mobile_plugin(
                 "publishShareTargets",
@@ -104,6 +95,12 @@ impl<R: Runtime> Gallery<R> {
     pub fn clear_share_targets(&self) -> crate::Result<ClearOutcome> {
         self.0
             .run_mobile_plugin("clearShareTargets", ())
+            .map_err(Into::into)
+    }
+
+    pub fn clear_conversation_shortcuts(&self) -> crate::Result<ClearOutcome> {
+        self.0
+            .run_mobile_plugin("clearConversationShortcuts", ())
             .map_err(Into::into)
     }
 

@@ -79,11 +79,19 @@ export interface ShareTargetsInput {
   /** The member's setting (`settings.shareSuggestionsEnabled`). */
   enabled: boolean;
   signedIn: boolean;
-  /** The conversation list has been read from the device (`conversationsRestored`). */
+  /**
+   * Every source that can add a conversation to THIS session's list has finished
+   * (`conversationSourcesSettled`, whose restore half is reset at sign-out) - so the next account
+   * never publishes from a list still loading.
+   */
   conversationsReady: boolean;
-  conversations: Iterable<[string, Conversation]>;
+  /**
+   * Read only when a publish is due: called inside an effect, a disabled or signed-out state then
+   * does not subscribe to every change of the conversation map.
+   */
+  conversations: () => Iterable<[string, Conversation]>;
   currentUserId: string;
-  workspaces: readonly WorkspaceLike[];
+  workspaces: () => readonly WorkspaceLike[];
 }
 
 /**
@@ -100,7 +108,7 @@ export function syncShareTargets(input: ShareTargetsInput): void {
   }
   if (!input.signedIn || !input.conversationsReady) return;
   void publishShareTargets(
-    selectShareTargets(input.conversations, input.currentUserId, input.workspaces),
+    selectShareTargets(input.conversations(), input.currentUserId, input.workspaces()),
     'conversations changed'
   );
 }

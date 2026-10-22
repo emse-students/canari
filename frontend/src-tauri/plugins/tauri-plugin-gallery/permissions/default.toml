@@ -10,4 +10,5 @@ permissions = [
   "allow-discard-shared-out",
   "allow-publish-share-targets",
   "allow-clear-share-targets",
+  "allow-clear-conversation-shortcuts",
 ]

@@ -85,10 +85,22 @@ export function publishShareTargets(targets: ShareTarget[], reason: string): Pro
   return enqueue(async () => {
     if (key === lastPublished) return;
     try {
-      const published = await invoke<number>(galleryCommand('publishShareTargets'), { targets });
-      lastPublished = key;
+      const answer = await invoke<{ present: number; leftover: number }>(
+        galleryCommand('publishShareTargets'),
+        { targets }
+      );
       // The names are the member's conversations: their count only.
-      Log.d('ShareTargets', `published ${published} of ${targets.length} (${reason})`);
+      if (answer.leftover > 0) {
+        // Stale suggestions the platform would not remove: what it holds is NOT this list, so
+        // the next call is sent whatever it asks for.
+        lastPublished = null;
+        console.warn(
+          `[share-targets] published, but ${answer.leftover} stale suggestion(s) could not be removed (${reason})`
+        );
+      } else {
+        lastPublished = key;
+      }
+      Log.d('ShareTargets', `${answer.present} of ${targets.length} present (${reason})`);
     } catch (err) {
       lastPublished = null;
       console.error(`[share-targets] the suggestions were not published (${reason})`, err);
@@ -97,14 +109,19 @@ export function publishShareTargets(targets: ShareTarget[], reason: string): Pro
 }
 
 /**
- * Removes every suggested conversation - at sign-out (an account switch included) and when the
- * member turns the suggestions off - and RESETS the state, so the next account publishes its own.
- * Android only; a failure is said, never thrown.
+ * Removes every suggested conversation - when the member turns the suggestions off, and at
+ * sign-out through {@link eraseAccountShortcuts} - and RESETS the state, so the next account
+ * publishes its own. Skipped when the native side is known to hold nothing, unless `force`: the
+ * sign-out always asks, since only the native record knows for certain. Android only; a failure is
+ * said, never thrown.
  */
-export function clearShareTargets(reason: string): Promise<void> {
+export function clearShareTargets(
+  reason: string,
+  options: { force?: boolean } = {}
+): Promise<void> {
   if (!isAndroidTauriRuntime()) return Promise.resolve();
   return enqueue(async () => {
-    if (lastPublished === NOTHING) return;
+    if (!options.force && lastPublished === NOTHING) return;
     try {
       const removed = await invoke<number>(galleryCommand('clearShareTargets'));
       lastPublished = NOTHING;
@@ -112,6 +129,25 @@ export function clearShareTargets(reason: string): Promise<void> {
     } catch (err) {
       lastPublished = null;
       console.error(`[share-targets] the suggestions were not cleared (${reason})`, err);
+    }
+  });
+}
+
+/**
+ * Everything of THIS account the system holds as shortcuts, erased at every sign-out (an account
+ * switch included; user, 2026-10-22): the share suggestions, ALWAYS asked of the native side, and
+ * the `chat_<group>` conversation shortcuts the message notifications publish (names and faces).
+ * Queued after any publish in flight. Android only; a failure is said, never thrown.
+ */
+export function eraseAccountShortcuts(reason: string): Promise<void> {
+  if (!isAndroidTauriRuntime()) return Promise.resolve();
+  void clearShareTargets(reason, { force: true });
+  return enqueue(async () => {
+    try {
+      const removed = await invoke<number>(galleryCommand('clearConversationShortcuts'));
+      Log.d('ShareTargets', `${removed} conversation shortcut(s) erased (${reason})`);
+    } catch (err) {
+      console.error(`[share-targets] the conversation shortcuts were not erased (${reason})`, err);
     }
   });
 }

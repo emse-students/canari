@@ -35,6 +35,11 @@ const kotlin = readFileSync(
   'utf8'
 );
 
+/** Kotlin without its comments: a doc block naming a call to say why it is NOT used is not a use. */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+}
+
 /** The `<activity>` element declaring MainActivity, up to its closing tag. */
 function mainActivity(): string {
   const start = manifest.indexOf('android:name=".MainActivity"');
@@ -101,9 +106,46 @@ describe('the suggestion id has one shape on every side', () => {
   });
 
   it('never replaces the whole dynamic set, which holds the notification shortcuts too', () => {
-    // Code only: the class comment names both calls to say why they are not used.
-    const code = kotlin.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const code = codeOnly(kotlin);
     expect(code).toMatch(/removeDynamicShortcuts\(context, ids\)/);
     expect(code).not.toMatch(/setDynamicShortcuts|removeAllDynamicShortcuts/);
+  });
+});
+
+/**
+ * The notifications' `chat_<group>` conversation shortcuts carry a conversation name and a face,
+ * so they are erased at sign-out too - which works only if EVERY one is recorded before it is
+ * pushed. A push straight to `ShortcutManagerCompat` from the messaging service would publish one
+ * no sign-out can name.
+ */
+describe('the conversation shortcuts are recorded, and erased by that record', () => {
+  const service = readFileSync(
+    resolve(ANDROID, 'java/fr/emse/canari/CanariFirebaseMessagingService.kt'),
+    'utf8'
+  );
+  const conversations = readFileSync(
+    resolve(
+      here,
+      '../../../src-tauri/plugins/tauri-plugin-gallery/android/src/main/java/ConversationShortcuts.kt'
+    ),
+    'utf8'
+  );
+
+  it('the messaging service pushes them only through the recorder', () => {
+    const code = codeOnly(service);
+    expect(code).toMatch(/ConversationShortcuts\.push\(context, info\)/);
+    expect(code).toMatch(/"\$\{ConversationShortcuts\.ID_PREFIX\}\$groupId"/);
+    expect(code).not.toMatch(/pushDynamicShortcut|addDynamicShortcuts|setDynamicShortcuts/);
+  });
+
+  it('the recorder records before it pushes, and erases long-lived copies by the record', () => {
+    const code = codeOnly(conversations);
+    const recorded = code.indexOf('record.write(context, ids)');
+    const pushed = code.indexOf('pushDynamicShortcut(context, info)');
+    expect(recorded).toBeGreaterThan(-1);
+    expect(pushed).toBeGreaterThan(recorded);
+    expect(code).toMatch(/if \(!record\.write\(context, ids\)\)/);
+    expect(code).toMatch(/removeLongLivedShortcuts\(context, ids\)/);
+    expect(code).toMatch(/const val CAP = \d+/);
   });
 });

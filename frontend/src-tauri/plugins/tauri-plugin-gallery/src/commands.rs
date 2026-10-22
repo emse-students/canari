@@ -282,8 +282,17 @@ pub struct ShareTarget {
     pub link: String,
 }
 
+/// What a publish left: the suggestions the platform lists afterwards (`present`), and the stale
+/// ones it could not remove (`leftover`, still recorded natively) - when that is not 0 the page
+/// must not believe the set is the one it asked for.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct PublishAnswer {
+    pub present: u32,
+    pub leftover: u32,
+}
+
 /// Replaces the conversations Android's share sheet suggests (sharing lot S5) with `targets`, most
-/// recent first. Returns how many the platform took. Android only: the iOS suggestions need the
+/// recent first. Answers what the platform lists afterwards and what it left. Android only: the iOS suggestions need the
 /// Share Extension (lot S4).
 ///
 /// The labels are conversation names: they are NOT logged, only their count.
@@ -291,16 +300,14 @@ pub struct ShareTarget {
 pub(crate) async fn publish_share_targets<R: Runtime>(
     app: AppHandle<R>,
     targets: Vec<ShareTarget>,
-) -> crate::Result<u32> {
+) -> crate::Result<PublishAnswer> {
     log::debug!(
         "[gallery] publish_share_targets: {} target(s)",
         targets.len()
     );
     #[cfg(target_os = "android")]
     {
-        app.gallery()
-            .publish_share_targets(targets)
-            .map(|o| o.published)
+        app.gallery().publish_share_targets(targets)
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -317,6 +324,27 @@ pub(crate) async fn clear_share_targets<R: Runtime>(app: AppHandle<R>) -> crate:
     #[cfg(target_os = "android")]
     {
         app.gallery().clear_share_targets().map(|o| o.removed)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err(crate::Error::AndroidOnly)
+    }
+}
+
+/// Removes every `chat_<group>` conversation shortcut the message notifications published - at
+/// sign-out, beside `clear_share_targets`: they carry a conversation's name and a face, and nothing
+/// of an account stays with the system for the next one. Returns how many were removed.
+#[command]
+pub(crate) async fn clear_conversation_shortcuts<R: Runtime>(
+    app: AppHandle<R>,
+) -> crate::Result<u32> {
+    log::debug!("[gallery] clear_conversation_shortcuts");
+    #[cfg(target_os = "android")]
+    {
+        app.gallery()
+            .clear_conversation_shortcuts()
+            .map(|o| o.removed)
     }
     #[cfg(not(target_os = "android"))]
     {

@@ -22,6 +22,7 @@ export const GALLERY_COMMAND_NAMES = {
   discardSharedOut: 'discard_shared_out',
   publishShareTargets: 'publish_share_targets',
   clearShareTargets: 'clear_share_targets',
+  clearConversationShortcuts: 'clear_conversation_shortcuts',
 } as const;
 
 /** Fully-qualified `invoke()` identifier for a gallery command. */

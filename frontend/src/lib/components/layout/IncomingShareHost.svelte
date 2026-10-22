@@ -69,10 +69,10 @@
     syncShareTargets({
       enabled: settings.shareSuggestionsEnabled,
       signedIn: globalSession.isLoggedIn,
-      conversationsReady: globalConvs.conversationsRestored,
-      conversations: globalConvs.conversations.entries(),
+      conversationsReady: globalConvs.conversationSourcesSettled,
+      conversations: () => globalConvs.conversations.entries(),
       currentUserId: globalSession.userId,
-      workspaces: globalChannels.channelWorkspaces,
+      workspaces: () => globalChannels.channelWorkspaces,
     });
   });
 

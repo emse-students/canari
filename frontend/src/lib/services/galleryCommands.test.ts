@@ -54,6 +54,12 @@ describe('gallery command contract', () => {
       /pub struct ShareTarget \{\s*pub id: String,\s*pub label: String,\s*pub link: String,/
     );
     expect(commandsRs).toMatch(/fn clear_share_targets<R: Runtime>\(app: AppHandle<R>\)/);
+    expect(commandsRs).toMatch(
+      /fn clear_conversation_shortcuts<R: Runtime>\(\s*app: AppHandle<R>,?\s*\)/
+    );
+    expect(commandsRs).toMatch(
+      /pub struct PublishAnswer \{\s*pub present: u32,\s*pub leftover: u32,/
+    );
   });
 
   it('is granted to the app and registered on mobile', () => {

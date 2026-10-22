@@ -585,13 +585,18 @@
             <td>Jusqu'à leur effacement</td>
           </tr>
           <tr>
-            <td>Suggestions du menu Partager (application Android)</td>
+            <td>Raccourcis de conversation (application Android)</td>
             <td>
               Les noms de vos conversations récentes, et leur identifiant interne, sont confiés au
-              système Android pour les proposer dans son menu Partager ; le système et l'écran
-              d'accueil peuvent donc les afficher. Désactivable dans Paramètres &gt; Préférences
+              système Android pour les proposer dans son menu Partager (désactivable dans Paramètres
+              &gt; Préférences) ; les notifications de message y confient aussi le nom et la photo
+              de la conversation. Le système et l'écran d'accueil peuvent donc les afficher
             </td>
-            <td>Effacées à la déconnexion, à la désactivation du réglage ou à la désinstallation</td
+            <td
+              >Effacés à la déconnexion (les suggestions aussi à la désactivation du réglage) ou à
+              la désinstallation. Un raccourci que vous avez épinglé sur l'écran d'accueil ne peut
+              pas être retiré par l'application : il est désactivé, et c'est le lanceur qui décide
+              s'il reste affiché</td
             >
           </tr>
           <tr>
