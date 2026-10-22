@@ -127,11 +127,8 @@ maybe('a removal against PostgreSQL', () => {
     await member('owner', ADMIN_ROLE);
     await member('salons', SALONS_ROLE);
     await member('kicker', MOD_ROLE);
-    // ITS OWN BUDGET, NOT JEST'S 5 s DEFAULT. This hook builds the schema - DDL on a server that may
-    // have just started - and on a fresh container that took from 0.2 s to 4.5 s here (measured
-    // 2026-10-22, 45 cold starts); past 5 s every test failed as "Exceeded timeout ... for a hook".
-    // The other integration specs give their setup the same kind of budget.
-  }, 60_000);
+    // No budget here: every integration spec has one, `jest-integration-budget.cjs`.
+  });
 
   afterAll(async () => {
     jest.restoreAllMocks();

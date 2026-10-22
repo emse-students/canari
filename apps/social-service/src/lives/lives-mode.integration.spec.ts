@@ -54,7 +54,7 @@ maybe('LiveEnabledGuard against platform_config (migration 015)', () => {
     await ds.query(MIGRATION_015);
     process.env.LIVE_ENABLED = 'true';
     jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
-  }, 60_000);
+  });
 
   afterAll(async () => {
     if (savedSwitch === undefined) delete process.env.LIVE_ENABLED;
@@ -62,7 +62,7 @@ maybe('LiveEnabledGuard against platform_config (migration 015)', () => {
     await ds?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await ds?.destroy();
     jest.restoreAllMocks();
-  }, 60_000);
+  });
 
   const status = async (guard: LiveEnabledGuard) => {
     try {

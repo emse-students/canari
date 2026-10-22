@@ -10,5 +10,8 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
-  "testEnvironment": "node"
+  "testEnvironment": "node",
+  "setupFilesAfterEnv": [
+    "<rootDir>/jest-integration-budget.cjs"
+  ]
 }

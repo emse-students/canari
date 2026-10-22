@@ -116,7 +116,7 @@ maybe('account erasure against PostgreSQL', () => {
   afterAll(async () => {
     await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await client.end();
-  }, 60_000);
+  });
 
   /** One row per covered column naming the erased account, and the same row naming the other one. */
   async function seed(): Promise<void> {

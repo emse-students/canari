@@ -1355,7 +1355,7 @@ removal is saved. Pinned by `removal-bound.integration.spec.ts`, which parks the
 uncommitted role change through `pg_blocking_pids`.
 
 **No call to chat-delivery is made while that lock is held.** The key-distribution evictions a
-removal causes are recorded as rows of `distribution_evictions_owed` (migration 106) in the same
+removal causes are recorded as rows of `distribution_evictions_owed` (migration 109) in the same
 transaction - the community's group for a kick, each private salon's group the user leaves - and
 `settleOwedEvictions` makes the calls after the commit, deleting each row once its call succeeded.
 A failed call is logged at ERROR and its row stays owed; every later pass retries it: after each

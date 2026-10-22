@@ -1,4 +1,4 @@
--- Migration 106: the key-distribution evictions a removal OWES, recorded in its transaction.
+-- Migration 109: the key-distribution evictions a removal OWES, recorded in its transaction.
 --
 -- A removal from a community or a private salon (a kick, a salon removal, an access-list update)
 -- runs its permission check, its roster change and this record in ONE transaction under the

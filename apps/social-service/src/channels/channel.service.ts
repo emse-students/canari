@@ -203,7 +203,7 @@ export function sortChannels<T extends Pick<Channel, 'id' | 'sortOrder' | 'creat
 export const UNREAD_TRACKED_SINCE_MS = Date.UTC(2026, 9, 8);
 
 /** What the outbox entry of a salon row keeps for its push (migration 093). */
-/** One row of `distribution_evictions_owed` (migration 106), as {@link ChannelService.settleOwedEvictions} reads it. */
+/** One row of `distribution_evictions_owed` (migration 109), as {@link ChannelService.settleOwedEvictions} reads it. */
 interface OwedEviction {
   kind: 'workspace' | 'channel';
   scopeId: string;

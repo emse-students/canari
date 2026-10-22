@@ -1,7 +1,7 @@
 import { Column, CreateDateColumn, Entity, PrimaryColumn } from 'typeorm';
 
 /**
- * A key-distribution eviction a removal owes (migration 106): written in the removal's transaction,
+ * A key-distribution eviction a removal owes (migration 109): written in the removal's transaction,
  * deleted once chat-delivery confirmed the eviction, retried by every later pass until then.
  *
  * Declared so that a schema built by `synchronize` (CI's boot job, a local stack, the integration

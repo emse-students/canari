@@ -87,7 +87,7 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     action: 'kept',
     reason: 'a transient outbox entry, deleted at hand-off and with its message',
   },
-  // An eviction a removal owes (migration 106): it lives only until chat-delivery confirmed it, and
+  // An eviction a removal owes (migration 109): it lives only until chat-delivery confirmed it, and
   // the eviction it records is what removes the delivery rows that name the same account.
   'distribution_evictions_owed.userId': {
     action: 'kept',
