@@ -33,6 +33,15 @@ pub struct PersistedState {
     /// #[serde(default)] ensures compatibility with states saved before this field was added.
     #[serde(default)]
     pub forgotten_group_min_epochs: HashMap<String, u64>,
+    /// The signature key each device identity was first seen with (`crate::device_trust`).
+    /// `#[serde(default)]`: a state written before pins existed loads with none, and its trees are
+    /// pinned at that load. An older build reading this state ignores the field and drops it on its
+    /// next write - the pins are then re-seeded from the trees at the next upgrade.
+    #[serde(default)]
+    pub device_pins: Vec<crate::device_trust::PersistedPin>,
+    /// Device admissions seen in merged commits and not yet taken (`crate::device_trust`).
+    #[serde(default)]
+    pub device_events: Vec<crate::device_trust::DeviceEvent>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -48,6 +57,8 @@ pub(crate) struct PersistedStateSer<'a> {
     #[serde(with = "crate::byte_compat::bytes_vec")]
     pub(crate) group_ids: &'a [Vec<u8>],
     pub(crate) forgotten_group_min_epochs: &'a HashMap<String, u64>,
+    pub(crate) device_pins: &'a [crate::device_trust::PersistedPin],
+    pub(crate) device_events: &'a [crate::device_trust::DeviceEvent],
 }
 
 // Struct request wrapper for serialization
@@ -162,6 +173,9 @@ pub struct MlsManager {
     /// Set by forget_group to prevent a stale Welcome (from a device itself behind on epoch)
     /// from putting this device back on the wrong branch.
     pub(crate) forgotten_group_min_epochs: HashMap<String, u64>,
+
+    /// Pinned device signature keys and pending device events - see [`crate::device_trust`].
+    pub(crate) device_trust: crate::device_trust::DeviceTrust,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
 }
@@ -697,12 +711,40 @@ impl MlsManager {
                 }
             }
 
+            let mut device_trust = crate::device_trust::DeviceTrust::from_persisted(
+                state.device_pins,
+                state.device_events,
+            );
+            // THE TREES THIS STATE ALREADY HOLDS ARE FIRST SIGHT. Every leaf in them was admitted by
+            // a commit this device merged; a state written before pins existed holds none, and an
+            // identity pinned since is left untouched. Cheap - one credential parse per leaf - and
+            // idempotent, so it runs on every load rather than behind a version flag.
+            // This device's own key first, so a manager with no group yet holds the same pins
+            // after a reload as before it.
+            device_trust.seed_from_tree(&[(
+                0,
+                String::from_utf8_lossy(credential.identity()).to_string(),
+                keypair.public().to_vec(),
+            )]);
+            let mut seeded = 0usize;
+            for group in groups.values() {
+                if device_trust.seed_from_tree(&crate::device_trust::leaf_keys(group)) {
+                    seeded += 1;
+                }
+            }
+            if seeded > 0 {
+                log::info!(
+                    "load_or_create: pinned the device keys of {seeded} group tree(s) seen before pins existed"
+                );
+            }
+
             let manager = Self {
                 provider,
                 keypair,
                 credential,
                 groups,
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
+                device_trust,
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -804,12 +846,21 @@ impl MlsManager {
             let credential =
                 BasicCredential::new(format!("{}:{}", user_id, device_id).into_bytes());
 
+            // This device's own key is the first one it pins - see `crate::device_trust`.
+            let mut device_trust = crate::device_trust::DeviceTrust::default();
+            device_trust.seed_from_tree(&[(
+                0,
+                format!("{}:{}", user_id, device_id),
+                keypair.public().to_vec(),
+            )]);
+
             Ok(Self {
                 provider,
                 keypair,
                 credential,
                 groups: HashMap::new(),
                 forgotten_group_min_epochs: HashMap::new(),
+                device_trust,
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
             })
         }
@@ -858,11 +909,15 @@ impl MlsManager {
         group_ids.sort();
 
         // 4. Encode the global state without copying storage_values
+        let device_pins = self.device_trust.persisted_pins();
+        let device_events = self.device_trust.persisted_events();
         let persisted = PersistedStateSer {
             identity_bundle: &bundle_bytes,
             storage_values: &storage_lock,
             group_ids: &group_ids,
             forgotten_group_min_epochs: &self.forgotten_group_min_epochs,
+            device_pins: &device_pins,
+            device_events: &device_events,
         };
 
         let mut final_bytes = Vec::new();

@@ -22,6 +22,7 @@ import {
 } from './historyManifest';
 import { holdsGroupState } from './groupUsability';
 import { groupSkippedByReason, type SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
+import { isDeviceTrustRefusal } from '$lib/mls-client/deviceTrust';
 
 /**
  * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
@@ -43,6 +44,18 @@ export function warnSkippedKeyPackages(
   // ONE LINE PER CAUSE: an expired package (wait for its owner to reconnect) and a bad signature
   // (a defect) want opposite fixes, and a count collapsed them.
   for (const { reason, deviceIds } of groupSkippedByReason(skipped)) {
+    // A REFUSED IDENTITY OR KEY IS NOT A STALE PACKAGE: republishing cannot lift it, because the
+    // package named another device or a key this device never pinned for it (`deviceTrust.ts`).
+    if (isDeviceTrustRefusal(reason)) {
+      log(
+        `${tag} ${deviceIds.length} device(s) REFUSED (${reason}): ${deviceIds.join(', ')} - not invited; nothing proves the package is that device's.`
+      );
+      console.error(
+        `${tag}[TRUST] KeyPackage ${reason} for ${deviceIds.length} device(s) on ${groupId}:`,
+        deviceIds
+      );
+      continue;
+    }
     log(
       `${tag} ${deviceIds.length} device(s) skipped (KeyPackage ${reason}): ${deviceIds.join(', ')} - not invited, republish a fresh KeyPackage.`
     );

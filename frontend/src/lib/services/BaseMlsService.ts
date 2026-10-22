@@ -55,6 +55,13 @@ import type {
 } from '$lib/mls-client/IMlsService';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import {
+  DeviceTrustRefusedError,
+  isDeviceTrustRefusal,
+  verdictAdmits,
+  type DeviceEvent,
+  type KeyPackageVerdict,
+} from '$lib/mls-client/deviceTrust';
+import {
   SenderMismatchError,
   setSenderMismatchReporter,
   type EnvelopeSender,
@@ -2819,6 +2826,8 @@ export abstract class BaseMlsService implements IMlsService {
     Array<{
       keyPackage: Uint8Array;
       deviceId: string;
+      /** The `userId` asked for, carried so an Add can check each package names this device. */
+      userId: string;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
@@ -3360,10 +3369,12 @@ export abstract class BaseMlsService implements IMlsService {
   /** Stages an Add commit WITHOUT merging. Returns the commit, shared Welcome, the input
    *  positions actually added / dropped-as-invalid (already-member dedup is silent), and
    *  `groupInfo`: the external-join base for the epoch the commit CREATES (see
-   *  {@link runCommitTransaction}). */
+   *  {@link runCommitTransaction}). Each package travels with the `userId:deviceId` it was
+   *  FETCHED FOR, and Rust skips one whose credential names another device or whose key is not
+   *  the one pinned for it (`deviceTrust.ts`). */
   protected abstract stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -4716,15 +4727,61 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
+  /** Asks the MLS layer whether a package may be added as `identity` - see {@link vetKeyPackage}. */
+  protected abstract vetKeyPackageNative(
+    keyPackage: Uint8Array,
+    identity: string
+  ): Promise<KeyPackageVerdict>;
+  /** Takes the pending device events from the MLS layer - see {@link takeDeviceEvents}. */
+  protected abstract takeDeviceEventsNative(): Promise<DeviceEvent[]>;
+
+  /**
+   * Whether `keyPackage` may be added as the device `userId:deviceId`, WITHOUT staging anything.
+   *
+   * For the caller that must decide BEFORE a destructive step: the re-add of a device whose leaf is
+   * still in the tree removes that leaf first, and a removal made for a replacement the Add then
+   * refuses would take the device out of the group for nothing. The Add re-runs the same check in
+   * Rust, so this is the same decision taken earlier, never a second policy.
+   */
+  async vetKeyPackage(
+    keyPackage: Uint8Array,
+    userId: string,
+    deviceId: string
+  ): Promise<KeyPackageVerdict> {
+    const verdict = await this.vetKeyPackageNative(keyPackage, `${userId}:${deviceId}`);
+    console.debug(
+      `[TRUST] KeyPackage for ${sanitizeForLog(userId).slice(0, 8)}:${sanitizeForLog(deviceId)} vetted: ${verdict}`
+    );
+    return verdict;
+  }
+
+  /**
+   * Every device admission recorded since the last call (`DeviceEvent`), oldest first, and forgets
+   * them. Computed in Rust from the signed commits this device merged - never from the server - and
+   * kept in the sealed MLS state until taken, so the UI that will show "a device was added" is one
+   * caller of this. Nothing takes them yet: whether to show them is the user's decision.
+   */
+  async takeDeviceEvents(): Promise<DeviceEvent[]> {
+    return this.takeDeviceEventsNative();
+  }
+
   async addMember(
     groupId: string,
-    keyPackageBytes: Uint8Array,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
   ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
+    // REFUSED BEFORE THE LOCK, NOT INSIDE IT: a package the binding or the pin refuses would make
+    // Rust stage nothing and answer with a sentence; the type is decided here, from the verdict.
+    const verdict = await this.vetKeyPackage(device.keyPackage, device.userId, device.deviceId);
+    if (!verdictAdmits(verdict) && isDeviceTrustRefusal(verdict)) {
+      throw new DeviceTrustRefusedError(verdict, device.userId, device.deviceId);
+    }
     const result = await this.runCommitTransaction(
       groupId,
       async () => {
-        const staged = await this.stageAddMembers(groupId, [keyPackageBytes]);
+        const staged = await this.stageAddMembers(groupId, [
+          { keyPackage: device.keyPackage, identity: `${device.userId}:${device.deviceId}` },
+        ]);
         return {
           commit: staged.commit,
           welcome: staged.welcome,
@@ -4738,7 +4795,7 @@ export abstract class BaseMlsService implements IMlsService {
 
   async addMembersBulk(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>,
+    devices: Array<{ keyPackage: Uint8Array; deviceId: string; userId: string }>,
     excludeDeviceIds?: string[]
   ): Promise<{
     welcome?: Uint8Array;
@@ -4751,7 +4808,7 @@ export abstract class BaseMlsService implements IMlsService {
       async () => {
         const staged = await this.stageAddMembers(
           groupId,
-          devices.map((d) => d.keyPackage)
+          devices.map((d) => ({ keyPackage: d.keyPackage, identity: `${d.userId}:${d.deviceId}` }))
         );
         return {
           commit: staged.commit,

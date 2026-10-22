@@ -1,5 +1,6 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { DeviceEvent, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
@@ -1176,7 +1177,7 @@ export class WebMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1184,11 +1185,11 @@ export class WebMlsService extends BaseMlsService {
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }> {
-    const jsArray = keyPackages.reduce((arr, kp) => {
-      arr.push(kp);
-      return arr;
-    }, [] as Uint8Array[]);
-    const res = this.client.add_members_bulk(groupId, jsArray);
+    const res = this.client.add_members_bulk(
+      groupId,
+      devices.map((d) => d.keyPackage),
+      devices.map((d) => d.identity)
+    );
     return {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array | undefined,
@@ -1196,6 +1197,19 @@ export class WebMlsService extends BaseMlsService {
       skipped: (res[3] as SkippedKeyPackage[] | undefined) ?? [],
       groupInfo: res[4] as Uint8Array,
     };
+  }
+
+  /** WASM client wrapper - `vet_key_package`, the Rust verdict on binding and pin. */
+  protected async vetKeyPackageNative(
+    keyPackage: Uint8Array,
+    identity: string
+  ): Promise<KeyPackageVerdict> {
+    return this.client.vet_key_package(keyPackage, identity) as KeyPackageVerdict;
+  }
+
+  /** WASM client wrapper - `take_device_events`, JSON from Rust (`DeviceEvent`, camelCase). */
+  protected async takeDeviceEventsNative(): Promise<DeviceEvent[]> {
+    return JSON.parse(this.client.take_device_events()) as DeviceEvent[];
   }
 
   /** WASM client wrapper - stages a Remove commit for all devices of the given users (no merge). */

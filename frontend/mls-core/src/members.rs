@@ -2,11 +2,58 @@ use openmls::messages::group_info::GroupInfo;
 use openmls::prelude::*;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
+use crate::device_trust::{
+    DeviceTrust, LeafTrust, identity_names, is_well_formed_identity, key_fingerprint, leaf_keys,
+};
 use crate::state::MlsManager;
 use crate::{
     AddMemberResult, AddMembersBulkResult, AddMembersWithBaseResult, MlsError, SkippedKeyPackage,
     SkippedKeyPackageReason, StagedRemovalResult,
 };
+
+/// The binding and pin check every Add runs on a package that already VALIDATED.
+///
+/// `expected` is the device the package was fetched for; `None` only on the test-and-bench form,
+/// which binds no identity (the identity must still be well formed). One function for the Add and
+/// for [`MlsManager::vet_key_package`], so the decision a re-add takes BEFORE it removes a stale
+/// leaf is the very one the Add then applies.
+fn vet_validated(
+    trust: &DeviceTrust,
+    kp: &KeyPackage,
+    expected: Option<&str>,
+) -> Result<LeafTrust, SkippedKeyPackageReason> {
+    let leaf = kp.leaf_node();
+    let identity = match credential_identity(leaf.credential()) {
+        Ok(identity) => identity,
+        Err(why) => {
+            log::error!("[TRUST] KeyPackage refused: its credential is unreadable ({why})");
+            return Err(SkippedKeyPackageReason::IdentityMismatch);
+        }
+    };
+    let bound = match expected {
+        Some(expected) => identity_names(&identity, expected),
+        None => is_well_formed_identity(&identity),
+    };
+    if !bound {
+        log::error!(
+            "[TRUST] KeyPackage refused: fetched for {} but its credential names {identity}",
+            expected.unwrap_or("a well-formed device identity")
+        );
+        return Err(SkippedKeyPackageReason::IdentityMismatch);
+    }
+    let key = leaf.signature_key().as_slice();
+    match trust.verdict(&identity, key) {
+        LeafTrust::KeyChanged => {
+            log::error!(
+                "[TRUST] KeyPackage refused: {identity} offers signature key {}, not the one this \
+                 device pinned for it - nothing proves the change, so the device is not (re-)added",
+                key_fingerprint(key)
+            );
+            Err(SkippedKeyPackageReason::SignatureKeyChanged)
+        }
+        other => Ok(other),
+    }
+}
 
 /// The external-join base for the epoch a staged commit CREATES, in the `MlsMessageOut` wire form
 /// the delivery service stores - the same form `export_group_info` produces.
@@ -206,16 +253,75 @@ impl MlsManager {
     /// Merges the group's pending (staged) commit: call AFTER the server accepted the commit
     /// (`validateCommit`). Advances the local epoch. Counterpart of `clear_pending_commit_for`.
     /// [[C7]] Option A: validate-then-merge, never a local fork on rejection.
+    ///
+    /// Every leaf the commit put in the tree is recorded ([`crate::device_trust`]) - our own Adds
+    /// were vetted against the pins when they were staged, so this only pins first sights and
+    /// records the event.
     pub fn merge_pending_commit_for(&mut self, group_id: &str) -> Result<(), MlsError> {
+        let own_identity = String::from_utf8_lossy(self.credential.identity()).to_string();
+        let own_key = self.keypair.public().to_vec();
         let group = self
             .groups
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        let before = leaf_keys(group);
         group
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge pending commit error: {:?}", e)))?;
+        let after = leaf_keys(group);
+        let epoch = group.epoch().as_u64();
+        // An external join's tree was observed when it was joined (`join_by_external_commit`), so
+        // `before` is pinned already and only this device's own new leaf differs - which is skipped.
+        self.device_trust.observe_merged_commit(
+            group_id,
+            epoch,
+            &before,
+            &after,
+            Some(&own_identity),
+            (&own_identity, &own_key),
+        );
         self.mark_state_dirty();
         Ok(())
+    }
+
+    /// Whether `key_package_bytes` may be added as the device `expected_identity`, WITHOUT staging
+    /// anything: `first-sight` / `pinned` when it may, otherwise the
+    /// [`SkippedKeyPackageReason`] wire name an Add would skip it for.
+    ///
+    /// For the caller that must decide BEFORE a destructive step - the re-add that first removes the
+    /// device's stale leaf (`kickStaleLeaf`): a removal made for a replacement the Add then refuses
+    /// would take the device out of the group for nothing. The Add itself re-runs the same check.
+    pub fn vet_key_package(
+        &self,
+        key_package_bytes: &[u8],
+        expected_identity: &str,
+    ) -> &'static str {
+        let kp = match KeyPackageIn::tls_deserialize(&mut &key_package_bytes[..]) {
+            Ok(kp_in) => match kp_in.validate(self.provider.crypto(), ProtocolVersion::Mls10) {
+                Ok(kp) => kp,
+                Err(e) => return SkippedKeyPackageReason::from_verify(&e).as_str(),
+            },
+            Err(_) => return SkippedKeyPackageReason::Undecodable.as_str(),
+        };
+        match vet_validated(&self.device_trust, &kp, Some(expected_identity)) {
+            Ok(trust) => trust.as_str(),
+            Err(reason) => reason.as_str(),
+        }
+    }
+
+    /// Hands over every device event recorded since the last call, oldest first, and forgets them
+    /// ([`crate::device_trust::DeviceEvent`]). The state is dirtied only when something was taken.
+    pub fn take_device_events(&mut self) -> Vec<crate::device_trust::DeviceEvent> {
+        let events = self.device_trust.take_events();
+        if !events.is_empty() {
+            self.mark_state_dirty();
+        }
+        events
+    }
+
+    /// The trust a leaf with `identity` and `key` would get, without pinning anything.
+    pub fn device_key_trust(&self, identity: &str, key: &[u8]) -> LeafTrust {
+        self.device_trust.verdict(identity, key)
     }
 
     /// Clears the group's pending (staged) commit: call when the server REJECTS the commit.
@@ -270,22 +376,50 @@ impl MlsManager {
     /// Welcome/commit over the network, leaving a "ghost" member that the caller should detect via
     /// `MlsError::AlreadyMember` (when nothing else was added) and heal by removing then re-adding
     /// that identity.
+    ///
+    /// **NOT THE PRODUCTION PATH**: it checks the pins but binds no identity, because it is not told
+    /// which device each package was fetched for. Both clients stage through
+    /// [`Self::add_members_bulk_with_base`], which does; this form serves the tests and benches.
     pub fn add_members_bulk(
         &mut self,
         group_id: &str,
         key_packages_bytes: &[&[u8]],
     ) -> Result<AddMembersBulkResult, MlsError> {
-        self.add_members_bulk_with_base(group_id, key_packages_bytes)
+        self.stage_add(group_id, key_packages_bytes, None)
             .map(|(staged, _base)| staged)
     }
 
     /// [`Self::add_members_bulk`] plus the external-join base for the epoch the staged commit
     /// CREATES (see [`AddMembersWithBaseResult`]). The caller that submits the commit to a server
     /// carries the base with it, so the epoch advance and its base are stored together (COMM-22).
+    ///
+    /// **`expected_identities[i]` IS THE DEVICE `key_packages_bytes[i]` WAS FETCHED FOR**
+    /// (`userId:deviceId`). The bytes came from the delivery service, which chose them, so a package
+    /// whose credential names any other device is skipped as `IdentityMismatch`, and one naming the
+    /// right device under a key this device has not pinned for it as `SignatureKeyChanged`
+    /// ([`crate::device_trust`]). Both are logged at ERROR: neither happens unless somebody
+    /// substituted a package. The two slices must be the same length.
     pub fn add_members_bulk_with_base(
         &mut self,
         group_id: &str,
         key_packages_bytes: &[&[u8]],
+        expected_identities: &[&str],
+    ) -> Result<AddMembersWithBaseResult, MlsError> {
+        if expected_identities.len() != key_packages_bytes.len() {
+            return Err(MlsError::OpenMls(format!(
+                "add_members_bulk_with_base: {} key package(s) for {} expected identit(ies)",
+                key_packages_bytes.len(),
+                expected_identities.len()
+            )));
+        }
+        self.stage_add(group_id, key_packages_bytes, Some(expected_identities))
+    }
+
+    fn stage_add(
+        &mut self,
+        group_id: &str,
+        key_packages_bytes: &[&[u8]],
+        expected_identities: Option<&[&str]>,
     ) -> Result<AddMembersWithBaseResult, MlsError> {
         let group = self
             .groups
@@ -342,6 +476,17 @@ impl MlsManager {
                     continue;
                 }
             };
+
+            // THE DEVICE IT WAS FETCHED FOR, AND THE KEY IT WAS FIRST SEEN WITH - before the dedup,
+            // so a package naming somebody else is reported as what it is, not as a member.
+            let expected = expected_identities.map(|e| e[idx]);
+            if let Err(reason) = vet_validated(&self.device_trust, &kp, expected) {
+                skipped.push(SkippedKeyPackage {
+                    index: idx as u32,
+                    reason,
+                });
+                continue;
+            }
 
             let identity = BasicCredential::try_from(kp.leaf_node().credential().clone())
                 .ok()

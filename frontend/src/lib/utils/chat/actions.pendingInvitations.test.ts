@@ -16,6 +16,10 @@ vi.mock('$lib/utils/chat/groupSyncEligibility', async (importOriginal) => ({
 
 import { processPendingInvitations } from './actions';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import {
+  DeviceTrustRefusedError,
+  resetReportedDeviceTrustRefusals,
+} from '$lib/mls-client/deviceTrust';
 
 function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
   return {
@@ -253,9 +257,12 @@ describe('processPendingInvitations - leaf already in tree', () => {
     });
 
     // addMember now runs the whole staged transaction and takes the commit-broadcast exclude list.
-    expect(mlsService.addMember).toHaveBeenCalledWith('g1', expect.any(Uint8Array), [
-      'peer:peer-dev',
-    ]);
+    // And the device the package was fetched for, which the Add checks the package names.
+    expect(mlsService.addMember).toHaveBeenCalledWith(
+      'g1',
+      { keyPackage: expect.any(Uint8Array), userId: 'peer', deviceId: 'peer-dev' },
+      ['peer:peer-dev']
+    );
     expect(mlsService.sendWelcome).toHaveBeenCalled();
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
   });
@@ -491,5 +498,51 @@ describe('processPendingInvitations - the group is absent from THIS device', () 
 
     expect(requestReAdd).not.toHaveBeenCalled();
     expect(mlsService.deleteDeviceMembership).toHaveBeenCalledWith('peer', 'peer-dev', 'g1');
+  });
+});
+
+// A KEY THIS MEMBER REFUSES IS ITS JUDGEMENT, NOT A FACT ABOUT THE DEVICE: the row stays for a
+// member who can judge otherwise, nothing is retried as a race, and the refusal is said once.
+describe('processPendingInvitations - a device key this member refuses', () => {
+  it('names the device being added to addMember, and keeps the row on a trust refusal', async () => {
+    resetReportedDeviceTrustRefusals();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
+      addMember: vi
+        .fn()
+        .mockRejectedValue(
+          new DeviceTrustRefusedError('signature-key-changed', 'peer', 'peer-dev')
+        ),
+    });
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
+      log: vi.fn(),
+    });
+
+    expect(mlsService.addMember).toHaveBeenCalledWith(
+      'g1',
+      { keyPackage: new Uint8Array([1]), userId: 'peer', deviceId: 'peer-dev' },
+      ['peer:peer-dev']
+    );
+    expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
+    expect(mlsService.registerMember).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls[0][0])).toContain('peer:peer-dev');
+    error.mockRestore();
   });
 });

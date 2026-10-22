@@ -97,8 +97,8 @@ describe('admitNewcomerToDistributionGroup', () => {
     expect(mls.addMembersBulk).toHaveBeenCalledWith(
       'key-group',
       [
-        { deviceId: 'phone', keyPackage: kp(1) },
-        { deviceId: 'web', keyPackage: kp(2) },
+        { deviceId: 'phone', keyPackage: kp(1), userId: 'bob' },
+        { deviceId: 'web', keyPackage: kp(2), userId: 'bob' },
       ],
       ['bob:phone', 'bob:web']
     );
@@ -165,7 +165,7 @@ describe('admitNewcomerToDistributionGroup', () => {
 
     expect(mls.addMembersBulk).toHaveBeenCalledWith(
       'key-group',
-      [{ deviceId: 'phone', keyPackage: kp(1) }],
+      [{ deviceId: 'phone', keyPackage: kp(1), userId: 'bob' }],
       ['bob:phone']
     );
     expect(mls.sendWelcome).toHaveBeenCalledTimes(1);

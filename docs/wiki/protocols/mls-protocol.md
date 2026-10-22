@@ -590,6 +590,66 @@ enqueueMessage()      enqueueMessage()
 
 **TauriMlsService** uses a `callbackLock` promise chain so `fetchPendingMessages` and `processQueue` never call the Rust layer concurrently.
 
+## Device binding
+
+**A KeyPackage is checked against the device it was fetched for, and device keys are pinned on first
+sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the TypeScript face is
+`frontend/src/lib/mls-client/deviceTrust.ts`. Tests: `frontend/mls-core/tests/device_binding.rs`,
+`deviceTrust.test.ts`, `BaseMlsService.deviceTrust.test.ts`, `actions.welcomeRequest.test.ts`.
+
+- **Binding.** Every Add carries, beside each package, the `userId:deviceId` it was fetched for
+  (`add_members_bulk_with_base(.., expected_identities)`). A credential naming anything else is
+  skipped as `identity-mismatch`. The user half compares case-insensitively, the device half
+  exactly, and an identity holds exactly one `:`.
+- **Pins.** Each identity maps to the SET of signature keys this device has seen for it, kept in the
+  sealed MLS state (`PersistedState.device_pins`, CBOR, `#[serde(default)]`). A state written before
+  pins existed is seeded at load from every tree it holds, so nothing already trusted is refused. A
+  package for a known device under an unknown key is skipped as `signature-key-changed`. Nothing
+  today can prove such a change - the old key goes with the lost state and there is no
+  cross-signing - so the refusal is final until the device re-enrols under a new id.
+- **The replace path.** `handleWelcomeRequest` used to remove a device's stale leaf and then re-add
+  it. It now asks `vetKeyPackage` FIRST: a refused package removes nothing and adds nothing.
+  `addMember` throws the typed `DeviceTrustRefusedError` before staging, and the callers log it once
+  per identity per session (`reportDeviceTrustRefusal`) and retire nothing.
+- **Events.** Every leaf a merged commit admitted - ours or a peer's, the signer read from the
+  verified commit - is recorded as a `DeviceEvent` (`identity`, `keyFingerprint`, `trust`:
+  `first-sight` / `pinned` / `key-changed`, `addedBy`). The list is bounded (512) and lives in the
+  sealed state until `IMlsService.takeDeviceEvents()` takes it. A commit another member made is
+  applied as signed - refusing it would fork the group - and what it admitted is recorded.
+
+### What each legitimate flow does
+
+| Flow | Outcome |
+|---|---|
+| Last-resort or one-time package rotation | Same device signature key, so the pin matches: no change. |
+| PIN change | Re-seals the state, the signature key is unchanged: no change. |
+| Several devices on one account | Each `userId:deviceId` has its own pin. |
+| Web device ids (`web-<user>-...`) | Ordinary identities, pinned like any other. |
+| Reinstall or factory wipe (new id) | A new device: first sight, admitted. |
+| Restore (WP-RESTORE-1) | Enrols as a new device, first sight. |
+| A device that kept its id but lost its state | Comes back with a new key under the old name: its re-add is refused, and it is not kicked. It re-enrols by a reset, which mints a new id. Whether such a device should rotate its id by itself is a user decision (below). |
+| Downgrade to a build without pins, then upgrade | The older build drops the pins it cannot read; the upgrade re-seeds them from the trees. |
+| A Tauri resume reload | Events not yet persisted in `mls.bin` can be lost with the reload, as any unsaved state is. |
+
+### New-device notices (decided by the user 2026-10-22, refined the same day)
+
+No mandatory approval of a new device. Instead, **produced by the client from the signed commit it
+processed, never from a server message** (a server that stays silent must not silence them):
+
+- the account owner gets an alert "a new device was added to your account", in the app and as a
+  local notification on the phone, whichever group the commit came from;
+- contacts see a discreet line "X added a device" in **private conversations only** (1:1 and
+  groups), **never in a community or salon key group**, where it would be noise.
+
+The rule is written once, `deviceEventAudience()` in `deviceTrust.ts`, and one device under one key
+is announced once (`deviceEventKey()`). **The UI is not built yet**: the strings, the conversation
+line, the in-app alert and the native local notification on the background path are their own work
+package ([backlog](../backlog.md#new-device-notices-decided-by-the-user-on-2026-10-22---the-ui-is-owed)).
+
+**Still a user decision:** whether a device that expected a saved state and found none should rotate
+its own id at start-up (it would then re-enrol as a new device instead of being refused), at the
+cost of the old leaf staying in trees until it is removed and of a changed device id.
+
 ## Key packages
 
 ### The two kinds of key package

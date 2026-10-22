@@ -45,4 +45,30 @@ describe('warnSkippedKeyPackages', () => {
     expect(warn).toHaveBeenCalledTimes(2);
     warn.mockRestore();
   });
+
+  // A REFUSED IDENTITY OR KEY IS NOT A STALE PACKAGE, so the remedy for one ("republish") would
+  // send a reader to the wrong device. It is an error, with its own words.
+  it('reports a trust refusal as an error and never as a package to republish', () => {
+    const log = vi.fn();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    warnSkippedKeyPackages(
+      [
+        { deviceId: 'phone', reason: 'signature-key-changed' },
+        { deviceId: 'web', reason: 'identity-mismatch' },
+      ],
+      'g1',
+      '[ADD]',
+      log
+    );
+    expect(log).toHaveBeenCalledTimes(2);
+    for (const [line] of log.mock.calls) {
+      expect(line).toContain('REFUSED');
+      expect(line).not.toContain('republish');
+    }
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+    error.mockRestore();
+  });
 });

@@ -421,11 +421,18 @@ impl WasmMlsClient {
     /// KeyPackage dropped because it was **invalid/undeserializable** (not the already-member
     /// dedup) together with its typed reason (`SkippedKeyPackageReason` wire name), so the caller
     /// can surface a non-silent member loss and say why. [[C5]]
+    ///
+    /// `expected_identities[i]` is the `userId:deviceId` `key_packages[i]` was fetched for: a package
+    /// naming another device, or the right one under a key this device never pinned for it, is
+    /// skipped (`identity-mismatch`, `signature-key-changed` - see `mls_core::device_trust`). An
+    /// EMPTY package is kept at its position and skipped as `undecodable`, so every index the caller
+    /// reads back still names the device it passed there.
     #[wasm_bindgen]
     pub fn add_members_bulk(
         &mut self,
         group_id: String,
         key_packages: js_sys::Array,
+        expected_identities: js_sys::Array,
     ) -> Result<js_sys::Array, JsValue> {
         log::info!(
             "add_members_bulk to group: {} ({} key packages)",
@@ -433,24 +440,22 @@ impl WasmMlsClient {
             key_packages.length()
         );
 
-        // Convert JS Array<Uint8Array> -> Vec<Vec<u8>>
+        // Convert JS Array<Uint8Array> -> Vec<Vec<u8>>, position for position.
         let kp_vecs: Vec<Vec<u8>> = key_packages
             .iter()
-            .filter_map(|v| {
-                let arr = js_sys::Uint8Array::from(v);
-                if arr.length() == 0 {
-                    None
-                } else {
-                    Some(arr.to_vec())
-                }
-            })
+            .map(|v| js_sys::Uint8Array::from(v).to_vec())
             .collect();
-
         let kp_slices: Vec<&[u8]> = kp_vecs.iter().map(|v| v.as_slice()).collect();
+        // A non-string expectation is an empty one, which names no device and so refuses its package.
+        let expected: Vec<String> = expected_identities
+            .iter()
+            .map(|v| v.as_string().unwrap_or_default())
+            .collect();
+        let expected_refs: Vec<&str> = expected.iter().map(String::as_str).collect();
 
         let ((commit, welcome, added_indices, skipped), group_info) = self
             .manager
-            .add_members_bulk_with_base(&group_id, &kp_slices)
+            .add_members_bulk_with_base(&group_id, &kp_slices, &expected_refs)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let array = js_sys::Array::new();
@@ -485,6 +490,25 @@ impl WasmMlsClient {
         array.push(&skipped_array);
         array.push(&js_sys::Uint8Array::from(&group_info[..]));
         Ok(array)
+    }
+
+    /// Whether `key_package` may be added as `expected_identity` (`userId:deviceId`), without
+    /// staging anything: `"first-sight"` / `"pinned"` when it may, otherwise the skip reason's wire
+    /// name an Add would refuse it with. See `MlsManager::vet_key_package`.
+    #[wasm_bindgen]
+    pub fn vet_key_package(&self, key_package: Vec<u8>, expected_identity: String) -> String {
+        self.manager
+            .vet_key_package(&key_package, &expected_identity)
+            .to_string()
+    }
+
+    /// Every device event recorded since the last call, as a JSON array of
+    /// `{ groupId, epoch, identity, keyFingerprint, trust, addedBy }`, and forgets them. See
+    /// `mls_core::device_trust::DeviceEvent`.
+    #[wasm_bindgen]
+    pub fn take_device_events(&mut self) -> Result<String, JsValue> {
+        let events = self.manager.take_device_events();
+        mls_core::device_trust::events_json(&events).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     #[wasm_bindgen]

@@ -1,6 +1,7 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
+import type { DeviceEvent, KeyPackageVerdict } from './deviceTrust';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
@@ -654,12 +655,30 @@ export interface IMlsService {
    * (throws), broadcasts the commit, and returns the Welcome + post-merge ratchet tree for the
    * caller to deliver to the new device. `excludeDeviceIds` are skipped in the commit broadcast
    * (typically the inviter self and the invitee).
+   *
+   * The package is checked against `userId:deviceId`, the device it was fetched for, and against
+   * the signature key pinned for that device on first sight; either refusal throws a
+   * `DeviceTrustRefusedError` before anything is staged (`deviceTrust.ts`).
    */
   addMember(
     groupId: string,
-    keyPackageBytes: Uint8Array,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
   ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  /**
+   * Whether a package may be added as `userId:deviceId`, staging nothing - the same check the Add
+   * runs in Rust, taken BEFORE a destructive step (the removal of a stale leaf it would replace).
+   */
+  vetKeyPackage(
+    keyPackage: Uint8Array,
+    userId: string,
+    deviceId: string
+  ): Promise<KeyPackageVerdict>;
+  /**
+   * The device admissions recorded from merged signed commits since the last call, oldest first;
+   * taking them forgets them. Nothing shows them yet (a pending product decision).
+   */
+  takeDeviceEvents(): Promise<DeviceEvent[]>;
   /**
    * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
    * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts
@@ -672,11 +691,13 @@ export interface IMlsService {
    * Devices dropped because their KeyPackage was **invalid/undeserializable** (expired, wrong
    * ciphersuite, lost private key, corrupted bytes) are reported in `skipped` WITH a typed reason
    * (`SkippedKeyPackageReason`, classified in Rust) so the caller can surface a non-silent member
-   * loss and say why instead of letting them disappear. [[C5]]
+   * loss and say why instead of letting them disappear. [[C5]] A package whose credential does
+   * not name `userId:deviceId`, or carries a key other than the one pinned for that device, is one
+   * of those skips (`identity-mismatch`, `signature-key-changed`).
    */
   addMembersBulk(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>,
+    devices: Array<{ keyPackage: Uint8Array; deviceId: string; userId: string }>,
     excludeDeviceIds?: string[]
   ): Promise<{
     welcome?: Uint8Array;
@@ -764,6 +785,8 @@ export interface IMlsService {
     Array<{
       keyPackage: Uint8Array;
       deviceId: string;
+      /** The `userId` asked for, carried so an Add can check each package names this device. */
+      userId: string;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
