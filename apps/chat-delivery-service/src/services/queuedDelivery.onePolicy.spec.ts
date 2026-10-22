@@ -116,10 +116,14 @@ describe('a queued frame - one delivery, two routes', () => {
     manager: {
       transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
         cb({
+          // The shared seat lock a send's write takes; the seats it re-reads are the roster's.
+          query: jest.fn().mockResolvedValue([]),
           getRepository: (entity: unknown) =>
             entity === Group
               ? { find: jest.fn().mockResolvedValue([{ id: GROUP, deletedAt: null }]) }
-              : { save: queuedSave },
+              : entity === DeviceGroupMembership
+                ? deviceGroupRepo
+                : { save: queuedSave },
         })
       ),
     },
@@ -141,6 +145,8 @@ describe('a queued frame - one delivery, two routes', () => {
     sadd: jest.fn().mockResolvedValue(0),
     srem: jest.fn().mockResolvedValue(1),
     smembers: jest.fn().mockResolvedValue([]),
+    // Every member already routed: the reconciliation writes nothing here.
+    smismember: jest.fn(async (_key: string, ...members: string[]) => members.map(() => 1)),
     del: jest.fn(),
     pipeline: jest.fn(() => pipelineDouble()),
   };

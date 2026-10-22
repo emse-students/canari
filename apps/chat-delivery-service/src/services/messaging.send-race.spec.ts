@@ -59,6 +59,10 @@ describe('MessagingService - a send cannot outlive its group', () => {
   /** Every option object the transaction's `Group.find` was called with. */
   let lockedReads: Array<{ lock?: { mode?: string } }>;
   let warnings: string[];
+  /** The seats the group holds when read UNDER A LOCK - an eviction after the roster read removes one. */
+  let seats: Array<{ userId: string; deviceId: string }>;
+  /** What the transactions did, in order: each advisory lock taken and each group-row read. */
+  let order: string[];
 
   const GROUP = 'g-1';
   const SENDER = { userId: 'u-sender', deviceId: 'dev-sender' };
@@ -79,6 +83,8 @@ describe('MessagingService - a send cannot outlive its group', () => {
     xrevrange: jest.fn().mockResolvedValue([]),
     smembers: jest.fn().mockResolvedValue([]),
     sadd: jest.fn().mockResolvedValue(0),
+    // Every member already routed, unless a test says otherwise.
+    smismember: jest.fn(async (_key: string, ...members: string[]) => members.map(() => 1)),
     exists: jest.fn().mockResolvedValue(1),
     publish: jest.fn(),
     del: jest.fn().mockResolvedValue(1),
@@ -104,16 +110,28 @@ describe('MessagingService - a send cannot outlive its group', () => {
     bareSaved = [];
     lockedReads = [];
     warnings = [];
+    seats = [SENDER, PEER];
+    order = [];
 
     // The transaction the fix runs in. `getRepository` hands back the two repositories it uses, and
     // both record what they were asked - the Group read so the test can see the lock, the queue
     // write so it can see WHERE the rows went.
     const transaction = async (cb: (m: unknown) => Promise<unknown>) =>
       cb({
+        query: async (sql: string, params: unknown[]) => {
+          order.push(`${sql.includes('_shared') ? 'shared' : 'exclusive'} ${String(params[0])}`);
+          return [];
+        },
         getRepository: (entity: unknown) => {
+          if (entity === DeviceGroupMembership) {
+            return {
+              find: async () => seats.map((s) => ({ ...s, groupId: GROUP, status: 'active' })),
+            };
+          }
           if (entity === Group) {
             return {
               find: async (opts: { lock?: { mode?: string }; where: { id: string } }) => {
+                order.push('group row');
                 lockedReads.push(opts);
                 const row = groups[opts.where.id];
                 return row ? [row] : [];
@@ -160,7 +178,10 @@ describe('MessagingService - a send cannot outlive its group', () => {
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: queuedRepo },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        {
+          provide: getRepositoryToken(Group),
+          useValue: { ...emptyRepo(), manager: { transaction: jest.fn(transaction) } },
+        },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
@@ -269,6 +290,54 @@ describe('MessagingService - a send cannot outlive its group', () => {
     // And the write went through the transaction, not around it.
     expect(committed).toHaveLength(1);
     expect(bareSaved).toEqual([]);
+  });
+
+  /**
+   * A SEND MAY NOT OUTLIVE A SEAT EITHER. Its recipients are read with no lock, and an eviction that
+   * lands before its write deletes the seat, its queued frames and its route - so the write takes
+   * the seat lock SHARED, before the group row, and re-reads who still holds a seat.
+   */
+  describe('a seat evicted while the send was in flight', () => {
+    it('takes the seat lock shared, before the group row', async () => {
+      await send(GROUP);
+
+      expect(order).toEqual([`shared seat:${GROUP}`, 'group row']);
+    });
+
+    it('queues nothing for it and delivers nothing to it', async () => {
+      seats = [SENDER];
+      const deliver = jest.spyOn(
+        service as unknown as { deliverQueuedFrame: () => Promise<boolean> },
+        'deliverQueuedFrame'
+      );
+
+      const res = await send(GROUP);
+
+      expect(committed).toEqual([]);
+      expect(deliver).not.toHaveBeenCalled();
+      expect(res).toEqual(expect.objectContaining({ queued: 0 }));
+    });
+
+    it('puts no route back for it, re-reading the seats under the seat lock', async () => {
+      seats = [SENDER];
+      redis.smismember.mockResolvedValueOnce([1, 0]);
+
+      await send(GROUP);
+
+      expect(order).toContain(`exclusive seat:${GROUP}`);
+      expect(redis.sadd).not.toHaveBeenCalled();
+    });
+
+    it('puts back the route of a seat still held, under the same lock', async () => {
+      redis.smismember.mockResolvedValueOnce([1, 0]);
+
+      await send(GROUP);
+
+      expect(redis.sadd).toHaveBeenCalledWith(
+        `group:members:${GROUP}`,
+        `${PEER.userId}:${PEER.deviceId}`
+      );
+    });
   });
 
   // The same locked read names a frame sealed beyond the past-epoch window (backlog, 2026-10-12:

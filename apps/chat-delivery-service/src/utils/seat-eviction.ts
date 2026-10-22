@@ -23,6 +23,11 @@ import type { EntityManager } from 'typeorm';
  * `owedDeparture` to its own generation; the second (after the roster write) and the hourly drain
  * settle THAT departure and no other ({@link settleSeatDeparture}).
  *
+ * WHAT A SEAT CARRIES IS WRITTEN UNDER THE SAME LOCK. A route in the gateway's set is written only
+ * under it, against a re-read of the active rows (`MessagingService.restoreRoutes`); a send's queued
+ * frames under it SHARED, against a re-read of who holds a seat (`enqueueForLiveGroup`). An eviction
+ * deletes all three under it, so none outlives the seat it was written for.
+ *
  * The lock is a Postgres transaction-scoped advisory lock: released by the commit or the rollback
  * itself, so it has no expiry and termination never rests on a clock.
  */
@@ -39,6 +44,18 @@ function seatLockKey(groupId: string): string {
  */
 export async function takeSeatLock(m: EntityManager, groupId: string): Promise<void> {
   await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [seatLockKey(groupId)]);
+}
+
+/**
+ * Takes `groupId`'s seat lock SHARED in the transaction `m` carries: it waits for any writer holding
+ * the lock (an eviction, a commit's admits) and keeps the next one waiting until `m` ends, while
+ * other shared holders - concurrent sends into one group - never wait for each other. For a write
+ * that does not change a seat but must not outlive one (a queued frame). `m` MUST be transactional.
+ */
+export async function takeSharedSeatLock(m: EntityManager, groupId: string): Promise<void> {
+  await m.query(`SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))`, [
+    seatLockKey(groupId),
+  ]);
 }
 
 /** Runs `fn` in one transaction holding `groupId`'s seat lock. */

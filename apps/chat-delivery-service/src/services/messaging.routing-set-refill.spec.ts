@@ -57,6 +57,28 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
   };
   const deviceGroupRepo = { find: jest.fn().mockResolvedValue([]) };
 
+  /**
+   * The seat lock's transaction: every route is written under it, against a re-read of the rows.
+   * The re-read goes to the same roster fake, so a test that evicts between the two reads says so
+   * with a second answer.
+   */
+  const seatLocks: string[] = [];
+  const groupRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+    manager: {
+      transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
+        cb({
+          query: async (_sql: string, params: unknown[]) => {
+            seatLocks.push(String(params[0]));
+            return [];
+          },
+          getRepository: () => deviceGroupRepo,
+        })
+      ),
+    },
+  };
+
   /** A repository that holds nothing - `find` answers `[]`, the way a real one does. */
   const emptyRepo = () => ({
     find: jest.fn().mockResolvedValue([]),
@@ -70,12 +92,16 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    seatLocks.length = 0;
+    // `clearAllMocks` keeps queued once-answers, so a test whose second read went unused would
+    // hand it to the next one.
+    deviceGroupRepo.find.mockReset().mockResolvedValue([]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
@@ -133,6 +159,25 @@ describe('MessagingService - the routing set is reloaded from the rows, once, at
           where: { groupId: 'g1', status: 'active' },
         });
         expect(redis.sadd).toHaveBeenCalledWith('group:members:g1', 'ua:da', 'reqU:reqD');
+      });
+
+      it('routes no device evicted between the read and the refill, re-reading under the seat lock', async () => {
+        cacheEmptyRowsPresent();
+        deviceGroupRepo.find
+          .mockResolvedValueOnce([
+            { userId: 'ua', deviceId: 'da', groupId: 'g1', status: 'active' },
+            { userId: 'reqU', deviceId: 'reqD', groupId: 'g1', status: 'active' },
+          ])
+          // The eviction of `ua:da` committed before the seat lock was taken.
+          .mockResolvedValueOnce([
+            { userId: 'reqU', deviceId: 'reqD', groupId: 'g1', status: 'active' },
+          ]);
+
+        await door.call();
+
+        expect(seatLocks).toEqual(['seat:g1']);
+        expect(redis.sadd).toHaveBeenCalledWith('group:members:g1', 'reqU:reqD');
+        expect(redis.sadd.mock.calls.flat()).not.toContain('ua:da');
       });
 
       it('elects the peer it just reloaded rather than reporting no_peer_online', async () => {

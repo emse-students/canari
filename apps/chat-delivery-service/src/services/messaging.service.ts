@@ -65,6 +65,7 @@ import {
   seatClaimHolds,
   settleSeatDeparture,
   takeSeatLock,
+  takeSharedSeatLock,
   withSeatLock,
   type SeatClaim,
 } from '../utils/seat-eviction';
@@ -1512,16 +1513,32 @@ export class MessagingService {
         // its own delivery and an `excludeDeviceIds` entry from this one send, but both are
         // routable members like any other, and leaving them out made the repair incomplete by
         // construction - a member missing from the set is unelectable for ever.
-        const routable = memberships
-          .filter((m) => liveDeviceIds.has(`${m.userId}:${m.deviceId}`))
-          .map((m) => `${m.userId}:${m.deviceId}`);
+        //
+        // WRITTEN UNDER THE SEAT LOCK, AGAINST A RE-READ: `memberships` was read with no lock, so an
+        // eviction may have deleted a seat and its route since. The missing entries are found first
+        // (one round trip, no lock on the ordinary send), and only those still active when re-read
+        // under the lock are added (`restoreRoutes`).
+        const routable = memberships.filter((m) => liveDeviceIds.has(`${m.userId}:${m.deviceId}`));
         if (routable.length > 0) {
-          const added = await this.redis.sadd(`group:members:${groupId}`, ...routable);
-          if (added > 0) {
-            this.logger.warn(
-              `[SEND][${traceId}] MEMBERS_CACHE_REPAIRED group=${groupId} added=${added} of=${routable.length}` +
-                ` - these active devices were absent from the gateway routing set and unreachable by it`
-            );
+          const present = await this.redis.smismember(
+            `group:members:${groupId}`,
+            ...routable.map((m) => `${m.userId}:${m.deviceId}`)
+          );
+          const missing = routable.filter((_, i) => present[i] !== 1);
+          if (missing.length > 0) {
+            const { restored, gone } = await this.restoreRoutes(groupId, missing);
+            if (restored.length > 0) {
+              this.logger.warn(
+                `[SEND][${traceId}] MEMBERS_CACHE_REPAIRED group=${groupId} added=${restored.length} of=${routable.length}` +
+                  ` - these active devices were absent from the gateway routing set and unreachable by it`
+              );
+            }
+            if (gone.length > 0) {
+              this.logger.log(
+                `[SEND][${traceId}] ROUTE_NOT_RESTORED group=${groupId} devices=${capLoggedDevices(gone).join(',')}` +
+                  ` - their seat was gone when re-read under the seat lock`
+              );
+            }
           }
         }
       }
@@ -1585,10 +1602,21 @@ export class MessagingService {
       );
     }
 
-    // 1. Persist ALL messages first (survives crashes / timing races)
+    // 1. Persist ALL messages first (survives crashes / timing races). What is delivered below is
+    // what was queued: a seat evicted after the recipients were read is neither (`enqueueForLiveGroup`).
+    let queuedRows: QueuedMessage[] = [];
     if (toDeliver.length > 0) {
-      await this.enqueueForLiveGroup(toDeliver, body.groupId, 'SEND', traceId, sealed);
-      this.logger.log(`[SEND][${traceId}] QUEUED count=${toDeliver.length}`);
+      queuedRows = await this.enqueueForLiveGroup(
+        toDeliver,
+        body.groupId,
+        'SEND',
+        traceId,
+        sealed,
+        {
+          exempt: new Set(partingConsumed),
+        }
+      );
+      this.logger.log(`[SEND][${traceId}] QUEUED count=${queuedRows.length}`);
       if (partingConsumed.length > 0 && body.groupId) {
         await this.redis
           .hdel(partingKey(body.groupId), ...partingConsumed)
@@ -1723,7 +1751,7 @@ export class MessagingService {
     // than relying on that keeps the two facts independent.
     const silent = body.isCommit || body.isWelcome ? true : (body.silent ?? false);
     const tally: FanOutTally = { pushed: 0, pushes: [] };
-    for (const queued of toDeliver) {
+    for (const queued of queuedRows) {
       // Reuses the presence answer taken above rather than asking Redis a second time. A device
       // that went offline in between is covered the same way it always was: the row survives and
       // its next pull redelivers it.
@@ -1752,12 +1780,12 @@ export class MessagingService {
     // drops its offline recipients above, and a log that still said `ops.length` would describe rows
     // that do not exist.
     this.logger.log(
-      `[SEND][${traceId}] DONE queued=${toDeliver.length} realtime=${sentCount} offline=${tally.pushes.length}`
+      `[SEND][${traceId}] DONE queued=${queuedRows.length} realtime=${sentCount} offline=${tally.pushes.length}`
     );
 
     return {
       status: 'processed',
-      queued: toDeliver.length,
+      queued: queuedRows.length,
       sent: sentCount,
       receivedAt: receivedAt.getTime(),
     };
@@ -3499,14 +3527,50 @@ export class MessagingService {
     });
     if (rows.length === 0) return cached;
 
-    const members = rows.map((m) => `${m.userId}:${m.deviceId}`);
-    await this.redis.sadd(`group:members:${groupId}`, ...members);
+    // Written under the seat lock against a re-read, like every route: a seat evicted since the
+    // read above is not routed again (`restoreRoutes`).
+    const { restored, gone } = await this.restoreRoutes(groupId, rows);
     this.logger.warn(
-      `[${tag}][${traceId}] MEMBERS_CACHE_RELOADED group=${groupId} members=${members.length}` +
+      `[${tag}][${traceId}] MEMBERS_CACHE_RELOADED group=${groupId} members=${restored.length}` +
+        (gone.length > 0 ? ` evictedSinceRead=${gone.length}` : '') +
         ` - the gateway routing set was empty for a group with active devices, so it was rebuilt` +
         ` from the rows; anything routed on it before this point reached nobody`
     );
-    return members;
+    return restored;
+  }
+
+  /**
+   * Adds to `groupId`'s routing set those of `candidates` whose seat is still ACTIVE when re-read
+   * under the seat lock.
+   *
+   * The routing set is what the gateway delivers on, and an eviction deletes a seat and its route
+   * under that lock. A route written from a read taken BEFORE the lock could put back the route of a
+   * seat evicted in between, and nothing would ever take it out again: the gateway reads the set
+   * alone. So the re-read and the write happen while no eviction can run.
+   *
+   * @returns the entries written, and the candidates whose seat was gone
+   */
+  private async restoreRoutes(
+    groupId: string,
+    candidates: ReadonlyArray<{ userId: string; deviceId: string }>
+  ): Promise<{ restored: string[]; gone: string[] }> {
+    const wanted = candidates.map((c) => `${c.userId}:${c.deviceId}`);
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const rows = await m.getRepository(DeviceGroupMembership).find({
+        where: {
+          groupId,
+          status: 'active' as const,
+          deviceId: In([...new Set(candidates.map((c) => c.deviceId))]),
+        },
+      });
+      const active = new Set(rows.map((r) => `${r.userId}:${r.deviceId}`));
+      const restored = wanted.filter((k) => active.has(k));
+      const gone = wanted.filter((k) => !active.has(k));
+      if (restored.length > 0) {
+        await this.redis.sadd(`group:members:${groupId}`, ...restored);
+      }
+      return { restored, gone };
+    });
   }
 
   async notifyHistoryRequest(
@@ -3953,10 +4017,16 @@ export class MessagingService {
     groupId: string | undefined,
     tag: string,
     traceId: string,
-    sealed?: SealedFrame
+    sealed?: SealedFrame,
+    seats?: { exempt: ReadonlySet<string> }
   ): Promise<QueuedMessage[]> {
     if (!groupId) return this.queuedMessageRepo.save(rows);
     return this.queuedMessageRepo.manager.transaction(async (manager) => {
+      // THE SEAT LOCK, SHARED, BEFORE THE GROUP ROW - the order every seat writer takes them in. The
+      // recipients were read with no lock, so an eviction may have deleted a seat and its queued
+      // frames since; holding the lock shared, no eviction runs until these rows are written, and the
+      // re-read below drops a seat already gone. Sends into one group never wait for each other.
+      if (seats && rows.length > 0) await takeSharedSeatLock(manager, groupId);
       const [group] = await manager.getRepository(Group).find({
         where: { id: groupId },
         select: {
@@ -3994,7 +4064,40 @@ export class MessagingService {
       }
       // An empty batch is a liveness check alone (an emptied roster, see `sendMessage`).
       if (rows.length === 0) return [];
-      return manager.getRepository(QueuedMessage).save(rows);
+      const kept = seats ? await this.keepSeatedRows(manager, rows, groupId, seats.exempt) : rows;
+      if (kept.length < rows.length) {
+        const dropped = rows
+          .filter((r) => !kept.includes(r))
+          .map((r) => `${r.recipientId}:${r.deviceId}`);
+        this.logger.log(
+          `[${tag}][${traceId}] SEAT_GONE_NOT_QUEUED group=${groupId} count=${dropped.length} ` +
+            `devices=${capLoggedDevices(dropped).join(',')} - evicted after this send read its recipients`
+        );
+      }
+      if (kept.length === 0) return [];
+      return manager.getRepository(QueuedMessage).save(kept);
+    });
+  }
+
+  /**
+   * The rows of `rows` whose recipient still holds a seat (a membership row, any status) in
+   * `groupId`, read in the transaction `m`, which holds the seat lock. A key in `exempt` is kept
+   * without one: a commit reaches the devices it removes, whose seats were deleted on purpose.
+   */
+  private async keepSeatedRows(
+    m: EntityManager,
+    rows: QueuedMessage[],
+    groupId: string,
+    exempt: ReadonlySet<string>
+  ): Promise<QueuedMessage[]> {
+    const seated = await m.getRepository(DeviceGroupMembership).find({
+      where: { groupId, deviceId: In([...new Set(rows.map((r) => r.deviceId))]) },
+      select: { userId: true, deviceId: true },
+    });
+    const held = new Set(seated.map((s) => `${s.userId}:${s.deviceId}`));
+    return rows.filter((r) => {
+      const k = `${r.recipientId}:${r.deviceId}`;
+      return held.has(k) || exempt.has(k);
     });
   }
 
