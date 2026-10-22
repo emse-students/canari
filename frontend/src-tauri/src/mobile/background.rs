@@ -10,6 +10,7 @@ use std::path::Path;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::crypto::decode_base64_to_32_bytes;
+use mls_core::device_trust::{canonical_user_id, canonical_user_of};
 use mls_core::MlsManager;
 
 use super::proto_fields::extract_full_message_info;
@@ -236,7 +237,7 @@ pub fn open_graine_push(
     let Some((minter, signing_pk_b64)) = &held.v2 else {
         return open_graine_push_v1(&seed, push, &nonce, &ciphertext, language);
     };
-    if !push.sender_id.eq_ignore_ascii_case(minter) {
+    if canonical_user_id(push.sender_id) != canonical_user_id(minter) {
         log::error!(
             "[GraineBG] REFUSED: push names {} as the author of session {}, minted by {minter}",
             push.sender_id,
@@ -662,11 +663,10 @@ fn classify_verified(
     app: mls_core::IncomingApplication,
     language: PushLanguage,
 ) -> serde_json::Value {
-    let verified_user = app
-        .sender_identity
-        .as_deref()
-        .map(|identity| identity.split_once(':').map_or(identity, |(user, _)| user));
-    if !verified_user.is_some_and(|user| user.eq_ignore_ascii_case(envelope_sender)) {
+    // The user half of the ONE canonical identity the binding reads; a credential that is not a
+    // well-formed `user:device` names no user and is refused like a mismatch.
+    let verified_user = app.sender_identity.as_deref().and_then(canonical_user_of);
+    if verified_user != Some(canonical_user_id(envelope_sender)) {
         log::error!(
             "[PushBG] SENDER MISMATCH group={} envelope={envelope_sender} verified={} - REFUSED, the generic banner is shown",
             group_id.get(..8).unwrap_or(group_id),

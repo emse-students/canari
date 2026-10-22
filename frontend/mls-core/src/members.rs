@@ -3,7 +3,8 @@ use openmls::prelude::*;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::device_trust::{
-    DeviceTrust, LeafTrust, identity_names, is_well_formed_identity, key_fingerprint, leaf_keys,
+    DeviceTrust, LeafTrust, canonical_identity, canonical_user_id, canonical_user_of,
+    identity_names, is_well_formed_identity, key_fingerprint, leaf_keys,
 };
 use crate::state::MlsManager;
 use crate::{
@@ -153,8 +154,10 @@ impl MlsManager {
             .groups
             .get(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        // Matched as the binding matches (one canonical identity): a spelling of a device that IS a
+        // leaf must find that leaf, never fall through to the server's published keys.
         for member in group.members() {
-            if leaf_identity(&member)? == identity {
+            if identity_names(&leaf_identity(&member)?, identity) {
                 return Ok(Some(member.signature_key));
             }
         }
@@ -182,10 +185,11 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
+        // The user half of the ONE canonical identity, against the canonical user id: a leaf the
+        // binding admitted under another spelling of this user is this user's.
+        let wanted: Vec<String> = user_ids.iter().map(|u| canonical_user_id(u)).collect();
         let leaf_indices = leaf_indices_where(group, |identity| {
-            user_ids
-                .iter()
-                .any(|uid| identity == *uid || identity.starts_with(&format!("{}:", uid)))
+            canonical_user_of(identity).is_some_and(|user| wanted.contains(&user))
         })?;
 
         if leaf_indices.is_empty() {
@@ -223,8 +227,11 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        let leaf_indices =
-            leaf_indices_where(group, |identity| device_identities.contains(&identity))?;
+        let leaf_indices = leaf_indices_where(group, |identity| {
+            device_identities
+                .iter()
+                .any(|wanted| identity_names(identity, wanted))
+        })?;
 
         // NOTHING TO REMOVE IS ITS OWN ANSWER, not a crypto failure - see `MlsError::NoSuchMember`.
         // The caller that clears a stale leaf must distinguish "the leaf was never there" from "the
@@ -609,11 +616,16 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        let mut known_identities: std::collections::HashSet<Vec<u8>> =
+        // Keyed by the ONE canonical identity, as the binding reads it: two spellings of one device
+        // are one member, in the tree and within this batch.
+        let mut known_identities: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         for member in group.members() {
-            if let Ok(credential) = BasicCredential::try_from(member.credential.clone()) {
-                known_identities.insert(credential.identity().to_vec());
+            if let Some(identity) = credential_identity(&member.credential)
+                .ok()
+                .and_then(|id| canonical_identity(&id))
+            {
+                known_identities.insert(identity);
             }
         }
 
@@ -671,9 +683,9 @@ impl MlsManager {
                 continue;
             }
 
-            let identity = BasicCredential::try_from(kp.leaf_node().credential().clone())
+            let identity = credential_identity(kp.leaf_node().credential())
                 .ok()
-                .map(|c| c.identity().to_vec());
+                .and_then(|id| canonical_identity(&id));
             if let Some(identity) = &identity {
                 if known_identities.contains(identity) {
                     log::warn!("Skipping KeyPackage already a member of the group");

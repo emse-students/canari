@@ -192,9 +192,16 @@ pub struct DeviceTrust {
     unseeded: std::collections::HashSet<String>,
 }
 
-/// The user half of `identity`, lowercased, or `None` for an identity that is not well formed.
-fn user_of(identity: &str) -> Option<String> {
+/// The user half of `identity` in its [`canonical_identity`] form, or `None` for an identity that
+/// is not well formed. Every comparison of a leaf's user with a user id goes through it.
+pub fn canonical_user_of(identity: &str) -> Option<String> {
     canonical_identity(identity).and_then(|c| c.split_once(':').map(|(user, _)| user.to_string()))
+}
+
+/// A bare user id in the form [`canonical_user_of`] returns: ASCII-lowercased, so a roster's or a
+/// push's user id compares with a leaf's user half as the binding compares them.
+pub fn canonical_user_id(user_id: &str) -> String {
+    user_id.to_ascii_lowercase()
 }
 
 /// THE ONE CANONICAL FORM OF A DEVICE IDENTITY: the user half ASCII-lowercased, the device half as
@@ -287,56 +294,43 @@ impl DeviceTrust {
         events: Vec<DeviceEvent>,
         departures: Vec<Departure>,
     ) -> Self {
-        // A STATE WRITTEN BEFORE PINS WERE CANONICAL keyed each pin by its credential's spelling. It
-        // is re-keyed here; two spellings of one device merge - every key kept, anchored only if both
-        // were, and the SMALLER reaffirmation count (it lifts refusals, so the cautious one wins).
-        let mut merged: HashMap<String, Pin> = HashMap::new();
-        let mut migrated = 0usize;
+        // EVERY PIN THIS CODE WRITES IS KEYED CANONICALLY ([`Self::insert_pin`]), and no released
+        // build wrote pins before that. A record under any other key is therefore not a pin of this
+        // code and is NOT merged into one: merging two records would turn a key conflict between
+        // them into trust. No lookup could reach it, so it is dropped, loudly.
+        let mut loaded: HashMap<String, Pin> = HashMap::new();
         for p in pins {
-            let Some(identity) = canonical_identity(&p.identity) else {
+            if canonical_identity(&p.identity).as_deref() != Some(p.identity.as_str()) {
                 log::warn!(
-                    "[TRUST] a persisted pin names no device ({}) - dropped",
+                    "[TRUST] a persisted pin is not keyed by a canonical identity ({}) - dropped",
                     p.identity
                 );
                 continue;
-            };
-            if identity != p.identity {
-                migrated += 1;
             }
-            match merged.get_mut(&identity) {
-                None => {
-                    merged.insert(
-                        identity,
-                        Pin {
-                            keys: p.keys,
-                            anchored: p.anchored,
-                            reaffirmations: p.reaffirmations,
-                        },
+            loaded.insert(
+                p.identity,
+                Pin {
+                    keys: p.keys,
+                    anchored: p.anchored,
+                    reaffirmations: p.reaffirmations,
+                },
+            );
+        }
+        let pruned: VecDeque<String> = pruned
+            .into_iter()
+            .filter(|p| {
+                let canonical = canonical_identity(p).as_deref() == Some(p.as_str());
+                if !canonical {
+                    log::warn!(
+                        "[TRUST] a pruned record is not a canonical identity ({p}) - dropped"
                     );
                 }
-                Some(pin) => {
-                    for k in p.keys {
-                        if !pin.keys.contains(&k) {
-                            pin.keys.push(k);
-                        }
-                    }
-                    pin.anchored &= p.anchored;
-                    pin.reaffirmations = pin.reaffirmations.min(p.reaffirmations);
-                }
-            }
-        }
-        if migrated > 0 {
-            log::info!("[TRUST] {migrated} pin(s) re-keyed to the canonical identity");
-        }
-        let mut canonical_pruned: VecDeque<String> = VecDeque::new();
-        for p in pruned.iter().filter_map(|p| canonical_identity(p)) {
-            if !canonical_pruned.contains(&p) {
-                canonical_pruned.push_back(p);
-            }
-        }
+                canonical
+            })
+            .collect();
         Self {
-            pins: merged,
-            pruned: canonical_pruned,
+            pins: loaded,
+            pruned,
             events: events.into_iter().collect(),
             full_reported: false,
             departures: departures.into_iter().collect(),
@@ -423,11 +417,13 @@ impl DeviceTrust {
         before: &[LeafKey],
         after: &[LeafKey],
     ) -> bool {
-        let remaining: std::collections::HashSet<String> =
-            after.iter().filter_map(|(_, id, _)| user_of(id)).collect();
+        let remaining: std::collections::HashSet<String> = after
+            .iter()
+            .filter_map(|(_, id, _)| canonical_user_of(id))
+            .collect();
         let mut gone: Vec<String> = before
             .iter()
-            .filter_map(|(_, id, _)| user_of(id))
+            .filter_map(|(_, id, _)| canonical_user_of(id))
             .filter(|u| !remaining.contains(u))
             .collect();
         gone.sort();
