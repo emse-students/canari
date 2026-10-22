@@ -198,6 +198,21 @@ describe('removeStrayLeaves', () => {
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
     expect(lines.join(' | ')).toContain('their leaves stay');
   });
+
+  it('says the departed leaves are gone when another member removed them first', async () => {
+    trees.g1 = ['alice:web-1', 'bob:web-1'];
+    batch = answered({ g1: ['alice'] });
+    getGroupUserMembers.mockResolvedValue([{ userId: 'alice' }]);
+    removeMember.mockImplementation(async () => {
+      trees.g1 = ['alice:web-1'];
+      throw new Error('epoch_mismatch');
+    });
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    const said = lines.join(' | ');
+    expect(said).not.toContain('their leaves stay');
+    expect(said).toContain('already gone from the tree');
+  });
 });
 
 /**
@@ -265,6 +280,22 @@ describe('removeStrayLeaves - revoked devices', () => {
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
     expect(lines.join(' | ')).toContain('could not remove 1 revoked device(s)');
+  });
+
+  it('says the leaf is gone, not that it stays, when another member removed it first', async () => {
+    // Two members' collectors race; the loser's commit is refused BECAUSE the winner's removed the
+    // leaf. "Their leaves stay" would then be false - the tree is read again and says what happened.
+    trees.g1 = ['alice:web-1', 'bob:web-1', 'bob:phone-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['bob:phone-1'] });
+    removeMemberDevice.mockImplementation(async () => {
+      trees.g1 = ['alice:web-1', 'bob:web-1'];
+      throw new Error('epoch_mismatch');
+    });
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    const said = lines.join(' | ');
+    expect(said).not.toContain('their leaves stay');
+    expect(said).toContain('already gone from the tree');
   });
 
   it('removes a departed member first, then a revoked device of one who stays', async () => {

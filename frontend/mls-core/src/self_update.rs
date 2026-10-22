@@ -13,9 +13,10 @@
 //! **WHEN** is the caller's decision (`frontend/src/lib/mls-client/leafRefresh.ts`); this module only
 //! stages the commit and reports how old the current leaf is. See
 //! `docs/wiki/protocols/mls-protocol.md#the-periodic-leaf-refresh`.
+use openmls::messages::group_info::VerifiableGroupInfo;
 use openmls::prelude::*;
 use openmls::treesync::LeafNodeSource;
-use tls_codec::Serialize as TlsSerialize;
+use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::state::MlsManager;
 use crate::{MlsError, StagedRemovalResult};
@@ -90,6 +91,48 @@ impl MlsManager {
         Ok((commit, base))
     }
 
+    /// Whether this device's CURRENT group context in `group_id` is the one `group_info_bytes`
+    /// (a served external-join base, an `MlsMessageOut` wire blob) describes: same group, same
+    /// epoch, same tree hash, same confirmed transcript hash.
+    ///
+    /// **WHY THE HASHES AND NOT THE NUMBER.** The server's commit gate compares only epoch numbers,
+    /// so a device that merged a commit nobody else did is at the right NUMBER on the wrong branch:
+    /// its next commit is accepted, and every healthy member then fails to apply it. A commit nobody
+    /// asked for - the periodic refresh - must not be what spreads such a fork, so it is staged only
+    /// when this device's context IS the base the server publishes for the epoch. The comparison is
+    /// local and reads the GroupInfo unverified: equality of the hashes is the whole claim, and a
+    /// forged base can only make the answer `false`, which stages nothing.
+    pub fn own_context_matches_base(
+        &self,
+        group_id: &str,
+        group_info_bytes: &[u8],
+    ) -> Result<bool, MlsError> {
+        // openmls 0.9.1 exposes a group's context only to its own tests, so this device's context is
+        // read the way the served one is: from a GroupInfo, here one it exports of itself.
+        let own_bytes = self.export_group_info(group_id)?;
+        let served = parse_group_info(group_id, "served base", group_info_bytes)?;
+        let own = parse_group_info(group_id, "own export", &own_bytes)?;
+        let theirs = served.group_context();
+        let ours = own.group_context();
+        let same = theirs.group_id() == ours.group_id()
+            && theirs.epoch() == ours.epoch()
+            && theirs.tree_hash() == ours.tree_hash()
+            && theirs.confirmed_transcript_hash() == ours.confirmed_transcript_hash();
+        if !same {
+            log::warn!(
+                "[LEAF_REFRESH] {group_id}: own context (epoch {}) differs from the served base (epoch {}){}",
+                ours.epoch().as_u64(),
+                theirs.epoch().as_u64(),
+                if theirs.epoch() == ours.epoch() {
+                    " AT THE SAME EPOCH - this device is on another branch"
+                } else {
+                    ""
+                }
+            );
+        }
+        Ok(same)
+    }
+
     /// When this device's leaf in `group_id` was minted, in Unix seconds - or `None` once the leaf
     /// has been replaced by a commit (a refresh, or an external join).
     ///
@@ -114,5 +157,26 @@ impl MlsManager {
             ),
             LeafNodeSource::Update | LeafNodeSource::Commit(_) => None,
         })
+    }
+}
+
+/// Parses an `MlsMessageOut`-framed GroupInfo, unverified; anything else is `InvalidData`.
+fn parse_group_info(
+    group_id: &str,
+    what: &str,
+    bytes: &[u8],
+) -> Result<VerifiableGroupInfo, MlsError> {
+    match MlsMessageIn::tls_deserialize(&mut &bytes[..]) {
+        Ok(msg) => match msg.extract() {
+            MlsMessageBodyIn::GroupInfo(gi) => Ok(gi),
+            _ => {
+                log::warn!("[LEAF_REFRESH] {group_id}: the {what} is not a GroupInfo");
+                Err(MlsError::InvalidData)
+            }
+        },
+        Err(e) => {
+            log::warn!("[LEAF_REFRESH] {group_id}: the {what} does not parse: {e:?}");
+            Err(MlsError::InvalidData)
+        }
     }
 }

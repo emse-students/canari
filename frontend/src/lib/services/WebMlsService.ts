@@ -1237,6 +1237,11 @@ export class WebMlsService extends BaseMlsService {
     return this.client.own_leaf_minted_at(groupId) ?? null;
   }
 
+  /** WASM client wrapper - whether this device's context is the one the served base describes. */
+  protected async ownContextMatchesBase(groupId: string, groupInfo: Uint8Array): Promise<boolean> {
+    return this.client.own_context_matches_base(groupId, groupInfo);
+  }
+
   /** WASM client wrapper - merges the pending staged commit (server accepted). */
   protected async mergePendingCommit(groupId: string): Promise<void> {
     this.client.merge_pending_commit(groupId);

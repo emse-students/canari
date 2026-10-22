@@ -195,9 +195,14 @@ async function removeRevokedLeaves(
   } catch (e) {
     // Loud for the reason `removeStrays` gives: until this lands, the revoked device can still
     // read every new epoch. The next connection decides again.
-    log(
-      `[STRAY] ${short}... could not remove ${identities.length} revoked device(s): ` +
-        `${String(e)} - their leaves stay`
+    const named = new Set(identities);
+    await reportFailedRemoval(
+      mlsService,
+      groupId,
+      `${identities.length} revoked device(s)`,
+      (leaf) => named.has(leaf),
+      e,
+      log
     );
     return false;
   }
@@ -206,6 +211,41 @@ async function removeRevokedLeaves(
       'gone from the tree'
   );
   return true;
+}
+
+/**
+ * Says what a REFUSED removal left, read from the tree after the refusal rather than assumed.
+ *
+ * Two members' collectors race on the same leaf, and the loser's commit is refused precisely
+ * because the winner's removed it: "their leaves stay" would then be false, and the line its reader
+ * learns to skip. The tree is read again, and the line names what is actually still there.
+ */
+async function reportFailedRemoval(
+  mlsService: IMlsService,
+  groupId: string,
+  what: string,
+  isTarget: (leafIdentity: string) => boolean,
+  error: unknown,
+  log: (msg: string) => void
+): Promise<void> {
+  const short = groupId.slice(0, 8);
+  let left: number;
+  try {
+    left = (await mlsService.getGroupMemberIdentities(groupId)).filter(isTarget).length;
+  } catch (e) {
+    log(
+      `[STRAY] ${short}... could not remove ${what}: ${String(error)} - and the tree could not be ` +
+        `read again (${String(e)}), so whether their leaves stay is unknown`
+    );
+    return;
+  }
+  log(
+    left === 0
+      ? `[STRAY] ${short}... removal of ${what} refused (${String(error)}), and their leaves are ` +
+          'already gone from the tree - another member removed them first'
+      : `[STRAY] ${short}... could not remove ${what}: ${String(error)} - ${left} of their ` +
+          'leaves stay'
+  );
 }
 
 /**
@@ -257,9 +297,14 @@ async function removeStrays(
     // holds key material for the conversation. A rejected commit (another member won the epoch) is
     // the benign case and the next connection carries it - anything else is a real failure, and
     // this line is the only place it is visible.
-    log(
-      `[STRAY] ${groupId.slice(0, 8)}... could not remove ${strayUserIds.length} departed ` +
-        `member(s): ${String(e)} - their leaves stay`
+    const departed = new Set(strayUserIds);
+    await reportFailedRemoval(
+      mlsService,
+      groupId,
+      `${strayUserIds.length} departed member(s)`,
+      (leaf) => departed.has(leaf.slice(0, Math.max(0, leaf.indexOf(':')))),
+      e,
+      log
     );
     return false;
   }

@@ -47,7 +47,11 @@ import {
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
-import { noteOwnLeafRefreshed, refreshLeafIfDue } from '$lib/mls-client/leafRefresh';
+import {
+  LeafRefreshUnverifiedError,
+  noteOwnLeafRefreshed,
+  refreshLeafIfDue,
+} from '$lib/mls-client/leafRefresh';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -3392,6 +3396,13 @@ export abstract class BaseMlsService implements IMlsService {
   /** When this device's leaf in `groupId` was minted (Unix seconds), `null` once a commit replaced
    *  it. See `MlsManager::own_leaf_minted_at` and `leafRefresh.ts`. */
   protected abstract ownLeafMintedAt(groupId: string): Promise<number | null>;
+  /** Whether this device's current context in `groupId` (epoch, tree hash, confirmed transcript
+   *  hash) is the one the served base `groupInfo` describes. See
+   *  `MlsManager::own_context_matches_base`. */
+  protected abstract ownContextMatchesBase(
+    groupId: string,
+    groupInfo: Uint8Array
+  ): Promise<boolean>;
   /** Merges the pending staged commit (server accepted): advances the local epoch. */
   protected abstract mergePendingCommit(groupId: string): Promise<void>;
   /** Clears the pending staged commit (server rejected): local epoch unchanged, no fork. */
@@ -3463,17 +3474,42 @@ export abstract class BaseMlsService implements IMlsService {
         // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
         // between this accept and the local merge below, our epoch lags the server by one - a gap the
         // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
-        const validation = await this.delivery.submitCommit(
-          groupId,
-          baseEpoch,
-          toBase64(staged.commit),
-          opts.excludeDeviceIds,
-          toBase64(staged.groupInfo),
-          admits,
-          // Whom this commit removes, so the server queues it to the devices its half of the
-          // removal already parted (`commitRemovals`).
-          opts.removes
-        );
+        const commitB64 = toBase64(staged.commit);
+        let validation: Awaited<ReturnType<typeof this.delivery.submitCommit>>;
+        try {
+          validation = await this.delivery.submitCommit(
+            groupId,
+            baseEpoch,
+            commitB64,
+            opts.excludeDeviceIds,
+            toBase64(staged.groupInfo),
+            admits,
+            // Whom this commit removes, so the server queues it to the devices its half of the
+            // removal already parted (`commitRemovals`).
+            opts.removes
+          );
+        } catch (e) {
+          // NO ANSWER IS NOT A REFUSAL, AND THE STAGED COMMIT MUST NOT OUTLIVE IT. Left pending, the
+          // next checkpoint persists it and openmls then refuses every commit this device stages in
+          // the group - no Add, no Remove, no refresh. Whether the server took it is a FACT its log
+          // holds, so it is read rather than guessed: our commit at our base epoch means accepted.
+          const landed = await this.ownCommitLanded(groupId, baseEpoch, commitB64, e);
+          if (landed.ours) {
+            validation = { accepted: true };
+          } else {
+            await this.clearPendingCommit(groupId).catch((clearErr: unknown) =>
+              console.error(
+                `[COMMIT] ${groupId.slice(0, 8)}... could not clear the unanswered commit at ` +
+                  `${baseEpoch}: ${String(clearErr)}`
+              )
+            );
+            // Another commit took the epoch: this device is behind, exactly as on a refusal.
+            if (landed.activeEpoch !== undefined && landed.activeEpoch > baseEpoch) {
+              await this.catchUpOnRefusedCommit(groupId, baseEpoch, landed.activeEpoch);
+            }
+            throw e;
+          }
+        }
         if (!validation.accepted) {
           // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
           // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
@@ -3508,6 +3544,52 @@ export abstract class BaseMlsService implements IMlsService {
     // as the holder repair for the OTHER causes of a stale base (a legacy client's commit, a
     // server-side write that failed), which is a different question from this commit's own base.
     return out;
+  }
+
+  /**
+   * Whether the commit `commitB64`, submitted from `baseEpoch` with no answer back, is the one the
+   * server's log records at that epoch - i.e. it WAS accepted and only the answer was lost.
+   *
+   * The log is keyed by base epoch and written in the same transaction as the advance, holding the
+   * submitted bytes verbatim, so equality is the whole proof. `ours: false` covers "nothing
+   * recorded there" and "another device's commit there" alike (`activeEpoch` then tells them
+   * apart); a log that cannot be read is `ours: false` with no epoch, and said loudly - if the
+   * commit had in fact landed, this device is one epoch behind its own commit, which the recovery
+   * ladder's rung 2 rebuilds, the same as a crash between accept and merge.
+   */
+  private async ownCommitLanded(
+    groupId: string,
+    baseEpoch: number,
+    commitB64: string,
+    submitError: unknown
+  ): Promise<{ ours: boolean; activeEpoch?: number }> {
+    const short = groupId.slice(0, 8);
+    console.warn(
+      `[COMMIT] ${short}... no answer to the commit from epoch ${baseEpoch} ` +
+        `(${String(submitError).slice(0, 120)}) - reading the server log for it`
+    );
+    let replay: { commits: Array<{ baseEpoch: number; proto: string }>; activeEpoch: number };
+    try {
+      replay = await this.delivery.fetchCommitsSince(groupId, baseEpoch);
+    } catch (e) {
+      console.error(
+        `[COMMIT] ${short}... the commit from epoch ${baseEpoch} is UNRESOLVED: no answer and the ` +
+          `log is unreadable (${String(e).slice(0, 120)}) - cleared; if it had landed, rung 2 rebuilds`
+      );
+      return { ours: false };
+    }
+    const atBase = replay.commits.find((c) => c.baseEpoch === baseEpoch);
+    const ours = atBase?.proto === commitB64;
+    console.log(
+      `[COMMIT] ${short}... the log at epoch ${baseEpoch} holds ` +
+        (atBase
+          ? ours
+            ? 'OUR commit - it was accepted, merging'
+            : "another device's commit"
+          : 'nothing') +
+        ` (server at ${replay.activeEpoch})`
+    );
+    return { ours, activeEpoch: replay.activeEpoch };
   }
 
   /**
@@ -4805,7 +4887,19 @@ export abstract class BaseMlsService implements IMlsService {
    * Admits nobody and removes nobody, so it declares neither.
    */
   async refreshOwnLeaf(groupId: string): Promise<void> {
-    await this.runCommitTransaction(groupId, () => this.stageSelfUpdate(groupId));
+    // The base is read OUTSIDE the lock (network) and compared INSIDE it, against the state the
+    // commit is built from: an epoch that moved in between no longer matches, and nothing is staged.
+    const base = await this.delivery.fetchGroupInfo(groupId);
+    if (!base) throw new LeafRefreshUnverifiedError(groupId, 'no-base');
+    const baseBytes = fromBase64(base.groupInfo);
+    await this.runCommitTransaction(groupId, async () => {
+      const epoch = await this.freshEpoch(groupId);
+      if (base.baseEpoch !== epoch) throw new LeafRefreshUnverifiedError(groupId, 'other-epoch');
+      if (!(await this.ownContextMatchesBase(groupId, baseBytes))) {
+        throw new LeafRefreshUnverifiedError(groupId, 'diverged');
+      }
+      return this.stageSelfUpdate(groupId);
+    });
   }
 
   /** The epoch at which a refresh of each group last failed this session (`leafRefresh.ts`). */
@@ -4891,11 +4985,13 @@ export abstract class BaseMlsService implements IMlsService {
     const sent = await runAsEpochSend(groupId, () =>
       this.emitFrame(groupId, messageBytes, frameDelivery)
     );
-    // ACTIVITY IN THE GROUP IS WHAT DUE LEAF REFRESHES WAIT FOR: a durable frame the server just
-    // accepted. Never a seed (an epoch move on a key group rotates every sender's seed) and never
-    // transport traffic, which every connection sends and which would make this a per-connection
-    // commit storm. See `leafRefresh.ts`.
-    if (frameDelivery.durable && frameDelivery !== DELIVERY.keyMaterial) {
+    // ACTIVITY IN THE GROUP IS WHAT DUE LEAF REFRESHES WAIT FOR: a conversation frame the server
+    // just accepted. An ALLOWLIST of the two conversation kinds, by identity, because neither the
+    // value nor `durable` can tell them from key material: a seed is shaped exactly like a mutation,
+    // and an addressed seed is a fresh object each time. Never a seed (an epoch move on a key group
+    // rotates every sender's seed - and the key-group registry is empty at a cold start), never
+    // transport traffic, which every connection sends. See `leafRefresh.ts`.
+    if (frameDelivery === DELIVERY.visible || frameDelivery === DELIVERY.mutation) {
       this.scheduleLeafRefresh(groupId);
     }
     return sent;

@@ -36,15 +36,15 @@ use crate::commands::display_names::store_display_names;
 use crate::commands::handoff::read_and_clear_pending_share;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
-    creer_groupe, date_feuille, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
-    exporter_secret, generer_key_packages_et_persister, graine_member_signature_key,
-    graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
-    graine_verify_signature, groupe_actif, initialiser_mls, key_package_a_clef_privee,
-    lister_groupes, lister_identites_membres, obtenir_epoch, oublier_groupe, oublier_key_packages,
-    rafraichir_feuille, recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
-    recuperer_cle_session_mls, rejoindre_par_commit_externe, retirer_membres,
-    retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
-    trailer_welcome,
+    contexte_correspond_base, creer_groupe, date_feuille, envoyer_message_bytes,
+    exporter_group_info, exporter_ratchet_tree, exporter_secret, generer_key_packages_et_persister,
+    graine_member_signature_key, graine_session_keypair, graine_sign_with_device_credential,
+    graine_sign_with_session_key, graine_verify_signature, groupe_actif, initialiser_mls,
+    key_package_a_clef_privee, lister_groupes, lister_identites_membres, obtenir_epoch,
+    oublier_groupe, oublier_key_packages, rafraichir_feuille, recenser_key_packages,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, retirer_membres, retirer_membres_par_appareil,
+    sauvegarder_mls_et_persister, skip_send_generations, trailer_welcome,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
@@ -1087,6 +1087,7 @@ pub fn run() {
             retirer_membres_par_appareil,
             rafraichir_feuille,
             date_feuille,
+            contexte_correspond_base,
             confirmer_commit,
             annuler_commit,
             exporter_ratchet_tree,

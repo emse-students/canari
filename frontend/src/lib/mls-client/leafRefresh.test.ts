@@ -2,7 +2,10 @@ import type { Mock } from 'vitest';
 import {
   LEAF_REFRESH_INTERVAL_MS,
   LEAF_REFRESH_LEDGER_MAX_GROUPS,
+  LeafRefreshUnverifiedError,
   decideLeafRefresh,
+  holdLeafRefresh,
+  leafRefreshHold,
   noteOwnLeafRefreshed,
   readLeafRefreshLedger,
   refreshLeafIfDue,
@@ -210,5 +213,42 @@ describe('refreshLeafIfDue', () => {
     refreshOwnLeaf.mockResolvedValue(undefined);
     expect(await refreshLeafIfDue(d, G)).toBe('refreshed');
     expect(refreshOwnLeaf).toHaveBeenCalledTimes(2);
+  });
+
+  it('is held while something in the group needs the epoch to stay put (a call being set up)', async () => {
+    // A call derives its media keys from the group's CURRENT epoch on each end, one after the
+    // other: a refresh between the two derivations gives the two ends different keys.
+    const release = holdLeafRefresh(G, 'call');
+    const d = deps({ ownLeafMintedAt: async () => (NOW - 8 * DAY) / 1000 });
+    expect(await refreshLeafIfDue(d, G)).toBe('held');
+    expect(refreshOwnLeaf).not.toHaveBeenCalled();
+    expect(lines.join(' | ')).toContain('call');
+
+    // Another group is not held, and the release lifts the hold.
+    expect(leafRefreshHold('g-other')).toBeNull();
+    release();
+    expect(leafRefreshHold(G)).toBeNull();
+    expect(await refreshLeafIfDue(d, G)).toBe('refreshed');
+  });
+
+  it('a release is idempotent and lifts only its own hold', () => {
+    const a = holdLeafRefresh(G, 'call');
+    const b = holdLeafRefresh(G, 'call');
+    a();
+    a();
+    expect(leafRefreshHold(G)).toBe('call');
+    b();
+    expect(leafRefreshHold(G)).toBeNull();
+  });
+
+  it('a refresh the published base could not vouch for is not retried at the same epoch', async () => {
+    refreshOwnLeaf.mockRejectedValue(new LeafRefreshUnverifiedError(G, 'diverged'));
+    const d = deps({ ownLeafMintedAt: async () => (NOW - 8 * DAY) / 1000 });
+
+    expect(await refreshLeafIfDue(d, G)).toBe('unverified');
+    expect(lines.join(' | ')).toContain('diverged');
+    expect(readLeafRefreshLedger(U, D)[G]).toBeUndefined();
+    expect(await refreshLeafIfDue(d, G)).toBe('already-tried');
+    expect(refreshOwnLeaf).toHaveBeenCalledTimes(1);
   });
 });

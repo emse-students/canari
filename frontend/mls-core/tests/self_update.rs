@@ -213,6 +213,113 @@ fn a_self_update_is_refused_while_another_commit_is_pending() {
 }
 
 #[test]
+fn a_self_update_keeps_every_identity_and_signature_key_so_the_graine_run_continues() {
+    // What a Graine run reads as a DEPARTURE is a Remove, or an `(identity, signature key)` pair
+    // leaving the tree; an external commit is an arrival. A refresh is a member commit with no
+    // proposal and does not rotate the signature key, so every pair is the same before and after,
+    // on the committer and on the peer that applies it - and a seed must not rotate for it.
+    let gid = "g-refresh-graine";
+    let (mut alice, mut bob) = alice_and_bob(gid);
+    let pairs = |m: &MlsManager| -> Vec<(String, Vec<u8>)> {
+        m.member_identities(gid)
+            .expect("tree")
+            .into_iter()
+            .map(|id| {
+                let key = m
+                    .member_signature_key(gid, &id)
+                    .expect("readable")
+                    .expect("a leaf for every identity");
+                (id, key)
+            })
+            .collect()
+    };
+    let before_alice = pairs(&alice);
+    let before_bob = pairs(&bob);
+    assert_eq!(before_alice, before_bob, "one tree, seen from both sides");
+
+    let (commit, _base) = bob.stage_self_update(gid).expect("stage");
+    bob.merge_pending_commit_for(gid).expect("merge");
+    alice
+        .process_incoming_message(gid, &commit)
+        .expect("alice applies");
+
+    assert_eq!(pairs(&bob), before_bob, "the committer keeps every pair");
+    assert_eq!(pairs(&alice), before_alice, "the peer sees no pair leave");
+}
+
+#[test]
+fn the_own_context_matches_the_base_published_for_the_same_epoch_on_the_same_branch() {
+    let gid = "g-refresh-base";
+    let (mut alice, bob) = alice_and_bob(gid);
+    // The base the server serves for the current epoch: any member's export of it.
+    let published = alice.export_group_info(gid).expect("alice's base");
+    assert!(
+        bob.own_context_matches_base(gid, &published)
+            .expect("comparable")
+    );
+    assert!(
+        alice
+            .own_context_matches_base(gid, &published)
+            .expect("comparable")
+    );
+
+    // A base of an older epoch is not this device's context.
+    let _ = alice.stage_self_update(gid).expect("stage");
+    alice.merge_pending_commit_for(gid).expect("merge");
+    assert!(
+        !alice
+            .own_context_matches_base(gid, &published)
+            .expect("comparable")
+    );
+}
+
+#[test]
+fn a_device_forked_at_the_same_epoch_number_does_not_match_the_published_base() {
+    // THE FORK THE EPOCH GATE CANNOT SEE: both devices merged a DIFFERENT commit from epoch 1, so
+    // both are at epoch 2 and the server's number check would accept either one's next commit. The
+    // published base (here alice's branch) carries the transcript and tree hashes of epoch 2 as the
+    // server has it, and bob's own context differs from it.
+    let gid = "g-refresh-fork";
+    let (mut alice, mut bob) = alice_and_bob(gid);
+    let _ = alice.stage_self_update(gid).expect("alice stages");
+    alice.merge_pending_commit_for(gid).expect("alice merges");
+    let _ = bob.stage_self_update(gid).expect("bob stages");
+    bob.merge_pending_commit_for(gid)
+        .expect("bob merges, never seeing alice's");
+    assert_eq!(
+        alice.get_epoch(gid).expect("epoch"),
+        bob.get_epoch(gid).expect("epoch"),
+        "same epoch number on both branches"
+    );
+
+    let published = alice.export_group_info(gid).expect("alice's base");
+    assert!(
+        alice
+            .own_context_matches_base(gid, &published)
+            .expect("comparable")
+    );
+    assert!(
+        !bob.own_context_matches_base(gid, &published)
+            .expect("comparable"),
+        "the forked device must not see its context as the published one"
+    );
+}
+
+#[test]
+fn a_base_that_does_not_parse_is_an_error_not_a_verdict() {
+    let gid = "g-refresh-garbage";
+    let (alice, _bob) = alice_and_bob(gid);
+    assert!(matches!(
+        alice.own_context_matches_base(gid, b"not a group info"),
+        Err(MlsError::InvalidData)
+    ));
+    assert!(matches!(
+        alice.own_context_matches_base("nope", b"x"),
+        Err(MlsError::GroupNotFound(_))
+    ));
+}
+
+#[test]
 fn a_self_update_on_an_unknown_group_is_a_typed_absence() {
     let mut alice = make_device("alice", "dev1");
     assert!(matches!(

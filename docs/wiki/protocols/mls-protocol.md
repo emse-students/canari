@@ -688,11 +688,28 @@ swept in), membership is unchanged, the leaf's HPKE key and path secrets are new
 `BaseMlsService.runCommitTransaction` like every other commit - stage, server validation
 (`submitCommit`), then merge or clear, with the successor base attached - so the single-writer and
 commit-gate rules hold unchanged. A refused refresh clears its pending commit and retries nothing.
+
+**A submit with no answer (every commit, not only the refresh).** A transport failure or a non-OK
+answer to `submitCommit` used to leave the staged commit pending; the next checkpoint persisted it,
+and openmls then refused every commit the device staged in that group. `runCommitTransaction` now
+reads the server's commit log at its base epoch (`ownCommitLanded`): OUR bytes there mean the commit
+was accepted and only the answer was lost, so it merges; anything else (nothing, another device's
+commit, an unreadable log) clears it, catches up when another commit took the epoch, and rethrows.
+An unreadable log is the one case left to rung 2, exactly as a crash between accept and merge.
+
+**Staged only on the branch the server publishes.** The server's gate compares epoch NUMBERS, so a
+device that merged a commit nobody else did is at the right number on the wrong branch, and its
+refresh would be accepted and break every healthy member. `refreshOwnLeaf` reads the published base
+(outside the MLS lock) and, under the lock, stages only when its epoch is ours and our group context
+- tree hash and confirmed transcript hash - is the one it describes
+(`MlsManager::own_context_matches_base`); otherwise nothing is staged (`no-base`, `other-epoch`,
+`diverged` - the last is a fork, logged as one).
 The **signature key is not rotated**: one device key signs every leaf and every KeyPackage of the
 device, and a stolen signature key is answered by revocation (next section), not by a refresh.
 
-**The trigger is durable state, not a timer.** After `sendMessage` delivers a durable frame (a visible
-message or a mutation; never key material, never transport), the service hands the group to
+**The trigger is durable state, not a timer.** After `sendMessage` delivers a conversation frame -
+`DELIVERY.visible` or `DELIVERY.mutation`, an allowlist by identity, because a seed is shaped exactly
+like a mutation and an addressed seed is a fresh object - the service hands the group to
 `refreshLeafIfDue` (`frontend/src/lib/mls-client/leafRefresh.ts`), outside the send barrier and
 single-flight per group. It refreshes only when the leaf is DUE:
 
@@ -703,7 +720,10 @@ single-flight per group. It refreshes only when the leaf is DUE:
 | Replaced by a commit, no ledger entry (an install that predates the ledger) | first sight: dated now | never on first sight |
 
 It skips a community key group, a group this device was removed from, a group in an epoch gap (the
-[recovery ladder](mls-recovery-ladder.md) owns it), and a second attempt at the epoch a first one
+[recovery ladder](mls-recovery-ladder.md) owns it), a group HELD by something that needs its epoch to
+stay put (`holdLeafRefresh`: `CallService` holds its call's group from the ring until the call is
+over, because each end derives the media keys from the CURRENT epoch one after the other - another
+device of either user is not held, see [calls](../frontend/modules/calls.md)), and a second attempt at the epoch a first one
 failed at in this session - the epoch moving is what makes another attempt different. Nothing here
 waits on a clock to be correct: the clock only decides WHETHER a refresh is owed, never what a commit
 contains, and a wrong clock costs one early or one late refresh. The ledger is capped at 512 groups

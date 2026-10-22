@@ -26,7 +26,11 @@
  * **WHERE IT MUST NOT RUN.** A community's key group: there, any epoch move rotates every sender's
  * Graine seed at its next send (`shouldRotateGraineSession`), so a refresh would mint seeds the way
  * the 2026-10-21 measurement already deplores. A group in an epoch gap: the recovery ladder owns it.
- * A group this device was removed from: it can commit nothing there.
+ * A group this device was removed from: it can commit nothing there. A group HELD by something
+ * that needs its epoch to stay put ({@link holdLeafRefresh} - a call being set up). And a device
+ * whose own context is not the base the server publishes for the epoch
+ * ({@link LeafRefreshUnverifiedError}): the server's gate compares only epoch numbers, so a forked
+ * device's refresh would be accepted and break every healthy member.
  *
  * @see docs/wiki/protocols/mls-protocol.md#the-periodic-leaf-refresh
  */
@@ -159,6 +163,70 @@ export function noteOwnLeafRefreshed(
   }
 }
 
+/** Why the server's published base could not vouch for this device's state. */
+export type LeafRefreshUnverifiedReason = 'no-base' | 'other-epoch' | 'diverged';
+
+/**
+ * Thrown by `BaseMlsService.refreshOwnLeaf` BEFORE anything is staged, when this device's group
+ * context is not the one the server publishes for the epoch.
+ *
+ * WHY: the server's commit gate compares epoch NUMBERS. A device that merged a commit nobody else
+ * did sits at the right number on the wrong branch, its refresh is accepted, and every healthy
+ * member then fails to apply it. A commit nobody asked for must not be what spreads a fork, so it is
+ * staged only when the device's context (tree hash, confirmed transcript hash) IS the published one.
+ * - `no-base`: nothing is published for the group - nothing to compare against;
+ * - `other-epoch`: the published base is of another epoch (this device is behind, or the base is);
+ * - `diverged`: same epoch, different hashes - THIS DEVICE IS ON ANOTHER BRANCH.
+ */
+export class LeafRefreshUnverifiedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly reason: LeafRefreshUnverifiedReason
+  ) {
+    super(
+      `leaf refresh of ${groupId.slice(0, 8)}... not vouched for by the published base: ${reason}`
+    );
+    this.name = 'LeafRefreshUnverifiedError';
+  }
+}
+
+/**
+ * Groups whose epoch something on this device needs to stay put for a while, and why - a call
+ * being set up derives its media keys from the CURRENT epoch on each end, one after the other, so
+ * a refresh between the two derivations gives the ends different keys. Several holds may be taken
+ * on one group; the group is held while any is.
+ */
+const leafRefreshHolds = new Map<string, Map<symbol, string>>();
+
+/**
+ * Holds the periodic refresh of `groupId` until the returned release is called. The release is
+ * idempotent and lifts only this hold. Only the REFRESH is held - a commit a person asked for
+ * (an Add, a Remove) is not this module's to delay.
+ */
+export function holdLeafRefresh(groupId: string, reason: string): () => void {
+  const token = Symbol(reason);
+  let holds = leafRefreshHolds.get(groupId);
+  if (!holds) {
+    holds = new Map();
+    leafRefreshHolds.set(groupId, holds);
+  }
+  holds.set(token, reason);
+  console.log(`[LEAF_REFRESH] ${groupId.slice(0, 8)}... held (${reason})`);
+  return () => {
+    const current = leafRefreshHolds.get(groupId);
+    if (!current?.delete(token)) return;
+    if (current.size === 0) leafRefreshHolds.delete(groupId);
+    console.log(`[LEAF_REFRESH] ${groupId.slice(0, 8)}... hold released (${reason})`);
+  };
+}
+
+/** The reason `groupId`'s refresh is held, or `null` when nothing holds it. */
+export function leafRefreshHold(groupId: string): string | null {
+  const holds = leafRefreshHolds.get(groupId);
+  if (!holds) return null;
+  return holds.values().next().value ?? null;
+}
+
 /** What one {@link refreshLeafIfDue} call did. */
 export type LeafRefreshOutcome =
   | 'key-group'
@@ -166,7 +234,9 @@ export type LeafRefreshOutcome =
   | 'first-sight'
   | 'not-due'
   | 'epoch-gap'
+  | 'held'
   | 'already-tried'
+  | 'unverified'
   | 'refreshed'
   | 'failed';
 
@@ -233,6 +303,14 @@ export async function refreshLeafIfDue(
     );
     return 'epoch-gap';
   }
+  const hold = leafRefreshHold(groupId);
+  if (hold !== null) {
+    deps.log(
+      `[LEAF_REFRESH] ${short}... due (${ageDays} d, ${decision.basis}) but held (${hold}) - ` +
+        'asked again at the next send after the hold is released'
+    );
+    return 'held';
+  }
   if (deps.attemptedAtEpoch.get(groupId) === epoch) return 'already-tried';
 
   deps.log(
@@ -242,6 +320,18 @@ export async function refreshLeafIfDue(
     await deps.refreshOwnLeaf(groupId);
   } catch (e) {
     deps.attemptedAtEpoch.set(groupId, epoch);
+    if (e instanceof LeafRefreshUnverifiedError) {
+      // Nothing was staged. `diverged` is the one that accuses: this device is on a branch the
+      // server does not publish, and the recovery ladder - not a refresh - is what owns that.
+      deps.log(
+        e.reason === 'diverged'
+          ? `[LEAF_REFRESH] ${short}... NOT refreshed at epoch ${epoch}: this device's context ` +
+              'DIVERGES from the published base at the same epoch (diverged) - a fork; nothing staged'
+          : `[LEAF_REFRESH] ${short}... not refreshed at epoch ${epoch}: the published base cannot ` +
+              `vouch for this state (${e.reason}) - nothing staged, asked again after the epoch moves`
+      );
+      return 'unverified';
+    }
     deps.log(
       e instanceof CommitRefusedError
         ? `[LEAF_REFRESH] ${short}... refresh refused at epoch ${epoch} (${e.reason}, server at ` +

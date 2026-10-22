@@ -1313,6 +1313,14 @@ export class TauriMlsService extends BaseMlsService {
     return (await invoke<number | null>('date_feuille', { groupId })) ?? null;
   }
 
+  /** Tauri-native `invoke` wrapper - whether this device's context is the one the served base describes. */
+  protected async ownContextMatchesBase(groupId: string, groupInfo: Uint8Array): Promise<boolean> {
+    return invoke<boolean>('contexte_correspond_base', {
+      groupId,
+      groupInfo: Array.from(groupInfo),
+    });
+  }
+
   /** Tauri-native `invoke` wrapper - merges the pending staged commit (server accepted) and refreshes the epoch cache. */
   protected async mergePendingCommit(groupId: string): Promise<void> {
     await invoke('confirmer_commit', { groupId });

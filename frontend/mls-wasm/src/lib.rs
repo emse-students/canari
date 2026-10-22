@@ -729,6 +729,20 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Whether this device's current context in `group_id` is the one the served base
+    /// `group_info` describes - same epoch, tree hash and transcript hash
+    /// (`MlsManager::own_context_matches_base`). Gates the periodic refresh against a fork.
+    #[wasm_bindgen]
+    pub fn own_context_matches_base(
+        &self,
+        group_id: String,
+        group_info: Vec<u8>,
+    ) -> Result<bool, JsValue> {
+        self.manager
+            .own_context_matches_base(&group_id, &group_info)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).
     /// Advances the local epoch. Counterpart of `clear_pending_commit`. [[C7]] Option A:
     /// validate-then-merge.

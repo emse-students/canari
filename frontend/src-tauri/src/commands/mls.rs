@@ -741,6 +741,24 @@ pub(crate) fn date_feuille(
         .map_err(|e| e.to_string())
 }
 
+/// Whether this device's current context in `group_id` is the one the served base `group_info`
+/// describes (`MlsManager::own_context_matches_base`) - the fork gate of the periodic refresh.
+#[tauri::command]
+pub(crate) fn contexte_correspond_base(
+    group_id: String,
+    group_info: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<bool, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .own_context_matches_base(&group_id, &group_info)
+        .map_err(|e| e.to_string())
+}
+
 /// Confirms (merges) a *staged* commit (ADD or REMOVE) AFTER the server accepts it
 /// (`validateCommit`). Advances the local epoch. Counterpart of `annuler_commit`. [[C7]] Option A:
 /// validate-then-merge, never a local fork on rejection (unified ADD+REMOVE regime).
