@@ -2,7 +2,11 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { FindOperator, IsNull } from 'typeorm';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -829,26 +833,99 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).not.toHaveBeenCalled();
     });
 
-    it("KNOWN GAP (WP-KEYGROUP-JOIN-GATE): a key group's external commit is accepted, logged and activates its committer", async () => {
-      // This asserts today's behaviour so the gate that replaces it changes this test on purpose:
-      // no entitlement is checked, and acceptance promotes the committing device.
-      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
-      const activate = jest
-        .spyOn(service, 'activateDeviceMembership')
-        .mockResolvedValue({ ok: true });
-      tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
-      fanOut();
+    /**
+     * A KEY GROUP'S EXTERNAL COMMIT IS ASKED OF SOCIAL-SERVICE (WP-KEYGROUP-JOIN-GATE): accepted and
+     * activated only on `entitled: true`; a `false` is a 403 and an unanswered question a 503, both
+     * before the epoch moves and before any activation.
+     */
+    describe("a key group's external commit", () => {
+      let previous: string | undefined;
+      let fetchSpy: jest.SpyInstance;
+      let activate: jest.SpyInstance;
+      const social = (status: number, body: unknown) =>
+        fetchSpy.mockResolvedValue(new Response(JSON.stringify(body), { status }));
 
-      await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).resolves.toMatchObject({
-        accepted: true,
+      beforeEach(() => {
+        previous = process.env.INTERNAL_SECRET;
+        process.env.INTERNAL_SECRET = 'sekret';
+        fetchSpy = jest.spyOn(globalThis, 'fetch');
+        activate = jest.spyOn(service, 'activateDeviceMembership').mockResolvedValue({ ok: true });
       });
-      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
-        'key-group external join'
+
+      afterEach(() => {
+        fetchSpy.mockRestore();
+        if (previous === undefined) delete process.env.INTERNAL_SECRET;
+        else process.env.INTERNAL_SECRET = previous;
+      });
+
+      it.each([
+        [
+          'a community',
+          { distributionWorkspaceId: 'ws-1' },
+          { kind: 'workspace', scopeId: 'ws-1' },
+        ],
+        [
+          'a private salon',
+          { distributionChannelId: 'ch-1' },
+          { kind: 'channel', scopeId: 'ch-1' },
+        ],
+      ])(
+        'is accepted and activates its committer once %s entitles them',
+        async (_n, group, asked) => {
+          tables({ keyPackages: [ownKey], group });
+          social(200, { entitled: true });
+          fanOut();
+
+          await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).resolves.toMatchObject({
+            accepted: true,
+          });
+          expect(JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body))).toEqual({
+            ...asked,
+            userId: 'user-1',
+          });
+          expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1', {
+            authority: 'accepted_commit',
+          });
+        }
       );
-      expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1', {
-        authority: 'accepted_commit',
+
+      it('is refused, before the epoch moves and before activation, when not entitled', async () => {
+        tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
+        social(200, { entitled: false });
+        const sent = fanOut();
+
+        await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
+          response: { error: 'committer_not_member' },
+        });
+        expect(transaction).not.toHaveBeenCalled();
+        expect(activate).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
       });
-      warn.mockRestore();
+
+      it('is a retryable 503 - never an acceptance - when social-service cannot answer', async () => {
+        tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
+        fetchSpy.mockRejectedValue(new TypeError('fetch failed'));
+        const sent = fanOut();
+
+        await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toBeInstanceOf(
+          ServiceUnavailableException
+        );
+        expect(transaction).not.toHaveBeenCalled();
+        expect(activate).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      it('never asks social-service about a member commit', async () => {
+        tables({
+          keyPackages: [ownKey],
+          devices: [ownDevice],
+          group: { distributionWorkspaceId: 'ws-1' },
+        });
+        fanOut();
+
+        await expect(commit({}, 'user-1')).resolves.toMatchObject({ accepted: true });
+        expect(fetchSpy).not.toHaveBeenCalled();
+      });
     });
 
     it("writes the CALLER's id downstream of the gate, never the body's spelling of it", async () => {

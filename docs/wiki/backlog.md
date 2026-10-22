@@ -249,9 +249,14 @@ The reading has one setup and three checks:
   No `REJECT` appears, and in particular no commit-caller refusal.
 - **The newcomer.** It opens the group and reads the next message.
 
-## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join has no entitlement gate yet (2026-10-22)
+## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
-A key-group external join has no entitlement check yet; each one is logged `[COMMIT] key-group external join`. An accepted external commit also promotes its committing device to `active`, as every external join must, so the check belongs before both. A key group's Welcome target is not checked either: a conversation's Welcome target must be on its roster, and a key group has no roster here. The roster of a key group is held by social-service. Owed next, as its own pull request with an opus review: a social-service internal route answering "is this person entitled to this scope", called by chat-delivery for a key-group external commit only. A failed call refuses with a retryable 503 and never accepts, and its rate is measured against the ~77 joins/day before a stable.
+A key-group external commit and a key group's Welcome target are now asked of social-service
+(`POST /internal/distribution-groups/entitlement`) before the epoch moves and before any activation;
+an unanswered call is a `503 entitlement_unavailable`, never an acceptance
+([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
+Owed before a stable: the rate of `[ENTITLEMENT] UNANSWERED` lines on dev, then production, against
+the ~77 key-group joins/day.
 
 ## P3 - A refused membership report is silent on the client (2026-10-22)
 

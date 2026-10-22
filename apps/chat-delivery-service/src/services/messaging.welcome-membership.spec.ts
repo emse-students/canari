@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
@@ -236,16 +236,65 @@ describe('MessagingService - sendWelcome does not touch membership status or the
    * the gate refused every such Welcome; it asks the device table for this kind, like the replay.
    */
   describe('who may send a Welcome', () => {
-    it('lets a key-distribution member with an ACTIVE device row Welcome a newcomer', async () => {
+    let previous: string | undefined;
+    let fetchSpy: jest.SpyInstance;
+    /** social-service's answer for the Welcome's target (WP-KEYGROUP-JOIN-GATE). */
+    const social = (entitled: boolean) =>
+      fetchSpy.mockResolvedValue(new Response(JSON.stringify({ entitled }), { status: 200 }));
+
+    beforeEach(() => {
+      previous = process.env.INTERNAL_SECRET;
+      process.env.INTERNAL_SECRET = 'sekret';
+      fetchSpy = jest.spyOn(globalThis, 'fetch');
+    });
+
+    afterEach(() => {
+      fetchSpy.mockRestore();
+      if (previous === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = previous;
+    });
+
+    it('lets a key-distribution member with an ACTIVE device row Welcome an entitled newcomer', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
       deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      social(true);
 
       await expect(service.sendWelcome('u1', body)).resolves.toEqual({ status: 'queued' });
       expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
         where: { groupId: 'g1', userId: 'u1', status: 'active' },
       });
-      // The user table cannot answer for this kind, so it is not asked at all.
+      // The user table cannot answer for this kind, so it is not asked at all: social-service is,
+      // about the TARGET.
       expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+      expect(JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body))).toEqual({
+        kind: 'workspace',
+        scopeId: 'ws-1',
+        userId: 'u2',
+      });
+    });
+
+    it("refuses a key group's Welcome to a target social-service does not entitle", async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionChannelId: 'salon-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      social(false);
+
+      await expect(service.sendWelcome('u1', body)).rejects.toMatchObject({
+        response: { error: 'welcome_target_not_member' },
+      });
+      expect(queuedSave).not.toHaveBeenCalled();
+      expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it("is a 503 - nothing queued, no row - when social-service cannot answer for a key group's target", async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+      fetchSpy.mockRejectedValue(new TypeError('fetch failed'));
+
+      await expect(service.sendWelcome('u1', body)).rejects.toBeInstanceOf(
+        ServiceUnavailableException
+      );
+      expect(queuedSave).not.toHaveBeenCalled();
+      expect(deviceGroupRepo.createQueryBuilder).not.toHaveBeenCalled();
     });
 
     it('refuses a sender with no active device in a private salon key group', async () => {

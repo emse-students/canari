@@ -7,4 +7,4 @@ A commit, foreground or background, is bound to its authenticated committer and 
 device, must come from a member (or, for an external commit, a person on the roster), and must name
 its own group and base epoch; its fan-out skips only devices new to the group. A conversation's
 Welcome reaches only a device of someone on its roster, and never ends a kick. A device id belongs
-to one account ([backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-has-no-entitlement-gate-yet-2026-10-22)).
+to one account ([backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)).
