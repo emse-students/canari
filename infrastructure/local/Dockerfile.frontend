@@ -82,6 +82,15 @@ map $request_uri $logged_request_uri {\n\
     "~^(?<uri_before_token>.*[?&])token=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}token=redacted${uri_after_token}";\n\
     default $request_uri;\n\
 }\n\
+# A PUBLIC FORM PAGE SENDS NO REFERER (2026-10-22, paid public forms WP-P2). `/f/<id>/receipt` carries\n\
+# a guest'"'"'s receipt in its query, and the page boots on the client: the first requests it makes (its\n\
+# own chunks) leave before any <meta> in it can apply, carrying the whole URL as their Referer. So the\n\
+# policy is a HEADER of the page itself, on every `/f/` page. Keyed on $request_uri, which @app_shell'"'"'s\n\
+# try_files does not rewrite. An empty value sends no header, so every other page is unchanged.\n\
+map $request_uri $public_form_referrer_policy {\n\
+    default "";\n\
+    "~^/f/" "no-referrer";\n\
+}\n\
 # FIVE DIAGNOSTIC FIELDS TRAIL THE LINE (2026-10-18), for the intermittent Messenger preview failure the\n\
 # access log could not explain: it held two response sizes for one crawler hit and nothing to say why.\n\
 # rt = total time; urt and ust = the upstream's time and status (a slow or failing SSR shows here);\n\
@@ -508,6 +517,7 @@ server {\n\
     # default, and the sitemap's own public max-age passes through the first map unchanged.\n\
     proxy_hide_header Cache-Control;\n\
     add_header Cache-Control $ssr_cache_control always;\n\
+    add_header Referrer-Policy $public_form_referrer_policy always;\n\
     include /etc/nginx/snippets/csp.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
@@ -529,6 +539,7 @@ server {\n\
     try_files /app-shell.html =502;\n\
     add_header Cache-Control "no-store" always;\n\
     add_header X-Canari-Degraded "ssr-unavailable" always;\n\
+    add_header Referrer-Policy $public_form_referrer_policy always;\n\
     include /etc/nginx/snippets/csp.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\

@@ -508,9 +508,13 @@ sent the answer.
   - the front nginx's access log drops the receipt route's query (`/f/<id>/receipt?query-redacted`,
     the `$logged_request_uri` map in `Dockerfile.frontend`, asserted by
     `access-log-redaction.test.mjs` and run against a real nginx);
-  - the page sends no Referer (`<meta name="referrer" content="no-referrer">`), so its own
-    requests - the confirm call, the assets, the retry link - do not carry the URL into that log's
-    referer field.
+  - every `/f/` page is answered with the HEADER `Referrer-Policy: no-referrer` (the
+    `$public_form_referrer_policy` map, sent by `@ssr` and `@app_shell`, asserted by
+    `static-headers.test.mjs` and run against a real nginx), so the page's own requests - its
+    chunks, the confirm call, the retry link - do not carry the URL into that log's referer field.
+    It has to be a header: the page boots on the client, so its first chunk requests leave before
+    a `<meta>` could apply. The page still carries the `<meta>` for a shell served without that
+    header (a dev server).
 - **Residual risk, stated**: the receipt stays in the guest's browser history, in Lydia's copy of
   the return URL, and in any proxy in front of this container that logs full URLs (outside this
   repository's control). It does not expire. What bounds it: it only READS one answer's reference,

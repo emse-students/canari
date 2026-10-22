@@ -18,9 +18,12 @@
    * is the ONLY thing read from the URL: every status shown comes from the server, which reads the
    * answer's own request at Lydia. A URL that says "paid" says nothing here. The receipt stays in the
    * address bar on purpose - it is the link the guest comes back to while the payment confirms.
-   * So the page sends NO Referer (`no-referrer` below): its own requests - the confirmation call, an
-   * asset, the retry link - would otherwise carry the whole URL, receipt included, into the access
-   * log's referer field, which the request-line redaction (`Dockerfile.frontend`) does not cover.
+   * So the page sends NO Referer: its own requests - its chunks, the confirmation call, the retry
+   * link - would otherwise carry the whole URL, receipt included, into the access log's referer
+   * field, which the request-line redaction (`Dockerfile.frontend`) does not cover. The policy is a
+   * response HEADER of every `/f/` page (`$public_form_referrer_policy`), because this page boots on
+   * the client and its first chunks leave before any <meta> can apply; the <meta> below restates it
+   * for a shell served without that header (a dev server, a preview).
    *
    * It shares the member return page's poll (`pollPaymentReturn`) and its verdicts, and words them
    * for a guest: no e-mail is promised, and the organiser is reached with the reference.
