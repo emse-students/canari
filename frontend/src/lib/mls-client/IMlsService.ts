@@ -1,7 +1,7 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
-import type { DeviceEvent, KeyPackageVerdict } from './deviceTrust';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
@@ -666,6 +666,16 @@ export interface IMlsService {
     excludeDeviceIds?: string[]
   ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
   /**
+   * {@link addMember} for a device whose leaf is STILL in the tree: removes that leaf and adds the
+   * device back in ONE commit, so no epoch has the user out of the tree (no departure, see
+   * {@link removalEpochs}). Same vetting, same typed refusal, same transaction.
+   */
+  replaceMember(
+    groupId: string,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
+    excludeDeviceIds?: string[]
+  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }>;
+  /**
    * Whether a package may be added as `userId:deviceId`, staging nothing - the same check the Add
    * runs in Rust, taken BEFORE a destructive step (the removal of a stale leaf it would replace).
    */
@@ -681,17 +691,18 @@ export interface IMlsService {
    */
   takeDeviceEvents(): Promise<DeviceEvent[]>;
   /**
-   * The signature keys this device has seen for `userId:deviceId` in a signed tree it merged or
-   * joined, or `null` for a device it never saw - THE SINGLE SOURCE OF TRUST for "a key this device
-   * has seen", for any verifier of a device-key signature: a key the server published alone proves
-   * nothing against the server. `null` means UNVERIFIED, never FORGED - pins of devices no held tree
-   * contains may be dropped past their bound. See `BaseMlsService.pinnedSignatureKeys`.
+   * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
+   * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF
+   * TRUST for "a key this device has seen", for any verifier of a device-key signature, since a key
+   * the server published alone proves nothing against the server. `null`, and a contradiction with
+   * an `anchored: false` pin, mean UNVERIFIED, never FORGED. See `BaseMlsService.pinnedSignatureKeys`.
    */
-  pinnedSignatureKeys(userId: string, deviceId: string): Promise<Uint8Array[] | null>;
+  pinnedSignatureKeys(userId: string, deviceId: string): Promise<DevicePin | null>;
   /**
    * The epochs at which this device saw `userId` leave `groupId`'s tree (its last leaf removed by a
-   * merged commit, live or caught up), oldest first. Empty means NOT SEEN, never "never happened".
-   * Never user-visible. See `BaseMlsService.removalEpochs`.
+   * merged commit, live or caught up), oldest first. Per USER, and only commits this device merged.
+   * Empty means NOT SEEN, never "never happened". Never user-visible. See
+   * `BaseMlsService.removalEpochs`.
    */
   removalEpochs(groupId: string, userId: string): Promise<number[]>;
   /**

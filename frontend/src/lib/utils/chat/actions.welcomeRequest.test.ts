@@ -156,9 +156,9 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
     });
 
   // The case the handler exists for: a device that lost its WASM state and asks to be let back in.
-  // Its leaf is still in the tree, so it must be kicked before it can be re-added - and the routing
+  // Its leaf is still in the tree, so it is REPLACED - Remove and Add in one commit - and the routing
   // rows its fresh-start cleared must not talk the handler out of it.
-  it('kicks a leaf the tree holds even when the routing table has lost its row', async () => {
+  it('replaces a leaf the tree holds even when the routing table has lost its row', async () => {
     const mlsService = admissible({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:dev-1']),
       getGroupMembers: vi.fn().mockResolvedValue([]),
@@ -167,14 +167,17 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
 
     await run('g-kick-holds', mlsService, log);
 
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('leaf in MLS tree - kick + re-add'));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('leaf in MLS tree - remove + re-add in one commit')
+    );
     expect(mlsService.getGroupMembers).not.toHaveBeenCalled();
+    expect(mlsService.replaceMember).toHaveBeenCalledTimes(1);
   });
 
   // A WELCOME SENT BY ANOTHER PATH IS STILL IN FLIGHT. A creation fan-out welcomed this device
   // seconds ago and it asked before the Welcome landed: its leaf is fresh, so the push and the pull
-  // must not overlap into a kick + re-add. Only the welcome_request path used to be remembered.
-  it('does not kick a device another path welcomed seconds ago', async () => {
+  // must not overlap into a replacement. Only the welcome_request path used to be remembered.
+  it('does not replace a device another path welcomed seconds ago', async () => {
     const mlsService = admissible({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:dev-1']),
     });
@@ -184,12 +187,12 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
     await run('g-kick-in-flight', mlsService, log);
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining('still joining, skip'));
-    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.replaceMember).not.toHaveBeenCalled();
     expect(mlsService.addMember).not.toHaveBeenCalled();
   });
 
-  // AND PAST THE COOLDOWN THE KICK NAMES WHICH CAUSE IT REPAIRS: a Welcome sent here and lost, not
-  // a leaf from another session.
+  // AND PAST THE COOLDOWN THE REPAIR NAMES WHICH CAUSE IT REPAIRS: a Welcome sent here and lost,
+  // not a leaf from another session.
   it('names the Welcome another path sent when the repair comes after the cooldown', async () => {
     const mlsService = admissible({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:dev-1']),
@@ -207,14 +210,14 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
     }
 
     expect(log).toHaveBeenCalledWith(
-      expect.stringContaining('kick + re-add (last Welcome sent here 45s ago)')
+      expect.stringContaining('in one commit (last Welcome sent here 45s ago)')
     );
   });
 
-  // AND THE OTHER DIRECTION, WHICH IS WHY THIS IS NOT MERELY A TIDY-UP: the routing table listing a
-  // device whose leaf was never added would have made the handler kick a leaf that is not there,
-  // rotating the epoch for nothing on every single reconnect.
-  it('does not kick when the routing table lists a device the tree never held', async () => {
+  // AND THE OTHER DIRECTION: the routing table listing a device whose leaf was never added would
+  // have made the handler remove a leaf that is not there, rotating the epoch for nothing on every
+  // single reconnect. A plain Add goes out instead.
+  it('does not replace when the routing table lists a device the tree never held', async () => {
     const mlsService = admissible({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self']),
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user', deviceId: 'dev-1' }]),
@@ -223,14 +226,14 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
 
     await run('g-kick-routing', mlsService, log);
 
-    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('kick + re-add'));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('remove + re-add'));
+    expect(mlsService.replaceMember).not.toHaveBeenCalled();
     expect(mlsService.addMember).toHaveBeenCalledTimes(1);
   });
 
   // A DESTRUCTIVE ACTION IS NOT TAKEN ON DOUBT. An unreadable tree is not a leaf sighting, so
-  // nothing is removed; the Add still goes out, exactly as the swallowed catch here used to allow,
-  // and the branch now says which fact it was missing.
-  it('never kicks on an unreadable tree, and logs that it could not tell', async () => {
+  // nothing is removed; the Add still goes out, and the branch says which fact it was missing.
+  it('never removes on an unreadable tree, and logs that it could not tell', async () => {
     const mlsService = admissible({
       getGroupMemberIdentities: vi.fn().mockRejectedValue(new Error('GroupNotFound')),
     });
@@ -238,59 +241,17 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
 
     await run('g-kick-unreadable', mlsService, log);
 
+    expect(mlsService.replaceMember).not.toHaveBeenCalled();
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Tree of g-kick-u'));
     expect(mlsService.addMember).toHaveBeenCalledTimes(1);
   });
 
-  // A FAILED KICK LEFT NO TRACE OF ITS OWN, and the line that followed claimed the removal anyway.
-  // `kickStaleLeaf` swallowed both of its calls and then logged `[KICK] ... removed` regardless, so
-  // the Add collided with a leaf the reader had just been told was gone - and the DuplicateSignature
-  // downstream, under another tag, was the only evidence. Neither failure is promoted to a throw:
-  // the callers' fall-through is deliberate, only the silence was not.
-  it('reports both halves of a kick that removed nothing, and still attempts the add', async () => {
-    const mlsService = admissible({
-      getGroupMemberIdentities: vi.fn().mockResolvedValue(['legit-user:dev-1']),
-      removeMemberDevice: vi.fn().mockRejectedValue(new Error('epoch moved under us')),
-      kickStaleDevice: vi.fn().mockRejectedValue(new Error('delivery service down')),
-    });
-    const log = vi.fn();
-
-    await run('g-kick-failed', mlsService, log);
-
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("still in g-kick-failed's tree"));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Routing row for legit-user:dev-1'));
-    // THE SUCCESS LINE MUST NOT BE EMITTED. This is the assertion the old code failed.
-    expect(log).not.toHaveBeenCalledWith(
-      expect.stringContaining('Stale leaf legit-user:dev-1 removed from')
-    );
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining('tree=still present, routing=still listed')
-    );
-    expect(mlsService.addMember).toHaveBeenCalledTimes(1);
-  });
-
-  // THE TWO HALVES FAIL INDEPENDENTLY AND NEED DIFFERENT REPAIRS - a leaf out of the tree with a
-  // routing row still shipping to it is a different estate from the reverse. A summary saying
-  // "partially" without naming the half leaves the reader where the silence did.
-  it('names which half survived when only the routing row resists', async () => {
-    const mlsService = admissible({
-      getGroupMemberIdentities: vi.fn().mockResolvedValue(['legit-user:dev-1']),
-      kickStaleDevice: vi.fn().mockRejectedValue(new Error('delivery service down')),
-    });
-    const log = vi.fn();
-
-    await run('g-kick-routing-half', mlsService, log);
-
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('tree=cleared, routing=still listed'));
-    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("still in g-kick-routing-half's"));
-  });
-
-  // AND THE ORDINARY CASE STILL SAYS SO PLAINLY, in the one spelling the classifier knows. A kick
-  // is a repair, so `[KICK] ... removed` is `unexplained` by design and breaks `clean`: reaching it
-  // at all is the finding. The spelling is therefore load-bearing, not cosmetic.
-  it('claims the removal only when both halves actually succeeded', async () => {
+  // THE REPAIR IS ONE COMMIT, NOT A KICK THEN AN ADD. Two commits left a window where the device
+  // was out of the group and a departure was recorded for a device that never left; nothing here
+  // removes a leaf on its own any more, and nothing clears the routing row ahead of the Add.
+  it('removes nothing on its own: the leaf leaves in the same commit that re-adds it', async () => {
     const mlsService = admissible({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['legit-user:dev-1']),
     });
@@ -298,10 +259,15 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
 
     await run('g-kick-clean', mlsService, log);
 
-    expect(log).toHaveBeenCalledWith(
-      '[KICK] Stale leaf legit-user:dev-1 removed from g-kick-clean'
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(mlsService.replaceMember).toHaveBeenCalledWith(
+      'g-kick-clean',
+      { keyPackage: new Uint8Array([7]), userId: 'legit-user', deviceId: 'dev-1' },
+      ['legit-user:dev-1']
     );
-    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('PARTIALLY'));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('[KICK]'));
   });
 });
 
@@ -376,18 +342,16 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
     error.mockRestore();
   });
 
-  it('still kicks and re-adds a device whose key is the pinned one', async () => {
+  it('still replaces a device whose key is the pinned one, in one commit', async () => {
     const mlsService = requester({
       vetKeyPackage: vi.fn().mockResolvedValue('pinned'),
-      addMember: vi
-        .fn()
-        .mockResolvedValue({ welcome: new Uint8Array([1]), ratchetTree: new Uint8Array([2]) }),
     });
 
     await run('g-trust-pinned', mlsService);
 
-    expect(mlsService.removeMemberDevice).toHaveBeenCalled();
-    expect(mlsService.addMember).toHaveBeenCalledWith(
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(mlsService.replaceMember).toHaveBeenCalledWith(
       'g-trust-pinned',
       { keyPackage: new Uint8Array([7]), userId: 'legit-user', deviceId: 'dev-1' },
       ['legit-user:dev-1']
@@ -419,6 +383,10 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const mlsService = requester({
       vetKeyPackage: vi.fn().mockResolvedValue('signature-key-changed'),
+      // The refusal is remembered against the pin it was judged by; no pin, nothing to remember.
+      pinnedSignatureKeys: vi
+        .fn()
+        .mockResolvedValue({ keys: [new Uint8Array([1])], anchored: true, reaffirmations: 0 }),
     });
 
     await run('g-trust-remembered', mlsService);

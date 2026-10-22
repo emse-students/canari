@@ -35,6 +35,10 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
     kickStaleDevice: vi.fn().mockResolvedValue(undefined),
     addMember: vi.fn(),
+    // A device seen before, pinned and never reaffirmed: what a remembered refusal is judged against.
+    pinnedSignatureKeys: vi
+      .fn()
+      .mockResolvedValue({ keys: [new Uint8Array([1])], anchored: true, reaffirmations: 0 }),
     updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
     registerMember: vi.fn().mockResolvedValue(undefined),
     sendWelcome: vi.fn().mockResolvedValue(undefined),

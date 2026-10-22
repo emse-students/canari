@@ -406,9 +406,10 @@ fn the_pinned_signature_key_is_the_one_a_signed_tree_carried() {
     let keys = alice
         .pinned_signature_keys("bob", "dev1")
         .expect("a device admitted by a merged commit is pinned");
-    assert_eq!(keys.len(), 1);
+    assert_eq!(keys.keys.len(), 1);
+    assert!(keys.anchored, "a first sight is anchored");
     assert_eq!(
-        mls_core::device_trust::key_fingerprint(&keys[0]),
+        mls_core::device_trust::key_fingerprint(&keys.keys[0]),
         admitted[0].key_fingerprint,
         "the pinned key is the leaf's key"
     );
@@ -431,7 +432,104 @@ fn the_pinned_signature_key_is_the_one_a_signed_tree_carried() {
     let alice_from_bob = bob
         .pinned_signature_keys("alice", "dev1")
         .expect("the joiner pins the tree it joined");
-    assert_eq!(alice_from_bob.len(), 1);
+    assert_eq!(alice_from_bob.keys.len(), 1);
+}
+
+/// A CHECKPOINT BETWEEN AN EXTERNAL JOIN AND ITS MERGE PINS NOTHING AT RELOAD: the marker is in the
+/// sealed state, so the load does not seed the tree the server served, and the merge still pins it.
+#[test]
+fn an_external_join_checkpointed_before_its_merge_pins_nothing_at_reload() {
+    let gid = "g-ext-restart";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let info = alice.export_group_info(gid).expect("group info");
+
+    let mut carol = device("carol", "dev1");
+    carol.join_by_external_commit(&info).expect("stage join");
+    let saved = carol.save_state().expect("checkpoint");
+    let state: PersistedState = from_reader(saved.as_slice()).unwrap();
+    assert_eq!(state.pending_external_joins, vec![gid.to_string()]);
+
+    let mut reloaded = MlsManager::load_or_create("carol", "dev1", Some(saved)).expect("reload");
+    assert_eq!(
+        reloaded.vet_key_package(&bob.generate_key_package().unwrap(), "bob:dev1"),
+        "first-sight",
+        "a reload must not pin the tree of a join not yet accepted"
+    );
+    reloaded.merge_pending_commit_for(gid).expect("merge");
+    assert_eq!(
+        reloaded.vet_key_package(&bob.generate_key_package().unwrap(), "bob:dev1"),
+        "pinned"
+    );
+}
+
+/// CLEARING AN EXTERNAL JOIN'S COMMIT DROPS THE MARKER AND THE GROUP: nothing of a refused join is
+/// left for a later load to pin.
+#[test]
+fn clearing_an_external_join_leaves_no_marker_and_nothing_to_pin() {
+    let gid = "g-ext-clear";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let info = alice.export_group_info(gid).expect("group info");
+
+    let mut carol = device("carol", "dev1");
+    carol.join_by_external_commit(&info).expect("stage join");
+    carol.clear_pending_commit_for(gid).expect("clear");
+    assert!(carol.get_epoch(gid).is_err(), "the group is gone");
+
+    let saved = carol.save_state().expect("save");
+    let state: PersistedState = from_reader(saved.as_slice()).unwrap();
+    assert!(state.pending_external_joins.is_empty());
+    let reloaded = MlsManager::load_or_create("carol", "dev1", Some(saved)).expect("reload");
+    assert_eq!(
+        reloaded.vet_key_package(&bob.generate_key_package().unwrap(), "bob:dev1"),
+        "first-sight"
+    );
+}
+
+/// A COMMIT A DEVICE SIGNED REAFFIRMS ITS PIN: the count a refusal caused by one forged KeyPackage
+/// is lifted by (`refusedDevices.ts`).
+#[test]
+fn a_commit_signed_by_a_pinned_device_reaffirms_its_pin() {
+    let gid = "g-reaffirm";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut carol = device("carol", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let before = alice
+        .pinned_signature_keys("bob", "dev1")
+        .unwrap()
+        .reaffirmations;
+
+    let kp = carol.generate_key_package().unwrap();
+    let by_bob = add_and_join(&mut bob, &mut carol, gid, &kp, "carol:dev1");
+    alice.process_incoming_message(gid, &by_bob).unwrap();
+
+    assert_eq!(
+        alice
+            .pinned_signature_keys("bob", "dev1")
+            .unwrap()
+            .reaffirmations,
+        before + 1
+    );
+    let saved = alice.save_state().unwrap();
+    let reloaded = MlsManager::load_or_create("alice", "dev1", Some(saved)).unwrap();
+    assert_eq!(
+        reloaded
+            .pinned_signature_keys("bob", "dev1")
+            .unwrap()
+            .reaffirmations,
+        before + 1,
+        "persisted"
+    );
 }
 
 /// A DEPARTURE IS RECORDED AT MERGE TIME, so a device that never saw the tree between a kick and a
@@ -520,5 +618,90 @@ fn a_resync_or_the_removal_of_one_device_among_several_records_no_departure() {
     assert!(
         alice.removal_epochs(gid, "bob").is_empty(),
         "one device among several leaving is not the user leaving"
+    );
+}
+
+/// THE REPAIR IS ONE COMMIT: a device asking to be re-added while its leaf is still in the tree is
+/// removed and added back by a single commit, so no epoch has the user out of the tree and no
+/// departure is recorded - neither by the committer, nor live by a member, nor by one catching up.
+/// The Welcome reaches the re-added device, which lands at the same epoch.
+#[test]
+fn a_repair_in_one_commit_records_no_departure_live_or_on_catch_up() {
+    let gid = "g-repair-one-commit";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut carol = device("carol", "dev1");
+    let mut dave = device("dave", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = carol.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut carol, gid, &kp, "carol:dev1");
+    let kp = dave.generate_key_package().unwrap();
+    let dave_in = add_and_join(&mut alice, &mut dave, gid, &kp, "dave:dev1");
+    carol.process_incoming_message(gid, &dave_in).unwrap();
+    let kp = bob.generate_key_package().unwrap();
+    let bob_in = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    carol.process_incoming_message(gid, &bob_in).unwrap();
+    dave.process_incoming_message(gid, &bob_in).unwrap();
+    for m in [&mut alice, &mut carol, &mut dave] {
+        m.take_device_events();
+    }
+
+    // bob lost the group but kept its key: alice repairs it in ONE commit.
+    bob.forget_group(gid, 0);
+    let kp = bob.generate_key_package().unwrap();
+    let (repair, welcome, _base) = alice
+        .replace_device_with_base(gid, "bob:dev1", &kp)
+        .expect("one commit removes and re-adds the same identity");
+    alice.merge_pending_commit_for(gid).expect("merge");
+    let tree = alice.export_ratchet_tree_for(gid).expect("tree");
+    bob.process_welcome(&welcome, Some(&tree))
+        .expect("the Welcome reaches the re-added device");
+    assert_eq!(bob.get_epoch(gid).unwrap(), alice.get_epoch(gid).unwrap());
+
+    // carol merges it live; dave catches up on it after one more commit.
+    carol.process_incoming_message(gid, &repair).unwrap();
+    let later = remove(&mut alice, gid, "carol:dev1");
+    dave.process_incoming_message(gid, &repair).unwrap();
+    dave.process_incoming_message(gid, &later).unwrap();
+
+    assert!(alice.removal_epochs(gid, "bob").is_empty(), "committer");
+    assert!(carol.removal_epochs(gid, "bob").is_empty(), "live");
+    assert!(dave.removal_epochs(gid, "bob").is_empty(), "catch-up");
+    assert!(
+        !dave.removal_epochs(gid, "carol").is_empty(),
+        "a real removal still is one"
+    );
+    for (who, m) in [("alice", &mut alice), ("carol", &mut carol)] {
+        assert!(
+            m.take_device_events().is_empty(),
+            "{who}: a repair under the pinned key is no new device"
+        );
+    }
+}
+
+/// A repair whose package carries a key never pinned for the device stages nothing.
+#[test]
+fn a_repair_refuses_an_unpinned_key_and_stages_nothing() {
+    let gid = "g-repair-refused";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let epoch = alice.get_epoch(gid).unwrap();
+
+    let impostor = device("bob", "dev1");
+    let forged = impostor.generate_key_package().unwrap();
+    assert!(
+        alice
+            .replace_device_with_base(gid, "bob:dev1", &forged)
+            .is_err()
+    );
+    assert_eq!(alice.get_epoch(gid).unwrap(), epoch);
+    assert!(
+        alice
+            .replace_device_with_base(gid, "nobody:dev1", &bob.generate_key_package().unwrap())
+            .is_err(),
+        "nothing to replace is not an add"
     );
 }

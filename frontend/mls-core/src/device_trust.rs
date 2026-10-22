@@ -107,7 +107,50 @@ pub struct PersistedPin {
     pub identity: String,
     #[serde(with = "crate::byte_compat::bytes_vec")]
     pub keys: Vec<Vec<u8>>,
+    /// See [`Pin::anchored`]. A pin written before the field existed was never re-seeded after a
+    /// prune (nothing pruned then), so it reads as anchored.
+    #[serde(default = "anchored_by_default")]
+    pub anchored: bool,
+    /// See [`Pin::reaffirmations`].
+    #[serde(default)]
+    pub reaffirmations: u64,
 }
+
+fn anchored_by_default() -> bool {
+    true
+}
+
+/// One identity's pin, in memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Pin {
+    /// Every signature key accepted for the identity. MORE THAN ONE only when the trees held several
+    /// at the load that first pinned it: every one of those was admitted by a commit this device
+    /// merged before pins existed, so none is more trustworthy than another.
+    keys: Vec<Vec<u8>>,
+    /// FALSE when this pin was written AFTER the identity's previous pin was pruned: the key came
+    /// from whatever tree arrived next, with nothing this device saw before to anchor it. A verifier
+    /// reads a contradiction with an unanchored pin as "unverified", never as "forged".
+    anchored: bool,
+    /// How many times a merged commit showed the device holding a pinned key AFTER the pin was
+    /// written: its leaf entering a tree under that key, or a commit it signed. Lifts a refusal a
+    /// single forged KeyPackage caused (`refusedDevices.ts`).
+    reaffirmations: u64,
+}
+
+/// What a verifier is told about one device: `MlsManager::pinned_signature_keys`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinView {
+    /// The pinned signature keys - a signature valid under ANY of them is the device's.
+    pub keys: Vec<Vec<u8>>,
+    /// Whether the pin is anchored ([`Pin::anchored`]).
+    pub anchored: bool,
+    /// The reaffirmation count ([`Pin::reaffirmations`]); a verifier ignores it.
+    pub reaffirmations: u64,
+}
+
+/// The most pruned identities remembered (to mark a later pin unanchored). Past it the oldest go.
+pub const MAX_REMEMBERED_PRUNED: usize = 8192;
 
 /// One leaf as [`DeviceTrust`] reads it: index, identity, signature key.
 pub(crate) type LeafKey = (u32, String, Vec<u8>);
@@ -124,17 +167,18 @@ pub struct Departure {
     pub epoch: u64,
 }
 
-/// The most departures kept. Past it the departures of groups no held tree is any more are dropped
-/// at load and on `forget_group`, and a push past it drops the oldest (said once per filling).
+/// The most departures kept. Past it the departures of groups no longer held are dropped at load,
+/// and a push past it drops the oldest (said once per filling).
 pub const MAX_RECORDED_DEPARTURES: usize = 8192;
 
 /// The pins and the pending events. Owned by [`crate::MlsManager`].
 #[derive(Debug, Default)]
 pub struct DeviceTrust {
-    /// identity -> every signature key accepted for it. MORE THAN ONE only when the trees held
-    /// several at the load that first pinned it: every one of those was admitted by a commit this
-    /// device merged before pins existed, so none is more trustworthy than another.
-    pins: HashMap<String, Vec<Vec<u8>>>,
+    /// identity -> its pin ([`Pin`]).
+    pins: HashMap<String, Pin>,
+    /// Identities whose pin was pruned, oldest first: a pin written for one of them later is
+    /// UNANCHORED ([`Pin::anchored`]). Persisted; bounded by [`MAX_REMEMBERED_PRUNED`].
+    pruned: VecDeque<String>,
     events: VecDeque<DeviceEvent>,
     /// Whether this process already said the event queue is full (see `push_event`).
     full_reported: bool,
@@ -226,11 +270,25 @@ impl DeviceTrust {
     /// Rebuilds the in-memory record from the persisted one.
     pub(crate) fn from_persisted(
         pins: Vec<PersistedPin>,
+        pruned: Vec<String>,
         events: Vec<DeviceEvent>,
         departures: Vec<Departure>,
     ) -> Self {
         Self {
-            pins: pins.into_iter().map(|p| (p.identity, p.keys)).collect(),
+            pins: pins
+                .into_iter()
+                .map(|p| {
+                    (
+                        p.identity,
+                        Pin {
+                            keys: p.keys,
+                            anchored: p.anchored,
+                            reaffirmations: p.reaffirmations,
+                        },
+                    )
+                })
+                .collect(),
+            pruned: pruned.into_iter().collect(),
             events: events.into_iter().collect(),
             full_reported: false,
             departures: departures.into_iter().collect(),
@@ -331,13 +389,54 @@ impl DeviceTrust {
         let mut out: Vec<PersistedPin> = self
             .pins
             .iter()
-            .map(|(identity, keys)| PersistedPin {
+            .map(|(identity, pin)| PersistedPin {
                 identity: identity.clone(),
-                keys: keys.clone(),
+                keys: pin.keys.clone(),
+                anchored: pin.anchored,
+                reaffirmations: pin.reaffirmations,
             })
             .collect();
         out.sort_by(|a, b| a.identity.cmp(&b.identity));
         out
+    }
+
+    /// The pruned identities, oldest first, as they are persisted.
+    pub(crate) fn persisted_pruned(&self) -> Vec<String> {
+        self.pruned.iter().cloned().collect()
+    }
+
+    /// Writes a NEW pin for `identity`: anchored unless its previous pin was pruned.
+    fn insert_pin(&mut self, identity: &str, keys: Vec<Vec<u8>>) {
+        let anchored = match self.pruned.iter().position(|p| p == identity) {
+            Some(at) => {
+                self.pruned.remove(at);
+                log::warn!(
+                    "[TRUST] {identity} pinned again after its pin was pruned - UNANCHORED: a \
+                     contradiction with it is unverified, never forged"
+                );
+                false
+            }
+            None => true,
+        };
+        self.pins.insert(
+            identity.to_string(),
+            Pin {
+                keys,
+                anchored,
+                reaffirmations: 0,
+            },
+        );
+    }
+
+    /// Counts one proof that `identity` holds a pinned key `key` (see [`Pin::reaffirmations`]).
+    fn reaffirm(&mut self, identity: &str, key: &[u8]) -> bool {
+        match self.pins.get_mut(identity) {
+            Some(pin) if pin.keys.iter().any(|k| k.as_slice() == key) => {
+                pin.reaffirmations += 1;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The pending events, oldest first.
@@ -349,41 +448,55 @@ impl DeviceTrust {
     pub fn verdict(&self, identity: &str, key: &[u8]) -> LeafTrust {
         match self.pins.get(identity) {
             None => LeafTrust::FirstSight,
-            Some(keys) if keys.iter().any(|k| k.as_slice() == key) => LeafTrust::Pinned,
+            Some(pin) if pin.keys.iter().any(|k| k.as_slice() == key) => LeafTrust::Pinned,
             Some(_) => LeafTrust::KeyChanged,
         }
     }
 
     /// The keys pinned for `identity`, if any.
     pub fn pinned_keys(&self, identity: &str) -> Option<&[Vec<u8>]> {
-        self.pins.get(identity).map(Vec::as_slice)
+        self.pins.get(identity).map(|pin| pin.keys.as_slice())
     }
 
-    /// The keys pinned for the device `expected` names, matched as [`identity_names`] matches a
-    /// credential (user half ignoring ASCII case, device half exact), or `None` when no pin names it
-    /// or `expected` is not a well-formed identity.
+    /// The pin of the device `expected` names, matched as [`identity_names`] matches a credential
+    /// (user half ignoring ASCII case, device half exact), or `None` when no pin names it or
+    /// `expected` is not a well-formed identity.
     ///
     /// A pin is stored under the identity AS ITS CREDENTIAL SPELT IT, and a caller asking from a
-    /// roster may spell the user half differently - so an exact miss falls back to a scan, and the
-    /// keys of every spelling that names the device are returned together, without duplicates.
-    pub fn pinned_keys_naming(&self, expected: &str) -> Option<Vec<Vec<u8>>> {
+    /// roster may spell the user half differently - so an exact miss falls back to a scan. Several
+    /// spellings merge: their keys without duplicates, anchored only if every one is, and the
+    /// reaffirmations summed.
+    pub fn pin_naming(&self, expected: &str) -> Option<PinView> {
         if !is_well_formed_identity(expected) {
             return None;
         }
-        if let Some(keys) = self.pins.get(expected) {
-            return Some(keys.clone());
+        let view = |pin: &Pin| PinView {
+            keys: pin.keys.clone(),
+            anchored: pin.anchored,
+            reaffirmations: pin.reaffirmations,
+        };
+        if let Some(pin) = self.pins.get(expected) {
+            return Some(view(pin));
         }
-        let mut out: Vec<Vec<u8>> = Vec::new();
-        for (identity, keys) in &self.pins {
-            if identity_names(identity, expected) {
-                for k in keys {
-                    if !out.contains(k) {
-                        out.push(k.clone());
+        let mut out: Option<PinView> = None;
+        for (identity, pin) in &self.pins {
+            if !identity_names(identity, expected) {
+                continue;
+            }
+            match out.as_mut() {
+                None => out = Some(view(pin)),
+                Some(acc) => {
+                    for k in &pin.keys {
+                        if !acc.keys.contains(k) {
+                            acc.keys.push(k.clone());
+                        }
                     }
+                    acc.anchored &= pin.anchored;
+                    acc.reaffirmations += pin.reaffirmations;
                 }
             }
         }
-        (!out.is_empty()).then_some(out)
+        out
     }
 
     /// Records a leaf seen in a signed tree: pins it on first sight, never moves an existing pin.
@@ -392,7 +505,7 @@ impl DeviceTrust {
     fn observe(&mut self, identity: &str, key: &[u8]) -> (LeafTrust, bool) {
         let trust = self.verdict(identity, key);
         if trust == LeafTrust::FirstSight {
-            self.pins.insert(identity.to_string(), vec![key.to_vec()]);
+            self.insert_pin(identity, vec![key.to_vec()]);
             return (trust, true);
         }
         (trust, false)
@@ -430,7 +543,8 @@ impl DeviceTrust {
     ///
     /// ONLY ABSENT IDENTITIES GO: a pin of a device still in a tree this device holds is what refuses
     /// a changed key for it, and is kept whatever the count. A dropped identity is first sight again
-    /// if it ever returns - the same answer a device that never met it gets.
+    /// if it ever returns, but its new pin is UNANCHORED ([`Pin::anchored`]): the identity is
+    /// remembered here, so a verifier never reads a contradiction with that new pin as a forgery.
     ///
     /// @returns how many pins were dropped.
     pub(crate) fn prune_absent(&mut self, held: &std::collections::HashSet<&str>) -> usize {
@@ -438,8 +552,20 @@ impl DeviceTrust {
             return 0;
         }
         let before = self.pins.len();
-        self.pins
-            .retain(|identity, _| held.contains(identity.as_str()));
+        let mut gone: Vec<String> = self
+            .pins
+            .keys()
+            .filter(|identity| !held.contains(identity.as_str()))
+            .cloned()
+            .collect();
+        gone.sort();
+        for identity in gone {
+            self.pins.remove(&identity);
+            self.pruned.push_back(identity);
+        }
+        while self.pruned.len() > MAX_REMEMBERED_PRUNED {
+            self.pruned.pop_front();
+        }
         let dropped = before - self.pins.len();
         log::info!(
             "[TRUST] {before} pinned identities passed the bound of {MAX_PINNED_IDENTITIES}: \
@@ -469,7 +595,7 @@ impl DeviceTrust {
         }
         let wrote = !fresh.is_empty();
         for (identity, keys) in fresh {
-            self.pins.insert(identity.to_string(), keys);
+            self.insert_pin(identity, keys);
         }
         wrote
     }
@@ -533,6 +659,12 @@ impl DeviceTrust {
         own: (&str, &[u8]),
     ) -> bool {
         let mut wrote = self.record_departures(group_id, epoch, before, after);
+        // The committer signed this commit with the key its leaf carries: a proof it holds that key.
+        if let Some(committer) = added_by
+            && let Some((_, _, key)) = after.iter().find(|(_, id, _)| id == committer)
+        {
+            wrote |= self.reaffirm(committer, key);
+        }
         for (_, identity, key) in after {
             let existed = before.iter().any(|(_, id, k)| id == identity && k == key);
             if existed {
@@ -555,6 +687,8 @@ impl DeviceTrust {
                     added_by.unwrap_or("an unreadable sender")
                 ),
                 LeafTrust::Pinned => {
+                    // A package under the pinned key reached somebody: the device still holds it.
+                    wrote |= self.reaffirm(identity, key);
                     log::debug!(
                         "[TRUST] {group_id} epoch {epoch}: {identity} re-entered under its pinned key \
                          (added by {}) - the same device, nothing recorded",
@@ -678,6 +812,38 @@ mod tests {
             t.prune_absent(&held),
             0,
             "under the bound, nothing is pruned"
+        );
+    }
+
+    #[test]
+    fn a_pin_written_after_its_identity_was_pruned_is_unanchored_and_persists_so() {
+        let mut t = DeviceTrust::default();
+        for i in 0..=MAX_PINNED_IDENTITIES {
+            t.observe(&format!("u{i}:d"), b"k");
+        }
+        assert!(t.pin_naming("u5:d").unwrap().anchored);
+        let held: std::collections::HashSet<&str> = ["u0:d"].into_iter().collect();
+        t.prune_absent(&held);
+        assert!(t.pin_naming("u5:d").is_none());
+
+        // u5 comes back under whatever key the next tree carries.
+        t.seed_from_tree(&[(0, "u5:d".into(), b"other".to_vec())]);
+        let pin = t.pin_naming("U5:d").unwrap();
+        assert!(!pin.anchored, "re-seeded after a prune");
+        assert_eq!(pin.keys, vec![b"other".to_vec()]);
+        assert!(
+            t.pin_naming("u0:d").unwrap().anchored,
+            "a kept pin stays anchored"
+        );
+        // A never-pruned first sight is anchored; the flag survives persistence.
+        t.observe("new:d", b"k");
+        assert!(t.pin_naming("new:d").unwrap().anchored);
+        let again =
+            DeviceTrust::from_persisted(t.persisted_pins(), t.persisted_pruned(), vec![], vec![]);
+        assert!(!again.pin_naming("u5:d").unwrap().anchored);
+        assert!(
+            again.pruned.contains(&"u6:d".to_string()),
+            "the pruned identities persist"
         );
     }
 
