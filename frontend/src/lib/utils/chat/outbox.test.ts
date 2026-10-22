@@ -78,7 +78,7 @@ import {
   queuedReadWatermarkAt,
   sendReadWatermark,
 } from './messaging';
-import { owedDmReadMarks, recordDmReadMark } from './salonReadMarkQueue';
+import { flushDmReadMarks, owedDmReadMarks, recordDmReadMark } from './salonReadMarkQueue';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import {
   UploadAbortedError,
@@ -135,8 +135,12 @@ function textEntry(id: string, conversationId: string, sentAt: number): OutboxEn
 /** Minimal in-memory IStorage covering the outbox + saveMessage surface the flusher touches. */
 function makeStorage(seed: OutboxEntry[] = []) {
   const map = new Map<string, OutboxEntry>(seed.map((e) => [e.id, structuredClone(e)]));
+  /** The owed group exits (`pendingGroupExits`); none by default. */
+  const exits: Array<{ groupId: string; kind: 'leave' | 'delete'; requestedAt: number }> = [];
   return {
     _map: map,
+    _exits: exits,
+    getPendingGroupExits: vi.fn(async () => [...exits]),
     saveMessage: vi.fn().mockResolvedValue(undefined),
     saveOutboxEntry: vi.fn(async (e: OutboxEntry) => {
       map.set(e.id, structuredClone(e));
@@ -1464,7 +1468,8 @@ describe('outbox flusher - an undecided leadership is not a follower (WP-OUTBOX-
 
     // Enqueued INSIDE the gap - `enqueue` runs the flush that used to be the one skipped.
     const flushed = outbox.enqueue(textEntry('m1', 'g1', 100));
-    await Promise.resolve();
+    // A few microtask turns, not one: the enqueue reads the owed group exits before its write.
+    await outboxIdle();
 
     // Nothing may be delegated on a question nobody has answered yet.
     expect(tabOutboxMock.requestLeaderOutboxFlush).not.toHaveBeenCalled();
@@ -1657,64 +1662,163 @@ describe('outbox cancellation', () => {
 });
 
 /**
- * A GROUP THIS DEVICE LEAVES TAKES ITS QUEUED ENTRIES WITH IT (GRP-6, 2026-10-22).
+ * A GROUP EXIT SETTLES THE GROUP'S QUEUE BEFORE ITS SERVER STEP (GRP-6, 2026-10-22).
  *
  * The leaver's read watermark was queued as the conversation closed, flushed 54 ms after the leave
- * ended the membership, refused 403 and parked "until the next sign-in" - for a group the device no
- * longer holds. The exit withdraws the group's rows before its server step; these cases pin the
- * allowlist (that group, nothing else) and the one send it cannot stop (already on the wire).
+ * ended the membership, refused 403 and parked "until the next sign-in". The exit now drains the
+ * group's lane while the membership still exists, awaits what is on the wire, withdraws only what
+ * cannot go, and every later enqueue for the group refuses itself on the durable owed exit.
  */
-describe('outbox - withdrawing a conversation on a group exit', () => {
+describe('outbox - settling a group before its exit', () => {
   beforeEach(() => {
     connectivity.reset();
     isTabLeaderMock.mockReturnValue(true);
     tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(() => () => {});
   });
 
-  it('withdraws every entry of that group and no other, and names the count', async () => {
+  it('SENDS a text written just before leaving, before it resolves, and touches no other group', async () => {
+    const storage = makeStorage([textEntry('m1', 'left', 100), textEntry('m2', 'kept', 101)]);
+    const mlsService = makeMls();
+    const lines: string[] = [];
+    const outbox = createOutbox(makeDeps({ mlsService, storage, log: (m) => lines.push(m) }));
+
+    expect(await outbox.drainForExit('left', 'leave')).toBe(0);
+
+    const sentIds = mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2]);
+    expect(sentIds).toEqual(['m1']);
+    expect(storage._map.has('m1')).toBe(false);
+    expect(storage._map.has('m2')).toBe(true);
+    expect(lines).toContainEqual(
+      'leave of left…: 1 of 1 queued entry sent before the server step, 0 lost'.replace(
+        /^/,
+        '[OUTBOX] '
+      )
+    );
+  });
+
+  it('withdraws only what cannot be sent, and names what was lost by kind', async () => {
     const storage = makeStorage([
       textEntry('m1', 'left', 100),
-      textEntry('m2', 'kept', 101),
-      textEntry('m3', 'left', 102),
+      {
+        ...textEntry('c1', 'left', 101),
+        kind: 'control',
+        text: undefined,
+        controlProto: new Uint8Array([1]),
+      },
+      textEntry('m2', 'kept', 102),
     ]);
+    const mlsService = makeMls();
+    const lines: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    connectivity.notifyServerUnreachable();
+    const outbox = createOutbox(makeDeps({ mlsService, storage, log: (m) => lines.push(m) }));
+
+    expect(await outbox.drainForExit('left', 'delete')).toBe(2);
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect([...storage._map.keys()]).toEqual(['m2']);
+    expect(lines).toContainEqual(
+      expect.stringMatching(
+        /delete of left…: 0 of 2 queued entries sent before the server step, 2 lost \(1 text, 1 control\)/
+      )
+    );
+    expect(lines).toContainEqual(expect.stringContaining('(text) withdrawn by the group exit'));
+    // The author's-delete wording would be false here: nothing travels as an event on an exit.
+    expect(lines.some((l) => l.includes('has to travel as an event'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('awaits a send already on the wire before it resolves, instead of racing it', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'left', 100)]);
+    const mlsService = makeMls({ send: () => onTheWire });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+
+    let settled = false;
+    const exit = outbox.drainForExit('left', 'leave').then(() => {
+      settled = true;
+    });
+    await outboxIdle();
+    // The POST has not answered: the server step must not start yet.
+    expect(settled).toBe(false);
+
+    release();
+    await exit;
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage._map.size).toBe(0);
+  });
+
+  it('refuses an enqueue into a group whose exit is owed, and deletes a row written beside its echo', async () => {
+    const storage = makeStorage([textEntry('m1', 'left', 100)]);
+    storage._exits.push({ groupId: 'left', kind: 'leave', requestedAt: 1 });
     const mlsService = makeMls();
     const lines: string[] = [];
     connectivity.notifyServerUnreachable();
     const outbox = createOutbox(makeDeps({ mlsService, storage, log: (m) => lines.push(m) }));
 
-    expect(await outbox.withdrawConversation('left', 'leave of the group')).toBe(2);
-    expect([...storage._map.keys()]).toEqual(['m2']);
+    await outbox.enqueue(textEntry('m9', 'left', 200));
+    await outbox.enqueue(textEntry('m1', 'left', 100), { alreadyDurable: true });
+
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalled();
+    expect(storage._map.size).toBe(0);
     expect(lines).toContainEqual(
-      expect.stringMatching(
-        /2 queued entries of left… withdrawn \(leave of the group\): 2 never sent/
-      )
+      expect.stringContaining('not queued: this device owes the leave of left…')
     );
-
-    connectivity.notifyServerReachable();
-    await outboxIdle();
-    await outbox.flush();
-    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
-    expect(mlsService.sendMessage.mock.calls[0][2]).toBe('m2');
   });
 
-  it('answers 0 and says nothing when the group has nothing queued', async () => {
-    const storage = makeStorage([textEntry('m2', 'kept', 101)]);
-    const lines: string[] = [];
-    const outbox = createOutbox(
-      makeDeps({ mlsService: makeMls(), storage, log: (m) => lines.push(m) })
-    );
+  it('withdraws its own row when the exit was recorded while it was being written', async () => {
+    const storage = makeStorage([]);
+    const save = storage.saveOutboxEntry.getMockImplementation();
+    storage.saveOutboxEntry.mockImplementation(async (e: OutboxEntry) => {
+      await save(e);
+      // The exit lands between the gate's first look and the write's end.
+      storage._exits.push({ groupId: 'left', kind: 'delete', requestedAt: 1 });
+    });
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
 
-    expect(await outbox.withdrawConversation('left', 'leave of the group')).toBe(0);
-    expect(storage._map.has('m2')).toBe(true);
-    expect(lines.some((l) => l.includes('withdrawn ('))).toBe(false);
+    await outbox.enqueue(textEntry('m1', 'left', 100));
+
+    expect(storage._map.size).toBe(0);
   });
 
-  it('drops an entry withdrawn on the wire that the server then refuses, instead of parking it', async () => {
+  it('lets the owed read-mark ledger drop a mark of an exited group, so a sign-in re-queues nothing', async () => {
+    const storage = makeStorage([]);
+    storage._exits.push({ groupId: 'left', kind: 'leave', requestedAt: 1 });
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+    recordDmReadMark('u-exit', 'left', 4242);
+
+    await flushDmReadMarks('u-exit', (conversationId) =>
+      outbox.enqueue({
+        id: `rm-${conversationId}`,
+        conversationId,
+        sentAt: 1,
+        kind: 'control',
+        controlProto: new Uint8Array([1]),
+        status: 'pending',
+        attempts: 0,
+        createdAt: 1,
+      })
+    );
+
+    expect(owedDmReadMarks('u-exit')['left']).toBeUndefined();
+    expect(storage._map.size).toBe(0);
+  });
+
+  it("drops an author's delete that was on the wire when the send then failed, and says so", async () => {
     let refuse!: () => void;
     const onTheWire = new Promise<void>((_, reject) => {
-      refuse = () => reject(new SendForbiddenError('left'));
+      refuse = () => reject(new SendForbiddenError('g1'));
     });
-    const storage = makeStorage([textEntry('m1', 'left', 100)]);
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls({ send: () => onTheWire });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const lines: string[] = [];
@@ -1722,17 +1826,16 @@ describe('outbox - withdrawing a conversation on a group exit', () => {
 
     const flushing = outbox.flush();
     await outboxIdle();
-    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
-
-    // The leave withdraws it mid-send, then the server ends the membership and refuses the frame.
-    await outbox.withdrawConversation('left', 'leave of the group');
+    // The author deletes it mid-send: answered "maybe sent", so the delete goes as an event.
+    expect(await outbox.cancelPending('m1')).toBe(false);
     refuse();
     await flushing;
 
     expect(storage._map.size).toBe(0);
-    // Not the accusing park: the refusal is the state this device asked for.
     expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('REFUSED with 403'))).toBe(false);
-    expect(lines).toContainEqual(expect.stringContaining('withdrawn while on the wire'));
+    expect(lines).toContainEqual(
+      expect.stringContaining('deleted by its author while on the wire, and the send failed')
+    );
     errorSpy.mockRestore();
   });
 });

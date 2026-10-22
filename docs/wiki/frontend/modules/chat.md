@@ -2750,12 +2750,20 @@ hands the owed read watermark to the outbox, and that flush lost the race to the
 So `exitGroupAndCleanup`, for a leave and a delete alike:
 
 - revokes the group's owed read mark (`forgetDmReadMark`) synchronously, before any await, so the
-  debounce cleanup no longer names the group - the source is revoked, not only its output;
-- withdraws every queued outbox entry of THAT group (`withdrawOutboxConversation`, an allowlist on
-  `conversationId`) after recording the owed exit and BEFORE the server step, and the outbox logs
-  the count, split into never sent / already on the wire / rows it could not delete;
-- an entry already on the wire cannot be withdrawn; if the server then refuses it, the flusher drops
-  it (`withdrawn while on the wire, and the send failed`) instead of parking it as an accusation.
+  debounce cleanup no longer names the group and no sign-in re-queues it;
+- after recording the owed exit and BEFORE the server step, SETTLES the group's outbox
+  (`drainOutboxForExit` -> `OutboxController.drainForExit`). A lane already running for the group is
+  AWAITED, so a send in flight settles before the membership ends rather than racing it. The exit
+  then claims the lane and drains it in queue order, each entry skipping its backoff once: the
+  membership and the MLS state still exist, so a text written just before leaving is SENT. What
+  cannot go (offline, held, an upload still running) is withdrawn under the same claim - so nothing
+  withdrawn can be on the wire - and logged by kind as lost
+  (`[OUTBOX] leave of <id>…: N of M queued entries sent before the server step, K lost (1 text)`);
+- every enqueue reads the DURABLE owed exit (`pendingGroupExits`) and refuses a group whose exit is
+  owed, before its write and again after it - whichever of the exit and the write comes second sees
+  the other, so no clock is involved. A refused read mark then leaves the owed-mark ledger too;
+- a withdrawn entry whose send fails is dropped, and the line says what that means for who withdrew
+  it: an author's delete, a newer read mark superseding it, the exit, or another tab.
 
 **A notice that fails is LOST, not sent later, and the exit goes on.** It cannot be queued - a frame
 needs the MLS state and the membership the exit removes - and holding the exit for it would keep a

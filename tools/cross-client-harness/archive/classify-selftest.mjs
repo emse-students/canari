@@ -47,16 +47,21 @@ const CASES = [
   // things about what the peers hold. Landed in `unexplained` on MUT-19's first green run.
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before it was ever sent', 'benign'],
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before this tab sent it', 'benign'],
-  // A group exit withdrawing its queue (GRP-6): clean only when nothing was on the wire.
+  // A group exit settling its queue (GRP-6): clean only when nothing was lost.
   [
     'log',
-    '[06:49:10] [OUTBOX] 1 queued entry of 4271a303… withdrawn (leave of the group, before the server step): 1 never sent, 0 already on the wire, 0 row(s) not deletable',
+    '[06:49:10] [OUTBOX] leave of 4271a303…: 1 of 1 queued entry sent before the server step, 0 lost',
     'benign',
   ],
   [
     'log',
-    '[06:49:10] [OUTBOX] 1 queued entry of 4271a303… withdrawn (leave of the group, before the server step): 0 never sent, 1 already on the wire, 0 row(s) not deletable',
+    '[06:49:10] [OUTBOX] leave of 4271a303…: 0 of 1 queued entry sent before the server step, 1 lost (1 text)',
     'unexplained',
+  ],
+  [
+    'log',
+    '[06:49:10] [OUTBOX] 9e1c40aa… (control) not queued: this device owes the leave of 4271a303…, so nothing of it can be delivered',
+    'benign',
   ],
   [
     'log',

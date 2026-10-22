@@ -37,10 +37,10 @@ vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
   };
 });
 
-const withdrawOutboxConversation = vi.hoisted(() => vi.fn());
+const drainOutboxForExit = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/chat/outbox', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/outbox')>();
-  return { ...actual, withdrawOutboxConversation };
+  return { ...actual, drainOutboxForExit };
 });
 
 // Same isolation reasoning as the other composable tests: `useConversations` is reachable from the
@@ -118,7 +118,7 @@ beforeEach(() => {
   isGroupActiveOnServer.mockResolvedValue(true);
   purgeOrphanGroup.mockResolvedValue(undefined);
   fetchUniqueGroupMembers.mockResolvedValue(['u1', 'u2']);
-  withdrawOutboxConversation.mockResolvedValue(0);
+  drainOutboxForExit.mockResolvedValue(0);
 });
 
 /**
@@ -131,7 +131,7 @@ describe('exitGroupAndCleanup - nothing of the group is left queued for the serv
     ['leave', leaveGroupAndBroadcast, 'handleLeaveGroup'],
     ['delete', deleteGroupAndBroadcast, 'handleDeleteGroup'],
   ] as const) {
-    it(`withdraws the group's outbox entries and its owed read mark BEFORE the ${what}'s server step`, async () => {
+    it(`settles the group's outbox and forgets its owed read mark BEFORE the ${what}'s server step`, async () => {
       const convs = useConversations();
       convs.conversations.set(CONTACT, conversation());
       convs.selectConversation(CONTACT);
@@ -141,21 +141,21 @@ describe('exitGroupAndCleanup - nothing of the group is left queued for the serv
       let withdrawnBefore: unknown[][] = [];
       let owedDuring: Record<string, unknown> = {};
       broadcast.mockImplementation(async () => {
-        withdrawnBefore = [...withdrawOutboxConversation.mock.calls];
+        withdrawnBefore = [...drainOutboxForExit.mock.calls];
         owedDuring = { ...owedDmReadMarks('u1') };
       });
 
       await convs[run](ctx);
 
-      expect(withdrawnBefore).toEqual([[GROUP_ID, expect.stringContaining(what)]]);
+      expect(withdrawnBefore).toEqual([[GROUP_ID, what]]);
       // An allowlist: this group's mark is gone, another conversation's is untouched.
       expect(owedDuring[GROUP_ID]).toBeUndefined();
       expect(owedDuring['another-group']).toEqual(expect.objectContaining({ at: 5678 }));
     });
   }
 
-  it('still leaves when the withdrawal fails, and says what that leaves behind', async () => {
-    withdrawOutboxConversation.mockRejectedValue(new Error('no active outbox controller'));
+  it('still leaves when the outbox cannot be settled, and says what that leaves behind', async () => {
+    drainOutboxForExit.mockRejectedValue(new Error('no active outbox controller'));
     const convs = useConversations();
     convs.conversations.set(CONTACT, conversation());
     convs.selectConversation(CONTACT);
@@ -164,7 +164,7 @@ describe('exitGroupAndCleanup - nothing of the group is left queued for the serv
     await convs.handleLeaveGroup(ctx);
 
     expect(leaveGroupAndBroadcast).toHaveBeenCalledOnce();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('NOT withdrawn'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('NOT settled before the server step'));
   });
 });
 

@@ -338,7 +338,7 @@ export async function removeMemberAndBroadcast(params: {
  * the delivery service's acceptance, so the notice is routed before the membership ends. The 403 the
  * GRP-6 row recorded on 2026-10-22 was NOT this notice: it was another entry of the same group in
  * the durable outbox (a read watermark queued as the leaver closed the conversation), which
- * `exitGroupAndCleanup` now withdraws before calling this.
+ * `exitGroupAndCleanup` now settles (sends, or withdraws what cannot go) before calling this.
  *
  * **A NOTICE THAT FAILS IS LOST, NOT SENT LATER, AND THE LEAVE GOES ON.** It cannot be queued: a
  * frame needs this device's MLS state and its membership, and step 3 and step 2 remove exactly those -
