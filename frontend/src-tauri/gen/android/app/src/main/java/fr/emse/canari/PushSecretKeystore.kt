@@ -20,6 +20,14 @@ object PushSecretKeystore {
     private const val GCM_TAG_LENGTH = 128
 
     /**
+     * Held by every move of a secret between `pending_push_secret.txt` and this store
+     * ([CanariApplication.processPendingPushSecret], `CanariFirebaseMessagingService.retrievePushSecret`)
+     * and by the sign-out's erasure ([PushRegistrationEnd]), so an adoption that read the pending
+     * file before the sign-out removed it cannot store the secret after the sign-out cleared it.
+     */
+    val handoffLock = Any()
+
+    /**
      * Encrypts [secret] with AES-256-GCM using an Android Keystore key,
      * then stores the ciphertext and IV in the app's SharedPreferences.
      * Must be called exactly once from [CanariApplication] at startup.

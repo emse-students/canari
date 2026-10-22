@@ -2921,7 +2921,15 @@ static void CanariPersistVoipToken(NSString *hexToken) {
                   [data[@"hasVideo"] isEqualToString:@"true"];
   NSLog(@"[CanariCallKit] voip push type=%@ call=%@", msgType, callId);
 
-  if ([msgType isEqualToString:@"call_ring"] && callId.length > 0) {
+  if (CanariPushSignedOut()) {
+    // A SIGNED-OUT DEVICE RINGS FOR NOBODY. PushKit still requires every VoIP push to be reported
+    // to CallKit, so a placeholder with no caller and no conversation is reported and ended at once
+    // - nothing of the account that signed out is shown.
+    NSLog(@"[CanariCallKit] voip push type=%@ while signed out - reported and ended", msgType);
+    NSString *placeholderId = [[NSUUID UUID] UUIDString];
+    CanariReportIncomingCall(@"", placeholderId, @"", @"", NO);
+    CanariEndCallKitCall(placeholderId, CXCallEndedReasonFailed);
+  } else if ([msgType isEqualToString:@"call_ring"] && callId.length > 0) {
     CanariReportIncomingCall(groupId, callId, callerName, groupName, hasVideo);
   } else {
     // Contract keeper: report-and-kill a placeholder call for any unexpected payload.
@@ -3969,27 +3977,8 @@ void CanariPushSetup(void) {
 /// How long one attempt waits on FCM. The owed mark, not this bound, is what makes it complete.
 static const int64_t kCanariPushDeleteTimeoutSec = 30;
 
-@interface CanariPushRegistrationEnd : NSObject
-+ (BOOL)endForSignOut;
-+ (BOOL)completeOwedDeletion;
-@end
-
-@implementation CanariPushRegistrationEnd
-
-+ (BOOL)endForSignOut {
-  NSLog(@"[CanariPush] sign-out: erasing the push secret and deleting the FCM token");
-  CanariPushSecretErase();
-  return [self completeOwedDeletion];
-}
-
-+ (BOOL)completeOwedDeletion {
-  if (!CanariPushTokenDeletionOwed()) {
-    return YES;
-  }
-  if ([NSThread isMainThread]) {
-    NSLog(@"[CanariPush] ERROR: token deletion asked on the main thread - refused, still owed");
-    return NO;
-  }
+/// The body of `+completeOwedDeletion`, run under its lock with the mark known to be on disk.
+static BOOL CanariCompleteOwedDeletionLocked(void) {
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
@@ -4031,16 +4020,32 @@ static const int64_t kCanariPushDeleteTimeoutSec = 30;
   }
   NSLog(@"[CanariPush] FCM token deleted - this install is no longer the previous account's push "
         @"destination");
-  // The token the next sign-in registers. No server learns it here: the stripped push context is
-  // what keeps CanariPersistFcmToken from refreshing it on the backend.
+  // The token the next sign-in registers, fetched under the lock so no other deletion runs between
+  // the fetch and the mirror. Only once APNs has answered: before that FIRMessaging cannot mint
+  // one, and the APNs callback (`CanariSyncFcmTokenIfApnsReady`) fetches it as soon as it can - so
+  // a deletion on a cold start never waits on APNs. No server learns the token here: the stripped
+  // push context is what keeps CanariPersistFcmToken from refreshing it on the backend.
+  if ([FIRMessaging messaging].APNSToken == nil) {
+    NSLog(@"[CanariPush] APNs not answered yet - the fresh FCM token is fetched when it does");
+    return YES;
+  }
+  dispatch_semaphore_t fetched = dispatch_semaphore_create(0);
+  __block NSString *fresh = nil;
   [[FIRMessaging messaging] tokenWithCompletion:^(NSString *_Nullable token,
                                                   NSError *_Nullable error) {
-    if (error != nil || token.length == 0) {
-      NSLog(@"[CanariPush] no fresh FCM token yet - the next activation fetches it");
-      return;
+    if (error == nil) {
+      fresh = token;
     }
-    CanariPersistFcmToken(token);
+    dispatch_semaphore_signal(fetched);
   }];
+  if (dispatch_semaphore_wait(fetched, dispatch_time(DISPATCH_TIME_NOW,
+                                                     kCanariPushDeleteTimeoutSec * NSEC_PER_SEC)) !=
+          0 ||
+      fresh.length == 0) {
+    NSLog(@"[CanariPush] no fresh FCM token yet - the next activation fetches it");
+    return YES;
+  }
+  CanariPersistFcmToken(fresh);
   return YES;
 #else
   NSLog(@"[CanariPush] Firebase Messaging absent - no FCM token to delete");
@@ -4048,18 +4053,43 @@ static const int64_t kCanariPushDeleteTimeoutSec = 30;
 #endif
 }
 
+@interface CanariPushRegistrationEnd : NSObject
++ (BOOL)endForSignOut;
++ (BOOL)completeOwedDeletion;
+@end
+
+@implementation CanariPushRegistrationEnd
+
++ (BOOL)endForSignOut {
+  NSLog(@"[CanariPush] sign-out: erasing the push secret and deleting the FCM token");
+  CanariPushSecretErase();
+  return [self completeOwedDeletion];
+}
+
++ (BOOL)completeOwedDeletion {
+  if (!CanariPushTokenDeletionOwed()) {
+    return YES;
+  }
+  if ([NSThread isMainThread]) {
+    NSLog(@"[CanariPush] ERROR: token deletion asked on the main thread - refused, still owed");
+    return NO;
+  }
+  // ONE DELETION AT A TIME, PROCESS-WIDE: the sign-out, `startPushService` and an activation can
+  // all owe it at once, and two interleaved runs could each delete a token and fetch a fresh one,
+  // leaving the mirror naming a token a later deletion killed. The mark is read again INSIDE the
+  // lock, so a caller that waited finds the work done; the fresh token is fetched inside it too.
+  @synchronized(self) {
+    if (!CanariPushTokenDeletionOwed()) {
+      NSLog(@"[CanariPush] token deletion completed by another caller");
+      return YES;
+    }
+    return CanariCompleteOwedDeletionLocked();
+  }
+}
+
 @end
 
 void CanariSyncFcmTokenIfApnsReady(void) {
-  // A SIGN-OUT THAT COULD NOT DELETE ITS TOKEN IS COMPLETED HERE, and the old token is not mirrored:
-  // it belongs to the account that left. The deletion fetches the fresh one.
-  if (CanariPushTokenDeletionOwed()) {
-    NSLog(@"[CanariPush] FCM token deletion owed by a sign-out - completing it");
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-      [CanariPushRegistrationEnd completeOwedDeletion];
-    });
-    return;
-  }
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
   // The guard, and the reason this needs no timer and no retry count: the APNs token either has
   // arrived or it has not, `didBecomeActive` fires again on every foreground, and
@@ -4070,6 +4100,17 @@ void CanariSyncFcmTokenIfApnsReady(void) {
     // LATER activation, or with no "APNs token received" after it, APNs never answered.
     NSLog(@"[CanariPush] APNs token not here yet - the FCM token is fetched when it arrives");
     CanariWritePushDiagnostic(@"no-apns-token");
+    return;
+  }
+  // A SIGN-OUT THAT COULD NOT DELETE ITS TOKEN IS COMPLETED HERE, and the old token is not mirrored:
+  // it belongs to the account that left. AFTER the APNs guard, so on a cold start it runs from the
+  // APNs callback rather than the first activation; `startPushService` completes it on its own
+  // before any registration either way. The deletion fetches the fresh token.
+  if (CanariPushTokenDeletionOwed()) {
+    NSLog(@"[CanariPush] FCM token deletion owed by a sign-out - completing it");
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+      [CanariPushRegistrationEnd completeOwedDeletion];
+    });
     return;
   }
   [[FIRMessaging messaging] tokenWithCompletion:^(NSString *_Nullable token,

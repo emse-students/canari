@@ -34,10 +34,26 @@ type PushPlatform = 'android' | 'ios';
  * A TYPE rather than a boolean, because the two failures need different reactions and the caller can
  * only tell them apart if the callee states which one it was. `no-token` means the OS never handed
  * this app a push token, so there is nothing to send and no server involved; `rejected` means the
- * token existed and the backend refused it. Reported to the server as-is, and the server prints
+ * token existed and the backend refused it; `secret-not-stored` means the backend answered and the
+ * push secret it returned could not be stored here. Reported to the server as-is, and the server prints
  * whatever it is given rather than guessing.
  */
-export type PushRegistrationOutcome = { ok: true } | { ok: false; reason: 'no-token' | 'rejected' };
+export type PushRegistrationFailure = 'no-token' | 'rejected' | 'secret-not-stored';
+
+/** The answer of one registration attempt; see {@link PushRegistrationFailure}. */
+export type PushRegistrationOutcome = { ok: true } | { ok: false; reason: PushRegistrationFailure };
+
+/**
+ * The server answered the registration and its push secret could not be stored on the device.
+ * Thrown by the registration itself so the caller classifies by TYPE: the registration does not
+ * count (no skip key), and the next attempt re-registers and stores a fresh secret.
+ */
+export class PushSecretNotStoredError extends Error {
+  constructor(cause: unknown) {
+    super('the push secret the server returned was not stored', { cause });
+    this.name = 'PushSecretNotStoredError';
+  }
+}
 
 /**
  * Asks the native layer WHY there is no token, and falls back to the symptom when it has no answer.
@@ -157,6 +173,10 @@ async function registerPushTokenOnce(
     console.info('[Push] FCM token registered successfully');
     return { ok: true };
   } catch (err) {
+    if (err instanceof PushSecretNotStoredError) {
+      console.error('[Push] registration answered but its push secret was not stored', err.cause);
+      return { ok: false, reason: 'secret-not-stored' };
+    }
     console.error('[Push] FCM token registration failed', err);
     return { ok: false, reason: 'rejected' };
   }
@@ -237,11 +257,15 @@ export async function startPushService(
       const data = await response.json().catch(() => null);
       const pushSecret: string | undefined = data?.pushSecret;
       // AWAITED, so the secret is stored before this registration counts as finished and the next
-      // one may start: two stores in flight could land in either order.
+      // one may start: two stores in flight could land in either order. A store that failed makes
+      // the registration fail too, so it is not counted and the next attempt registers again: the
+      // device stays signed out of pushes until a secret is stored (`write_push_secret`).
       if (pushSecret) {
-        await invoke('store_push_secret', { secret: pushSecret }).catch((err) =>
-          console.warn('[Push] Failed to store push secret', err)
-        );
+        try {
+          await invoke('store_push_secret', { secret: pushSecret });
+        } catch (err) {
+          throw new PushSecretNotStoredError(err);
+        }
       }
     });
   };
@@ -355,7 +379,7 @@ async function reportGaveUp(
   bearerToken: string,
   deviceId: string,
   platform: PushPlatform,
-  reason: 'no-token' | 'rejected'
+  reason: PushRegistrationFailure
 ): Promise<void> {
   if (pushUnavailableReported) {
     console.info('[Push] still unavailable, already reported once this process');

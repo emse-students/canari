@@ -1793,9 +1793,6 @@ pub(crate) fn write_push_secret(
     );
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     std::fs::write(data_dir.join(PENDING_PUSH_SECRET_FILE), secret).map_err(|e| e.to_string())?;
-    // A SECRET IS THE SERVER'S ANSWER TO A REGISTRATION, so from here this device is a push
-    // destination again - for the session that registered it. See `push_registration.rs`.
-    crate::commands::push_registration::clear_signed_out_mark(data_dir)?;
     if let Some(dir) = extension_dir {
         // Temp + rename: the extension reads this file from another process, and must never see
         // it half-written.
@@ -1811,7 +1808,11 @@ pub(crate) fn write_push_secret(
                 format!("write {}: {e}", target.display())
             })?;
     }
-    Ok(())
+    // A SECRET IS THE SERVER'S ANSWER TO A REGISTRATION, so this device is a push destination again
+    // - for the session that registered it. LAST, once every copy of the secret is written: a
+    // device whose copies are incomplete stays signed out, and its next registration retries all.
+    // See `push_registration.rs`.
+    crate::commands::push_registration::clear_signed_out_mark(data_dir)
 }
 
 /// Stores the pushSecret received from the backend: `pending_push_secret.txt` for the app's own

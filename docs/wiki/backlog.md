@@ -446,25 +446,25 @@ test that the route answers `429` past it and never below it.
 
 ## P2 - A push registration is not bound to the session that made it (2026-10-22)
 
-A sign-out ends the device's push registration on both sides since 2026-10-22
-([sessions](sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)), but the
-server half is ONE internal call per ended session, deleting by `(userId, deviceId)`. Two things it
-cannot do without a schema change, which needs the user's yes:
+A session that ends ends its device's push registration on both sides since 2026-10-22
+([sessions](sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
+The server half is ONE internal call per ended session, deleting by `(userId, deviceId)`. Two
+reliability properties need a schema change, and the user's yes
+([owed](#owed-to-the-user---decisions-rotations-and-one-off-clicks)):
 
-- **A lost call is lost.** Nothing durable records that an ended session still owes its device's
-  push ending; the device's own token deletion is what covers it.
-- **It cannot name the registration it ends.** A re-sign-in on the same device that registered
-  before the call landed would be deleted with it (healing at that device's next launch).
+- **Durability.** The server-side ending is single-shot: a failed call is logged at error and not
+  retried.
+- **Precision.** The delete is keyed on the device, not on the registration the ended session made,
+  so its order against a re-sign-in on the same device is not fixed by construction.
 
 **Proposal (not built).** Migration on chat-delivery: `push_token."sessionId" uuid NULL`, written by
 `POST /mls/push/register` from the access token's session claim (if the access token does not carry
-`sid`, core-service adds it); the internal route deletes `WHERE "sessionId" = :sid` (falling back to
-`(userId, deviceId)` only for NULL rows registered before the column). Migration on core-service:
-an outbox `session_push_endings (sessionId, userId, deviceId, createdAt, attempts, lastError)`
-written in the SAME transaction as the session delete and drained like `account_erasure_jobs` until
-chat-delivery answers 2xx. Backfill: none - pre-existing rows stay NULL and age out at their next
-registration. Together these make a session's end and its push ending one durable fact, and the
-dispatcher unable to reach a device whose session ended even if a call is lost.
+`sid`, core-service adds it); the internal route deletes `WHERE "sessionId" = :sid`. Rows registered
+before the column carry NULL and are rewritten at their next registration - no backfill. Migration on
+core-service: an outbox `session_push_endings (sessionId, userId, deviceId, createdAt, attempts,
+lastError)` written in the SAME transaction as the session delete and drained like
+`account_erasure_jobs` until chat-delivery answers 2xx. Together these make a session's end and its
+push ending one durable fact.
 
 ## P3 - A refused membership report is silent on the client (2026-10-22)
 
@@ -650,6 +650,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **migration: bind a push registration to its session (+ outbox)** | 1 decision (a migration on two services) | [the P2](#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22) |
+| **should session expiry end the push registration of a device never reopened?** (today an expired session leaves it as it is) | 1 decision | [sessions](sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22) |
 | **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
 | **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |

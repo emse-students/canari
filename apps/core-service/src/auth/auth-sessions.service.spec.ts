@@ -123,6 +123,7 @@ class FakeQueryBuilder {
   private mode: 'update' | 'delete' | null = null;
   private patch: Partial<AuthSession> = {};
   private params: Record<string, unknown> = {};
+  private returned: string[] = [];
 
   constructor(private readonly repo: FakeRepo) {}
 
@@ -161,7 +162,12 @@ class FakeQueryBuilder {
     return this;
   }
 
-  execute(): Promise<{ affected: number }> {
+  returning(columns: string[]): this {
+    this.returned = columns;
+    return this;
+  }
+
+  execute(): Promise<{ affected: number; raw?: Array<Record<string, unknown>> }> {
     if (this.mode === 'update') {
       const { id, presented, now } = this.params as {
         id: string;
@@ -177,11 +183,18 @@ class FakeQueryBuilder {
     }
 
     const { userId, keep } = this.params as { userId: string; keep?: string };
-    const before = this.repo.rows.length;
-    this.repo.rows = this.repo.rows.filter(
-      (r) => r.userId !== userId || (keep !== undefined && r.id === keep)
-    );
-    return Promise.resolve({ affected: before - this.repo.rows.length });
+    const deleted = (r: AuthSession) =>
+      r.userId === userId && (keep === undefined || r.id !== keep);
+    // RETURNING: the deleted rows, reduced to the columns asked for, as the driver hands them back.
+    const raw = this.repo.rows
+      .filter(deleted)
+      .map((r) =>
+        Object.fromEntries(
+          this.returned.map((c) => [c, (r as unknown as Record<string, unknown>)[c]])
+        )
+      );
+    this.repo.rows = this.repo.rows.filter((r) => !deleted(r));
+    return Promise.resolve({ affected: raw.length, raw });
   }
 }
 

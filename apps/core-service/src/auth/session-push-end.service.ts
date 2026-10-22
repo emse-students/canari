@@ -18,10 +18,8 @@ const CALL_TIMEOUT_MS = 10_000;
  * `auth_sessions."deviceId"`, which is why the call carries the device the ended session named.
  * Through `INTERNAL_SECRET`, the one service-to-service credential (`internal-secret.util.ts`).
  *
- * WHAT A FAILED CALL LEAVES, said so the error line can be read: the device deletes its own token at
- * every sign-out it runs (`push_registration.rs`), and FCM refusing a deleted token makes the
- * dispatcher drop the row at the next send. A call lost here AND a device that never ran its
- * sign-out (offline for good, uninstalled) is the one case where the row stays.
+ * The call is single-shot: a failure is logged at ERROR and not retried. Making the server-side
+ * ending durable is tracked in `docs/wiki/backlog.md`.
  */
 @Injectable()
 export class SessionPushEndService {

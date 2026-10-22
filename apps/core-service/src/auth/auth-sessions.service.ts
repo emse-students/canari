@@ -374,20 +374,21 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
    * Returns how many died.
    */
   async revokeOthers(userId: string, keepSessionId: string | null): Promise<number> {
-    const ending = (await this.sessions.find({ where: { userId } })).filter(
-      (row) => row.id !== keepSessionId
-    );
+    // RETURNING, so the devices whose push registration ends are exactly the rows THIS delete
+    // removed - not a read taken before it, which a concurrent sign-in or revocation could change.
     const qb = this.sessions
       .createQueryBuilder()
       .delete()
       .from(AuthSession)
       .where('"userId" = :userId', {
         userId,
-      });
+      })
+      .returning(['userId', 'deviceId']);
     if (keepSessionId) qb.andWhere('id != :keep', { keep: keepSessionId });
     const res = await qb.execute();
+    const ended = (res.raw ?? []) as Array<Pick<AuthSession, 'userId' | 'deviceId'>>;
     // The kept session's device survives through the live-session check, not a filter here.
-    this.endPushOfEndedSessions(ending, 'revoked-others');
+    this.endPushOfEndedSessions(ended, 'revoked-others');
     return res.affected ?? 0;
   }
 

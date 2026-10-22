@@ -3774,6 +3774,7 @@ network, the tab's registration marker and the app shell.
 | Material | Where | At sign-out |
 |---|---|---|
 | FCM token | FCM / `fcm_token.txt` + prefs | deleted natively (`FirebaseMessaging.deleteToken`, `-[FIRMessaging deleteTokenWithCompletion:]`), mirror removed, a fresh token fetched for the next sign-in |
+| PushKit (VoIP) token | `voip_token.txt` | removed; PushKit hands a fresh one at the next launch |
 | push secret | `pending_push_secret.txt`, Android Keystore-wrapped prefs, iOS Keychain, App Group `push_secret.txt` | all four erased |
 | `push_context.json` (`baseUrl`, bearer `pushToken`) | data dir, App Group copy | reduced to `userId`, `deviceId`, `locale` (allowlist); App Group copy removed |
 | `mls.bin`, device key, `graine_seeds.json`, FCM cache | data dir / Keystore / App Group | kept - a sign-out keeps the local state; without a `baseUrl` no background reader loads a context, so nothing decrypts with them |
@@ -3789,6 +3790,25 @@ network, the tab's registration marker and the app shell.
   boot receiver and `CanariSyncFcmTokenIfApnsReady` complete the deletion instead of mirroring the
   old token, and `startPushService` calls `complete_owed_push_token_deletion` and registers NOTHING
   until it answers true - the token of the account that left is never registered for the next.
+
+Both marks survive the factory wipe of a revoked device (`KEPT_AT_TOP_LEVEL` in `storage.rs`),
+which runs right after that device's sign-out wrote them.
+
+**One deletion at a time.** The sign-out, `startPushService`'s check and an activation can owe the
+deletion at once. Each platform runs it under one process-wide lock - `OwedTokenDeletion`
+(`push/OwedTokenDeletion.kt`, tested in `android-tests`) on Android, `@synchronized` on iOS - reads
+the mark again inside it, and fetches and mirrors the fresh token inside it too, so the mirror always
+names the live token. On iOS the fresh token is fetched only once APNs has answered (the APNs callback
+fetches it otherwise), and `CanariSyncFcmTokenIfApnsReady` completes an owed deletion only after its
+APNs guard, so a cold start never waits on APNs; `startPushService` completes it on its own before
+any registration either way. On Android, the sign-out's erasure of the push secret and every adoption
+of `pending_push_secret.txt` into the Keystore hold `PushSecretKeystore.handoffLock`, so an adoption
+cannot store a secret after the sign-out cleared it.
+
+`push_signed_out` is lifted only once EVERY copy of a new secret is written (`write_push_secret`), and
+a secret the app could not store fails the registration (`secret-not-stored`): it is not counted, and
+the next attempt registers again. While signed out, the iOS PushKit handler reports any VoIP push to
+CallKit - Apple requires it - as a placeholder with no caller and ends it at once.
 
 The native background paths that could re-register a token (`onNewToken`, the boot receiver,
 `CanariPersistFcmToken`) need a push context and a secret, so after a sign-out they do nothing; they

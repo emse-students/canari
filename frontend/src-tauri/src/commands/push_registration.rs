@@ -36,12 +36,17 @@ pub(crate) const SIGNED_OUT_FILE: &str = "push_signed_out";
 
 /// Present while the OS push token of the account that left has not been deleted. Name shared with
 /// `PushRegistrationEnd.kt` and `canari_push.mm` - change all three together.
-#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
 pub(crate) const DELETION_OWED_FILE: &str = "push_token_deletion_owed";
 
 /// The token the native side mirrors for `get_fcm_token`; the registration that ended named it.
 #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
 const FCM_TOKEN_FILE: &str = "fcm_token.txt";
+
+/// The iOS PushKit (VoIP) token `CanariPersistVoipToken` writes and `get_voip_token` reads; the
+/// registration that ended named it, so the next one must not send it before PushKit hands a fresh
+/// one (`didUpdatePushCredentials` runs at every launch).
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+const VOIP_TOKEN_FILE: &str = "voip_token.txt";
 
 /// The keys of `push_context.json` that describe the DEVICE and outlive a sign-out - an ALLOWLIST,
 /// so a key added to the context later is dropped at sign-out until somebody decides it is not the
@@ -81,7 +86,7 @@ pub(crate) fn end_push_registration_files(
     }
     let mut removed = 0usize;
     let mut failures = 0usize;
-    for name in [PENDING_PUSH_SECRET_FILE, FCM_TOKEN_FILE] {
+    for name in [PENDING_PUSH_SECRET_FILE, FCM_TOKEN_FILE, VOIP_TOKEN_FILE] {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
     if let Some(dir) = extension_dir {
@@ -312,7 +317,7 @@ fn completed(done: bool) -> &'static str {
 mod tests {
     use super::{
         clear_signed_out_mark, end_push_registration_files, DELETION_OWED_FILE, FCM_TOKEN_FILE,
-        SIGNED_OUT_FILE,
+        SIGNED_OUT_FILE, VOIP_TOKEN_FILE,
     };
     use crate::commands::push::{
         EXTENSION_PUSH_SECRET_FILE, PENDING_PUSH_SECRET_FILE, PUSH_CONTEXT_FILE,
@@ -343,6 +348,7 @@ mod tests {
         .unwrap();
         std::fs::write(app.join(PENDING_PUSH_SECRET_FILE), "secret").unwrap();
         std::fs::write(app.join(FCM_TOKEN_FILE), "token").unwrap();
+        std::fs::write(app.join(VOIP_TOKEN_FILE), "voip").unwrap();
         std::fs::write(group.join(EXTENSION_PUSH_SECRET_FILE), "secret").unwrap();
         std::fs::write(group.join(PUSH_CONTEXT_FILE), "{}").unwrap();
 
@@ -356,6 +362,7 @@ mod tests {
         );
         assert!(!app.join(PENDING_PUSH_SECRET_FILE).exists());
         assert!(!app.join(FCM_TOKEN_FILE).exists());
+        assert!(!app.join(VOIP_TOKEN_FILE).exists());
         assert!(!group.join(EXTENSION_PUSH_SECRET_FILE).exists());
         assert!(!group.join(PUSH_CONTEXT_FILE).exists());
     }
@@ -426,5 +433,17 @@ mod tests {
         end_push_registration_files(&app, None).unwrap();
         crate::commands::push::write_push_secret(&app, None, "fresh").unwrap();
         assert!(!app.join(SIGNED_OUT_FILE).exists());
+    }
+
+    /// The mark is lifted LAST: a secret whose extension copy could not be written (the copy's path
+    /// is a directory here) leaves the device signed out, so the next registration retries it.
+    #[test]
+    fn a_secret_not_written_everywhere_keeps_the_signed_out_mark() {
+        let app = dir("secret-partial");
+        let group = dir("secret-partial-group");
+        end_push_registration_files(&app, Some(&group)).unwrap();
+        std::fs::create_dir_all(group.join(EXTENSION_PUSH_SECRET_FILE).join("blocked")).unwrap();
+        assert!(crate::commands::push::write_push_secret(&app, Some(&group), "fresh").is_err());
+        assert!(app.join(SIGNED_OUT_FILE).exists());
     }
 }

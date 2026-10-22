@@ -125,4 +125,32 @@ describe('the next registration after a sign-out', () => {
     expect(error).toHaveBeenCalled();
     error.mockRestore();
   });
+
+  it('does not count a registration whose push secret was not stored', async () => {
+    // A first registration, so this one takes the foreground re-check path (no retry ladder).
+    await startPushService('https://api', 'jwt', 'dev-1');
+    sessionStorage.clear();
+    vi.mocked(globalThis.fetch).mockClear();
+    tauriInvokeStub.mockImplementation((cmd?: string) =>
+      cmd === 'store_push_secret'
+        ? Promise.reject(new Error('disk full'))
+        : Promise.resolve(cmd !== undefined && cmd in answers ? answers[cmd] : null)
+    );
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await startPushService('https://api', 'jwt', 'dev-1');
+
+    // No skip key: the next attempt registers again and stores a fresh secret.
+    expect(sessionStorage.getItem('canari_fcm_token')).toBeNull();
+    expect(
+      error.mock.calls.some(([line]) => String(line).includes('push secret was not stored'))
+    ).toBe(true);
+    const reports = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.filter(([url]) => !String(url).includes('/api/mls/push/register'));
+    expect(reports.map(([, init]) => JSON.parse(String(init?.body)).reason)).toContain(
+      'secret-not-stored'
+    );
+    error.mockRestore();
+  });
 });

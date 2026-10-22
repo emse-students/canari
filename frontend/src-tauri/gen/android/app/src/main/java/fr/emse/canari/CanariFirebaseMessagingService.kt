@@ -410,32 +410,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * file's presence never means anything but "newer than the Keystore".
          */
         internal fun retrievePushSecret(context: Context): String? {
-            try {
-                val file = File(MlsContextLoader.tauriDataDir(context), "pending_push_secret.txt")
-                if (file.exists()) {
-                    val rawBytes = file.readBytes()
-                    val secret = rawBytes.toString(Charsets.UTF_8).trim()
-                    if (secret.isNotEmpty()) {
-                        PushSecretKeystore.store(context, secret)
-                        file.writeBytes(ByteArray(rawBytes.size) { 0 })
-                        file.delete()
-                        Log.i(TAG, "retrievePushSecret: newer secret adopted from pending_push_secret.txt -> Keystore")
-                        return secret
+            synchronized(PushSecretKeystore.handoffLock) {
+                try {
+                    val file = File(MlsContextLoader.tauriDataDir(context), "pending_push_secret.txt")
+                    if (file.exists()) {
+                        val rawBytes = file.readBytes()
+                        val secret = rawBytes.toString(Charsets.UTF_8).trim()
+                        if (secret.isNotEmpty()) {
+                            PushSecretKeystore.store(context, secret)
+                            file.writeBytes(ByteArray(rawBytes.size) { 0 })
+                            file.delete()
+                            Log.i(TAG, "retrievePushSecret: newer secret adopted from pending_push_secret.txt -> Keystore")
+                            return secret
+                        }
+                        // An empty file is a half-written handoff, not an answer: leave it for the next
+                        // reader and fall through to the Keystore rather than deleting a secret nobody
+                        // has read yet.
+                        Log.w(TAG, "retrievePushSecret: pending_push_secret.txt present but empty - falling through to the Keystore")
                     }
-                    // An empty file is a half-written handoff, not an answer: leave it for the next
-                    // reader and fall through to the Keystore rather than deleting a secret nobody
-                    // has read yet.
-                    Log.w(TAG, "retrievePushSecret: pending_push_secret.txt present but empty - falling through to the Keystore")
+                } catch (e: Exception) {
+                    Log.e(TAG, "retrievePushSecret: pending_push_secret.txt unreadable: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "retrievePushSecret: pending_push_secret.txt unreadable: ${e.message}")
-            }
 
-            val stored = PushSecretKeystore.retrieve(context)
-            if (stored == null) {
-                Log.e(TAG, "retrievePushSecret: no pending file and no Keystore entry - background send cannot authenticate")
+                val stored = PushSecretKeystore.retrieve(context)
+                if (stored == null) {
+                    Log.e(TAG, "retrievePushSecret: no pending file and no Keystore entry - background send cannot authenticate")
+                }
+                return stored
             }
-            return stored
         }
 
         /**

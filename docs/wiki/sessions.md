@@ -364,8 +364,9 @@ both sides, and neither depends on the other.**
 
 **Server.** Every path in `AuthSessionsService` that deletes a session naming a device ends that
 device's push registration: `revoke` (the logout), `revokeOwned` (the owner revoking a device),
-`revokeOthers`, and the replay that revokes in `rotate`. The device is read off the row before it
-goes - `auth_sessions."deviceId"` is the only join between a login and a device - and
+`revokeOthers`, and the replay that revokes in `rotate`. The device is taken from the deleted row
+(`DELETE ... RETURNING` for `revokeOthers`) - `auth_sessions."deviceId"` is the only join between a
+login and a device - and
 `SessionPushEndService` calls chat-delivery-service's
 `DELETE /api/internal/push/users/:userId/devices/:deviceId` with `INTERNAL_SECRET`. Deleting the
 `push_token` row removes the destination AND the push secret on it, so every PushSecret-authenticated
@@ -385,19 +386,18 @@ allowlist), and the iOS extension's copies removed; a push still in flight is th
 native handlers instead of shown. The mechanism, and the two durable marks it leaves, are on
 [mobile](frontend/mobile.md#a-sign-out-ends-this-devices-push-registration-2026-10-22).
 
-**What each covers if the other fails.** A lost server call: the device's token deletion makes FCM
-refuse the token, and the dispatcher drops the row at the next send
-(`registration-token-not-registered`). A device that never runs its sign-out (offline for good,
-uninstalled, a session revoked from another device): the server row is gone. Both lost is the
-residual case.
+**What each side guarantees on its own.** The device's deletion of its OS token makes FCM refuse
+that token, and the dispatcher drops the row at the next send (`registration-token-not-registered`).
+The server's deletion needs nothing from the device. The server-side ending is single-shot: a failed
+call is logged at error and not retried; making it durable is tracked in
+[backlog](backlog.md#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22).
 
-**Not covered, and why.** A session that EXPIRES (7 idle days, `deleteExpired`) is not a revocation
-and does not end the push registration: a device read only through its notifications for a week
-would stop receiving them, which is a product decision, not a correction. And the deletion by
-`(userId, deviceId)` cannot tell the ended session's registration from one a re-sign-in on the same
-device made after it; the call fires within milliseconds of the logout while a re-sign-in needs a
-full OIDC round trip, so the two do not overlap in practice, but nothing excludes it by construction
-- see [backlog](backlog.md#p2---a-push-registration-is-not-bound-to-the-session-that-made-it-2026-10-22).
+**Scope.** A delete keyed on `(userId, deviceId)` cannot reach another account's registration.
+Within one account, its order against a re-sign-in on the same device is guaranteed only once a
+registration is bound to the session that made it - a schema change, listed with the decisions
+owed in [backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks). A session
+that EXPIRES (7 idle days, `deleteExpired`) is not a revocation and leaves the push registration as
+it is; whether it should is an open decision in the same table.
 
 ## A dead session sends the user to `/login` carrying where they were going (2026-10-09)
 
