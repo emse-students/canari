@@ -162,10 +162,10 @@ returns to key groups only.
   release carrying A, which waits for both stores to serve it. The server cannot refuse such a frame:
   it cannot read it. An honest new client drops what it overhears from them (`dropOwnExcludedMessages`).
 - What a newcomer has already received cannot be taken back.
-- A reply quoting a message from before a member's arrival still carries the quoted text; the quote
-  rule is a real broadcast and reads the union of gaps only. Extending it to every member's
-  before-arrival span blanks every quote older than the newest member, for everybody - a product
-  decision owed to the user ([backlog](../backlog.md)).
+- **A reply quoting a message from before a member's arrival SHOWS that member the quoted text -
+  DECIDED by the user, 2026-10-22.** The quote rule stays a broadcast that reads the union of gaps
+  only. Extending it to every before-arrival span would blank every quote older than the newest
+  member, for everybody, and that cost was declined. Nothing is built for it.
 
 ## What proves it
 

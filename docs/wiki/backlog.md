@@ -37,9 +37,9 @@ the receiver drops its own) is on `main`. **Step A is BUILT (draft PR): every hi
 push included, is addressed to the asking device and filtered on its own windows; migration `035`
 is applied by the deploy, so the user's yes is the release.** Owed, in order: the rig row GRP-ADDR-1; a `minClientVersion` carrying A
 once both stores serve it (older clients broadcast until then); option B, sealing the answer to the
-asker (X25519 in `mls-core`), which is what makes it hold against a malicious server. **A decision
-owed to the user:** a reply quoting a pre-arrival message still carries the quoted text to a newcomer;
-blanking it means blanking every quote older than the newest member, for everybody. Design and limits:
+asker (X25519 in `mls-core`), which is what makes it hold against a malicious server. **DECIDED by
+the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer the quoted text;
+nothing is built for it. Design and limits:
 [history-answer-addressing](protocols/history-answer-addressing.md#what-a-does-not-close),
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
 
