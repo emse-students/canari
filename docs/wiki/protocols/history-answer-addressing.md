@@ -6,43 +6,25 @@ group conversation receives its whole past". The decision, step C and its number
 The design was reviewed on 2026-10-22 (verdict REVISE, direction kept: address first, seal later).
 Building it changed three of its rules, and each change is stated where the rule is, with why.
 
-## The problem C leaves
+## Why answers are addressed
 
 A history answer is an MLS application message, so every member of the conversation receives it,
 whoever it is meant for. Step C filtered the inviter's PUSH for the invitee. The answers to a request
-could not be filtered that way. The diff (`sendHistoryBundleForIds`) and the scrollback
+could not be filtered that way: the diff (`sendHistoryBundleForIds`) and the scrollback
 (`sendHistoryRangeBundle`) answer one device, often a new device of a founding member, which is
-entitled to everything since that member arrived. Filtered for that device, the broadcast hands a
-newcomer messages from before the newcomer arrived. Filtered for the newcomer, it starves the
-founding member's new device. **No single filter is right for every reader of a broadcast, so the
-answer must stop being a broadcast.**
+entitled to everything since that member arrived, while another member of the same conversation
+may be entitled to less. **No single filter fits every reader of a broadcast, so the answer is
+addressed to the device that asked and filtered for that device alone.**
 
-**The push had the same hole, and the review missed it.** Step C's claim that the push is "safe as a
-broadcast because every other member is entitled to a superset of what the invitee is" holds only
-when the invitee is the NEWEST person in the group. `handleWelcomeRequest` also pushes to a new
-device of a member of any age: that push carries everything since the member's own arrival, and a
-newcomer overhears it. So the push is addressed too (rule 1).
-
-## What A protects against, and what it does not
-
-**A protects against an HONEST server and an HONEST answerer, and against nothing else.** It stops
-correct software from handing a newcomer what the newcomer was never meant to read. It is not a
-confidentiality boundary:
-
-- MLS encrypts an addressed answer for the whole group, so every member can decrypt it. A malicious
-  server can deliver an addressed answer to the newcomer as easily as to its addressee. **Addressing
-  is a routing control.**
-- A malicious answerer can send the newcomer its plaintext history in any shape it likes. A member
-  can always leak what it holds.
-
-Making the answer unreadable to everyone but the asker is option B below, and it is the follow-up.
+The push is addressed the same way (rule 1): `handleWelcomeRequest` also pushes to a new device of
+a member of any age, and that push is filtered for its own reader like every other answer.
 
 ## The rules, as built
 
 1. **Every history answer is addressed** - the diff, the scrollback AND the push.
    `sendBundleChunks` sends with `recipientDevices = [to]` (`addressedHistoryAnswer`), `to` being the
    asking device's `userId:deviceId`. *Changed from the review, which kept the push a broadcast -
-   see above.* An ask that carries no `requestId` (an older asker) is not answered when the server
+   see above, for consistency.* An ask that carries no `requestId` (an older asker) is not answered when the server
    routes addressed answers: the asker could not accept the answer (rule 5), and the generation it
    costs would be skipped by every other member for nothing.
 2. **The answer is filtered for its ONE reader** (`readerHistorySelection`). The windows are the
@@ -61,7 +43,7 @@ Making the answer unreadable to everyone but the asker is option B below, and it
      sends nothing.
    - **A server that predates addressed answers** (the exclusions route answers no
      `addressedAnswers: true`) gets today's broadcast: the union, plus the invitee's span on a push.
-     The newcomer residual of C then stands, and it accuses once per session at error
+     The behaviour of step C then stands, and it accuses once per session at error
      ([legacy-compatibility](../legacy-compatibility.md)).
 3. **chat-delivery accepts an addressed frame on a conversation group** where it refused one
    outright, under two conditions (`assertConversationAddressable`):
@@ -169,21 +151,13 @@ Making the answer unreadable to everyone but the asker is option B below, and it
    The answerer then does not answer that device (`[HISTORY_BUNDLE] ... cannot be addressed`), and
    sends no broadcast in its place. The older device is served by older peers exactly as before.
 
-## Why the allowlist existed, and how far rules 3-6 keep it
+## Why addressing was limited to key groups, and what rules 3-6 add
 
-**Equivocation.** On a conversation, chat-delivery fans an application frame out to every device as
-ONE ciphertext, which is why addressing was allowlisted to key groups. Addressing lets a sender show
-one frame to one device and keep it out of the shared stream - a split view.
-
-- **Visible messages: closed by rules 5 and 6.** An addressed frame that is not a solicited, bounded
-  `history_bundle` is refused by every receiver that declares the capability, and rule 6 addresses
-  no receiver that does not.
-- **History contents: narrowed, NOT closed.** A `history_bundle` carries messages as JSON, restated by
-  a peer and checked only for duplicate ids. A member could already put a forged message, attributed
-  to anyone, into a bundle broadcast to everybody; addressing adds TARGETING. Rule 5 shrinks it to
-  "the answerer the asker solicited, inside the bound it stated, as messages it did not hold".
-  Closing it needs each relayed message bound to its original sender (the original ciphertext and
-  its signature, or a per-message signature in the Graine v2 shape). Out of scope.
+On a conversation, chat-delivery fans an application frame out to every device as ONE ciphertext,
+so every member sees the same frames; that is why addressing was allowlisted to key groups. Rules 5
+and 6 keep that property for everything a conversation shows: an addressed frame that is not a
+solicited, bounded `history_bundle` is refused by every receiver that declares the capability, and
+rule 6 addresses no receiver that does not.
 
 ## The ratchet cost of addressing
 
@@ -197,27 +171,16 @@ messages. Graine accepted the same bound
 The durable rule that forbade addressing an application message is narrowed accordingly
 ([durable-rules](../durable-rules.md)).
 
-## Sealing to the asker (option B) is the follow-up, and its key is decided
+## Next step
 
-Option B keeps nothing to the server's honesty: the answer is sealed to a dedicated ephemeral X25519
-key generated in `mls-core` and carried inside the MLS-signed request, so the server cannot swap it.
-Not the leaf encryption key (it rotates on every commit touching the path, and has no API outside
-MLS). WebCrypto is avoided because the iOS app targets iOS 14.0, whose WKWebView has no X25519. B is
-an opus work package across three platforms; once it ships, rules 3 to 6 can go and the allowlist
-returns to key groups only.
+Option B (sealing the answer to the asker) is the next step; see the [backlog](../backlog.md).
 
-## What A does not close
+## Decided: a quote of an earlier message
 
-- Anything against a malicious server or a malicious answerer (above).
-- The split view through history contents, narrowed by rule 5.
-- **Older clients keep pushing and answering by broadcast** until `minClientVersion` passes the
-  release carrying A, which waits for both stores to serve it. The server cannot refuse such a frame:
-  it cannot read it. An honest new client drops what it overhears from them (`dropOwnExcludedMessages`).
-- What a newcomer has already received cannot be taken back.
-- **A reply quoting a message from before a member's arrival SHOWS that member the quoted text -
-  DECIDED by the user, 2026-10-22.** The quote rule stays a broadcast that reads the union of gaps
-  only. Extending it to every before-arrival span would blank every quote older than the newest
-  member, for everybody, and that cost was declined. Nothing is built for it.
+**A reply quoting a message from before a member's arrival SHOWS that member the quoted text -
+decided by the user, 2026-10-22.** The quote rule stays a broadcast that reads the union of gaps
+only. Extending it to every before-arrival span would blank every quote older than the newest
+member, for everybody, and that cost was declined. Nothing is built for it.
 
 ## What proves it
 

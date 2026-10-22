@@ -36,11 +36,11 @@ and the remove-then-re-add rule of 2026-10-14 stays. Step C (the push withholds 
 the receiver drops its own) is on `main`. **Step A is BUILT (draft PR): every history answer, the
 push included, is addressed to the asking device and filtered on its own windows; migration `035`
 is applied by the deploy, so the user's yes is the release.** Owed, in order: the rig row GRP-ADDR-1; a `minClientVersion` carrying A
-once both stores serve it (older clients broadcast until then); option B, sealing the answer to the
-asker (X25519 in `mls-core`), which is what makes it hold against a malicious server. **DECIDED by
+once both stores serve it; option B, sealing the answer to the asker (X25519 in `mls-core`, an
+ephemeral key carried inside the MLS-signed request). **DECIDED by
 the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer the quoted text;
 nothing is built for it. Design and limits:
-[history-answer-addressing](protocols/history-answer-addressing.md#what-a-does-not-close),
+[history-answer-addressing](protocols/history-answer-addressing.md#decided-a-quote-of-an-earlier-message),
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
 
 ## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)
