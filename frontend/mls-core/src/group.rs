@@ -166,6 +166,7 @@ impl MlsManager {
     pub fn forget_group(&mut self, group_id: &str, min_epoch: u64) {
         self.groups.remove(group_id);
         self.pending_external_joins.remove(group_id);
+        self.device_trust.forget_unseeded(group_id);
         // NO PRUNING HERE: a forget is also the first half of a forget-and-re-Welcome HEAL, and a pin
         // dropped now would be re-written from whatever tree the re-Welcome brings. The pins and the
         // departures are bounded at load, past their cap only (`load_or_create`).

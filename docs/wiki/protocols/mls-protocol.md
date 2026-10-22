@@ -602,7 +602,10 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   (`add_members_bulk_with_base(.., expected_identities)`). A credential naming anything else is
   skipped as `identity-mismatch`. The user half compares case-insensitively, the device half
   exactly, and an identity holds exactly one `:` - the TypeScript parsers (`leafIdentity.ts`) read
-  an identity with more as naming nobody.
+  an identity with more as naming nobody. Pin lookup and binding use ONE canonical identity
+  (`canonical_identity`: user half lowercased, device half as is): the pin store is keyed by it,
+  every lookup and comparison goes through it, and pins persisted under another spelling are
+  re-keyed at load.
 - **Pins.** Each identity maps to the SET of signature keys this device has seen for it, kept in the
   sealed MLS state (`PersistedState.device_pins`, CBOR, `#[serde(default)]`). A state written before
   pins existed is seeded at load from every tree it holds, so nothing already trusted is refused. A
@@ -616,7 +619,13 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   A pin of a device still in a held tree is never dropped. A dropped identity is remembered
   (`device_pins_pruned`, bounded at 8192), and a pin written for it again is UNANCHORED: learned
   from a tree after this device had already forgotten it, so it vouches for less than a pin held
-  since first sight.
+  since first sight. A prune is reported at WARN (`PINS PRUNED`, with the counts), and every load's
+  `state composition` line carries `pins <n>, <m> pruned remembered`. Both go to the device log
+  only - pins are client state the server never sees.
+- **A group the load does not seed.** A group with a staged commit at load is not seeded (its tree
+  may be an external join's server-served one). It is seeded from the tree the first merged commit
+  was built on - ours accepted, or a member's - and stays unseeded until the next load if its commit
+  is refused.
 - **Reaffirmations.** A pin counts the merged commits that showed its device holding the pinned key -
   its leaf re-entering under that key, or a commit it signed. This is what lifts a remembered
   refusal (below).
@@ -626,7 +635,8 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   Welcome goes to the re-added device. It used to kick the leaf, then re-add it in a second commit,
   which left the device out of the group in between and recorded a departure for a device that never
   left. The package is vetted FIRST, in TypeScript and again in Rust: a refused package stages
-  nothing. `addMember` and `replaceMember` throw the typed `DeviceTrustRefusedError` before staging,
+  nothing. Its signature key must also EQUAL the key of every leaf it removes - local signed
+  evidence that holds with or without a pin. `addMember` and `replaceMember` throw the typed `DeviceTrustRefusedError` before staging,
   and the callers log it once per identity per session (`reportDeviceTrustRefusal`) and retire
   nothing. No path kicks any more: an Add refused as a `DuplicateSignature` reads the tree again.
   If the key's identity is in the tree, a welcome request replaces it in one commit, and a pending

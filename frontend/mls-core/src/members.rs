@@ -260,7 +260,9 @@ impl MlsManager {
     /// the re-added device.
     ///
     /// The package is bound and pinned exactly as an Add's is ([`vet_validated`]): a package naming
-    /// another device or carrying an unpinned key stages nothing. No leaf for `identity` is
+    /// another device or carrying an unpinned key stages nothing. Its key must also EQUAL the key of
+    /// every leaf it removes (matched by [`identity_names`], the one canonical identity), pin or no
+    /// pin. No leaf for `identity` is
     /// [`MlsError::NoSuchMember`] - the caller then adds, it does not replace.
     pub fn replace_device_with_base(
         &mut self,
@@ -284,10 +286,29 @@ impl MlsManager {
             .groups
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
-        let leaf_indices = leaf_indices_where(group, |found| found == identity)?;
+        let leaf_indices = leaf_indices_where(group, |found| identity_names(found, identity))?;
         if leaf_indices.is_empty() {
             return Err(MlsError::NoSuchMember(format!(
                 "no leaf carries {identity} - nothing to replace"
+            )));
+        }
+        // THE TREE IS THE PROOF, NOT ONLY THE PIN: the leaf being removed carries a key signed into
+        // a tree this device holds, and the device it names must come back under THAT key. A pin
+        // may be missing (a state seeded late, a pin pruned); this evidence is always local.
+        let new_key = kp.leaf_node().signature_key().as_slice();
+        let removed_keys: Vec<Vec<u8>> = group
+            .members()
+            .filter(|m| leaf_indices.contains(&m.index))
+            .map(|m| m.signature_key)
+            .collect();
+        if removed_keys.iter().any(|k| k.as_slice() != new_key) {
+            log::error!(
+                "[TRUST] replace refused: {identity} in {group_id} offers key {}, not the key of the \
+                 leaf it would replace - nothing staged",
+                key_fingerprint(new_key)
+            );
+            return Err(MlsError::OpenMls(format!(
+                "replace_device: the KeyPackage for {identity} does not carry the key of its leaf"
             )));
         }
         let bundle = group
@@ -376,9 +397,8 @@ impl MlsManager {
     /// anything: `first-sight` / `pinned` when it may, otherwise the
     /// [`SkippedKeyPackageReason`] wire name an Add would skip it for.
     ///
-    /// For the caller that must decide BEFORE a destructive step - the re-add that first removes the
-    /// device's stale leaf (`kickStaleLeaf`): a removal made for a replacement the Add then refuses
-    /// would take the device out of the group for nothing. The Add itself re-runs the same check.
+    /// For the caller that must decide BEFORE staging - the one-commit replace of a device whose leaf
+    /// is still in the tree (`replaceMember`). The Add and the replace re-run the same check.
     pub fn vet_key_package(
         &self,
         key_package_bytes: &[u8],
@@ -475,6 +495,13 @@ impl MlsManager {
         // AN EXTERNAL JOIN HAS NO STATE TO FALL BACK TO: clearing its commit leaves a group this
         // device never entered, holding the tree the server served - which a later load would then
         // pin. The marker goes and the group with it, so nothing of a refused join survives.
+        // A group the load left unseeded stays so: the commit built on its tree was refused, and the
+        // next load seeds it like any held tree.
+        if self.device_trust.forget_unseeded(group_id) {
+            log::info!(
+                "clear_pending_commit_for: {group_id}'s staged commit did not merge - its tree stays unseeded until the next load"
+            );
+        }
         if self.pending_external_joins.remove(group_id) {
             log::warn!(
                 "clear_pending_commit_for: {group_id} was an external join not merged - the group is forgotten, its tree never pinned"

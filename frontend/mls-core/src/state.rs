@@ -192,8 +192,9 @@ pub struct MlsManager {
 
     /// Groups joined by an external commit not yet merged. Their tree is pinned at the MERGE - once
     /// the server accepted the join - never at the join: a refused join's tree came from a GroupInfo
-    /// nobody vouched for. In memory only: a restart before the merge leaves the tree to the
-    /// load-time seed, which pins only the trees the state actually holds.
+    /// nobody vouched for. PERSISTED in the sealed state (`PersistedState::pending_external_joins`),
+    /// so a checkpoint and a restart before the merge keep it, and the load-time seed skips the
+    /// group. Clearing the join's commit forgets the group (`clear_pending_commit_for`).
     pub(crate) pending_external_joins: std::collections::HashSet<String>,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
@@ -366,7 +367,10 @@ impl MlsManager {
                     .map(|r| format!("{} {}x{}B", r.label, r.entries, r.bytes))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{total}B total; {head}")
+                format!(
+                    "{total}B total; {head}; {}",
+                    self.device_trust.pin_summary()
+                )
             }
             // NOT SWALLOWED INTO AN EMPTY STRING: a caller logging this would print a line that
             // reads as "the state is made of nothing", which is a worse answer than none.
@@ -756,8 +760,9 @@ impl MlsManager {
                 // join. It is pinned at the merge (`merge_pending_commit_for`), never here.
                 if pending_external_joins.contains(group_id) || group.pending_commit().is_some() {
                     log::info!(
-                        "load_or_create: {group_id} has a commit not yet merged - its tree is not seeded"
+                        "load_or_create: {group_id} has a commit not yet merged - its tree is seeded at the first commit merged on it, not now"
                     );
+                    device_trust.mark_unseeded(group_id);
                     continue;
                 }
                 if device_trust.seed_from_tree(&crate::device_trust::leaf_keys(group)) {
