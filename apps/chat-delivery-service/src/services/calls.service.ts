@@ -24,6 +24,7 @@ import { resolveUserDisplayName } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
+import { incomingCallAlertBody } from './push-payload';
 import {
   METER_TIMEOUT_MS,
   TurnMeterUnavailableError,
@@ -144,6 +145,9 @@ export interface SiblingCallStatusResponse {
   callId?: string;
   groupId?: string;
 }
+
+/** The ring payload keys that name the caller or the conversation: never sent to an iPhone. */
+const CALL_NAME_FIELDS: ReadonlySet<string> = new Set(['callerName', 'senderName', 'groupName']);
 
 const USER_CALL_PRESENCE_TTL_SEC = 2 * 60 * 60;
 /** The longest call a room binding outlives: past it the room id names nothing. */
@@ -827,7 +831,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       const delivered =
         pt.platform === 'ios' && pt.voipToken
           ? await this.ringIosVoip(pt, dataFields)
-          : fcmReady && (await this.ringViaFcm(pt, dataFields, callerName, groupName));
+          : fcmReady && (await this.ringViaFcm(pt, dataFields));
       if (delivered) rang++;
     }
     this.logger.log(`[ring] call=${callId} group=${groupId} rang=${rang}/${tokens.length} devices`);
@@ -1002,32 +1006,35 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * FCM ring delivery: Android gets the data payload (native CallStyle notification);
-   * legacy iOS (no voipToken) gets a visible alert banner built by FCM's APNs relay.
+   * an iPhone with no voipToken gets a visible alert banner built by FCM's APNs relay.
+   *
+   * **That alert is GENERIC** (owner, 2026-10-22, calls.md B2'): until a native ring exists it is
+   * titled "Canari" and reads "Appel entrant" / "Incoming call" in the device's language, with no
+   * caller and no conversation name - neither in the alert nor in the payload keys, since FCM
+   * merges `data` into the APNs payload too. The names stay in the Android data payload, which the
+   * native layer there gates on the callee's own permission.
    */
-  private async ringViaFcm(
-    pt: PushToken,
-    dataFields: Record<string, string>,
-    callerName: string,
-    groupName: string
-  ): Promise<boolean> {
+  private async ringViaFcm(pt: PushToken, dataFields: Record<string, string>): Promise<boolean> {
+    // Names removed for iOS: `...anonymous` below and FCM's own `data` both reach the APNs payload.
+    const anonymous = Object.fromEntries(
+      Object.entries(dataFields).filter(([key]) => !CALL_NAME_FIELDS.has(key))
+    );
     try {
       await getMessaging().send({
         token: pt.token,
-        data: dataFields,
+        data: pt.platform === 'ios' ? anonymous : dataFields,
         android: { priority: 'high', ttl: 60_000 },
         apns: {
           payload: {
             aps: {
               alert: {
-                title: callerName || 'Canari',
-                body: groupName
-                  ? `\u{1f4de} Appel entrant - ${groupName}`
-                  : '\u{1f4de} Appel entrant',
+                title: 'Canari',
+                body: incomingCallAlertBody(pt.locale),
               },
               sound: 'default',
               'mutable-content': 1,
             },
-            ...dataFields,
+            ...anonymous,
           },
           headers: { 'apns-push-type': 'alert', 'apns-priority': '10' },
         },

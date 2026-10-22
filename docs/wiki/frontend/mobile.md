@@ -2768,15 +2768,13 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
 - **BootReceiver** (`CanariBootReceiver`): re-registers FCM token + drains outbox on boot
 - **Foreground guard**: retry is deferred when the TS outbox flusher is active
 - **The ongoing-call foreground service** (`CallForegroundService`, type `microphone`, WP-C-BG-A,
-  2026-10-20): the ONLY foreground service this app declares, and only in builds that place calls
-  (`src/calls/AndroidManifest.xml`, merged by `app/build.gradle.kts` when `VITE_DEPLOY_ENVIRONMENT`
-  is `development`). A backgrounded or locked app lost its call socket and its microphone 5 s in
+  2026-10-20): the ONLY foreground service this app declares, declared in the main manifest since the flip of `CALLS_COMPILED` (2026-10-22; it was a gradle-merged overlay on pre-releases before). A backgrounded or locked app lost its call socket and its microphone 5 s in
   while its JavaScript kept running; the service keeps both for the call's life, draws the
   `CallStyle` notification and owns the audio OUTPUT (the mode is Chromium's when Chromium set it).
   Started by the page through `window.canariCall` (`CallBridge.kt`) with a plain `startService`
   while the activity is resumed, never from the background; every end path (hang-up, page reload,
-  Recents, activity destroyed) releases it without waiting on the page. `android.yml` fails a stable
-  whose built manifest carries it. Design, Play declaration and the readings owed:
+  Recents, activity destroyed) releases it without waiting on the page. `android.yml` fails a build whose manifest
+  disagrees with `CALLS_COMPILED`. Design, Play declaration and the readings owed:
   [calls](modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20).
 
 **THE WORKER LOOKS AT THE QUEUE FIRST, AND ONLY A DRAIN THAT RAN IS AN ATTEMPT (2026-10-01).** It

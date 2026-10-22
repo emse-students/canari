@@ -21,7 +21,8 @@ import { describe, expect, it } from 'vitest';
  * | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | the ring | Android (the locked-screen CallStyle ring) and Play |
  *
  * The Android microphone foreground service follows `CALLS_COMPILED` too, asserted in
- * `androidCallServiceManifest.test.ts`.
+ * `androidCallServiceManifest.test.ts`. The microphone purpose string is written so that a later
+ * lives flip only APPENDS to it (docs/wiki/frontend/modules/live-production.md).
  *
  * Each cuts both ways: declared but unused is a store rejection (App Review refused `voip` under
  * guideline 2.5.4 on 2026-08-31), used but undeclared cannot work (no PushKit token, no full-screen
@@ -46,6 +47,7 @@ const manifest = read(resolve(ANDROID_MAIN, 'AndroidManifest.xml'));
 const pushMm = read(resolve(APPLE, 'Sources/canari/canari_push.mm'));
 const infoPlist = read(resolve(APPLE, 'canari_iOS/Info.plist'));
 const iosWorkflow = read(resolve(here, '../../../../.github/workflows/ios.yml'));
+const androidGradle = read(resolve(SRC_TAURI, 'gen/android/app/build.gradle.kts'));
 
 /** The one capture group of `pattern` in `src`, or fail naming what went missing. */
 function captured(src: string, pattern: RegExp, what: string): string {
@@ -166,23 +168,17 @@ describe(`in-app calls and the background follow CALLS_COMPILED (= ${COMPILED})`
   });
 });
 
-describe('the pre-release builds, which call while CALLS_COMPILED is false', () => {
-  // A pre-release turns in-app calls on (`VITE_DEPLOY_ENVIRONMENT=development` -> `CALLS_ENABLED`),
-  // so its iPhone build needs the `audio` mode the committed plist does not carry (WP-C-BG-I). Both
-  // are written by ONE branch of ios.yml, so a build cannot get one without the other.
-  it('ios.yml adds `audio` in the same branch that turns in-app calls on', () => {
-    // The branch closes at ITS indentation: the `if` nested inside it closes deeper.
-    const match = iosWorkflow.match(
-      /\n( *)if \[ "\$IS_PRERELEASE" = "true" \]; then\n(\s+echo "VITE_DEPLOY_ENVIRONMENT=development" >> \.env[\s\S]*?)\n\1fi\n/
-    );
-    expect(match, 'the pre-release branch that writes VITE_DEPLOY_ENVIRONMENT').not.toBeNull();
-    const branch = match![2];
-    expect(branch).toContain('Add :UIBackgroundModes: string audio');
-    expect(branch).toContain('src-tauri/gen/apple/canari_iOS/Info.plist');
+describe('the committed files are the ONLY carriers: no build step patches a call switch in', () => {
+  // Before the flip a pre-release got `audio` from a PlistBuddy branch of ios.yml and the Android
+  // service from a gradle overlay on VITE_DEPLOY_ENVIRONMENT. Both are deleted: a build that
+  // differs from the committed files is a build the tests above did not read.
+  it('ios.yml patches no UIBackgroundModes entry', () => {
+    expect(iosWorkflow).not.toContain('UIBackgroundModes');
   });
 
-  it('ios.yml adds `audio` nowhere else', () => {
-    expect(iosWorkflow.split('Add :UIBackgroundModes:').length - 1).toBe(1);
+  it('build.gradle.kts merges no calls overlay', () => {
+    expect(androidGradle).not.toContain('src/calls/');
+    expect(androidGradle).not.toContain('VITE_DEPLOY_ENVIRONMENT');
   });
 });
 

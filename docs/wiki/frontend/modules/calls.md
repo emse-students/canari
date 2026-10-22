@@ -94,7 +94,7 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
 | B0 | **No video in production.** `CALLS_VIDEO_ENABLED` was `CALLS_ENABLED`, so the flip would have shipped it; and the flag only hid the buttons - an invite with `hasVideo: true` (a modified client, or a later build) made `acceptCall` open the camera with no control on screen to close it | **built in #2171**: `CALLS_VIDEO_ENABLED = deployEnvironment() === 'development'` (`features.test.ts`), and `CallService` holds it at every boundary - the invite rings as audio (`incomingHasVideo`), `startCall` and `acceptCall` never ask for video, `cameraOn` (every camera open) refuses, and a peer's video m-line is answered `recvonly`, decrypted (so the E2E path check still judges it) and never shown. `inactive` would be possible (either side may renegotiate after the first remote description) and would spare the peer's video bandwidth and CPU; it is not taken because the path check's treatment of a negotiated m-line carrying nothing is unmeasured on a phone, and until video ships only a modified client sends one - when video ships, the floor rises past the audio-only stable or `inactive` is built. Pinned by `CallService.p2p.test.ts` ("an audio-only build", and "judges the peer's HIDDEN video": frames -> conclusive, packets with no frame -> ended) | code done; **owed on a phone**: that a receiver transform whose track has NO SINK is still fed frames (unproven on WebKit) - CALL-L1 row 13, no false `CallE2eBypassedError` on the iPhone and the Mi 9T |
 | B1 | The scope of the native ring | **decided** (Q1): not in the first release | B2' |
 | B2 | The native ring: WP-C5 (Android: names from the phone's local copy, out of the `call_ring` payload; `canUseFullScreenIntent`; decision 7 natively) and WP-C6 (iOS: no PushKit token was ever registered; every VoIP push must report a CallKit call; the answer with MLS behind the PIN). **Also to gate in the SAME commit as the native-ring switches**: both rings still ANNOUNCE a video call for a `hasVideo` invite (Android `CanariFirebaseMessagingService.kt` `setIsVideo` / `notif_incoming_video_call`, iOS `canari_push.mm` CallKit `update.hasVideo`) - on an audio-only build they must announce audio | **later - not the first release** | its own chantier, with video or after |
-| B2' | **Two facts instead of one**: `CALLS_COMPILED` for in-app calls and background continuation (`audio`, the microphone foreground service, the microphone purpose strings), a second constant for the native ring (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`), each set asserted by `callsCompiled.test.ts`. **And the iOS FCM ALERT**: no iPhone has a `voipToken`, so `CallsService.ringViaFcm` would send EVERY iPhone callee a visible alert titled with the caller's name in clear (against decision 6), opening an app that may not answer in time - removed, or decided. That branch IS reachable in the first release (unlike the native ring), and its body says "Appel entrant" whatever `hasVideo` is - if kept, it must never announce video | **owed** | a draft |
+| B2' | **Two facts instead of one**: `CALLS_COMPILED` for in-app calls and background continuation (`audio`, the microphone foreground service, the microphone purpose strings), a second constant for the native ring (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`), each set asserted by `callsCompiled.test.ts`. **And the iOS FCM ALERT**: no iPhone has a `voipToken`, so `CallsService.ringViaFcm` would send EVERY iPhone callee a visible alert titled with the caller's name in clear (against decision 6), opening an app that may not answer in time - removed, or decided. That branch IS reachable in the first release (unlike the native ring), and its body says "Appel entrant" whatever `hasVideo` is - if kept, it must never announce video | **built in the flip PR (2026-10-22)**: the two facts exist (`CALLS_NATIVE_RING_COMPILED`); the iPhone FCM alert is GENERIC - title "Canari", body "Appel entrant" / "Incoming call" from `push_token.locale` (`incomingCallAlertBody`), and the caller and conversation names are removed from the iOS data and APNs keys too (FCM merges `data` into the payload); pinned in `calls.service.spec.ts`. Android keeps its names | a draft |
 | B3 | **The review of #1997, crypto half**: one key per direction + AAD on every frame, the key-mismatch toast (F5) | **built (#2176)**: #2013 ported onto `main` (per-direction keys, AAD on every frame, the mismatch notice), adversarially reviewed | CALL-L1 rows 1-4 re-read on it |
 | B4 | **The `fp=` log line printed 4 bytes of the call key** | **built (#2176)**: a SHA-256 fingerprint per direction (`send_fp`/`recv_fp`, `utils/callKeys.ts`), first in #2171 | done |
 | B5 | **F4 - say who sees what**: each party learns the other's IP; Cloudflare TURN relays some calls (IPs, time, volume, never audio). Into `compliance/register-of-processing.md` and `/legal/privacy`, together | register rows C21 + TURN processor in #2176, marked owed review; the `/legal/privacy` paragraphs HELD in a separate draft pull request for the owner (Q5) | the owner's yes on the wording, merged BEFORE the flip ships |
@@ -117,7 +117,7 @@ hardware; `owed` = not done. A blocker closes only when its last column is true.
    (dev + testers); B8, B9, B10, B11 are read there. **The App Review video and the Play video are
    recorded FROM these runs**, never staged afterwards (revival plan section 8).
 4. **The production preflight** (B13), read-only, from a signed-in production session and the host.
-5. **THE FLIP, ONE COMMIT, ONE PR** (draft #2039 is the 2026-10-18 rehearsal of a flip WITH the
+5. **THE FLIP, ONE COMMIT, ONE PR** - BUILT (owner, 2026-10-22: calls reach production fast), as a draft pull request off `main`; the table below is what it moved. It merges only when the blockers above say so, and the server's `calls_mode` stays `off` at deploy. (Draft #2039 is the 2026-10-18 rehearsal of a flip WITH the
    ring: rebuild it on `main` after B2', do not rebase it). With Q1 = no, it moves:
 
    | Moves | File | Asserted by |
@@ -1713,15 +1713,13 @@ phone while it rings would be refused at `incall`.
 list of `microphone` uses names "communication apps". Moving to `phoneCall` means a self-managed
 `ConnectionService`, a larger piece of work with its own Play declaration.
 
-**Only in builds that place calls.** `src/calls/AndroidManifest.xml` (the service,
-`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`) is merged by `app/build.gradle.kts` into the
-debug and release build types when `VITE_DEPLOY_ENVIRONMENT` is `development` - read from the process
-environment, then `frontend/.env`, the order Vite reads them, and printed by Gradle
-(`Canari ongoing-call service: IN this build ...`). That is every pre-release and a local build that
-sets it; a stable merges nothing. `androidCallServiceManifest.test.ts` asserts the main manifest
-declares it exactly when `CALLS_COMPILED` is true - so the revival commit moves it into
-`src/main/AndroidManifest.xml` with the other `CALLS_COMPILED` switches, or fails there (not with
-the native ring's `CALLS_NATIVE_RING_COMPILED`: an in-app call needs it). `CALLS_COMPILED` stays false.
+**In the main manifest since the flip (2026-10-22).** The service, `FOREGROUND_SERVICE` and
+`FOREGROUND_SERVICE_MICROPHONE` were a `src/calls/AndroidManifest.xml` overlay merged by gradle on
+`VITE_DEPLOY_ENVIRONMENT=development`; the overlay and that gradle code are deleted and every build
+carries the declaration. `androidCallServiceManifest.test.ts` asserts the main manifest
+declares it exactly when `CALLS_COMPILED` is true (not with the native ring's
+`CALLS_NATIVE_RING_COMPILED`: an in-app call needs it); `android.yml` reads the BUILT manifests
+against the same constant. `CALLS_COMPILED` is true since the flip.
 
 **Google Play.** Since API 34 every foreground service declares a type, and Play asks the developer
 to declare each foreground-service permission in the Play Console (App content, "Foreground service

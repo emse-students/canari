@@ -595,6 +595,63 @@ describe('CallsService', () => {
       );
     });
 
+    it('rings an iPhone without a VoIP token with a GENERIC alert: no caller, no conversation name', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        {
+          id: '1',
+          userId: 'callee-android',
+          deviceId: 'd1',
+          token: 'fcm-a',
+          platform: 'android',
+          voipToken: null,
+          locale: 'en',
+        },
+        {
+          id: '3',
+          userId: 'callee-ios-legacy',
+          deviceId: 'd3',
+          token: 'fcm-c',
+          platform: 'ios',
+          voipToken: null,
+          locale: 'en',
+        },
+        {
+          id: '4',
+          userId: 'callee-ios-legacy',
+          deviceId: 'd4',
+          token: 'fcm-d',
+          platform: 'ios',
+          voipToken: null,
+          locale: null,
+        },
+      ]);
+
+      await ringAndSettle(service, 'caller', 'group-1', 'call-1', false);
+
+      const sent = (token: string) =>
+        fcmSend.mock.calls.map((c) => c[0]).find((m) => m.token === token);
+      // Android keeps the names its native layer reads.
+      expect(sent('fcm-a').data).toHaveProperty('callerName');
+      // The iPhone is told only that a call is coming, in its own language (base locale when unknown).
+      expect(sent('fcm-c').apns.payload.aps.alert).toEqual({
+        title: 'Canari',
+        body: 'Incoming call',
+      });
+      expect(sent('fcm-d').apns.payload.aps.alert).toEqual({
+        title: 'Canari',
+        body: 'Appel entrant',
+      });
+      // Neither the data nor the APNs payload keys carry a name: FCM merges the first into the second.
+      for (const token of ['fcm-c', 'fcm-d']) {
+        const message = sent(token);
+        for (const key of ['callerName', 'senderName', 'groupName']) {
+          expect(message.data).not.toHaveProperty(key);
+          expect(message.apns.payload).not.toHaveProperty(key);
+        }
+        expect(message.data.type).toBe('call_ring');
+      }
+    });
+
     it('never pushes a ring to a member whose call permission refuses this conversation', async () => {
       // First read: who is in the group. Second: each callee's permission and level.
       groupMemberRepo.find
