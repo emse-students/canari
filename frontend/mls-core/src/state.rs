@@ -10,6 +10,7 @@ use std::collections::{BTreeSet, HashMap};
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::MlsError;
+use crate::graine_run::GraineRun;
 
 // --- 1. Persistence model (on disk) ---
 
@@ -42,6 +43,13 @@ pub struct PersistedState {
     /// `#[serde(default)]`, like the field above.
     #[serde(default, with = "crate::byte_compat::bytes_map")]
     pub owed_welcomes: HashMap<Vec<u8>, Vec<u8>>,
+    /// Graine's departure tracker, one clean run per group (`graine_run.rs`). Kept in THIS blob so
+    /// it is written by the same checkpoint as the tree it describes. `#[serde(default)]`: a state
+    /// written before the field has no runs, so its first sends rotate exactly as before. A build
+    /// that predates the field ignores it on read and drops it on its next write - the fail-safe
+    /// direction, since no run means rotate.
+    #[serde(default)]
+    pub graine_runs: HashMap<String, GraineRun>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -61,6 +69,7 @@ pub(crate) struct PersistedStateSer<'a> {
     pub(crate) pending_submissions: &'a HashMap<Vec<u8>, Vec<u8>>,
     #[serde(with = "crate::byte_compat::bytes_map")]
     pub(crate) owed_welcomes: &'a HashMap<Vec<u8>, Vec<u8>>,
+    pub(crate) graine_runs: &'a HashMap<String, GraineRun>,
 }
 
 // Struct request wrapper for serialization
@@ -181,6 +190,8 @@ pub struct MlsManager {
 
     /// The Welcome each settled Add still owes (`owed_welcome.rs`), encoded.
     pub(crate) owed_welcomes: HashMap<String, Vec<u8>>,
+    /// Graine's departure tracker, persisted with the state (`graine_run.rs`).
+    pub(crate) graine_runs: HashMap<String, GraineRun>,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
 }
@@ -732,6 +743,7 @@ impl MlsManager {
                     .into_iter()
                     .map(|(id, w)| (String::from_utf8_lossy(&id).to_string(), w))
                     .collect(),
+                graine_runs: state.graine_runs,
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -841,6 +853,7 @@ impl MlsManager {
                 forgotten_group_min_epochs: HashMap::new(),
                 pending_submissions: HashMap::new(),
                 owed_welcomes: HashMap::new(),
+                graine_runs: HashMap::new(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
             })
         }
@@ -903,6 +916,7 @@ impl MlsManager {
             forgotten_group_min_epochs: &self.forgotten_group_min_epochs,
             pending_submissions: &pending_submissions,
             owed_welcomes: &owed_welcomes,
+            graine_runs: &self.graine_runs,
         };
 
         let mut final_bytes = Vec::new();

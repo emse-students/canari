@@ -1,7 +1,12 @@
 {
   "app": {
     "security": {
-      "capabilities": ["default", "local-estate", "ios-system-components"]
+      "capabilities": ["default", "local-estate", "ios-system-components"],
+      "csp": {
+        "connect-src": "'self' ipc: http://ipc.localhost blob: https://canari.emse.fr wss://canari.emse.fr https://canari-emse.fr wss://canari-emse.fr https://www.canari-emse.fr wss://www.canari-emse.fr https://dev.canari-emse.fr wss://dev.canari-emse.fr http: ws:",
+        "media-src": "'self' blob: https://canari.emse.fr https://canari-emse.fr https://www.canari-emse.fr https://dev.canari-emse.fr http:",
+        "img-src": "'self' data: blob: https: http:"
+      }
     }
   }
 }

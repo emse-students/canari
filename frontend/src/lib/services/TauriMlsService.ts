@@ -19,7 +19,7 @@ import {
   type BatchDecryptRow,
 } from '$lib/mls-client/mlsBatchDecrypt';
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
-import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
@@ -1566,6 +1566,11 @@ export class TauriMlsService extends BaseMlsService {
   async memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null> {
     const key = await invoke<number[] | null>('graine_member_signature_key', { groupId, identity });
     return key ? new Uint8Array(key) : null;
+  }
+
+  /** The key group's clean run at its current epoch (`graine_run`), read live under the manager lock. */
+  async graineRun(groupId: string): Promise<GraineRunReading> {
+    return invoke<GraineRunReading>('graine_run', { groupId });
   }
 
   /** This device's credential key signs `message` (`graine_sign_with_device_credential`). */

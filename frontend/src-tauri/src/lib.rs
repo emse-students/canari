@@ -6,6 +6,7 @@ mod commands;
 mod concurrency;
 mod happy_eyeballs;
 mod keystore_bridge;
+mod native_cache;
 mod state;
 
 // `test` is in the gate so the shared background logic - the outbox batch drain in particular -
@@ -33,19 +34,20 @@ use crate::state::{AppState, PendingDb};
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
-use crate::commands::handoff::read_and_clear_pending_share;
+use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
     confirmer_commit_welcome_du, contexte_correspond_base, creer_groupe, date_feuille,
     envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree, exporter_secret,
-    generer_key_packages_et_persister, graine_member_signature_key, graine_session_keypair,
-    graine_sign_with_device_credential, graine_sign_with_session_key, graine_verify_signature,
-    groupe_actif, groupes_commit_en_attente, initialiser_mls, key_package_a_clef_privee,
-    lister_groupes, lister_identites_membres, obtenir_epoch, oublier_groupe, oublier_key_packages,
-    rafraichir_feuille, recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
-    recuperer_cle_session_mls, rejoindre_par_commit_externe, retirer_membres,
-    retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
-    soumission_en_attente, trailer_welcome, welcome_remis, welcomes_dus,
+    generer_key_packages_et_persister, graine_member_signature_key, graine_run,
+    graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
+    graine_verify_signature, groupe_actif, groupes_commit_en_attente, initialiser_mls,
+    key_package_a_clef_privee, lister_groupes, lister_identites_membres, obtenir_epoch,
+    oublier_groupe, oublier_key_packages, rafraichir_feuille, recenser_key_packages,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, retirer_membres, retirer_membres_par_appareil,
+    sauvegarder_mls_et_persister, skip_send_generations, soumission_en_attente, trailer_welcome,
+    welcome_remis, welcomes_dus,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
@@ -213,8 +215,12 @@ pub(crate) fn android_java_vm() -> Option<&'static jni::JavaVM> {
 /// `AppHandle` in a process with no WebView; the merge and its per-channel bound are the
 /// foreground's, shared through `commands::push::merge_graine_seed`.
 ///
-/// Returns -1 if the argument could not be marshalled or parsed at all, which is a different fact
-/// from "zero seeds were usable" and must not read as the same one.
+/// Returns -1 if the argument could not be marshalled or parsed at all, or no cache key was handed
+/// over, which are different facts from "zero seeds were usable" and must not read as the same one.
+///
+/// `cacheKeyB64` is the install's native cache key Kotlin unwrapped from the Android Keystore
+/// (`NativeCacheKey.retrieve`), or `""` when it could not: the mirror is sealed under it
+/// (`native_cache`), and with none nothing is written.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeStoreGraineSeeds<
@@ -223,10 +229,15 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     data_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
     seeds_json: jni::objects::JString<'a>,
 ) -> i32 {
     let Ok(dir) = env.get_string(&data_dir) else {
         log::error!("[GRAINE_PUSH] jni-data-dir");
+        return -1;
+    };
+    let Ok(key) = env.get_string(&cache_key_b64) else {
+        log::error!("[GRAINE_PUSH] jni-cache-key");
         return -1;
     };
     let Ok(json) = env.get_string(&seeds_json) else {
@@ -234,15 +245,86 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         return -1;
     };
     let dir: String = dir.into();
+    let key: String = key.into();
     let json: String = json.into();
 
-    commands::push::store_graine_seeds_json(std::path::Path::new(&dir), &json)
+    commands::push::store_graine_seeds_json(
+        std::path::Path::new(&dir),
+        native_cache::platform_key(&key).as_ref(),
+        &json,
+    )
+}
+
+/// Whether the seed mirror under `dataDir` holds a session: 1 yes, 0 no, -1 it cannot be read.
+/// What the push service asks before choosing between the mirror and the seed frame a message
+/// carries - the seed itself never enters the JVM. `cacheKeyB64` as for `nativeStoreGraineSeeds`.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeGraineSeedHeld<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
+    channel_id: jni::objects::JString<'a>,
+    session_id: jni::objects::JString<'a>,
+) -> i32 {
+    let mut read = |s: &jni::objects::JString<'a>| -> Option<String> {
+        env.get_string(s).ok().map(Into::into)
+    };
+    let (Some(dir), Some(key), Some(channel), Some(session)) = (
+        read(&data_dir),
+        read(&cache_key_b64),
+        read(&channel_id),
+        read(&session_id),
+    ) else {
+        log::error!("[GRAINE_MIRROR] jni-string");
+        return -1;
+    };
+    commands::push::graine_seed_held(
+        std::path::Path::new(&dir),
+        native_cache::platform_key(&key).as_ref(),
+        &channel,
+        &session,
+    )
+}
+
+/// Seals one push-cache line under the install's native cache key (`native_cache`). Returns `null`
+/// when there is no usable key, and the caller then writes NOTHING - never a line in the clear.
+/// A companion-object function, because the notification action receiver writes the cache too.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeSealCacheLine<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
+    line: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let null = || jni::objects::JString::from(jni::objects::JObject::null());
+    let (Ok(key), Ok(line)) = (env.get_string(&cache_key_b64), env.get_string(&line)) else {
+        log::error!("[FCM_CACHE] jni-string");
+        return null();
+    };
+    let key: String = key.into();
+    let line: String = line.into();
+    let Some(key) = native_cache::platform_key(&key) else {
+        return null();
+    };
+    let sealed = native_cache::seal_line(&key, native_cache::Purpose::PushCache, &line);
+    env.new_string(sealed).unwrap_or_else(|e| {
+        log::error!("[FCM_CACHE] sealed line not returned: {e}");
+        null()
+    })
 }
 
 /// Opens a salon push against the seed mirror under `dataDir` - every v1 and v2 rule, in the one
 /// implementation both platforms share (`mobile::background::open_graine_push`). `signatureB64` is
 /// empty when the push carried none. Returns the same JSON as `nativeDecryptMessageWithKey`.
 /// `locale` is the app language mirrored in `push_context.json` (`""` when none was).
+/// `cacheKeyB64` opens the sealed mirror, as for `nativeStoreGraineSeeds`.
 #[cfg(target_os = "android")]
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
@@ -252,6 +334,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
     data_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
     channel_id: jni::objects::JString<'a>,
     session_id: jni::objects::JString<'a>,
     message_index: jni::sys::jint,
@@ -273,6 +356,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         };
         let (
             Some(dir),
+            Some(cache_key),
             Some(channel),
             Some(session),
             Some(sender),
@@ -282,6 +366,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             Some(locale),
         ) = (
             read(&data_dir),
+            read(&cache_key_b64),
             read(&channel_id),
             read(&session_id),
             read(&sender_id),
@@ -295,6 +380,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         };
         mobile::background::open_graine_push(
             std::path::Path::new(&dir),
+            native_cache::platform_key(&cache_key).as_ref(),
             &mobile::background::GrainePush {
                 channel_id: &channel,
                 session_id: &session,
@@ -1071,6 +1157,7 @@ pub fn run() {
             graine_verify_signature,
             graine_sign_with_device_credential,
             graine_member_signature_key,
+            graine_run,
             recuperer_cle_session_mls,
             sauvegarder_mls_et_persister,
             creer_groupe,
@@ -1137,6 +1224,7 @@ pub fn run() {
             read_and_clear_outbox_sent,
             read_and_clear_pending_call_accept,
             read_and_clear_pending_share,
+            advance_share_epoch,
             get_voip_token,
             store_graine_seed,
             forget_graine_channel,

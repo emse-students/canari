@@ -133,6 +133,7 @@ import type {
   DistributionGapVerdict,
   DistributionGroupStore,
   ExternalJoinOutcome,
+  GraineRunReading,
 } from '$lib/mls-client/IMlsService';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
@@ -5423,6 +5424,7 @@ export abstract class BaseMlsService implements IMlsService {
   abstract getEpoch(groupId: string): number;
   abstract getGroupMemberIdentities(groupId: string): Promise<string[]>;
   abstract memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
+  abstract graineRun(groupId: string): Promise<GraineRunReading>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
   abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;

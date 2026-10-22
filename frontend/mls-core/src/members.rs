@@ -215,17 +215,11 @@ impl MlsManager {
     /// Merges the group's pending (staged) commit: call AFTER the server accepted the commit
     /// (`validateCommit`). Advances the local epoch. Counterpart of `clear_pending_commit_for`.
     /// [[C7]] Option A: validate-then-merge, never a local fork on rejection.
+    ///
+    /// The merge is also observed by Graine's departure tracker (`graine_run.rs`), so a Remove this
+    /// device commits ends the run its sessions were minted in.
     pub fn merge_pending_commit_for(&mut self, group_id: &str) -> Result<(), MlsError> {
-        let group = self
-            .groups
-            .get_mut(group_id)
-            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
-        group
-            .merge_pending_commit(&self.provider)
-            .map_err(|e| MlsError::OpenMls(format!("Merge pending commit error: {:?}", e)))?;
-        self.drop_pending_submission(group_id);
-        self.mark_state_dirty();
-        Ok(())
+        self.merge_pending_commit_with_summary(group_id).map(|_| ())
     }
 
     /// Clears the group's pending (staged) commit: call when the server REJECTS the commit.
