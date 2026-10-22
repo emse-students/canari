@@ -2387,7 +2387,7 @@ export function logcatReport(lines, label = 'A1') {
    * hand this app the platform's failures.
    */
   const OURS_BY_NAME =
-    /^(CanariRust|CanariFCM|CanariWorker|CanariApp|CanariBoot|CanariNotifAction|CanariOutboxRetry|MlsDeviceKeyStore|PushSecretKeystore|KeyboardMedia|MainActivity|mines_app_lib|tokio_tungstenite|RustStdoutStderr|Tauri\/Plugin)$/;
+    /^(CanariRust|CanariFCM|CanariWorker|CanariApp|CanariBoot|CanariNotifAction|CanariOutboxRetry|MlsDeviceKeyStore|NativeCacheKey|PushSecretKeystore|KeyboardMedia|MainActivity|mines_app_lib|tokio_tungstenite|RustStdoutStderr|Tauri\/Plugin)$/;
   const RUST_MODULE = /^[a-z][a-z0-9_]*(::[a-z0-9_]+)+$/;
   const isOurs = (tag) => OURS_BY_NAME.test(tag) || RUST_MODULE.test(tag);
 
@@ -2402,6 +2402,10 @@ export function logcatReport(lines, label = 'A1') {
     // being recorded rather than a tick. MSG-8 types into the composer, which is what raises it.
     ['ime-inset', /^IME inset: \d+ -> content padding$/],
     ['keystore-read', /^retrieve: success alias=/],
+    // The install's native cache key (`NativeCacheKey.ensure`, every process start): found, or made
+    // once on the first start of an install - and that one creation is the only `store:` it causes.
+    ['native-cache-key', /^ensure: (present|created)$/],
+    ['native-cache-key-store', /^store: success alias=canari_native_cache_key$/],
     ['keystore-health', /^checkKeystoreHealth: Keystore operational/],
     ['push-secret', /^processPendingPushSecret: /],
     ['installer', /^recordInstallerPackage: /],
@@ -2433,7 +2437,8 @@ export function logcatReport(lines, label = 'A1') {
     // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
     ['fcm-channel-blind-reported', /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/],
     ['fcm-channel-redraw', /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/],
-    ['fcm-channel-notify', /^handleChannelMessage: notification title=.*mentionsMe=(true|false)$/],
+    // No title and no body since 2026-10-22: a release log line carries no content (nativeLogContent.test.ts).
+    ['fcm-channel-notify', /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false)$/],
     // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a
     // DIFFERENT branch from the `success` one above - that one decrypted a message, this one
     // recognised key material and decrypted nothing - so it needs its own rule rather than a wider
@@ -2510,7 +2515,7 @@ export function logcatReport(lines, label = 'A1') {
     // ONLY THE `D` SITE, DELIBERATELY. Its sibling at `W` - "reaction push without groupId -
     // dropped, nothing to attach it to" - is a push that reached the device and was thrown away,
     // which is a real loss and must keep surfacing.
-    ['fcm-reaction', /^reaction: group=[0-9a-f]+ actor=[0-9a-f]+ emoji=/],
+    ['fcm-reaction', /^reaction: group=[0-9a-f]+ actor=[0-9a-f]+$/],
     // ── the boot receiver, and the reason it fires without a boot ────────────────────────────────
     // ANDROID REPLAYS THE BOOT BROADCAST TO A PACKAGE LEAVING THE STOPPED STATE, so `force-stop`
     // followed by a launch delivers `LOCKED_BOOT_COMPLETED` then `BOOT_COMPLETED` on a device that
