@@ -134,7 +134,10 @@ and this page carries the reasoning.
 
 ### Communities
 
-1. **Rotate on a REMOVAL, not on any epoch change (P2).** This is the measured cause of the seed
+1. **Rotate on a REMOVAL, not on any epoch change (P2).** *The identity-set check below was refused
+   on 2026-10-22: a leaf added and removed between two sends is in neither set. Its replacement, a
+   clean run fed by a commit summary from `mls-core`, is designed in
+   [graine-removal-tracker](graine-removal-tracker.md).* This is the measured cause of the seed
    count. The comment that chose the epoch rejected a durable *"somebody LEFT"* marker, because every
    device would have to write it. A local alternative needs no marker: at mint, a session records the
    leaf identities of the key group (`userId:deviceId`), and at the next send it rotates only if one
