@@ -55,6 +55,13 @@ import type {
 } from '$lib/mls-client/IMlsService';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import {
+  DeviceTrustRefusedError,
+  isDeviceTrustRefusal,
+  verdictAdmits,
+  type DeviceEvent,
+  type KeyPackageVerdict,
+} from '$lib/mls-client/deviceTrust';
+import {
   SenderMismatchError,
   setSenderMismatchReporter,
   type EnvelopeSender,
@@ -137,6 +144,7 @@ import {
   snapshotPendingHistoryMarks,
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
+import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
@@ -2424,6 +2432,12 @@ export abstract class BaseMlsService implements IMlsService {
         const published = await this.generateKeyPackageImpl(deviceKeyB64);
         // A published round proves this page's identity is accepted: any refused-rotation run ended.
         forgetRefusedRotationReloads();
+        // And the server is reachable: an abandoned id a rotation could not delete is retried here.
+        void retireAbandonedDevices({
+          userId: this.userId,
+          liveDeviceId: this.deviceId,
+          deleteDevice: (u, d) => this.deleteDevice(u, d),
+        });
         return published;
       } catch (e) {
         if (!(e instanceof DeviceRevokedError)) throw e;
@@ -2707,12 +2721,63 @@ export abstract class BaseMlsService implements IMlsService {
     // that, from the peers' side, this device has never made.
     resetSendRatchetLedger(this.userId);
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
-    // our fresh state no longer holds (NoMatchingKeyPackage). Best-effort: a revoked id is already
-    // gone server-side, and a mismatch must not block on the network.
-    this.deleteDevice(this.userId, oldDeviceId).catch((err) =>
-      console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
-    );
+    // our fresh state no longer holds (NoMatchingKeyPackage). RECORDED BEFORE IT IS ASKED, so a
+    // failed delete is retried at the next published round rather than forgotten; never awaited, so
+    // a rotation does not block on the network.
+    recordAbandonedDevice(this.userId, oldDeviceId);
+    void retireAbandonedDevices({
+      userId: this.userId,
+      liveDeviceId: this.deviceId,
+      deleteDevice: (u, d) => this.deleteDevice(u, d),
+    });
     return oldDeviceId;
+  }
+
+  /**
+   * Whether this device's saved MLS state is PROVABLY absent - no file / no record, or an empty one.
+   * `false` on anything the store could not answer: an error is not an absence.
+   *
+   * Gates {@link reenrolLostState}, the one rotation that starts from a MISSING state rather than an
+   * unusable one, so it must never fire on a state that is merely unread (a locked keystore, a
+   * failing disk, a PIN problem - those reach `_initImpl` with a state, or throw).
+   */
+  protected abstract savedStateProvenAbsent(): Promise<boolean>;
+
+  /**
+   * A DEVICE THAT KEPT ITS ID BUT LOST ITS STATE IS A NEW DEVICE (lead decision, 2026-10-22). Its old
+   * signature key went with the state, so peers that pinned it refuse a re-add under the old name
+   * (`docs/wiki/protocols/mls-protocol.md#device-binding`); a new id is a first sight for them, and
+   * the owner's devices announce it as a new device. The old id is retired through the ordinary
+   * device deletion, for that id only (`abandonedDevices.ts`).
+   *
+   * Taken only when ALL of these hold: an id pre-existed this boot (`stateWasExpected`), the caller
+   * did not claim a state exists (`noFreshStart`), and the store PROVES there is none.
+   *
+   * @returns whether the identity was rotated (the fresh client is then loaded and persisted).
+   */
+  protected async reenrolLostState(
+    deviceKeyB64: string,
+    opts?: { noFreshStart?: boolean }
+  ): Promise<boolean> {
+    if (!this.stateWasExpected || opts?.noFreshStart) return false;
+    let absent = false;
+    try {
+      absent = await this.savedStateProvenAbsent();
+    } catch (e) {
+      console.warn(`[MLS] could not prove the saved state absent - not rotating: ${String(e)}`);
+      return false;
+    }
+    if (!absent) {
+      console.warn(
+        `[MLS] ${sanitizeForLog(this.deviceId)} expected a saved state, none was passed, and the store did not prove it absent - not rotating`
+      );
+      return false;
+    }
+    await this.rotateDeviceIdentity(
+      deviceKeyB64,
+      'saved state lost - the device re-enrols as a new device'
+    );
+    return true;
   }
 
   /**
@@ -2819,6 +2884,8 @@ export abstract class BaseMlsService implements IMlsService {
     Array<{
       keyPackage: Uint8Array;
       deviceId: string;
+      /** The `userId` asked for, carried so an Add can check each package names this device. */
+      userId: string;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
@@ -3360,10 +3427,12 @@ export abstract class BaseMlsService implements IMlsService {
   /** Stages an Add commit WITHOUT merging. Returns the commit, shared Welcome, the input
    *  positions actually added / dropped-as-invalid (already-member dedup is silent), and
    *  `groupInfo`: the external-join base for the epoch the commit CREATES (see
-   *  {@link runCommitTransaction}). */
+   *  {@link runCommitTransaction}). Each package travels with the `userId:deviceId` it was
+   *  FETCHED FOR, and Rust skips one whose credential names another device or whose key is not
+   *  the one pinned for it (`deviceTrust.ts`). */
   protected abstract stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -4716,15 +4785,119 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
+  /** Asks the MLS layer whether a package may be added as `identity` - see {@link vetKeyPackage}. */
+  protected abstract vetKeyPackageNative(
+    keyPackage: Uint8Array,
+    identity: string
+  ): Promise<KeyPackageVerdict>;
+  /** Takes the pending device events from the MLS layer - see {@link takeDeviceEvents}. */
+  protected abstract takeDeviceEventsNative(): Promise<DeviceEvent[]>;
+  /** Reads the pins of one device from the MLS layer - see {@link pinnedSignatureKeys}. */
+  protected abstract pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<Uint8Array[] | null>;
+
+  /**
+   * The signature keys THIS DEVICE has seen for `userId:deviceId` in a signed tree it merged or
+   * joined, or `null` for a device it never saw - THE SINGLE SOURCE OF TRUST for "a key this device
+   * has seen" (`MlsManager::pinned_signature_keys`, the device pins).
+   *
+   * WHY: a verifier of a signature made by a device key (a community admission voucher, a signed
+   * history entry) must not take the key from the server, which is the party the signature has to
+   * hold against. A pinned key came from a tree whose commits this device verified itself.
+   *
+   * `null` MEANS UNVERIFIED, NEVER FORGED. Pins are bounded, and past the bound the pin of a device
+   * no held tree contains any more is dropped, so a device seen once can come back unknown. A
+   * verifier shows such a signature as not checked, and never as a forgery. Several keys come back
+   * only for a state seeded from trees that disagreed; a signature verifying under ANY of them was
+   * made by a key this device saw for that device. The user half matches case-insensitively and the
+   * device half exactly, as the KeyPackage binding reads them.
+   */
+  /** Reads the recorded departures from the MLS layer - see {@link removalEpochs}. */
+  protected abstract removalEpochsNative(groupId: string, userId: string): Promise<number[]>;
+
+  /**
+   * The epochs at which this device saw `userId` LEAVE `groupId`'s tree - a merged commit removed
+   * the user's last leaf; each epoch is the first one the user is no longer in - oldest first.
+   *
+   * WHY: a verifier that must know whether a user was removed (and when) cannot ask the server, and
+   * observing the tree finds a removal only when it happens to look between a kick and a re-add.
+   * This is recorded at MERGE time in Rust, in the one place every merged commit passes - live,
+   * replayed on catch-up, or our own - so every device that merged the commit records it.
+   * Compared per user over the trees: a single commit that swaps a leaf (a resync, a heal) and the
+   * removal of one device among several record nothing; a kick and a re-add in TWO commits is a
+   * departure, whatever the kick was for.
+   *
+   * AN EMPTY LIST IS "NOT SEEN", NEVER "NEVER HAPPENED": commits merged before this record existed,
+   * by a state since lost, or dropped past its bound are absent. Kept in the sealed state; never a
+   * device event and never user-visible.
+   */
+  async removalEpochs(groupId: string, userId: string): Promise<number[]> {
+    const epochs = await this.removalEpochsNative(groupId, userId);
+    console.debug(
+      `[TRUST] departures of ${sanitizeForLog(userId).slice(0, 8)} from ${groupId.slice(0, 8)}...: ${epochs.length}`
+    );
+    return epochs;
+  }
+
+  async pinnedSignatureKeys(userId: string, deviceId: string): Promise<Uint8Array[] | null> {
+    const keys = await this.pinnedSignatureKeysNative(userId, deviceId);
+    if (keys === null) {
+      console.debug(
+        `[TRUST] no pinned key for ${sanitizeForLog(userId).slice(0, 8)}:${sanitizeForLog(deviceId)} - unverified`
+      );
+    }
+    return keys;
+  }
+
+  /**
+   * Whether `keyPackage` may be added as the device `userId:deviceId`, WITHOUT staging anything.
+   *
+   * For the caller that must decide BEFORE a destructive step: the re-add of a device whose leaf is
+   * still in the tree removes that leaf first, and a removal made for a replacement the Add then
+   * refuses would take the device out of the group for nothing. The Add re-runs the same check in
+   * Rust, so this is the same decision taken earlier, never a second policy.
+   */
+  async vetKeyPackage(
+    keyPackage: Uint8Array,
+    userId: string,
+    deviceId: string
+  ): Promise<KeyPackageVerdict> {
+    const verdict = await this.vetKeyPackageNative(keyPackage, `${userId}:${deviceId}`);
+    console.debug(
+      `[TRUST] KeyPackage for ${sanitizeForLog(userId).slice(0, 8)}:${sanitizeForLog(deviceId)} vetted: ${verdict}`
+    );
+    return verdict;
+  }
+
+  /**
+   * Every device admission recorded since the last call (`DeviceEvent`), oldest first, and forgets
+   * them. Computed in Rust from the signed commits this device merged - never from the server - and
+   * kept in the sealed MLS state until taken, so the UI that will show "a device was added" is one
+   * caller of this (decided by the user 2026-10-22; the UI is owed).
+   */
+  async takeDeviceEvents(): Promise<DeviceEvent[]> {
+    return this.takeDeviceEventsNative();
+  }
+
   async addMember(
     groupId: string,
-    keyPackageBytes: Uint8Array,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
   ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
+    // REFUSED BEFORE THE LOCK, NOT INSIDE IT: a package the binding or the pin refuses would make
+    // Rust stage nothing and answer with a sentence; the type is decided here, from the verdict.
+    const verdict = await this.vetKeyPackage(device.keyPackage, device.userId, device.deviceId);
+    if (!verdictAdmits(verdict) && isDeviceTrustRefusal(verdict)) {
+      throw new DeviceTrustRefusedError(verdict, device.userId, device.deviceId);
+    }
     const result = await this.runCommitTransaction(
       groupId,
       async () => {
-        const staged = await this.stageAddMembers(groupId, [keyPackageBytes]);
+        const staged = await this.stageAddMembers(groupId, [
+          { keyPackage: device.keyPackage, identity: `${device.userId}:${device.deviceId}` },
+        ]);
         return {
           commit: staged.commit,
           welcome: staged.welcome,
@@ -4738,7 +4911,7 @@ export abstract class BaseMlsService implements IMlsService {
 
   async addMembersBulk(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>,
+    devices: Array<{ keyPackage: Uint8Array; deviceId: string; userId: string }>,
     excludeDeviceIds?: string[]
   ): Promise<{
     welcome?: Uint8Array;
@@ -4751,7 +4924,7 @@ export abstract class BaseMlsService implements IMlsService {
       async () => {
         const staged = await this.stageAddMembers(
           groupId,
-          devices.map((d) => d.keyPackage)
+          devices.map((d) => ({ keyPackage: d.keyPackage, identity: `${d.userId}:${d.deviceId}` }))
         );
         return {
           commit: staged.commit,

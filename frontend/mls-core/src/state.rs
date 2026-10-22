@@ -33,6 +33,18 @@ pub struct PersistedState {
     /// #[serde(default)] ensures compatibility with states saved before this field was added.
     #[serde(default)]
     pub forgotten_group_min_epochs: HashMap<String, u64>,
+    /// The signature key each device identity was first seen with (`crate::device_trust`).
+    /// `#[serde(default)]`: a state written before pins existed loads with none, and its trees are
+    /// pinned at that load. An older build reading this state ignores the field and drops it on its
+    /// next write - the pins are then re-seeded from the trees at the next upgrade.
+    #[serde(default)]
+    pub device_pins: Vec<crate::device_trust::PersistedPin>,
+    /// Device admissions seen in merged commits and not yet taken (`crate::device_trust`).
+    #[serde(default)]
+    pub device_events: Vec<crate::device_trust::DeviceEvent>,
+    /// Users seen leaving a group's tree in merged commits (`crate::device_trust::Departure`).
+    #[serde(default)]
+    pub device_departures: Vec<crate::device_trust::Departure>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -48,6 +60,9 @@ pub(crate) struct PersistedStateSer<'a> {
     #[serde(with = "crate::byte_compat::bytes_vec")]
     pub(crate) group_ids: &'a [Vec<u8>],
     pub(crate) forgotten_group_min_epochs: &'a HashMap<String, u64>,
+    pub(crate) device_pins: &'a [crate::device_trust::PersistedPin],
+    pub(crate) device_events: &'a [crate::device_trust::DeviceEvent],
+    pub(crate) device_departures: &'a [crate::device_trust::Departure],
 }
 
 // Struct request wrapper for serialization
@@ -162,6 +177,15 @@ pub struct MlsManager {
     /// Set by forget_group to prevent a stale Welcome (from a device itself behind on epoch)
     /// from putting this device back on the wrong branch.
     pub(crate) forgotten_group_min_epochs: HashMap<String, u64>,
+
+    /// Pinned device signature keys and pending device events - see [`crate::device_trust`].
+    pub(crate) device_trust: crate::device_trust::DeviceTrust,
+
+    /// Groups joined by an external commit not yet merged. Their tree is pinned at the MERGE - once
+    /// the server accepted the join - never at the join: a refused join's tree came from a GroupInfo
+    /// nobody vouched for. In memory only: a restart before the merge leaves the tree to the
+    /// load-time seed, which pins only the trees the state actually holds.
+    pub(crate) pending_external_joins: std::collections::HashSet<String>,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
 }
@@ -697,12 +721,56 @@ impl MlsManager {
                 }
             }
 
+            let mut device_trust = crate::device_trust::DeviceTrust::from_persisted(
+                state.device_pins,
+                state.device_events,
+                state.device_departures,
+            );
+            // THE TREES THIS STATE ALREADY HOLDS ARE FIRST SIGHT. Every leaf in them was admitted by
+            // a commit this device merged; a state written before pins existed holds none, and an
+            // identity pinned since is left untouched. Cheap - one credential parse per leaf - and
+            // idempotent, so it runs on every load rather than behind a version flag.
+            // This device's own key first, so a manager with no group yet holds the same pins
+            // after a reload as before it.
+            device_trust.seed_from_tree(&[(
+                0,
+                String::from_utf8_lossy(credential.identity()).to_string(),
+                keypair.public().to_vec(),
+            )]);
+            let mut seeded = 0usize;
+            for group in groups.values() {
+                if device_trust.seed_from_tree(&crate::device_trust::leaf_keys(group)) {
+                    seeded += 1;
+                }
+            }
+            if seeded > 0 {
+                log::info!(
+                    "load_or_create: pinned the device keys of {seeded} group tree(s) seen before pins existed"
+                );
+            }
+            {
+                let held_leaves: Vec<_> = groups
+                    .values()
+                    .flat_map(crate::device_trust::leaf_keys)
+                    .collect();
+                let own = String::from_utf8_lossy(credential.identity()).to_string();
+                let mut held: std::collections::HashSet<&str> =
+                    held_leaves.iter().map(|(_, id, _)| id.as_str()).collect();
+                held.insert(own.as_str());
+                device_trust.prune_absent(&held);
+                let held_groups: std::collections::HashSet<&str> =
+                    groups.keys().map(String::as_str).collect();
+                device_trust.prune_departures(&held_groups);
+            }
+
             let manager = Self {
                 provider,
                 keypair,
                 credential,
                 groups,
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
+                device_trust,
+                pending_external_joins: Default::default(),
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -804,12 +872,22 @@ impl MlsManager {
             let credential =
                 BasicCredential::new(format!("{}:{}", user_id, device_id).into_bytes());
 
+            // This device's own key is the first one it pins - see `crate::device_trust`.
+            let mut device_trust = crate::device_trust::DeviceTrust::default();
+            device_trust.seed_from_tree(&[(
+                0,
+                format!("{}:{}", user_id, device_id),
+                keypair.public().to_vec(),
+            )]);
+
             Ok(Self {
                 provider,
                 keypair,
                 credential,
                 groups: HashMap::new(),
                 forgotten_group_min_epochs: HashMap::new(),
+                device_trust,
+                pending_external_joins: Default::default(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
             })
         }
@@ -858,11 +936,17 @@ impl MlsManager {
         group_ids.sort();
 
         // 4. Encode the global state without copying storage_values
+        let device_pins = self.device_trust.persisted_pins();
+        let device_events = self.device_trust.persisted_events();
+        let device_departures = self.device_trust.persisted_departures();
         let persisted = PersistedStateSer {
             identity_bundle: &bundle_bytes,
             storage_values: &storage_lock,
             group_ids: &group_ids,
             forgotten_group_min_epochs: &self.forgotten_group_min_epochs,
+            device_pins: &device_pins,
+            device_events: &device_events,
+            device_departures: &device_departures,
         };
 
         let mut final_bytes = Vec::new();

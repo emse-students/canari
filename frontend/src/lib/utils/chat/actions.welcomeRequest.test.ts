@@ -2,6 +2,11 @@ import type { Conversation } from '$lib/types';
 import { handleWelcomeRequest } from './actions';
 import { recordWelcomeSent, resetWelcomeSent } from './welcomeSent';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
+import { resetReportedRefusedDeviceSkips } from '$lib/mls-client/refusedDevices';
+import {
+  DeviceTrustRefusedError,
+  resetReportedDeviceTrustRefusals,
+} from '$lib/mls-client/deviceTrust';
 
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
@@ -297,5 +302,134 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
       '[KICK] Stale leaf legit-user:dev-1 removed from g-kick-clean'
     );
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('PARTIALLY'));
+  });
+});
+
+// THE REPLACEMENT IS VETTED BEFORE THE LEAF IT REPLACES IS REMOVED. A device that lost its state
+// comes back under its old id with a new key nothing vouches for: the Add would refuse it, and a
+// kick taken first would have removed the device from the group for nothing.
+describe('handleWelcomeRequest - a re-add the device key cannot justify', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetWelcomeSent();
+    resetReportedDeviceTrustRefusals();
+    resetReportedRefusedDeviceSkips();
+  });
+
+  const requester = (overrides = {}) =>
+    createMlsServiceStub({
+      getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
+      getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:dev-1']),
+      ...overrides,
+    });
+  const run = (
+    groupId: string,
+    mlsService: ReturnType<typeof createMlsServiceStub>,
+    log = vi.fn()
+  ) =>
+    handleWelcomeRequest({
+      mlsService,
+      storage: null,
+      userId: 'me',
+      deviceKeyB64: 'pin',
+      conversations: activeConversations(groupId),
+      log,
+      requesterUserId: 'legit-user',
+      requesterDeviceId: 'dev-1',
+      groupId,
+    });
+
+  it('kicks nothing and adds nothing when the package carries a key never pinned for the device', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = requester({
+      vetKeyPackage: vi.fn().mockResolvedValue('signature-key-changed'),
+    });
+
+    await run('g-trust-changed', mlsService);
+
+    expect(mlsService.vetKeyPackage).toHaveBeenCalledWith(
+      new Uint8Array([7]),
+      'legit-user',
+      'dev-1'
+    );
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  it('kicks nothing for a package that names another device', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = requester({
+      vetKeyPackage: vi.fn().mockResolvedValue('identity-mismatch'),
+    });
+
+    await run('g-trust-mismatch', mlsService);
+
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('still kicks and re-adds a device whose key is the pinned one', async () => {
+    const mlsService = requester({
+      vetKeyPackage: vi.fn().mockResolvedValue('pinned'),
+      addMember: vi
+        .fn()
+        .mockResolvedValue({ welcome: new Uint8Array([1]), ratchetTree: new Uint8Array([2]) }),
+    });
+
+    await run('g-trust-pinned', mlsService);
+
+    expect(mlsService.removeMemberDevice).toHaveBeenCalled();
+    expect(mlsService.addMember).toHaveBeenCalledWith(
+      'g-trust-pinned',
+      { keyPackage: new Uint8Array([7]), userId: 'legit-user', deviceId: 'dev-1' },
+      ['legit-user:dev-1']
+    );
+  });
+
+  it('says a refusal raised by the Add once, as a refusal and not as a failure', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.fn();
+    const mlsService = requester({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self']),
+      addMember: vi
+        .fn()
+        .mockRejectedValue(new DeviceTrustRefusedError('identity-mismatch', 'legit-user', 'dev-1')),
+    });
+
+    await run('g-trust-add', mlsService, log);
+
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('[WELCOME_REQ] Error for'));
+    expect(mlsService.sendWelcome).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  // THE NEXT REQUEST SPENDS NO KEYPACKAGE: a key change under a kept id is refused again by every
+  // package of that device, so it is remembered and the requester is told what lifts it.
+  it('fetches nothing for a requester already refused for a changed key', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mlsService = requester({
+      vetKeyPackage: vi.fn().mockResolvedValue('signature-key-changed'),
+    });
+
+    await run('g-trust-remembered', mlsService);
+    await run('g-trust-remembered', mlsService);
+
+    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(1);
+    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('re-enrols under a new id'));
+    error.mockRestore();
+    warn.mockRestore();
   });
 });

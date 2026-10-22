@@ -26,7 +26,11 @@ import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
 import { welcomeSentAt } from '$lib/utils/chat/welcomeSent';
 import { ensureConversationForServerGroup } from '$lib/utils/chat/serverGroupConversation';
 import { retireConversation } from '$lib/utils/chat/conversations';
-import { refusalIsTemporary, refusalRetiresInvitation } from '$lib/mls-client/deviceKeyPackage';
+import {
+  refusalIsTemporary,
+  refusalRetiresInvitation,
+  type DeviceKeyPackage,
+} from '$lib/mls-client/deviceKeyPackage';
 import {
   classifyServerStatus,
   decideAbsentGroupFate,
@@ -41,6 +45,17 @@ import {
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import {
+  DeviceTrustRefusedError,
+  isDeviceTrustRefusal,
+  reportDeviceTrustRefusal,
+  verdictAdmits,
+} from '$lib/mls-client/deviceTrust';
+import {
+  isRefusedDevice,
+  recordRefusedDevice,
+  reportRefusedDeviceSkipped,
+} from '$lib/mls-client/refusedDevices';
 
 /**
  * Whether `userId:deviceId`'s leaf is in OUR copy of `groupId`'s ratchet tree.
@@ -198,6 +213,13 @@ export async function processPendingInvitations(params: {
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
 
       for (const inv of currentPending) {
+        // A DEVICE THIS ONE REFUSED FOR A CHANGED KEY IS NOT FETCHED AGAIN: every package it has
+        // carries the same key, so a fetch would only spend one. The row stays (it is this member's
+        // judgement), and the line names who can lift it (`refusedDevices.ts`).
+        if (isRefusedDevice({ userId, deviceId: myDeviceId }, inv.userId, inv.deviceId)) {
+          reportRefusedDeviceSkipped('[PENDING]', groupId, inv.userId, inv.deviceId);
+          continue;
+        }
         try {
           // Fetch fresh KeyPackage for the pending device. fetchUserDevices only returns
           // devices active within the last 30 days; fall back to fetchDeviceKeyPackage for
@@ -205,7 +227,9 @@ export async function processPendingInvitations(params: {
           // Best-effort (`.catch(() => [])`) : a network error here must not short-circuit
           // the fetchDeviceKeyPackage fallback below (empty list => try the fallback).
           const devices = await mlsService.fetchUserDevices(inv.userId).catch(() => []);
-          let targetDevice = devices.find((d) => d.deviceId === inv.deviceId);
+          let targetDevice: DeviceKeyPackage | undefined = devices.find(
+            (d) => d.deviceId === inv.deviceId
+          );
           if (!targetDevice) {
             const answer = await mlsService.fetchDeviceKeyPackage(inv.userId, inv.deviceId);
 
@@ -310,9 +334,11 @@ export async function processPendingInvitations(params: {
           // or roll back on reject. A rejected commit throws WITHOUT advancing the local epoch (no
           // fork) and is handled by the outer catch as a benign retryable failure; the Welcome is
           // only sent once the commit is accepted. [[C7]]
-          const result = await mlsService.addMember(groupId, targetDevice.keyPackage, [
-            `${inv.userId}:${inv.deviceId}`,
-          ]);
+          const result = await mlsService.addMember(
+            groupId,
+            { keyPackage: targetDevice.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
+            [`${inv.userId}:${inv.deviceId}`]
+          );
 
           // Register member on server (upsert GroupMember row), keeping server state up to date.
           await mlsService.registerMember(groupId, inv.userId);
@@ -345,6 +371,14 @@ export async function processPendingInvitations(params: {
             log(`[HISTORY_BUNDLE] History send error to ${inv.userId}: ${String(e)}`)
           );
         } catch (e) {
+          // A REFUSED KEY IS NOT A RETRYABLE FAILURE AND RETIRES NOTHING: the package names
+          // another device, or this device's key changed with nothing to prove it. The row stays,
+          // because the refusal is this member's judgement and not a fact about the device.
+          if (e instanceof DeviceTrustRefusedError) {
+            reportDeviceTrustRefusal('[PENDING]', groupId, e);
+            recordRefusedDevice({ userId, deviceId: myDeviceId }, e);
+            continue;
+          }
           const errStr = String(e);
 
           // Device already a member: invitation fulfilled (its leaf is already in our MLS tree).
@@ -921,6 +955,14 @@ export async function handleWelcomeRequest(params: {
       return;
     }
 
+    // A requester this device refused for a changed key is not fetched again, and is told by the
+    // line what lifts it (`refusedDevices.ts`). Before the anti-livelock count: it is not an attempt.
+    const ownDevice = { userId, deviceId: mlsService.getDeviceId() };
+    if (isRefusedDevice(ownDevice, requesterUserId, requesterDeviceId)) {
+      reportRefusedDeviceSkipped('[WELCOME_REQ]', groupId, requesterUserId, requesterDeviceId);
+      return;
+    }
+
     // Anti-livelock guard: limits repeated re-adds of the same device within a sliding
     // window. If the invitee loops (their published KeyPackages are orphaned from their
     // private key -> NoMatchingKeyPackage client-side), re-adding is pointless and would
@@ -943,7 +985,9 @@ export async function handleWelcomeRequest(params: {
     // welcome_request until generateKeyPackage has succeeded.
     // Best-effort: a network error must not short-circuit the fetchDeviceKeyPackage fallback.
     const devices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
-    let targetDevice = devices.find((d) => d.deviceId === requesterDeviceId);
+    let targetDevice: DeviceKeyPackage | undefined = devices.find(
+      (d) => d.deviceId === requesterDeviceId
+    );
     if (!targetDevice) {
       // fetchUserDevices applies a 30-day cutoff: the requesting device may be absent
       // (old device reconnecting). Retry via fetchDeviceKeyPackage, which has no cutoff -
@@ -983,6 +1027,27 @@ export async function handleWelcomeRequest(params: {
       log,
     });
     if (leafPresent === true) {
+      // THE REPLACEMENT IS VETTED BEFORE THE LEAF IT REPLACES IS REMOVED. A device that lost its
+      // state comes back under the same id with a NEW signature key, and nothing proves that key
+      // is the device's (the old one went with the state): the Add would refuse it, and the kick
+      // would already have taken the device out of the group. A refused package kicks nothing.
+      const verdict = await mlsService.vetKeyPackage(
+        targetDevice.keyPackage,
+        requesterUserId,
+        requesterDeviceId
+      );
+      if (!verdictAdmits(verdict)) {
+        if (isDeviceTrustRefusal(verdict)) {
+          const refusal = new DeviceTrustRefusedError(verdict, requesterUserId, requesterDeviceId);
+          reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, refusal);
+          recordRefusedDevice(ownDevice, refusal);
+        } else {
+          log(
+            `[WELCOME_REQ] KeyPackage for ${requesterDeviceId.slice(0, 12)}... refused (${verdict}) - no kick, no re-add`
+          );
+        }
+        return;
+      }
       // WHICH OF THE TWO CAUSES THIS REPAIRS, said from where it is already known: a Welcome this
       // session sent to the device long enough ago to be past the cooldown means the device lost
       // or failed to process it; none sent here means the leaf came from another path or session.
@@ -1029,9 +1094,11 @@ export async function handleWelcomeRequest(params: {
     // the inviter self and the invitee) or roll back on reject. A rejected commit throws WITHOUT
     // advancing the local epoch (no fork) and is handled by the outer catch as a retryable failure;
     // the Welcome is only sent once the commit is accepted. [[C7]]
-    const result = await mlsService.addMember(groupId, targetDevice.keyPackage, [
-      `${requesterUserId}:${requesterDeviceId}`,
-    ]);
+    const result = await mlsService.addMember(
+      groupId,
+      { keyPackage: targetDevice.keyPackage, userId: requesterUserId, deviceId: requesterDeviceId },
+      [`${requesterUserId}:${requesterDeviceId}`]
+    );
     await mlsService.registerMember(groupId, requesterUserId);
 
     // Send the Welcome + post-merge ratchet tree to the requesting device.
@@ -1061,6 +1128,11 @@ export async function handleWelcomeRequest(params: {
       to: digestIdentity(requesterUserId, requesterDeviceId),
     }).catch((e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`));
   } catch (e) {
+    if (e instanceof DeviceTrustRefusedError) {
+      reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, e);
+      recordRefusedDevice({ userId, deviceId: mlsService.getDeviceId() }, e);
+      return;
+    }
     const errStr = String(e);
 
     if (errStr.includes('ALREADY_MEMBER')) {

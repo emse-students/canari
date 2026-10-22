@@ -67,9 +67,12 @@ afterEach(() => {
 });
 
 describe('userIdOfLeaf', () => {
-  it('splits on the first colon, because a device id may contain one and a user id may not', () => {
+  it('splits on the one colon an identity may carry, and refuses one with more', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(userIdOfLeaf('alice:web-alice-abcd-1234')).toBe('alice');
-    expect(userIdOfLeaf('alice:tauri:weird')).toBe('alice');
+    // Matches Rust's binding check: a second colon names nobody (`leafIdentity.ts`).
+    expect(userIdOfLeaf('alice:tauri:weird')).toBe('');
+    error.mockRestore();
   });
 
   it('answers the whole string when there is no colon at all', () => {

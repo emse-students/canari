@@ -27,6 +27,22 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## New-device notices: decided by the user on 2026-10-22 - the UI is owed
+
+No mandatory approval of a new device. The client that processes the signed change produces the
+notices itself, never a server message: the account owner gets an alert "a new device was added to
+your account" (in the app and as a local notification on the phone), and contacts see a discreet
+line "X added a device" in private conversations only - 1:1 and groups, never communities or salons.
+
+Built: the event (`DeviceEvent`, `IMlsService.takeDeviceEvents()`), the audience rule
+(`deviceEventAudience()`) and the dedup key (`deviceEventKey()`) - see
+[mls-protocol](protocols/mls-protocol.md#device-binding). Owed, as its own work package: the
+Paraglide strings, the conversation line, the in-app alert, and the native local notification when
+the Android or iOS background path merges such a commit (its events wait in `mls.bin` until the app
+takes them), deduplicated per device. Also owed there: telling a device's owner, in the app, that
+peers refuse to re-add it under its kept id until it is reset (today only the members' logs say
+so, once per session).
+
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 
 The adding device pushes its whole local store to the invitee (`sendFullHistoryBundle`, up to 5

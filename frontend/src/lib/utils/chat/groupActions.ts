@@ -22,6 +22,18 @@ import {
 } from './historyManifest';
 import { holdsGroupState } from './groupUsability';
 import { groupSkippedByReason, type SkippedDevice } from '$lib/mls-client/skippedKeyPackage';
+import { isDeviceTrustRefusal } from '$lib/mls-client/deviceTrust';
+
+/**
+ * The trust refusals this session already reported, as `deviceId|reason` - a sweep re-derives the
+ * same refusal at every pass, and an error repeated at each one is a line its reader learns to skip.
+ */
+const reportedSkippedRefusals = new Set<string>();
+
+/** Test seam: forgets which skipped-package refusals were already reported. */
+export function resetReportedSkippedRefusals(): void {
+  reportedSkippedRefusals.clear();
+}
 
 /**
  * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
@@ -43,6 +55,27 @@ export function warnSkippedKeyPackages(
   // ONE LINE PER CAUSE: an expired package (wait for its owner to reconnect) and a bad signature
   // (a defect) want opposite fixes, and a count collapsed them.
   for (const { reason, deviceIds } of groupSkippedByReason(skipped)) {
+    // A REFUSED IDENTITY OR KEY IS NOT A STALE PACKAGE: republishing cannot lift it, because the
+    // package named another device or a key this device never pinned for it (`deviceTrust.ts`).
+    if (isDeviceTrustRefusal(reason)) {
+      // Said once per device and reason per session; a repeat goes to `debug`.
+      const fresh = deviceIds.filter((id) => !reportedSkippedRefusals.has(`${id}|${reason}`));
+      if (fresh.length === 0) {
+        console.debug(
+          `${tag}[TRUST] KeyPackage ${reason} again for ${deviceIds.join(', ')} on ${groupId} (already reported)`
+        );
+        continue;
+      }
+      for (const id of fresh) reportedSkippedRefusals.add(`${id}|${reason}`);
+      log(
+        `${tag} ${fresh.length} device(s) REFUSED (${reason}): ${fresh.join(', ')} - not invited; nothing proves the package is that device's.`
+      );
+      console.error(
+        `${tag}[TRUST] KeyPackage ${reason} for ${fresh.length} device(s) on ${groupId}:`,
+        fresh
+      );
+      continue;
+    }
     log(
       `${tag} ${deviceIds.length} device(s) skipped (KeyPackage ${reason}): ${deviceIds.join(', ')} - not invited, republish a fresh KeyPackage.`
     );
