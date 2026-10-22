@@ -23,7 +23,7 @@ Canari est la plateforme officielle de messagerie et de vie associative de l'EMS
 - **Communautes** : chaque association dispose d'un espace (workspace) avec des channels thematiques.
 - **Fil d'actualites** : publications des associations, sondages, partage de documents.
 - **Formulaires** : inscription aux evenements, adhesion, paiement en ligne ou en especes.
-- **Boutique** : achat de produits aupres des associations (paiement Stripe ou especes).
+- **Boutique** : achat de produits aupres des associations (paiement en ligne Lydia ou especes).
 
 ## Disponibilite
 
