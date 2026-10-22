@@ -335,8 +335,9 @@ draft. `frontend/src/lib/live/liveCrypto.ts` exports `sealLiveSegment(keyHex, li
 - **WebCrypto, not WASM.** WASM holds the MLS group state; media content keys are SubtleCrypto
   (`$lib/mediaCrypto`), and the live key is a media key of that kind, so the media path is the
   precedent. The key is imported non-extractable for each call.
-- **Random IVs under one key** are safe at this volume: a 2 s segment over the longest live the
-  server allows is a few thousand seals per key, far below GCM's 2^32 random-IV bound.
+- **Random IVs under one key** are safe at this volume: a live hour at an uncapped audience is
+  about 2 million chat seals plus 1800 segments (2 s each), about 2^21 seals under one key, so the
+  collision chance for random 96-bit IVs is about 2^-55, and far below GCM's 2^32 random-IV bound.
 
 **A segment that does not open is a `LiveSegmentOpenError`**, typed at the throw, `reason`
 `malformed` (under 28 bytes) or `unauthentic` (GCM refused it: wrong key, live, index, version, or a

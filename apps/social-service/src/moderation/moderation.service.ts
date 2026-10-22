@@ -98,10 +98,21 @@ export interface LiveChatLineState {
   integrity: ReportedLineIntegrity;
 }
 
+/** Bound of the once-per-(reporter, message) mismatch log set. */
+const MISMATCH_LOG_CAP = 1000;
+
 /** Handles content reports and user mute/unmute moderation actions. */
 @Injectable()
 export class ModerationService {
   private readonly logger = new Logger(ModerationService.name);
+
+  /**
+   * (reporter, message) pairs whose chat-line mismatch was already logged at warn. The refusal rolls
+   * its transaction back, so no durable row can say "already told"; this process-local set is
+   * bounded by clearing at MISMATCH_LOG_CAP, never by a timer. After a restart or a clear the next
+   * attempt warns once more, which costs one line.
+   */
+  private readonly loggedMismatches = new Set<string>();
 
   constructor(
     @InjectRepository(ContentReport)
@@ -228,6 +239,8 @@ export class ModerationService {
    * and not yet purged) and be visible to the reporter by the rule of a post
    * (`liveVisibleToViewerSql`), with no block between them - otherwise 404 `LIVE_NOT_FOUND`, the
    * live API's own answer, so the report route is no oracle for a live the reporter could not watch.
+   * A viewer the broadcaster removed from that live (`live_removed_viewers`) gets the same 404: the
+   * server refuses them the live's key, so a line they report was never legitimately shown to them.
    * A live ended and purged has nothing left to review (no replay, L3): report the person instead.
    * Returns the broadcaster (stored as the report's `reportedUserId`) and the live key, which a chat
    * line's report checks the reporter's plaintext with. `FOR SHARE` when `lock`: the live's row then
@@ -240,9 +253,11 @@ export class ModerationService {
     lock = false
   ): Promise<{ broadcasterId: string; liveKey: string }> {
     if (!UUID_RE.test(liveId)) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
-    const rows: { broadcasterId: string; liveKey: string; visible: boolean }[] =
+    const rows: { broadcasterId: string; liveKey: string; visible: boolean; removed: boolean }[] =
       await manager.query(
-        `SELECT "broadcasterId", "liveKey", ${liveVisibleToViewerSql('lives', '$2')} AS visible
+        `SELECT "broadcasterId", "liveKey", ${liveVisibleToViewerSql('lives', '$2')} AS visible,
+                EXISTS (SELECT 1 FROM live_removed_viewers r
+                         WHERE r."liveId" = lives.id AND r."viewerId" = $2) AS removed
            FROM lives WHERE id = $1${lock ? ' FOR SHARE' : ''}`,
         [liveId.toLowerCase(), reporterId]
       );
@@ -250,6 +265,7 @@ export class ModerationService {
     if (
       !live ||
       live.visible !== true ||
+      live.removed === true ||
       (await isBlockedBetween(manager, reporterId, live.broadcasterId))
     ) {
       this.logger.debug(
@@ -258,6 +274,18 @@ export class ModerationService {
       throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     }
     return { broadcasterId: live.broadcasterId, liveKey: live.liveKey };
+  }
+
+  /** Warns the FIRST time a reporter's text mismatches a line, then drops repeats to debug. */
+  private logMismatchOnce(reporterId: string, messageId: string, line: string): void {
+    const key = `${reporterId}|${messageId}`;
+    if (this.loggedMismatches.has(key)) {
+      this.logger.debug(`${line} (repeat)`);
+      return;
+    }
+    if (this.loggedMismatches.size >= MISMATCH_LOG_CAP) this.loggedMismatches.clear();
+    this.loggedMismatches.add(key);
+    this.logger.warn(line);
   }
 
   /**
@@ -342,7 +370,9 @@ export class ModerationService {
         line.sealed
       );
       if (opened !== text) {
-        this.logger.warn(
+        this.logMismatchOnce(
+          data.reporterId,
+          messageId,
           `[REPORT] chat line ${messageId} on ${liveId}: the reporter's text does not match the ` +
             `sealed line (${opened === null ? 'the line does not open' : 'another text'}) - refused`
         );
@@ -490,7 +520,9 @@ export class ModerationService {
               : r.contentType === 'live'
                 ? (lives.get(r.contentId)?.broadcasterName ?? null)
                 : r.contentType === 'live_chat'
-                  ? (chatLines.get(r.id)?.text ?? null)
+                  ? chatLines.get(r.id)?.integrity.content === 'verified'
+                    ? chatLines.get(r.id)!.text
+                    : null
                   : null,
       postId:
         r.contentType === 'comment' ? (commentPreviews.get(r.contentId)?.postId ?? null) : null,

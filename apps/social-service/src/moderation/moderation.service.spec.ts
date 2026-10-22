@@ -1,5 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import type { Repository } from 'typeorm';
+import { Logger } from '@nestjs/common';
+import * as signature from '../lives/live-report-signature';
 import { ModerationService } from './moderation.service';
 import type { ContentReport } from './entities/content-report.entity';
 import type { UserModeration } from './entities/user-moderation.entity';
@@ -231,6 +233,129 @@ describe('ModerationService - reports', () => {
         })
       ).rejects.toMatchObject({ status: 404, response: { code: 'LIVE_NOT_FOUND' } });
     });
+  });
+
+  describe('a live chat line (WP-L8b)', () => {
+    const LIVE = '22222222-2222-4222-8222-222222222222';
+    const MSG = '33333333-3333-4333-8333-333333333333';
+    const CLIENT = '44444444-4444-4444-8444-444444444444';
+    const report = {
+      reporterId: 'alice',
+      contentType: 'live_chat' as const,
+      contentId: MSG,
+      reason: 'spam' as const,
+      message: 'hello',
+    };
+
+    /** Answers each statement by its table, so the order of the service's reads is free. */
+    function answer(opts: { removed?: boolean }) {
+      reportRepo.manager.query.mockImplementation((sql: string) => {
+        if (sql.includes('"liveId"::text FROM live_chat_messages')) return [{ liveId: LIVE }];
+        if (sql.includes('FROM lives'))
+          return [
+            {
+              broadcasterId: 'bob',
+              liveKey: Buffer.alloc(32),
+              visible: true,
+              removed: !!opts.removed,
+            },
+          ];
+        if (sql.includes('FROM live_chat_messages'))
+          return [
+            {
+              seq: 1,
+              authorId: 'carol',
+              clientId: CLIENT,
+              sealed: Buffer.alloc(40),
+              createdAt: new Date(),
+            },
+          ];
+        return [];
+      });
+    }
+
+    beforeEach(() => {
+      process.env.LIVE_REPORT_SIGNING_KEY = 'k'.repeat(64);
+    });
+
+    it('answers 404 LIVE_NOT_FOUND to a viewer the broadcaster removed from that live', async () => {
+      answer({ removed: true });
+
+      await expect(service.createReport(report)).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'LIVE_NOT_FOUND' },
+      });
+      expect(reportRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('logs a content mismatch at warn ONCE per (reporter, message), then at debug', async () => {
+      answer({});
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation();
+
+      for (let i = 0; i < 3; i++) {
+        await expect(service.createReport(report)).rejects.toMatchObject({
+          status: 400,
+          response: { code: 'LIVE_CHAT_REPORT_MISMATCH' },
+        });
+      }
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(debug.mock.calls.filter((c) => String(c[0]).includes('(repeat)'))).toHaveLength(2);
+
+      await expect(service.createReport({ ...report, reporterId: 'dave' })).rejects.toMatchObject({
+        status: 400,
+      });
+      expect(warn).toHaveBeenCalledTimes(2);
+      jest.restoreAllMocks();
+    });
+
+    it.each([
+      ['verified', 'hello'],
+      ['altered', null],
+      ['key-rotated', null],
+      ['unverifiable', null],
+    ] as const)(
+      'shows the staff preview of a kept line only when its content is verified (%s)',
+      async (content, preview) => {
+        reportRepo.find.mockResolvedValue([
+          {
+            id: 'r1',
+            contentType: 'live_chat',
+            contentId: MSG,
+            reporterId: 'alice',
+            reason: 'spam',
+          },
+        ]);
+        reportRepo.manager.query.mockImplementation((sql: string) =>
+          sql.includes('live_chat_reported_lines')
+            ? [
+                {
+                  reportId: 'r1',
+                  liveId: LIVE,
+                  messageId: MSG,
+                  seq: 1,
+                  authorId: 'carol',
+                  clientId: CLIENT,
+                  sealedSha256: 'x',
+                  text: Buffer.from('hello'),
+                  messageCreatedAt: new Date(),
+                  keptAt: new Date(),
+                  authorName: 'Carol',
+                },
+              ]
+            : []
+        );
+        jest
+          .spyOn(signature, 'verifyReportedLine')
+          .mockReturnValue({ content, author: 'verified', reporter: 'verified' });
+
+        const [row] = await service.listAllReports();
+
+        expect(row.contentPreview).toBe(preview);
+        expect(row.liveChat?.text).toBe('hello');
+        jest.restoreAllMocks();
+      }
+    );
   });
 
   describe('listAllReports', () => {
