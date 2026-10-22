@@ -1,6 +1,7 @@
 import { ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { FindOperator, Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
+import { installRemovalLock } from './removal-lock.fixture-spec';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -86,17 +87,8 @@ describe('removals bounded by the actor', () => {
       find: jest.fn(() => Promise.resolve(members)),
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
       save: jest.fn((m: unknown) => Promise.resolve(m)),
-      manager: { transaction: jest.fn() },
     };
-    // The removal lock's transaction hands out the same repositories; `query` takes the lock.
-    const tx = {
-      query: jest.fn().mockResolvedValue(undefined),
-      getRepository: (entity: unknown) =>
-        entity === ChannelMember ? memberRepo : entity === ChannelRole ? roleRepo : channelRepo,
-    };
-    memberRepo.manager.transaction.mockImplementation((work: (t: typeof tx) => unknown) =>
-      work(tx)
-    );
+    const removalLock = installRemovalLock({ memberRepo, roleRepo, channelRepo });
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
@@ -113,6 +105,7 @@ describe('removals bounded by the actor', () => {
       'cutOffKeyDistribution',
       'cutOffEveryPrivateChannel',
       'cutOffChannelKeyDistribution',
+      'evictFromChannelGroup',
       'hardDeleteWorkspace',
       'ensureChannelDistributionGroup',
       'retireChannelDistributionGroup',
@@ -126,7 +119,7 @@ describe('removals bounded by the actor', () => {
     jest
       .spyOn(service as never, 'writeDecisionsFor' as never)
       .mockResolvedValue(new Map() as never);
-    return { service, memberRepo, channelRepo, tx };
+    return { service, memberRepo, channelRepo, removalLock };
   }
 
   beforeEach(() => {
@@ -226,9 +219,9 @@ describe('removals bounded by the actor', () => {
     });
 
     it('checks, cuts off and saves under the community removal lock', async () => {
-      const { service, tx } = makeService();
+      const { service, removalLock } = makeService();
       await service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-member'));
-      expect(tx.query).toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'), [WS]);
+      expect(removalLock.lockQueries).toEqual([expect.stringContaining('pg_advisory_xact_lock')]);
     });
   });
 

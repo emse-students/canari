@@ -9,6 +9,7 @@ import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { ChannelMessageFanout } from './entities/channel-message-fanout.entity';
+import { DistributionEvictionOwed } from './entities/distribution-eviction-owed.entity';
 import { Workspace } from './entities/workspace.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 
@@ -21,6 +22,7 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
       ChannelMember,
       ChannelMessage,
       ChannelMessageFanout,
+      DistributionEvictionOwed,
       WorkspaceInvite,
     ]),
     HttpModule,

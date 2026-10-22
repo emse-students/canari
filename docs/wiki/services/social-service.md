@@ -1346,13 +1346,27 @@ longer a member has nothing to compare and is dropped. A consequence worth knowi
 holds only `channel.manage` cannot make a salon private while it would leave off someone who
 outranks them, unless that member is on the list.
 
-The check, the cut-offs and the save run in ONE transaction holding the community's removal lock
+The check and the save run in ONE transaction holding the community's removal lock
 (`withCommunityRemovalLock`: `pg_advisory_xact_lock` on `community_removal:<workspace id>`), and the
 gate reads the actor's and every target's membership and role rows `FOR SHARE`. A role change
 writing any of those rows waits for the removal to commit, and a removal that started after a role
 change waits for it and reads the committed roles - so what was compared is what holds when the
 removal is saved. Pinned by `removal-bound.integration.spec.ts`, which parks the gate on an
 uncommitted role change through `pg_blocking_pids`.
+
+**No call to chat-delivery is made while that lock is held.** The key-distribution evictions a
+removal causes are recorded as rows of `distribution_evictions_owed` (migration 106) in the same
+transaction - the community's group for a kick, each private salon's group the user leaves - and
+`settleOwedEvictions` makes the calls after the commit, deleting each row once its call succeeded.
+A failed call is logged at ERROR and its row stays owed; every later pass retries it: after each
+removal, at boot, and every minute. The minute is a trigger only - what is owed is read from the
+rows. A user the scope entitles again before the pass (re-invited, re-granted) is not evicted, and
+the row is closed with a warning. The message fan-out outbox (`channel_message_fanout`, migration
+093) was not reused: it is keyed by a message and cascades with it. Leaving a community or a salon,
+and an account deletion, still call chat-delivery before their save, outside any lock.
+
+A public salon made private gets its distribution group before the lock is taken; when the check
+then refuses, the salon stays public and the group is retired again.
 
 `workspace.manage` holds every permission, so an administrator keeps all of it. Pinned by
 `role-change-bound.spec.ts` and `removal-bound.spec.ts`.

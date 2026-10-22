@@ -27,6 +27,7 @@ import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
+import { DistributionEvictionOwed } from './entities/distribution-eviction-owed.entity';
 import type { RedisService } from '../common/redis';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -76,7 +77,15 @@ maybe('a removal against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Workspace, Channel, ChannelRole, ChannelMember, ChannelMessage, WorkspaceInvite],
+      entities: [
+        Workspace,
+        Channel,
+        ChannelRole,
+        ChannelMember,
+        ChannelMessage,
+        WorkspaceInvite,
+        DistributionEvictionOwed,
+      ],
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
@@ -98,7 +107,7 @@ maybe('a removal against PostgreSQL', () => {
     for (const name of [
       'cutOffKeyDistribution',
       'cutOffEveryPrivateChannel',
-      'cutOffChannelKeyDistribution',
+      'evictFromChannelGroup',
       'announceChannelAccessGranted',
     ]) {
       jest.spyOn(service as never, name as never).mockResolvedValue(undefined as never);
@@ -118,7 +127,11 @@ maybe('a removal against PostgreSQL', () => {
     await member('owner', ADMIN_ROLE);
     await member('salons', SALONS_ROLE);
     await member('kicker', MOD_ROLE);
-  });
+    // ITS OWN BUDGET, NOT JEST'S 5 s DEFAULT. This hook builds the schema - DDL on a server that may
+    // have just started - and on a fresh container that took from 0.2 s to 4.5 s here (measured
+    // 2026-10-22, 45 cold starts); past 5 s every test failed as "Exceeded timeout ... for a hook".
+    // The other integration specs give their setup the same kind of budget.
+  }, 60_000);
 
   afterAll(async () => {
     jest.restoreAllMocks();
@@ -247,5 +260,39 @@ maybe('a removal against PostgreSQL', () => {
       await other.client.query('ROLLBACK').catch(() => undefined);
       await other.client.end();
     }
+  });
+  it('records the eviction a salon removal owes, and calls it only after the commit', async () => {
+    // The call fails the first time: the removal stays committed, the row stays owed, and the next
+    // pass completes it. Neither call runs while any advisory lock is held.
+    await member('evicted', BASE_ROLE);
+    const id = await salon(['salons', 'evicted']);
+    await q(`UPDATE channels SET "distributionGroupId" = gen_random_uuid() WHERE id = $1`, [id]);
+    const owed = () =>
+      q(
+        `SELECT "userId" FROM distribution_evictions_owed WHERE kind = 'channel' AND "scopeId" = $1`,
+        [id]
+      );
+    const evict = (service as unknown as { evictFromChannelGroup: jest.Mock })
+      .evictFromChannelGroup;
+    const locksAtCall: number[] = [];
+    const advisoryLocks = async () =>
+      Number((await q(`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory'`))[0].n);
+    evict.mockImplementationOnce(async () => {
+      locksAtCall.push(await advisoryLocks());
+      throw new Error('chat-delivery down');
+    });
+
+    expect(await started(service.removeMemberFromChannel(id, 'evicted', 'salons')).outcome).toBe(
+      'allowed'
+    );
+    expect(await allowedOn(id)).toEqual(['salons']);
+    expect(await owed()).toEqual([{ userId: 'evicted' }]);
+
+    evict.mockImplementationOnce(async () => {
+      locksAtCall.push(await advisoryLocks());
+    });
+    expect(await service.settleOwedEvictions()).toBe(1);
+    expect(await owed()).toEqual([]);
+    expect(locksAtCall).toEqual([0, 0]);
   });
 });

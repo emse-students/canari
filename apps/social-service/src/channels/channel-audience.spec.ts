@@ -1,5 +1,6 @@
 import { Repository } from 'typeorm';
 import { ChannelService, channelIsReadableBy } from './channel.service';
+import { installRemovalLock } from './removal-lock.fixture-spec';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -95,21 +96,8 @@ describe('channel audience', () => {
     );
     const redis = { publishChannelEvent: jest.fn(() => Promise.resolve()) };
 
-    // The community removal lock runs its work in one transaction over these same repositories.
-    Object.assign(memberRepo, {
-      manager: {
-        transaction: (work: (tx: unknown) => unknown) =>
-          work({
-            query: () => Promise.resolve(undefined),
-            getRepository: (entity: unknown) =>
-              entity === ChannelMember
-                ? memberRepo
-                : entity === ChannelRole
-                  ? roleRepo
-                  : channelRepo,
-          }),
-      },
-    });
+    // The community removal lock and its owed evictions (`removal-lock.fixture-spec.ts`).
+    installRemovalLock({ memberRepo, roleRepo, channelRepo });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,

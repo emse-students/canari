@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
+import { installRemovalLock } from './removal-lock.fixture-spec';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -91,21 +92,8 @@ describe('ChannelService - the community distribution group', () => {
     const inviteRepo = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const redis = { publishChannelEvent: jest.fn(() => Promise.resolve()) };
 
-    // The community removal lock runs its work in one transaction over these same repositories.
-    Object.assign(memberRepo, {
-      manager: {
-        transaction: (work: (tx: unknown) => unknown) =>
-          work({
-            query: () => Promise.resolve(undefined),
-            getRepository: (entity: unknown) =>
-              entity === ChannelMember
-                ? memberRepo
-                : entity === ChannelRole
-                  ? roleRepo
-                  : channelRepo,
-          }),
-      },
-    });
+    // The community removal lock and its owed evictions (`removal-lock.fixture-spec.ts`).
+    const removalLock = installRemovalLock({ memberRepo, roleRepo, channelRepo });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,
@@ -119,7 +107,7 @@ describe('ChannelService - the community distribution group', () => {
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
 
-    return { service, workspaceRepo, channelRepo, roleRepo, memberRepo, redis };
+    return { service, workspaceRepo, channelRepo, roleRepo, memberRepo, redis, removalLock };
   }
 
   beforeEach(() => {
@@ -583,6 +571,77 @@ describe('ChannelService - the community distribution group', () => {
         `internal/mls/distribution-groups/workspace/${WORKSPACE}/members/u2`
       );
       expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: 'u2' });
+    });
+
+    /** A kick of plain member `u2` by administrator USER, with the reads it needs arranged. */
+    function arrangeKick() {
+      const made = makeService();
+      made.workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, name: WORKSPACE_NAME });
+      made.memberRepo.findOne
+        .mockResolvedValueOnce({ workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] })
+        .mockResolvedValueOnce({ workspaceId: WORKSPACE, userId: 'u2', roleIds: [] });
+      made.memberRepo.find.mockResolvedValue([
+        { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] },
+        { workspaceId: WORKSPACE, userId: 'u2', roleIds: [] },
+      ]);
+      made.roleRepo.find.mockResolvedValue([
+        { id: 'r-admin', permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE], priority: 10 },
+      ]);
+      return made;
+    }
+
+    it('calls chat-delivery only after the removal committed, never under the lock', async () => {
+      const { service, removalLock } = arrangeKick();
+      const underLock: boolean[] = [];
+      const answer = answerWith({ evicted: true, memberships: 1, queued: 0, routes: 1 });
+      global.fetch = jest.fn((...args: Parameters<typeof fetch>) => {
+        underLock.push(removalLock.lockHeld());
+        return answer(...args);
+      }) as never;
+
+      await service.kickFromWorkspace(WORKSPACE, 'u2', USER);
+
+      expect(removalLock.lockQueries).toHaveLength(1);
+      expect(underLock).toEqual([false]);
+      expect(removalLock.owed).toEqual([]);
+    });
+
+    it('keeps a failed eviction OWED after the commit, and a later pass completes it', async () => {
+      const { service, memberRepo, removalLock } = arrangeKick();
+      global.fetch = answerWith({ message: 'down' }, false) as never;
+
+      // The removal itself is committed: the call failing afterwards does not undo it.
+      await expect(service.kickFromWorkspace(WORKSPACE, 'u2', USER)).resolves.toEqual({
+        success: true,
+      });
+      expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: 'u2' });
+      expect(removalLock.owed).toEqual([
+        expect.objectContaining({ kind: 'workspace', scopeId: WORKSPACE, userId: 'u2' }),
+      ]);
+
+      global.fetch = answerWith({ evicted: true, memberships: 1, queued: 0, routes: 1 }) as never;
+      expect(await service.settleOwedEvictions()).toBe(1);
+
+      const [url] = (global.fetch as unknown as jest.Mock).mock.calls[0];
+      expect(String(url)).toContain(
+        `internal/mls/distribution-groups/workspace/${WORKSPACE}/members/u2`
+      );
+      expect(removalLock.owed).toEqual([]);
+    });
+
+    it('closes an owed eviction WITHOUT a call when the user is entitled again', async () => {
+      const { service, memberRepo, removalLock } = arrangeKick();
+      global.fetch = answerWith({ message: 'down' }, false) as never;
+      await service.kickFromWorkspace(WORKSPACE, 'u2', USER);
+      expect(removalLock.owed).toHaveLength(1);
+
+      // Re-invited before the pass: evicting now would cut a member off.
+      memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: 'u2', roleIds: [] });
+      global.fetch = jest.fn() as never;
+      expect(await service.settleOwedEvictions()).toBe(1);
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(removalLock.owed).toEqual([]);
     });
 
     it('refuses the last admin before it cuts anything off', async () => {
