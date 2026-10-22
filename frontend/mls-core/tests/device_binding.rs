@@ -923,9 +923,11 @@ fn one_batch_adds_one_leaf_per_canonical_device() {
 }
 
 /// A COMMIT ON A GROUP WHOSE EXTERNAL JOIN IS STILL PENDING IS NOT MERGED, so nothing is seeded from
-/// the tree the server served: the joiner holds no secret of that epoch until its own join merges.
+/// the tree the server served. Both commits were built on the same epoch and the joiner's group
+/// already stands at the epoch its own join creates, so the member's commit is dropped as a past
+/// handshake (`Ok(None)`), not refused with an error.
 #[test]
-fn a_members_commit_before_the_join_merges_is_refused_and_pins_nothing() {
+fn a_members_commit_before_the_join_merges_is_not_merged_and_pins_nothing() {
     let gid = "g-ext-pending-commit";
     let mut alice = device("alice", "dev1");
     let mut bob = device("bob", "dev1");
@@ -938,8 +940,11 @@ fn a_members_commit_before_the_join_merges_is_refused_and_pins_nothing() {
     carol.join_by_external_commit(&info).expect("stage join");
     let commit = remove(&mut alice, gid, "bob:dev1");
     let epoch = carol.get_epoch(gid).unwrap();
-    // Refused or dropped as unreadable - either way NOT merged: the epoch does not move.
-    let _ = carol.process_incoming_message(gid, &commit);
+    let outcome = carol.process_incoming_message(gid, &commit);
+    assert!(
+        matches!(outcome, Ok(None)),
+        "dropped as a past handshake: {outcome:?}"
+    );
     assert_eq!(carol.get_epoch(gid).unwrap(), epoch, "nothing merged");
     assert_eq!(
         carol.vet_key_package(
