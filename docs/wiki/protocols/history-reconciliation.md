@@ -776,15 +776,14 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   the next member 13.5 s. A joiner's span is unchanged.
 - Against a server that predates addressed answers, `sendFullHistoryBundle` still passes the invitee
   (`userIdOfLeaf(to)`) to `entitledHistorySelection`, whose filter is the union of gaps plus that one
-  person's withheld windows - safe as a broadcast only when the invitee is the newest person.
+  person's withheld windows.
 - Receiver hygiene: `dropOwnExcludedMessages` reads this device's own `withheld` windows, so an honest
   newcomer drops what precedes its arrival from any bundle it overhears.
 
 **Step A - every answer is addressed to the device that asked, and filtered for it (built
 2026-10-22).** The diff, the scrollback AND the push go to `recipientDevices = [to]` and are filtered
-on that reader's own `withheld` windows (`readerHistorySelection`), so a newcomer no longer receives
-an answer meant for a founding member's new device, and that new device is no longer starved by the
-union of everyone's gaps. The design, its six rules, what it protects against (an honest server and
+on that reader's own `withheld` windows (`readerHistorySelection`), so an answer reaches only the device
+that asked, and that device is not held to the union of everyone's gaps. The design, its six rules, what it protects against (an honest server and
 an honest answerer, nothing more: addressing is a routing control and MLS still encrypts for the whole
 group) and what it does not close are on
 [history-answer-addressing](history-answer-addressing.md), the only copy. **Owed: the rig row

@@ -346,8 +346,7 @@ describe('a Remove holds against a later re-add - every history sender withholds
  *
  * Carol joined the group at T_CAROL; Alice was there from the start. Every answer - the inviter's
  * push and an answer to a request alike - is addressed to its reader and withholds THAT reader's
- * span, so a push to Alice's NEW device carries Alice's whole past and Carol never receives it (step
- * A: before it, that push was a broadcast and Carol overheard it).
+ * span, so a push to Alice's NEW device carries Alice's whole past and goes to that device alone.
  */
 describe('every answer withholds the span before ITS READER arrived', () => {
   const T_ALICE = 1_600_000_000_000;

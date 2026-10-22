@@ -27,9 +27,9 @@
  * **A NEW MEMBER OF A GROUP CONVERSATION READS NOTHING FROM BEFORE THEIR ARRIVAL (user, 2026-10-21).**
  * That span cannot join a union - it would withhold everything older than the newest member, from
  * everyone - so it is applied for ONE person at a time: the reader of an addressed answer, the
- * INVITEE of a legacy broadcast push (`invitee` below), and this device's own user on receipt. What
- * is left open is the legacy broadcast alone: an older client, or a server predating addressed
- * answers, still broadcasts an answer meant for another member's new device.
+ * INVITEE of a legacy broadcast push (`invitee` below), and this device's own user on receipt. The
+ * legacy broadcast (an older client, or a server predating addressed answers) is filtered on the
+ * union of gaps and, on receipt, on the receiver's own windows.
  *
  * Design and what it does not cover: docs/wiki/protocols/history-reconciliation.md.
  */
@@ -291,7 +291,7 @@ export async function readerHistorySelection<M extends PlaceableMessage>(
     if (!warnedServerPredatesAddressing) {
       warnedServerPredatesAddressing = true;
       console.error(
-        `[HISTORY_ENTITLEMENT] the delivery service predates addressed history answers - answers are broadcast to the whole group and filtered on the union, so a newcomer can read what preceded their arrival from an answer meant for another member's device`
+        `[HISTORY_ENTITLEMENT] the delivery service predates addressed history answers - answers are broadcast to the whole group and filtered on the union of gaps`
       );
     }
     const kept = await entitledHistorySelection(groupId, messages, deps, push ? reader : undefined);

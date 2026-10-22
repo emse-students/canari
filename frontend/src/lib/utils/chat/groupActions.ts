@@ -819,10 +819,9 @@ export async function sendFullHistoryBundle(
   }
 
   // ADDRESSED TO THE INVITEE AND FILTERED ON THEIR OWN WINDOWS (step A; user, 2026-10-21: a new
-  // member of a group conversation reads nothing from before their arrival). It used to be a
-  // broadcast filtered on the union plus the invitee's span, which was safe only when the invitee is
-  // the NEWEST person: a push to a new device of a founding member carries everything since that
-  // member arrived, and a newcomer overheard it. A 1:1 has no span (the server's rule).
+  // member of a group conversation reads nothing from before their arrival). The push is sent
+  // to the invitee's device alone and carries that reader's own span. A 1:1 has no span (the server's
+  // rule).
   const outcome = await sendBundleChunks(
     groupId,
     messages,
@@ -865,7 +864,7 @@ export type HistoryStoreDeps = HistorySendDeps & {
  * on that reader's windows. An addressed answer that names no ask (`requestId`, or `join` on the
  * push) is not sent - the receiver would refuse it, and the sender's ratchet would have spent a
  * generation every other member skips for nothing. A device the server cannot address (a session of
- * it predates the capability) is sent nothing: broadcasting instead is the leak this step closes.
+ * it predates the capability) is sent nothing: an addressed answer is never turned into a broadcast.
  *
  * @returns the {@link BundleOutcome} - whether anything could be sent, and how much was.
  */

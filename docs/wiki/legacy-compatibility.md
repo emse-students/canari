@@ -179,8 +179,8 @@ error is an ordinary refusal. A server version, not a client floor.
 **Shim (2026-10-22):** a server that predates step A refuses an addressed conversation frame, so
 every history answer - the push, the diff, the scrollback - is sent as the broadcast it was before,
 filtered on the union of gaps (plus the invitee's span on a push).
-**What it costs:** a newcomer can read, from an answer meant for another member's new device, what
-preceded their arrival; an honest one drops it on receipt. It is a FALLBACK and accuses: one
+**What it costs:** against such a server the answer is a broadcast, filtered on the union of gaps
+and, on the receiving side, on that receiver's own windows. It is a FALLBACK and accuses: one
 `console.error` per session.
 **Removal condition:** every estate's chat-delivery answers `addressedAnswers: true`; then the branch
 and `entitledHistorySelection` go. A server version, not a client floor.
@@ -191,8 +191,8 @@ and `entitledHistorySelection` go. A server version, not a client floor.
 answers by broadcast. A new answerer sends nothing addressed to an ask with no id
 (`sendBundleChunks`), and a new receiver drops from a broadcast bundle what falls in its own windows
 (`dropOwnExcludedMessages`).
-**What it costs:** an older client's broadcast answer still reaches a newcomer, and an older asker is
-answered only by older peers.
+**What it costs:** a product choice: an older client is answered only by older peers, until
+`minClientVersion` carries step A.
 **Removal condition:** `minClientVersion` is a release carrying step A; then the broadcast branch of
 the `history_bundle` receiver and the no-id refusal line can go.
 
