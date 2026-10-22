@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.util.Log
+import androidx.core.content.pm.ShortcutManagerCompat
 import fr.emse.canari.share.ShareRules
 import fr.emse.canari.share.SharedFileName
 import org.json.JSONArray
@@ -50,7 +51,8 @@ object IncomingShare {
     fun capture(context: Context, intent: Intent, onReady: () -> Unit) {
         val text = sharedText(intent)
         val uris = sharedUris(intent)
-        Log.i(TAG, "share received: action=${intent.action} type=${intent.type} text=${text.length} chars, ${uris.size} stream(s)")
+        val target = suggestedTarget(intent)
+        Log.i(TAG, "share received: action=${intent.action} type=${intent.type} text=${text.length} chars, ${uris.size} stream(s), suggestion=${target != null}")
         if (text.isEmpty() && uris.isEmpty()) {
             Log.w(TAG, "share carried neither text nor a stream - ignored")
             return
@@ -58,7 +60,7 @@ object IncomingShare {
         val appContext = context.applicationContext
         Thread {
             try {
-                if (runCapture(appContext, text, uris, intent.type)) onReady()
+                if (runCapture(appContext, text, uris, intent.type, target)) onReady()
             } catch (e: Exception) {
                 Log.e(TAG, "share capture failed: ${e.message}", e)
             }
@@ -77,7 +79,7 @@ object IncomingShare {
      * its files, and a staging in progress is never cut.
      */
     @Synchronized
-    private fun runCapture(context: Context, text: String, uris: List<Uri>, intentType: String?): Boolean {
+    private fun runCapture(context: Context, text: String, uris: List<Uri>, intentType: String?, target: String?): Boolean {
         val shareId = UUID.randomUUID().toString()
         val dir = File(inboxDir(context), shareId).also { it.mkdirs() }
         try {
@@ -114,6 +116,7 @@ object IncomingShare {
                 .put("text", text)
                 .put("files", files)
                 .put("refused", refused)
+            if (target != null) payload.put("target", target)
             // CLAIMED, NOT PEEKED AT: the older manifest is renamed away first, so the page cannot drain
             // it between this capture reading its id and deleting its copies.
             val replaced = claimPending(context)
@@ -223,6 +226,18 @@ object IncomingShare {
         if (orphans.isEmpty()) return
         Log.i(TAG, "sweeping ${orphans.size} share(s) left by an earlier process")
         for (entry in orphans) deleteDir(entry, "orphan share")
+    }
+
+    /**
+     * The conversation suggestion the member picked in the share sheet (sharing lot S5), as the
+     * shortcut id the page published (`c:<conversation id>`), or null. Only a HINT: the page
+     * preselects it only if the signed-in account holds that conversation.
+     */
+    private fun suggestedTarget(intent: Intent): String? {
+        val id = intent.getStringExtra(ShortcutManagerCompat.EXTRA_SHORTCUT_ID) ?: return null
+        if (id.startsWith("c:") && id.length in 3..200) return id
+        Log.w(TAG, "a shortcut id not of the suggestion shape was ignored")
+        return null
     }
 
     private fun sharedText(intent: Intent): String {

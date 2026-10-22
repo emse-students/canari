@@ -8,6 +8,8 @@ const COMMANDS: &[&str] = &[
     "share_text",
     "share_staged",
     "discard_shared_out",
+    "publish_share_targets",
+    "clear_share_targets",
 ];
 
 fn main() {

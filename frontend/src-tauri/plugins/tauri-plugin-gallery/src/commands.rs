@@ -60,7 +60,9 @@ pub(crate) fn sweep_staged<R: Runtime>(app: &AppHandle<R>) {
             continue;
         }
         match std::fs::remove_file(entry.path()) {
-            Ok(()) => log::warn!("[gallery] sweep: removed a save interrupted by a restart: {name:?}"),
+            Ok(()) => {
+                log::warn!("[gallery] sweep: removed a save interrupted by a restart: {name:?}")
+            }
             Err(e) => log::warn!("[gallery] sweep: {name:?} was not removed: {e}"),
         }
     }
@@ -146,7 +148,7 @@ pub(crate) async fn discard_video<R: Runtime>(
 
 /// A file name the page chose, used as the last segment of a cache path: never a path itself.
 fn valid_name(name: &str) -> bool {
-    !name.is_empty() && name.len() <= 200 && !name.contains(['/', '\\']) &&!name.contains("..")
+    !name.is_empty() && name.len() <= 200 && !name.contains(['/', '\\']) && !name.contains("..")
 }
 
 /// A plain `type/subtype`, as the receiving app is told: nothing that could carry parameters or
@@ -263,7 +265,63 @@ fn remove_staged(path: &std::path::Path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             log::debug!("[gallery] {} was not staged", path.display());
         }
-        Err(e) => log::warn!("[gallery] the staged copy {} was not removed: {e}", path.display()),
+        Err(e) => log::warn!(
+            "[gallery] the staged copy {} was not removed: {e}",
+            path.display()
+        ),
+    }
+}
+
+/// One conversation suggested in Android's share sheet, as the page sends it: the shortcut id
+/// (`c:<conversation id>`), the name shown, and the deep link a tap from the launcher opens. The
+/// native side validates each and drops a malformed one (`ShareTargets.kt`).
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ShareTarget {
+    pub id: String,
+    pub label: String,
+    pub link: String,
+}
+
+/// Replaces the conversations Android's share sheet suggests (sharing lot S5) with `targets`, most
+/// recent first. Returns how many the platform took. Android only: the iOS suggestions need the
+/// Share Extension (lot S4).
+///
+/// The labels are conversation names: they are NOT logged, only their count.
+#[command]
+pub(crate) async fn publish_share_targets<R: Runtime>(
+    app: AppHandle<R>,
+    targets: Vec<ShareTarget>,
+) -> crate::Result<u32> {
+    log::debug!(
+        "[gallery] publish_share_targets: {} target(s)",
+        targets.len()
+    );
+    #[cfg(target_os = "android")]
+    {
+        app.gallery()
+            .publish_share_targets(targets)
+            .map(|o| o.published)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, targets);
+        Err(crate::Error::AndroidOnly)
+    }
+}
+
+/// Removes every conversation this app suggested to Android's share sheet - at sign-out, and when
+/// the member turns the suggestions off. Returns how many were removed.
+#[command]
+pub(crate) async fn clear_share_targets<R: Runtime>(app: AppHandle<R>) -> crate::Result<u32> {
+    log::debug!("[gallery] clear_share_targets");
+    #[cfg(target_os = "android")]
+    {
+        app.gallery().clear_share_targets().map(|o| o.removed)
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err(crate::Error::AndroidOnly)
     }
 }
 
@@ -309,7 +367,9 @@ mod tests {
     #[test]
     fn a_shared_mime_is_a_plain_type_and_subtype() {
         assert!(valid_mime("image/jpeg"));
-        assert!(valid_mime("application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+        assert!(valid_mime(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ));
         assert!(valid_mime("image/svg+xml"));
         assert!(!valid_mime("image"));
         assert!(!valid_mime("text/plain; charset=utf-8"));

@@ -6,6 +6,7 @@
 const SOUNDS_KEY = 'canari_sounds_enabled';
 const VIBRATIONS_KEY = 'canari_vibrations_enabled';
 const POST_FEED_KEY = 'canari_preferred_post_feed';
+const SHARE_SUGGESTIONS_KEY = 'canari_share_suggestions_enabled';
 
 function readBool(key: string): boolean {
   if (typeof localStorage === 'undefined') return true;
@@ -28,6 +29,7 @@ function readString(key: string): string | null {
 let soundsEnabled = $state(readBool(SOUNDS_KEY));
 let vibrationsEnabled = $state(readBool(VIBRATIONS_KEY));
 let preferredPostFeed = $state(readString(POST_FEED_KEY));
+let shareSuggestionsEnabled = $state(readBool(SHARE_SUGGESTIONS_KEY));
 
 function persist(key: string, value: boolean | string): void {
   if (typeof localStorage !== 'undefined') {
@@ -52,6 +54,20 @@ export const settings = {
   setVibrationsEnabled(value: boolean): void {
     vibrationsEnabled = value;
     persist(VIBRATIONS_KEY, value);
+  },
+
+  /**
+   * Whether Android's share sheet suggests this account's recent conversations (sharing lot S5).
+   * ON by default (user, 2026-10-22). Per device, like the two toggles above; the suggestions
+   * themselves are erased at every sign-out whatever this says (`shareTargets.ts`).
+   */
+  get shareSuggestionsEnabled(): boolean {
+    return shareSuggestionsEnabled;
+  },
+  /** Persists the share-suggestions preference to localStorage. */
+  setShareSuggestionsEnabled(value: boolean): void {
+    shareSuggestionsEnabled = value;
+    persist(SHARE_SUGGESTIONS_KEY, value);
   },
 
   /**

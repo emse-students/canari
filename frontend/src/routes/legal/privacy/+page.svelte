@@ -585,6 +585,16 @@
             <td>Jusqu'à leur effacement</td>
           </tr>
           <tr>
+            <td>Suggestions du menu Partager (application Android)</td>
+            <td>
+              Les noms de vos conversations récentes, et leur identifiant interne, sont confiés au
+              système Android pour les proposer dans son menu Partager ; le système et l'écran
+              d'accueil peuvent donc les afficher. Désactivable dans Paramètres &gt; Préférences
+            </td>
+            <td>Effacées à la déconnexion, à la désactivation du réglage ou à la désinstallation</td
+            >
+          </tr>
+          <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>
             <td>
               Créé par les versions de l'application antérieures à octobre 2026, qui l'envoyaient à

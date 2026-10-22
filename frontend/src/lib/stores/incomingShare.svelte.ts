@@ -36,6 +36,12 @@ export interface SharedFileEntry {
 export interface IncomingSharePayload {
   text: string;
   files: SharedFileEntry[];
+  /**
+   * The conversation id the member picked among Android's share-sheet suggestions (lot S5), or
+   * null. A HINT for the picker, which preselects it only when the signed-in account holds that
+   * conversation - never a destination by itself: the member still confirms.
+   */
+  suggested?: string | null;
 }
 
 let pending = $state<IncomingSharePayload | null>(null);
@@ -67,8 +73,11 @@ export const incomingShare = {
         'replaced by a newer share'
       );
     }
-    appendLog(`[SHARE] offered: ${text.length} chars, ${payload.files.length} file(s)`);
-    pending = { text, files: payload.files };
+    const suggested = payload.suggested ?? null;
+    appendLog(
+      `[SHARE] offered: ${text.length} chars, ${payload.files.length} file(s), suggestion=${suggested !== null}`
+    );
+    pending = { text, files: payload.files, suggested };
     target = null;
     return true;
   },

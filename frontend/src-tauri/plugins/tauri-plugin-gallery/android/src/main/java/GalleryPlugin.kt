@@ -23,6 +23,7 @@ import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import androidx.core.content.FileProvider
 import java.io.File
+import java.util.concurrent.Executors
 
 private const val TAG = "GalleryPlugin"
 private const val ALBUM = "Canari"
@@ -192,6 +193,56 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
             } catch (e: Exception) {
                 Log.e(TAG, "the share sheet did not open", e)
                 invoke.reject("the share sheet did not open: ${e.message}")
+            }
+        }
+    }
+
+    @InvokeArg
+    class ShareTargetArg {
+        lateinit var id: String
+        lateinit var label: String
+        lateinit var link: String
+    }
+
+    @InvokeArg
+    class PublishShareTargetsArgs {
+        lateinit var targets: Array<ShareTargetArg>
+    }
+
+    /**
+     * Share suggestions (lot S5) are binder calls into the shortcut service: off the UI thread, and
+     * on ONE thread, so a clear issued after a publish is applied after it.
+     */
+    private val shareTargetsThread = Executors.newSingleThreadExecutor()
+
+    /** Replaces the conversations Android's share sheet suggests (`ShareTargets.publish`). */
+    @Command
+    fun publishShareTargets(invoke: Invoke) {
+        val args = invoke.parseArgs(PublishShareTargetsArgs::class.java)
+        Log.d(TAG, "publishShareTargets: ${args.targets.size} target(s)")
+        val targets = args.targets.map { ShareTargets.Target(it.id, it.label, it.link) }
+        shareTargetsThread.execute {
+            try {
+                val published = ShareTargets.publish(activity, targets)
+                invoke.resolve(JSObject().put("published", published))
+            } catch (e: Exception) {
+                Log.e(TAG, "publishShareTargets failed", e)
+                invoke.reject("publishShareTargets failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Removes every conversation this app suggested to the share sheet (`ShareTargets.clear`). */
+    @Command
+    fun clearShareTargets(invoke: Invoke) {
+        Log.d(TAG, "clearShareTargets")
+        shareTargetsThread.execute {
+            try {
+                val removed = ShareTargets.clear(activity)
+                invoke.resolve(JSObject().put("removed", removed))
+            } catch (e: Exception) {
+                Log.e(TAG, "clearShareTargets failed", e)
+                invoke.reject("clearShareTargets failed: ${e.message}")
             }
         }
     }

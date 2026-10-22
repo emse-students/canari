@@ -4,18 +4,15 @@
   import { Search, Forward, Hash, Send } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
-  import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import {
+    channelCommunities,
+    shareDestinationPresentation,
+    type WorkspaceLike,
+  } from '$lib/sharing/shareDestinations';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import type { Conversation } from '$lib/types';
-  import { SvelteMap } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
-
-  /** Minimal community-workspace shape needed to resolve a channel's community. */
-  interface WorkspaceLike {
-    name: string;
-    channels: { id: string }[];
-  }
 
   interface Props {
     open: boolean;
@@ -39,6 +36,12 @@
      * app shared into Canari (`share`). Only the title and the row icon differ.
      */
     variant?: 'forward' | 'share';
+    /**
+     * A conversation id to offer first and highlighted - the suggestion the member picked in
+     * Android's share sheet (sharing lot S5). Only a row this list holds is highlighted; the member
+     * still taps it.
+     */
+    preselectedId?: string | null;
   }
 
   let {
@@ -50,18 +53,13 @@
     onClose,
     onSelect,
     variant = 'forward',
+    preselectedId = null,
   }: Props = $props();
 
   let query = $state('');
 
   /** Channel conversation ID → community (workspace) name, for disambiguating same-named salons. */
-  const channelCommunity = $derived.by(() => {
-    const map = new SvelteMap<string, string>();
-    for (const ws of channelWorkspaces) {
-      for (const ch of ws.channels) map.set(ch.id, ws.name);
-    }
-    return map;
-  });
+  const channelCommunity = $derived(channelCommunities(channelWorkspaces));
 
   interface Candidate {
     key: string;
@@ -82,17 +80,7 @@
    */
   let resolvedPeerNames = $state<Record<string, string>>({});
 
-  const presentationOf = (c: Conversation) =>
-    resolveConversationListPresentation(
-      {
-        id: c.id,
-        name: c.name,
-        contactName: c.contactName ?? c.id,
-        conversationType: c.conversationType,
-        directPeerId: c.directPeerId,
-      },
-      currentUserId
-    );
+  const presentationOf = (c: Conversation) => shareDestinationPresentation(c, currentUserId);
 
   $effect(() => {
     for (const [key, c] of conversations) {
@@ -134,9 +122,15 @@
       )
       .sort(
         (a, b) =>
-          (a.community ?? '').localeCompare(b.community ?? '') || a.label.localeCompare(b.label)
+          Number(isPreselected(b)) - Number(isPreselected(a)) ||
+          (a.community ?? '').localeCompare(b.community ?? '') ||
+          a.label.localeCompare(b.label)
       );
   });
+
+  function isPreselected(cand: Candidate): boolean {
+    return preselectedId !== null && cand.conversation.id === preselectedId;
+  }
 
   function pick(cand: Candidate) {
     onSelect(cand.key, cand.conversation, cand.label);
@@ -169,7 +163,9 @@
           <button
             type="button"
             onclick={() => pick(cand)}
-            class="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+            aria-current={isPreselected(cand) ? 'true' : undefined}
+            class="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5
+ {isPreselected(cand) ? 'ring-cn-yellow bg-cn-yellow/10 ring-2' : ''}"
           >
             {#if cand.conversation.conversationType === 'direct'}
               <Avatar

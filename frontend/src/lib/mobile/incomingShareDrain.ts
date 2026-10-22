@@ -15,6 +15,7 @@ import { Log } from '$lib/utils/Log';
 import { refusedBeforePreparation } from '$lib/media';
 import { discardSharedFiles } from '$lib/mobile/sharedInbox';
 import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.svelte';
+import { conversationIdFromShareTarget } from '$lib/sharing/shareTargetsNative';
 
 /** The native manifest, validated. */
 export interface SharedManifest {
@@ -22,6 +23,12 @@ export interface SharedManifest {
   files: SharedFileEntry[];
   /** Streams the native side did not keep (unreadable, too large, past a cap, not the sender's). */
   refused: number;
+  /**
+   * The conversation the member picked among the share sheet's suggestions (sharing lot S5), from
+   * the shortcut id `IncomingShare.kt` carried; null when none, or not of the suggestion shape. A
+   * HINT only: the picker preselects it only if the signed-in account holds that conversation.
+   */
+  target: string | null;
 }
 
 /**
@@ -53,6 +60,7 @@ export function parseSharedManifest(raw: string): SharedManifest | null {
     text: typeof record.text === 'string' ? record.text : '',
     files,
     refused: typeof record.refused === 'number' && record.refused > 0 ? record.refused : 0,
+    target: conversationIdFromShareTarget(record.target),
   };
 }
 
@@ -77,9 +85,9 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
   }
   Log.d(
     'IncomingShare',
-    `drained: ${manifest.text.length} chars, ${manifest.files.length} file(s), ${manifest.refused} refused natively`
+    `drained: ${manifest.text.length} chars, ${manifest.files.length} file(s), ${manifest.refused} refused natively, suggestion=${manifest.target !== null}`
   );
-  incomingShare.offer({ text: manifest.text, files: manifest.files });
+  incomingShare.offer({ text: manifest.text, files: manifest.files, suggested: manifest.target });
   return { lost: manifest.refused };
 }
 
