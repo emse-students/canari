@@ -988,7 +988,7 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | POST | `/api/mls/groups/:groupId/members` | Add member record to group |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
-| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused }`) |
+| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused, revoked }`) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 
@@ -1035,6 +1035,12 @@ production cost is the round trips (81 x ~62 ms on the console above), which the
 one. Pinned by `members.controller.group-rosters.spec.ts` (one query, refusal per group) and
 `strayLeaves.test.ts` (one roster read for every held group, after every tree; a leaver who
 rejoined after the batch read is spared).
+
+**And the revoked devices of each roster (2026-10-22).** The answer carries `revoked`: per ANSWERED
+group, the `userId:deviceId` of every active revocation (`activeRevocationWhere`) among that group's
+roster users, read in ONE `revoked_device` query over every answered user. A refused or unanswered
+group names nobody. The client removes exactly those leaves
+([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
 
 ### Messaging
 

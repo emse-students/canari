@@ -74,10 +74,17 @@ payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
 
 A QUESTION first: measure that group's unreadable-frame rate against the communities' and decide
-whether a group conversation above some size should be backed by Graine. Leaves never self-update
-either, so MLS post-compromise security is never exercised. A periodic update commit would heal a
-stolen leaf, at the price of more commits, which is the desync class itself
+whether a group conversation above some size should be backed by Graine
 ([dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#dms-and-group-conversations)).
+
+## P2 - Community key groups: no periodic leaf refresh and no revoked-device removal yet (2026-10-22)
+
+Conversations refresh their leaves and drop revoked devices
+([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)). Key groups are excluded from
+the refresh because any key-group epoch change rotates every sender's seed today; owed once seeds
+rotate on departures only (a self-update is a non-departure epoch). Their roster collector
+(`reconcileDistributionGroupRoster`) does not read the `revoked` answer yet; owed: the same allowlist
+there (a removal IS a departure, so it rotates, as it should).
 
 ## P3 - Names in the clear: conversation, community and salon names (user, 2026-10-21, not designed)
 

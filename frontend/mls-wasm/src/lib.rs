@@ -705,6 +705,30 @@ impl WasmMlsClient {
         Ok(commit_and_base(&commit, &group_info))
     }
 
+    /// Stages a refresh of this device's own leaf: an empty commit with a path and NO proposal
+    /// (`MlsManager::stage_self_update`). Returns [commit, group_info] like `remove_members`; merged
+    /// or cleared by the caller on the server's answer.
+    #[wasm_bindgen]
+    pub fn self_update(&mut self, group_id: String) -> Result<js_sys::Array, JsValue> {
+        log::info!("self_update on group: {}", group_id);
+        let (commit, group_info) = self
+            .manager
+            .stage_self_update(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(commit_and_base(&commit, &group_info))
+    }
+
+    /// When this device's leaf in `group_id` was minted, in Unix seconds, or `undefined` once a
+    /// commit replaced it (`MlsManager::own_leaf_minted_at`). An `f64`, not a `u64`: wasm-bindgen
+    /// would hand a `u64` to JS as a BigInt, and a seconds count fits a double exactly.
+    #[wasm_bindgen]
+    pub fn own_leaf_minted_at(&self, group_id: String) -> Result<Option<f64>, JsValue> {
+        self.manager
+            .own_leaf_minted_at(&group_id)
+            .map(|minted| minted.map(|s| s as f64))
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).
     /// Advances the local epoch. Counterpart of `clear_pending_commit`. [[C7]] Option A:
     /// validate-then-merge.

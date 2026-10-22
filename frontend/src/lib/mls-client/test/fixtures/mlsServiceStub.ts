@@ -109,7 +109,9 @@ export function createMlsServiceStub(
       async (_groupId: string, forUserId?: string) =>
         new Map(forUserId ? [[forUserId.toLowerCase(), []]] : [])
     ),
-    getGroupRosters: vi.fn().mockResolvedValue({ rosters: new Map(), refused: new Set() }),
+    getGroupRosters: vi
+      .fn()
+      .mockResolvedValue({ rosters: new Map(), refused: new Set(), revoked: new Map() }),
     getUserGroups: vi.fn().mockResolvedValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),
     getPendingInvitations: vi.fn().mockResolvedValue([]),

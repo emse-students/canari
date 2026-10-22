@@ -44,6 +44,15 @@ import { holdsGroupState } from './groupUsability';
  * it; a `memberRemoved` notice here would tell them a second time, in the words of an eviction, that
  * somebody chose to leave.
  *
+ * **AND THE LEAF OF A REVOKED DEVICE, WHOSE OWNER STAYS.** Revoking a device (`DELETE
+ * mls/devices/:userId/:deviceId`) purges its routing and cannot touch a tree, so its leaf kept every
+ * future epoch for whoever holds the device. The same batch read names, per group, the revoked
+ * devices of the people on its roster; a leaf carrying EXACTLY one of those identities is removed
+ * by device (`removeMemberDevice`), after the departures, on a fresh tree and a fresh answer. It is
+ * an ALLOWLIST - a destructive control acts only on what the server states is revoked, never on a
+ * leaf the routing table merely forgot (a device fresh-start looks exactly like that) - and this
+ * device never removes itself: a revoked device is wiped by its own revocation path.
+ *
  * @returns the groups whose tree a removal changed - empty when every tree already agrees, when this
  *   device holds none of them, or when nothing could be decided.
  */
@@ -82,6 +91,7 @@ export async function removeStrayLeaves(
   );
 
   // 3. The batch diff, which only says where a removal MAY be owed.
+  const selfIdentity = `${userId}:${mlsService.getDeviceId()}`;
   const changed: string[] = [];
   for (const [groupId, leafIdentities] of trees) {
     if (batch.refused.has(groupId)) {
@@ -93,10 +103,109 @@ export async function removeStrayLeaves(
     const rosterUserIds = batch.rosters.get(groupId);
     if (!rosterUserIds) continue; // not answered: counted in the line above
     const diff = diffRosterAgainstTree({ leafIdentities, rosterUserIds, selfUserId: userId });
-    if (diff.strayUserIds.length === 0) continue;
-    if (await removeStrays(mlsService, groupId, userId, log)) changed.push(groupId);
+    const revoked = revokedLeavesIn({
+      leafIdentities,
+      revokedIdentities: batch.revoked.get(groupId) ?? [],
+      selfIdentity,
+    });
+    if (revoked.selfListed) {
+      log(
+        `[STRAY] ${groupId.slice(0, 8)}... THIS device is listed as revoked - its own leaf is left ` +
+          'to the revocation path, never removed by itself'
+      );
+    }
+    let changedHere = false;
+    if (diff.strayUserIds.length > 0 && (await removeStrays(mlsService, groupId, userId, log))) {
+      changedHere = true;
+    }
+    if (
+      revoked.identities.length > 0 &&
+      (await removeRevokedLeaves(mlsService, groupId, selfIdentity, log))
+    ) {
+      changedHere = true;
+    }
+    if (changedHere) changed.push(groupId);
   }
   return changed;
+}
+
+/**
+ * Which leaves of a tree belong to a device the server names as revoked. PURE.
+ *
+ * An ALLOWLIST: a leaf is a candidate only when its WHOLE identity (`userId:deviceId`) is in the
+ * revoked list - device ids are client-generated, so two users can hold the same one. This device
+ * is never a candidate: it is reported (`selfListed`) and left to its own revocation path, which
+ * wipes it - a device that removed its own leaf would only strand the group it holds.
+ */
+export function revokedLeavesIn(input: {
+  leafIdentities: string[];
+  revokedIdentities: string[];
+  selfIdentity: string;
+}): { identities: string[]; selfListed: boolean } {
+  const revoked = new Set(input.revokedIdentities);
+  const identities = input.leafIdentities.filter(
+    (identity) => identity !== input.selfIdentity && revoked.has(identity)
+  );
+  return {
+    identities: [...new Set(identities)],
+    selfListed:
+      revoked.has(input.selfIdentity) && input.leafIdentities.includes(input.selfIdentity),
+  };
+}
+
+/**
+ * Decides `groupId` again on a fresh tree and a fresh revocation answer - in that order, for the
+ * reason {@link removeStrayLeaves} gives - and commits ONE Remove for every revoked device still in
+ * the tree; true when it landed. A fresh answer that does not name the group removes nobody.
+ */
+async function removeRevokedLeaves(
+  mlsService: IMlsService,
+  groupId: string,
+  selfIdentity: string,
+  log: (msg: string) => void
+): Promise<boolean> {
+  const short = groupId.slice(0, 8);
+  let identities: string[];
+  try {
+    const leafIdentities = await mlsService.getGroupMemberIdentities(groupId);
+    const fresh = await mlsService.getGroupRosters([groupId]);
+    ({ identities } = revokedLeavesIn({
+      leafIdentities,
+      revokedIdentities: fresh.revoked.get(groupId) ?? [],
+      selfIdentity,
+    }));
+  } catch (e) {
+    log(
+      `[STRAY] ${short}... could not confirm the revoked leaves on a fresh read: ${String(e)} - ` +
+        'nobody removed'
+    );
+    return false;
+  }
+  if (identities.length === 0) {
+    log(
+      `[STRAY] ${short}... no revoked leaf left on a fresh read (removed by another member, or no ` +
+        'longer named) - nothing to commit'
+    );
+    return false;
+  }
+
+  log(`[STRAY] ${short}... ${identities.length} revoked device(s) still hold a leaf - removing`);
+  try {
+    await mlsService.removeMemberDevice(groupId, identities);
+  } catch (e) {
+    // Loud for the reason `removeStrays` gives: until this lands, the revoked device can still
+    // read every new epoch. The next connection decides again.
+    log(
+      `[STRAY] ${short}... could not remove ${identities.length} revoked device(s): ` +
+        `${String(e)} - their leaves stay`
+    );
+    return false;
+  }
+  log(
+    `[STRAY] ${short}... is now at epoch ${mlsService.getEpoch(groupId)} - the revoked leaves are ` +
+      'gone from the tree'
+  );
+  return true;
 }
 
 /**

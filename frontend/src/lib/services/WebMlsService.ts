@@ -1224,6 +1224,19 @@ export class WebMlsService extends BaseMlsService {
     return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
   }
 
+  /** WASM client wrapper - stages a refresh of this device's own leaf (no merge). */
+  protected async stageSelfUpdate(
+    groupId: string
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
+    const res = this.client.self_update(groupId);
+    return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
+  }
+
+  /** WASM client wrapper - when this device's leaf was minted, `null` once a commit replaced it. */
+  protected async ownLeafMintedAt(groupId: string): Promise<number | null> {
+    return this.client.own_leaf_minted_at(groupId) ?? null;
+  }
+
   /** WASM client wrapper - merges the pending staged commit (server accepted). */
   protected async mergePendingCommit(groupId: string): Promise<void> {
     this.client.merge_pending_commit(groupId);

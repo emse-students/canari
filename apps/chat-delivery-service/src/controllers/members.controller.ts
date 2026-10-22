@@ -24,6 +24,8 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { RevokedDevice } from '../entities/revoked-device.entity';
+import { activeRevocationWhere } from '../utils/revocation';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import {
@@ -75,6 +77,8 @@ export class MembersController {
     private groupInfoRepo: Repository<MlsGroupInfo>,
     @InjectRepository(QueuedMessage)
     private queuedMessageRepo: Repository<QueuedMessage>,
+    @InjectRepository(RevokedDevice)
+    private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly dataSource: DataSource
   ) {}
@@ -590,6 +594,13 @@ export class MembersController {
    *
    * A path of its own (`mls/group-rosters`) rather than one under `mls/groups/`, so it can never be
    * matched by a `mls/groups/:groupId/...` route.
+   *
+   * **`revoked`: THE REVOKED DEVICES OF EACH ANSWERED ROSTER, as `userId:deviceId`.** Revoking a
+   * device purges its routing, and its LEAF stays in every tree until a member commits a Remove -
+   * which only a member can do, and only for a leaf it KNOWS is revoked. So the same read that tells
+   * the client which users left tells it which devices of the remaining users are revoked, under the
+   * one active-revocation rule (`activeRevocationWhere`). Never for a refused group. A client that
+   * predates the field ignores it.
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/group-rosters')
@@ -597,7 +608,11 @@ export class MembersController {
     @Body() body: { groupIds?: unknown } | undefined,
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string
-  ): Promise<{ rosters: Record<string, string[]>; refused: string[] }> {
+  ): Promise<{
+    rosters: Record<string, string[]>;
+    refused: string[];
+    revoked: Record<string, string[]>;
+  }> {
     const requested = body?.groupIds;
     if (!Array.isArray(requested)) {
       throw new BadRequestException('groupIds must be an array');
@@ -606,7 +621,7 @@ export class MembersController {
       throw new BadRequestException(`At most ${GROUP_ROSTERS_MAX_GROUPS} groups per request`);
     }
     const groupIds = [...new Set(requested.map((g) => sanitizeQueryValue(g, 'groupId')))];
-    if (groupIds.length === 0) return { rosters: {}, refused: [] };
+    if (groupIds.length === 0) return { rosters: {}, refused: [], revoked: {} };
 
     const rows = await this.groupMemberRepo.find({
       where: { groupId: In(groupIds) },
@@ -631,10 +646,35 @@ export class MembersController {
       }
       rosters[groupId] = [...members];
     }
+
+    // ONE query over every answered roster's users; nothing is asked for a refused group.
+    const answeredUsers = [...new Set(Object.values(rosters).flat())];
+    const revokedRows =
+      answeredUsers.length === 0
+        ? []
+        : await this.revokedDeviceRepo.find({
+            where: activeRevocationWhere({ userId: In(answeredUsers) }),
+            select: { userId: true, deviceId: true },
+          });
+    const revokedByUser = new Map<string, string[]>();
+    for (const row of revokedRows) {
+      const devices = revokedByUser.get(row.userId) ?? [];
+      devices.push(`${row.userId}:${row.deviceId}`);
+      revokedByUser.set(row.userId, devices);
+    }
+    const revoked: Record<string, string[]> = {};
+    let revokedNamed = 0;
+    for (const [groupId, userIds] of Object.entries(rosters)) {
+      const identities = userIds.flatMap((u) => revokedByUser.get(u) ?? []);
+      if (identities.length === 0) continue;
+      revoked[groupId] = identities;
+      revokedNamed += identities.length;
+    }
+
     this.logger.log(
-      `[GROUP_ROSTERS] asked=${groupIds.length} answered=${groupIds.length - refused.length} refused=${refused.length} rows=${rows.length}`
+      `[GROUP_ROSTERS] asked=${groupIds.length} answered=${groupIds.length - refused.length} refused=${refused.length} rows=${rows.length} revoked=${revokedNamed}`
     );
-    return { rosters, refused };
+    return { rosters, refused, revoked };
   }
 
   @UseGuards(HeaderAuthGuard)

@@ -1298,6 +1298,21 @@ export class TauriMlsService extends BaseMlsService {
     return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
   }
 
+  /** Tauri-native `invoke` wrapper - stages a refresh of this device's own leaf (no merge). */
+  protected async stageSelfUpdate(
+    groupId: string
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
+    const [commit, groupInfo] = await invoke<[number[], number[]]>('rafraichir_feuille', {
+      groupId,
+    });
+    return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
+  }
+
+  /** Tauri-native `invoke` wrapper - when this device's leaf was minted, `null` once a commit replaced it. */
+  protected async ownLeafMintedAt(groupId: string): Promise<number | null> {
+    return (await invoke<number | null>('date_feuille', { groupId })) ?? null;
+  }
+
   /** Tauri-native `invoke` wrapper - merges the pending staged commit (server accepted) and refreshes the epoch cache. */
   protected async mergePendingCommit(groupId: string): Promise<void> {
     await invoke('confirmer_commit', { groupId });

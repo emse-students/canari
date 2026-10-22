@@ -192,8 +192,10 @@ It is left out of this design so that the first step changes no routing.
 production a session lived about two messages, because the next Add replaced it. A copy of a device's
 seeds, taken without removing its leaf (a backup, a debug dump, a briefly borrowed unlocked phone),
 was therefore worth almost nothing a few messages later. Reuse removes that accident. A seed now
-lives until a departure or a cap. Key-group leaves never self-update (see the backlog P3 on the
-109-seat group conversation), so nothing else shortens its life.
+lives until a departure or a cap. The [periodic leaf refresh](mls-protocol.md#the-periodic-leaf-refresh)
+excludes key groups (while any epoch change rotates every seed, a weekly refresh per device would be
+a seed per refresh), so nothing else shortens its life. Once rotation follows departures only, a
+self-update is a non-departure epoch and could be enabled there without rotating a seed.
 
 **Accepted by Master on 2026-10-22, under the user's mandate on MLS robustness, with the caps as the
 stated bound.** The caps of a reused session are tightened so that the bound is a day and not a week.

@@ -706,6 +706,41 @@ pub(crate) fn retirer_membres_par_appareil(
         .map_err(|e| e.to_string())
 }
 
+/// Stages a refresh of this device's own leaf in `group_id` (`MlsManager::stage_self_update`): an
+/// empty commit with a path and no proposal. Merged by `confirmer_commit` or cleared by
+/// `annuler_commit` on the server's answer, like every other staged commit.
+#[tauri::command]
+pub(crate) fn rafraichir_feuille(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<mls_core::StagedSelfUpdateResult, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager
+        .stage_self_update(&group_id)
+        .map_err(|e| e.to_string())
+}
+
+/// When this device's leaf in `group_id` was minted (Unix seconds), or `None` once a commit
+/// replaced it (`MlsManager::own_leaf_minted_at`).
+#[tauri::command]
+pub(crate) fn date_feuille(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Option<u64>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .own_leaf_minted_at(&group_id)
+        .map_err(|e| e.to_string())
+}
+
 /// Confirms (merges) a *staged* commit (ADD or REMOVE) AFTER the server accepts it
 /// (`validateCommit`). Advances the local epoch. Counterpart of `annuler_commit`. [[C7]] Option A:
 /// validate-then-merge, never a local fork on rejection (unified ADD+REMOVE regime).

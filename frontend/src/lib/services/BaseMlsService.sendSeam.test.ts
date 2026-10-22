@@ -62,6 +62,11 @@ abstract class SendSeamHarness extends BaseMlsService {
     return new Uint8Array([1, 2, 3]);
   }
 
+  /** The leaf refresh a durable send schedules reads this first; no group is held here. */
+  async isGroupActive(): Promise<boolean> {
+    return false;
+  }
+
   /** Exposes the protected counter every replacement seam compares against. */
   get mutations(): number {
     return this.liveMutations;

@@ -78,4 +78,27 @@ describe('fetchGroupRosters', () => {
     expect(got.rosters.has('g1')).toBe(false);
     expect(got.rosters.get('g2')).toEqual(['alice']);
   });
+
+  it('carries the revoked devices of each answered group, and only well-formed ones', async () => {
+    // The ALLOWLIST a destructive collector reads: only an exact `userId:deviceId` the server names
+    // as revoked, for a group it answered. Anything else is dropped rather than guessed at.
+    const { api: a } = api(() =>
+      json({
+        rosters: { g1: ['alice', 'bob'], g2: ['alice'] },
+        refused: ['g3'],
+        revoked: { g1: ['bob:phone-1', 42, ''], g2: 'nope', g3: ['eve:x'] },
+      })
+    );
+
+    const got = await a.fetchGroupRosters(['g1', 'g2', 'g3']);
+
+    expect(got.revoked.get('g1')).toEqual(['bob:phone-1']);
+    expect(got.revoked.has('g2')).toBe(false);
+    expect(got.revoked.has('g3')).toBe(false);
+  });
+
+  it('knows no revoked device from a server that predates the field', async () => {
+    const { api: a } = api(() => json({ rosters: { g1: ['alice'] }, refused: [] }));
+    expect((await a.fetchGroupRosters(['g1'])).revoked.size).toBe(0);
+  });
 });

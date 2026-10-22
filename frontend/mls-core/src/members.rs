@@ -19,7 +19,10 @@ use crate::{
 ///
 /// `None` therefore means a group built without the extension - a broken invariant, not a state to
 /// degrade around: a commit submitted without its base strands every stateless joiner (COMM-22).
-fn successor_base(group_info: Option<GroupInfo>, group_id: &str) -> Result<Vec<u8>, MlsError> {
+pub(crate) fn successor_base(
+    group_info: Option<GroupInfo>,
+    group_id: &str,
+) -> Result<Vec<u8>, MlsError> {
     let group_info = group_info.ok_or_else(|| {
         log::error!(
             "[BASE] {group_id}: OpenMLS built no GroupInfo for the staged commit - the group lacks the ratchet-tree extension"

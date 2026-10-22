@@ -13,7 +13,7 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 | Protocol | MLS RFC 9420 |
 | Cipher suite | MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 |
 | Forward secrecy | Per epoch (key ratchet on every commit) |
-| Post-compromise security | Devices can be removed and re-added |
+| Post-compromise security | Every device refreshes its own leaf at most every 7 days of activity per conversation ([periodic leaf refresh](#the-periodic-leaf-refresh)); a revoked device's leaf is removed by the stray-leaf collector |
 | Server role | Routing + persistence of encrypted blobs only |
 
 ## Non-negotiable invariants (post-2026-06 rewrite)
@@ -625,17 +625,20 @@ being served twice, the pool prekey must not - and
 `apps/chat-delivery-service/src/controllers/devices.controller.static-fallback.spec.ts` pins the
 server's side of the promise, so the pair cannot drift apart silently.
 
-### The 84-day lifetime outlives the device, and a leaf is NEVER updated
+### The 84-day lifetime outlives the device
 
 A KeyPackage carries a `Lifetime` (OpenMLS default: 84 days, `not_before` backdated one hour for
-clock skew), and the leaf node minted from it carries that same lifetime into the ratchet tree. The
-tree keeps it: **nothing in this product ever updates a leaf.** There is no periodic self-update
-commit, and the only thing that takes a leaf out of a tree is another member committing a Remove.
+clock skew), and the leaf node minted from it carries that same lifetime into the ratchet tree. A
+device that keeps sending replaces that leaf (every commit it builds carries a path, and the
+[periodic leaf refresh](#the-periodic-leaf-refresh) makes one at least every 7 days of activity) and
+the replacement has no lifetime at all. A device that stops running does not.
 
 So a device that stops running - wiped, reinstalled, abandoned, or reset through the button on the
 login page - leaves a leaf behind in every group it was in, and on day 85 that leaf elapses. Purging
 the device's server-side footprint does not touch it: `DELETE mls/devices/:userId/:deviceId` deletes
-routing rows, and a ratchet tree is not a routing row.
+routing rows, and a ratchet tree is not a routing row. What takes the leaf out is a member's commit:
+the stray-leaf collector removes the leaf of a device the server names as REVOKED
+([below](#a-revoked-devices-leaf-is-removed-from-every-conversation)), and only that.
 
 **Until 2026-09-11 that elapsed leaf closed the group to everybody else.** RFC 9420 7.3 recommends
 validating leaf lifetimes when a ratchet tree is IMPORTED, and OpenMLS did so on both paths a device
@@ -670,6 +673,75 @@ join nor a Welcome is refused - and that a KeyPackage already elapsed is still r
 beside a good one, so the assertion distinguishes "that package was refused" from "the batch fell
 over". Remove either `skip_lifetime_validation()` and two of the three tests fail with the
 production error.
+
+### The periodic leaf refresh
+
+Post-compromise security in MLS comes from a member replacing its own leaf's encryption key: once it
+has, an attacker who copied the old key material stops reading new epochs. Every commit a device
+builds already does that (openmls gives every member commit a path - an Add or a Remove refreshes the
+committer's leaf too, pinned in `frontend/mls-core/tests/self_update.rs`), so a device that commits
+often is already refreshing. The periodic refresh covers the device that only SENDS.
+
+**The commit.** `MlsManager::stage_self_update` (`frontend/mls-core/src/self_update.rs`) stages an
+empty commit with a forced path: no proposal store is consumed (a queued external proposal is never
+swept in), membership is unchanged, the leaf's HPKE key and path secrets are new. It goes through
+`BaseMlsService.runCommitTransaction` like every other commit - stage, server validation
+(`submitCommit`), then merge or clear, with the successor base attached - so the single-writer and
+commit-gate rules hold unchanged. A refused refresh clears its pending commit and retries nothing.
+The **signature key is not rotated**: one device key signs every leaf and every KeyPackage of the
+device, and a stolen signature key is answered by revocation (next section), not by a refresh.
+
+**The trigger is durable state, not a timer.** After `sendMessage` delivers a durable frame (a visible
+message or a mutation; never key material, never transport), the service hands the group to
+`refreshLeafIfDue` (`frontend/src/lib/mls-client/leafRefresh.ts`), outside the send barrier and
+single-flight per group. It refreshes only when the leaf is DUE:
+
+| Leaf age basis | Source | Due when |
+|---|---|---|
+| Admitted from a KeyPackage | `not_before + 1 h` read from the tree (`own_leaf_minted_at`) | older than the interval |
+| Replaced by an own commit | the ledger `mls_leaf_refresh:<userId>:<deviceId>` (`{groupId: {at, epoch}}`), written after EVERY accepted own commit and external join | older than the interval |
+| Replaced by a commit, no ledger entry (an install that predates the ledger) | first sight: dated now | never on first sight |
+
+It skips a community key group, a group this device was removed from, a group in an epoch gap (the
+[recovery ladder](mls-recovery-ladder.md) owns it), and a second attempt at the epoch a first one
+failed at in this session - the epoch moving is what makes another attempt different. Nothing here
+waits on a clock to be correct: the clock only decides WHETHER a refresh is owed, never what a commit
+contains, and a wrong clock costs one early or one late refresh. The ledger is capped at 512 groups
+and is swept with the account's local keys.
+
+**Why 7 days.** It matches the 7-day cap of a Graine session, so a compromise of either half heals in
+the same bound, and it is twelve times inside the 84-day leaf lifetime. A refresh is owed only after
+ACTIVITY, so a silent device adds nothing.
+
+**What it costs, on the fleet measured 2026-10-21** ([dm-vs-community-encryption](dm-vs-community-encryption.md)):
+at most one refresh per device seat per group per 7 days, and only for a seat that sent.
+
+| Scope | Seats | Ceiling (every seat sends weekly) | Today's commits |
+|---|---|---|---|
+| 236 one-to-one conversations | median 6 seats | ~200 commits/day | ~30/day (903 per 30 days) |
+| 15 group conversations | max 109, median 11 | ~15.6/day for the largest alone | ~8/day (241 per 30 days) |
+
+The ceiling is not the expectation: only seats that send count, and an own commit (Add, Remove)
+already resets the clock. A commit races like any other: a lost epoch race is a refusal, logged, and
+the next send after the epoch moves tries again.
+
+**Community key groups are excluded, deliberately.** A key group's epoch change rotates every
+sender's Graine seed (`shouldRotateGraineSession`), so a weekly refresh per device would mint a seed
+per refresh across the community - the cost already measured as P2 in
+[backlog](../backlog.md). A key group's leaves are refreshed by its own Adds and Removes; a refresh
+there waits until a seed rotation is triggered by DEPARTURES only, and a self-update is not a
+departure.
+
+### A revoked device's leaf is removed from every conversation
+
+Revoking a device (`DELETE mls/devices/:userId/:deviceId`) writes a `revoked_device` row and purges
+routing; it cannot touch a tree. The roster batch (`POST /api/mls/group-rosters`) now also answers,
+per answered group, the ACTIVE revocations of the people on that roster (`revoked`, as
+`userId:deviceId`). `removeStrayLeaves` (`frontend/src/lib/utils/chat/strayLeaves.ts`) removes a leaf
+whose whole identity is in that list, by device (`removeMemberDevice`), after the departures and on a
+fresh tree and a fresh answer. It is an ALLOWLIST: a leaf the routing table merely forgot is never a
+candidate, and a device never removes its own leaf. Key groups are not covered yet, for the seed
+reason above ([backlog](../backlog.md)).
 
 ### Static fallback key package
 

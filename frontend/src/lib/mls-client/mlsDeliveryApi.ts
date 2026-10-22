@@ -52,6 +52,12 @@ export interface GroupRosterBatch {
   rosters: Map<string, string[]>;
   /** Groups the server refused because the caller is not in them (the single read's 403). */
   refused: Set<string>;
+  /**
+   * The `userId:deviceId` of every REVOKED device of an answered group's roster, by group - the
+   * allowlist `removeStrayLeaves` collects revoked leaves from. Absent for a group with none, and
+   * empty against a server that predates the field: nothing known revoked is nothing removed.
+   */
+  revoked: Map<string, string[]>;
 }
 
 /**
@@ -1779,7 +1785,7 @@ export class MlsDeliveryApi {
    * per group - so the caller knows it without asking again.
    */
   async fetchGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
-    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set() };
+    const out: GroupRosterBatch = { rosters: new Map(), refused: new Set(), revoked: new Map() };
     for (let i = 0; i < groupIds.length; i += GROUP_ROSTERS_MAX_GROUPS) {
       const chunk = groupIds.slice(i, i + GROUP_ROSTERS_MAX_GROUPS);
       try {
@@ -1798,6 +1804,7 @@ export class MlsDeliveryApi {
         const data = (await res.json()) as {
           rosters?: Record<string, string[]>;
           refused?: string[];
+          revoked?: Record<string, unknown>;
         };
         for (const [groupId, userIds] of Object.entries(data.rosters ?? {})) {
           // A roster that is not a list is not an empty roster: an empty one names every leaf as a
@@ -1805,6 +1812,15 @@ export class MlsDeliveryApi {
           if (Array.isArray(userIds)) out.rosters.set(groupId, userIds);
         }
         for (const groupId of data.refused ?? []) out.refused.add(groupId);
+        // AN ALLOWLIST FOR A DESTRUCTIVE COLLECTOR: only a non-empty string, only for a group whose
+        // roster was answered. A malformed entry names nobody - never "everybody".
+        for (const [groupId, identities] of Object.entries(data.revoked ?? {})) {
+          if (!out.rosters.has(groupId) || !Array.isArray(identities)) continue;
+          const named = identities.filter(
+            (id): id is string => typeof id === 'string' && id.length > 0
+          );
+          if (named.length > 0) out.revoked.set(groupId, named);
+        }
       } catch (e) {
         console.warn(
           `[ROSTER] batch of ${chunk.length} group(s) could not be sent - nothing is decided for these groups:`,

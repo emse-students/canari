@@ -47,6 +47,7 @@ import {
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
+import { noteOwnLeafRefreshed, refreshLeafIfDue } from '$lib/mls-client/leafRefresh';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -3383,6 +3384,14 @@ export abstract class BaseMlsService implements IMlsService {
     groupId: string,
     deviceIdentities: string[]
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
+  /** Stages a refresh of this device's own leaf - an empty commit with a path and no proposal -
+   *  WITHOUT merging. Returns the commit and the external-join base for the epoch it creates. */
+  protected abstract stageSelfUpdate(
+    groupId: string
+  ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
+  /** When this device's leaf in `groupId` was minted (Unix seconds), `null` once a commit replaced
+   *  it. See `MlsManager::own_leaf_minted_at` and `leafRefresh.ts`. */
+  protected abstract ownLeafMintedAt(groupId: string): Promise<number | null>;
   /** Merges the pending staged commit (server accepted): advances the local epoch. */
   protected abstract mergePendingCommit(groupId: string): Promise<void>;
   /** Clears the pending staged commit (server rejected): local epoch unchanged, no fork. */
@@ -3479,6 +3488,10 @@ export abstract class BaseMlsService implements IMlsService {
           );
         }
         await this.mergePendingCommit(groupId);
+        // EVERY OWN COMMIT REPLACES THIS DEVICE'S LEAF - openmls puts a path in each member commit it
+        // builds (`mls-core/tests/self_update.rs`) - so an Add or a Remove is a refresh too, and the
+        // periodic one is not owed again for an interval. Written here, the one seam they all pass.
+        noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, baseEpoch + 1);
         const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
         return {
           welcome: staged.welcome,
@@ -4543,6 +4556,9 @@ export abstract class BaseMlsService implements IMlsService {
 
         if (validation.accepted) {
           await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
+          // The external commit's path IS this device's new leaf, so the group's periodic refresh is
+          // dated from here - not from a ledger entry of an earlier incarnation (`leafRefresh.ts`).
+          noteOwnLeafRefreshed(this.userId, this.deviceId, joined.groupId, gi.baseEpoch + 1);
           // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
           // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
           // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
@@ -4782,6 +4798,57 @@ export abstract class BaseMlsService implements IMlsService {
     );
   }
 
+  /**
+   * Replaces this device's own leaf in `groupId` - the periodic refresh (`leafRefresh.ts`). A commit
+   * like any other: staged, submitted to the epoch gate, merged on its accept (which dates the leaf
+   * in the refresh ledger) or cleared on its refusal, which throws {@link CommitRefusedError}.
+   * Admits nobody and removes nobody, so it declares neither.
+   */
+  async refreshOwnLeaf(groupId: string): Promise<void> {
+    await this.runCommitTransaction(groupId, () => this.stageSelfUpdate(groupId));
+  }
+
+  /** The epoch at which a refresh of each group last failed this session (`leafRefresh.ts`). */
+  private readonly leafRefreshAttempts = new Map<string, number>();
+  /** One refresh decision in flight per group: two sends in a row must not stage two commits. */
+  private readonly leafRefreshInFlight = new Map<string, Promise<unknown>>();
+
+  /**
+   * Runs the periodic leaf refresh for `groupId` after a durable send, without holding the send up.
+   *
+   * NOT AWAITED BY THE SEND, AND OUTSIDE ITS BARRIER: the refresh is a commit, which takes the MLS
+   * lock and the epoch-advance barrier itself, and a send must never wait for one. Its loss costs
+   * nothing - the ledger is written only on an accepted commit, so the next durable send decides
+   * again from the same durable facts.
+   */
+  private scheduleLeafRefresh(groupId: string): void {
+    if (this.leafRefreshInFlight.has(groupId)) return;
+    const run = refreshLeafIfDue(
+      {
+        userId: this.userId,
+        deviceId: this.deviceId,
+        isDistributionGroup: (g) => this.isDistributionGroup(g),
+        isInEpochGap,
+        isGroupActive: (g) => this.isGroupActive(g),
+        getEpoch: (g) => this.getEpoch(g),
+        ownLeafMintedAt: (g) => this.ownLeafMintedAt(g),
+        refreshOwnLeaf: (g) => this.refreshOwnLeaf(g),
+        checkpoint: () => persistMlsStructuralCheckpoint({ mlsService: this }),
+        attemptedAtEpoch: this.leafRefreshAttempts,
+        now: () => Date.now(),
+        log: (message) => console.log(message),
+      },
+      groupId
+    )
+      .catch((e) =>
+        console.warn(
+          `[LEAF_REFRESH] ${groupId.slice(0, 8)}... decision failed: ${String(e).slice(0, 160)}`
+        )
+      )
+      .finally(() => this.leafRefreshInFlight.delete(groupId));
+    this.leafRefreshInFlight.set(groupId, run);
+  }
+
   abstract processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
   /**
    * Encrypts one application message against the LIVE client, advancing this device's send ratchet.
@@ -4821,7 +4888,17 @@ export abstract class BaseMlsService implements IMlsService {
     // recipient, which two further commits make undecryptable for good. The barrier deletes the
     // overlap rather than detecting it afterwards - see `epochSendBarrier`, which also carries the
     // lock order this relies on.
-    return runAsEpochSend(groupId, () => this.emitFrame(groupId, messageBytes, frameDelivery));
+    const sent = await runAsEpochSend(groupId, () =>
+      this.emitFrame(groupId, messageBytes, frameDelivery)
+    );
+    // ACTIVITY IN THE GROUP IS WHAT DUE LEAF REFRESHES WAIT FOR: a durable frame the server just
+    // accepted. Never a seed (an epoch move on a key group rotates every sender's seed) and never
+    // transport traffic, which every connection sends and which would make this a per-connection
+    // commit storm. See `leafRefresh.ts`.
+    if (frameDelivery.durable && frameDelivery !== DELIVERY.keyMaterial) {
+      this.scheduleLeafRefresh(groupId);
+    }
+    return sent;
   }
 
   /**

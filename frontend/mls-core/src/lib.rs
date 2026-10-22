@@ -8,12 +8,14 @@ pub mod keystore;
 pub mod logging;
 pub mod members;
 pub mod messaging;
+pub mod self_update;
 pub mod state;
 pub mod state_blob;
 pub mod welcome;
 
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
 pub use messaging::IncomingApplication;
+pub use self_update::StagedSelfUpdateResult;
 pub use state::DatedKeyPackage;
 pub use state::MlsManager;
 pub use state::PersistedState;
