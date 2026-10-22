@@ -845,7 +845,9 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
         'key-group external join'
       );
-      expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1');
+      expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1', {
+        authority: 'accepted_commit',
+      });
       warn.mockRestore();
     });
 
@@ -866,7 +868,9 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
         where: { userId: 'user-1', deviceId: 'device-1', groupId: 'group-1' },
       });
-      expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1');
+      expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1', {
+        authority: 'accepted_commit',
+      });
       // ...and the fan-out names the caller as the commit's author.
       expect(sent.mock.calls[0][0]).toMatchObject({
         senderId: 'user-1',

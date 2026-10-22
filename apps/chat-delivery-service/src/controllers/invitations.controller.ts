@@ -33,7 +33,7 @@ import {
   assertCallerOwnsUserId,
 } from '../utils/sanitize';
 import { In } from 'typeorm';
-import { MessagingService } from '../services/messaging.service';
+import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-invite';
 import { activeRevocationWhere } from '../utils/revocation';
 import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
@@ -476,11 +476,10 @@ export class InvitationsController {
         safeUserId,
         safeDeviceId,
         safeGroupId,
-        { tag: 'INVITATION_STATUS' }
+        // A report, by the device or a member for it: it promotes a seat and never creates one.
+        { tag: 'INVITATION_STATUS', authority: 'report' }
       );
-      if (!outcome.ok) {
-        throw new BadRequestException(`Device is not addressable: ${outcome.reason}`);
-      }
+      if (!outcome.ok) throw activationRefusalException(outcome.reason);
       return { status: 'active' as const };
     }
 

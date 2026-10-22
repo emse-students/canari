@@ -161,7 +161,7 @@ export class GroupsController {
           safeCreatorId,
           safeCreatorDeviceId,
           groupId,
-          { tag: 'CREATE_GROUP' }
+          { tag: 'CREATE_GROUP', authority: 'group_creator' }
         );
       } catch (e) {
         await this.discardUnenrolledGroup(

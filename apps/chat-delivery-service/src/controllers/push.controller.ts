@@ -33,7 +33,7 @@ import {
   sanitizeQueryValue,
 } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
-import { MessagingService } from '../services/messaging.service';
+import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
 /**
@@ -636,13 +636,10 @@ export class PushController {
       userId,
       deviceId,
       groupId,
-      {
-        tag: 'MEMBERSHIP_ACTIVE_PUSH',
-      }
+      // A report: it promotes the seat this device's Welcome came with, and never creates one.
+      { tag: 'MEMBERSHIP_ACTIVE_PUSH', authority: 'report' }
     );
-    if (!outcome.ok) {
-      throw new BadRequestException(`Device is not addressable: ${outcome.reason}`);
-    }
+    if (!outcome.ok) throw activationRefusalException(outcome.reason);
     return { status: 'active' };
   }
 
