@@ -14,8 +14,9 @@
  *
  * Memory only. A share that has not been taken when the app dies is lost with the page - the
  * member shares again - and a share never outlives the page that was shown it. A share DROPPED here
- * (replaced, or cancelled) has its copies deleted at once (`discardSharedFiles`); one lost with the
- * page is swept at the next process start (`IncomingShare.sweepOrphansOnce`).
+ * (replaced, cancelled, or erased at sign-out) has its copies deleted at once
+ * (`discardSharedFiles`); one lost with the page is swept at the next process start
+ * (`IncomingShare.sweepOrphansOnce`).
  */
 import { appendLog } from '$lib/utils/sessionLog';
 import { discardSharedFiles } from '$lib/mobile/sharedInbox';
@@ -104,11 +105,19 @@ export const incomingShare = {
   },
   /** The member dismissed the picker: the share is dropped, and its copies deleted unread. */
   cancel(): void {
+    this.drop('cancelled by the member');
+  },
+  /**
+   * Drops whatever share is held - waiting for its destination or for its destination to open -
+   * and deletes its copies unread. The picker's dismissal (`cancel`), and a SIGN-OUT
+   * (`eraseIncomingShare`): a share must never land in the account signed in next.
+   */
+  drop(reason: string): void {
     if (!pending) return;
-    appendLog('[SHARE] cancelled by the member');
+    appendLog(`[SHARE] dropped: ${reason}`);
     void discardSharedFiles(
       pending.files.map((f) => f.path),
-      'cancelled by the member'
+      reason
     );
     pending = null;
     target = null;

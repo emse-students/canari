@@ -70,6 +70,7 @@
   import { incomingShare, type SharedFileEntry } from '$lib/stores/incomingShare.svelte';
   import { stageSharedFiles } from '$lib/mobile/incomingShareDrain';
   import { MediaService } from '$lib/media';
+  import { signOutGeneration } from '$lib/stores/auth';
   import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
@@ -1173,8 +1174,14 @@
    */
   async function stageShare(files: SharedFileEntry[], destination: string) {
     const limits = await new MediaService().uploadLimits();
-    const { lost, tooLarge } = await stageSharedFiles(files, destination, limits, (file, to) =>
-      messaging.handleFilesSelected([file], { ...msgCtx(), selectedContact: to })
+    // A sign-out from here on stops the staging: the rest of the share is not this session's.
+    const generation = signOutGeneration();
+    const { lost, tooLarge } = await stageSharedFiles(
+      files,
+      destination,
+      limits,
+      (file, to) => messaging.handleFilesSelected([file], { ...msgCtx(), selectedContact: to }),
+      () => signOutGeneration() === generation
     );
     if (lost > 0) showToast(m.share_items_lost({ count: lost }), 'error');
     if (tooLarge.length > 0 && limits) {

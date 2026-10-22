@@ -371,11 +371,14 @@ The school applied a setting on its TEST CAS and the IP-only and user-agent-only
 
 Reuse the bench phones with screen recording to make demo videos and screenshots for the stores and for communication, from the fictional dev seed (never production). Personal data blurred frame by frame and the result reviewed before delivery; Apple and Google formats. Capture and sizes: [store-listings](store-listings.md#6-capture). Not built.
 
-## Sharing into and out of Canari - S1+S2 built, S3-S5 next (user, 2026-10-11, a priority 2026-10-21)
+## Sharing into and out of Canari - S1-S3 built, S4 set aside (user, 2026-10-11, a priority 2026-10-21)
 
-Share IN on Android is built: the SEND filter, the native copy, "Envoyer a...", the composer staging.
-Next: share OUT (S3), the iOS Share Extension (S4, needs an App ID and a profile from the user), then
-the suggestions (S5). CanaRun waits. Owed: the Mi 9T reading. [sharing](frontend/sharing.md)
+Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
+waiting share is erased at sign-out (user, 2026-10-22). Owed: the Mi 9T and iPhone 12 readings.
+**S4, share IN on iOS, is SET ASIDE (user, 2026-10-22)**: a Share Extension needs an App ID
+`fr.emse.canari.share` in the App Group and its provisioning profiles, which only the user can
+create on the Apple portal - not started until they exist. Then the suggestions (S5). CanaRun
+waits. [sharing](frontend/sharing.md)
 
 ## Owed a VERIFICATION, and nothing else
 

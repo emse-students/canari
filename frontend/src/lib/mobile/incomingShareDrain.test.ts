@@ -1,7 +1,8 @@
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 
-import { drainNativeShare, parseSharedManifest, stageSharedFiles } from './incomingShareDrain';
+import { drainNativeShare, stageSharedFiles } from './incomingShareDrain';
+import { parseSharedManifest } from './sharedInbox';
 import { incomingShare } from '$lib/stores/incomingShare.svelte';
 
 /**
@@ -184,5 +185,30 @@ describe('stageSharedFiles', () => {
     );
     expect(onScreen).toBe('elsewhere');
     expect(stagedIn).toEqual(['chosen', 'chosen', 'chosen']);
+  });
+
+  it('stops at a sign-out: the rest is deleted unread, never staged into the ended session', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'take_picked_file' ? new ArrayBuffer(1) : undefined
+    );
+    let signedIn = true;
+    const staged: string[] = [];
+    const entry = (n: string) => ({ path: `/c/${n}`, name: n, mime: 'image/png', size: 1 });
+    const result = await stageSharedFiles(
+      [entry('a'), entry('b'), entry('c')],
+      'g',
+      limits,
+      async (file) => {
+        staged.push(file.name);
+        signedIn = false; // the member signs out while the first file is being prepared
+      },
+      () => signedIn
+    );
+    expect(staged).toEqual(['a']);
+    expect(result).toEqual({ staged: 1, lost: 0, tooLarge: [] });
+    const calls = invoke.mock.calls.filter(([cmd]) => cmd !== 'plugin:log|log');
+    expect(calls).toContainEqual(['discard_picked_file', { path: '/c/b' }]);
+    expect(calls).toContainEqual(['discard_picked_file', { path: '/c/c' }]);
+    expect(calls).not.toContainEqual(['take_picked_file', { path: '/c/b' }]);
   });
 });

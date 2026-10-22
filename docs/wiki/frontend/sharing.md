@@ -11,8 +11,8 @@ builds on the IN half later and is not started.
 | Lot | What | State |
 | --- | --- | --- |
 | S1+S2 | Share IN on Android: the intent filter, the native copy, the "Envoyer a..." picker, the composer staging | built (this page) |
-| S3 | Share OUT (Android + iOS): `share_text` / `share_file`, message and post menus | not started |
-| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a new signing profile (owed to the user) | not started |
+| S3 | Share OUT (Android + iOS): `share_text` / `share_staged`, message and post menus | built - [share-out](share-out.md) |
+| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a new signing profile | **set aside (user, 2026-10-22)** - blocked on an App ID and a provisioning profile only the user can make ([backlog](../backlog.md)) |
 | S5 | Conversation suggestions in the sheet (Android Direct Share, iOS `INSendMessageIntent`) | not started - a privacy decision comes with it |
 
 ## Share IN, Android - the path
@@ -92,9 +92,21 @@ builds on the IN half later and is not started.
   readable by the server, a message is end-to-end encrypted.
 - **No server data is added.** The copies live in the app cache until the page reads them, and what
   is sent is an ordinary message.
-- **A share belongs to the device holder, not to an account**: it is memory only on the page side,
-  and a sign-out does not drop it (a session that expired at cold start would otherwise lose the
-  share the member just made).
+- **A share is ERASED AT SIGN-OUT, an account switch included (user, 2026-10-22)** - it must never
+  land in the account signed in next. This REVERSES the first decision ("a share belongs to the
+  device holder", kept so a session expired at cold start would not lose it): the user chose the
+  other risk. `clearAuthUnderway` calls `eraseIncomingShare` (`mobile/incomingShareSignOut.ts`):
+  - the page's share is dropped and its copies deleted unread (`incomingShare.drop`);
+  - a manifest not yet drained is CLAIMED through the drain's own command
+    (`read_and_clear_pending_share`, so a capture racing it is either claimed or lands after) and
+    the copies it names are deleted unread;
+  - a staging in progress stops at its next file (`stageSharedFiles`' `stillWanted`, the sign-out
+    generation) and deletes the rest, telling nobody - nobody is signed in to be told.
+  What is NOT covered: a share whose copy is still RUNNING natively when the sign-out lands writes
+  its manifest afterwards, and the next account is offered it. It was made after the member tapped
+  "sign out", by whoever holds the phone. An unreadable claimed manifest leaves its copies until the
+  next process start sweeps what no manifest names. Tests: `incomingShareSignOut.test.ts` (a share
+  pending, then a sign-out: nothing left in the page, on disk or as a copy).
 
 - **The confused-deputy check is narrow, and that is accepted (Master review, 2026-10-21).** It
   refuses our own authorities and the grants Canari holds; a sender holding `READ_MEDIA_*` can
