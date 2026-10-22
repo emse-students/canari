@@ -450,16 +450,23 @@ const BENIGN = [
   /^\[GROUP\] My other devices: \d+ /,
   /^\[GROUP\] addMembersBulk result: welcome=(true|false) \(\d+ bytes\), added=\d+ /,
   /^\[GROUP\] Welcome -> \S+ OK$/,
-  /^\[GROUP\] Group ".*" created successfully \(id=\S+\)$/,
-  /^\[OK\] Group ".*" created\.$/,
+  // THE ID, NOT THE NAME, since the creation lines stopped printing a group's name (`groupCreation.ts`).
+  // The name-shaped rules matched nothing from then on, and every GRP row came back PASS-DIRTY on its
+  // own creation (2026-10-22).
+  /^\[GROUP\] Group created successfully \(id=[0-9a-f]{8}…\)$/,
+  /^\[OK\] Group [0-9a-f]{8}… created\.$/,
   /^Inviting \d+ member\(s\): \S+$/,
   /^\[SYNC\] bulk\.addedDeviceIds: \S+$/,
   /^\[SYNC\] Welcome -> \S+ OK$/,
   /^\[OK\] Added: \S+ \(\d+ device\(s\)\)\. \(\d+ user\(s\) delivered\)$/,
   /^\[SYNC\] Members added: \S+ \(\d+\/\d+ delivered\)$/,
   /^\S+ retire du groupe\.$/,
-  /^Groupe renomme en ".*"$/,
-  /^.{0,4}\s?Group renamed to ".*" by /,
+  // The rename, on the renamer (`useConversations`) and on the other member (`systemMessageHandler`),
+  // spelt as the app spells it since the name left the log line - the old rules matched nothing.
+  /^Group [0-9a-f]{8}… renamed$/,
+  /^.{0,4}\s?Group renamed by [0-9a-f]{8}…$/,
+  // A member leaving, seen by the one who stays (`systemMessageHandler`). GRP-6's subject.
+  /^\[INFO\] [0-9a-f]{8}… left group "[0-9a-f]{8}…"$/,
   // The invitee's side of the same commit. `already held ... (idempotent)` is the redelivery being
   // absorbed, which is the mechanism working - a redelivered Welcome that was NOT absorbed is what
   // would matter, and it does not match this.
@@ -478,6 +485,16 @@ const BENIGN = [
   // of a back-stack hand-off, the second of the band the keyboard layout is computed from.
   /^\[historyOverlay\] overlay \d+ takes the ghost entry under the pointer \(a hand-off\)$/,
   /^\[ChatComposer\] composer height (?:unset|\d+px) -> \d+px$/,
+  // FOUR MORE DECISION LINES, read 2026-10-22 on GRP, every one on a healthy conversation: the overlay
+  // stack written at boot (`historyOverlayStack.ts`); the send tone's audio output opened and suspended
+  // again (`toneOutput.ts`, the reason is one of the named ones); the outbox's durable write and its
+  // cost (`outbox.ts`); and the view following a group's new message (`[CHAT_VIEW]`, the group form of
+  // the `channel_` line `PAGE_BOOT_NARRATION` names).
+  /^\[historyOverlay\] stack ready - (?:entries written|no system Back, no entries)$/,
+  /^\[AUDIO\] opening the tone output for \w+$/,
+  /^\[AUDIO\] last tone ended, suspending the tone output$/,
+  /^\[OUTBOX\] [0-9a-f]{8}… durable write took \d+ ms \(\d+ file bytes\)$/,
+  /^\[CHAT_VIEW\] [0-9a-f]{8} messages \d+ \(hasNewMessage=(?:true|false), response=[a-z/-]+\)$/,
 ];
 
 /**
@@ -1868,7 +1885,7 @@ const OFFLINE_NOISE =
 // `report` truncates at 300 characters - so the verb never survives to be matched. Matching the
 // SUBJECT instead is both shorter and immune to the truncation.
 const CUT_REACTION =
-  /WebSocket connection to '?wss?:|\[WS\] WebSocket error|\[WS\] Gateway connection failed|Connection lost\. Retrying|\[OUTBOX\] \S+ transient failure|Gateway inaccessible: WebSocket connection failed/i;
+  /WebSocket connection to '?wss?:|\[WS\] WebSocket error|\[WS\] Gateway connection failed|Connection lost\. Retrying|\[OUTBOX\] \S+ transient failure|Gateway inaccessible: (?:Error: )?WebSocket connection failed/i;
 
 /**
  * WHAT A COLD START SAYS, AND WHY IT IS FORGIVEN PER ROW RATHER THAN GLOBALLY BENIGN.
@@ -1940,6 +1957,15 @@ export const COLD_START_NARRATION = [
 export const EVICTED_REJOIN_NARRATION = [
   // Both scope shapes, for the reason given over the in-flight rule in `BENIGN`.
   /^\[GRAINE\] (?:community [0-9a-f]{8}|salon [0-9a-f]{8} of [0-9a-f]{8}): this device holds the distribution group but the group holds NO row for it \(0 device\(s\) for this user\) - the local group is stale, rejoining$/,
+];
+
+/**
+ * A MEMBER REMOVED AND ADDED BACK, SAID BY THE MEMBER: the Welcome of the re-add withdraws the removal
+ * notices it disproves (`eviction.ts`). The subject of GRP-8, which removes and re-adds the same member
+ * on purpose - and applied there alone, because a re-admission nobody asked for is a finding.
+ */
+export const READMISSION_NARRATION = [
+  /^\[EVICT\] [0-9a-f]{8}… - re-admitted, \d+ removal notice\(s\) withdrawn: the Welcome disproves them$/,
 ];
 
 /**

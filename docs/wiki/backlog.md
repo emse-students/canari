@@ -49,6 +49,33 @@ device is denied the span between the two. Nothing leaks to anyone: the member l
 Production held 4 such late-interval members on 2026-10-22. Fix direction: keep the arrival as a fact
 outside the device rows (on the membership interval, for instance) so a purge cannot move it.
 
+## P2 - The undated margin also withholds a joiner's FIRST HOUR, after their arrival (review of #2251, 2026-10-22)
+
+`withholdReason` places a copy with no `serverTimestamp` against every window widened by
+`UNDATED_SKEW_MARGIN_MS` (one hour) on BOTH sides. A joiner's before-arrival span `[0, arrival)` thus
+also withholds their undated history from the hour AFTER they arrived. A device that already holds a
+message is never filtered, so the loss is that member's NEXT device restoring history, unless a member
+holding the message dated serves it. **Is it intended? The symmetry is, and the cost is not.** Widening
+only the pre-arrival side would leak a message received before the arrival whose sender's clock ran
+ahead and stamped it after the edge. That is exactly the case the margin exists for. So the trade is
+between losing a joiner's first undated hour and showing them a pre-arrival message stamped late.
+**A decision is owed, not a fix.** Both directions are open: keep the symmetric margin, or narrow the
+post-arrival side to a measured skew bound. **The undated count cannot be read on the server.**
+Undated copies live in client stores, and bundles reach the server as ciphertext. The only reading
+is the client's own `[HISTORY_ENTITLEMENT] ... N undated within 60 min` line, on a device that
+receives a filtered push. The creator's case of the same margin is fixed (#2251).
+
+## P3 - A leave's own `memberLeft` notice is refused with 403, so the others never see it (GRP-6, 2026-10-22)
+
+`leaveGroupAndBroadcast` sends `memberLeft` "before the server deletion". But `sendMessage` returns
+once the outbox has written the entry durably, not once it is delivered. `removeMemberFromServer`
+then ends the membership, and the outbox's POST loses the race: `[OUTBOX] ... REFUSED with 403 ...
+parked, no retry until the next sign-in`. Observed in GRP-6 on the local estate: written at +0 ms,
+the leave dropped local state at +26 ms, refused at +54 ms. So the entry is the leave notice itself,
+and withdrawing the group's queued entries on a leave would only silence the line. The fix is
+ordering: step 2 must wait for the notice's DELIVERY, not its durable write. A parked entry for a
+group the device has left should also be withdrawn rather than wait for a sign-in.
+
 ## P3 - `for` is decided against the caller's EARLIEST arrival (review of #2226, 2026-10-22)
 
 The exclusions read honours `for` when the named person's latest device is no older than the

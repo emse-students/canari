@@ -25,6 +25,7 @@ import {
   PAGE_BOOT_NARRATION,
   stripStamp,
   ignoringExpectedRefusal,
+  ignoringOfflineCut,
   report,
 } from '../watch.mjs';
 
@@ -525,7 +526,20 @@ const CASES = [
   ['log', '[14:08:40] [OK] Added: b78568a3… (1 device(s)). (1 user(s) delivered)', 'benign'],
   ['log', '[14:08:40] [SYNC] Members added: b78568a3… (1/1 delivered)', 'benign'],
   ['log', '[14:10:28] b78568a3… retire du groupe.', 'benign'],
-  ['log', '[14:12:38] Groupe renomme en "GRP5-mt5rospko89-R"', 'benign'],
+  // THE CURRENT SPELLINGS of creation, rename and departure: the id, never the name (GRP, 2026-10-22).
+  ['log', '[06:44:38] [OK] Group d80f646d… created.', 'benign'],
+  ['log', '[06:44:38] [GROUP] Group created successfully (id=d80f646d…)', 'benign'],
+  ['log', '[14:12:38] Group cab9b983… renamed', 'benign'],
+  ['log', '[14:12:38] 📝 Group renamed by f7a9bb80…', 'benign'],
+  ['log', '[06:49:10] [INFO] c71e1a5b… left group "4271a303…"', 'benign'],
+  ['debug', '[2026-10-22T04:44:36.752Z] [historyOverlay] stack ready - entries written', 'benign'],
+  ['debug', '[2026-10-22T04:40:12.551Z] [AUDIO] opening the tone output for send', 'benign'],
+  ['debug', '[2026-10-22T04:40:12.543Z] [AUDIO] last tone ended, suspending the tone output', 'benign'],
+  // A tone that FAILED is not routine, and the rule names its one reason.
+  ['debug', '[2026-10-22T04:40:12.543Z] [AUDIO] the send tone failed, suspending the tone output', 'unexplained'],
+  ['log', '[06:40:14] [OUTBOX] 3d9f6c2f… durable write took 1 ms (0 file bytes)', 'benign'],
+  ['debug', '[2026-10-22T04:40:12.275Z] [CHAT_VIEW] 358105f1 messages 1 (hasNewMessage=true, response=follow-bottom)', 'benign'],
+  ['debug', '[2026-10-22T04:40:12.275Z] [CHAT_VIEW] 358105f1 messages 2 (hasNewMessage=false, response=n/a)', 'benign'],
   ['log', '[14:08:40] [WELCOME] Group ee6ba569… ready', 'benign'],
   [
     'log',
@@ -1369,6 +1383,22 @@ for (const [what, url, status, rule, shouldBeClean] of REFUSAL_CASES) {
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'refusal'.padEnd(12)} ${what}`);
   if (!ok) console.log(`       clean=${rep.clean} badHttp=${JSON.stringify(rep.badHttp)}`);
+}
+
+/**
+ * THE APP'S OWN REACTION TO A DELIBERATE CUT, forgiven only under `ignoringOfflineCut`. The gateway
+ * line is `String(err)`, so it carries `Error: ` before the sentence, and the rule written without it
+ * forgave nothing: GRP-7 was `PASS-DIRTY` on its own cut (2026-10-22). Pinned as the app spells it,
+ * and pinned to stay dirt outside a cut.
+ */
+const CUT_LINE =
+  '[06:50:17] Gateway inaccessible: Error: WebSocket connection failed to ws://localhost:8081/api/ws (chat-gateway). Check that the gateway is running and reachable.';
+{
+  const plain = await report({ cx: cxOf([['log', CUT_LINE]]), label: 'selftest' });
+  const underCut = ignoringOfflineCut(plain);
+  const ok = plain.unexplained.length === 1 && underCut.unexplained.length === 0;
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'cut'.padEnd(12)} the gateway line is forgiven under a cut and only there`);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
