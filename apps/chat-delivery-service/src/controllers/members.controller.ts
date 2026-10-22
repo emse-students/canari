@@ -34,6 +34,7 @@ import {
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { recordSeatEviction, withSeatLock } from '../utils/seat-eviction';
 import {
   ensureGroupMember,
   endGroupMembership,
@@ -725,18 +726,23 @@ export class MembersController {
       }
     }
 
-    // Remove all per-device memberships for this user in the group: from here on no application
-    // frame is queued for them, and no frame they send is accepted.
-    const deviceMembershipDelete = await this.deviceGroupRepo.delete({
-      groupId: safeGroupId,
-      userId: safeUserId,
-    });
-
-    // The live row goes and the membership interval closes in ONE transaction: the interval is what
-    // makes this removal hold against a later re-add (user, 2026-10-14), so a removal that deleted
-    // the row and not the interval would be a removal a re-add silently undoes.
-    const ended = await this.dataSource.transaction((manager) =>
-      endGroupMembership(manager, safeGroupId, safeUserId)
+    // ONE TRANSACTION UNDER THE GROUP'S SEAT LOCK: the per-device memberships go (from here on no
+    // application frame is queued for them, and no frame they send is accepted), the live row goes
+    // and the membership interval closes - the interval is what makes this removal hold against a
+    // later re-add (user, 2026-10-14) - and the eviction is RECORDED, so an external commit whose
+    // roster check ran before this removal cannot write its committer's seat after it
+    // (`utils/seat-eviction.ts`).
+    const { deviceMemberships, ended, generation } = await withSeatLock(
+      this.dataSource.manager,
+      safeGroupId,
+      async (manager) => {
+        const deleted = await manager
+          .getRepository(DeviceGroupMembership)
+          .delete({ groupId: safeGroupId, userId: safeUserId });
+        const closed = await endGroupMembership(manager, safeGroupId, safeUserId);
+        const gen = await recordSeatEviction(manager, safeGroupId, safeUserId, false);
+        return { deviceMemberships: deleted.affected ?? 0, ended: closed, generation: gen };
+      }
     );
     if (ended.deleted > 0 && ended.closed === 0) {
       // A member with no open interval: enrolled by a writer running pre-030 code during the deploy
@@ -755,7 +761,7 @@ export class MembersController {
     }
 
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0} intervalClosed=${ended.closed}`
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMemberships} intervalClosed=${ended.closed} evictionGeneration=${generation}`
     );
     return { status: 'removed' };
   }

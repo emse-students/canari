@@ -288,15 +288,15 @@ the ~77 key-group joins/day.
 
 ## P3 - The key-group seat lock: what it does not yet carry (2026-10-22)
 
-A key-group external commit's activation and `evictFromDistributionGroup` share one per-group
-advisory lock, the entitlement is re-read inside it, and social-service evicts a second time after
-every departure's roster write
+Every seat-creating write (a commit's committer, a key group's publisher, a commit's admits) and
+every eviction (a key-group departure, a conversation removal) share one per-group advisory lock and
+one durable row, `dm_seat_evictions` (migration 036); no HTTP call runs under the lock, and a
+departure left owed is settled by the hourly sweep
 ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
-Owed: (1) a durable "eviction owed" row written in the roster-delete transaction and drained by an
-existing sweep, so a failed second eviction (logged `[KEY_DISTRIBUTION] second eviction FAILED`) is
-retried rather than read by hand; (2) the same exclusion for the other two writers of an `active`
-key-group row, the publisher activation and the admits; (3) the count of `second eviction FAILED`
-lines on dev then production, expected 0.
+Owed: (1) migration 036 applied on dev then production, with the user's yes, BEFORE the code
+deploys; (2) the counts of `[KEY_DISTRIBUTION] second eviction FAILED` and of `[SEAT_DRAIN]`
+outcomes on dev then production, expected 0 and near 0; (3) bringing the remaining roster writers
+(account erasure, and admits after a departure has settled) under the same record.
 
 ## P3 - The commit rate limit is not yet checked against production (2026-10-22)
 

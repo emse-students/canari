@@ -9,6 +9,7 @@ import { Group } from '../entities/group.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 
 /** How many Redis keys one `DEL` carries, so a large reap never spreads one huge argument list. */
 const REDIS_DEL_CHUNK = 500;
@@ -33,6 +34,7 @@ export type GroupOwnedRowCounts = {
   groupInfo: number;
   invites: number;
   membershipIntervals: number;
+  seatEvictions: number;
   dismissals: number;
 };
 
@@ -66,6 +68,7 @@ const GROUP_OWNED_TABLES: readonly {
   { count: 'groupInfo', entity: MlsGroupInfo },
   { count: 'invites', entity: GroupInvite },
   { count: 'membershipIntervals', entity: GroupMembershipInterval },
+  { count: 'seatEvictions', entity: SeatEviction },
 ];
 
 /** A {@link GroupOwnedRowCounts} where nothing was removed - the answer to an empty id list. */
@@ -78,6 +81,7 @@ function noRowsRemoved(): GroupOwnedRowCounts {
     groupInfo: 0,
     invites: 0,
     membershipIntervals: 0,
+    seatEvictions: 0,
     dismissals: 0,
   };
 }
@@ -85,7 +89,7 @@ function noRowsRemoved(): GroupOwnedRowCounts {
 /**
  * Deletes every database row the given groups own, from {@link GROUP_OWNED_TABLES}.
  *
- * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: eight tables named
+ * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: nine tables named
  * one by one, checkable against `src/entities/` (every entity carrying a `groupId` is here). It
  * exists because the two places that end a group each carried their own shorter list, and both
  * were wrong in the same direction - measured on prod 2026-08-18, 21 of 69 `mls_group_info` rows,

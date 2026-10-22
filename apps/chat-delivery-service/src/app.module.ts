@@ -38,6 +38,7 @@ import { RevokedDevice } from './entities/revoked-device.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
+import { SeatEviction } from './entities/seat-eviction.entity';
 import Redis from 'ioredis';
 
 const RedisProvider: Provider = {
@@ -99,6 +100,7 @@ class RedisShutdown implements OnModuleDestroy {
         DeviceSignatureKey,
         NotificationPreference,
         GroupMembershipInterval,
+        SeatEviction,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
     }),

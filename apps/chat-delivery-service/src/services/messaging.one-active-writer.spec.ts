@@ -382,19 +382,67 @@ describe('the ONE writer of an active membership', () => {
       });
     });
 
+    /**
+     * The seat lock's transaction, over an in-memory `dm_seat_evictions`: `query` answers the claim
+     * re-read and records the lock taken, `getRepository` hands back the seat table.
+     */
+    const lockedManager = (eviction: { generation: number; owed: boolean } | null) => {
+      const locks: string[] = [];
+      (groupRepo as unknown as { manager: unknown }).manager = {
+        transaction: async (cb: (m: unknown) => Promise<unknown>) =>
+          cb({
+            query: async (sql: string, params: unknown[]) => {
+              if (sql.includes('pg_advisory_xact_lock')) locks.push(String(params[0]));
+              return sql.includes('FROM dm_seat_evictions') && eviction ? [eviction] : [];
+            },
+            getRepository: () => deviceGroupRepo,
+          }),
+      };
+      return locks;
+    };
+    const claim = { groupId: 'g1', userId: 'u1', generation: 0, owed: false };
+
     it('lets every other authority create the seat it is the gate for', async () => {
       seats = [];
+      const locks = lockedManager(null);
 
-      for (const authority of [
-        'accepted_commit',
-        'group_creator',
-        'distribution_publisher',
-      ] as const) {
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', { authority: 'group_creator' })
+      ).resolves.toEqual({ ok: true });
+      for (const authority of ['accepted_commit', 'distribution_publisher'] as const) {
         await expect(
-          service.activateDeviceMembership('u1', 'd1', 'g1', { authority })
+          service.activateDeviceMembership('u1', 'd1', 'g1', { authority, claim })
         ).resolves.toEqual({ ok: true });
       }
       expect(seats).toHaveLength(1);
+      // The two claimed authorities wrote under the group's seat lock; the creator needs none.
+      expect(locks).toEqual(['seat:g1', 'seat:g1']);
+    });
+
+    it('writes no seat against a claim an eviction overtook, or a departure in progress', async () => {
+      seats = [];
+      lockedManager({ generation: 1, owed: false });
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', { authority: 'accepted_commit', claim })
+      ).resolves.toEqual({ ok: false, reason: 'departed' });
+
+      lockedManager({ generation: 0, owed: true });
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', {
+          authority: 'distribution_publisher',
+          claim,
+        })
+      ).resolves.toEqual({ ok: false, reason: 'departed' });
+      expect(seats).toHaveLength(0);
+    });
+
+    it('refuses a claimed authority that brought no claim, rather than writing an unguarded seat', async () => {
+      seats = [];
+      lockedManager(null);
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', { authority: 'accepted_commit' })
+      ).resolves.toEqual({ ok: false, reason: 'departed' });
+      expect(seats).toHaveLength(0);
     });
 
     it('follows kick-and-re-add end to end: kicked, admitted, then reported', async () => {

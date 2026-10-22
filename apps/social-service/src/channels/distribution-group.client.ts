@@ -213,17 +213,25 @@ export async function publishDistributionGroupInfo(
  * distribution group" into "a cut that found nothing": the discriminator is KNOWN here and the
  * decision is made there, so it travels rather than being guessed from three zeros.
  *
+ * TWO CALLS PER DEPARTURE, AND THE PHASE SAYS WHICH. The one made before the roster write marks the
+ * departure in progress on chat-delivery, where no seat is written for that person meanwhile; the
+ * one made after it (`afterRosterWrite`) settles it. A second call that never arrives is settled by
+ * chat-delivery's hourly drain, which asks this service's entitlement.
+ *
+ * @param afterRosterWrite true for the eviction made once the roster row is gone
  * @returns whether there was a group at all, and how many rows, Redis routes and queued frames went
  */
 export async function evictFromDistributionGroup(
   secret: string,
   scope: DistributionScope,
-  userId: string
+  userId: string,
+  { afterRosterWrite = false }: { afterRosterWrite?: boolean } = {}
 ): Promise<{ evicted: boolean; memberships: number; queued: number; routes: number }> {
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
-    `internal/mls/distribution-groups/${seg(scope)}/members/${encodeURIComponent(userId)}`,
+    `internal/mls/distribution-groups/${seg(scope)}/members/${encodeURIComponent(userId)}` +
+      (afterRosterWrite ? '?phase=after_roster_write' : ''),
     { method: 'DELETE' }
   )) as { evicted?: unknown; memberships?: unknown; queued?: unknown; routes?: unknown } | null;
 

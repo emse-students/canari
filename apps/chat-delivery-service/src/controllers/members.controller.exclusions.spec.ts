@@ -79,7 +79,12 @@ describe('MembersController - membership intervals and the exclusions read', () 
 
     const txManager = {
       getRepository: (entity: unknown) => ({
-        delete: (where: unknown) => {
+        delete: (where: { userId: string }) => {
+          if (entity === DeviceGroupMembership) {
+            order.push('devices-deleted');
+            deviceRows = deviceRows.filter((d) => d.userId !== where.userId);
+            return Promise.resolve({ affected: 2 });
+          }
           txDeletes.push({ entity, where });
           return Promise.resolve({ affected: 1 });
         },
@@ -138,10 +143,36 @@ describe('MembersController - membership intervals and the exclusions read', () 
       }),
       createQueryBuilder: () => healBuilder,
     };
+    // One transactional manager for both transactions the controller opens on `dataSource.manager`:
+    // the interval repair's (roster read, insert) and the removal's (seat lock, device rows,
+    // membership, eviction record). A failed removal rolls its device deletes back with it.
+    const sharedTx = {
+      ...healTx,
+      getRepository: (entity: unknown) => ({
+        ...healTx.getRepository(),
+        ...txManager.getRepository(entity),
+      }),
+      query: async (sql: string, params: unknown[]) => {
+        if (sql.includes('pg_advisory_xact_lock')) order.push(`seat-lock:${String(params[0])}`);
+        if (sql.includes('INSERT INTO dm_seat_evictions')) {
+          order.push('eviction-recorded');
+          return [{ generation: 1 }];
+        }
+        return [];
+      },
+    };
     const dataSource = {
       manager: {
         find: intervalFind,
-        transaction: (fn: (m: unknown) => Promise<unknown>) => fn(healTx),
+        transaction: async (fn: (m: unknown) => Promise<unknown>) => {
+          const before = deviceRows;
+          try {
+            return await fn(sharedTx);
+          } catch (e) {
+            deviceRows = before;
+            throw e;
+          }
+        },
       },
       transaction: (fn: (m: unknown) => Promise<unknown>) => fn(txManager),
     };
@@ -401,6 +432,20 @@ describe('MembersController - membership intervals and the exclusions read', () 
     expect(txUpdates[0].where).toMatchObject({ groupId: 'g-1', userId: 'bob' });
   });
 
+  it('a removal takes the seat lock first and records the eviction with the roster write', async () => {
+    // An external commit whose roster check ran before this removal holds a claim this record
+    // overtakes, so its committer's seat is never written after the removal (`seat-eviction.ts`).
+    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+
+    expect(order).toEqual([
+      'parting-recorded',
+      'seat-lock:seat:g-1',
+      'devices-deleted',
+      'interval-closed',
+      'eviction-recorded',
+    ]);
+  });
+
   it("a removal by ANOTHER member names the removed person's devices as parting, before their rows go", async () => {
     // The commit that removes bob is fanned out from the rows deleted here; without the parting
     // entry it would never reach his devices (second review of #1878, P1-a). Written BEFORE the
@@ -415,10 +460,10 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    expect(order).toEqual(['parting-recorded', 'devices-deleted', 'interval-closed']);
+    expect(order.indexOf('parting-recorded')).toBeLessThan(order.indexOf('devices-deleted'));
   });
 
-  it('a crash after the device rows went still leaves the entry - a retry could not re-derive it', async () => {
+  it('a failed removal rolls its device rows back with it, and the retry names them again', async () => {
     failTx = true;
 
     await expect(controller.removeGroupMember('g-1', 'bob', 'alice', undefined)).rejects.toThrow(
@@ -431,11 +476,14 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    // The retry finds no device rows to derive an entry from - which is why it was written first.
+    // The device rows went in the removal's transaction, so they came back with its rollback:
+    // bob is still a member, and the retry derives the same entry from them.
+    expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(2);
     redis.hset.mockClear();
     failTx = false;
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
-    expect(redis.hset).not.toHaveBeenCalled();
+    expect(redis.hset).toHaveBeenCalledTimes(1);
+    expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(0);
   });
 
   it('a self-leave makes no commit, and names nobody as parting', async () => {

@@ -511,17 +511,15 @@ export class ChannelService implements OnApplicationBootstrap {
    * The SECOND eviction of a departure, made once the roster row that entitled the leaver is gone.
    *
    * WHY TWICE. The first eviction runs before the roster write so that its failure can abort a
-   * departure that is still retryable ({@link cutOffKeyDistribution}). Between the two, the leaver
-   * is still on the roster, so an external commit whose entitlement is read in that gap is entitled
-   * and chat-delivery activates its committer. This call, after the roster write, is the one an
-   * activation is ordered against: chat-delivery runs the eviction and the activation under one
-   * per-group seat lock and re-reads the entitlement inside it, so an activation either lands before
-   * this (and is deleted by it) or after it (and reads `false`) - channel-encryption, "WP-21, and the
-   * gate it had nowhere to live".
+   * departure that is still retryable ({@link cutOffKeyDistribution}); chat-delivery records it as
+   * a departure IN PROGRESS and writes no seat for the leaver meanwhile. Between the two the leaver
+   * is still on the roster, so this service's entitlement still answers `true`. This call, after the
+   * roster write, settles the departure and cuts again whatever a racing activation wrote -
+   * channel-encryption, "WP-21, and the gate it had nowhere to live".
    *
-   * IT CANNOT ABORT ANYTHING, the roster row is already gone. So a failure is logged at error: the
-   * leaver may then keep a seat an external commit wrote in the gap, until the removal commit a
-   * remaining member owes deactivates it.
+   * IT CANNOT ABORT ANYTHING, the roster row is already gone. So a failure is logged at error, and
+   * the departure stays recorded as in progress on chat-delivery, whose hourly drain asks this
+   * service's entitlement and settles it.
    */
   private async evictAgainAfterRosterWrite(
     scope: DistributionScope,
@@ -529,7 +527,9 @@ export class ChannelService implements OnApplicationBootstrap {
     reason: string
   ): Promise<void> {
     try {
-      const cut = await evictFromDistributionGroup(this.internalSecret, scope, userId);
+      const cut = await evictFromDistributionGroup(this.internalSecret, scope, userId, {
+        afterRosterWrite: true,
+      });
       this.logger.log(
         `[KEY_DISTRIBUTION] second eviction scope=${scope.kind}:${scope.id} user=${userId.slice(0, 8)} ` +
           `reason=${reason} evicted=${cut.evicted} memberships=${cut.memberships} routes=${cut.routes}`
@@ -538,7 +538,7 @@ export class ChannelService implements OnApplicationBootstrap {
       this.logger.error(
         `[KEY_DISTRIBUTION] second eviction FAILED scope=${scope.kind}:${scope.id} ` +
           `user=${userId.slice(0, 8)} reason=${reason}: ${e instanceof Error ? e.message : String(e)} ` +
-          `- a seat activated during the departure may survive until a member's removal commit`
+          `- the departure stays in progress on chat-delivery until its hourly drain settles it`
       );
     }
   }

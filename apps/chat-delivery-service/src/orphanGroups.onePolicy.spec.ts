@@ -14,6 +14,7 @@ import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { GroupInvite } from './entities/group-invite.entity';
 import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
+import { SeatEviction } from './entities/seat-eviction.entity';
 import { UserDismissedGroup } from './entities/user-dismissed-group.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -52,6 +53,7 @@ const SWEPT = [
   MlsGroupInfo,
   GroupInvite,
   GroupMembershipInterval,
+  SeatEviction,
   UserDismissedGroup,
 ];
 
@@ -69,6 +71,7 @@ const FAKE_TABLE = new Map<unknown, string>([
   [MlsGroupInfo, 'table_of_group_info'],
   [GroupInvite, 'table_of_invite'],
   [GroupMembershipInterval, 'table_of_membership_interval'],
+  [SeatEviction, 'table_of_seat_eviction'],
   [UserDismissedGroup, 'table_of_dismissal'],
 ]);
 

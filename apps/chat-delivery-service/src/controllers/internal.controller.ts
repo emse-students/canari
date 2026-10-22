@@ -35,8 +35,9 @@ import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { sanitizeIdentityValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
-import { withKeyGroupSeatLock } from '../utils/key-group-seat-lock';
-import { MessagingService } from '../services/messaging.service';
+import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
+import { SeatEviction } from '../entities/seat-eviction.entity';
+import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
 
@@ -415,13 +416,26 @@ export class InternalController {
     // allowlist every other door applies.
     const publisherUserId = sanitizeIdentityValue(body.userId, 'userId');
     const publisherDeviceId = sanitizeIdentityValue(body.deviceId, 'deviceId');
-    const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
+    const kind = this.assertDistributionScope(scope);
+    const where = this.distributionWhere(kind, scopeId);
     const label = `${scope}:${scopeId}`;
 
     const group = await this.groupRepo.findOne({ where });
     if (!group) {
       throw new BadRequestException(`No distribution group for ${label}`);
     }
+
+    // THE PUBLISHER'S SEAT IS WRITTEN AGAINST A CLAIM, like an external committer's: the claim is
+    // read first, then the entitlement is asked here - after the claim, never under a lock - and the
+    // seat is written under the seat lock only if no eviction overtook the claim. Social-service's
+    // own check came before this request, so it cannot stand in for one made after the claim.
+    // Unanswered is a retryable 503 before anything is stored, the gate's rule.
+    const claim = await this.messagingService.claimSeat(group.id, publisherUserId);
+    const entitled = await isEntitledToDistributionGroup(
+      { kind, id: scopeId },
+      publisherUserId,
+      `publish-${group.id}`
+    );
 
     const result = await this.messagingService.putGroupInfo(
       group.id,
@@ -449,12 +463,20 @@ export class InternalController {
     // one the writer will not route to leaves the group with nobody to answer - the 2026-08-20
     // defect above, reached by a different road. So it goes back in the answer, the way this
     // endpoint's siblings carry their counts, and `tag` puts this door's name on the warn line.
-    const outcome = await this.messagingService.activateDeviceMembership(
-      publisherUserId,
-      publisherDeviceId,
-      group.id,
-      { tag: 'DISTRIBUTION_PUBLISHER', authority: 'distribution_publisher' }
-    );
+    const outcome: ActivationOutcome = entitled
+      ? await this.messagingService.activateDeviceMembership(
+          publisherUserId,
+          publisherDeviceId,
+          group.id,
+          { tag: 'DISTRIBUTION_PUBLISHER', authority: 'distribution_publisher', claim }
+        )
+      : { ok: false, reason: 'not_on_roster' };
+    if (!entitled) {
+      this.logger.warn(
+        `[DISTRIBUTION_PUBLISHER] REFUSED group=${group.id} ` +
+          `device=${publisherUserId.slice(0, 8)}:${publisherDeviceId.slice(0, 12)} reason=not_entitled`
+      );
+    }
 
     this.logger.log(
       `[DISTRIBUTION_GROUP] group-info scope=${label} group=${group.id} epoch=${body.baseEpoch} ` +
@@ -483,17 +505,28 @@ export class InternalController {
    * Idempotent by construction - every step is a delete keyed on the pair - so the caller may
    * repeat it, and a scope with no distribution group answers `{ evicted: false }` rather than
    * failing a departure that has otherwise completed.
+   *
+   * THE EVICTION IS RECORDED (`dm_seat_evictions`, {@link recordSeatEviction}) under the group's
+   * seat lock, so a seat claimed before it is never written after it. Social-service calls this
+   * twice per departure: before its roster write (`phase` absent - the departure is then in
+   * progress, `owed`) and after it (`phase=after_roster_write`, which settles it). A second call
+   * that never arrives is settled by {@link MessagingService.drainOwedSeatEvictions}.
    */
   @Delete('mls/distribution-groups/:scope/:scopeId/members/:userId')
   async evictFromDistributionGroup(
     @Param('scope') scope: string,
     @Param('scopeId') scopeId: string,
     @Param('userId') userId: string,
-    @Headers('x-internal-secret') headerSecret: string
+    @Headers('x-internal-secret') headerSecret: string,
+    @Query('phase') phase?: string
   ): Promise<{ evicted: boolean; memberships: number; queued: number; routes: number }> {
     this.assertInternalSecret(headerSecret);
     const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
     const label = `${scope}:${scopeId}`;
+    if (phase !== undefined && phase !== 'after_roster_write') {
+      throw new BadRequestException('phase must be absent or after_roster_write');
+    }
+    const departureSettled = phase === 'after_roster_write';
 
     const group = await this.groupRepo.findOne({ where });
     if (!group) {
@@ -505,38 +538,20 @@ export class InternalController {
       return { evicted: false, memberships: 0, queued: 0, routes: 0 };
     }
 
-    // UNDER THE SEAT LOCK, so an external commit's activation for this user runs wholly before this
-    // (and its row is deleted here) or wholly after (and re-reads an entitlement that social-service
-    // has, by its second eviction, already turned false). See `withKeyGroupSeatLock`.
-    const { memberships, queued, toRemove } = await withKeyGroupSeatLock(
-      this.groupRepo.manager,
+    // UNDER THE SEAT LOCK, so a seat activation for this user runs wholly before this (and its row
+    // is deleted here) or wholly after (and finds its claim overtaken). See `utils/seat-eviction.ts`.
+    const { memberships, queued, toRemove, generation } = await this.messagingService.evictSeats(
       group.id,
-      async (m) => {
-        const deletedRows = await m
-          .getRepository(DeviceGroupMembership)
-          .delete({ groupId: group.id, userId });
-        const deletedQueue = await m
-          .getRepository(QueuedMessage)
-          .delete({ groupId: group.id, recipientId: userId });
-        const routed = await this.redis.smembers(`group:members:${group.id}`);
-        const routes = routed.filter((r) => r.startsWith(`${userId}:`));
-        if (routes.length > 0) {
-          await this.redis.srem(`group:members:${group.id}`, ...routes);
-        }
-        return { memberships: deletedRows, queued: deletedQueue, toRemove: routes };
-      }
+      userId,
+      !departureSettled
     );
 
     this.logger.log(
       `[DISTRIBUTION_GROUP] evict scope=${label} group=${group.id} user=${userId.slice(0, 8)} ` +
-        `memberships=${memberships.affected ?? 0} queued=${queued.affected ?? 0} routes=${toRemove.length}`
+        `phase=${departureSettled ? 'after_roster_write' : 'before_roster_write'} generation=${generation} ` +
+        `memberships=${memberships} queued=${queued} routes=${toRemove}`
     );
-    return {
-      evicted: true,
-      memberships: memberships.affected ?? 0,
-      queued: queued.affected ?? 0,
-      routes: toRemove.length,
-    };
+    return { evicted: true, memberships, queued, routes: toRemove };
   }
 
   /**
@@ -713,6 +728,8 @@ export class InternalController {
       manager.delete(DeviceSignatureKey, { userId }),
       manager.delete(NotificationPreference, { userId }),
       manager.delete(UserDismissedGroup, { userId }),
+      // Nothing will claim a seat for this person again, so their eviction record has no reader.
+      manager.delete(SeatEviction, { userId }),
       // An invite link the account minted keeps working for the group; only the name goes.
       this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);

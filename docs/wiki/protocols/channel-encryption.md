@@ -539,30 +539,39 @@ joins again on its next recovery pass. A key group's Welcome TARGET is asked the
 `apps/chat-delivery-service/src/internal/distribution-entitlement.ts`,
 `apps/social-service/src/internal/internal-distribution-entitlement.controller.ts`.
 
-**A departure and a key-group join are serialised by one lock, and the activation re-reads the
-entitlement inside it (2026-10-22).** The gate's answer is read before the epoch moves, but the seat
-is written later, so a departure could run in between. Two changes close that window:
+**A seat is written against a CLAIM, under one per-group lock, and no HTTP call runs under it
+(2026-10-22).** The gate's answer is read before the epoch moves, but the seat is written later, so a
+departure could run in between. `apps/chat-delivery-service/src/utils/seat-eviction.ts` closes that
+window with a durable row and a lock:
 
-- **One per-group lock.** `withKeyGroupSeatLock` (`apps/chat-delivery-service/src/utils/key-group-seat-lock.ts`)
-  is a transaction-scoped Postgres advisory lock on `keygroup-seat:<groupId>`, released at commit or
-  rollback and never by a clock. `evictFromDistributionGroup` runs its deletes and its Redis seat
-  removal under it, and `activateKeyGroupCommitter` (`messaging.service.ts`) runs under it too: it asks
-  `isEntitledToDistributionGroup` AGAIN immediately before the upsert, and activates only on `true`.
-  `false` is logged as a departure that raced the commit; an unanswered re-read is logged at error and
-  activates nothing - the same rule as the gate, never an acceptance.
-- **A second eviction after the roster write.** Every departure in social-service (`leaveWorkspace`,
+- **The row.** `dm_seat_evictions` (migration `036_seat_evictions.sql`), one per (group, person):
+  a `generation` every eviction bumps, and `owed`, true while a key group's departure is in progress.
+- **The lock.** A transaction-scoped Postgres advisory lock on `seat:<groupId>`, released by the
+  commit or the rollback and never by a clock. Every writer that evicts or creates a seat holds it:
+  `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
+  roster write and its eviction record in one transaction), the commit's advance (which also refuses
+  the admits of a person whose departure is owed), and `activateDeviceMembership` for an accepted
+  commit's committer and a key group's publisher.
+- **The claim.** Before the check that decides an activation (the roster, or
+  `isEntitledToDistributionGroup` over HTTP, always outside the lock) `claimSeat` reads the row.
+  Under the lock `seatClaimHolds` re-reads it - a database read only - and the seat is written only if
+  the generation has not moved and nothing is owed. An eviction therefore ran before the claim (the
+  check sees it), between claim and write (nothing is written), or after the write (it deletes the
+  seat). An activation without a claim is refused and logged at error.
+- **Two evictions per departure, and a drain.** Every departure in social-service (`leaveWorkspace`,
   `kickFromWorkspace`, `leaveChannel`, `removeMemberFromChannel`, `updateChannelAccess`, and the
-  workspace-wide cut of private channels) still evicts BEFORE it removes the roster row, so that a
-  failed eviction aborts a departure that is still retryable. It now evicts a second time AFTER the
-  roster write commits. Between the two the entitlement still answers `true` - correctly, the leaver is
-  still on the roster - so the first eviction alone cannot exclude a commit read in that gap. The
-  second one can: either the activation's re-read ran before it (the row it wrote is deleted), or after
-  the roster write (the re-read answers `false`). A failed second eviction does not undo the departure;
-  it is logged `[KEY_DISTRIBUTION] second eviction FAILED` at error, and what would retry it is tracked
-  in [backlog](../backlog.md).
+  workspace-wide cut of private channels) evicts BEFORE it removes the roster row - recorded
+  `owed=true`, so that a failed eviction aborts a departure that is still retryable - and again AFTER
+  the roster write commits, with `?phase=after_roster_write`, which settles it `owed=false`. A failed
+  second eviction is logged `[KEY_DISTRIBUTION] second eviction FAILED` and the row stays owed; the
+  hourly sweep (`drainOwedSeatEvictions`, logged `[SEAT_DRAIN]`) asks the entitlement outside the
+  lock and settles the row only if its generation has not moved meanwhile.
 
-The interleaving is asserted without a clock in `messaging.commit-log.spec.ts` ("against a departure
-that races it") and the order `evict -> roster -> evict` in social-service's `distribution-group.spec.ts`.
+The interleavings are asserted without a clock in `messaging.commit-log.spec.ts` ("against a
+departure that races it": an eviction while the activation holds the lock, a stale HTTP answer after
+the whole departure, an activation between the two evictions, the drain), in
+`members.controller.exclusions.spec.ts` (the removal's order under the lock) and the order
+`evict -> roster -> evict?phase=after_roster_write` in social-service's `distribution-group.spec.ts`.
 
 **`POST /mls/commit` is rate-limited per user (2026-10-22):** `MLS_COMMIT_LIMIT_PER_MINUTE` (600)
 through `UserThrottlerGuard`, after `HeaderAuthGuard`. A refusal is the throttler's `429` before the

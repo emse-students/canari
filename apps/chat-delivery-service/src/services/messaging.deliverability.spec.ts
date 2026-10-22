@@ -16,6 +16,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
+import { SeatEviction } from '../entities/seat-eviction.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 
 /**
@@ -227,6 +228,7 @@ describe('MessagingService - a tombstone is not a destination', () => {
       MlsGroupInfo,
       GroupInvite,
       GroupMembershipInterval,
+      SeatEviction,
       UserDismissedGroup,
     ]);
     expect(warnings.some((w) => w.includes('absent from dm_groups'))).toBe(true);

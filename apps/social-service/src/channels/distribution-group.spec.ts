@@ -625,6 +625,10 @@ describe('ChannelService - the community distribution group', () => {
             `internal/mls/distribution-groups/workspace/${WORKSPACE}/members/${leaver}`
           );
         }
+        // The first marks the departure in progress on chat-delivery; the second, after the roster
+        // write, settles it - so the two calls are told apart by their phase, not their order.
+        expect(String(evictions[0][0])).not.toContain('phase=');
+        expect(String(evictions[1][0])).toContain('?phase=after_roster_write');
       }
     );
 

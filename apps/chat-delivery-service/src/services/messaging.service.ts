@@ -56,7 +56,15 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
-import { withKeyGroupSeatLock } from '../utils/key-group-seat-lock';
+import {
+  claimSeat,
+  departingUsers,
+  recordSeatEviction,
+  seatClaimHolds,
+  takeSeatLock,
+  withSeatLock,
+  type SeatClaim,
+} from '../utils/seat-eviction';
 import {
   deleteGroupOwnedRows,
   deleteGroupRedisKeys,
@@ -466,7 +474,13 @@ export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
  * (WP-GHOST-1). The third is not about the device at all: it is the value failing to name one, and
  * it lives here rather than at each door because two of the four doors did not check it.
  */
-export type ActivationRefusal = 'revoked' | 'no_key_package' | 'unresolved_identity' | SeatRefusal;
+export type ActivationRefusal =
+  | 'revoked'
+  | 'no_key_package'
+  | 'unresolved_identity'
+  | SeatRefusal
+  /** An eviction overtook the claim the seat was to be written against (`utils/seat-eviction.ts`). */
+  | 'departed';
 
 /** Why a REPORT of `active` was refused: the device holds no seat it may promote. */
 export type SeatRefusal = 'no_seat' | 'kicked' | 'not_on_roster';
@@ -495,7 +509,10 @@ export type ActivationAuthority =
 export function activationRefusalException(
   reason: ActivationRefusal | undefined
 ): ForbiddenException | BadRequestException {
-  return reason === 'no_seat' || reason === 'kicked' || reason === 'not_on_roster'
+  return reason === 'no_seat' ||
+    reason === 'kicked' ||
+    reason === 'not_on_roster' ||
+    reason === 'departed'
     ? new ForbiddenException(
         refusalBody(RefusalCode.NOT_A_MEMBER, 'This device holds no seat in this group', { reason })
       )
@@ -1842,7 +1859,7 @@ export class MessagingService {
         message: 'this commit is not accepted',
       });
     }
-    const keyGroupScope = await this.assertCommitterMayCommit(
+    const committerClaim = await this.assertCommitterMayCommit(
       groupId,
       committer,
       deviceId,
@@ -1916,7 +1933,13 @@ export class MessagingService {
       // Legacy clients send no `groupInfo`; for them this is the plain advance it always was, and
       // `republishStaleBase` on a holder remains their repair.
       const newBase = typeof body.groupInfo === 'string' && body.groupInfo ? body.groupInfo : null;
-      const admitted = await this.resolveAdmittedDevices(groupId, deviceId, body.admits, traceId);
+      const declaredAdmits = await this.resolveAdmittedDevices(
+        groupId,
+        deviceId,
+        body.admits,
+        traceId
+      );
+      let admitted = declaredAdmits;
       // THE ADVANCE, THE BASE AND THE REPLAYABLE COMMIT LAND TOGETHER OR NOT AT ALL.
       //
       // The log row used to be written AFTER this transaction, best-effort, on the reasoning that
@@ -1934,6 +1957,24 @@ export class MessagingService {
       // the committer, which `submitCommit` is already built for - it rolls the staged commit back
       // on a reject - against a loss that no later call can repair.
       await this.groupRepo.manager.transaction(async (m) => {
+        // THE ADMITS WRITE SEATS, SO THEY TAKE THE SEAT LOCK - first, before any row, so this
+        // transaction and an eviction always take their locks in the same order. A person whose
+        // departure is in progress is not admitted: their eviction after the roster write would
+        // find the `pending` row this wrote, but one that never arrives would leave it for good.
+        await takeSeatLock(m, groupId);
+        const departing = await departingUsers(
+          m,
+          groupId,
+          declaredAdmits.map((a) => a.userId)
+        );
+        if (departing.size > 0) {
+          admitted = declaredAdmits.filter((a) => !departing.has(a.userId));
+          for (const a of declaredAdmits.filter((d) => departing.has(d.userId))) {
+            this.logger.warn(
+              `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${a.userId}:${a.deviceId} reason=departure_in_progress`
+            );
+          }
+        }
         await m.getRepository(Group).update({ id: groupId }, { activeEpoch: baseEpoch + 1 });
         if (newBase) {
           await this.putGroupInfo(groupId, newBase, baseEpoch + 1, m);
@@ -2004,11 +2045,14 @@ export class MessagingService {
       const committerRow = await this.deviceGroupRepo.findOne({
         where: { userId: committer, deviceId, groupId },
       });
-      if (committerRow?.status !== 'active' && keyGroupScope) {
-        await this.activateKeyGroupCommitter(keyGroupScope, committer, deviceId, groupId, traceId);
-      } else if (committerRow?.status !== 'active') {
+      //
+      // AGAINST THE CLAIM THE GATE TOOK BEFORE ITS CHECK (`assertCommitterMayCommit`), so a departure
+      // that ran after that check - which no HTTP call is repeated under a lock to discover - leaves
+      // no seat behind (`utils/seat-eviction.ts`).
+      if (committerRow?.status !== 'active') {
         await this.activateDeviceMembership(committer, deviceId, groupId, {
           authority: 'accepted_commit',
+          claim: committerClaim,
         }).catch((e) =>
           this.logger.warn(
             `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
@@ -2540,8 +2584,12 @@ export class MessagingService {
    * Every caller runs this before the epoch moves, so a refusal also stops the activation an
    * accepted commit grants its committer.
    *
-   * @returns the key group's scope when this is a key-distribution group's EXTERNAL commit, so the
-   *   activation can ask the same question again under the seat lock; `null` otherwise.
+   * THE SEAT CLAIM IS READ FIRST, BEFORE THE CHECK ({@link claimSeat}). The activation that follows
+   * an accepted commit is written under the seat lock against it, so an eviction that lands after
+   * this check - including one social-service makes while its entitlement still answered `true` -
+   * leaves no seat behind, and the check itself is never repeated under a lock.
+   *
+   * @returns the claim the committer's activation is written against.
    */
   private async assertCommitterMayCommit(
     groupId: string,
@@ -2549,7 +2597,8 @@ export class MessagingService {
     deviceId: string,
     external: boolean,
     traceId: string
-  ): Promise<DistributionScope | null> {
+  ): Promise<SeatClaim> {
+    const claim = await claimSeat(this.groupRepo.manager, groupId, userId);
     const scope = external ? await this.keyDistributionScope(groupId) : null;
     const allowed = scope
       ? await isEntitledToDistributionGroup(scope, userId, traceId)
@@ -2562,7 +2611,7 @@ export class MessagingService {
             ],
             select: { deviceId: true },
           }));
-    if (allowed) return scope;
+    if (allowed) return claim;
     this.logger.warn(
       `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
         `device=${sanitizeLogValue(userId)}:${deviceId} ` +
@@ -2577,58 +2626,126 @@ export class MessagingService {
   }
 
   /**
-   * Activates the committer of an accepted key-group EXTERNAL commit, under the group's seat lock
-   * ({@link withKeyGroupSeatLock}), the lock the eviction of a departing member also takes.
-   *
-   * THE ENTITLEMENT IS ASKED AGAIN, INSIDE THE LOCK, IMMEDIATELY BEFORE THE WRITE. The answer the
-   * gate read before the epoch moved may predate a departure: social-service evicts, removes the
-   * roster row, then evicts again. Read here, the answer and the activation are one step against
-   * either eviction - one that ran first is seen (the second one only runs once the roster says
-   * no), and one that runs after deletes the row written here. The gate's own read stays where it is,
-   * because it is what keeps a refused commit from moving the epoch.
-   *
-   * A `false` or an unanswered call activates nothing. The commit itself stands (the epoch has
-   * moved); the leaf is cut by the removal commit a remaining member owes, as for any departure, and
-   * an entitled device that was merely unanswered finds its seat missing (`memberDevices`) and joins
-   * again. Best-effort like the activation it replaces: every outcome is logged, nothing throws.
+   * Takes a claim on a seat of `userId` in `groupId` - read BEFORE the check that decides an
+   * activation ({@link claimSeat}). For the doors outside this service that create a seat.
    */
-  private async activateKeyGroupCommitter(
-    scope: DistributionScope,
-    userId: string,
-    deviceId: string,
+  async claimSeat(groupId: string, userId: string): Promise<SeatClaim> {
+    return claimSeat(this.groupRepo.manager, groupId, userId);
+  }
+
+  /**
+   * Cuts `userId` off every seat of `groupId`, under the seat lock, and RECORDS it: the membership
+   * rows, the frames queued to them, the Redis routes, and a new generation of their eviction row so
+   * no claim taken before this is honoured after it ({@link recordSeatEviction}).
+   *
+   * Idempotent: every step is a delete keyed on the pair, and the generation only moves.
+   *
+   * @param owed true while a key group's departure is in progress (social-service's eviction before
+   *   its roster write); false once it is settled.
+   */
+  async evictSeats(
     groupId: string,
-    traceId: string
-  ): Promise<void> {
-    try {
-      await withKeyGroupSeatLock(this.groupRepo.manager, groupId, async (m) => {
-        let entitled: boolean;
-        try {
-          entitled = await isEntitledToDistributionGroup(scope, userId, traceId);
-        } catch (e) {
-          this.logger.error(
-            `[COMMIT][${traceId}] key-group committer NOT activated group=${groupId} ` +
-              `device=${cutUserId(userId)}:${cutDeviceId(deviceId)} - entitlement unanswered under the seat lock: ${String(e)}`
-          );
-          return;
+    userId: string,
+    owed: boolean
+  ): Promise<{ memberships: number; queued: number; toRemove: number; generation: number }> {
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const generation = await recordSeatEviction(m, groupId, userId, owed);
+      const memberships = await m.getRepository(DeviceGroupMembership).delete({ groupId, userId });
+      const queued = await m.getRepository(QueuedMessage).delete({ groupId, recipientId: userId });
+      const routed = await this.redis.smembers(`group:members:${groupId}`);
+      const routes = routed.filter((r) => r.startsWith(`${userId}:`));
+      if (routes.length > 0) {
+        await this.redis.srem(`group:members:${groupId}`, ...routes);
+      }
+      return {
+        memberships: memberships.affected ?? 0,
+        queued: queued.affected ?? 0,
+        toRemove: routes.length,
+        generation,
+      };
+    });
+  }
+
+  /**
+   * SETTLES THE KEY-GROUP DEPARTURES WHOSE SECOND EVICTION NEVER ARRIVED (hourly, beside the stale
+   * device detection).
+   *
+   * A row left `owed` is a departure social-service began - it evicted before its roster write - and
+   * did not finish telling: the eviction after the roster write failed, or the roster write itself
+   * did. Each row is asked of social-service, OUTSIDE any lock, and settled under the seat lock only
+   * if no eviction rewrote it meanwhile (its generation is unchanged):
+   *
+   * - not entitled: the departure happened. The seats are cut again (anything written since the first
+   *   eviction goes) and the row is settled.
+   * - entitled: the departure did not happen (the roster write failed, or the person is back). The
+   *   row is settled and they may hold a seat again.
+   * - unanswered: left as it is, for the next pass, and logged.
+   *
+   * A row whose group is gone, or is not a key group, is settled as it stands. Each row is caught on
+   * its own, so one failure never stops the batch.
+   *
+   * @returns how many rows were settled, for the caller's log line.
+   */
+  async drainOwedSeatEvictions(): Promise<number> {
+    const owed = (await this.groupRepo.manager.query(
+      `SELECT "groupId", "userId", "generation" FROM dm_seat_evictions WHERE "owed" LIMIT 500`
+    )) as Array<{ groupId: string; userId: string; generation: number | string }>;
+    let settled = 0;
+    for (const row of owed) {
+      const traceId = this.makeTraceId('seat-drain');
+      const generation = Number(row.generation);
+      try {
+        const scope = await this.keyDistributionScope(row.groupId);
+        let entitled: boolean | null = null;
+        if (scope) {
+          try {
+            entitled = await isEntitledToDistributionGroup(scope, row.userId, traceId);
+          } catch (e) {
+            this.logger.warn(
+              `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} left owed - entitlement unanswered: ${String(e)}`
+            );
+            continue;
+          }
         }
-        if (!entitled) {
-          this.logger.warn(
-            `[COMMIT][${traceId}] key-group committer NOT activated group=${groupId} ` +
-              `device=${cutUserId(userId)}:${cutDeviceId(deviceId)} - no longer entitled ` +
-              `(${scope.kind}=${scope.id}); a departure raced this commit`
+        const outcome = await withSeatLock(this.groupRepo.manager, row.groupId, async (m) => {
+          const now = (await m.query(
+            `SELECT "generation", "owed" FROM dm_seat_evictions WHERE "groupId" = $1 AND "userId" = $2`,
+            [row.groupId, row.userId]
+          )) as Array<{ generation: number | string; owed: boolean }>;
+          if (!now[0]?.owed || Number(now[0].generation) !== generation) return 'moved';
+          if (entitled === false) {
+            await recordSeatEviction(m, row.groupId, row.userId, false);
+            await m
+              .getRepository(DeviceGroupMembership)
+              .delete({ groupId: row.groupId, userId: row.userId });
+            await m
+              .getRepository(QueuedMessage)
+              .delete({ groupId: row.groupId, recipientId: row.userId });
+            const routed = await this.redis.smembers(`group:members:${row.groupId}`);
+            const routes = routed.filter((r) => r.startsWith(`${row.userId}:`));
+            if (routes.length > 0) await this.redis.srem(`group:members:${row.groupId}`, ...routes);
+            return 'evicted';
+          }
+          await m.query(
+            `UPDATE dm_seat_evictions SET "owed" = FALSE, "updatedAt" = now() WHERE "groupId" = $1 AND "userId" = $2`,
+            [row.groupId, row.userId]
           );
-          return;
-        }
-        await this.activateDeviceMembership(userId, deviceId, groupId, {
-          authority: 'accepted_commit',
-          manager: m,
+          return scope ? 'still_entitled' : 'not_a_key_group';
         });
-      });
-    } catch (e) {
-      this.logger.warn(
-        `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
-      );
+        if (outcome !== 'moved') settled++;
+        this.logger.log(
+          `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} outcome=${outcome}`
+        );
+      } catch (e) {
+        this.logger.error(
+          `[SEAT_DRAIN][${traceId}] group=${row.groupId} user=${cutUserId(row.userId)} FAILED: ${String(e)}`
+        );
+      }
     }
+    if (owed.length > 0) {
+      this.logger.log(`[SEAT_DRAIN] owed=${owed.length} settled=${settled}`);
+    }
+    return settled;
   }
 
   /** Whether `groupId` is a Graine key-distribution group (a community's or a private salon's). */
@@ -2945,16 +3062,17 @@ export class MessagingService {
     {
       tag = 'MEMBERSHIP_ACTIVE',
       authority,
-      manager,
+      claim,
     }: {
       tag?: string;
       authority: ActivationAuthority;
       /**
-       * The transaction to write the seat in, when the caller holds a lock in it - the key-group
-       * seat lock ({@link activateKeyGroupCommitter}). The routing set is then written before that
-       * transaction commits, so it is ordered by the same lock.
+       * The claim this seat is written against ({@link claimSeat}), taken by the caller BEFORE the
+       * check that decided the activation. REQUIRED of the two authorities whose check is made
+       * outside this service's lock - `accepted_commit` and `distribution_publisher` - and the seat
+       * is then written under the group's seat lock only if no eviction overtook the claim.
        */
-      manager?: EntityManager;
+      claim?: SeatClaim;
     }
   ): Promise<ActivationOutcome> {
     // A NON-IDENTITY IS REFUSED HERE, BECAUSE THE GATE BELOW CANNOT SEE IT AND TWO DOORS DID NOT
@@ -2991,9 +3109,54 @@ export class MessagingService {
 
     if (authority === 'report') return this.promoteReportedSeat(userId, deviceId, groupId, tag);
 
+    if (authority === 'group_creator') {
+      await this.writeActiveSeat(this.deviceGroupRepo, userId, deviceId, groupId, tag);
+      return { ok: true };
+    }
+
+    // A CLAIMED AUTHORITY WITH NO CLAIM IS A CALLER BUG, refused loudly rather than written: the
+    // seat would stand against no eviction at all.
+    if (!claim || claim.groupId !== groupId || claim.userId !== userId) {
+      this.logger.error(
+        `[${tag}] REFUSED group=${groupId} device=${userId}:${deviceId} reason=unclaimed authority=${authority}`
+      );
+      return { ok: false, reason: 'departed' };
+    }
+    return withSeatLock(this.groupRepo.manager, groupId, async (m) => {
+      const overtaken = await seatClaimHolds(m, claim);
+      if (overtaken) {
+        this.logger.warn(
+          `[${tag}] REFUSED group=${groupId} device=${userId}:${deviceId} reason=departed ` +
+            `(${overtaken}, claimed at generation ${claim.generation})`
+        );
+        return { ok: false, reason: 'departed' } as const;
+      }
+      await this.writeActiveSeat(
+        m.getRepository(DeviceGroupMembership),
+        userId,
+        deviceId,
+        groupId,
+        tag
+      );
+      return { ok: true } as const;
+    });
+  }
+
+  /**
+   * Writes the `active` seat and its Redis route - the write itself, for
+   * {@link activateDeviceMembership} only, which decides whether it may happen. With `seats` bound to a
+   * transaction holding the seat lock, the route is written before that transaction commits, so it is ordered by the lock.
+   */
+  private async writeActiveSeat(
+    seats: Repository<DeviceGroupMembership>,
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    tag: string
+  ): Promise<void> {
     // `kickedAt: null`: the device is IN, so nothing is owed to it and no kick is outstanding.
     // `admittedAtEpoch: null`: its status routes it from here on, so its admission has done its job.
-    await (manager ? manager.getRepository(DeviceGroupMembership) : this.deviceGroupRepo).upsert(
+    await seats.upsert(
       {
         userId,
         deviceId,
@@ -3007,8 +3170,6 @@ export class MessagingService {
     // Immediate routing: add to Redis set without waiting for a cache rebuild.
     await this.redis.sadd(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
     this.logger.log(`[${tag}] group=${groupId} device=${userId}:${deviceId}`);
-
-    return { ok: true };
   }
 
   /**
