@@ -75,6 +75,13 @@ the queue accept; (3) a key-group frame stored once per group, not once per seat
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
 
+### P3 - one identity reader for rotation and device trust (#2263 / #2268)
+
+`user_of` in `frontend/mls-core/src/graine_run.rs` reads the canonical user of a leaf (well-formed
+`user:device`, user half ASCII-lowercased). Once #2268 merges, it becomes device trust's shared
+identity function (`is_well_formed_identity` plus the same canonical lowercase), done by whichever of
+#2263 and #2268 lands second, so rotation and trust never disagree on who a user is.
+
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
 
 A QUESTION first: measure that group's unreadable-frame rate against the communities' and decide
