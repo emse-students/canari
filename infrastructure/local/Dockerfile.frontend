@@ -50,8 +50,21 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 #   NOT api.klipy.com, since 2026-10-16: the GIF search goes through chat-delivery's
 #   /api/mls/gifs so KLIPY never sees a reader's query, IP or identifier (gifSearch.ts).
 # img-src stays wide (https:) because it renders arbitrary user-posted image URLs;
-# connect-src must not, since it governs what the app can read into memory.
-RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"'; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+# connect-src must not, since it governs what the app can read into memory. It names
+# no bare ws:/wss: either: both WebSockets are same-origin, and the estate's own wss://
+# names are listed because 'self' matches wss: only under CSP Level 3 (older Safari).
+#
+# NO 'unsafe-inline' FOR SCRIPTS, AND A PAGE IS NOT GOVERNED BY THIS SNIPPET (2026-10-22).
+# These directives are written ONCE MORE, in frontend/src/lib/security/cspPolicy.js, and
+# csp.test.ts holds the two equal: SvelteKit sends that policy on every PAGE, plus the
+# hash of each inline script the page carries, which only the build knows. This snippet
+# covers every OTHER response - a worker script's policy is its own response's, so the
+# MLS worker compiles its WebAssembly under 'wasm-unsafe-eval' from here. A page block
+# (@ssr, @app_shell) must NOT include it: a second policy is intersected with the first,
+# and this one, holding no hash, would refuse the page's own scripts. It includes
+# csp-page.conf instead, which says only what a <meta> policy cannot (frame-ancestors).
+RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss://canari.emse.fr wss://canari-emse.fr wss://www.canari-emse.fr wss://dev.canari-emse.fr https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+RUN printf 'add_header Content-Security-Policy "frame-ancestors '"'"'none'"'"'" always;\n' > /etc/nginx/snippets/csp-page.conf
 
 # The headers of an error this nginx makes itself on an API route (@api_error_*): JSON, never cached,
 # readable cross-origin by the three WebView origins ($api_error_cors_origin, an allowlist - empty
@@ -518,7 +531,10 @@ server {\n\
     proxy_hide_header Cache-Control;\n\
     add_header Cache-Control $ssr_cache_control always;\n\
     add_header Referrer-Policy $public_form_referrer_policy always;\n\
-    include /etc/nginx/snippets/csp.conf;\n\
+    # THE CONTENT-SECURITY-POLICY OF A PAGE IS WRITTEN BY SVELTEKIT (kit.csp, hash mode), passed from the\n\
+    # upstream with the hash of each inline script; csp.conf here would be intersected with it and\n\
+    # refuse those scripts. csp-page.conf adds only frame-ancestors (see the snippet comment above).\n\
+    include /etc/nginx/snippets/csp-page.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
     error_page 502 503 504 =200 @app_shell;\n\
@@ -540,7 +556,9 @@ server {\n\
     add_header Cache-Control "no-store" always;\n\
     add_header X-Canari-Degraded "ssr-unavailable" always;\n\
     add_header Referrer-Policy $public_form_referrer_policy always;\n\
-    include /etc/nginx/snippets/csp.conf;\n\
+    # The prerendered shell carries its policy as a <meta> (kit.csp, hashes included), which cannot\n\
+    # say frame-ancestors - csp-page.conf says it.\n\
+    include /etc/nginx/snippets/csp-page.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
     }\n\

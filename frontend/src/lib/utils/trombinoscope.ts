@@ -42,7 +42,7 @@ export async function exportTrombinoscope(
   container.innerHTML = buildTrombinoscopeHtml(asso, members, resolvedMemberNames);
 
   // A member with no photo shows the initials behind it. A listener and not an `onerror=` attribute:
-  // a Content-Security-Policy without 'unsafe-inline' refuses inline handlers. Attached before
+  // the Content-Security-Policy refuses inline handlers (lib/security/cspPolicy.js). Attached before
   // the container joins the document, so an error that fires at once still finds it.
   for (const img of container.querySelectorAll<HTMLImageElement>('img[data-avatar-fallback]')) {
     img.addEventListener('error', () => showInitialsInstead(img), { once: true });

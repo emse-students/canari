@@ -9,7 +9,12 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AnonymousAvatar from '$lib/components/shared/AnonymousAvatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
-  import { fetchGifFile } from '$lib/utils/gifMediaProxy';
+  import { fetchGifFile, GifRelayError, proxiedGifUrl } from '$lib/utils/gifMediaProxy';
+  import {
+    commentGifRendition,
+    pickGridRendition,
+    type GifResult,
+  } from '$lib/utils/chat/gifSearch';
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
@@ -149,20 +154,62 @@
   }
 
   /**
-   * In-app GIF picker: fetches the chosen GIF's bytes and stages them as encrypted media. The bytes
-   * come through Canari's GIF relay (`fetchGifFile`), never from KLIPY's CDN, so KLIPY does not see
-   * the person attaching it.
+   * A picked GIF on its way: shown AT ONCE as the attachment chip with a progress bar, and, when it
+   * does not arrive, with the cause and a retry - the reader never faces a closed picker, a silent
+   * wait and a toast that vanished.
    */
-  async function handleGifSelected(url: string) {
-    showGifPicker = false;
-    try {
-      await stageMediaFile(await fetchGifFile(url));
-    } catch (err) {
-      // The log separates the two causes this shares one message for: a refused connection
-      // (offline, relay down) throws a TypeError, a served error throws our `HTTP <status>`.
-      console.error('Failed to load GIF', err);
-      showToast(m.post_comment_gif_fetch_error());
+  let gifLoad = $state<{
+    gif: GifResult;
+    progress: number;
+    error: string;
+  } | null>(null);
+  let gifAbort: AbortController | null = null;
+
+  /** The sentence for a failed GIF download, by the cause the relay client classified. */
+  function gifFailureMessage(error: unknown): string {
+    if (error instanceof GifRelayError) {
+      if (error.failure === 'busy') return m.post_comment_gif_busy();
+      if (error.failure === 'timeout') return m.post_comment_gif_timeout();
+      if (error.failure === 'too-large') return m.post_comment_gif_too_large();
     }
+    return m.post_comment_gif_fetch_error();
+  }
+
+  /**
+   * In-app GIF picker: fetches the chosen GIF's bytes (the SMALL rendition, which is plenty at a
+   * comment's width) and stages them as encrypted media. The bytes come through Canari's GIF relay
+   * (`fetchGifFile`), never from KLIPY's CDN, so KLIPY does not see the person attaching it.
+   */
+  async function handleGifSelected(gif: GifResult) {
+    showGifPicker = false;
+    gifAbort?.abort();
+    const controller = new AbortController();
+    gifAbort = controller;
+    gifLoad = { gif, progress: 0, error: '' };
+    try {
+      const file = await fetchGifFile(commentGifRendition(gif).url, {
+        signal: controller.signal,
+        onProgress: (fraction) => {
+          if (gifAbort === controller && gifLoad) gifLoad = { ...gifLoad, progress: fraction };
+        },
+      });
+      if (gifAbort !== controller) return;
+      gifLoad = null;
+      await stageMediaFile(file);
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      console.error('Failed to load GIF', err);
+      gifLoad = { gif, progress: 0, error: gifFailureMessage(err) };
+    } finally {
+      if (gifAbort === controller) gifAbort = null;
+    }
+  }
+
+  /** Drops the GIF being fetched (or the failed one): no request keeps running behind the chip. */
+  function dismissGifLoad() {
+    gifAbort?.abort();
+    gifAbort = null;
+    gifLoad = null;
   }
 
   /** Rebuilds a File from a keyboard-committed GIF (base64, Android/iOS) and stages it. */
@@ -195,7 +242,10 @@
 
     const onKeyboardMedia = (e: Event) => handleKeyboardMedia((e as CustomEvent).detail ?? {});
     window.addEventListener('canari-keyboard-media', onKeyboardMedia);
-    return () => window.removeEventListener('canari-keyboard-media', onKeyboardMedia);
+    return () => {
+      window.removeEventListener('canari-keyboard-media', onKeyboardMedia);
+      gifAbort?.abort();
+    };
   });
 
   /** Every change is kept; an empty box forgets the draft (the module clears on empty text). */
@@ -242,7 +292,11 @@
 
   // --- Sending ------------------------------------------------------------------------------------
   const canSend = $derived(
-    (value.trim() !== '' || pendingMedia !== null) && !submitting && !uploadingMedia
+    (value.trim() !== '' || pendingMedia !== null) &&
+      !submitting &&
+      !uploadingMedia &&
+      // A GIF still arriving would be left behind by a send: wait for it, or dismiss it.
+      !(gifLoad && !gifLoad.error)
   );
   const nearLimit = $derived(value.length >= COMMENT_MAX_LENGTH - 200);
 
@@ -306,7 +360,51 @@
   {/if}
 
   <div class="relative">
-    {#if pendingPreviewUrl || uploadingMedia}
+    {#if gifLoad}
+      <div class="mb-2 ml-10 flex items-center gap-2" data-testid="comment-gif-load">
+        <div
+          class="relative max-h-14 w-20 shrink-0 overflow-hidden rounded-lg bg-black/10 dark:bg-white/10"
+          style={mediaAspectStyle(gifLoad.gif.preview.width, gifLoad.gif.preview.height)}
+        >
+          <!-- The thumbnail the grid already drew: in the browser's cache, so it is there at once. -->
+          <img
+            src={proxiedGifUrl(pickGridRendition(gifLoad.gif, 80).url)}
+            alt=""
+            class="h-full w-full object-cover {gifLoad.error ? 'opacity-40' : ''}"
+          />
+          {#if !gifLoad.error}
+            <div class="absolute inset-x-0 bottom-0 h-1 bg-black/20">
+              <div
+                class="h-full bg-amber-500 transition-[width]"
+                style="width: {Math.round(gifLoad.progress * 100)}%"
+                data-testid="comment-gif-progress"
+              ></div>
+            </div>
+          {/if}
+          <button
+            type="button"
+            onclick={dismissGifLoad}
+            class="tap-target absolute top-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-red-500"
+            aria-label={m.post_remove_image_label()}
+          >
+            <X size={10} strokeWidth={3} />
+          </button>
+        </div>
+        {#if gifLoad.error}
+          <span class="text-2xs text-red-500" role="alert">{gifLoad.error}</span>
+          <button
+            type="button"
+            onclick={() => gifLoad && void handleGifSelected(gifLoad.gif)}
+            class="text-2xs font-semibold text-amber-600 underline dark:text-amber-400"
+            data-testid="comment-gif-retry"
+          >
+            {m.chat_gif_retry()}
+          </button>
+        {:else}
+          <span class="text-text-muted text-2xs animate-pulse">{m.common_loading_label()}</span>
+        {/if}
+      </div>
+    {:else if pendingPreviewUrl || uploadingMedia}
       <div class="mb-2 ml-10 flex items-center gap-2">
         <div
           class="relative max-h-14 w-20 shrink-0 overflow-hidden rounded-lg bg-black/10 dark:bg-white/10"
@@ -424,7 +522,7 @@
         <button
           type="button"
           onclick={() => (showGifPicker = true)}
-          disabled={uploadingMedia}
+          disabled={uploadingMedia || (gifLoad !== null && !gifLoad.error)}
           title={m.chat_send_gif_label()}
           aria-label={m.chat_send_gif_label()}
           class="text-text-muted text-2xs tap-target mr-0.5 flex h-11 shrink-0 items-center px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40 [@media(min-width:768px)_and_(pointer:fine)]:h-9.5"
@@ -457,5 +555,5 @@
 <GifPickerModal
   open={showGifPicker}
   onClose={() => (showGifPicker = false)}
-  onSelect={(gif) => handleGifSelected(gif.full.url)}
+  onSelect={(gif) => handleGifSelected(gif)}
 />
