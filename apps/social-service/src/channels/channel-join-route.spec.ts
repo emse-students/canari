@@ -6,17 +6,11 @@ import { ChannelService } from './channel.service';
 import { ChannelsController } from './channels.controller';
 
 /**
- * A community is entered through an invite link or an invitation from a member who holds the
- * permission - and through nothing else. Membership is what entitles a device to the community's
- * key-distribution group (`isDistributionGroupEntitled`), so a route that writes a membership row
- * is a grant of every public salon's seeds, and it must check what those two doors check.
- *
  * `POST /channels/:channelId/members/join` was left from the channels MVP with no caller in any
- * client. It is deleted rather than kept, and this file asserts its absence over HTTP -
- * a real Nest application, the real guard, a valid signed caller - so a re-introduced handler
- * fails here and not in production. The neighbouring invite route is the control: the same
- * request shape on a registered path reaches its handler, so the 404 is the route's absence and
- * not the harness refusing everything.
+ * client, and is removed. This file asserts its absence over HTTP - a real Nest application, the
+ * real guard, a valid signed caller - so a re-introduced handler fails here. The neighbouring
+ * invite route is the control: the same request on a registered path reaches its handler, so the
+ * 404 is the route's absence and not the harness refusing everything.
  */
 
 const SECRET = 'channel-join-route-spec-secret';
@@ -28,7 +22,7 @@ function internalToken(userId: string): string {
   return createHmac('sha256', SECRET).update(`${userId}:${minute}`).digest('hex');
 }
 
-describe('POST /api/channels/:channelId/members/join', () => {
+describe('the removed channels-MVP members/join route', () => {
   let app: INestApplication;
   let base: string;
   const service = {
@@ -72,14 +66,14 @@ describe('POST /api/channels/:channelId/members/join', () => {
     });
   }
 
-  it('is not a route: a signed-in caller gets 404 and no membership is written', async () => {
+  it('is not registered: it answers 404 and reaches no handler', async () => {
     const res = await signedPost('/api/channels/some-channel/members/join', {});
 
     expect(res.status).toBe(404);
     expect(service.joinChannel).not.toHaveBeenCalled();
   });
 
-  it('control: the invite route beside it still reaches its handler with the same caller', async () => {
+  it('control: members/invite still reaches its handler with the same caller', async () => {
     const res = await signedPost('/api/channels/some-channel/members/invite', {
       targetUserId: 'someone-else',
     });
