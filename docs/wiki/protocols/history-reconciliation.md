@@ -743,9 +743,13 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   receiver then keep their old rule, the union of gaps and the device's own gaps: a newcomer is still
   pushed the past in that window, and the push says so once per session at error
   ([legacy-compatibility](../legacy-compatibility.md)).
-- **`for` answers only for a person being admitted** (a device row still `pending`, compared
-  case-insensitively). For any other member it has no entry, so a member cannot read another
-  member's arrival through it.
+- **`for` answers only for a person with a device added since the caller arrived** (a device row in
+  the group created at or after the caller's own arrival, compared case-insensitively): a newcomer,
+  or a new device of a member of any age. The caller witnessed that add. For any other member it has
+  no entry, so a member cannot read the arrival of somebody whose devices all predate their own.
+  **It was a row STATUS first (`pending`), and that starved the push it exists for**: the invitee
+  promotes its row to `active` as soon as it processes its Welcome, while the push may still be
+  re-reading its windows chunk by chunk, so the entry vanished mid-push and the push stopped.
 - **Group conversations only, never a 1:1.** Nobody is added to a 1:1, and its recorded arrivals are
   not arrivals: on production 2026-10-21, 51 of 472 1:1 members had a first interval starting more
   than 10 minutes after the conversation was created. Applying the span there would take a member's

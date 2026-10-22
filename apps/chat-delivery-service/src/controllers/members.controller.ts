@@ -799,10 +799,14 @@ export class MembersController {
    * key always means "not counted" and the client refuses to send on it rather than reading it as
    * "nothing withheld".
    *
-   * **`for` answers only for a person being ADMITTED** - holding a device row still `pending` in this
-   * group, which is who an inviter's push is for (compared case-insensitively). For anyone else it
-   * has no entry, so a member cannot read another member's arrival. What its presence still tells a
-   * member is that a device of that person is being admitted, which the add itself shows them.
+   * **`for` answers only for a person with a device ADDED SINCE THE CALLER ARRIVED** - a device row
+   * in this group created at or after the caller's own arrival (compared case-insensitively). That
+   * is who an inviter's push is for: a newcomer, or a new device of a member of any age. It is a
+   * DURABLE fact, never a status: the invitee's row turns `active` the moment its Welcome is
+   * processed, possibly while the push is still reading its windows chunk by chunk, and a status
+   * predicate then starved the push it was written for. The caller witnessed that add, so the
+   * arrival it reads is one the group showed it. Anybody else has no entry: a member cannot read the
+   * arrival of somebody whose devices all predate their own.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/exclusions')
@@ -844,28 +848,24 @@ export class MembersController {
     // what it costs is three indexed reads on `groupId` - the same order as the chunk's own send,
     // which inserts one queued row per recipient device.
     //
-    // The earliest row per person is also the evidence `withheldWindows` reads for their arrival.
+    // The earliest row per person is also the evidence `withheldWindows` reads for their arrival, and
+    // the latest is what `for` is decided on.
     const admittedRows = await this.deviceGroupRepo
       .createQueryBuilder('d')
       .select('d.userId', 'userId')
       .addSelect('MIN(d.createdAt)', 'firstDeviceAt')
-      .addSelect(`BOOL_OR(d.status = 'pending')`, 'admitting')
+      .addSelect('MAX(d.createdAt)', 'lastDeviceAt')
       .where('d.groupId = :groupId', { groupId: safeGroupId })
       .groupBy('d.userId')
       .getRawMany<{
         userId: string;
         firstDeviceAt: Date | string | null;
-        admitting: boolean | null;
+        lastDeviceAt: Date | string | null;
       }>();
     const counted = new Set([...memberIds, ...admittedRows.map((r) => r.userId)]);
-    // `for` answers only for a person a commit is ADMITTING right now - a device row still pending -
-    // which is who an inviter's push is for. Anyone else's arrival is not the caller's to read.
-    const admitting = new Set(
-      admittedRows.filter((r) => r.admitting === true).map((r) => r.userId)
-    );
-    const firstDeviceAt = new Map(
-      admittedRows.map((r) => [r.userId, r.firstDeviceAt ? new Date(r.firstDeviceAt) : null])
-    );
+    const asDate = (v: Date | string | null): Date | null => (v ? new Date(v) : null);
+    const firstDeviceAt = new Map(admittedRows.map((r) => [r.userId, asDate(r.firstDeviceAt)]));
+    const lastDeviceAt = new Map(admittedRows.map((r) => [r.userId, asDate(r.lastDeviceAt)]));
 
     const readByUser = async () => {
       const rows = await this.dataSource.manager.find(GroupMembershipInterval, {
@@ -914,8 +914,18 @@ export class MembersController {
       if (windows.length > 0) exclusions[userId] = windows;
     }
     const withheld: Record<string, ExclusionWindow[]> = {};
+    // The caller's arrival: their earliest interval or device row, whichever the server recorded
+    // first. None recorded answers `for` for nobody.
+    const callerArrival = Math.min(
+      ...(byUser.get(caller) ?? []).map((r) => r.joinedAt.getTime()),
+      firstDeviceAt.get(caller)?.getTime() ?? Infinity
+    );
     const forCounted = forUser
-      ? [...admitting].find((u) => u.toLowerCase() === forUser.toLowerCase())
+      ? [...counted].find(
+          (u) =>
+            u.toLowerCase() === forUser.toLowerCase() &&
+            (lastDeviceAt.get(u)?.getTime() ?? -Infinity) >= callerArrival
+        )
       : undefined;
     for (const userId of new Set([caller, ...(forCounted ? [forCounted] : [])])) {
       if (!counted.has(userId)) continue;

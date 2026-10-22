@@ -172,7 +172,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
               return { affected: 2 };
             }),
             // The exclusions read: each user holding a device row, whatever its status, with the
-            // earliest row's time.
+            // earliest and the latest row's time.
             createQueryBuilder: () => {
               const qb = {
                 select: () => qb,
@@ -187,9 +187,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
                     return {
                       userId,
                       firstDeviceAt: times.length > 0 ? new Date(Math.min(...times)) : null,
-                      admitting: deviceRows.some(
-                        (d) => d.userId === userId && d.status === 'pending'
-                      ),
+                      lastDeviceAt: times.length > 0 ? new Date(Math.max(...times)) : null,
                     };
                   }),
               };
@@ -241,13 +239,15 @@ describe('MembersController - membership intervals and the exclusions read', () 
     expect(Object.keys(got.exclusions)).toEqual(['bob']);
   });
 
-  /** carol's device is being admitted: its row is still `pending`, as at an inviter's push. */
-  const admittingCarol = () => {
-    deviceRows = deviceRows.map((d) => (d.userId === 'carol' ? { ...d, status: 'pending' } : d));
+  /** carol's device was added on the 7th, after alice arrived - as at an inviter's push. */
+  const carolAdded = (status: 'pending' | 'active') => {
+    deviceRows = deviceRows.map((d) =>
+      d.userId === 'carol' ? { ...d, createdAt: T('2026-10-07T00:00:00Z'), status } : d
+    );
   };
 
   it("names the caller and the `for` person ONLY - nobody else's arrival leaves the server", async () => {
-    admittingCarol();
+    carolAdded('pending');
     const got = await controller.getGroupExclusions('g-1', 'alice', 'CAROL');
 
     expect(got.withheld).toEqual({
@@ -257,11 +257,42 @@ describe('MembersController - membership intervals and the exclusions read', () 
     });
   });
 
-  it('answers `for` nothing about a member who is not being admitted - a probe learns no arrival', async () => {
-    // bob is a counted member with only active rows: not the object of any push.
-    const got = await controller.getGroupExclusions('g-1', 'alice', 'bob');
+  it('still answers `for` once the invitee has processed its Welcome - the row is ACTIVE mid-push', async () => {
+    // The invitee promotes itself as soon as its Welcome lands, while the push may still be reading
+    // its windows chunk by chunk. A status predicate starved the push here.
+    carolAdded('active');
+    const got = await controller.getGroupExclusions('g-1', 'alice', 'carol');
 
-    expect(Object.keys(got.withheld)).toEqual(['alice']);
+    expect(got.withheld.carol).toEqual([{ from: 0, until: T('2026-10-07T00:00:00Z').getTime() }]);
+  });
+
+  it("answers `for` a founding member's NEW device, added after the caller arrived", async () => {
+    // alice has been in since the 1st; her new phone joins on the 9th and carol pushes to it.
+    deviceRows = [
+      ...deviceRows.map((d) =>
+        d.userId === 'carol' ? { ...d, createdAt: T('2026-10-07T00:00:00Z') } : d
+      ),
+      { userId: 'alice', deviceId: 'a2', createdAt: T('2026-10-09T00:00:00Z'), status: 'active' },
+    ];
+    const got = await controller.getGroupExclusions('g-1', 'carol', 'alice');
+
+    expect(got.withheld.alice).toEqual([{ from: 0, until: T('2026-10-01T00:00:00Z').getTime() }]);
+  });
+
+  it('answers `for` nothing about a member whose devices all predate the caller - a probe learns no arrival', async () => {
+    // carol arrived on the 7th; alice's only device dates from the 1st, and bob's carry no date.
+    deviceRows = deviceRows.map((d) =>
+      d.userId === 'alice'
+        ? { ...d, createdAt: T('2026-10-01T00:00:00Z') }
+        : d.userId === 'carol'
+          ? { ...d, createdAt: T('2026-10-07T00:00:00Z') }
+          : d
+    );
+    const fromCarol = await controller.getGroupExclusions('g-1', 'carol', 'alice');
+    const aboutBob = await controller.getGroupExclusions('g-1', 'carol', 'bob');
+
+    expect(Object.keys(fromCarol.withheld)).toEqual(['carol']);
+    expect(Object.keys(aboutBob.withheld)).toEqual(['carol']);
   });
 
   it('gives a counted person an EMPTY entry, so a missing key can only mean "not counted"', async () => {
@@ -283,8 +314,10 @@ describe('MembersController - membership intervals and the exclusions read', () 
   });
 
   it('withholds the gaps only in a 1:1, and in a key group', async () => {
-    // bob's second device is being admitted.
-    deviceRows = deviceRows.map((d) => (d.deviceId === 'b2' ? { ...d, status: 'pending' } : d));
+    // bob's second device was added on the 6th, after alice arrived.
+    deviceRows = deviceRows.map((d) =>
+      d.deviceId === 'b2' ? { ...d, createdAt: T('2026-10-06T00:00:00Z'), status: 'pending' } : d
+    );
     group = { isGroup: false };
     const oneToOne = await controller.getGroupExclusions('g-1', 'alice', 'bob');
     expect(oneToOne.withheld).toEqual({ alice: [], bob: oneToOne.exclusions.bob });
