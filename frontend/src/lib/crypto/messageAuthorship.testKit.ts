@@ -44,11 +44,20 @@ export async function signedBy(
   return { body: toBase64(body), proof: toBase64(proof), group: groupId };
 }
 
-/** A key source answering from a fixed tree: a device not in `tree` has no trusted key. */
-export function keySource(opts: { tree?: TestAuthor[] }): AuthorKeySource {
+/**
+ * A key source answering from a fixed tree and fixed pins: a device in neither has no trusted key
+ * (`pinnedSignatureKeys` answers `null`, as for a device never pinned).
+ */
+export function keySource(opts: { tree?: TestAuthor[]; pinned?: TestAuthor[] }): AuthorKeySource {
   return {
     async memberSignatureKey(_groupId, identity) {
       return opts.tree?.find((a) => a.identity === identity)?.publicKey ?? null;
+    },
+    async pinnedSignatureKeys(userId, deviceId) {
+      const keys = (opts.pinned ?? [])
+        .filter((a) => a.identity === `${userId}:${deviceId}`)
+        .map((a) => a.publicKey);
+      return keys.length > 0 ? keys : null;
     },
     graineSignatureEngine: () => webCryptoEngine,
   };

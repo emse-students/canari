@@ -23,6 +23,7 @@ import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import type { ForkFinding } from '$lib/mls-client/integrityFindings';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { DeviceEvent, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -666,13 +667,25 @@ export class TauriMlsService extends BaseMlsService {
     // is idempotent: a no-op when login already resolved it before the pin-check.
     await this.resolveDeviceId(userId);
 
+    // A KEPT ID WITH A LOST STATE RE-ENROLS AS A NEW DEVICE (`reenrolLostState`). The rotation loads
+    // and persists the fresh client itself; the post-init steps below (push context, groups cache)
+    // still run, under the new id.
+    const reenrolled = !savedStateExists && (await this.reenrolLostState(deviceKeyB64, opts));
+
     // THE NAME IS THE SAME ON BOTH PLATFORMS ON PURPOSE. `WebMlsService` brackets its own decrypt
     // with `mls-load-state` too, so an Android report and a browser report answer the same question
     // with the same word - which is the only way the two can be compared at all, and the phone is
     // where this block was measured at 1621.9 ms with nothing inside it named.
     beginBootSpan('mls-load-state');
     try {
-      await this.loadStateWithKey(deviceKeyB64, state, opts?.stateOnDisk, opts?.unattendedKeyRead);
+      if (!reenrolled) {
+        await this.loadStateWithKey(
+          deviceKeyB64,
+          state,
+          opts?.stateOnDisk,
+          opts?.unattendedKeyRead
+        );
+      }
       endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
       // CLOSED HERE RATHER THAN IN A `finally`, because the two exits are not the same measurement:
@@ -1255,7 +1268,7 @@ export class TauriMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1263,10 +1276,11 @@ export class TauriMlsService extends BaseMlsService {
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }> {
-    const keyPackagesBytes = keyPackages.map((kp) => Array.from(kp));
+    const keyPackagesBytes = devices.map((d) => Array.from(d.keyPackage));
+    const expectedIdentities = devices.map((d) => d.identity);
     const result = await invoke<
       [number[], number[] | null, number[], SkippedKeyPackage[], number[]]
-    >('ajouter_membres_bulk', { groupId, keyPackagesBytes });
+    >('ajouter_membres_bulk', { groupId, keyPackagesBytes, expectedIdentities });
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
@@ -1274,6 +1288,45 @@ export class TauriMlsService extends BaseMlsService {
       skipped: result[3] ?? [],
       groupInfo: Uint8Array.from(result[4]),
     };
+  }
+
+  /**
+   * `mls_state_absent`: `true` only when `mls.bin` does not exist or is empty. An unreadable data
+   * directory is an `Err`, which `reenrolLostState` reads as "not proven" - unlike `mls_state_size`,
+   * which answers 0 for it.
+   */
+  protected async savedStateProvenAbsent(): Promise<boolean> {
+    return invoke<boolean>('mls_state_absent');
+  }
+
+  /** Tauri-native `invoke` wrapper - `verifier_key_package`, the Rust verdict on binding and pin. */
+  protected async vetKeyPackageNative(
+    keyPackage: Uint8Array,
+    identity: string
+  ): Promise<KeyPackageVerdict> {
+    return invoke<KeyPackageVerdict>('verifier_key_package', {
+      keyPackage: Array.from(keyPackage),
+      expectedIdentity: identity,
+    });
+  }
+
+  /** Tauri-native `invoke` wrapper - `cles_signature_epinglees`, the pinned keys as byte arrays. */
+  protected async pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<Uint8Array[] | null> {
+    const keys = await invoke<number[][] | null>('cles_signature_epinglees', { userId, deviceId });
+    return keys === null ? null : keys.map((k) => Uint8Array.from(k));
+  }
+
+  /** Tauri-native `invoke` wrapper - `epoques_departs`, the epochs as JSON numbers. */
+  protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
+    return invoke<number[]>('epoques_departs', { groupId, userId });
+  }
+
+  /** Tauri-native `invoke` wrapper - `prendre_evenements_appareils` (`DeviceEvent`, camelCase). */
+  protected async takeDeviceEventsNative(): Promise<DeviceEvent[]> {
+    return invoke<DeviceEvent[]>('prendre_evenements_appareils');
   }
 
   /** Tauri-native `invoke` wrapper - stages a Remove commit for all devices of the given users (no merge). */

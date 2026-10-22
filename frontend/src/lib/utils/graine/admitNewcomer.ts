@@ -208,7 +208,11 @@ export async function admitNewcomerToDistributionGroup(
         // get, and a commit for an epoch they are not in yet is a frame they can never open.
         result = await mlsService.addMembersBulk(
           groupId,
-          missing.map((d) => ({ deviceId: d.deviceId, keyPackage: d.keyPackage })),
+          missing.map((d) => ({
+            deviceId: d.deviceId,
+            keyPackage: d.keyPackage,
+            userId: newcomer,
+          })),
           missing.map((d) => `${newcomer}:${d.deviceId}`)
         );
         break;

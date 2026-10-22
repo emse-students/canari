@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::authorship::{AuthorVerdict, vet_author_proof};
+use crate::device_trust::{DeviceTrust, leaf_keys};
 use crate::fork_check::{ForkFindings, ForkVerdict, judge_fork_claim, record_fork_verdict};
 use crate::members::credential_identity;
 use crate::state::{MlsManager, StateSnapshotCache};
@@ -160,6 +161,8 @@ impl MlsManager {
             message_bytes,
             &self.state_snapshot,
             &self.fork_findings,
+            &mut self.device_trust,
+            (self.credential.identity(), self.keypair.public()),
         )
     }
 
@@ -180,6 +183,8 @@ impl MlsManager {
         let provider = &self.provider;
         let snapshot = &self.state_snapshot;
         let fork_findings = &self.fork_findings;
+        let trust = &mut self.device_trust;
+        let own = (self.credential.identity(), self.keypair.public());
         messages
             .iter()
             .map(|bytes| {
@@ -190,11 +195,17 @@ impl MlsManager {
                     bytes,
                     snapshot,
                     fork_findings,
+                    trust,
+                    own,
                 )
             })
             .collect()
     }
 
+    // Eight because two independent per-device ledgers meet here (the fork findings and the device
+    // trust), each borrowed from a different field of `MlsManager` while `group` is borrowed from a
+    // third - a struct bundling them would only rename the same split borrows.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn process_incoming_on_group(
         group: &mut MlsGroup,
         provider: &OpenMlsRustCrypto,
@@ -202,6 +213,8 @@ impl MlsManager {
         message_bytes: &[u8],
         state_snapshot: &RefCell<StateSnapshotCache>,
         fork_findings: &RefCell<ForkFindings>,
+        trust: &mut DeviceTrust,
+        own: (&[u8], &[u8]),
     ) -> Result<Option<IncomingApplication>, MlsError> {
         if message_bytes.len() > MAX_MLS_MESSAGE_BYTES {
             return Err(MlsError::InvalidData);
@@ -448,10 +461,23 @@ impl MlsManager {
                 }))
             }
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
+                let before = leaf_keys(group);
                 group
                     .merge_staged_commit(provider, *staged_commit)
                     .map_err(|e| MlsError::OpenMls(format!("Merge commit error: {:?}", e)))?;
                 state_snapshot.borrow_mut().invalidate();
+                // EVERY DEVICE THIS COMMIT ADMITTED, read from the signed tree it produced - the one
+                // place every merged commit passes, live, replayed or in a batch (crate::device_trust).
+                // Merged whatever it admits: refusing a commit the group merged forks this device out.
+                let own_identity = String::from_utf8_lossy(own.0).to_string();
+                trust.observe_merged_commit(
+                    group_id,
+                    group.epoch().as_u64(),
+                    &before,
+                    &leaf_keys(group),
+                    sender_identity.as_deref(),
+                    (&own_identity, own.1),
+                );
                 // A Remove commit naming OUR leaf leaves the group inactive, and this is the
                 // instant that becomes true. Before this line the fact was thrown away and the
                 // caller got the same `Ok(None)` as any other applied commit - so the client only

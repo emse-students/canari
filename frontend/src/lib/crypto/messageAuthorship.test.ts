@@ -130,6 +130,42 @@ describe('checking a relayed proof', () => {
     expect(check.kind).toBe('unproven');
   });
 
+  it('verifies an author who has left the tree under the key this device pinned for it', async () => {
+    const alice = await newTestAuthor('alice:dev-a');
+    const rec = await signedBy(alice, GROUP, HELLO);
+    const check = await checkRecordedAuthorship(
+      keySource({ tree: [], pinned: [alice] }),
+      GROUP,
+      rec
+    );
+    expect(check.kind === 'verified' && check.source).toBe('pinned');
+  });
+
+  it('keeps a ghost device unverified - neither in the tree nor pinned', async () => {
+    const alice = await newTestAuthor('alice:dev-a');
+    const ghost = await newTestAuthor('alice:dev-ghost');
+    const rec = await signedBy(ghost, GROUP, HELLO);
+    // Alice's real device is pinned; the ghost device the proof names is not.
+    const check = await checkRecordedAuthorship(
+      keySource({ tree: [], pinned: [alice] }),
+      GROUP,
+      rec
+    );
+    expect(check.kind).toBe('unproven');
+  });
+
+  it('accuses when the only trusted key is a pin that contradicts the signature', async () => {
+    const alice = await newTestAuthor('alice:dev-a');
+    const substitute = await newTestAuthor('alice:dev-a');
+    const rec = await signedBy(substitute, GROUP, HELLO);
+    const check = await checkRecordedAuthorship(
+      keySource({ tree: [], pinned: [alice] }),
+      GROUP,
+      rec
+    );
+    expect(check.kind).toBe('forged');
+  });
+
   it('accuses only when a trusted key contradicts the signature', async () => {
     const alice = await newTestAuthor('alice:dev-a');
     const substitute = await newTestAuthor('alice:dev-a');

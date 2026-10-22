@@ -51,13 +51,14 @@ export interface RecordedAuthorship {
  * What the checks below need of the MLS service, so a test needs no client.
  *
  * ONLY KEYS THIS DEVICE TRUSTS: the author device's leaf in the current tree, which MLS
- * authenticated. A key the SERVER publishes is never enough on its own - a server can list a key for
- * a device that never existed, or drop a real one - so it can neither verify a proof nor accuse one.
- * The device-key pins of the key-binding work are the second trusted source, added when that work
- * exposes them.
+ * authenticated, then the keys this device PINNED for it on first sight (`pinnedSignatureKeys`, the
+ * key-binding work - `null` when it never pinned that device). A key the SERVER publishes is never
+ * enough - a server can list a key for a device that never existed, or drop a real one - so it can
+ * neither verify a proof nor accuse one.
  */
 export interface AuthorKeySource {
   memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
+  pinnedSignatureKeys(userId: string, deviceId: string): Promise<Uint8Array[] | null>;
   graineSignatureEngine(): GraineSignatureEngine;
 }
 
@@ -139,8 +140,8 @@ export type AuthorshipCheck =
       message: canari.AppMessage;
       /** The group the proof was signed in - the CALLER compares it with the conversation. */
       group: string;
-      /** Which trusted key proved it - today the author's leaf in the tree. */
-      source: 'tree';
+      /** Which trusted key proved it: the author's leaf in the tree, or a key pinned for it. */
+      source: 'tree' | 'pinned';
     }
   | { kind: 'forged'; why: string }
   | { kind: 'unproven'; why: string };
@@ -149,10 +150,12 @@ export type AuthorshipCheck =
  * Checks a relayed proof: decodes it, finds the author device's TRUSTED key and verifies the
  * signature over the descriptor of the group the proof NAMES (`recorded.group`).
  *
- * - `forged`: the proof is malformed, names no group or device, or a key this device trusts (the
- *   author's leaf in `treeGroupId`'s tree) CONTRADICTS the signature. Only local evidence accuses.
- * - `unproven`: no trusted key for the author (they left the tree). That says nothing about the
- *   proof - the server's word is not evidence either way - and the caller treats it as unsigned.
+ * - `forged`: the proof is malformed, names no group or device, or the keys this device trusts (the
+ *   author's leaf in `treeGroupId`'s tree, then its pins) exist and none verifies the signature.
+ *   Only local evidence accuses.
+ * - `unproven`: no trusted key for the author (not in the tree, never pinned - a ghost device, or
+ *   one met before pinning). That says nothing about the proof - the server's word is not evidence
+ *   either way - and the caller treats it as unsigned.
  *
  * A proof that verifies in ANOTHER group is `verified` with that group, and whether it may stand for
  * a message of this conversation is the caller's decision.
@@ -184,18 +187,37 @@ export async function checkRecordedAuthorship(
   const message = decodeBody(body);
   if (!message) return { kind: 'forged', why: 'the signed bytes are not a message' };
 
-  const treeKey = await mls.memberSignatureKey(treeGroupId, author);
-  if (!treeKey) {
-    return { kind: 'unproven', why: `${author} has no leaf in the tree, so no trusted key` };
-  }
   const descriptor = await authorDescriptor(group, author, body);
-  const verdict = await mls
-    .graineSignatureEngine()
-    .verifySignature(treeKey, descriptor, proof.signature);
-  if (verdict !== 'valid') {
-    return { kind: 'forged', why: `the signature does not verify under ${author}'s tree key` };
+  const engine = mls.graineSignatureEngine();
+  const verifiesUnder = async (key: Uint8Array): Promise<boolean> =>
+    (await engine.verifySignature(key, descriptor, proof.signature)) === 'valid';
+  const verified = (source: 'tree' | 'pinned'): AuthorshipCheck => ({
+    kind: 'verified',
+    author,
+    authorUserId,
+    message,
+    group,
+    source,
+  });
+
+  const treeKey = await mls.memberSignatureKey(treeGroupId, author);
+  if (treeKey && (await verifiesUnder(treeKey))) return verified('tree');
+  // Pinned under the user id as MLS names it (the author string keeps the sender's casing).
+  const pins = (await mls.pinnedSignatureKeys(author.slice(0, sep), author.slice(sep + 1))) ?? [];
+  for (const pin of pins) {
+    if (await verifiesUnder(pin)) return verified('pinned');
   }
-  return { kind: 'verified', author, authorUserId, message, group, source: 'tree' };
+  const trusted = pins.length + (treeKey ? 1 : 0);
+  if (trusted === 0) {
+    return {
+      kind: 'unproven',
+      why: `${author} has no leaf in the tree and no pin - no trusted key`,
+    };
+  }
+  return {
+    kind: 'forged',
+    why: `the signature verifies under none of ${author}'s ${trusted} trusted key(s) (tree, pins)`,
+  };
 }
 
 function decodeBody(body: Uint8Array): canari.AppMessage | null {
