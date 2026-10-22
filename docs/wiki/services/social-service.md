@@ -1296,6 +1296,47 @@ expires. Bounds that would mint a dead link - an expiry already past, a cap belo
 (`INVITE_EXPIRY_INVALID`, `INVITE_EXPIRY_IN_THE_PAST`, `INVITE_MAX_USES_INVALID`) rather than stored,
 since `inviteIsValid` would otherwise hand back a token dead on arrival with nothing saying why.
 
+**Invite use counting is atomic (2026-10-22).** `acceptWorkspaceInvite`'s read of the invite is a
+preview; what admits is ONE conditional `UPDATE workspace_invites SET uses = uses + 1 WHERE id = $1
+AND revoked = false AND (not expired) AND ("maxUses" IS NULL OR uses < "maxUses") RETURNING id`, in
+the transaction that writes the membership. The row lock serialises concurrent accepts, each
+re-evaluates the WHERE against the committed count, and a claim that matches no row is refused
+(`404`) with nothing written. Pinned by `workspace-invite.integration.spec.ts`,
+which parks an accept on a held claim through `pg_blocking_pids`, never a sleep.
+
+### An invitation grants only a role the inviter may grant (2026-10-22)
+
+An invite LINK carries no role: whoever minted it, accepting grants the community's base role,
+its lowest-priority one (`baseMemberRole`, the one definition). A direct invitation
+(`inviteToChannel`) takes a `roleName` in its body, and since inviting is `member.invite` or
+`channel.manage` while granting a role is role management, it grants the base role unless
+`actorMayGrantRole` (`permissions.ts`) allows the named one: the actor holds
+`roleGrantsRoleManagement` - the same predicate every role-management endpoint now reads - and the
+role grants nothing the actor does not hold (`workspace.manage` holds everything). Otherwise
+`403 { code: 'INVITE_ROLE_NOT_GRANTABLE' }`, decided before the device lookup, never a silent
+downgrade. A request naming `Membre` (or the base role's own name) means the base role, so an
+ordinary invitation works in a community whose lowest role is called otherwise; the client sends
+no `roleName` at all for one, and names a role only when the inviter picked one.
+
+**Role changes are bounded by the actor's own permissions, by the same function.** Every
+role-management write goes through `assertActorManagesRoles` (the `roleGrantsRoleManagement` gate,
+returning the union of what the actor holds) and then `actorMayGrantRole`:
+
+| Write | Bound | Refusal |
+|---|---|---|
+| `updateWorkspaceMemberRole` | the new role AND the target's current roles grant nothing the actor lacks - the actor's own membership included | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `setRoleBasePermission` | the role being edited grants nothing the actor lacks (their own role included), and a granted key is one they hold; checked on the LOCKED row | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `createRole` | the new role grants nothing the actor lacks; it ranks just above the base role (`priority` is the server's, the body's is not read) | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+
+**Removals are bounded by the actor's own permissions, by the sibling predicate.**
+`kickFromWorkspace` and `removeMemberFromChannel` share one gate, `assertActorMayRemoveMember`:
+the actor holds `member.kick`, `channel.manage` or `workspace.manage`, and `permissionsCover` -
+the "holds at least as much" that `actorMayGrantRole` is built on - holds between the actor's
+permissions and the target's. Otherwise `403 REMOVAL_EXCEEDS_ACTOR`.
+
+`workspace.manage` holds every permission, so an administrator keeps all of it. Pinned by
+`role-change-bound.spec.ts` and `removal-bound.spec.ts`.
+
 ### A user id becomes a property name, and four sites spelled the refusal differently (2026-09-23)
 
 Reactions and poll answers are both stored as a map KEYED BY USER ID (`reactions`, `votesByUser`),
