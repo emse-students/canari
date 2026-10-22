@@ -2780,6 +2780,7 @@ render, and every consumer - the slice, the hidden-above count, `loadOlderGroups
 `fillViewportThenPin`, `navigateToMessage` - reads the clamped value while pagination keeps writing
 the raw state. The invariant it guarantees is the one worth remembering: **a non-empty list always
 yields a non-empty window.** `renderWindow.test.ts` pins it across every combination of stored index
+and list length, which is the assertion that fails against the old arithmetic.
 
 **The entry window is 20 groups, then 60 (2026-10-14).** Mounting a page of rows is one task that
 scales with the rows (339-635 ms for 56-200 rows on a Mi 9T) and nothing paints until it ends. So an
@@ -2792,7 +2793,17 @@ the start. Known duplication: that scroll compensation repeats what `observeThre
 growth above the viewport; folding the two is a note, not done. The salon skeleton raised by a history
 request issued at the tap is keyed by its salon (`skeletonSalon`). `ChatArea.entryWindow.svelte.test.ts`
 pins the row counts under a modelled geometry.
-and list length, which is the assertion that fails against the old arithmetic.
+
+**The render BEFORE the entry is the entry frame too (2026-10-22).** The entry effect sets
+`windowStart`, but an effect runs AFTER the render it follows. So the first render of a mount used
+the initial `windowStart` of 0 and mounted EVERY group of the thread. A switch used the window the
+previous conversation had left. The entry frame then cut it to 20 in the same flush, so the DOM
+looked right while the work was thrown away. That cost grew with the whole thread, not the window:
+2.0 s at 300 rows against 0.5 s at 70 under happy-dom, and the 20/60 split above existed to bound
+it. `awaitingEntry` (the conversation's entry key differs from `lastConversationKey`) now makes the
+window the entry frame until the effect has run. The test counts every row that EXISTED during the
+mount, from the observer's removals as well as its additions, because the DOM after the flush shows
+20 either way.
 
 The replacement itself - the reason the window and the list could disagree at all - is gone as of
 2026-08-12, see below.

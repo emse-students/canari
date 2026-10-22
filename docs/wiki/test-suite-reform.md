@@ -381,6 +381,13 @@ the 60-row window (300 rows 2.0 s, 70 rows 0.5 s); the test now mounts 80 rows, 
 60-row cap, median 0.6 s. One run in 20 still crossed 5 s there while the box was running other
 sessions' suites (that run's wall was 59 s against a 15 s median); `testTimeout` was NOT raised.
 
+**The cause of that cost was the component (2026-10-22).** A CPU profile of a 300-row mount put
+~700 ms of ~850 ms in `ChatMessageGroups` creating rows. The first render mounted the WHOLE thread
+(301 groups) before the entry effect cut it to 20 in the same flush
+([chat](frontend/modules/chat.md)). Fixed in `ChatArea`: until the entry effect has run, the window
+is the entry frame. The test mounts 61 rows (the least above 60) and pins that no more than 20
+rows ever exist during the mount. The parallel-run readings are in #2286.
+
 ## 6. Expected end state
 
 | Measure | Today | After WP-T1..T4 (estimate from the A/B) |
