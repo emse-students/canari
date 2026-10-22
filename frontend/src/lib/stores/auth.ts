@@ -565,6 +565,11 @@ async function handleOidcCallbackUnderway(
         // would recreate it under the same identity (docs/wiki/account-erasure.md).
         console.warn('[auth] sign-in refused: account erasure pending');
         message = m.auth_account_erasure_pending();
+      } else if (code === 'USER_ID_INVALID') {
+        // The identity provider's subject is not a mintable user id (printable ASCII, no ':' -
+        // core-service `users/user-id.ts`): nothing on this device can fix it, only a human can.
+        console.error('[auth] sign-in refused: the subject is not a valid user id');
+        message = m.auth_user_id_invalid();
       } else if (code === 'ACCOUNT_ERASURE_BLOCKED') {
         // A permanent failure the server could not fix by retrying: only a human finishes it.
         console.warn('[auth] sign-in refused: account erasure blocked');
