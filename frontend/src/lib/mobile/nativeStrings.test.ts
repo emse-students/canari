@@ -437,8 +437,8 @@ describe('Mention tokens in a native banner', () => {
     expect(objc).toMatch(
       /if \(namesMentionAuthor && mentionsMe\) \{\s*subtitle = CanariMentionAuthorLine\(senderId, nameBook\);/
     );
-    expect(objc).toMatch(/mentionsMe, channelName, YES\);/);
-    expect(objc).toMatch(/decrypted, NO,\s*senderName, NO\);/);
+    expect(objc).toMatch(/shownMentionsMe, channelName, YES, NO\);/);
+    expect(objc).toMatch(/decrypted, NO,\s*senderName, NO, YES\);/);
   });
 
   it('names the two words in all four iOS tables and both Android ones', () => {

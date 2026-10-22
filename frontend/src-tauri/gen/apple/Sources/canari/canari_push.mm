@@ -2616,11 +2616,16 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
 // `namesMentionAuthor` is YES on the SALON path only: its title is the salon, so a mention of this
 // reader names its author in the subtitle (`CanariMentionAuthorLine`, WP-MENTION-NAME). An MLS
 // banner passes NO - its push already names the sender in the title or the subtitle.
+//
+// `scansBodyForMention` is YES on the MLS path only. The salon caller has already DECIDED the
+// mention (`mentionedByServer` is its answer, and NO on a blind banner, which nothing proved), and a
+// scan of a blind banner's body would read the generic line, whose salon name the server wrote -
+// a salon named `@[<id>]` would mention that reader again.
 static void CanariShowMessageNotification(NSString *senderName, NSString *groupName, NSString *body,
                                           NSString *groupId, NSString *senderId,
                                           CanariDecryptedMessage *_Nullable decrypted,
                                           BOOL mentionedByServer, NSString *_Nullable initialsName,
-                                          BOOL namesMentionAuthor) {
+                                          BOOL namesMentionAuthor, BOOL scansBodyForMention) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
@@ -2650,7 +2655,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // @-mention of me (WP-XP-5): the decrypted body carries inline `@[uuid]` tokens; when one
   // targets my own userId the notification is delivered time-sensitive (Focus breakthrough).
   BOOL mentionsMe = mentionedByServer;
-  if (!mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {
+  if (scansBodyForMention && !mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {
     NSString *needle = [NSString stringWithFormat:@"@[%@]", ctx.userId];
     mentionsMe = [body rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
   }
@@ -3091,7 +3096,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     dispatch_async(dispatch_get_main_queue(), ^{
       // MLS: the server cannot know who is mentioned, so the body scan inside decides.
       CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO,
-                                    senderName, NO);
+                                    senderName, NO, YES);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -3234,8 +3239,18 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
             @"channel=%@",
             channelId);
     }
-    if (body.length == 0) {
+    // THE AUTHOR AND THE MENTION ARE THE SERVER'S WORDS until the open proves them, so a blind
+    // banner draws neither: no face, no mention route. Android twin: `ChannelBannerAttribution`.
+    BOOL showsMessage = body.length > 0;
+    NSString *shownSenderId = showsMessage ? senderId : @"";
+    BOOL shownMentionsMe = showsMessage && mentionsMe;
+    if (!showsMessage) {
       body = CanariBuildChannelFallbackText(channelName);
+      if (senderId.length > 0 || mentionsMe) {
+        NSLog(@"[CanariPush] handleChannelMessage: blind banner -> no author, no mention "
+              @"(server named sender=%@ mentioned=%d) channel=%@",
+              senderId.length > 8 ? [senderId substringToIndex:8] : senderId, mentionsMe, channelId);
+      }
     }
 
     // `<Communaute> - #<salon>`: a salon name alone is ambiguous, two communities may both have a
@@ -3246,12 +3261,12 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
                                 ? [NSString stringWithFormat:@"%@ - #%@", workspaceName, channelName]
                                 : [NSString stringWithFormat:@"#%@", channelName];
     dispatch_async(dispatch_get_main_queue(), ^{
-      // groupName empty + senderName as the title -> the banner shows it as-is; avatar from senderId.
-      // No media thumbnail for channels (WP-XP-3 is MLS DM/group only) -> pass nil.
-      // The initials fall back to the SALON, not to the composed title: Android twin uses
+      // groupName empty + senderName as the title -> the banner shows it as-is; avatar from senderId
+      // when the open proved it. No media thumbnail for channels (WP-XP-3 is MLS DM/group only) ->
+      // pass nil. The initials fall back to the SALON, not to the composed title: Android twin uses
       // channelName for exactly the same reason.
-      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil,
-                                    mentionsMe, channelName, YES);
+      CanariShowMessageNotification(displayName, @"", body, conversationId, shownSenderId, nil,
+                                    shownMentionsMe, channelName, YES, NO);
     });
   });
 }

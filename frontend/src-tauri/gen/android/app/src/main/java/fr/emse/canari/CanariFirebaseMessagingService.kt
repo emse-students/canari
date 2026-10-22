@@ -31,12 +31,14 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.NotificationLevelGate
 import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
+import fr.emse.canari.push.RepostAlert
 import fr.emse.canari.push.SeedFrameLadder
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -2127,10 +2129,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Channel switch (WP-XP-5): a posted notification cannot move channels in place, so when
             // a mention upgrades (or a plain message downgrades) this conversation's channel, cancel
             // the old post first - the rebuilt MessagingStyle above already carries its history.
-            if (existingNotif != null && android.os.Build.VERSION.SDK_INT >= 26 &&
+            val switchesChannel = existingNotif != null && android.os.Build.VERSION.SDK_INT >= 26 &&
                 existingNotif.channelId != channel
-            ) {
+            if (switchesChannel) {
                 manager.cancel(notifId)
+            }
+            // The repost after that cancel is a NEW post, which `setOnlyAlertOnce` does not silence -
+            // see [RepostAlert].
+            val alertMode = RepostAlert.of(
+                redraw = alreadyPosted || supersedes != 0L,
+                switchesChannel = switchesChannel,
+                hasExistingPost = existingNotif != null,
+            )
+            if (alertMode == RepostAlert.Mode.SILENT) {
+                Log.d(TAG, "showMessageNotification: a re-draw is a new post -> reposted silent (groupId=${groupId.take(8)} channel=$channel existing=${existingNotif != null})")
             }
 
             val isReactionNotif = channel == CHANNEL_REACTIONS
@@ -2165,7 +2177,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // A SUPERSEDE IS THE SAME MESSAGE, SPELT PROPERLY. The reader was alerted when the
                 // generic line went up; buzzing again to correct its wording would be a second
                 // notification for one message, which is the defect, not the fix.
-                .setOnlyAlertOnce(alreadyPosted || supersedes != 0L)
+                .setOnlyAlertOnce(alertMode != RepostAlert.Mode.ALERT)
+                // A re-draw that is a NEW post (after a channel-switch cancel, or after the reader
+                // swiped the old line away): `setSilent` - compat mutes the post itself, which
+                // `setOnlyAlertOnce` cannot do for a post that is not an update.
+                .setSilent(alertMode == RepostAlert.Mode.SILENT)
 
             // A REACTION DOES NOT JOIN THE MESSAGES BUNDLE. [refreshBadgeSummary] builds that bundle's
             // summary from the unread-CONVERSATION count, which a reaction is deliberately not part of
@@ -4734,7 +4750,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val ciphertext  = data["ciphertext"]?.takeIf { it.isNotEmpty() }
         val nonce       = data["nonce"]?.takeIf { it.isNotEmpty() }
         val senderId    = data["senderId"] ?: ""
-        val mentionsMe  = data["mentioned"] == "true"
+        val serverSaysMentioned = data["mentioned"] == "true"
         // THE MESSAGE'S OWN INSTANT, AND IT IS WHAT LETS THE TWO TRIGGERS RECOGNISE ONE MESSAGE.
         // Both this push and the socket frame carry `channel_messages.createdAt` - the same stored
         // column, to the millisecond - so `showMessageNotification` compares exactly. 0 when the
@@ -4811,10 +4827,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             buildChannelFallbackText(res, channelName)
         }
 
+        // THE AUTHOR AND THE MENTION ARE THE SERVER'S WORDS until the open proves them, so a blind
+        // banner draws neither - see `ChannelBannerAttribution`.
+        val attribution = ChannelBannerAttribution.of(showsMessage, senderId, serverSaysMentioned)
+        val mentionsMe = attribution.mentionsMe
+        if (!showsMessage && (senderId.isNotEmpty() || serverSaysMentioned)) {
+            Log.d(TAG, "handleChannelMessage: blind banner -> no author, no mention (server named sender=${senderId.take(8)} mentioned=$serverSaysMentioned) channel=$channelId")
+        }
         // A salon banner names no author (its "sender" is the salon's title), so a mention of this
         // reader says WHO above the line - the iOS twin is the banner's subtitle (WP-MENTION-NAME).
         val shownBody = if (mentionsMe) "${mentionAuthorLine(senderId, nameBook, res)}\n$body" else body
-        val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
+        val avatarBitmap = attribution.authorId?.let { fetchAvatar(it) }
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
         val title = buildChannelPushTitle(workspaceName, channelName)
         Log.d(TAG, "handleChannelMessage: notification title=$title body=${body.take(60)} mentionsMe=$mentionsMe")

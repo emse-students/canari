@@ -2426,6 +2426,9 @@ export function logcatReport(lines, label = 'A1') {
     // REQUIRED - the call site emits it unconditionally since 2026-09-24, and a rule that tolerated
     // its absence would go on matching a build that had quietly lost the discriminator.
     ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/],
+    // What that generic banner leaves out: the author and the mention the server named, which only an
+    // open proves. Explained, because the blind banner it rides on is already `notable` on its own.
+    ['fcm-channel-blind-no-author', /^handleChannelMessage: blind banner -> no author, no mention \(server named sender=\S* mentioned=(true|false)\) channel=\S+$/],
     // The generic banner above, COUNTED: the phone tells `/api/mls/push/blind-banner` once the
     // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
     ['fcm-channel-blind-reported', /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/],
@@ -2466,6 +2469,9 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-requeue-behind-welcome', /^tryDecrypt refused group=[0-9a-f]+: its Welcome is queued behind this frame -> re-queued after it$/],
     ['fcm-channel-requeue-behind-welcome', /^handleChannelMessage: the Welcome into key group [0-9a-f]+ is queued behind this push -> re-queued after it channel=\S+ index=\d+$/],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
+    // A re-draw of an announced message that is a new post (a held salon mention moving channel once
+    // its seed lands, or a blind banner swiped away first) is reposted silent - see `RepostAlert`.
+    ['fcm-repost-silent', /^showMessageNotification: a re-draw is a new post -> reposted silent \(groupId=\S+ channel=\S+ existing=(true|false)\)$/],
     // ── the silent half of the notification surface, which the list knew nothing about ──
     // Every one of these is a DECISION, not a tick: a silent frame shows nothing, and a silent frame
     // FROM SELF means another device of this account read the conversation, so this device's
