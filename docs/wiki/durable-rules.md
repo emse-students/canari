@@ -1469,6 +1469,16 @@ What must not be forgotten between the pages:
 
 ## Mobile and native -> [frontend/mobile](frontend/mobile.md)
 
+- **A FILE A BACKGROUND PROCESS MUST READ IS SEALED UNDER A KEY THAT NEVER ROTATES, CREATED BY ONE
+  NATIVE CREATOR - AND "NO KEY" MEANS WRITE NOTHING, NEVER WRITE IN THE CLEAR.** The seed mirror and
+  the push cache are sealed under the install's own key, not the device key: a key the PIN rotates
+  would need two processes to re-seal one file across a change neither holds. Only Rust opens them;
+  a platform asks it a yes/no. A new native cache goes through `native_cache.rs` and joins
+  `nativeCacheSeal.test.ts` ([mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
+- **A NATIVE LOG LINE CARRIES IDS AND COUNTS, NEVER CONTENT, IN EVERY BUILD.** Log `chars=${text.length}`,
+  not the text; `nativeLogContent.test.ts` fails on an interpolated content name in any Kotlin,
+  Swift, Objective-C++ or Rust log call, and a harness rule matching the old line moves with it
+  ([mobile](frontend/mobile.md#what-a-native-log-line-may-carry-2026-10-22)).
 - **A NATIVE VIEW OVER THE WEBVIEW CANNOT BE COVERED BY ANY WEB LAYER - EVERY SURFACE THAT COVERS THE
   SCREEN DECLARES IT.** The iOS tab bar is a `UITabBar` drawn above the WebView: no `z-index` reaches
   it, so it sat over the post composer's "Publier" and stayed tappable over every dialog (iPhone 12,

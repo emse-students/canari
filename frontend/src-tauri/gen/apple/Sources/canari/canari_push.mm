@@ -342,6 +342,32 @@ static NSString *_Nullable CanariRetrieveDeviceKey(NSString *userId, NSString *d
   return nil;
 }
 
+// The install's native cache key (Rust `native_cache`), base64, from the shared Keychain item
+// `CanariEnsureNativeCacheKey` creates at bootstrap. @"" when absent or unreadable - which Rust
+// treats as "write nothing, read nothing sealed", never as a reason to write in the clear.
+// Swift twin: NotificationService.retrieveNativeCacheKey.
+static NSString *CanariRetrieveNativeCacheKey(void) {
+  NSDictionary *query = @{
+    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService : @"fr.emse.canari",
+    (__bridge id)kSecAttrAccount : @"mls_bg_key_canari_native_cache_key",
+    (__bridge id)kSecAttrAccessGroup : @"group.fr.emse.canari",
+    (__bridge id)kSecReturnData : @YES,
+    (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitOne,
+  };
+  CFTypeRef item = nil;
+  OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &item);
+  if (status == errSecSuccess && item != nil) {
+    NSData *data = (__bridge_transfer NSData *)item;
+    if (data.length == 32) {
+      // RAW key bytes, re-encoded - never read as UTF-8.
+      return [data base64EncodedStringWithOptions:0];
+    }
+  }
+  NSLog(@"[CanariPush] native cache key: ERROR unreadable (status=%d)", (int)status);
+  return @"";
+}
+
 static CanariPushContext *_Nullable CanariLoadPushContext(void) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
@@ -937,14 +963,27 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
  * Appends one entry to the app's `fcm_message_cache.ndjson`, bounded to kMaxFcmCacheEntries.
  * Two callers write it: a push decrypted while the app was dead, and a notification quick reply
  * this device SENT while the app was dead (CanariWriteSentMessageToCache).
+ *
+ * Each line is SEALED under the install's native cache key before it touches the disk. With no key
+ * the entry is NOT written - never in the clear: the message is still on the server.
  */
 static void CanariAppendFcmCacheEntry(NSDictionary *entry, NSString *messageId) {
   NSData *entryData = [NSJSONSerialization dataWithJSONObject:entry options:0 error:nil];
   if (entryData == nil) {
+    NSLog(@"[CanariPush] writeFcmCache: JSON encoding failed");
     return;
   }
-  NSString *entryLine =
+  NSString *plainLine =
       [[NSString alloc] initWithData:entryData encoding:NSUTF8StringEncoding];
+  char *sealedPtr = canari_native_seal_cache_line(CanariRetrieveNativeCacheKey().UTF8String,
+                                                  plainLine.UTF8String);
+  if (sealedPtr == nil) {
+    NSLog(@"[CanariPush] writeFcmCache: ERROR no cache key - entry NOT written messageId=%@",
+          [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)]);
+    return;
+  }
+  NSString *entryLine = [NSString stringWithUTF8String:sealedPtr];
+  canari_free_string(sealedPtr);
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
     return;
@@ -3114,40 +3153,28 @@ static NSString *CanariBuildChannelFallbackText(NSString *channelName) {
   return [NSString stringWithFormat:CanariLocalized(@"notif.channel.message"), channelName];
 }
 
-// Looks up a Graine session's raw base64 seed in graine_seeds.json, written by the foreground.
-// Shape: { "<channelId>": { "<sessionId>": { "seed": "<b64>", "createdAt": <ms> } } }.
+// Whether graine_seeds.json (written by the foreground, sealed under the install's native cache
+// key) holds a Graine session - asked of Rust, which alone opens the file, so the seed never
+// enters Objective-C.
 //
 // The mirror is BOUNDED to the newest sessions per channel, so a miss on an old session is
 // expected and not a fault: the banner degrades to the generic body, the same outcome an
-// oversized ciphertext already produces.
-static NSString *_Nullable CanariLookupGraineSeed(NSString *channelId, NSString *sessionId) {
+// oversized ciphertext already produces. An unreadable mirror reads as a miss, and says so.
+static BOOL CanariGraineSeedHeld(NSString *channelId, NSString *sessionId) {
   if (sessionId.length == 0) {
-    return nil;
+    return NO;
   }
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
-    return nil;
+    return NO;
   }
-  NSData *raw =
-      [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"graine_seeds.json"]];
-  if (raw == nil) {
-    NSLog(@"[CanariPush] lookupGraineSeed: graine_seeds.json absent");
-    return nil;
+  int32_t held = canari_native_graine_seed_held(dir.UTF8String,
+                                                CanariRetrieveNativeCacheKey().UTF8String,
+                                                channelId.UTF8String, sessionId.UTF8String);
+  if (held < 0) {
+    NSLog(@"[CanariPush] graineSeedHeld: ERROR the seed mirror is unreadable channel=%@", channelId);
   }
-  id json = [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil];
-  if (![json isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  id byChannel = ((NSDictionary *)json)[channelId];
-  if (![byChannel isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  id session = ((NSDictionary *)byChannel)[sessionId];
-  if (![session isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  id seed = ((NSDictionary *)session)[@"seed"];
-  return ([seed isKindOfClass:[NSString class]] && [(NSString *)seed length] > 0) ? seed : nil;
+  return held == 1;
 }
 
 // Decrypts a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) and shows
@@ -3191,14 +3218,12 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
 
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSString *body = nil;
-    NSString *seedB64 =
-        (ciphertext.length > 0 && nonce.length > 0 && messageIndexStr.length > 0)
-            ? CanariLookupGraineSeed(channelId, sessionId)
-            : nil;
-    if (seedB64.length > 0) {
+    BOOL seedHeld = (ciphertext.length > 0 && nonce.length > 0 && messageIndexStr.length > 0) &&
+                    CanariGraineSeedHeld(channelId, sessionId);
+    if (seedHeld) {
       // Rust reads the session from the mirror itself and applies the floor and, under a v2
       // session, the author, the signature and the AAD (channel-encryption section 21.5).
-      // `seedB64` above only says whether the mirror holds it.
+      // `seedHeld` above only says whether the mirror holds it.
       NSString *signature =
           [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
       NSString *dir = CanariTauriDataDir();
@@ -3207,7 +3232,8 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       char *jsonPtr =
           dir == nil ? nil
                      : canari_native_open_graine_push(
-                           dir.UTF8String, channelId.UTF8String, sessionId.UTF8String,
+                           dir.UTF8String, CanariRetrieveNativeCacheKey().UTF8String,
+                           channelId.UTF8String, sessionId.UTF8String,
                            (uint32_t)[messageIndexStr intValue], senderId.UTF8String,
                            nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String,
                            locale.UTF8String);

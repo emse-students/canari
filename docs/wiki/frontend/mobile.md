@@ -1049,8 +1049,10 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
   device key comes from the shared keychain item `mls_bg_key_<alias>` (see
   [auth](modules/auth.md) "Where the key lives")
 - `mls.bin` — read-only mirror of the persisted MLS state; the NSE never writes it
-- `channel_keys.json` — read-only mirror for community/channel message decryption
+- `graine_seeds.json` — the salon seed mirror, SEALED at rest; only Rust opens it (see "The native caches are sealed at rest")
 - `push_secret.txt` — read-only mirror of the PushSecret for backend fetch paths
+
+(`channel_keys.json`, the epoch-key mirror Graine replaced, had no reader left; the first run of a 2026-10-22 build deletes it.)
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
@@ -2581,9 +2583,62 @@ The web has no bridge to cross: the bytes go from IndexedDB to WASM in one proce
 `hasMlsState` still loads them there. That split is not a fallback, it is the same question asked
 the way each store can answer it.
 
+### The native caches are sealed at rest, and kept out of backups (2026-10-22)
+
+Two files exist so a phone can act with the app shut, and each holds what the app's own stores
+seal: `graine_seeds.json` (salon seeds, for the push service to derive a message key) and
+`fcm_message_cache*.ndjson` (messages the push service decrypted, for the next start). Both are
+sealed since 2026-10-22 by `src-tauri/src/native_cache.rs`, the only copy of the design:
+
+- **The key is the INSTALL's, not the device key.** A random 32 bytes, created once by the native
+  side at process start (Android `NativeCacheKey.ensure` from `CanariApplication`; iOS
+  `CanariEnsureNativeCacheKey` at bootstrap and activation), kept exactly where the device key's
+  background copy is kept: wrapped by a non-exportable Android Keystore key (`keystore_aliases`
+  prefs), or a Keychain item `mls_bg_key_canari_native_cache_key` in the App Group access group,
+  `AfterFirstUnlockThisDeviceOnly`. Not the device key, deliberately: that one changes with the
+  PIN, and two background processes would have to re-seal both files across a change neither
+  holds. A key that never rotates has no such window, and nothing the server holds derives it.
+- **One creator.** Rust never creates it - the app process reads it through the keystore plugin's
+  unattended read; the push service and the NSE read it themselves and hand it over (JNI / FFI).
+- **Two envelopes**: the mirror is `CNSEAL1\n || nonce || AES-256-GCM`; a cache LINE is
+  `cs1:<base64>`, so the append, the take and the size-checked ack still work line by line. Each
+  purpose has its own HKDF subkey.
+- **No key is never plaintext**: a writer with no key writes nothing (the message is still on the
+  server), a sealed file with no key is an error and never "empty", and a take with no key does not
+  hand over (so never acks) a file holding sealed lines.
+- **Only Rust opens the mirror.** The Kotlin service, the NSE and `canari_push.mm` ask
+  `graineSeedHeld` (1 / 0 / -1) and pass the key to `open_graine_push`; the seed never enters the
+  JVM or Swift.
+- **The upgrade**: a mirror without the marker is the older build's plaintext, read as such and
+  sealed by the first write and by `migrate_legacy_files` (run once per process from
+  `take_fcm_cache`, for the data dir and the iOS App Group copy; the file's marker is the durable
+  record, so it is idempotent). `channel_keys.json` has no reader and is deleted. Plaintext cache
+  lines are taken beside sealed ones and leave with the ack.
+- **Backups**: Android already excludes its whole data domain (`data_extraction_rules.xml`, see
+  below). iOS sets `NSURLIsExcludedFromBackupKey` on the app data DIRECTORY and the App Group
+  container (`CanariExcludeNativeCachesFromBackup`) - on directories because every writer replaces
+  its file by an atomic rename, which would drop a per-file flag.
+- **Desktop has no reader**, so it writes no mirror and deletes a plaintext one an older build left.
+
+`nativeCacheSeal.test.ts` pins the alias across the five files, that every cache writer seals,
+that no native reader opens the mirror, and the iOS exclusion. A rotation of the key, a key lost
+with the Keystore entry (Android re-creates it only when the wrapping entry is GONE), or a sealed
+line under another key costs a cache entry or a richer banner, never a message: the durable stores
+are the truth.
+
+### What a native log line may carry (2026-10-22)
+
+A release build prints no message text, name or key to logcat, os_log or the Rust log - ids
+(truncated where they already were) and counts only (`chars=${text.length}`, `named=true`).
+`nativeLogContent.test.ts` scans every Kotlin, Swift, Objective-C++ and Rust log call for an
+interpolated content-bearing name (`text`, `body`, `senderName`, `seed`, `token` ...) and fails on
+one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content is allowlisted
+by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) were
+moved to the new shapes in the same change.
+
 ### FCM message cache
 
-Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt:
+Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt, each line SEALED (previous section):
 
 - Android: `CanariFirebaseMessagingService.writeFcmCache` → `{app_data_dir}` directly. The FCM service runs in the app's own process, so it shares that directory.
 - iOS NSE: `NotificationService.writeFcmCache` → the **App Group container**, then `CanariDrainAppGroupFcmCache` (called from `canari_ios_bootstrap` and on `didBecomeActive`) moves the entries into `{app_data_dir}`.

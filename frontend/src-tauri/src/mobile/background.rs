@@ -187,28 +187,35 @@ pub struct GrainePush<'a> {
 /// opened. A replayed push re-shows a banner the device already showed; the app, which does hold
 /// that record, shows the row once.
 ///
-/// `language` words what the scanner composes itself ([`PushLanguage`]).
+/// `language` words what the scanner composes itself ([`PushLanguage`]). `cache_key` is the
+/// install's native cache key the platform read (`native_cache`), which opens the sealed mirror;
+/// `None` reads only an older build's plaintext mirror and refuses a sealed one as unreadable.
 pub fn open_graine_push(
     data_dir: &Path,
+    cache_key: Option<&crate::native_cache::CacheKey>,
     push: &GrainePush<'_>,
     language: PushLanguage,
 ) -> serde_json::Value {
-    let held =
-        match crate::commands::push::read_graine_seed(data_dir, push.channel_id, push.session_id) {
-            Ok(Some(held)) => held,
-            Ok(None) => {
-                log::debug!(
-                    "[GraineBG] session {} of channel {} is not mirrored",
-                    push.session_id,
-                    push.channel_id
-                );
-                return refused("seed-not-mirrored");
-            }
-            Err(e) => {
-                log::error!("[GraineBG] mirror unreadable: {e}");
-                return refused("mirror-unreadable");
-            }
-        };
+    let held = match crate::commands::push::read_graine_seed(
+        data_dir,
+        cache_key,
+        push.channel_id,
+        push.session_id,
+    ) {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            log::debug!(
+                "[GraineBG] session {} of channel {} is not mirrored",
+                push.session_id,
+                push.channel_id
+            );
+            return refused("seed-not-mirrored");
+        }
+        Err(e) => {
+            log::error!("[GraineBG] mirror unreadable: {e}");
+            return refused("mirror-unreadable");
+        }
+    };
     if push.index < held.first_index {
         log::warn!(
             "[GraineBG] index {} is below session {}'s floor {} - refused, as the app refuses it",
