@@ -1420,6 +1420,13 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
 - Localized `InfoPlist.strings` (fr/en `PBXVariantGroup`)
 - `aps-environment: production` for TestFlight/App Store
 - Provisioning profiles: two named profiles matching `PROVISIONING_PROFILE_SPECIFIER`, team "Les Rootz" `4CLNB8SR6L`
+- **The app needs iOS 16** (owner decision 2026-10-22). The WebView carries a Content-Security-Policy
+  with `'wasm-unsafe-eval'`, which WebKit before 16 does not know - it refuses WebAssembly, so the MLS
+  engine would not load. Stated in four places that must agree: `IPHONEOS_DEPLOYMENT_TARGET` (the
+  project and the app target, both configurations; the NSE keeps its own higher value), `project.yml`,
+  the `Podfile`, and `bundle.iOS.minimumSystemVersion` in `tauri.conf.json` - plus the Rust prebuild's
+  `IPHONEOS_DEPLOYMENT_TARGET` in `ios.yml`. `csp.test.ts` asserts them
+  ([cloudflare-edge](../infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)).
 
 ### A build for the phone on the bench
 
