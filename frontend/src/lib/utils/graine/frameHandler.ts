@@ -25,6 +25,7 @@ import { forgetAskedSession, noteHistoryHeldNothing, noteSeedUnavailable } from 
 import { seedFromWire, storedV2From, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
 import { checkSeedEndorsement, type EndorsementSource } from './endorsement';
 import { pageGraineBundle } from './bundlePages';
+import { noteHistoryPage } from './pagedHistoryAnswer';
 
 /**
  * What a frame arriving on a community's distribution group MEANS.
@@ -532,8 +533,8 @@ async function answerSeedRequest(
 
   // BOUNDED IN BYTES, NOT IN SEEDS (2026-10-22): an answer over GRAINE_BUNDLE_PAGE_MAX_BYTES goes as
   // several complete bundles under one request id. Each seed is stored on its own at the other end,
-  // so the pages need no reassembly - see `bundlePages.ts` for why order, duplicates and a lost page
-  // are all harmless there.
+  // so the pages need no reassembly - see `bundlePages.ts` for why order and duplicates corrupt
+  // nothing there, and what a lost page costs.
   const pages = pageGraineBundle({
     workspaceId: frame.workspaceId,
     requestId: String(request.requestId ?? ''),
@@ -864,6 +865,17 @@ async function absorbSeedBundle(
       `[GRAINE] not storing ${refusedOutOfScope.length + awaitingListing} seed(s) relayed by ${frame.sender} on ${scopeLabel(frame.scope)}: ${why.join('; ')}`
     );
   }
+
+  // AFTER its seeds are stored, never before: a page recorded as arrived is a page whose seeds are
+  // here, which is what an incomplete history answer is judged on at the next start (section 4.4).
+  // A bundle answering anything but this device's history ask is ignored there.
+  noteHistoryPage(
+    requireGraineRuntime('cannot record a history page').userId,
+    frame.workspaceId,
+    String(bundle.requestId ?? ''),
+    Number(bundle.pageIndex ?? 0),
+    Number(bundle.pageCount ?? 0)
+  );
 
   if (refusedV1.length > 0) {
     // ONE line per bundle: an honest answerer relays every v1 session it holds, so a joiner's

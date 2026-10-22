@@ -30,6 +30,7 @@ import { handleDistributionFrame } from './frameHandler';
 import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
 import type { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
+import { incompleteHistoryPages, noteHistoryAsked } from './pagedHistoryAnswer';
 import {
   announceGraineRepair,
   graineRepairHoldObserver,
@@ -1541,10 +1542,26 @@ describe('a bundle answering our own request (WP-33)', () => {
       expect(saved.map((s) => s.sessionId).sort()).toEqual(['s-a', 's-b', 's-c', 's-d']);
       expect(repaired).toEqual([['chan-3'], ['chan-1'], ['chan-2']]);
       const said = debug.mock.calls.flat().join(' ');
-      // A gap in this sequence is a lost page, visible in the log; the rows it carried ask again
-      // one session at a time, which is what makes losing one harmless.
+      // A gap in this sequence is a lost page, visible in the log. It corrupts nothing: its sessions
+      // are asked for one at a time as their rows fail to open, and a history answer missing a page
+      // is asked for once more at the next start (`pagedHistoryAnswer`).
       for (const n of [1, 2, 3]) expect(said).toContain(`page ${n}/3 of request r-p`);
       debug.mockRestore();
+    });
+
+    it('records each absorbed page of OUR history ask, so a page that never came is known at the next start', async () => {
+      localStorage.clear();
+      const { storage } = fakeStorage();
+      wire(storage);
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+      noteHistoryAsked('alice', 'ws-1', 'r-p', false);
+
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-1', 's-a', 0)], 0, 3));
+      await handleDistributionFrame(pageFrame([await v2SeedFor('chan-2', 's-b', 0)], 2, 3));
+
+      expect(incompleteHistoryPages('alice', 'ws-1')).toEqual([1]);
+      debug.mockRestore();
+      localStorage.clear();
     });
 
     it('treats a duplicated page as what it is - nothing new stored, no salon re-read', async () => {

@@ -88,7 +88,8 @@ export const GRAINE_HISTORY_BUNDLE_MAX_SEEDS = 8000;
  *
  * A seed count could not bound a message once a seed was ~330 bytes and its identifiers free to
  * grow. Every hop the frame crosses, read from code and config on 2026-10-22 (the frame travels as
- * base64, so ~4/3 of this, plus MLS framing of a few hundred bytes - no padding is configured):
+ * base64 of the MLS frame, which adds 165-170 bytes of framing to its plaintext, measured; no
+ * padding is configured):
  *
  * | Hop | Limit |
  * | --- | --- |
@@ -102,11 +103,18 @@ export const GRAINE_HISTORY_BUNDLE_MAX_SEEDS = 8000;
  *
  * The binding hop is the pending page: it is the unit an offline device catches up in, sized to
  * cross a poor mobile link, and a single row larger than it is still delivered, alone and over
- * budget. 256 KiB is ~342 KiB of base64 with its framing, a THIRD of that page - so a page never
- * crowds a catch-up and leaves room for the frames queued beside it - and 1/29 of the body limit.
- * Today's largest community (~150 KB) still answers in one message.
+ * budget. A page is sized so that THREE fit one pending page, so a page never crowds a catch-up:
+ *
+ * - three base64 frames fit 1 048 576 characters when each is <= 349 525, i.e. each MLS frame is
+ *   <= 262 143 bytes (4 x ceil(262 143 / 3) = 349 524);
+ * - 255 KiB = 261 120 bytes of plaintext leaves 1 023 bytes for MLS framing, which measures 170
+ *   (`frontend/mls-core/tests/application_frame_overhead.rs` pins it): a full page is a 261 290-byte
+ *   frame, 348 388 base64 characters, three of them 1 045 164 - 3 412 under the pending page.
+ *
+ * 256 KiB did NOT fit three: its frame is 349 752 characters, three of them 680 over. Against the
+ * 10 MB body limit a page is 1/29. Today's largest community (~150 KB) still answers in one message.
  */
-export const GRAINE_BUNDLE_PAGE_MAX_BYTES = 256 * 1024;
+export const GRAINE_BUNDLE_PAGE_MAX_BYTES = 255 * 1024;
 
 /**
  * What a community lets a newcomer read. Per community, not per channel: a member belongs to the

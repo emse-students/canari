@@ -279,17 +279,27 @@ export function inlineProtoBudget(input: PushMessageInput): number {
  * How a queued frame's ciphertext travels in the push: the typed outcome of {@link decideProtoCarriage}.
  *
  * - `inlined`: the ciphertext rides in the data map (a message that fits the budget).
- * - `by-reference`: a WELCOME. It is never inlined, by design and not by overflow: the receiving
- *   client always fetches the whole bundle (ciphertext AND ratchet tree) through `fetch-proto`,
- *   and the tree is what makes it 4 to 5 KB against a ~3.7 KB budget. Measured: 4608 B against
- *   3716 B. Nothing is dropped - the push still wakes the device, which fetches by `queuedMessageId`.
+ * - `by-reference`: the frame is fetched by `queuedMessageId`, and that is expected, for one of two
+ *   `reason`s. A `welcome` is never inlined, by design and not by overflow: the receiving client
+ *   always fetches the whole bundle (ciphertext AND ratchet tree) through `fetch-proto`, and the
+ *   tree is what makes it 4 to 5 KB against a ~3.7 KB budget (measured: 4608 B against 3716 B).
+ *   `key-material` is a Graine key-distribution frame over the budget: a seed bundle is routinely
+ *   kilobytes (a history answer is paged at up to 255 KiB, channel-encryption section 4.4), so its
+ *   size accuses nothing. Nothing is dropped either way - the push still wakes the device.
  * - `over-budget`: a MESSAGE whose ciphertext did not fit. Never expected: it means the fixed
  *   fields (`senderName`, `groupName`, unbounded user text) grew, so it is reported at warn level.
+ *   A frame the server could not classify (`isKeyDistribution` undefined) stays here.
  * - `empty`: nothing to carry.
  */
 export type ProtoCarriage =
   | { kind: 'inlined'; proto: string; bytes: number; budget: number }
-  | { kind: 'by-reference'; proto: ''; bytes: number; budget: number }
+  | {
+      kind: 'by-reference';
+      reason: 'welcome' | 'key-material';
+      proto: '';
+      bytes: number;
+      budget: number;
+    }
   | { kind: 'over-budget'; proto: ''; bytes: number; budget: number }
   | { kind: 'empty'; proto: ''; bytes: 0; budget: number };
 
@@ -298,10 +308,13 @@ export type ProtoCarriage =
  *
  * A Welcome is carried by reference whatever its size (the Android reader fetches its bundle
  * unconditionally, because the ratchet tree is never in the push), so for that population the
- * budget is not a question and no line is owed. A message is inlined when it fits and otherwise
- * reported as `over-budget`, the one outcome that accuses the fixed fields.
+ * budget is not a question and no line is owed. Any other frame is inlined when it fits - key
+ * material included, since the native mirror reads seeds from an inline frame. A key-distribution
+ * frame that does not fit is carried by reference, its size being ordinary; any other frame that
+ * does not fit is `over-budget`, the one outcome that accuses the fixed fields.
  *
- * @param input - The message description, read for `isWelcome` and the fixed fields (not `proto`).
+ * @param input - The message description, read for `isWelcome`, `isKeyDistribution` and the fixed
+ *   fields (not `proto`).
  * @param protoB64 - The ciphertext as queued.
  * @returns The outcome, whose `proto` is exactly what must be placed in the payload.
  */
@@ -309,8 +322,10 @@ export function decideProtoCarriage(input: PushMessageInput, protoB64: string): 
   const budget = inlineProtoBudget(input);
   const bytes = Buffer.byteLength(protoB64, 'utf8');
   if (bytes === 0) return { kind: 'empty', proto: '', bytes: 0, budget };
-  if (input.isWelcome) return { kind: 'by-reference', proto: '', bytes, budget };
+  if (input.isWelcome) return { kind: 'by-reference', reason: 'welcome', proto: '', bytes, budget };
   if (bytes <= budget) return { kind: 'inlined', proto: protoB64, bytes, budget };
+  if (input.isKeyDistribution === true)
+    return { kind: 'by-reference', reason: 'key-material', proto: '', bytes, budget };
   return { kind: 'over-budget', proto: '', bytes, budget };
 }
 

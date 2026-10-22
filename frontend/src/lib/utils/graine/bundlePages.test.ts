@@ -41,7 +41,9 @@ const encodedSize = (page: canari.GraineBundleMsg.$Properties) =>
 
 describe('pageGraineBundle', () => {
   it('keeps an answer that fits as ONE bundle with no page numbers - the bytes every client sent before', () => {
-    const one = answer([seed('a', 1), seed('b', 2)], { truncated: true });
+    // Out of salon order on purpose: only an answer that PAGES is grouped by salon, so one that fits
+    // keeps the order it was given and its bytes stay exactly the pre-paging ones.
+    const one = answer([seed('b', 2), seed('a', 1), seed('b', 3)], { truncated: true });
     const pages = pageGraineBundle(one);
 
     expect(pages).toHaveLength(1);

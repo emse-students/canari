@@ -7,11 +7,12 @@ import { GRAINE_BUNDLE_PAGE_MAX_BYTES } from '$lib/crypto/graineConstants';
  *
  * **Why pages need no reassembly.** A receiver stores every seed of a bundle on its own, keyed on
  * the session id, in the durable seed store (`storeIncomingSeed`): a seed already held is
- * `already-held` and changes nothing. So pages may arrive in any order, a duplicated page is a
- * no-op, and a lost page is a set of sessions the per-session repair asks for the moment a row
- * under one of them fails to open - derived from the messages themselves, never from a timer
- * waiting for "the rest". The page numbers exist for the log, so a gap is visible, and decide
- * nothing.
+ * `already-held` and changes nothing. So pages may arrive in any order and a duplicated page is a
+ * no-op. A lost page corrupts nothing but is NOT free: its sessions are missing, the rows under
+ * them stay hidden until the per-session repair (asked as each row fails to open) lands, and a
+ * history answer missing a page is asked for ONCE more at the next start (`pagedHistoryAnswer.ts`,
+ * durable, keyed on which page numbers arrived - never a timer waiting for "the rest"). The page
+ * numbers are recorded for that and for the log; the absorbing of a page depends on none of them.
  *
  * Protocol and measured limits: `docs/wiki/protocols/channel-encryption.md` section 4.4 and
  * {@link GRAINE_BUNDLE_PAGE_MAX_BYTES}.
@@ -72,12 +73,13 @@ function envelopeBytes(answer: GraineAnswer): number {
 /**
  * The bundles that carry `answer`, each encoding to at most `budget` bytes as an `AppMessage`.
  *
- * - An answer that fits is ONE bundle with no page numbers - byte for byte the answer every client
- *   sent before pages existed, so nothing changes for a community under the budget.
+ * - An answer that fits is ONE bundle with no page numbers and its seeds in the order given - byte
+ *   for byte the answer every client sent before pages existed, so nothing changes for a community
+ *   under the budget.
  * - Otherwise every page is a complete bundle under the same `requestId`, numbered from 0;
  *   `truncated` rides the last page only, so an old reader warns once, not once per page.
- * - Seeds are grouped by salon (stable within it), so a salon's seeds land in as few pages as
- *   possible: each page that stores a new seed of a salon re-reads that salon.
+ * - When it pages, seeds are grouped by salon (stable within it), so a salon's seeds land in as few
+ *   pages as possible: each page that stores a new seed of a salon re-reads that salon.
  * - A page always carries at least one entry, whatever its size, so an entry larger than the
  *   budget (never expected: a seed is ~330 bytes) still travels rather than looping.
  *
@@ -87,11 +89,32 @@ export function pageGraineBundle(
   answer: GraineAnswer,
   budget: number = GRAINE_BUNDLE_PAGE_MAX_BYTES
 ): canari.GraineBundleMsg.$Properties[] {
-  const seeds = [...answer.seeds].sort((a, b) =>
-    String(a.channelId ?? '').localeCompare(String(b.channelId ?? ''))
-  );
   const encoder = new TextEncoder();
   const envelope = envelopeBytes(answer);
+  const seedCost = new Map(
+    answer.seeds.map((seed) => [
+      seed,
+      entryBytes(canari.GraineMsg.encode(canari.GraineMsg.create(seed)).finish().length),
+    ])
+  );
+  const missingCost = answer.missing.map((id) => entryBytes(encoder.encode(id).length));
+  const base = { workspaceId: answer.workspaceId, requestId: answer.requestId };
+
+  const total =
+    envelope +
+    [...seedCost.values()].reduce((a, b) => a + b, 0) +
+    missingCost.reduce((a, b) => a + b, 0);
+  if (total <= budget || answer.seeds.length + answer.missing.length <= 1) {
+    return [
+      {
+        ...base,
+        seeds: answer.seeds,
+        missingSessionIds: answer.missing,
+        truncated: answer.truncated,
+        ...(answer.holdsNothing ? { holdsNothing: true } : {}),
+      },
+    ];
+  }
 
   interface Page {
     seeds: canari.GraineMsg.$Properties[];
@@ -109,27 +132,12 @@ export function pageGraineBundle(
     page.bytes += bytes;
     return page;
   };
-  for (const seed of seeds) {
-    place(
-      entryBytes(canari.GraineMsg.encode(canari.GraineMsg.create(seed)).finish().length)
-    ).seeds.push(seed);
-  }
-  for (const sessionId of answer.missing) {
-    place(entryBytes(encoder.encode(sessionId).length)).missing.push(sessionId);
-  }
+  const bySalon = [...answer.seeds].sort((a, b) =>
+    String(a.channelId ?? '').localeCompare(String(b.channelId ?? ''))
+  );
+  for (const seed of bySalon) place(seedCost.get(seed) ?? 0).seeds.push(seed);
+  answer.missing.forEach((sessionId, i) => place(missingCost[i]).missing.push(sessionId));
 
-  const base = { workspaceId: answer.workspaceId, requestId: answer.requestId };
-  if (pages.length === 1) {
-    return [
-      {
-        ...base,
-        seeds: pages[0].seeds,
-        missingSessionIds: pages[0].missing,
-        truncated: answer.truncated,
-        ...(answer.holdsNothing ? { holdsNothing: true } : {}),
-      },
-    ];
-  }
   return pages.map((page, index) => ({
     ...base,
     seeds: page.seeds,

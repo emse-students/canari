@@ -209,21 +209,59 @@ from code and config, and the binding one is the pending-queue page an offline d
 | **pending-queue page, `PENDING_PAGE_MAX_BYTES`** | **1 MiB of base64** (one larger row is still sent, alone) |
 | ciphertext inlined in a push | ~3.7 KB: a page never fits, the device fetches it by `queuedMessageId` |
 
-`GRAINE_BUNDLE_PAGE_MAX_BYTES` is 256 KiB of encoded `AppMessage`, about 342 KiB of base64 with its
-MLS framing: a third of that page. An answer over it goes as `page_count` complete
-`GraineBundleMsg`s under one `request_id`, numbered by `page_index`, seeds grouped by salon so a
-salon is re-read by as few pages as possible; `truncated` rides the last page only. An answer that
-fits is one bundle with no page numbers, the same bytes as before. 8 000 seeds is about eleven pages;
+`GRAINE_BUNDLE_PAGE_MAX_BYTES` is **255 KiB** of encoded `AppMessage`, sized so that THREE pages fit
+one pending page. The arithmetic, with the MLS framing MEASURED rather than estimated
+([application_frame_overhead.rs](../../../frontend/mls-core/tests/application_frame_overhead.rs)):
+
+| Quantity | Bytes |
+| --- | --- |
+| Pending page, base64 characters | 1 048 576 |
+| Largest base64 frame of which three fit (1 048 576 / 3, rounded down) | 349 525 |
+| Largest MLS frame giving it (4 x ceil(262 143 / 3) = 349 524) | 262 143 |
+| MLS framing, measured (UUID group id, 0 B to 255 KiB plaintext; no padding configured) | 165 - 170 |
+| A full page: 261 120 plaintext + 170 framing | 261 290 frame, 348 388 base64 |
+| Three full pages | 1 045 164, **3 412 under** the pending page |
+| What 256 KiB would have been: three frames of 349 752 | 1 049 256, 680 OVER |
+
+The first version of this page said 256 KiB was "a third" without counting the framing, and three of
+them did not fit; the test pins the framing under the 1 023 bytes 255 KiB leaves for it. A page is
+about 1/29 of the 10 MB body limit.
+
+An answer over the budget goes as `page_count` complete `GraineBundleMsg`s under one `request_id`,
+numbered by `page_index`. When it pages, seeds are grouped by salon, so a salon is re-read by as few
+pages as possible; `truncated` rides the last page only. **An answer that fits is one bundle with no
+page numbers and its seeds in the order gathered**, so its bytes are exactly the pre-paging ones (the
+grouping applies only to an answer that pages). 8 000 seeds is about eleven pages;
 `GRAINE_HISTORY_BUNDLE_MAX_SEEDS` now bounds one answer's work, not one message
 ([bundlePages.ts](../../../frontend/src/lib/utils/graine/bundlePages.ts)).
 
+**The history floor is read once per ANSWER, not once per page.** The floor that decides what an asker
+may read (`seedsTheAskerMayRead`, one `graineHistoryFloor` call per salon) belongs to the GATHER step,
+which runs before `pageGraineBundle`. Paging cuts what was already filtered, and a page carries no
+check of its own. Moving that filter after the paging would cost one floor call per salon per page,
+about eleven at the cap, so it must stay before.
+
 **Pages need no reassembly, so nothing waits for them.** A receiver stores each seed on its own in the
 durable seed store, keyed on the session id. Pages may arrive in any order. A duplicated page is
-`already-held`: nothing is stored and no salon is re-read. A lost page is a set of sessions, and the
-first row under one of them that fails to open asks for it (§4.5), which derives what is missing from
-the messages rather than from a timer. The page numbers only reach the absorb line
-(`page 2/5 of request r`), so a gap shows in a log. A numbering that cannot be true is warned about
-and the page is still absorbed. A page that fails to send is logged with how many pages went before it.
+`already-held`: nothing is stored and no salon is re-read. A numbering that cannot be true is warned
+about and the page is still absorbed. Each page names itself in the absorb line
+(`page 2/5 of request r`).
+
+**A lost page corrupts nothing, but it is not free.** It happens when the answerer's send fails
+partway, and that failure is logged with how many pages went before it. Its sessions are missing, and
+§4.5 hides a row whose seed is missing until the repair lands. That repair is asked for one session at
+a time, as each row fails to open. For a HISTORY answer the loss is also recorded durably:
+- `pagedHistoryAnswer.ts` keeps the ask's request id from the moment it is sent, so a page absorbed
+  after a restart is still recognised;
+- it marks each page absorbed only after its seeds are stored;
+- it closes on the last page.
+
+At the next start `requestCommunityHistory`, which otherwise asks only while no seed is held, asks
+ONCE more when that record names missing pages. That re-ask is spent only when it is sent, so an ask
+that finds nobody online keeps it. A second incomplete answer is left to the per-session repair. The
+trigger is the next start and the evidence is which page numbers arrived; no clock is involved. A
+re-ask may duplicate pages still sitting in the queue at that start, which costs one more answer and
+corrupts nothing.
 
 **A reader that predates pages** decodes a page with a schema lacking fields 7 and 8 (protobufjs and
 the native `proto_fields` reader both skip unknown tags), so each page is an ordinary bundle carrying

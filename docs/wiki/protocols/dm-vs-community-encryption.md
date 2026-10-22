@@ -103,7 +103,7 @@ measured), the signing key (32 B), the endorsement (64 B) and the varints. That 
 At the post-launch rate, the largest community reaches the cap in about two years. Another launch
 like the first one, such as a new year group arriving in September, adds hundreds of seeds in a day.
 The cap is a refusal (`truncated`), never a silent cut, so reaching it is visible. **Since
-2026-10-22 an answer is bounded in bytes and paged** (256 KiB a page, about eleven pages at the cap),
+2026-10-22 an answer is bounded in bytes and paged** (255 KiB a page, about eleven pages at the cap),
 after reading every hop's limit from code and config. The binding hop is the 1 MiB pending-queue page
 ([channel-encryption §4.4](channel-encryption.md#44-joining-and-what-a-share-link-is-worth)).
 
