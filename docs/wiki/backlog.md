@@ -242,8 +242,11 @@ a stable.
 The reading has one setup and three checks:
 
 - **Setup.** The Mi 9T is killed, not force-stopped (swiped away), and is a member of a group
-  conversation. Another member adds a new device of a third person, which makes the phone answer a
-  `welcome_request` in the background.
+  conversation. A new device of another member must send a `welcome_request` for it, which makes the
+  phone answer in the background. **That request is sent only when the newcomer's own external join
+  for the chat group FAILS for a reason other than `NotAGroupMember`** (no GroupInfo published, a stale
+  base, an unreachable server; `requestReAdd` step 9 and `sendWelcomeRequest` in `recovery.ts`). A new
+  login on a healthy estate does not send it: see the attempt below.
 - **Phone (logcat).** Both of these lines appear:
   - `processWelcomeRequestBackground: Welcome created ... baseEpoch=N`;
   - `processWelcomeRequestBackground: ✓ Welcome sent for group=... target=...`.
@@ -256,6 +259,23 @@ The reading has one setup and three checks:
 
   No `REJECT` appears, and in particular no commit-caller refusal.
 - **The newcomer.** It opens the group and reads the next message.
+
+**ATTEMPTED 2026-10-22: NOT EXERCISED, owed.** The Mi 9T ran a debug build whose frontend equals
+`2547870a7` (built from `dabc36813`, plus an uncommitted whitespace change to `AndroidManifest.xml`);
+the device is NEW (installed 2026-10-22 04:24:30 after the 1.3.1 release build was uninstalled on
+purpose, a bench phone), signed in as the bench owner on the local estate, app swiped from recents
+(no process left). A wiped web device of the same account then enrolled. It joined all four groups
+by itself (`roster seat with NO queued Welcome and NO add in flight - nobody owes us anything; serving
+ourselves`, then external join), so no `welcome_request` was sent: no
+`processWelcomeRequestBackground` line, no `[BG_WELCOME]` line, no REJECT. **What WAS read:** FCM woke
+the swiped-away phone for four `message` pushes and it applied the external-commit control frames
+("control frame applied - state advanced") with no error, so background control-frame handling works
+on that build. **Unreachable by the rig under its permissions:** the one state that sends the request
+needs the newcomer's GroupInfo read to fail, by deleting one `mls_group_info` row of the group on the
+local estate or by blocking `GET /api/mls/group-info/*` in the newcomer through CDP, and the
+permission layer refused the delete. **Owed to the user: allow that one local-estate delete (or the
+block) once, then about 3 minutes of reading** (the phone stays on the debug build, signed in on the
+local estate only, which is stopped).
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 
