@@ -675,8 +675,9 @@ export interface IMlsService {
     deviceId: string
   ): Promise<KeyPackageVerdict>;
   /**
-   * The device admissions recorded from merged signed commits since the last call, oldest first;
-   * taking them forgets them. Nothing shows them yet (a pending product decision).
+   * The new devices (first sight or a changed key) recorded from merged signed commits since the
+   * last call, oldest first; taking them forgets them. The notices built from them are owed
+   * (`deviceEventAudience`).
    */
   takeDeviceEvents(): Promise<DeviceEvent[]>;
   /**

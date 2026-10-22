@@ -98,6 +98,11 @@ export const ACCOUNT_KEY = {
   notReadySince: (userId: string, groupId: string) => `mls_not_ready_since:${userId}:${groupId}`,
   /** `WebMlsService` / `TauriMlsService`: the name this device announces for the account. */
   deviceName: (userId: string, deviceId: string) => `device-name:${userId}:${deviceId}`,
+  /**
+   * `refusedDevices.ts`: the devices THIS device refused for a changed key, never fetched again - a
+   * JSON array of `userId:deviceId`, keyed by this device because the pins are its own.
+   */
+  refusedDevices: (userId: string, deviceId: string) => `mls_refused_devices:${userId}:${deviceId}`,
 } as const;
 
 /** The Tauri store (`@tauri-apps/plugin-store`) that mirrors {@link ACCOUNT_KEY}`.lastActive`. */
@@ -152,6 +157,7 @@ function keyPrefixes(userId: string): string[] {
     ACCOUNT_KEY.historyAudit(userId, ''),
     ACCOUNT_KEY.notReadySince(userId, ''),
     ACCOUNT_KEY.deviceName(userId, ''),
+    ACCOUNT_KEY.refusedDevices(userId, ''),
   ];
 }
 

@@ -1,5 +1,6 @@
 //! What this device knows, by itself, about the OTHER devices it shares groups with: the signature
-//! key each `userId:deviceId` was first seen with, and every device admission a signed commit made.
+//! key each `userId:deviceId` was first seen with, and every NEW device a signed commit admitted
+//! (first sight or a changed key - a re-add under the pinned key records nothing).
 //!
 //! # Why a device keeps its own record
 //!
@@ -17,7 +18,7 @@
 //!   not pinned for that identity. Both are typed skips ([`crate::SkippedKeyPackageReason`]).
 //! - **A commit somebody else made** is MERGED whatever it admits - refusing to merge a commit the
 //!   rest of the group merged forks this device out of the group, which is not a protection - and
-//!   every leaf it adds is recorded as a [`DeviceEvent`], with `trust = key-changed` and an ERROR
+//!   every new device it adds is recorded as a [`DeviceEvent`], with `trust = key-changed` and an ERROR
 //!   line when the identity was pinned under another key. The pin is NOT moved by such a commit, so
 //!   the changed key is still refused by every Add this device builds.
 //!
@@ -119,7 +120,13 @@ pub struct DeviceTrust {
     /// device merged before pins existed, so none is more trustworthy than another.
     pins: HashMap<String, Vec<Vec<u8>>>,
     events: VecDeque<DeviceEvent>,
+    /// Whether this process already said the event queue is full (see `push_event`).
+    full_reported: bool,
 }
+
+/// The most pinned identities kept before those absent from every held tree are dropped
+/// ([`DeviceTrust::prune_absent`]). An identity and one key are ~120 bytes of the sealed state.
+pub const MAX_PINNED_IDENTITIES: usize = 8192;
 
 /// Whether `identity` is `userId:deviceId` with exactly one separator and two non-empty halves.
 ///
@@ -191,6 +198,7 @@ impl DeviceTrust {
         Self {
             pins: pins.into_iter().map(|p| (p.identity, p.keys)).collect(),
             events: events.into_iter().collect(),
+            full_reported: false,
         }
     }
 
@@ -239,19 +247,54 @@ impl DeviceTrust {
         (trust, false)
     }
 
-    fn push_event(&mut self, event: DeviceEvent) {
+    /// Queues an event, dropping the oldest past the bound.
+    ///
+    /// SAID ONCE PER FILLING, NOT PER DROP: a full queue means nothing takes the events, and a line
+    /// at every admission after that would be a line its reader learns to skip. The flag is in memory
+    /// only - a new process says it once again - and clears when the queue is taken.
+    ///
+    /// @returns whether this call reported the queue full.
+    fn push_event(&mut self, event: DeviceEvent) -> bool {
+        let mut reported = false;
         if self.events.len() >= MAX_PENDING_DEVICE_EVENTS
             && let Some(dropped) = self.events.pop_front()
+            && !self.full_reported
         {
+            self.full_reported = true;
+            reported = true;
             log::warn!(
-                "[TRUST] {MAX_PENDING_DEVICE_EVENTS} device events are waiting and nothing took them - \
-                 dropping the oldest ({} on {} at epoch {})",
+                "[TRUST] {MAX_PENDING_DEVICE_EVENTS} device events are waiting and nothing took \
+                 them - the oldest are dropped from now on (first: {} on {} at epoch {})",
                 dropped.identity,
                 dropped.group_id,
                 dropped.epoch
             );
         }
         self.events.push_back(event);
+        reported
+    }
+
+    /// Drops the pins of identities no held tree contains, when there are more than
+    /// [`MAX_PINNED_IDENTITIES`] - the bound on a record that otherwise only grows.
+    ///
+    /// ONLY ABSENT IDENTITIES GO: a pin of a device still in a tree this device holds is what refuses
+    /// a changed key for it, and is kept whatever the count. A dropped identity is first sight again
+    /// if it ever returns - the same answer a device that never met it gets.
+    ///
+    /// @returns how many pins were dropped.
+    pub(crate) fn prune_absent(&mut self, held: &std::collections::HashSet<&str>) -> usize {
+        if self.pins.len() <= MAX_PINNED_IDENTITIES {
+            return 0;
+        }
+        let before = self.pins.len();
+        self.pins
+            .retain(|identity, _| held.contains(identity.as_str()));
+        let dropped = before - self.pins.len();
+        log::info!(
+            "[TRUST] {before} pinned identities passed the bound of {MAX_PINNED_IDENTITIES}: \
+             dropped the {dropped} no held tree contains"
+        );
+        dropped
     }
 
     /// Pins every leaf of a tree whose identity has no pin yet, and nothing else.
@@ -318,11 +361,15 @@ impl DeviceTrust {
         wrote
     }
 
-    /// Records a commit this device merged: every leaf in `after` that is not, with the same key at
-    /// the same index, in `before` was ADDED (or had its key replaced) by that commit.
+    /// Records a commit this device merged: a leaf in `after` whose `(identity, key)` pair is nowhere
+    /// in `before` ENTERED the tree with that commit. An event is recorded only when that pair is NEWS
+    /// to this device - a key never pinned for the identity (`first-sight`) or another key than the
+    /// pinned one (`key-changed`).
     ///
     /// The diff is over the TREE, not over the commit's proposals, so every way a leaf enters - an
-    /// Add, an external join's own leaf, an update that swaps a key - is caught by one rule.
+    /// Add, an external join's own leaf, an update that swaps a key - is caught by one rule. It is
+    /// over PAIRS, not indexes, and a pinned pair is not news: a leaf that moved index, or a device
+    /// removed and re-added under its pinned key (a heal), is the same device and says nothing.
     ///
     /// @returns whether anything was written.
     pub(crate) fn observe_merged_commit(
@@ -335,20 +382,19 @@ impl DeviceTrust {
         own: (&str, &[u8]),
     ) -> bool {
         let mut wrote = false;
-        for (index, identity, key) in after {
-            let existed = before
-                .iter()
-                .any(|(i, id, k)| i == index && id == identity && k == key);
+        for (_, identity, key) in after {
+            let existed = before.iter().any(|(_, id, k)| id == identity && k == key);
             if existed {
                 continue;
             }
             // This device's own leaf entering its own group (an external join it made) is not a
             // device being added to anybody's conversation.
             if identity == own.0 && key.as_slice() == own.1 {
-                self.observe(identity, key);
+                wrote |= self.observe(identity, key).1;
                 continue;
             }
-            let (trust, _) = self.observe(identity, key);
+            let (trust, pinned) = self.observe(identity, key);
+            wrote |= pinned;
             let fingerprint = key_fingerprint(key);
             match trust {
                 LeafTrust::KeyChanged => log::error!(
@@ -357,10 +403,17 @@ impl DeviceTrust {
                      NOT re-pinned, and every Add this device builds keeps refusing that key",
                     added_by.unwrap_or("an unreadable sender")
                 ),
-                _ => log::info!(
-                    "[TRUST] {group_id} epoch {epoch}: {identity} added by {} (key {fingerprint}, {})",
+                LeafTrust::Pinned => {
+                    log::debug!(
+                        "[TRUST] {group_id} epoch {epoch}: {identity} re-entered under its pinned key \
+                         (added by {}) - the same device, nothing recorded",
+                        added_by.unwrap_or("an unreadable sender")
+                    );
+                    continue;
+                }
+                LeafTrust::FirstSight => log::info!(
+                    "[TRUST] {group_id} epoch {epoch}: {identity} added by {} (key {fingerprint}, first sight)",
                     added_by.unwrap_or("an unreadable sender"),
-                    trust.as_str()
                 ),
             }
             self.push_event(DeviceEvent {
@@ -378,6 +431,7 @@ impl DeviceTrust {
 
     /// Hands every pending event over and forgets them.
     pub(crate) fn take_events(&mut self) -> Vec<DeviceEvent> {
+        self.full_reported = false;
         self.events.drain(..).collect()
     }
 }
@@ -430,22 +484,50 @@ mod tests {
     }
 
     #[test]
-    fn the_event_queue_is_bounded_and_drops_the_oldest() {
+    fn the_event_queue_is_bounded_drops_the_oldest_and_says_so_once() {
+        let event = |i: usize| DeviceEvent {
+            group_id: "g".into(),
+            epoch: i as u64,
+            identity: "u:d".into(),
+            key_fingerprint: String::new(),
+            trust: LeafTrust::FirstSight,
+            added_by: None,
+        };
         let mut t = DeviceTrust::default();
-        for i in 0..(MAX_PENDING_DEVICE_EVENTS + 3) {
-            t.push_event(DeviceEvent {
-                group_id: "g".into(),
-                epoch: i as u64,
-                identity: "u:d".into(),
-                key_fingerprint: String::new(),
-                trust: LeafTrust::FirstSight,
-                added_by: None,
-            });
-        }
+        let reports = (0..(MAX_PENDING_DEVICE_EVENTS + 3))
+            .filter(|&i| t.push_event(event(i)))
+            .count();
+        assert_eq!(
+            reports, 1,
+            "a full queue is said once, not at every admission"
+        );
         let taken = t.take_events();
         assert_eq!(taken.len(), MAX_PENDING_DEVICE_EVENTS);
         assert_eq!(taken[0].epoch, 3);
         assert!(t.take_events().is_empty());
+
+        // Taken, then full again: said again, once.
+        let again = (0..(MAX_PENDING_DEVICE_EVENTS + 2))
+            .filter(|&i| t.push_event(event(i)))
+            .count();
+        assert_eq!(again, 1);
+    }
+
+    #[test]
+    fn pins_past_the_bound_drop_only_identities_no_held_tree_contains() {
+        let mut t = DeviceTrust::default();
+        for i in 0..=MAX_PINNED_IDENTITIES {
+            t.observe(&format!("u{i}:d"), b"k");
+        }
+        let held: std::collections::HashSet<&str> = ["u0:d", "u1:d"].into_iter().collect();
+        assert_eq!(t.prune_absent(&held), MAX_PINNED_IDENTITIES - 1);
+        assert_eq!(t.verdict("u0:d", b"other"), LeafTrust::KeyChanged);
+        assert_eq!(t.verdict("u5:d", b"other"), LeafTrust::FirstSight);
+        assert_eq!(
+            t.prune_absent(&held),
+            0,
+            "under the bound, nothing is pruned"
+        );
     }
 
     #[test]

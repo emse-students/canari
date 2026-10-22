@@ -310,3 +310,73 @@ fn pending_events_survive_a_save_and_a_reload() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].identity, "bob:dev1");
 }
+
+/// A HEAL IS NOT A NEW DEVICE. A device removed and re-added under the key it was pinned with - the
+/// kick + re-add that repairs a lost Welcome - is the same device: nothing is recorded, so no
+/// "added a device" line follows a repair.
+#[test]
+fn a_re_add_under_the_pinned_key_records_nothing() {
+    let gid = "g-events-heal";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    {
+        let kp = bob.generate_key_package().unwrap();
+        add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1")
+    };
+    assert_eq!(
+        alice.take_device_events().len(),
+        1,
+        "the first admission is news"
+    );
+
+    remove(&mut alice, gid, "bob:dev1");
+    bob.forget_group(gid, 0);
+    {
+        let kp = bob.generate_key_package().unwrap();
+        add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1")
+    };
+
+    assert!(
+        alice.take_device_events().is_empty(),
+        "a re-add under the pinned key is a repair, not a new device"
+    );
+}
+
+/// AN EXTERNAL JOIN PINS NOTHING UNTIL THE SERVER ACCEPTED IT. The tree comes from a GroupInfo the
+/// server served; a join the server then refuses (the commit is discarded and the group forgotten)
+/// must leave no pin behind.
+#[test]
+fn an_external_join_pins_its_tree_only_once_merged() {
+    let gid = "g-ext-pin";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let bob_kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &bob_kp, "bob:dev1");
+    let info = alice.export_group_info(gid).expect("group info");
+
+    // Refused by the server: carol forgets the group, and must have pinned nothing from it.
+    let mut carol = device("carol", "dev1");
+    carol.join_by_external_commit(&info).expect("stage join");
+    carol.forget_group(gid, 0);
+    assert_eq!(
+        carol.vet_key_package(&bob.generate_key_package().unwrap(), "bob:dev1"),
+        "first-sight",
+        "a refused join must not have pinned the tree it was built on"
+    );
+
+    // Accepted: the merge pins the tree.
+    carol
+        .join_by_external_commit(&info)
+        .expect("stage join again");
+    carol.merge_pending_commit_for(gid).expect("merge");
+    assert_eq!(
+        carol.vet_key_package(&bob.generate_key_package().unwrap(), "bob:dev1"),
+        "pinned"
+    );
+    assert!(
+        carol.take_device_events().is_empty(),
+        "joining a tree is not a device being added"
+    );
+}

@@ -51,6 +51,11 @@ import {
   reportDeviceTrustRefusal,
   verdictAdmits,
 } from '$lib/mls-client/deviceTrust';
+import {
+  isRefusedDevice,
+  recordRefusedDevice,
+  reportRefusedDeviceSkipped,
+} from '$lib/mls-client/refusedDevices';
 
 /**
  * Whether `userId:deviceId`'s leaf is in OUR copy of `groupId`'s ratchet tree.
@@ -208,6 +213,13 @@ export async function processPendingInvitations(params: {
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
 
       for (const inv of currentPending) {
+        // A DEVICE THIS ONE REFUSED FOR A CHANGED KEY IS NOT FETCHED AGAIN: every package it has
+        // carries the same key, so a fetch would only spend one. The row stays (it is this member's
+        // judgement), and the line names who can lift it (`refusedDevices.ts`).
+        if (isRefusedDevice({ userId, deviceId: myDeviceId }, inv.userId, inv.deviceId)) {
+          reportRefusedDeviceSkipped('[PENDING]', groupId, inv.userId, inv.deviceId);
+          continue;
+        }
         try {
           // Fetch fresh KeyPackage for the pending device. fetchUserDevices only returns
           // devices active within the last 30 days; fall back to fetchDeviceKeyPackage for
@@ -364,6 +376,7 @@ export async function processPendingInvitations(params: {
           // because the refusal is this member's judgement and not a fact about the device.
           if (e instanceof DeviceTrustRefusedError) {
             reportDeviceTrustRefusal('[PENDING]', groupId, e);
+            recordRefusedDevice({ userId, deviceId: myDeviceId }, e);
             continue;
           }
           const errStr = String(e);
@@ -942,6 +955,14 @@ export async function handleWelcomeRequest(params: {
       return;
     }
 
+    // A requester this device refused for a changed key is not fetched again, and is told by the
+    // line what lifts it (`refusedDevices.ts`). Before the anti-livelock count: it is not an attempt.
+    const ownDevice = { userId, deviceId: mlsService.getDeviceId() };
+    if (isRefusedDevice(ownDevice, requesterUserId, requesterDeviceId)) {
+      reportRefusedDeviceSkipped('[WELCOME_REQ]', groupId, requesterUserId, requesterDeviceId);
+      return;
+    }
+
     // Anti-livelock guard: limits repeated re-adds of the same device within a sliding
     // window. If the invitee loops (their published KeyPackages are orphaned from their
     // private key -> NoMatchingKeyPackage client-side), re-adding is pointless and would
@@ -1017,11 +1038,9 @@ export async function handleWelcomeRequest(params: {
       );
       if (!verdictAdmits(verdict)) {
         if (isDeviceTrustRefusal(verdict)) {
-          reportDeviceTrustRefusal(
-            '[WELCOME_REQ]',
-            groupId,
-            new DeviceTrustRefusedError(verdict, requesterUserId, requesterDeviceId)
-          );
+          const refusal = new DeviceTrustRefusedError(verdict, requesterUserId, requesterDeviceId);
+          reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, refusal);
+          recordRefusedDevice(ownDevice, refusal);
         } else {
           log(
             `[WELCOME_REQ] KeyPackage for ${requesterDeviceId.slice(0, 12)}... refused (${verdict}) - no kick, no re-add`
@@ -1111,6 +1130,7 @@ export async function handleWelcomeRequest(params: {
   } catch (e) {
     if (e instanceof DeviceTrustRefusedError) {
       reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, e);
+      recordRefusedDevice({ userId, deviceId: mlsService.getDeviceId() }, e);
       return;
     }
     const errStr = String(e);

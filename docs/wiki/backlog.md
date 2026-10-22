@@ -39,7 +39,9 @@ Built: the event (`DeviceEvent`, `IMlsService.takeDeviceEvents()`), the audience
 [mls-protocol](protocols/mls-protocol.md#device-binding). Owed, as its own work package: the
 Paraglide strings, the conversation line, the in-app alert, and the native local notification when
 the Android or iOS background path merges such a commit (its events wait in `mls.bin` until the app
-takes them), deduplicated per device.
+takes them), deduplicated per device. Also owed there: telling a device's owner, in the app, that
+peers refuse to re-add it under its kept id until it is reset (today only the members' logs say
+so, once per session).
 
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 

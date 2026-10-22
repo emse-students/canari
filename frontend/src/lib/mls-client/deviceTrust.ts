@@ -27,10 +27,15 @@ export type KeyPackageVerdict = 'first-sight' | 'pinned' | SkippedKeyPackageReas
 export type LeafTrust = 'first-sight' | 'pinned' | 'key-changed';
 
 /**
- * One device admission a merged, signed commit made (or a changed key found in a joined tree).
+ * One NEW device a merged, signed commit admitted - a device seen for the first time (`first-sight`)
+ * or under a key other than its pin (`key-changed`) - or a changed key found in a joined tree.
  *
- * The record a "a device was added" line in a conversation will be built from - whether to show it
- * is the user's decision, so nothing renders it yet. Taken with `IMlsService.takeDeviceEvents`.
+ * A device re-added under its pinned key is not an event: a heal or a resync re-adds devices every
+ * day, and an event per admission would announce the same device again each time. An external
+ * commit's own admission is recorded the same way, once the joiner's commit is merged.
+ *
+ * The record the new-device alert and the contact line are built from (`deviceEventAudience`).
+ * Taken with `IMlsService.takeDeviceEvents`.
  */
 export interface DeviceEvent {
   groupId: string;
@@ -52,7 +57,13 @@ export interface DeviceEvent {
  * - `contact-line`: everyone else, as a discreet "X added a device" line, in PRIVATE conversations
  *   only (a 1:1 or a group). Never in a community or salon key group, where it would be noise;
  * - `none`: not an admission (a changed key found in a joined tree names no committer), or a
- *   contact's device seen in a community key group.
+ *   contact's device placed in a community key group.
+ *
+ * THE KIND OF GROUP IS A PLACEMENT, NOT A FILTER ON WHAT IS RECORDED. The MLS layer records every
+ * new device whatever group admitted it - it cannot tell a key group from a conversation, and the
+ * first sight of a contact's new device is often in a community they share. The caller asks this
+ * rule once per conversation it might write the line in, so a device first seen in a community
+ * still reaches the private conversations shared with its owner.
  *
  * THE ONE PLACE THIS RULE IS WRITTEN. The event itself comes from a signed commit this client merged
  * (`DeviceEvent`), never from a server message: a compromised server would simply not send one.
@@ -63,8 +74,8 @@ export type DeviceEventAudience = 'owner-alert' | 'contact-line' | 'none';
  * Applies the rule above to one event.
  *
  * @param ctx.ownUserId - the signed-in account (compared case-insensitively, as identities are).
- * @param ctx.isKeyDistributionGroup - whether `event.groupId` is a community or salon key group
- *   (`IMlsService.isDistributionGroup`); `false` for a 1:1 or a group conversation.
+ * @param ctx.isKeyDistributionGroup - whether the conversation the line would be written in is a
+ *   community or salon key group (`IMlsService.isDistributionGroup`); `false` for a 1:1 or a group.
  */
 export function deviceEventAudience(
   event: DeviceEvent,

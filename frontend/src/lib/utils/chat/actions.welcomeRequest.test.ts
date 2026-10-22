@@ -2,6 +2,7 @@ import type { Conversation } from '$lib/types';
 import { handleWelcomeRequest } from './actions';
 import { recordWelcomeSent, resetWelcomeSent } from './welcomeSent';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
+import { resetReportedRefusedDeviceSkips } from '$lib/mls-client/refusedDevices';
 import {
   DeviceTrustRefusedError,
   resetReportedDeviceTrustRefusals,
@@ -309,8 +310,10 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
 // kick taken first would have removed the device from the group for nothing.
 describe('handleWelcomeRequest - a re-add the device key cannot justify', () => {
   beforeEach(() => {
+    localStorage.clear();
     resetWelcomeSent();
     resetReportedDeviceTrustRefusals();
+    resetReportedRefusedDeviceSkips();
   });
 
   const requester = (overrides = {}) =>
@@ -407,5 +410,26 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('[WELCOME_REQ] Error for'));
     expect(mlsService.sendWelcome).not.toHaveBeenCalled();
     error.mockRestore();
+  });
+
+  // THE NEXT REQUEST SPENDS NO KEYPACKAGE: a key change under a kept id is refused again by every
+  // package of that device, so it is remembered and the requester is told what lifts it.
+  it('fetches nothing for a requester already refused for a changed key', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mlsService = requester({
+      vetKeyPackage: vi.fn().mockResolvedValue('signature-key-changed'),
+    });
+
+    await run('g-trust-remembered', mlsService);
+    await run('g-trust-remembered', mlsService);
+
+    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(1);
+    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('re-enrols under a new id'));
+    error.mockRestore();
+    warn.mockRestore();
   });
 });

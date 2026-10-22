@@ -545,4 +545,85 @@ describe('processPendingInvitations - a device key this member refuses', () => {
     expect(String(error.mock.calls[0][0])).toContain('peer:peer-dev');
     error.mockRestore();
   });
+
+  // A KEY CHANGE NO RETRY CAN LIFT IS REMEMBERED: the next sweep spends no one-time KeyPackage on
+  // a device it would refuse again, and an identity mismatch (a package the server chose) is not.
+  it('fetches nothing for a device refused for a changed key on an earlier sweep', async () => {
+    localStorage.clear();
+    resetReportedDeviceTrustRefusals();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
+      addMember: vi
+        .fn()
+        .mockRejectedValue(
+          new DeviceTrustRefusedError('signature-key-changed', 'peer', 'peer-dev')
+        ),
+    });
+    const sweep = () =>
+      processPendingInvitations({
+        mlsService,
+        storage: null,
+        userId: 'self',
+        deviceKeyB64: 'pin',
+        conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+        requestReAdd: () => Promise.resolve(),
+        log: vi.fn(),
+      });
+
+    await sweep();
+    await sweep();
+
+    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(1);
+    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
+    expect(mlsService.addMember).toHaveBeenCalledTimes(1);
+    expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('fetches again after an identity mismatch, which the next package may not repeat', async () => {
+    localStorage.clear();
+    resetReportedDeviceTrustRefusals();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
+      addMember: vi
+        .fn()
+        .mockRejectedValue(new DeviceTrustRefusedError('identity-mismatch', 'peer', 'peer-dev')),
+    });
+    const sweep = () =>
+      processPendingInvitations({
+        mlsService,
+        storage: null,
+        userId: 'self',
+        deviceKeyB64: 'pin',
+        conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+        requestReAdd: () => Promise.resolve(),
+        log: vi.fn(),
+      });
+
+    await sweep();
+    await sweep();
+
+    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
 });

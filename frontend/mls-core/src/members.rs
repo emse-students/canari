@@ -254,9 +254,9 @@ impl MlsManager {
     /// (`validateCommit`). Advances the local epoch. Counterpart of `clear_pending_commit_for`.
     /// [[C7]] Option A: validate-then-merge, never a local fork on rejection.
     ///
-    /// Every leaf the commit put in the tree is recorded ([`crate::device_trust`]) - our own Adds
-    /// were vetted against the pins when they were staged, so this only pins first sights and
-    /// records the event.
+    /// Every NEW device the commit put in the tree is recorded ([`crate::device_trust`]) - our own
+    /// Adds were vetted against the pins when they were staged, so this only pins first sights and
+    /// records them. An external join of ours pins the tree it joined HERE, once the server took it.
     pub fn merge_pending_commit_for(&mut self, group_id: &str) -> Result<(), MlsError> {
         let own_identity = String::from_utf8_lossy(self.credential.identity()).to_string();
         let own_key = self.keypair.public().to_vec();
@@ -270,16 +270,21 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(format!("Merge pending commit error: {:?}", e)))?;
         let after = leaf_keys(group);
         let epoch = group.epoch().as_u64();
-        // An external join's tree was observed when it was joined (`join_by_external_commit`), so
-        // `before` is pinned already and only this device's own new leaf differs - which is skipped.
-        self.device_trust.observe_merged_commit(
-            group_id,
-            epoch,
-            &before,
-            &after,
-            Some(&own_identity),
-            (&own_identity, &own_key),
-        );
+        if self.pending_external_joins.remove(group_id) {
+            // OUR EXTERNAL JOIN, ACCEPTED: its tree is pinned now, as a Welcome's is - joining a
+            // tree is first sight of its members, never "a device was added".
+            self.device_trust
+                .observe_joined_tree(group_id, epoch, &after, &own_identity);
+        } else {
+            self.device_trust.observe_merged_commit(
+                group_id,
+                epoch,
+                &before,
+                &after,
+                Some(&own_identity),
+                (&own_identity, &own_key),
+            );
+        }
         self.mark_state_dirty();
         Ok(())
     }

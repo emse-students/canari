@@ -177,6 +177,12 @@ pub struct MlsManager {
     /// Pinned device signature keys and pending device events - see [`crate::device_trust`].
     pub(crate) device_trust: crate::device_trust::DeviceTrust,
 
+    /// Groups joined by an external commit not yet merged. Their tree is pinned at the MERGE - once
+    /// the server accepted the join - never at the join: a refused join's tree came from a GroupInfo
+    /// nobody vouched for. In memory only: a restart before the merge leaves the tree to the
+    /// load-time seed, which pins only the trees the state actually holds.
+    pub(crate) pending_external_joins: std::collections::HashSet<String>,
+
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
 }
 
@@ -737,6 +743,17 @@ impl MlsManager {
                     "load_or_create: pinned the device keys of {seeded} group tree(s) seen before pins existed"
                 );
             }
+            {
+                let held_leaves: Vec<_> = groups
+                    .values()
+                    .flat_map(crate::device_trust::leaf_keys)
+                    .collect();
+                let own = String::from_utf8_lossy(credential.identity()).to_string();
+                let mut held: std::collections::HashSet<&str> =
+                    held_leaves.iter().map(|(_, id, _)| id.as_str()).collect();
+                held.insert(own.as_str());
+                device_trust.prune_absent(&held);
+            }
 
             let manager = Self {
                 provider,
@@ -745,6 +762,7 @@ impl MlsManager {
                 groups,
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
                 device_trust,
+                pending_external_joins: Default::default(),
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -861,6 +879,7 @@ impl MlsManager {
                 groups: HashMap::new(),
                 forgotten_group_min_epochs: HashMap::new(),
                 device_trust,
+                pending_external_joins: Default::default(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
             })
         }

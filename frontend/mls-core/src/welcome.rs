@@ -119,17 +119,9 @@ impl MlsManager {
             .tls_serialize_detached()
             .map_err(|e| MlsError::OpenMls(e.to_string()))?;
 
-        // THE TREE JOINED IS FIRST SIGHT for every identity this device never pinned, and a changed
-        // key for one it did - recorded before the commit is even submitted, because the tree is
-        // what this device now encrypts to, whatever the server answers.
-        let own_identity = String::from_utf8_lossy(self.credential.identity()).to_string();
-        let epoch = group.epoch().as_u64();
-        self.device_trust.observe_joined_tree(
-            &group_id,
-            epoch,
-            &crate::device_trust::leaf_keys(&group),
-            &own_identity,
-        );
+        // THE TREE IS PINNED AT THE MERGE, NOT HERE: it came from a GroupInfo the server served, and
+        // a join the server refuses is forgotten. `merge_pending_commit_for` pins it once accepted.
+        self.pending_external_joins.insert(group_id.clone());
 
         self.groups.insert(group_id.clone(), group);
         self.mark_state_dirty();
