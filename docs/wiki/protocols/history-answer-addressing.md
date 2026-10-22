@@ -148,6 +148,8 @@ Making the answer unreadable to everyone but the asker is option B below, and it
    between the check and the publish - or that pulls the queue row before the asker's session ACKs
    it - receives the frame. It is an honest history answer to that device, so the only exposure is
    a malicious sender winning a sub-second window against an older build, during a deploy overlap.
+   The pull half closes only when `minClientVersion` carries this build - owed, in the
+   [backlog](../backlog.md).
 
    The answerer then does not answer that device (`[HISTORY_BUNDLE] ... cannot be addressed`), and
    sends no broadcast in its place. The older device is served by older peers exactly as before.
