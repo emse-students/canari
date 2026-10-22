@@ -145,6 +145,16 @@ jobs:
         with:
           xcode-version: '^26.0'
 
+      # THE HAND-MAINTAINED PROJECT IS READ BY XCODE FIRST, IN SECONDS, not at the archive twenty
+      # minutes in: a pbxproj with an unclosed object once got past every check on Windows. `plutil`
+      # parses its old-style plist syntax; `xcodebuild -list` reads it as a project (targets,
+      # configurations). The structure is also pinned by `iosShareExtension.test.ts`'s parser.
+      - name: Lint the Xcode project
+        run: |
+          set -euo pipefail
+          plutil -lint frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj
+          xcodebuild -list -project frontend/src-tauri/gen/apple/canari.xcodeproj
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:

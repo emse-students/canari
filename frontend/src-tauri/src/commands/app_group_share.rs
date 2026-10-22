@@ -37,7 +37,7 @@ use std::sync::Mutex;
 
 use serde_json::{Map, Value};
 
-use super::handoff::{read_share_epoch, PENDING_SHARE_FILE};
+use super::handoff::{read_share_epoch, write_share_epoch, PENDING_SHARE_FILE};
 use super::picked_files::SHARED_INBOX;
 
 /// The lock file in the App Group the extension holds for a whole capture. Pinned against the Swift
@@ -445,41 +445,202 @@ fn sweep_inbox(inbox: &Path, keep: Option<&str>, label: &str) -> usize {
     deleted
 }
 
+/// What the launch sweep did, for `canari_ios.mm` to log: it runs before the Rust logger exists, so
+/// a `log::` line from it reaches nobody, and this report is the only trace (`sweep_inboxes_once`).
+/// `flags` is a set of the `SWEEP_*` bits; the same layout is declared in `canari_rust_bridge.h`.
+#[repr(C)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+pub struct CanariShareSweep {
+    /// Share directories deleted, both inboxes together.
+    pub deleted: i32,
+    /// Leftover claim and staging files deleted from the App Group's root.
+    pub leftovers: i32,
+    /// `SWEEP_*` bits.
+    pub flags: u32,
+}
+
+/// The sweep already ran in this process: nothing was done.
+pub(crate) const SWEEP_ALREADY_RAN: u32 = 1;
+/// The app data or cache directory was not handed over: nothing was done.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) const SWEEP_NO_DIRS: u32 = 1 << 1;
+/// The App Group container is unavailable: only the app cache was swept.
+pub(crate) const SWEEP_NO_GROUP: u32 = 1 << 2;
+/// A capture holds the lock: the App Group inbox waits for the next process.
+pub(crate) const SWEEP_GROUP_BUSY: u32 = 1 << 3;
+/// The App Group lock could not be tried: its inbox was not swept.
+pub(crate) const SWEEP_GROUP_LOCK_FAILED: u32 = 1 << 4;
+/// The app's share epoch is unreadable: every waiting share was treated as stale.
+pub(crate) const SWEEP_EPOCH_UNREADABLE: u32 = 1 << 5;
+/// The App Group's epoch was BEHIND the app's (a failed copy at a sign-out) and was rewritten.
+pub(crate) const SWEEP_EPOCH_REPAIRED: u32 = 1 << 6;
+/// The App Group's epoch was behind and could NOT be rewritten.
+pub(crate) const SWEEP_EPOCH_REPAIR_FAILED: u32 = 1 << 7;
+/// A leftover file in the App Group's root could not be deleted.
+pub(crate) const SWEEP_LEFTOVER_FAILED: u32 = 1 << 8;
+
+/// The App Group root files a claim or a staging write leaves when its process dies between the
+/// rename and the delete: the app's claims (`.importing`, `.replacing`), the extension's
+/// (`.replacing`), the tmp of either's manifest write, and the epoch copy's tmp. An ALLOWLIST: the
+/// App Group also holds the NSE's files, which this never touches.
+const GROUP_LEFTOVERS: [&str; 4] = [
+    "pending_share.json.importing",
+    "pending_share.json.replacing",
+    "pending_share.json.tmp",
+    "share_epoch.tmp",
+];
+
 /// Deletes the copies no waiting manifest of the current session names - in the app cache's inbox and
 /// in the App Group's - ONCE per process, from the bootstrap, before the page exists: then nobody can
 /// be staging them (Android's `IncomingShare.sweepOrphansOnce`). The App Group half runs only when the
 /// extension's lock is free, so a capture in progress is never swept; when it is held, its leftovers
-/// wait for the next process.
+/// wait for the next process. It also REPAIRS the App Group's epoch when it is behind the app's.
 #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
-pub(crate) fn sweep_inboxes_once(group: Option<&Path>, data_dir: &Path, cache_dir: &Path) -> usize {
+pub(crate) fn sweep_inboxes_once(
+    group: Option<&Path>,
+    data_dir: &Path,
+    cache_dir: &Path,
+) -> CanariShareSweep {
     if SWEPT.swap(true, Ordering::SeqCst) {
-        return 0;
+        return CanariShareSweep {
+            flags: SWEEP_ALREADY_RAN,
+            ..Default::default()
+        };
     }
     sweep_inboxes(group, data_dir, cache_dir)
 }
 
 /// The sweep itself, on plain directories (`sweep_inboxes_once` is its once-per-process gate).
-/// Returns how many share directories it deleted.
-fn sweep_inboxes(group: Option<&Path>, data_dir: &Path, cache_dir: &Path) -> usize {
+fn sweep_inboxes(group: Option<&Path>, data_dir: &Path, cache_dir: &Path) -> CanariShareSweep {
+    let mut report = CanariShareSweep::default();
     let current = read_share_epoch(data_dir)
-        .inspect_err(|e| log::error!("[SHARE] the share epoch is unreadable at the sweep: {e}"))
+        .inspect_err(|e| {
+            report.flags |= SWEEP_EPOCH_UNREADABLE;
+            log::error!("[SHARE] the share epoch is unreadable at the sweep: {e}");
+        })
         .ok();
     let keep = current_pending_share_id(data_dir, current);
-    let in_cache = sweep_inbox(&cache_dir.join(SHARED_INBOX), keep.as_deref(), "app cache");
-    let Some(group) = group else { return in_cache };
-    match try_lock_group(group) {
-        Ok(Some(_lock)) => {
-            let keep = current_pending_share_id(group, current);
-            in_cache + sweep_inbox(&group.join(SHARED_INBOX), keep.as_deref(), "App Group")
+    let mut deleted = sweep_inbox(&cache_dir.join(SHARED_INBOX), keep.as_deref(), "app cache");
+    match group {
+        None => report.flags |= SWEEP_NO_GROUP,
+        Some(group) => {
+            if let Some(current) = current {
+                report.flags |= repair_group_epoch(group, current);
+            }
+            match try_lock_group(group) {
+                Ok(Some(_lock)) => {
+                    let keep = current_pending_share_id(group, current);
+                    deleted += sweep_inbox(&group.join(SHARED_INBOX), keep.as_deref(), "App Group");
+                    let (removed, failed) = sweep_group_leftovers(group);
+                    report.leftovers = i32::try_from(removed).unwrap_or(i32::MAX);
+                    if failed {
+                        report.flags |= SWEEP_LEFTOVER_FAILED;
+                    }
+                }
+                Ok(None) => {
+                    report.flags |= SWEEP_GROUP_BUSY;
+                    log::info!(
+                        "[SHARE] a capture is running - the App Group inbox is swept next process"
+                    );
+                }
+                Err(e) => {
+                    report.flags |= SWEEP_GROUP_LOCK_FAILED;
+                    log::warn!("[SHARE] the App Group inbox lock failed - not swept: {e}");
+                }
+            }
         }
-        Ok(None) => {
-            log::info!("[SHARE] a capture is running - the App Group inbox is swept next process");
-            in_cache
+    }
+    report.deleted = i32::try_from(deleted).unwrap_or(i32::MAX);
+    report
+}
+
+/// RESTORES THE INVARIANT AT ITS SOURCE: the App Group's epoch is never behind the app's. A sign-out
+/// whose App Group write failed (`advance_share_epoch` fails closed and says so, but cannot undo the
+/// app's own advance) would otherwise leave the extension stamping the PREVIOUS session's epoch on
+/// every capture - each one then dropped as stale until the next sign-out. An unreadable copy is
+/// rewritten too: the extension reads it as 0, which is stale. Never moves it BACK: a copy ahead of
+/// the app's is said and left alone. Returns `SWEEP_EPOCH_*` bits.
+fn repair_group_epoch(group: &Path, current: u64) -> u32 {
+    let behind = match read_share_epoch(group) {
+        Ok(copy) if copy >= current => {
+            if copy > current {
+                log::warn!(
+                    "[SHARE] the App Group's share epoch ({copy}) is ahead of the app's ({current}) - left alone"
+                );
+            }
+            return 0;
+        }
+        Ok(copy) => format!("{copy}"),
+        Err(e) => format!("unreadable ({e})"),
+    };
+    match write_share_epoch(group, current) {
+        Ok(()) => {
+            log::error!(
+                "[SHARE] the App Group's share epoch was {behind}, behind the app's {current} - rewritten (a sign-out's copy had failed)"
+            );
+            SWEEP_EPOCH_REPAIRED
         }
         Err(e) => {
-            log::warn!("[SHARE] the App Group inbox lock failed - not swept: {e}");
-            in_cache
+            log::error!(
+                "[SHARE] the App Group's share epoch is {behind}, behind the app's {current}, and could not be rewritten: {e}"
+            );
+            SWEEP_EPOCH_REPAIR_FAILED
         }
+    }
+}
+
+/// Deletes the `GROUP_LEFTOVERS` found in the App Group's root. Called with the extension's lock
+/// held, so no capture is between its rename and its delete. Returns (deleted, any failed).
+fn sweep_group_leftovers(group: &Path) -> (usize, bool) {
+    let (mut removed, mut failed) = (0, false);
+    for name in GROUP_LEFTOVERS {
+        match std::fs::remove_file(group.join(name)) {
+            Ok(()) => {
+                removed += 1;
+                log::info!("[SHARE] a leftover {name} deleted from the App Group");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                failed = true;
+                log::warn!("[SHARE] a leftover {name} in the App Group was not deleted: {e}");
+            }
+        }
+    }
+    (removed, failed)
+}
+
+/// The factory wipe's half in the App Group (`storage::clear_app_data`): the waiting manifest and
+/// every copy in its inbox - an ALLOWLIST of those two paths, the App Group also holding the NSE's
+/// files. Taken under the extension's lock; a capture in progress is an error (said), since deleting
+/// its directory under it would hand over a manifest naming nothing.
+#[cfg_attr(not(any(target_os = "ios", test)), allow(dead_code))]
+pub(crate) fn wipe_group_share(group: &Path) -> Result<(), String> {
+    let Some(_lock) = try_lock_group(group).map_err(|e| format!("App Group share lock: {e}"))?
+    else {
+        log::error!(
+            "[RESET] a share is being copied into the App Group - its share was not removed"
+        );
+        return Err("a share is being copied into the App Group".to_string());
+    };
+    let mut failures = Vec::new();
+    match std::fs::remove_file(group.join(PENDING_SHARE_FILE)) {
+        Ok(()) => log::info!("[RESET] the App Group's waiting share manifest removed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => failures.push(format!("{PENDING_SHARE_FILE}: {e}")),
+    }
+    match std::fs::remove_dir_all(group.join(SHARED_INBOX)) {
+        Ok(()) => log::info!("[RESET] the App Group's share inbox removed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => failures.push(format!("{SHARED_INBOX}: {e}")),
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        let joined = failures.join("; ");
+        log::error!("[RESET] the App Group share was not entirely removed: {joined}");
+        Err(format!(
+            "the App Group share was not entirely removed: {joined}"
+        ))
     }
 }
 
@@ -521,10 +682,38 @@ unsafe fn ffi_dirs(
     Some((PathBuf::from(data), PathBuf::from(cache)))
 }
 
-/// Imports the Share Extension's share into the app's handoff: 1 when a manifest is now waiting for
-/// the page (the caller then tells a live page, `canari:incoming-share`), 0 otherwise.
-/// Called by `canari_ios.mm` with the app data directory (`CanariTauriDataDir`) and the app cache
-/// directory (`Library/Caches/fr.emse.canari`, Tauri's `app_cache_dir`).
+/// `canari_ios_import_app_group_share`'s answer: a share is now waiting for the page.
+pub(crate) const IMPORT_IMPORTED: i32 = 1;
+/// No share waited in the App Group.
+pub(crate) const IMPORT_NOTHING: i32 = 0;
+/// A capture holds the lock: imported at the next activation or drain.
+pub(crate) const IMPORT_BUSY: i32 = 2;
+/// The App Group manifest was unreadable or named no usable id, and was dropped.
+pub(crate) const IMPORT_DROPPED: i32 = 3;
+/// The app data or cache directory was not handed over.
+pub(crate) const IMPORT_NO_DIRS: i32 = -1;
+/// The App Group container is unavailable.
+pub(crate) const IMPORT_NO_GROUP: i32 = -2;
+/// The import failed on the file system (a move or a manifest write).
+pub(crate) const IMPORT_FAILED: i32 = -3;
+
+/// The code `canari_ios_import_app_group_share` returns for an import's result.
+fn import_code(result: &std::io::Result<Import>) -> i32 {
+    match result {
+        Ok(Import::Imported) => IMPORT_IMPORTED,
+        Ok(Import::Nothing) => IMPORT_NOTHING,
+        Ok(Import::Busy) => IMPORT_BUSY,
+        Ok(Import::Dropped) => IMPORT_DROPPED,
+        Err(_) => IMPORT_FAILED,
+    }
+}
+
+/// Imports the Share Extension's share into the app's handoff, and answers with one of the
+/// `IMPORT_*` codes: `IMPORT_IMPORTED` when a manifest is now waiting for the page (the caller then
+/// tells a live page, `canari:incoming-share`). A CODE, not only a log line, because the launch call
+/// runs before the Rust logger exists: `canari_ios.mm` NSLogs every code but `IMPORT_NOTHING`.
+/// Called with the app data directory (`CanariTauriDataDir`) and the app cache directory
+/// (`Library/Caches/fr.emse.canari`, Tauri's `app_cache_dir`).
 ///
 /// # Safety
 /// Both arguments are null or valid NUL-terminated strings for the duration of the call.
@@ -535,30 +724,26 @@ pub unsafe extern "C" fn canari_ios_import_app_group_share(
     cache_dir: *const std::os::raw::c_char,
 ) -> i32 {
     let Some((data, cache)) = ffi_dirs(data_dir, cache_dir) else {
-        return 0;
+        return IMPORT_NO_DIRS;
     };
     let group = match crate::app_group::app_group_dir() {
         Ok(group) => group,
         Err(e) => {
             log::error!("[SHARE] the App Group share cannot be imported: {e}");
-            return 0;
+            return IMPORT_NO_GROUP;
         }
     };
-    match import_group_share(&group, &data, &cache) {
-        Ok(Import::Imported) => 1,
-        Ok(outcome) => {
-            log::debug!("[SHARE] App Group import: {outcome:?}");
-            0
-        }
-        Err(e) => {
-            log::error!("[SHARE] App Group import failed: {e}");
-            0
-        }
+    let result = import_group_share(&group, &data, &cache);
+    match &result {
+        Ok(outcome) => log::debug!("[SHARE] App Group import: {outcome:?}"),
+        Err(e) => log::error!("[SHARE] App Group import failed: {e}"),
     }
+    import_code(&result)
 }
 
 /// The once-per-process sweep (`sweep_inboxes_once`), called by `canari_ios.mm` at bootstrap, which
-/// logs the count it returns (the Rust logger does not exist yet at bootstrap).
+/// NSLogs the report it returns: the Rust logger does not exist yet at bootstrap, and the sweep
+/// cannot wait for it - it must run before any page could be staging a share.
 ///
 /// # Safety
 /// Both arguments are null or valid NUL-terminated strings for the duration of the call.
@@ -567,14 +752,17 @@ pub unsafe extern "C" fn canari_ios_import_app_group_share(
 pub unsafe extern "C" fn canari_ios_sweep_shared_inboxes(
     data_dir: *const std::os::raw::c_char,
     cache_dir: *const std::os::raw::c_char,
-) -> i32 {
+) -> CanariShareSweep {
     let Some((data, cache)) = ffi_dirs(data_dir, cache_dir) else {
-        return 0;
+        return CanariShareSweep {
+            flags: SWEEP_NO_DIRS,
+            ..Default::default()
+        };
     };
     let group = crate::app_group::app_group_dir()
         .inspect_err(|e| log::error!("[SHARE] the App Group inbox cannot be swept: {e}"))
         .ok();
-    i32::try_from(sweep_inboxes_once(group.as_deref(), &data, &cache)).unwrap_or(i32::MAX)
+    sweep_inboxes_once(group.as_deref(), &data, &cache)
 }
 
 #[cfg(test)]
@@ -835,7 +1023,11 @@ mod tests {
         extension_share(&group, "stale-1", 0, "old", &["0_a.png"], 0);
         std::fs::create_dir_all(group.join(SHARED_INBOX).join("leftover-1")).unwrap();
 
-        assert_eq!(sweep_inboxes(Some(&group), &data, &cache), 3);
+        let report = sweep_inboxes(Some(&group), &data, &cache);
+        assert_eq!(report.deleted, 3);
+        // The App Group had no epoch copy while the app is one sign-out on: repaired at the source.
+        assert_eq!(report.flags, SWEEP_EPOCH_REPAIRED);
+        assert_eq!(read_share_epoch(&group).unwrap(), 1);
 
         assert!(cache.join(SHARED_INBOX).join("live-1").exists());
         assert!(!cache.join(SHARED_INBOX).join("orphan-1").exists());
@@ -847,5 +1039,89 @@ mod tests {
         assert!(!group.join(SHARED_INBOX).join("leftover-1").exists());
         assert!(pending(&data).is_some(), "the current share stays");
         cleanup(&group);
+    }
+
+    #[test]
+    fn the_group_epoch_is_raised_to_the_apps_and_never_lowered() {
+        let (group, _data, _cache) = scratch("repair");
+        super::super::handoff::write_share_epoch(&group, 2).unwrap();
+        assert_eq!(repair_group_epoch(&group, 5), SWEEP_EPOCH_REPAIRED);
+        assert_eq!(read_share_epoch(&group).unwrap(), 5);
+        assert_eq!(repair_group_epoch(&group, 5), 0, "level: nothing to do");
+        assert_eq!(repair_group_epoch(&group, 3), 0, "ahead: never moved back");
+        assert_eq!(read_share_epoch(&group).unwrap(), 5);
+        std::fs::write(group.join("share_epoch"), "garbage").unwrap();
+        assert_eq!(repair_group_epoch(&group, 4), SWEEP_EPOCH_REPAIRED);
+        assert_eq!(read_share_epoch(&group).unwrap(), 4);
+        cleanup(&group);
+    }
+
+    #[test]
+    fn the_sweep_deletes_the_allowlisted_leftovers_and_nothing_else() {
+        let (group, data, cache) = scratch("leftovers");
+        for name in GROUP_LEFTOVERS {
+            std::fs::write(group.join(name), "x").unwrap();
+        }
+        // The NSE's files live beside them.
+        std::fs::write(group.join("push_context.json"), "{}").unwrap();
+        let report = sweep_inboxes(Some(&group), &data, &cache);
+        assert_eq!(report.leftovers, 4);
+        for name in GROUP_LEFTOVERS {
+            assert!(!group.join(name).exists(), "{name}");
+        }
+        assert!(group.join("push_context.json").exists());
+        // Held lock: the App Group root is left alone, and the report says why.
+        std::fs::write(group.join(GROUP_LEFTOVERS[0]), "x").unwrap();
+        let held = try_lock_group(&group).unwrap().expect("free");
+        let report = sweep_inboxes(Some(&group), &data, &cache);
+        assert_eq!(report.flags & SWEEP_GROUP_BUSY, SWEEP_GROUP_BUSY);
+        assert!(group.join(GROUP_LEFTOVERS[0]).exists());
+        drop(held);
+        cleanup(&group);
+    }
+
+    #[test]
+    fn no_group_and_an_unreadable_epoch_are_reported() {
+        let (group, data, cache) = scratch("report");
+        std::fs::write(data.join("share_epoch"), "garbage").unwrap();
+        let report = sweep_inboxes(None, &data, &cache);
+        assert_eq!(report.flags, SWEEP_NO_GROUP | SWEEP_EPOCH_UNREADABLE);
+        cleanup(&group);
+    }
+
+    #[test]
+    fn the_wipe_removes_the_group_share_and_only_it() {
+        let (group, _data, _cache) = scratch("wipe");
+        extension_share(&group, "dddd-1", 0, "hi", &["0_a.png"], 0);
+        std::fs::write(group.join("push_context.json"), "{}").unwrap();
+        let held = try_lock_group(&group).unwrap().expect("free");
+        assert!(
+            wipe_group_share(&group).is_err(),
+            "a running capture is refused"
+        );
+        assert!(pending(&group).is_some());
+        drop(held);
+        wipe_group_share(&group).unwrap();
+        assert!(pending(&group).is_none());
+        assert!(!group.join(SHARED_INBOX).exists());
+        assert!(group.join("push_context.json").exists());
+        wipe_group_share(&group).expect("nothing left is not an error");
+        cleanup(&group);
+    }
+
+    #[test]
+    fn every_import_outcome_has_its_own_code() {
+        let codes = [
+            import_code(&Ok(Import::Imported)),
+            import_code(&Ok(Import::Nothing)),
+            import_code(&Ok(Import::Busy)),
+            import_code(&Ok(Import::Dropped)),
+            import_code(&Err(std::io::Error::other("x"))),
+            IMPORT_NO_DIRS,
+            IMPORT_NO_GROUP,
+        ];
+        let distinct: std::collections::HashSet<_> = codes.iter().collect();
+        assert_eq!(distinct.len(), codes.len());
+        assert_eq!(codes[0], 1, "canari_ios.mm tells the page on 1");
     }
 }

@@ -56,8 +56,84 @@ final class ShareCapture {
         case unsupported
     }
 
+    /// Set when the system takes the capture's time back: the copy stops at the next chunk or
+    /// attachment, deletes what it wrote, and releases the lock (`run`).
+    private final class Cancellation {
+        private let lock = NSLock()
+        private var cancelled = false
+        private var started = false
+        private var current: Progress?
+
+        var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+
+        /// Marks the work as begun; false when the expiry came first, and the work must not begin.
+        func start() -> Bool { lock.lock(); defer { lock.unlock() }; started = !cancelled; return started }
+
+        /// Cancels; true when the work had begun, so the caller must wait for it to clean up.
+        func cancel() -> Bool {
+            lock.lock()
+            cancelled = true
+            let progress = current
+            let wasStarted = started
+            lock.unlock()
+            // A load waiting on the provider ends with an error instead of holding the capture.
+            progress?.cancel()
+            return wasStarted
+        }
+
+        /// The provider load under way, so a cancel can end it.
+        func track(_ progress: Progress?) {
+            lock.lock()
+            current = progress
+            let now = cancelled
+            lock.unlock()
+            if now { progress?.cancel() }
+        }
+    }
+
+    private let cancellation = Cancellation()
+
     /// Copies the share and hands it over. BLOCKING: call it off the main thread.
+    ///
+    /// UNDER AN EXPIRING ACTIVITY. An extension suspended while it holds a lock on a file in a
+    /// shared container is killed by the system (`0xdead10cc`), and a copy of a long video can
+    /// outlast the time the extension is given. So the capture runs inside
+    /// `performExpiringActivity`: on expiry it is cancelled, deletes its partial directory and
+    /// releases the lock BEFORE the expiry handler returns. The app is told a share is ready
+    /// (`postReady`) only AFTER the lock is released, or its try-lock import would answer Busy.
     func run(items: [NSExtensionItem]) -> ShareCaptureOutcome {
+        let finished = DispatchGroup()
+        finished.enter()
+        var outcome: ShareCaptureOutcome = .failed
+        ProcessInfo.processInfo.performExpiringActivity(withReason: "Copying a share into Canari") { expired in
+            if expired {
+                if self.cancellation.cancel() {
+                    self.log.error("the system is taking the capture's time back - cancelling it")
+                    // Wait for the capture to delete its copies and release the lock: returning
+                    // here lets the system suspend the process.
+                    finished.wait()
+                } else {
+                    self.log.error("the system gave the capture no time - nothing was copied")
+                    finished.leave()
+                }
+                return
+            }
+            guard self.cancellation.start() else { return }
+            outcome = self.captureLocked(items: items)
+            finished.leave()
+        }
+        finished.wait()
+        switch outcome {
+        case .handedOver, .keptNothing:
+            postReady()
+        case .empty, .failed:
+            break
+        }
+        return outcome
+    }
+
+    /// The capture itself, under the App Group lock (released when this returns).
+    private func captureLocked(items: [NSExtensionItem]) -> ShareCaptureOutcome {
         let providers = items.flatMap { $0.attachments ?? [] }
         log.info("share received: \(items.count) item(s), \(providers.count) attachment(s)")
         guard let container = FileManager.default.containerURL(
@@ -105,6 +181,9 @@ final class ShareCapture {
         var kept: Int64 = 0
         var fileIndex = 0
         for (index, provider) in providers.enumerated() {
+            if cancellation.isCancelled {
+                break
+            }
             switch classify(provider) {
             case .webURL:
                 if let url = loadWebURL(provider, index: index) {
@@ -145,6 +224,11 @@ final class ShareCapture {
             }
         }
 
+        // CANCELLED: nothing is handed over, and nothing of this share stays in the App Group.
+        if cancellation.isCancelled {
+            deleteDir(dir, why: "capture cancelled by the system")
+            return .failed
+        }
         let text = joinTexts(texts)
         if text.isEmpty && files.isEmpty {
             deleteDir(dir, why: "share kept nothing")
@@ -183,7 +267,6 @@ final class ShareCapture {
             deleteDir(inbox.appendingPathComponent(olderId, isDirectory: true), why: "replaced share")
         }
         log.info("share ready: \(files.count) file(s), \(kept) bytes, \(refused) refused")
-        postReady()
         return .handedOver(files: files.count, refused: refused)
     }
 
@@ -276,7 +359,7 @@ final class ShareCapture {
         let done = DispatchSemaphore(value: 0)
         var copied: (entry: [String: Any], size: Int64)?
         let suggested = provider.suggestedName
-        _ = provider.loadFileRepresentation(forTypeIdentifier: typeId) { url, error in
+        let progress = provider.loadFileRepresentation(forTypeIdentifier: typeId) { url, error in
             defer { done.signal() }
             guard let url = url else {
                 self.log.warning("file \(index) refused: no file representation (\(error?.localizedDescription ?? "none", privacy: .public))")
@@ -286,7 +369,9 @@ final class ShareCapture {
             copied = self.copy(from: url, suggestedName: suggested, typeId: typeId, index: index,
                                into: dir, ceiling: ceiling, container: container)
         }
+        cancellation.track(progress)
         done.wait()
+        cancellation.track(nil)
         return copied
     }
 
@@ -325,6 +410,12 @@ final class ShareCapture {
                     try input.read(upToCount: ShareCapture.bufferSize)
                 }
                 guard let data = chunk, !data.isEmpty else { break }
+                if cancellation.isCancelled {
+                    try? output.close()
+                    try? FileManager.default.removeItem(at: target)
+                    log.warning("file \(index) abandoned: the capture was cancelled")
+                    return nil
+                }
                 total += Int64(data.count)
                 if total > ceiling {
                     try? output.close()
@@ -377,9 +468,7 @@ final class ShareCapture {
             payload = ["id": UUID().uuidString, "epoch": epoch, "text": "", "files": [Any](), "refused": refused]
         }
         log.warning("a share kept nothing: \(refused) refusal(s) reported")
-        guard writePending(container, payload) else { return false }
-        postReady()
-        return true
+        return writePending(container, payload)
     }
 
     /// The share epoch the app's sign-outs advance (the App Group copy, written whole by a rename); 0

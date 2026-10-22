@@ -111,6 +111,78 @@ describe('the names the extension, the app and Android share', () => {
     );
   });
 
+  it('answers the native side in codes both sides read the same way', () => {
+    // The launch import and sweep run before the Rust logger exists: their codes ARE the log.
+    const header = read(resolve(APPLE, 'Sources/canari/canari_rust_bridge.h'));
+    const rustConst = (name: string) =>
+      capture(rustGroup, new RegExp(`const ${name}: (?:i32|u32) = ([^;]+);`));
+    const headerDefine = (name: string) =>
+      capture(header, new RegExp(`#define CANARI_SHARE_${name} \\(?([^)\\n]+)\\)?\\n`));
+    const asNumber = (expr: string) => {
+      const shift = /^1u? << (\d+)$/.exec(expr.trim());
+      return shift ? 1 << Number(shift[1]) : Number(expr.trim());
+    };
+    const imports = ['IMPORTED', 'NOTHING', 'BUSY', 'DROPPED', 'NO_DIRS', 'NO_GROUP', 'FAILED'];
+    for (const name of imports) {
+      expect(asNumber(headerDefine(`IMPORT_${name}`)), name).toBe(
+        asNumber(rustConst(`IMPORT_${name}`))
+      );
+    }
+    const sweeps = [...rustGroup.matchAll(/const SWEEP_(\w+): u32/g)].map((m) => m[1]);
+    expect(sweeps.length).toBe(9);
+    for (const name of sweeps) {
+      expect(asNumber(headerDefine(`SWEEP_${name}`)), name).toBe(
+        asNumber(rustConst(`SWEEP_${name}`))
+      );
+    }
+    // The struct the sweep returns has the same fields, in the same order, on both sides.
+    const rustFields = [
+      ...capture(rustGroup, /pub struct CanariShareSweep \{([^}]+)\}/).matchAll(
+        /pub (\w+): (\w+)/g
+      ),
+    ].map((m) => `${m[2]} ${m[1]}`);
+    const cFields = [
+      ...capture(header, /typedef struct \{([^}]+)\} CanariShareSweep;/).matchAll(
+        /(\w+)_t (\w+);/g
+      ),
+    ].map((m) => `${m[1].replace('int', 'i').replace('ui', 'u')} ${m[2]}`);
+    expect(cFields).toEqual(rustFields);
+    expect(rustGroup).toContain('#[repr(C)]');
+  });
+
+  it('sweeps exactly the leftover names the two writers can leave', () => {
+    const pendingFile = capture(swiftCapture, /static let pendingFile = "([^"]+)"/);
+    const leftovers = [
+      ...capture(rustGroup, /GROUP_LEFTOVERS: \[&str; \d+\] = \[([^\]]+)\]/).matchAll(/"([^"]+)"/g),
+    ]
+      .map((m) => m[1])
+      .sort();
+    expect(leftovers).toEqual(
+      [
+        `${pendingFile}.importing`, // the app's claim (import_group_share)
+        `${pendingFile}.replacing`, // the extension's claim, and the app's sweep claim
+        `${pendingFile}.tmp`, // either side's manifest write
+        `${capture(swiftCapture, /static let epochFile = "([^"]+)"/)}.tmp`, // the epoch copy's write
+      ].sort()
+    );
+    expect(swiftCapture).toContain('ShareCapture.pendingFile + ".replacing"');
+    expect(swiftCapture).toContain('ShareCapture.pendingFile + ".tmp"');
+    expect(rustGroup).toContain('claim(group, PENDING_SHARE_FILE, "importing")');
+  });
+
+  it('tells the app a share is ready only once the lock is released, under an expiring activity', () => {
+    // postReady is called once, from run(), after captureLocked() - whose defer releases the lock.
+    expect(swiftCapture.match(/\bpostReady\(\)/g)?.length).toBe(2); // the call and the definition
+    const run = swiftCapture.slice(
+      swiftCapture.indexOf('func run(items:'),
+      swiftCapture.indexOf('private func captureLocked(')
+    );
+    expect(run).toContain('performExpiringActivity');
+    expect(run.indexOf('self.captureLocked(items: items)')).toBeLessThan(
+      run.indexOf('postReady()')
+    );
+  });
+
   it('signals and announces with the names the native app listens for', () => {
     const ios = read(resolve(APPLE, 'Sources/canari/canari_ios.mm'));
     const push = read(resolve(APPLE, 'Sources/canari/canari_push.mm'));
@@ -159,88 +231,218 @@ describe('the extension bundle', () => {
   });
 });
 
+/** A value of an old-style (OpenStep) property list, which is what a pbxproj is. */
+type Pbx = string | Pbx[] | { [key: string]: Pbx };
+type PbxDict = { [key: string]: Pbx };
+
+/**
+ * Parses a pbxproj, and THROWS on anything Xcode would refuse: an unclosed object, a missing `;`,
+ * a key defined twice, trailing text. A scanner, not a regex: a `/*` or a brace inside a quoted
+ * string is text, and an object left open is found here rather than by `xcodebuild` on a runner.
+ * (A regex slice to the next `\t\t};` once read straight past two unterminated configurations.)
+ */
+function parsePbxproj(src: string): PbxDict {
+  let i = 0;
+  const fail = (what: string): never => {
+    const line = src.slice(0, i).split('\n').length;
+    throw new Error(`pbxproj line ${line}: ${what}`);
+  };
+  const skip = () => {
+    for (;;) {
+      while (i < src.length && /\s/.test(src[i])) i++;
+      if (src.startsWith('/*', i)) {
+        const end = src.indexOf('*/', i + 2);
+        if (end < 0) fail('unterminated comment');
+        i = end + 2;
+      } else if (src.startsWith('//', i)) {
+        const end = src.indexOf('\n', i);
+        i = end < 0 ? src.length : end + 1;
+      } else return;
+    }
+  };
+  const expectChar = (c: string) => {
+    skip();
+    if (src[i] !== c) fail(`expected '${c}', found '${src[i] ?? 'end of file'}'`);
+    i++;
+  };
+  const scalar = (): string => {
+    skip();
+    if (src[i] === '"') {
+      let out = '';
+      for (i++; i < src.length && src[i] !== '"'; i++) {
+        if (src[i] === '\\') i++;
+        out += src[i];
+      }
+      if (i >= src.length) fail('unterminated string');
+      i++;
+      return out;
+    }
+    const start = i;
+    while (
+      i < src.length &&
+      /[A-Za-z0-9_$+\-./:]/.test(src[i]) &&
+      !src.startsWith('/*', i) &&
+      !src.startsWith('//', i)
+    ) {
+      i++;
+    }
+    if (i === start) fail(`unexpected '${src[i] ?? 'end of file'}'`);
+    return src.slice(start, i);
+  };
+  const value = (): Pbx => {
+    skip();
+    if (src[i] === '{') {
+      i++;
+      const dict: PbxDict = {};
+      for (;;) {
+        skip();
+        if (i >= src.length) fail('unclosed {');
+        if (src[i] === '}') {
+          i++;
+          return dict;
+        }
+        const key = scalar();
+        expectChar('=');
+        const v = value();
+        expectChar(';');
+        if (Object.hasOwn(dict, key)) fail(`${key} defined twice`);
+        dict[key] = v;
+      }
+    }
+    if (src[i] === '(') {
+      i++;
+      const list: Pbx[] = [];
+      for (;;) {
+        skip();
+        if (i >= src.length) fail('unclosed (');
+        if (src[i] === ')') {
+          i++;
+          return list;
+        }
+        list.push(value());
+        skip();
+        if (src[i] === ',') i++;
+        else if (src[i] !== ')') fail(`expected ',' or ')', found '${src[i]}'`);
+      }
+    }
+    return scalar();
+  };
+  const root = value();
+  skip();
+  if (i !== src.length) fail('text after the root object');
+  if (typeof root !== 'object' || Array.isArray(root)) fail('the root is not a dictionary');
+  return root as PbxDict;
+}
+
 describe('the pbxproj builds, embeds and signs the extension', () => {
-  /** The object `id = { ... };` at one tab depth inside the objects dictionary. */
-  function object(id: string): string {
-    const start = pbxproj.search(new RegExp(`\\n\\t\\t${id} (/\\*[^*]*\\*/ )?= \\{`));
-    expect(start, id).toBeGreaterThan(-1);
-    return pbxproj.slice(start, pbxproj.indexOf('\n\t\t};', start));
+  // Parsed once; a parse error is the FIRST test's failure, and every other test then fails too.
+  let parseError: Error | undefined;
+  let project: PbxDict = { objects: {} };
+  try {
+    project = parsePbxproj(pbxproj);
+  } catch (e) {
+    parseError = e as Error;
+  }
+  const objects = project.objects as Record<string, PbxDict>;
+
+  const obj = (id: Pbx): PbxDict => {
+    const found = objects[id as string];
+    expect(found, String(id)).toBeDefined();
+    return found;
+  };
+  const ids = (value: Pbx): string[] => value as string[];
+  const ofIsa = (isa: string) => Object.entries(objects).filter(([, o]) => o.isa === isa);
+
+  function nativeTarget(name: string): { id: string; target: PbxDict } {
+    const found = ofIsa('PBXNativeTarget').filter(([, o]) => o.name === name);
+    expect(found.length, name).toBe(1);
+    return { id: found[0][0], target: found[0][1] };
   }
 
-  function nativeTarget(name: string): { id: string; body: string } {
-    const id = capture(
-      pbxproj,
-      new RegExp(`\\n\\t\\t([0-9A-F]+) /\\* ${name} \\*/ = \\{\\n\\t\\t\\tisa = PBXNativeTarget;`)
-    );
-    return { id, body: object(id) };
+  /** The build settings of each configuration of a target, by the configuration's own `name`. */
+  function configs(name: string): Record<string, PbxDict> {
+    const list = obj(nativeTarget(name).target.buildConfigurationList);
+    const cfgs = ids(list.buildConfigurations).map(obj);
+    expect(cfgs.length).toBe(2);
+    return Object.fromEntries(cfgs.map((c) => [c.name as string, c.buildSettings as PbxDict]));
   }
 
-  /** The build settings of each configuration of a target, by configuration name. */
-  function configs(name: string): Record<string, string> {
-    const list = capture(nativeTarget(name).body, /buildConfigurationList = ([0-9A-F]+)/);
-    const ids = [...object(list).matchAll(/\n\t\t\t\t([0-9A-F]+) \/\* (\w+) \*\//g)];
-    expect(ids.length).toBe(2);
-    return Object.fromEntries(ids.map(([, id, cfg]) => [cfg, object(id)]));
-  }
+  /** The `path` of every file a build phase carries. */
+  const phasePaths = (phase: PbxDict) =>
+    ids(phase.files).map((f) => obj(obj(f).fileRef).path as string);
 
-  const setting = (body: string, key: string) =>
-    capture(body, new RegExp(`\\n\\t+"?${key.replace(/[[\]*=]/g, '\\$&')}"? = ([^;]+);`));
+  it('parses whole: every object closed, no key defined twice', () => {
+    expect(parseError?.message).toBeUndefined();
+    expect(Object.keys(objects).length).toBeGreaterThan(50);
+    expect(obj(project.rootObject).isa).toBe('PBXProject');
+  });
+
+  it('names every build configuration and references no object that is missing', () => {
+    for (const [id, cfg] of ofIsa('XCBuildConfiguration')) {
+      expect(['debug', 'release'], id).toContain(cfg.name);
+      expect(typeof cfg.buildSettings, id).toBe('object');
+    }
+    const walk = (v: Pbx, from: string) => {
+      if (typeof v === 'string') {
+        if (/^[0-9A-F]{23,24}$/.test(v)) expect(objects[v], `${from} -> ${v}`).toBeDefined();
+      } else if (Array.isArray(v)) v.forEach((x) => walk(x, from));
+      else Object.values(v).forEach((x) => walk(x, from));
+    };
+    for (const [id, o] of Object.entries(objects)) walk(o, id);
+  });
 
   it('is an app-extension target producing CanariShare.appex', () => {
-    const { body } = nativeTarget('CanariShare');
-    expect(body).toContain('productType = "com.apple.product-type.app-extension";');
-    expect(body).toMatch(/productReference = [0-9A-F]+ \/\* CanariShare\.appex \*\//);
+    const { target } = nativeTarget('CanariShare');
+    expect(target.productType).toBe('com.apple.product-type.app-extension');
+    expect(obj(target.productReference).path).toBe('CanariShare.appex');
   });
 
   it('signs and versions both configurations like the NSE', () => {
     const share = configs('CanariShare');
     const nse = configs('CanariNotifications');
-    expect(Object.keys(share).sort()).toEqual(Object.keys(nse).sort());
-    for (const [cfg, body] of Object.entries(share)) {
-      expect(setting(body, 'PRODUCT_BUNDLE_IDENTIFIER'), cfg).toBe('fr.emse.canari.share');
-      expect(setting(body, 'PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]'), cfg).toBe(
-        'CanariShare'
-      );
-      expect(setting(body, 'CODE_SIGN_ENTITLEMENTS'), cfg).toBe(
-        'canari_Share/canari_Share.entitlements'
-      );
-      expect(setting(body, 'INFOPLIST_FILE'), cfg).toBe('canari_Share/Info.plist');
-      expect(setting(body, 'APPLICATION_EXTENSION_API_ONLY'), cfg).toBe('YES');
+    expect(Object.keys(share).sort()).toEqual(['debug', 'release']);
+    expect(Object.keys(nse).sort()).toEqual(['debug', 'release']);
+    for (const [cfg, s] of Object.entries(share)) {
+      expect(s.PRODUCT_BUNDLE_IDENTIFIER, cfg).toBe('fr.emse.canari.share');
+      expect(s['PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]'], cfg).toBe('CanariShare');
+      expect(s.CODE_SIGN_ENTITLEMENTS, cfg).toBe('canari_Share/canari_Share.entitlements');
+      expect(s.INFOPLIST_FILE, cfg).toBe('canari_Share/Info.plist');
+      expect(s.APPLICATION_EXTENSION_API_ONLY, cfg).toBe('YES');
       for (const key of ['MARKETING_VERSION', 'CURRENT_PROJECT_VERSION']) {
-        expect(setting(body, key), `${cfg} ${key}`).toBe(setting(nse[cfg], key));
+        expect(s[key], `${cfg} ${key}`).toBe(nse[cfg][key]);
       }
     }
   });
 
   it('is embedded in the app, built before it, and listed among the targets', () => {
-    const embed = object(
-      capture(pbxproj, /\n\t\t([0-9A-F]+) \/\* Embed Foundation Extensions \*\/ = \{/)
-    );
-    expect(embed).toContain('CanariNotifications.appex in Embed Foundation Extensions');
-    expect(embed).toContain('CanariShare.appex in Embed Foundation Extensions');
-    const app = nativeTarget('canari_iOS').body;
-    const deps = [...app.matchAll(/([0-9A-F]+) \/\* PBXTargetDependency \*\//g)].map((m) =>
-      object(m[1])
-    );
-    expect(deps.some((d) => d.includes(`target = ${nativeTarget('CanariShare').id} `))).toBe(true);
-    expect(pbxproj).toMatch(/targets = \([^)]*\/\* CanariShare \*\/,[^)]*\);/);
+    const app = nativeTarget('canari_iOS');
+    const share = nativeTarget('CanariShare');
+    const embed = ids(app.target.buildPhases)
+      .map(obj)
+      .filter((p) => p.name === 'Embed Foundation Extensions');
+    expect(embed.length).toBe(1);
+    expect(phasePaths(embed[0]).sort()).toEqual(['CanariNotifications.appex', 'CanariShare.appex']);
+    const deps = ids(app.target.dependencies).map((d) => obj(d).target);
+    expect(deps).toContain(share.id);
+    expect(ids(obj(project.rootObject).targets)).toContain(share.id);
   });
 
   it('compiles every Swift file of canari_Share', () => {
-    const sources = capture(nativeTarget('CanariShare').body, /([0-9A-F]+) \/\* Sources \*\//);
-    const phase = object(sources);
+    const sources = ids(nativeTarget('CanariShare').target.buildPhases)
+      .map(obj)
+      .filter((p) => p.isa === 'PBXSourcesBuildPhase');
+    expect(sources.length).toBe(1);
     const swift = readdirSync(SHARE).filter((f) => f.endsWith('.swift'));
     expect(swift.length).toBeGreaterThan(0);
-    for (const file of swift) expect(phase, file).toContain(`/* ${file} in Sources */`);
+    expect(phasePaths(sources[0]).sort()).toEqual(swift.sort());
   });
 
-  it('defines each of its objects once and references none that is missing', () => {
-    const ours = [...pbxproj.matchAll(/\b(5AE1A2B3C4D5E6F7[0-9A-F]{8})\b/g)].map((m) => m[1]);
-    const defined = [
-      ...pbxproj.matchAll(/\n\t\t(5AE1A2B3C4D5E6F7[0-9A-F]{8}) (\/\*[^*]*\*\/ )?= \{/g),
-    ].map((m) => m[1]);
-    expect(new Set(defined).size).toBe(defined.length);
-    for (const id of new Set(ours)) expect(defined, id).toContain(id);
+  it('the parser refuses what it must', () => {
+    expect(() => parsePbxproj('{ a = { b = c; }; ')).toThrow(/unclosed/);
+    expect(() => parsePbxproj('{ a = b; a = c; }')).toThrow(/defined twice/);
+    expect(() => parsePbxproj('{ a = "x /* } */ y"; }')).not.toThrow();
+    expect(parsePbxproj('{ a = "x /* } */ y"; }').a).toBe('x /* } */ y');
+    expect(() => parsePbxproj('{ a = b }')).toThrow(/expected ';'/);
   });
 });
 

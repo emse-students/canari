@@ -1082,6 +1082,8 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
+			name = debug;
+		};
 		5AE1A2B3C4D5E6F700000008 /* release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1162,6 +1164,8 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 			};
+			name = release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */

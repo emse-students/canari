@@ -260,7 +260,14 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    then writes `<AppGroup>/pending_share.json` in Android's schema (tmp + rename), with Android's
    claim/replace/refusal-merge rules by epoch. Every branch logs (`os_log`, subsystem
    `fr.emse.canari`, category `share`). Drift against the Kotlin is a vitest:
-   `src/lib/mobile/iosShareExtension.test.ts`.
+   `src/lib/mobile/iosShareExtension.test.ts`. **The capture runs under
+   `performExpiringActivity`**: when the system takes its time back mid-copy it is cancelled at the
+   next chunk (the provider load under way is cancelled too), deletes its partial directory and
+   releases the lock before the expiry handler returns - an extension suspended holding a lock on a
+   shared-container file is killed (`0xdead10cc`). **The app is signalled only AFTER the lock is
+   released**, or its try-lock import would answer Busy. The activation counts are PER KIND (10
+   pictures, 10 videos, 10 files): a mixed share over 10 in all is offered, and the copy keeps the
+   first 10 and counts the rest as refused.
 2. **It does not open the app.** An extension has no public API to launch its host app, and the
    responder-chain `openURL:` trick is undocumented private behaviour App Review may refuse, so it posts a
    LOCAL notification, "Choisissez la conversation" (fr/en from its own `Localizable.strings`, in
@@ -278,13 +285,26 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    path to the moved file of the same name, and hands over to the data directory's
    `pending_share.json` with Android's replace-by-epoch semantics. When it imported, `canari_ios.mm`
    removes the banner and dispatches `canari:incoming-share`. The once-per-process orphan sweep
-   covers BOTH inboxes (the App Group one only when the lock is free).
+   covers BOTH inboxes (the App Group one only when the lock is free), and with the lock held deletes
+   the App Group root's leftover claim and staging files (an allowlist: `pending_share.json.importing`,
+   `.replacing`, `.tmp`, `share_epoch.tmp` - the NSE's files sit beside them). **The launch import
+   and sweep run before the Rust logger exists**, so they answer CODES that `canari_ios.mm` NSLogs
+   (`IMPORT_*`; the sweep's `CanariShareSweep` report with its `SWEEP_*` bits), pinned on both sides
+   by the vitest. Deferring them until the logger exists was refused: Tauri creates the WebView
+   BEFORE the setup hook, so a page could claim a manifest and be staging copies the sweep would
+   then delete.
+   Once the page has read or discarded a share's last copy, its emptied `shared_inbox/<id>/` is
+   removed at once (`remove_dir`, which refuses a directory still holding a copy).
 4. **Sign-out leaves nothing in the App Group** with the same two page commands as Android:
    `advance_share_epoch` also writes `<AppGroup>/share_epoch` and FAILS CLOSED when it cannot
    (a stale group epoch would let an old capture look current), and `read_and_clear_pending_share`
    imports before it claims, so the erase deletes the group's share too. `share_epoch` is now kept
    across the app-data wipe (`storage.rs`, `KEPT_AT_TOP_LEVEL`): a reset count would make an old
    share look current against the group's copy - and on Android against a capture in flight.
+   **A failed App Group copy is repaired at its source**: the launch sweep finds the group's epoch
+   behind the app's (or unreadable), rewrites it, and says so at ERROR level; it never lowers it.
+   The factory wipe (`clear_app_data`) also removes the group's `pending_share.json` and
+   `shared_inbox/`, under the lock - an allowlist of those two paths.
 
 ## Decisions
 
@@ -356,6 +376,10 @@ Android leaves - from there, steps 3 to 6 above are the same code.
   app is on screen (the Darwin signal, no banner); a second share while the first waits; a share
   then a sign-out (nothing offered to the next account, the App Group's `shared_inbox` empty); and
   the logs - Console filtered on subsystem `fr.emse.canari`, category `share`, plus the app's
-  `[SHARE]` lines. Unproven until then: the cross-container rename staying one volume, `flock`
-  between the two processes, `loadFileRepresentation` on Photos assets, and the activation rule.
+  `[SHARE]` lines, and the `[CanariShare]` NSLog lines of the launch import and sweep. Unproven until
+  then: the cross-container rename staying one volume, `flock` between the two processes,
+  `loadFileRepresentation` on Photos assets, the activation rule, and the expiring activity's
+  cancel path (a long video shared, then the sheet left at once). The project itself is linted by
+  Xcode at the start of every `ios.yml` run (`plutil -lint`, `xcodebuild -list`) and parsed whole by
+  the vitest, after a pbxproj with two unclosed objects passed every Windows check.
   Suggested next lot: iOS conversation suggestions (`INSendMessageIntent`, the S5 twin).

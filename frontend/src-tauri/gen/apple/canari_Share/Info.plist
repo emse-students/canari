@@ -25,9 +25,11 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<!-- Canari in the share sheet (docs/wiki/frontend/sharing.md). The activation rule is the
-	     DICTIONARY form - App Review refuses TRUEPREDICATE - and its counts match the copy's own
-	     cap (ShareRules.maxFiles = 10): a share of more of one kind does not offer Canari at all,
-	     rather than offering it and dropping the rest. -->
+	     DICTIONARY form (Apple documents TRUEPREDICATE as for development only). Each count is PER
+	     KIND and equals the copy's own cap (ShareRules.maxFiles = 10): a share of more than 10
+	     pictures, or 10 videos, or 10 files does not offer Canari. The dictionary form cannot cap
+	     the TOTAL across kinds, so a mixed share (say 8 pictures and 8 videos) IS offered, and the
+	     copy keeps the first 10 files and counts the rest as refused - the member is told. -->
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>

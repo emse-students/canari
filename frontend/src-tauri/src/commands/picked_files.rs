@@ -58,15 +58,49 @@ fn picker_roots<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
     // iOS moves there out of the App Group, `app_group_share`). That directory, and NOT the whole app
     // cache around it: the cache also holds the WebView's own files
     // and the gallery's decrypted staging, none of which the page may read or delete by name.
-    if let Ok(inbox) = app.path().app_cache_dir().map(|d| d.join(SHARED_INBOX)) {
-        match inbox.canonicalize() {
-            Ok(d) => roots.push(d),
-            // Absent until the first share: nothing to read there, and nothing wrong.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => log::warn!("[PickedFiles] shared inbox unresolved: {e}"),
+    roots.extend(shared_inbox_root(app));
+    roots
+}
+
+/// The app cache's `shared_inbox`, canonical; `None` before the first share (nothing to read there,
+/// and nothing wrong) or when unresolved (said at warn level).
+fn shared_inbox_root<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    let inbox = app.path().app_cache_dir().ok()?.join(SHARED_INBOX);
+    match inbox.canonicalize() {
+        Ok(d) => Some(d),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            log::warn!("[PickedFiles] shared inbox unresolved: {e}");
+            None
         }
     }
-    roots
+}
+
+/// Once the last copy of a share is read or discarded, its `shared_inbox/<id>/` is empty: removed
+/// here rather than left for the next process's sweep. Only a directory DIRECTLY under the inbox, and
+/// only when empty (`remove_dir` refuses one that is not, so a copy still waiting is never touched);
+/// nobody writes into a share's directory once its manifest is handed over, which is the only way the
+/// page learns its id.
+pub(crate) fn remove_emptied_share_dir(file: &Path, inbox: &Path) {
+    let Some(dir) = file.parent() else { return };
+    if dir.parent() != Some(inbox) {
+        return;
+    }
+    match std::fs::remove_dir(dir) {
+        Ok(()) => log::debug!(
+            "[PickedFiles] emptied share directory removed: {}",
+            dir.display()
+        ),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
+            ) => {}
+        Err(e) => log::warn!(
+            "[PickedFiles] emptied share directory kept ({e}): {}",
+            dir.display()
+        ),
+    }
 }
 
 /// The directory under the app cache that `IncomingShare.kt` copies shared streams into - and, on
@@ -107,11 +141,16 @@ pub(crate) async fn take_picked_file<R: Runtime>(
         bytes.len(),
         canonical.display()
     );
-    if let Err(e) = std::fs::remove_file(&canonical) {
-        log::warn!(
+    match std::fs::remove_file(&canonical) {
+        Ok(()) => {
+            if let Some(inbox) = shared_inbox_root(&app) {
+                remove_emptied_share_dir(&canonical, &inbox);
+            }
+        }
+        Err(e) => log::warn!(
             "[PickedFiles] copy kept after read ({e}): {}",
             canonical.display()
-        );
+        ),
     }
     Ok(tauri::ipc::Response::new(bytes))
 }
@@ -127,12 +166,43 @@ pub(crate) async fn discard_picked_file<R: Runtime>(
     let canonical = allowed_path(&app, &path)?;
     std::fs::remove_file(&canonical).map_err(|e| format!("picked file not deleted: {e}"))?;
     log::debug!("[PickedFiles] discarded {}", canonical.display());
+    if let Some(inbox) = shared_inbox_root(&app) {
+        remove_emptied_share_dir(&canonical, &inbox);
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_emptied_share_directory_goes_and_nothing_else_does() {
+        let root = std::env::temp_dir().join(format!("canari-emptied-{}", std::process::id()));
+        let inbox = root.join(SHARED_INBOX);
+        let (empty, full, deep) = (inbox.join("a"), inbox.join("b"), inbox.join("c").join("d"));
+        for d in [&empty, &full, &deep] {
+            std::fs::create_dir_all(d).expect("dir");
+        }
+        std::fs::write(full.join("kept.png"), b"x").expect("file");
+
+        remove_emptied_share_dir(&empty.join("0_gone.png"), &inbox);
+        remove_emptied_share_dir(&full.join("0_gone.png"), &inbox);
+        remove_emptied_share_dir(&deep.join("0_gone.png"), &inbox);
+        remove_emptied_share_dir(&inbox.join("loose.png"), &inbox);
+
+        assert!(!empty.exists(), "the emptied share directory is removed");
+        assert!(
+            full.join("kept.png").exists(),
+            "a share still holding a copy is kept"
+        );
+        assert!(
+            deep.exists(),
+            "nothing deeper than a share directory is touched"
+        );
+        assert!(inbox.exists(), "the inbox itself is never removed");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn a_file_under_a_root_is_inside() {

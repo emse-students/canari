@@ -545,9 +545,19 @@ pub(crate) fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
     // after everything else was removed.
     #[cfg(target_os = "ios")]
     {
-        let group = crate::app_group::app_group_dir().and_then(|g| wipe_group_names(&g));
+        // The names copy, and the share the Share Extension left there - its manifest and its
+        // copies - which no sign-out reaches if nobody signed in (`app_group_share`).
+        let group = crate::app_group::app_group_dir().and_then(|g| {
+            let names = wipe_group_names(&g);
+            let share = crate::commands::app_group_share::wipe_group_share(&g);
+            match (names, share) {
+                (Ok(()), Ok(())) => Ok(()),
+                (Err(a), Err(b)) => Err(format!("{a}; {b}")),
+                (Err(e), Ok(())) | (Ok(()), Err(e)) => Err(e),
+            }
+        });
         if let Err(e) = group {
-            log::error!("[RESET] the App Group names copy was not removed: {e}");
+            log::error!("[RESET] the App Group was not entirely wiped: {e}");
             return match wiped {
                 Ok(()) => Err(e),
                 Err(w) => Err(format!("{w}; {e}")),
