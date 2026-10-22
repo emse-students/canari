@@ -1210,8 +1210,14 @@ Two refusals carry the design:
   names this session" has two causes the answer cannot separate - its messages expired, or it has
   none yet - and only the first is a reason to delete. The window travels back with the answer
   (`retentionDays`) so the client still holds no copy of it, and it is sent as DAYS rather than as
-  a cutoff instant so both sides of the comparison stay on the device's own clock. A server
-  answering `retentionDays <= 0` gets nothing swept: with no window every session looks old enough.
+  a cutoff instant so both sides of the comparison stay on the device's own clock.
+  **Client-side bounds on server-provided retention (2026-10-22):** the answer is bounded from below
+  by `GRAINE_RETENTION_FLOOR_DAYS` = 365 (`retention.ts`), the product window above. An honest
+  server answers exactly that, so the bound changes nothing; an answer below it (zero and negative
+  included) is logged at `error` and the sweep runs with the floor, so no seed younger than a year is
+  ever dropped on a remote number. A non-numeric answer is refused outright. There is no ceiling: it
+  could only delete SOONER than the server says, and the server already decides which sessions are
+  live. **Shortening `CHANNEL_MESSAGE_RETENTION_DAYS` means lowering the floor in the same change.**
 - **A chunk that went unanswered abandons the whole run.** A failed ask reads exactly like "the
   server names nothing", and acting on it would delete every seed on the device the first time the
   API is down. The server refuses a list over `MAX_LIVE_SESSION_QUERY` = 500 rather than truncating

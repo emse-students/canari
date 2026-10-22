@@ -12,6 +12,10 @@ import { ChannelMessage } from './entities/channel-message.entity';
  * its sessions this table still names (`liveGraineSessions`) and forgets the rest. A client-side
  * clock would have been a second copy of this number, and two windows meant to be one are exactly
  * what drifts.
+ *
+ * The client bounds this number from below by `GRAINE_RETENTION_FLOOR_DAYS`
+ * (`frontend/src/lib/utils/graine/retention.ts`), so a server-provided value can never shorten a
+ * device's seed lifetime. SHORTENING this window means lowering that floor in the same change.
  */
 export const CHANNEL_MESSAGE_RETENTION_DAYS = 365;
 
