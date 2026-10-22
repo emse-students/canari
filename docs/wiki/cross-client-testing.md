@@ -210,6 +210,11 @@ fleet member rather than by either driven browser. That finding outlives its led
 statement about the system, not a verdict - and it is why the fleet has to be enumerated before this
 rung is believed.
 
+**Owed, not yet a row: GRP-ADDR-1** (step A, [history-answer-addressing](protocols/history-answer-addressing.md#what-proves-it)),
+three devices on one group conversation: member A's NEW device asks while newcomer C, added after
+messages M1..Mn, is online. A's new device must restore M1..Mn; C must log no
+`[HISTORY_BUNDLE] ... received` for that answer and hold nothing from before its arrival.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | **`PASS`** 2026-09-07 19:00 on `04552e79`, clean |

@@ -349,7 +349,9 @@ export class MessagingController {
     @Query('limit') limitRaw?: string,
     @Query('after') after?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    // What the fetching session declares, as on its socket (history-answer-addressing, rule 6).
+    @Query('caps') caps?: string
   ): Promise<QueuedMessage[]> {
     const limit = limitRaw ? parseInt(limitRaw, 10) : 500;
     return this.messagingService.fetchMessages(
@@ -358,7 +360,8 @@ export class MessagingController {
       headerUserId,
       headerGlobalAdmin,
       Number.isFinite(limit) ? limit : 500,
-      after
+      after,
+      caps
     );
   }
 

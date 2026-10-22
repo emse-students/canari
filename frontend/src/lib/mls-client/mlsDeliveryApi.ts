@@ -1,7 +1,7 @@
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
 import { fetchJsonUnderProgressDeadline } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
-import { DELIVERY, type FrameDelivery } from './frameDelivery';
+import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
 import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
@@ -107,6 +107,24 @@ export class WithheldUnsupportedError extends Error {
   constructor(readonly groupId: string) {
     super(`the delivery service predates the withheld windows (group ${groupId.slice(0, 8)})`);
     this.name = 'WithheldUnsupportedError';
+  }
+}
+
+/**
+ * The delivery service refused to ADDRESS a history answer on a conversation to the named devices:
+ * not every live session of theirs declared that it refuses an addressed frame that is not a
+ * solicited history answer (`400 { error: 'addressed_unsupported' }`, step A rule 6). Typed so the
+ * answerer answers nobody - an older device is served by an older peer, never by a broadcast here.
+ */
+export class AddressedUnsupportedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly devices: readonly string[]
+  ) {
+    super(
+      `the addressed device(s) cannot receive an addressed answer in ${groupId.slice(0, 8)}: ${devices.join(',')}`
+    );
+    this.name = 'AddressedUnsupportedError';
   }
 }
 
@@ -621,6 +639,9 @@ export class MlsDeliveryApi {
       const url = new URL(`${this.historyUrl}/api/mls/messages/${this.userId}/${this.deviceId}`);
       url.searchParams.set('limit', String(pageLimit));
       if (afterCreatedAt) url.searchParams.set('after', afterCreatedAt);
+      // The same declaration the socket makes: the server hands an ADDRESSED row only to a session
+      // that applies rule 5 (history-answer-addressing, rule 6), and withholds it from any other.
+      url.searchParams.set('caps', ADDRESSED_HISTORY_CAPABILITY);
 
       let batch: Array<{ createdAt?: string }>;
       // OUTSIDE the try below: a token that cannot be had is not a page asked for too big. It used to
@@ -1476,6 +1497,17 @@ export class MlsDeliveryApi {
           parseRetryAfterMs(res.headers.get('retry-after'), Date.now())
         );
       }
+      // STEP A's refusal to address a device that does not apply rule 5 - typed at the throw by the
+      // `error` code the server sets, never by its sentence.
+      if (res.status === 400 && delivery.recipients) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string; devices?: unknown };
+        if (body.error === 'addressed_unsupported') {
+          throw new AddressedUnsupportedError(
+            groupId,
+            Array.isArray(body.devices) ? body.devices.map(String) : []
+          );
+        }
+      }
       // ANY OTHER REFUSAL carries its status as a type too: an answer, which the outbox reads as
       // breaking a run of 5xx - a sentence could not be read back.
       throw new ApiRefusalError(res.status, null, `Message send HTTP error: ${res.status}`);
@@ -1747,13 +1779,23 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * The one read behind {@link getGroupExclusions} and {@link getGroupWithheld}, failures classified
-   * at the throw. `withheld` is handed on UNPARSED - see {@link getGroupWithheld}.
+   * Whether this server routes an addressed history answer on a conversation (step A,
+   * docs/wiki/protocols/history-answer-addressing.md): `addressedAnswers: true` on the same read.
+   * A server that predates it answers without the field, which is `false` here, never a failure.
+   */
+  async getAddressedAnswersSupported(groupId: string, forUserId?: string): Promise<boolean> {
+    return (await this.readGroupWindows(groupId, forUserId)).addressedAnswers;
+  }
+
+  /**
+   * The one read behind {@link getGroupExclusions}, {@link getGroupWithheld} and
+   * {@link getAddressedAnswersSupported}, failures classified at the throw. `withheld` is handed on
+   * UNPARSED - see {@link getGroupWithheld}.
    */
   private readGroupWindows(
     groupId: string,
     forUserId?: string
-  ): Promise<{ exclusions: GroupExclusions; withheld: unknown }> {
+  ): Promise<{ exclusions: GroupExclusions; withheld: unknown; addressedAnswers: boolean }> {
     const forQuery = forUserId ? `?for=${encodeURIComponent(forUserId)}` : '';
     return this.joinInFlight(`exclusions:${groupId}${forQuery}`, async () => {
       const res = await this.f(
@@ -1774,8 +1816,16 @@ export class MlsDeliveryApi {
           `getGroupExclusions refused with ${res.status} for group ${groupId}`
         );
       }
-      const body = (await res.json()) as { exclusions?: unknown; withheld?: unknown };
-      return { exclusions: parseGroupExclusions(body?.exclusions), withheld: body?.withheld };
+      const body = (await res.json()) as {
+        exclusions?: unknown;
+        withheld?: unknown;
+        addressedAnswers?: unknown;
+      };
+      return {
+        exclusions: parseGroupExclusions(body?.exclusions),
+        withheld: body?.withheld,
+        addressedAnswers: body?.addressedAnswers === true,
+      };
     });
   }
 

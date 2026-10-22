@@ -20,6 +20,11 @@ import {
 import * as crypto from 'crypto';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import Redis from 'ioredis';
+import {
+  ADDRESSED_HISTORY_CAPABILITY,
+  declaresAddressedHistory,
+  publishIfAddressable,
+} from './addressing';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -1096,6 +1101,56 @@ export class MessagingService {
   }
 
   /**
+   * Refuses an addressed CONVERSATION frame unless every device it reaches applies rule 5 of
+   * docs/wiki/protocols/history-answer-addressing.md - refuse any addressed frame that is not a
+   * solicited, bounded history answer.
+   *
+   * THE EVIDENCE IS DECLARED BY THE CODE THAT WILL DECRYPT THE FRAME, not by a version, and it is
+   * read ACROSS GATEWAY PROCESSES: every session of the device, on whichever gateway holds it, owns
+   * one field of {@link addressingSessionsKey}, and ONE field that is not the capability makes the
+   * device unaddressable - a tab left open on an older build, wherever it is connected. A session on
+   * an OLDER gateway records no field; its only trace is the presence value `true`, which a current
+   * gateway never overwrites, so anything but {@link PRESENCE_SESSIONS} is refused too. The frame is
+   * transport-only (checked by the caller), so its addressee is online by construction and the live
+   * sessions are exactly the readers. An offline addressee answers no capability and is refused too:
+   * a transport frame would not have been queued for it anyway.
+   *
+   * @throws BadRequestException `{ error: 'addressed_unsupported', devices }` naming the devices that
+   *   did not declare it - the answerer then answers nobody, and never by broadcast.
+   */
+  private async assertConversationAddressable(
+    groupId: string,
+    targets: ReadonlyArray<{ userId: string; deviceId: string }>,
+    traceId: string
+  ): Promise<void> {
+    const incapable: string[] = [];
+    for (const t of targets) {
+      if (!(await publishIfAddressable(this.redis, t.userId, t.deviceId))) {
+        incapable.push(`${t.userId}:${t.deviceId}`);
+      }
+    }
+    if (incapable.length === 0) {
+      this.logger.log(
+        `[SEND][${traceId}] ADDRESSED_CONVERSATION group=${groupId} to=${targets
+          .map((t) => t.deviceId)
+          .join(',')} - every addressee declared ${ADDRESSED_HISTORY_CAPABILITY}`
+      );
+      return;
+    }
+    // EXPECTED while older builds are online, so not an error here: the answerer is told and answers
+    // nobody, and the older device is served by an older peer as before.
+    this.logger.log(
+      `[SEND][${traceId}] REJECT addressed_unsupported group=${groupId} devices=${incapable.join(',')}` +
+        ` - not every live session declared ${ADDRESSED_HISTORY_CAPABILITY}`
+    );
+    throw new BadRequestException({
+      error: 'addressed_unsupported',
+      message: `the addressed device(s) did not declare ${ADDRESSED_HISTORY_CAPABILITY}`,
+      devices: incapable,
+    });
+  }
+
+  /**
    * HANDS ONE QUEUED ROW TO ONE DEVICE, AND IT IS THE ONLY WAY A FRAME LEAVES THIS SERVICE.
    *
    * Online: publish the envelope on `chat:messages` for the gateway to route, then arm the deferred
@@ -1166,26 +1221,48 @@ export class MessagingService {
       return false;
     }
 
-    await this.redis.publish(
-      'chat:messages',
-      JSON.stringify({
-        recipientId: queued.recipientId,
-        deviceId: queued.deviceId,
-        senderId,
-        senderDeviceId: queued.senderDeviceId ?? '',
-        groupId,
-        isWelcome: queued.isWelcome ?? false,
-        isCommit: queued.isCommit ?? false,
-        // Only a Welcome carries one; `JSON.stringify` drops the key when it is undefined, which is
-        // what every other frame published before this was one function.
-        ratchetTree: queued.ratchetTree,
-        proto: queued.proto ?? queued.content ?? '',
-        // Without this id a frame processed in realtime cannot be ACKed, so the durable row
-        // survives and the next pull redelivers it - destructively, for a Welcome.
-        queuedMessageId: queued.id,
-        createdAt: queued.createdAt.toISOString(),
-      })
-    );
+    const frame = JSON.stringify({
+      recipientId: queued.recipientId,
+      deviceId: queued.deviceId,
+      senderId,
+      senderDeviceId: queued.senderDeviceId ?? '',
+      groupId,
+      isWelcome: queued.isWelcome ?? false,
+      isCommit: queued.isCommit ?? false,
+      // Only a Welcome carries one; `JSON.stringify` drops the key when it is undefined, which is
+      // what every other frame published before this was one function.
+      ratchetTree: queued.ratchetTree,
+      proto: queued.proto ?? queued.content ?? '',
+      // Without this id a frame processed in realtime cannot be ACKed, so the durable row
+      // survives and the next pull redelivers it - destructively, for a Welcome.
+      queuedMessageId: queued.id,
+      createdAt: queued.createdAt.toISOString(),
+      // Only when true, like `ratchetTree`: the receiver refuses an addressed conversation frame
+      // that is not a solicited history answer (history-answer-addressing, rule 5).
+      ...(queued.addressed ? { addressed: true } : {}),
+    });
+    if (queued.addressed) {
+      // THE CHECK AND THE PUBLISH ARE ONE SCRIPT (history-answer-addressing, rule 6): the sender's
+      // check ran before the rows were written, and a session that registered since - an older tab -
+      // would otherwise receive the frame. Refused here, the row stays queued for the declared
+      // session's pull, which withholds it from any session that did not declare.
+      const published = await publishIfAddressable(
+        this.redis,
+        queued.recipientId,
+        queued.deviceId,
+        { channel: 'chat:messages', payload: frame }
+      );
+      if (!published) {
+        this.logger.error(
+          `[${tag}][${traceId}] ADDRESSED row NOT published recipient=${queued.recipientId}:${queued.deviceId} ` +
+            `queuedId=${queued.id} - a session that did not declare ${ADDRESSED_HISTORY_CAPABILITY} ` +
+            `registered after the check; the row stays queued for a declared session to pull`
+        );
+        return false;
+      }
+    } else {
+      await this.redis.publish('chat:messages', frame);
+    }
     if (!batch) {
       this.logger.log(
         `[${tag}][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} ` +
@@ -1276,21 +1353,26 @@ export class MessagingService {
         // performed BY a device that is legitimately not active yet - `validateCommit` promotes it
         // precisely because such a device never receives a Welcome - so gating commits and Welcomes
         // here would wall up the one door out of `pending`.
-        // AN ADDRESSED FRAME IS ALLOWED ON A KEY-DISTRIBUTION GROUP ONLY - an allowlist, not a
-        // denylist. Its one sender is a Graine answer (channel-encryption section 23). On a
-        // conversation group the same field would let a member show different ciphertexts to
-        // different members and keep each out of the shared history stream - an equivocation the
-        // ordinary fan-out (one ciphertext, every member) makes impossible.
-        if (addressed) {
-          if (!(await this.isKeyDistributionGroup(groupId))) {
-            this.logger.warn(
-              `[SEND][${traceId}] REJECT addressed_not_key_group group=${groupId} - ` +
-                `recipientDevices is accepted on a key-distribution group only`
-            );
-            throw new BadRequestException(
-              'recipientDevices is accepted on a key-distribution group only'
-            );
-          }
+        // AN ADDRESSED FRAME ON A CONVERSATION IS A HISTORY ANSWER, AND IS HELD TO WHAT MAKES THAT SAFE.
+        // On a key-distribution group its one sender is a Graine answer (channel-encryption section
+        // 23) and nothing changes. On a conversation the same field lets a member show one device a
+        // frame the rest of the group never sees - an equivocation the ordinary fan-out (one
+        // ciphertext, every member) makes impossible. It is accepted there since step A
+        // (docs/wiki/protocols/history-answer-addressing.md, rules 3 and 6) only as a TRANSPORT
+        // frame, and only to devices whose every live session declared that it refuses an addressed
+        // frame that is not a solicited history answer - checked below, once the targets are known.
+        const addressedConversation = addressed
+          ? !(await this.isKeyDistributionGroup(groupId))
+          : false;
+        if (addressedConversation && (body.durable ?? !body.silent)) {
+          this.logger.warn(
+            `[SEND][${traceId}] REJECT addressed_durable group=${groupId} - an addressed frame on a ` +
+              `conversation must be transport-only`
+          );
+          throw new BadRequestException({
+            error: 'addressed_durable',
+            message: 'an addressed frame on a conversation must be transport-only (durable: false)',
+          });
         }
 
         const isHandshake = !!body.isCommit || !!body.isWelcome;
@@ -1431,6 +1513,9 @@ export class MessagingService {
             );
           }
         }
+        if (addressedConversation) {
+          await this.assertConversationAddressable(groupId, targets, traceId);
+        }
         const ghosts = recipients.filter(
           (m) =>
             !isSender(m) &&
@@ -1468,6 +1553,11 @@ export class MessagingService {
               isCommit: body.isCommit,
               proto,
               createdAt: receivedAt,
+              // The ROUTING fact the receiver needs: MLS encrypts for the whole group, so only the
+              // server can say this copy went to this device alone (history-answer-addressing, 4).
+              // Conversation frames only: it is what the receiver's rule 5 and the gateway's edge
+              // filter act on, and a key-group seed answer is held to neither.
+              addressed: addressedConversation,
             })
           );
         }
@@ -3650,6 +3740,16 @@ export class MessagingService {
    */
   private readonly accusedTombstones = new Set<string>();
 
+  /**
+   * The count of addressed rows last reported as withheld from each device, by `user:device`, so a
+   * device's older session is told about once per change of that count and not once per pull - see
+   * the line in {@link fetchMessages}. IN-PROCESS and not durable for the same reason as
+   * {@link accusedTombstones}: it answers "have I already said this here", and a restart re-announces
+   * what is still waiting. An entry is dropped as soon as nothing waits, so it holds one number per
+   * device that has a row waiting right now.
+   */
+  private readonly withheldReported = new Map<string, number>();
+
   async purgeOrphanGroups(
     groupIds: string[]
   ): Promise<{ deliverable: Set<string>; tombstoned: Set<string> }> {
@@ -4104,9 +4204,15 @@ export class MessagingService {
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
     limit = 500,
-    after?: string
+    after?: string,
+    caps?: string
   ): Promise<QueuedMessage[]> {
     const traceId = this.makeTraceId('fetch-msg');
+    // AN ADDRESSED ROW REACHES ONLY A SESSION THAT DECLARED IT APPLIES RULE 5
+    // (history-answer-addressing, rule 6): the same `caps` its socket declares, sent on the fetch.
+    // Withheld IN THE QUERY, so the page and the client's cursor are untouched and the row stays
+    // queued for the session that can read it.
+    const readsAddressed = declaresAddressedHistory(caps);
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     assertCallerOwnsUserId(
@@ -4147,6 +4253,7 @@ export class MessagingService {
       if (after?.trim()) {
         qb.andWhere('q.createdAt > :after', { after: new Date(after) });
       }
+      if (!readsAddressed) qb.andWhere('q.addressed = false');
 
       const chunk = await qb.getMany();
       if (chunk.length === 0) break;
@@ -4224,6 +4331,28 @@ export class MessagingService {
               `so the path that deleted them left residue: ${leaked.join(', ')}`
             : '')
       );
+    }
+
+    const withheldKey = `${safeUserId}:${safeDeviceId}`;
+    if (!readsAddressed) {
+      const withheld = await this.queuedMessageRepo.count({
+        where: { recipientId: safeUserId, deviceId: safeDeviceId, addressed: true },
+      });
+      if (withheld === 0) {
+        this.withheldReported.delete(withheldKey);
+      } else if (this.withheldReported.get(withheldKey) !== withheld) {
+        // An older session pulling while an addressed answer waits for a declared one - the
+        // expected consequence of an old client, and the row is not lost, it waits. ONCE per change
+        // of the count for this device: every pull of that session would otherwise repeat the same
+        // line until the row's retention ends.
+        this.withheldReported.set(withheldKey, withheld);
+        this.logger.log(
+          `[MSG_FETCH][${traceId}] WITHHELD ${withheld} addressed row(s) from user=${safeUserId} ` +
+            `device=${safeDeviceId} - this fetch did not declare ${ADDRESSED_HISTORY_CAPABILITY}`
+        );
+      }
+    } else {
+      this.withheldReported.delete(withheldKey);
     }
 
     this.logger.log(

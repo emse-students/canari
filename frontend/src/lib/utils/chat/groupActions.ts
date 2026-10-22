@@ -1,4 +1,5 @@
-import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { DELIVERY, addressedHistoryAnswer } from '$lib/mls-client/frameDelivery';
+import { AddressedUnsupportedError } from '$lib/mls-client/mlsDeliveryApi';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -11,7 +12,8 @@ import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
-import { entitledHistorySelection } from './historyEntitlement';
+import { readerHistorySelection } from './historyEntitlement';
+import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
 import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import {
   buildHistoryDigest,
@@ -527,15 +529,19 @@ function serializeForBundle(m: StoredMessage) {
 /**
  * Builds one `history_bundle` frame.
  *
- * **WHY EVERY BUNDLE CARRIES A `to`.** The frame is an MLS group broadcast - there is no such thing
- * as a private send here - so every member of the conversation receives an answer meant for ONE
- * device. `to` is the requester's `digestIdentity` - user AND device, because a user with three
- * devices must be able to solicit from one of them and be answered on that one. Addressing is the
- * ONLY thing it does: it is not a secrecy boundary and must never be read as one.
+ * **WHY EVERY BUNDLE CARRIES A `to`.** `to` is the requester's `digestIdentity` - user AND device,
+ * because a user with three devices must be able to solicit from one of them and be answered on that
+ * one. Since step A the frame is also ROUTED to that device alone (`recipientDevices`, see
+ * {@link sendBundleChunks}); `to` stays in the payload because MLS still encrypts it for the whole
+ * group, and an older server still broadcasts it. Neither is a secrecy boundary.
  *
- * It is deliberately not the `recipients` field of `POST /send`: MLS re-encrypts per recipient set,
- * and narrowing the set on an application message burns the sender ratchet budget
- * (`sender_ratchet_config` is (2000, 2000)) into a generation gap the other members can never close.
+ * **`requestId`, `last` and `join` are what the receiver checks an ADDRESSED answer against**
+ * (`historyAddressing.ts`): the ask it answers (absent on the inviter's push, which `join` names),
+ * and the chunk that closes that ask.
+ *
+ * The ratchet cost of addressing - a non-recipient skips the sender's generations - is bounded by
+ * `maximum_forward_distance` (2 000) over CONSECUTIVE addressed frames, i.e. one answer of 400 000
+ * messages (docs/wiki/protocols/history-answer-addressing.md).
  *
  * There is no `vouched` flag any more, and its absence is the point. It existed to tell a durable
  * marker whether it might be discharged - "I compared my whole store and you are complete" as
@@ -545,15 +551,18 @@ function serializeForBundle(m: StoredMessage) {
 function bundleFrame(
   messages: unknown[],
   to: string,
-  opts: { state?: ConversationHistoryState } = {}
+  opts: { state?: ConversationHistoryState; answer?: BundleAnswer; last?: boolean } = {}
 ): Uint8Array {
-  const { state } = opts;
+  const { state, answer, last } = opts;
   return encodeAppMessage(
     mkSystem(
       'history_bundle',
       JSON.stringify({
         messages,
         to,
+        ...(answer?.requestId ? { requestId: answer.requestId } : {}),
+        ...(answer?.join ? { join: true } : {}),
+        ...(last ? { last: true } : {}),
         // The conversation's own state - read watermarks and the shared history floor. A handful of
         // numbers, sent whole with every frame because both merges are `max` and therefore free to
         // repeat. Sending them once would make their delivery depend on which chunk survived.
@@ -567,6 +576,12 @@ function bundleFrame(
     )
   );
 }
+
+/**
+ * Which ask a bundle answers: the asker's `requestId`, or `join` for the inviter's push, which nobody
+ * asked an id for - the receiver's own admission solicited it (`historyAddressing.ts`).
+ */
+type BundleAnswer = { requestId?: string; join?: boolean };
 
 /** What a conversation carries beyond its messages, and what every bundle restates. */
 type ConversationHistoryState = {
@@ -688,36 +703,61 @@ export async function sendFullHistoryBundle(
   // A group with no messages can still have read state, a floor and pins worth handing over - and
   // so can one whose every message was withheld, or whose exclusion windows could not be read: the
   // invitee has no conversation row yet, and this frame is what gives it one. It carries no message.
-  const sendStateOnly = async (why: string): Promise<void> => {
-    const bytes = bundleFrame([], to, { state });
+  // ADDRESSED like the rest of the push when the server routes it (step A), and closing the `join`
+  // ask; broadcast when the windows could not be read, since nothing then says which - exactly the
+  // frame this was before step A, and it carries no message.
+  const sendStateOnly = async (why: string, addressed: boolean): Promise<void> => {
+    const bytes = bundleFrame([], to, { state, answer: { join: true }, last: true });
     try {
-      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
-      log(`[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (${why})`);
+      await mlsService.sendMessage(
+        groupId,
+        bytes,
+        undefined,
+        addressed ? addressedHistoryAnswer(to) : DELIVERY.transport
+      );
+      log(
+        `[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (${why})${addressed ? `, addressed to ${to}` : ''}`
+      );
     } catch (e) {
+      if (e instanceof AddressedUnsupportedError) {
+        log(
+          `[HISTORY_BUNDLE] ${to} cannot be addressed in ${groupId.slice(0, 8)}… (offline, or a session of it predates addressed answers) - pushing it nothing`
+        );
+        return;
+      }
       log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
     }
   };
   if (messages.length === 0) {
-    await sendStateOnly('group has no history');
+    // No chunk will read the windows, so the one read that decides how this frame is routed is here.
+    const mode = await readerHistorySelection(
+      groupId,
+      [],
+      { mlsService, log },
+      userIdOfLeaf(to),
+      true
+    );
+    await sendStateOnly('group has no history', mode?.mode === 'addressed');
     return;
   }
 
-  // THE INVITEE'S OWN SPAN JOINS THE FILTER (user, 2026-10-21: a new member of a group conversation
-  // reads nothing from before their arrival). Safe as a broadcast: every other member is entitled to
-  // a superset of what the invitee is. For a new device of a continuous member the span ends at that
-  // member's own arrival, so their restore is untouched; a 1:1 has no such span (the server's rule).
+  // ADDRESSED TO THE INVITEE AND FILTERED ON THEIR OWN WINDOWS (step A; user, 2026-10-21: a new
+  // member of a group conversation reads nothing from before their arrival). The push is sent
+  // to the invitee's device alone and carries that reader's own span. A 1:1 has no span (the server's
+  // rule).
   const outcome = await sendBundleChunks(
     groupId,
     messages,
     { mlsService, log },
-    { chunkSize, to, state, invitee: userIdOfLeaf(to) }
+    { chunkSize, to, state, answer: { join: true }, push: true }
   );
+  if (outcome.kind === 'refused') return;
   if (outcome.kind === 'unreadable') {
-    await sendStateOnly('exclusion windows unreadable - no message carried');
+    await sendStateOnly('exclusion windows unreadable - no message carried', false);
     return;
   }
   if (outcome.kind === 'withheld-all') {
-    await sendStateOnly('every message withheld');
+    await sendStateOnly('every message withheld', outcome.addressed);
     return;
   }
   log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
@@ -738,9 +778,16 @@ export type HistoryStoreDeps = HistorySendDeps & {
  * Shared by the full bundle and the id-filtered one so a change to the wire shape cannot reach one
  * path and miss the other - the two differ only in WHICH messages they were handed.
  *
- * **AND IT IS WHERE A REMOVE IS MADE TO HOLD** (user, 2026-10-14): every selection passes through
- * {@link entitledHistorySelection} before a frame is built, so no answer path - full, diff or
- * scrollback - can carry a message sent while a current member was out of the group.
+ * **AND IT IS WHERE ENTITLEMENT IS APPLIED** (user, 2026-10-14 and 2026-10-21): every selection passes
+ * through {@link readerHistorySelection} before a frame is built, so no answer path - full, diff or
+ * scrollback - can carry a message sent while its reader was out of the group, or before they arrived.
+ *
+ * **AND WHERE IT IS ADDRESSED** (step A, docs/wiki/protocols/history-answer-addressing.md): when the
+ * server routes addressed answers, every chunk goes to `to` alone (`recipientDevices`) and is filtered
+ * on that reader's windows. An addressed answer that names no ask (`requestId`, or `join` on the
+ * push) is not sent - the receiver would refuse it, and the sender's ratchet would have spent a
+ * generation every other member skips for nothing. A device the server cannot address (a session of
+ * it predates the capability) is sent nothing: an addressed answer is never turned into a broadcast.
  *
  * @returns the {@link BundleOutcome} - whether anything could be sent, and how much was.
  */
@@ -752,31 +799,37 @@ async function sendBundleChunks(
     chunkSize,
     to,
     state,
-    invitee,
+    answer,
+    push = false,
   }: {
     chunkSize: number;
     to: string;
     state?: ConversationHistoryState;
-    /** Set on the inviter's push only - see {@link entitledHistorySelection}. */
-    invitee?: string;
+    /** The ask this answers - see {@link BundleAnswer}. */
+    answer?: BundleAnswer;
+    /** The inviter's push - its legacy broadcast form adds the reader's span to the union. */
+    push?: boolean;
   }
 ): Promise<BundleOutcome> {
   // THE WINDOWS ARE READ AGAIN FOR EVERY CHUNK. A long answer spans seconds of network, and a
   // member re-added in the meantime decrypts every chunk sealed after their add commit - so the
   // windows that filter a chunk are the ones in force when THAT chunk leaves, never the ones read
   // when the answer began. Concurrent reads of one group share one request (`joinInFlight`).
+  const reader = userIdOfLeaf(to);
   const totalChunks = Math.ceil(selection.length / chunkSize);
   let sent = 0;
   let read = false;
+  let addressed = false;
   for (let i = 0; i < selection.length; i += chunkSize) {
     const chunkNo = Math.floor(i / chunkSize) + 1;
-    const kept = await entitledHistorySelection(
+    const chosen = await readerHistorySelection(
       groupId,
       selection.slice(i, i + chunkSize),
       { mlsService, log },
-      invitee
+      reader,
+      push
     );
-    if (kept === null) {
+    if (chosen === null) {
       if (!read) return { kind: 'unreadable' };
       log(
         `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} not sent - exclusion windows unreadable; stopping after ${sent} message(s)`
@@ -784,16 +837,35 @@ async function sendBundleChunks(
       return { kind: 'sent', count: sent };
     }
     read = true;
-    if (kept.length === 0) continue;
-    const payload = kept.map(serializeForBundle);
-    const bytes = bundleFrame(payload, to, { state });
+    addressed = chosen.mode === 'addressed';
+    if (addressed && !answer?.requestId && !answer?.join) {
+      log(
+        `[HISTORY_BUNDLE] Not answering ${to} in ${groupId.slice(0, 8)}… - its ask carries no request id (an older client), and an addressed answer to no ask is refused`
+      );
+      return { kind: 'refused' };
+    }
+    if (chosen.kept.length === 0) continue;
+    const payload = chosen.kept.map(serializeForBundle);
+    const last = i + chunkSize >= selection.length;
+    const bytes = bundleFrame(payload, to, { state, answer, last });
     try {
-      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+      await mlsService.sendMessage(
+        groupId,
+        bytes,
+        undefined,
+        addressed ? addressedHistoryAnswer(to) : DELIVERY.transport
+      );
       sent += payload.length;
       log(
-        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…`
+        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…${addressed ? ` (addressed to ${to})` : ' (broadcast)'}`
       );
     } catch (e) {
+      if (e instanceof AddressedUnsupportedError) {
+        log(
+          `[HISTORY_BUNDLE] ${to} cannot be addressed in ${groupId.slice(0, 8)}… (offline, or a session of it predates addressed answers) - answering nothing rather than broadcasting`
+        );
+        return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
+      }
       log(`[HISTORY_BUNDLE] Chunk send error ${chunkNo}: ${String(e)}`);
       return { kind: 'sent', count: sent };
     }
@@ -802,18 +874,21 @@ async function sendBundleChunks(
     log(
       `[HISTORY_BUNDLE] Every message selected for ${groupId.slice(0, 8)}… was withheld - no message sent`
     );
-    return { kind: 'withheld-all' };
+    return { kind: 'withheld-all', addressed };
   }
   return { kind: 'sent', count: sent };
 }
 
 /**
  * What {@link sendBundleChunks} did: no window could be read (nothing sent), every message was
- * withheld (nothing sent), or `count` messages went out before the end or the first failed chunk.
+ * withheld (nothing sent; `addressed` says how the last read said to route), the reader could not be answered at all (an addressed answer to no ask,
+ * or a device the server cannot address - nothing sent, and nothing must be sent in its place), or
+ * `count` messages went out before the end or the first failed chunk.
  */
 type BundleOutcome =
   | { kind: 'unreadable' }
-  | { kind: 'withheld-all' }
+  | { kind: 'withheld-all'; addressed: boolean }
+  | { kind: 'refused' }
   | { kind: 'sent'; count: number };
 
 /**
@@ -1037,7 +1112,18 @@ export async function sendHistoryRangeRequest(
   request: { from: string; before: number; limit: number; since: number },
   { mlsService, log }: HistorySendDeps
 ): Promise<boolean> {
-  const bytes = encodeAppMessage(mkSystem('history_range', JSON.stringify({ ...request })));
+  // The ask is recorded BEFORE it leaves, under the id the frame carries: an addressed answer is
+  // accepted only against it (`historyAddressing.ts`), and it can arrive before the send resolves.
+  const requestId = mintHistoryRequestId();
+  noteHistoryAsk(groupId, requestId, {
+    kind: 'range',
+    since: request.since,
+    before: request.before,
+    askedAt: Date.now(),
+  });
+  const bytes = encodeAppMessage(
+    mkSystem('history_range', JSON.stringify({ ...request, requestId }))
+  );
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
     log(
@@ -1086,8 +1172,12 @@ export async function sendHistoryDigest(
     digest.mode === 'ids'
       ? `${digest.ids.length} id(s)`
       : `${digest.ranges.length} slice(s) at depth ${digest.depth}`;
+  // Recorded before it leaves - see `sendHistoryRangeRequest`. The answer to a digest is the diff
+  // the responder computes, bounded by the `since` stated here.
+  const requestId = mintHistoryRequestId();
+  noteHistoryAsk(groupId, requestId, { kind: 'digest', since, askedAt: Date.now() });
   const bytes = encodeAppMessage(
-    mkSystem('history_digest', JSON.stringify({ from, digest, since }))
+    mkSystem('history_digest', JSON.stringify({ from, digest, since, requestId }))
   );
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
@@ -1141,7 +1231,19 @@ export async function sendHistoryPull(
   if (frames.length === 0) return;
 
   for (const payload of frames) {
-    const bytes = encodeAppMessage(mkSystem('history_pull', JSON.stringify(payload)));
+    // One ask per frame, each bounded by exactly what it names - see `sendHistoryRangeRequest`.
+    const requestId = mintHistoryRequestId();
+    noteHistoryAsk(groupId, requestId, {
+      kind: 'pull',
+      since,
+      ids: (payload.ids as string[] | undefined) ?? [],
+      prefixes: (payload.prefixes as string[] | undefined) ?? [],
+      depth: payload.depth as number | undefined,
+      askedAt: Date.now(),
+    });
+    const bytes = encodeAppMessage(
+      mkSystem('history_pull', JSON.stringify({ ...payload, requestId }))
+    );
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
     } catch (e) {
@@ -1182,10 +1284,16 @@ export async function sendHistoryBundleForIds(
   groupId: string,
   ids: readonly string[],
   deps: HistoryStoreDeps,
-  opts: { to: string; chunkSize?: number; since: number }
+  opts: {
+    to: string;
+    chunkSize?: number;
+    since: number;
+    /** The `requestId` of the ask this answers - echoed so the asker can accept it addressed. */
+    requestId?: string;
+  }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, chunkSize = 200, since } = opts;
+  const { to, chunkSize = 200, since, requestId } = opts;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -1221,7 +1329,7 @@ export async function sendHistoryBundleForIds(
     groupId,
     selected,
     { mlsService, log },
-    { chunkSize, to, state }
+    { chunkSize, to, state, answer: { requestId } }
   );
   if (outcome.kind !== 'sent') return;
   log(
@@ -1244,10 +1352,17 @@ export async function sendHistoryBundleForIds(
 export async function sendHistoryRangeBundle(
   groupId: string,
   deps: HistoryStoreDeps,
-  opts: { to: string; before: number; limit: number; since?: number }
+  opts: {
+    to: string;
+    before: number;
+    limit: number;
+    since?: number;
+    /** The `requestId` of the range ask this answers. */
+    requestId?: string;
+  }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, before, limit, since = 0 } = opts;
+  const { to, before, limit, since = 0, requestId } = opts;
   if (!storage) {
     log(`[HISTORY_RANGE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -1276,7 +1391,7 @@ export async function sendHistoryRangeBundle(
     groupId,
     page,
     { mlsService, log },
-    { chunkSize: 200, to, state }
+    { chunkSize: 200, to, state, answer: { requestId } }
   );
   if (outcome.kind !== 'sent') return;
   log(
