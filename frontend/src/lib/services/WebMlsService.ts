@@ -1,6 +1,6 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
-import type { PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
+import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
@@ -1262,6 +1262,29 @@ export class WebMlsService extends BaseMlsService {
         addedIndices: res[6] as number[],
       },
     };
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.mergePendingCommitOwingWelcome}. */
+  protected async mergePendingCommitOwingWelcome(
+    groupId: string,
+    recipients: string[]
+  ): Promise<void> {
+    this.client.merge_pending_commit_owing_welcome(groupId, recipients);
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.owedWelcomes}. */
+  protected async owedWelcomes(): Promise<OwedWelcome[]> {
+    return (this.client.owed_welcomes() as unknown[][]).map((w) => ({
+      groupId: w[0] as string,
+      welcome: w[1] as Uint8Array,
+      ratchetTree: w[2] as Uint8Array,
+      recipients: w[3] as string[],
+    }));
+  }
+
+  /** WASM client wrapper - see {@link BaseMlsService.welcomeDelivered}. */
+  protected async welcomeDelivered(groupId: string, recipient: string): Promise<void> {
+    this.client.welcome_delivered(groupId, recipient);
   }
 
   /** WASM client wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */

@@ -143,7 +143,7 @@ import {
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
-import { commitRemovals } from '$lib/mls-client/commitAdmits';
+import { commitRemovals, parseDeviceIdentity } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import {
   CommitOutcomeUnknownError,
@@ -153,6 +153,7 @@ import {
   resubmissionVerdict,
   type CommitIntent,
   type CommitSubmission,
+  type OwedWelcome,
   type PendingSubmissionRead,
   type ResubmissionVerdict,
 } from '$lib/mls-client/commitSubmission';
@@ -3689,6 +3690,15 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** The record its stage wrote beside `groupId`'s staged commit (`commitSubmission.ts`). */
   protected abstract pendingSubmission(groupId: string): Promise<PendingSubmissionRead>;
+  /** Merges `groupId`'s accepted Add and records its Welcome as owed to `recipients`, in one call. */
+  protected abstract mergePendingCommitOwingWelcome(
+    groupId: string,
+    recipients: string[]
+  ): Promise<void>;
+  /** Every Welcome the state still owes (`mls-core/src/owed_welcome.rs`). */
+  protected abstract owedWelcomes(): Promise<OwedWelcome[]>;
+  /** `recipient` was sent `groupId`'s owed Welcome. */
+  protected abstract welcomeDelivered(groupId: string, recipient: string): Promise<void>;
   /** Every group whose state holds a staged commit not yet merged or cleared. */
   protected abstract groupsWithPendingCommit(): Promise<string[]>;
 
@@ -3786,31 +3796,79 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Merges a kept commit the gate has now accepted, dates the leaf, and delivers an Add's Welcome to
-   * the devices it admits - the Welcome is a separate request made after the accept, and the call
-   * that staged the Add is long gone. A Welcome that cannot be delivered is said; the joiner's
-   * welcome request is what repairs it then.
+   * Merges a kept commit the gate has now accepted, dates the leaf, and - for an Add - delivers its
+   * Welcome to the devices it admits: the Welcome is a separate request made after the accept, and
+   * the call that staged the Add is long gone.
+   *
+   * **THE OWED WELCOME IS STATE, WRITTEN BY THE MERGE** (`mls-core/src/owed_welcome.rs`). This used
+   * to merge, send, and leave the checkpoint for later, so a reload in between settled the same Add
+   * again and sent every Welcome twice. Now the merge records "owed to these devices" in the same
+   * platform call, the checkpoint is awaited, and only then is anything sent, each recipient
+   * cleared as it goes ({@link deliverOwedWelcomes}). A reload re-sends at most what was not yet
+   * cleared, and the joiner takes a copy of a Welcome for a group it holds as a redelivery
+   * (`setupMessageHandler`).
    */
   private async mergeSettled(submission: CommitSubmission): Promise<void> {
     const { groupId, baseEpoch } = submission;
     const short = groupId.slice(0, 8);
-    await this.mergePendingCommit(groupId);
+    const recipients = submission.welcome
+      ? (submission.admits ?? []).map((a) => `${a.userId}:${a.deviceId}`)
+      : [];
+    if (recipients.length > 0) await this.mergePendingCommitOwingWelcome(groupId, recipients);
+    else await this.mergePendingCommit(groupId);
     noteOwnLeafRefreshed(this.userId, this.deviceId, groupId, baseEpoch + 1);
     console.log(`[COMMIT] ${short}... the kept commit from epoch ${baseEpoch}: accepted - merged`);
-    if (!submission.welcome || !submission.admits?.length) return;
-    const welcome = fromBase64(submission.welcome);
-    const tree = await this.exportRatchetTree(groupId);
-    for (const a of submission.admits) {
-      try {
-        await this.sendWelcome(welcome, a.userId, groupId, a.deviceId, tree);
-        console.log(`[COMMIT] ${short}... Welcome of the settled Add delivered to ${a.deviceId}`);
-      } catch (e) {
-        console.error(
-          `[COMMIT] ${short}... Welcome of the settled Add NOT delivered to ${a.deviceId} - its ` +
-            `welcome request repairs it: ${String(e).slice(0, 120)}`
-        );
+    if (recipients.length === 0) return;
+    // ON DISK BEFORE THE FIRST SEND: from here a reload finds the Add merged and its Welcome owed,
+    // never the Add still staged.
+    await this.awaitCommitCheckpoint(groupId, 'the settled Add and the Welcome it owes');
+    await this.deliverOwedWelcomes(groupId);
+  }
+
+  /**
+   * Sends every Welcome the state still owes - `groupId`'s only, when given - and clears each
+   * recipient once its send returned. A send that fails is said and stays owed, for the next
+   * settlement (the next connection) to send again; the joiner's own welcome request is the other
+   * repair. The clears reach disk with the next checkpoint: one lost clears means one more copy of a
+   * Welcome, which the joiner ignores.
+   */
+  private async deliverOwedWelcomes(groupId?: string): Promise<void> {
+    const owed = (await this.owedWelcomes()).filter((w) => !groupId || w.groupId === groupId);
+    let cleared = 0;
+    for (const w of owed) {
+      const short = w.groupId.slice(0, 8);
+      for (const recipient of w.recipients) {
+        const device = parseDeviceIdentity(recipient);
+        if (!device) {
+          // Written by this client from `userId:deviceId` admits; unreachable, and said if reached.
+          console.error(
+            `[COMMIT] ${short}... owed Welcome names no device (${recipient}) - dropped`
+          );
+          await this.welcomeDelivered(w.groupId, recipient);
+          continue;
+        }
+        try {
+          await this.sendWelcome(
+            w.welcome,
+            device.userId,
+            w.groupId,
+            device.deviceId,
+            w.ratchetTree
+          );
+          await this.welcomeDelivered(w.groupId, recipient);
+          cleared += 1;
+          console.log(
+            `[COMMIT] ${short}... Welcome of the settled Add delivered to ${device.deviceId}`
+          );
+        } catch (e) {
+          console.error(
+            `[COMMIT] ${short}... Welcome of the settled Add NOT delivered to ${device.deviceId} - ` +
+              `still owed, sent again at the next settlement: ${String(e).slice(0, 120)}`
+          );
+        }
       }
     }
+    if (cleared > 0) scheduleOutboundMlsPersist();
   }
 
   /**
@@ -3818,6 +3876,8 @@ export abstract class BaseMlsService implements IMlsService {
    * per group, then awaits a checkpoint when any group's state moved.
    */
   async settleUnresolvedCommits(groupIds?: string[]): Promise<void> {
+    // A Welcome a previous settlement owed and did not get out (a reload, a failed send) goes first.
+    if (!groupIds) await this.deliverOwedWelcomes();
     const all = await this.groupsWithPendingCommit();
     this.unresolvedGroups = new Set(all);
     const pending = all.filter((g) => !groupIds || groupIds.includes(g));

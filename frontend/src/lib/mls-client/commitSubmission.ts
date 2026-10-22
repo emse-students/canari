@@ -98,6 +98,19 @@ export type PendingSubmissionRead =
   | { status: 'recorded'; record: StagedRecord };
 
 /**
+ * An Add's Welcome a settlement still owes, kept in the MLS state until each recipient is sent it
+ * (`mls-core/src/owed_welcome.rs`). The tree is the one of the epoch the Add created, captured at
+ * the merge.
+ */
+export interface OwedWelcome {
+  groupId: string;
+  welcome: Uint8Array;
+  ratchetTree: Uint8Array;
+  /** `userId:deviceId` of every device not yet sent it. */
+  recipients: string[];
+}
+
+/**
  * The submission a record describes - the ONE spelling of it, used for the first request and for
  * every resubmission alike, so both are the same bytes. `null` (said loudly) when its intent does
  * not decode: the record is then unreadable, never "absent".

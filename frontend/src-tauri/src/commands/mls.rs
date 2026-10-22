@@ -832,6 +832,70 @@ pub(crate) fn groupes_commit_en_attente(
     Ok(manager.groups_with_pending_commit())
 }
 
+/// Merges `group_id`'s accepted Add and, in the same call, records its Welcome as owed to
+/// `recipients` (`MlsManager::merge_pending_commit_owing_welcome`).
+#[tauri::command]
+pub(crate) fn confirmer_commit_welcome_du(
+    group_id: String,
+    recipients: Vec<String>,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager
+        .merge_pending_commit_owing_welcome(&group_id, recipients)
+        .map_err(|e| e.to_string())
+}
+
+/// One owed Welcome, as `welcomes_dus` hands it to TypeScript.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WelcomeDu {
+    group_id: String,
+    welcome: Vec<u8>,
+    ratchet_tree: Vec<u8>,
+    recipients: Vec<String>,
+}
+
+/// Every Welcome still owed (`MlsManager::owed_welcomes`).
+#[tauri::command]
+pub(crate) fn welcomes_dus(state: tauri::State<AppState>) -> Result<Vec<WelcomeDu>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager
+        .owed_welcomes()
+        .into_iter()
+        .map(|w| WelcomeDu {
+            group_id: w.group_id,
+            welcome: w.welcome,
+            ratchet_tree: w.ratchet_tree,
+            recipients: w.recipients,
+        })
+        .collect())
+}
+
+/// `recipient` was sent `group_id`'s owed Welcome (`MlsManager::welcome_delivered`).
+#[tauri::command]
+pub(crate) fn welcome_remis(
+    group_id: String,
+    recipient: String,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager.welcome_delivered(&group_id, &recipient);
+    Ok(())
+}
+
 /// Confirms (merges) a *staged* commit (ADD or REMOVE) AFTER the server accepts it
 /// (`validateCommit`). Advances the local epoch. Counterpart of `annuler_commit`. [[C7]] Option A:
 /// validate-then-merge, never a local fork on rejection (unified ADD+REMOVE regime).

@@ -799,6 +799,45 @@ impl WasmMlsClient {
         self.manager.groups_with_pending_commit()
     }
 
+    /// Merges `group_id`'s accepted Add and, in the same call, records its Welcome as owed to
+    /// `recipients` (`MlsManager::merge_pending_commit_owing_welcome`).
+    #[wasm_bindgen]
+    pub fn merge_pending_commit_owing_welcome(
+        &mut self,
+        group_id: String,
+        recipients: Vec<String>,
+    ) -> Result<(), JsValue> {
+        self.manager
+            .merge_pending_commit_owing_welcome(&group_id, recipients)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Every Welcome still owed (`MlsManager::owed_welcomes`), each as
+    /// `[groupId, welcome, ratchetTree, recipients]`.
+    #[wasm_bindgen]
+    pub fn owed_welcomes(&self) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        for w in self.manager.owed_welcomes() {
+            let entry = js_sys::Array::new();
+            entry.push(&JsValue::from_str(&w.group_id));
+            entry.push(&js_sys::Uint8Array::from(&w.welcome[..]));
+            entry.push(&js_sys::Uint8Array::from(&w.ratchet_tree[..]));
+            let recipients = js_sys::Array::new();
+            for r in &w.recipients {
+                recipients.push(&JsValue::from_str(r));
+            }
+            entry.push(&recipients);
+            out.push(&entry);
+        }
+        out
+    }
+
+    /// `recipient` was sent `group_id`'s owed Welcome (`MlsManager::welcome_delivered`).
+    #[wasm_bindgen]
+    pub fn welcome_delivered(&mut self, group_id: String, recipient: String) {
+        self.manager.welcome_delivered(&group_id, &recipient);
+    }
+
     /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).
     /// Advances the local epoch. Counterpart of `clear_pending_commit`. [[C7]] Option A:
     /// validate-then-merge.

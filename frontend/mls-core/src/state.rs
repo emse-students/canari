@@ -38,6 +38,10 @@ pub struct PersistedState {
     /// before this field reads as none, and a build before it ignores the field.
     #[serde(default, with = "crate::byte_compat::bytes_map")]
     pub pending_submissions: HashMap<Vec<u8>, Vec<u8>>,
+    /// The Welcome each settled Add still owes, by group id (`owed_welcome.rs`).
+    /// `#[serde(default)]`, like the field above.
+    #[serde(default, with = "crate::byte_compat::bytes_map")]
+    pub owed_welcomes: HashMap<Vec<u8>, Vec<u8>>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -55,6 +59,8 @@ pub(crate) struct PersistedStateSer<'a> {
     pub(crate) forgotten_group_min_epochs: &'a HashMap<String, u64>,
     #[serde(with = "crate::byte_compat::bytes_map")]
     pub(crate) pending_submissions: &'a HashMap<Vec<u8>, Vec<u8>>,
+    #[serde(with = "crate::byte_compat::bytes_map")]
+    pub(crate) owed_welcomes: &'a HashMap<Vec<u8>, Vec<u8>>,
 }
 
 // Struct request wrapper for serialization
@@ -172,6 +178,9 @@ pub struct MlsManager {
 
     /// The submission of each group's staged commit, kept with it (`pending_submission.rs`).
     pub(crate) pending_submissions: HashMap<String, Vec<u8>>,
+
+    /// The Welcome each settled Add still owes (`owed_welcome.rs`), encoded.
+    pub(crate) owed_welcomes: HashMap<String, Vec<u8>>,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
 }
@@ -718,6 +727,11 @@ impl MlsManager {
                     .into_iter()
                     .map(|(id, s)| (String::from_utf8_lossy(&id).to_string(), s))
                     .collect(),
+                owed_welcomes: state
+                    .owed_welcomes
+                    .into_iter()
+                    .map(|(id, w)| (String::from_utf8_lossy(&id).to_string(), w))
+                    .collect(),
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -826,6 +840,7 @@ impl MlsManager {
                 groups: HashMap::new(),
                 forgotten_group_min_epochs: HashMap::new(),
                 pending_submissions: HashMap::new(),
+                owed_welcomes: HashMap::new(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
             })
         }
@@ -876,12 +891,18 @@ impl MlsManager {
         // 4. Encode the global state without copying storage_values. The submissions are filtered
         //    to the groups still holding their staged commit, so the two cannot disagree on disk.
         let pending_submissions = self.live_pending_submissions();
+        let owed_welcomes: HashMap<Vec<u8>, Vec<u8>> = self
+            .owed_welcomes
+            .iter()
+            .map(|(id, w)| (id.as_bytes().to_vec(), w.clone()))
+            .collect();
         let persisted = PersistedStateSer {
             identity_bundle: &bundle_bytes,
             storage_values: &storage_lock,
             group_ids: &group_ids,
             forgotten_group_min_epochs: &self.forgotten_group_min_epochs,
             pending_submissions: &pending_submissions,
+            owed_welcomes: &owed_welcomes,
         };
 
         let mut final_bytes = Vec::new();

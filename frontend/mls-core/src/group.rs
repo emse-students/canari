@@ -166,6 +166,7 @@ impl MlsManager {
     pub fn forget_group(&mut self, group_id: &str, min_epoch: u64) {
         self.groups.remove(group_id);
         self.drop_pending_submission(group_id);
+        self.drop_owed_welcome(group_id);
         if min_epoch > 0 {
             self.forgotten_group_min_epochs
                 .insert(group_id.to_string(), min_epoch);

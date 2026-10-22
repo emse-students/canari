@@ -21,7 +21,7 @@ import {
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
-import type { PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
+import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -1355,6 +1355,34 @@ export class TauriMlsService extends BaseMlsService {
         addedIndices: res.addedIndices,
       },
     };
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.mergePendingCommitOwingWelcome}. */
+  protected async mergePendingCommitOwingWelcome(
+    groupId: string,
+    recipients: string[]
+  ): Promise<void> {
+    await invoke('confirmer_commit_welcome_du', { groupId, recipients });
+    await this.refreshEpochCache(groupId);
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.owedWelcomes}. */
+  protected async owedWelcomes(): Promise<OwedWelcome[]> {
+    const owed =
+      await invoke<
+        Array<{ groupId: string; welcome: number[]; ratchetTree: number[]; recipients: string[] }>
+      >('welcomes_dus');
+    return owed.map((w) => ({
+      groupId: w.groupId,
+      welcome: Uint8Array.from(w.welcome),
+      ratchetTree: Uint8Array.from(w.ratchetTree),
+      recipients: w.recipients,
+    }));
+  }
+
+  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.welcomeDelivered}. */
+  protected async welcomeDelivered(groupId: string, recipient: string): Promise<void> {
+    await invoke('welcome_remis', { groupId, recipient });
   }
 
   /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */

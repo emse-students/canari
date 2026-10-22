@@ -727,9 +727,16 @@ merging the other. So the staged commit is KEPT and the group is marked in the e
 which keeps sends out of it and hands it to the sync watchdog's rung 2 (forget + re-Welcome) - the
 one repair right whichever way the commit went - with a `[COMMIT] ... UNREADABLE` line at error level.
 
-**An Add accepted only through a later resubmission still delivers its Welcome**: the Welcome is a
-separate request after the accept, and the call that staged the Add is gone by then, so the settlement
-merges, exports the new tree and sends the kept Welcome to each device the commit admits.
+**An Add accepted only through a later resubmission still delivers its Welcome, once**: the Welcome is
+a separate request after the accept, and the call that staged the Add is gone by then, so the
+settlement sends it. The owed Welcome is STATE (`mls-core/src/owed_welcome.rs`): the merge writes
+"owed to these devices", with the ratchet tree of the epoch the Add created, in the same platform call
+(`merge_pending_commit_owing_welcome`); the client awaits a checkpoint, sends, and clears each
+recipient as its send returns. A reload mid-settlement therefore finds the Add merged and only the
+uncleared recipients owed - it never re-merges and re-sends the whole Add - and a failed send stays
+owed for the next connection. A joiner handed a copy of a Welcome for a group it holds treats it as a
+redelivery before the core sees it (`setupMessageHandler`); the core itself refuses such a copy
+(its key package is spent) and leaves the group untouched (`mls-core/tests/owed_welcome.rs`).
 
 **What is left.** A commit-log row pruned before the resubmission reads as a refusal: rows are kept
 365 days and the last 20 000 epochs of each group (`COMMIT_LOG_RETENTION_MS`,
