@@ -19,9 +19,9 @@ comptent.
 | **Gerer les membres** | Ajouter, retirer, renommer et reordonner les membres, **cocher leurs droits**, changer le logo et le profil de l'association, gerer les tags, les cotisants et les paliers de cotisation, exporter la liste |
 | **Gerer les documents** | Acceder au coffre de documents prives de l'association, y deposer et y supprimer des fichiers, ecrire les notes internes |
 | **Gerer les formulaires** | Creer, modifier et supprimer les formulaires, et lire les reponses recues |
-| **Gerer les paiements (boutique)** | La boutique, les achats et leurs exports, la delegation de paiement vers une association parente, les reglages de cotisation |
+| **Gerer la boutique et les cotisations** | La boutique, les achats et leurs exports, la delegation de paiement vers une association parente, les reglages de cotisation |
 | **Gerer les partenariats** | Creer et modifier les cartes de partenariat, leurs codes et leurs icones, voir qui a reclame un code |
-| **Gerer Stripe Connect** | Lancer ou reprendre la liaison du compte bancaire de l'association. **C'est le droit le plus sensible : il decide ou part l'argent** |
+| **Gerer le compte bancaire** | Relier le compte Lydia de l'association et renseigner sa cle privee. **C'est le droit le plus sensible : il decide ou part l'argent** |
 | **Valider les evenements** | *BDE uniquement.* Valider, modifier ou supprimer les evenements de **toutes** les associations, et deposer un evenement deja valide |
 | **Gerer les associations** | *BDE uniquement.* Creer **et supprimer** une association, et administrer **n'importe quelle** association sans en etre membre (voir section 3) |
 | **Moderer** | *BDE uniquement.* Traiter les signalements, supprimer des contenus, rendre un utilisateur muet |
@@ -48,7 +48,7 @@ Deux garde-fous :
 - Vous ne pouvez pas retirer *Gerer les membres* au **dernier** membre qui le possede : l'association
   se retrouverait sans personne pour gerer ses membres. Nommez d'abord son remplacant.
 - A l'ajout d'un membre, le bouton **"Administrateur"** coche d'un coup tous les droits non-BDE,
-  Stripe Connect inclus. Si ce n'est pas ce que vous voulez, ajoutez la personne en simple membre
+  gestion du compte bancaire incluse. Si ce n'est pas ce que vous voulez, ajoutez la personne en simple membre
   puis cochez ses droits un par un.
 
 ---
@@ -64,7 +64,7 @@ son quota de documents.
 **Un membre du BDE ayant le droit *Gerer les associations*** peut administrer n'importe quelle
 association : membres, documents, formulaires, boutique. Deux exceptions, volontaires :
 
-- il ne peut **pas** toucher a **Gerer Stripe Connect** : le compte bancaire reste entre vos mains
+- il ne peut **pas** toucher a **Gerer le compte bancaire** : le compte bancaire reste entre vos mains
   et celles de l'administrateur de la plateforme ;
 - il ne peut **pas** publier au nom de votre association : parler en votre nom n'est pas administrer.
 
@@ -89,9 +89,9 @@ L'onglet n'apparait que si vous avez le droit correspondant.
 | **Membres** | Gerer les membres |
 | **Documents** | Gerer les documents |
 | **Formulaires** | Gerer les formulaires |
-| **Achats**, **Delegation** | Gerer les paiements (boutique) |
-| **Cotisations** | Gerer les membres **ou** Gerer les paiements |
-| **Paiements** | Gerer Stripe Connect **ou** Gerer les paiements |
+| **Achats**, **Delegation** | Gerer la boutique et les cotisations |
+| **Cotisations** | Gerer les membres **ou** Gerer la boutique et les cotisations |
+| **Paiements** | Gerer le compte bancaire **ou** Gerer la boutique et les cotisations |
 | **Partenariats** | Gerer les partenariats |
 | **Danger** | administrateur de la plateforme uniquement |
 
