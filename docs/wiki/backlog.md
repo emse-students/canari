@@ -243,6 +243,21 @@ phone state the reading would have had with the pending commits drained first. A
 same newcomer ended `ALREADY_MEMBER` on the phone, a duplicate that is expected. **Not fixed here:** the
 fix is native and MLS, its own work package with an adversarial review.
 
+## P3 - iPhone sign-in: the login page stays on a disabled "Redirection..." after the in-app sheet is cancelled (read 2026-10-22)
+
+On the iPhone (TestFlight `1.4.0`, build 100400001, `dev.canari-emse.fr`), cancelling the identity sheet
+(`Annuler`) returns to the login page with its button stuck on a disabled `Redirection...`; only a
+relaunch of the app brings the button back. Observed twice, driven over WDA; not read on a phone by hand,
+and not explained.
+
+## P3 - iPhone sign-in: iOS Password AutoFill covers the password field of the identity sheet (read 2026-10-22)
+
+On the same build, the system AutoFill card (`Se connecter ... avec le mot de passe utilise pour ...`)
+sits over the password field and the `Se connecter` button of the school's CAS page, and a tap on that
+field lands on the card, so a driven sign-in types into the wrong field. It is a property of that phone's
+settings, not of the app. A driven sign-in avoids it by moving focus with Tab and submitting with Enter;
+the page the test accounts use is the "Connexion externe (service-account)" route, not the school CAS.
+
 ## Hardware reading owed (user): one background Welcome on the Mi 9T (2026-10-22)
 
 The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the
