@@ -32,7 +32,7 @@ in the comparison below follows from that difference.
 | **Member added** | A commit plus a Welcome. MLS gives the newcomer nothing from before, **but the adding device then pushes its whole local history** (`sendFullHistoryBundle`), so a new member of a group conversation reads the past. That was never decided, and the user reversed it on 2026-10-21: [history-reconciliation](history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21). | The newcomer joins the key group by external commit, with nobody online needed, then receives a bundle of every seed held (`shared`) or none (`joined`). |
 | **New device of a member** | A `welcome_request`, an online device adds it, and a Welcome follows. Its past comes from peers, re-encrypted message by message. | An external join of the key group and the same history bundle: seeds only, with the ciphertexts read from the server. |
 | **Member leaves** | A Remove commit, and the next epoch excludes them. | A Remove commit on the key group, made by whoever reconciles the roster next ([§4.6](channel-encryption.md#46-ordering-rule-remove-then-distribute)). Every sender rotates at its next send. The leaver keeps what it could already read. |
-| **Rotation** | Every commit is a new epoch. No device ever self-updates ([mls-protocol](mls-protocol.md#the-84-day-lifetime-outlives-the-device-and-a-leaf-is-never-updated)). | Per sender, at the next send after ANY key-group epoch change, after 100 messages, or after 7 days ([`shouldRotateGraineSession`](../../../frontend/src/lib/utils/graine/sessionManager.ts)). |
+| **Rotation** | Every commit is a new epoch. No device ever self-updates ([mls-protocol](mls-protocol.md#the-84-day-lifetime-outlives-the-device-and-a-leaf-is-never-updated)). | Per sender, at the next send after a key-group Remove or a new user, after 100 messages, or after 7 days (50 and 24 hours once re-distributed); a new device of a present user re-distributes the session instead ([`graineOutboundVerdict`](../../../frontend/src/lib/utils/graine/sessionManager.ts), [graine-removal-tracker](graine-removal-tracker.md), 2026-10-22, not yet shipped). |
 | **Where the past lives** | On the devices. The server keeps a capped Redis stream and per-device queues, but cannot decrypt either for a later joiner. | On the server, as ciphertext. Devices hold only the keys. |
 
 ## What each system is good at
@@ -40,7 +40,7 @@ in the comparison below follows from that difference.
 | Property | DM | Community |
 | --- | --- | --- |
 | Forward secrecy | **Strong** - an epoch's keys are deleted once used. | **Weak, by decision** - whoever holds a seed opens every index of its session, and old seeds are kept so that newcomers can read the past ([§4.4](channel-encryption.md#44-joining-and-what-a-share-link-is-worth)). |
-| Post-compromise security | **Available but unused** - MLS heals a compromised leaf at its next update, and no device ever updates its leaf. | Bounded by rotation: a stolen seed opens one session. |
+| Post-compromise security | **Available but unused** - MLS heals a compromised leaf at its next update, and no device ever updates its leaf. | Bounded by seed rotation (on a removal or a new user); see the [backlog](../backlog.md) for the policy. |
 | Author authenticity | MLS signature, verified by OpenMLS. | v1: none (any member could forge). v2: Ed25519 per session plus an endorsement, and the server refuses an unsigned v2 row ([§21](channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)). |
 | A newcomer reads the past | Never from MLS. Today the inviter re-sends it all; decided 2026-10-21 that a new member gets nothing from before their arrival (not built). | Yes, from one bundle of seeds (`shared`, decided 2026-08-17). |
 | Tolerance of a device that fell behind | Low: a missed commit is the failure class [mls-desync-prevention](mls-desync-prevention.md) exists for. | High for messages, which stay readable once the seed arrives. The key group is still MLS, so the same class exists there, but it delays seeds rather than losing text. |
@@ -76,7 +76,7 @@ member count, is what an MLS group pays for.
 | Its key-group device joins on its first two days | 69, then 87 |
 | Its key-group commits on those days | 99, then 105 |
 
-**The cause, read from the code.** `shouldRotateGraineSession` rotates when the stored distribution
+**The cause, read from the code (before 2026-10-22; the fix is [graine-removal-tracker](graine-removal-tracker.md)).** `shouldRotateGraineSession` rotated when the stored distribution
 epoch differs from the current one ([sessionManager.ts](../../../frontend/src/lib/utils/graine/sessionManager.ts)).
 Every device that joins the key group commits, and so advances that epoch. Its comment accepts this:
 *"An ADD advances the epoch too, and rotates a session it did not have to [...] the cost is one extra

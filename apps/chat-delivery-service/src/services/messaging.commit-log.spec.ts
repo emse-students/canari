@@ -350,7 +350,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           groupId: 'group-1',
           deviceId: 'device-new',
           baseEpoch: 1,
-          proto: externalCommitFrame('group-1', 1n),
+          proto: externalCommitFrame('group-1', 1n, 'user-2:device-new'),
           senderId: 'user-2',
           excludeDeviceIds: ['user-2:device-new'],
         },
@@ -417,7 +417,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           groupId: 'group-1',
           deviceId: 'device-revoked',
           baseEpoch: 1,
-          proto: externalCommitFrame('group-1', 1n),
+          proto: externalCommitFrame('group-1', 1n, 'user-2:device-revoked'),
           senderId: 'user-2',
         },
         'user-2'
@@ -443,7 +443,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             groupId: 'group-1',
             deviceId: 'device-ghost',
             baseEpoch: 1,
-            proto: externalCommitFrame('group-1', 1n),
+            proto: externalCommitFrame('group-1', 1n, 'user-2:device-ghost'),
             senderId: 'user-2',
           },
           'user-2'
@@ -1499,6 +1499,29 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(transaction).not.toHaveBeenCalled();
       expect(sent).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ['another user', 'user-2:device-1'],
+      ['another device of the caller', 'user-1:device-2'],
+      ['a bare user id', 'user-1'],
+    ])(
+      'refuses an external commit whose new leaf names %s, before the membership gate',
+      async (_name, leafIdentity) => {
+        tables({
+          keyPackages: [ownKey],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-1' }],
+        });
+        const sent = fanOut();
+
+        await expect(
+          commit({ proto: externalCommitFrame('group-1', 5n, leafIdentity) }, 'user-1')
+        ).rejects.toMatchObject({ response: { error: 'commit_identity_mismatch' } });
+        expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+        expect(transaction).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      }
+    );
 
     it("holds a key group's external commit to the same header: its own group and epoch", async () => {
       tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });

@@ -8,8 +8,8 @@ import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 /**
  * Making a departure move the community's distribution-group epoch.
  *
- * WHAT WAS MISSING. Graine rotates a session when the distribution group's epoch changes
- * ({@link shouldRotateGraineSession} says yes), and its own doc states the premise: "every
+ * WHAT WAS MISSING. Graine rotated a session when the distribution group's epoch changed (since
+ * 2026-10-22, when a Remove is merged: `graineOutboundVerdict`), and its doc stated the premise: "every
  * membership change commits to the community's distribution group and advances its epoch". Nothing
  * implemented that. A member left, their leaf stayed in the tree, the epoch did not move, the next
  * sender reused the session they already held - so a departed member's seed still opened every

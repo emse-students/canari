@@ -154,6 +154,19 @@ export type DistributionGroupStore = Pick<
  * - `replay-failed`: the attempt failed for a reason that says nothing about the next one; the group
  *   stays in the epoch-gap registry and the sync watchdog owns it.
  */
+/**
+ * A key group's clean run at its current epoch (`mls-core/src/graine_run.rs`).
+ *
+ * `epochFingerprint` is a domain-separated hash of the epoch authenticator, never the authenticator
+ * itself: it identifies the epoch of THIS group instance, so two instances at the same epoch number
+ * never compare equal.
+ */
+export interface GraineRunReading {
+  runId: string;
+  epoch: number;
+  epochFingerprint: string;
+}
+
 export type DistributionGapVerdict = 'caught-up' | 'replay-exhausted' | 'replay-failed' | 'evicted';
 
 /** Told every {@link DistributionGapVerdict}, for the key group it concerns. */
@@ -1118,6 +1131,14 @@ export interface IMlsService {
    * {@link getGroupMemberIdentities} does: an absent leaf and an absent group are opposite facts.
    */
   memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
+  /**
+   * The clean run covering `groupId`'s CURRENT epoch (`mls-core/src/graine_run.rs`): what Graine's
+   * outbound rotation reads to decide whether a session may outlive an epoch move. The run ends on
+   * any removal and on a new user, and is kept in the MLS state beside the tree it describes.
+   *
+   * Throws when this device does not hold the group.
+   */
+  graineRun(groupId: string): Promise<GraineRunReading>;
   /** Graine v2's Ed25519 operations, from this platform's engine (`mls-core`, never WebCrypto). */
   graineSignatureEngine(): GraineSignatureEngine;
   /**
