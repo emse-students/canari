@@ -487,6 +487,13 @@ the price is only as good as the answer it is computed from:
   - one id for a single choice or a dropdown, a list without duplicates for a multiple choice;
   - anything else is a 400: an unknown id would match no group and no supplement, and land on the
     "everyone else" price while reading as the choice it names.
+- **The question's TYPE says whether its options charge**: only a single choice, a multiple choice
+  or a dropdown. A question turned into a matrix keeps its old options as columns; its answer is an
+  object that never charged, so it is not judged, and the editor stores those columns at no price
+  (`itemsPayload.ts`).
+- **Two questions never share an id** (`assertUniqueItemIds`, at create and on every edit): every
+  reader resolves a question by its id, and two readers resolving a duplicate differently would
+  judge one question and price another.
 - **The stored answer is the priced one.** The answer to a question the submitter did not see
   (`visibleItemIds`) is neither charged nor required, and it is no longer stored either, nor is its
   file attached.

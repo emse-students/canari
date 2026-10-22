@@ -77,7 +77,12 @@ import {
   visibleItemIds,
   type ConditionalItem,
 } from './visibility';
-import { assertDeclaredOptionAnswers, freeFallbackCells, type PricedItem } from './answer-options';
+import {
+  assertDeclaredOptionAnswers,
+  assertUniqueItemIds,
+  freeFallbackCells,
+  type PricedItem,
+} from './answer-options';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
@@ -445,6 +450,7 @@ export class FormsService {
         throw new ForbiddenException('You are not a member of this association.');
       }
     }
+    assertUniqueItemIds(input.items);
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
     this.assertFileQuestionConfigValid(input);
@@ -652,6 +658,7 @@ export class FormsService {
     }
     // The questions the form WILL have: an absent list keeps the stored one, file questions included.
     const items = input.items ?? form.items;
+    assertUniqueItemIds(items);
     this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
     // the answers already stored. An absent value means "leave it", so the stored one is checked -

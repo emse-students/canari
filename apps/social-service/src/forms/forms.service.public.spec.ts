@@ -265,6 +265,26 @@ describe('FormsService - public forms', () => {
         expect(saved).toEqual([]);
       });
 
+      // The TYPE decides whether options charge: a question turned into a matrix keeps its old
+      // options' modifiers, and its answer is an object that never charged. Control (2026-10-22):
+      // `decidesPrice` reading the modifiers alone -> this member's answer is refused.
+      it("accepts a member's matrix answer whose question kept an old option supplement", async () => {
+        const matrix = {
+          id: 'q_mx',
+          label: 'Disponibilites',
+          type: 'matrix_single',
+          required: false,
+          rows: ['r1'],
+          options: [{ id: 'c1', label: 'Oui', priceModifier: 500 }],
+        };
+        const { service, saved } = makeService({
+          form: baseForm({ isPublic: false, items: [matrix] }),
+        });
+        await service.submit('f1', { answers: { q_mx: { r1: 'c1' } }, userId: 'u1' } as any);
+        expect(saved).toHaveLength(1);
+        expect(saved[0].answers).toEqual({ q_mx: { r1: 'c1' } });
+      });
+
       it('does not store the answer to a priced question the guest did not see', async () => {
         const premium = {
           id: 'q_premium',
@@ -455,6 +475,34 @@ describe('FormsService - public forms', () => {
         const { service, formRepo } = makeService();
         await service.create(input({ requiresPayment: true, items, priceMatrix }));
         expect(formRepo.save).toHaveBeenCalled();
+      });
+
+      // Two questions with one id: one reader judged the first, another the last, so a required,
+      // shown-to-all copy hid a skippable one. Ids are unique at save. Control (2026-10-22):
+      // `assertUniqueItemIds` removed -> the create and the edit both save.
+      const twinMenus = [
+        gate,
+        menu(),
+        menu({ showIf: { answer: { questionId: 'q_come', optionIds: ['y'] } } }),
+      ];
+
+      it('refuses two questions with one id, at create', async () => {
+        const { service, formRepo } = makeService();
+        await expect(
+          service.create(input({ requiresPayment: true, items: twinMenus, priceMatrix: grid(0) }))
+        ).rejects.toThrow(/share the id q_menu/);
+        expect(formRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('refuses two questions with one id, on an edit', async () => {
+        const { service, formRepo } = makeService();
+        jest
+          .spyOn(service, 'assertFormManager')
+          .mockResolvedValue(baseForm({ items: [gate, menu()], priceMatrix: grid(0) }) as any);
+        await expect(
+          service.update('f1', { items: twinMenus } as any, 'u1', false)
+        ).rejects.toThrow(/share the id q_menu/);
+        expect(formRepo.save).not.toHaveBeenCalled();
       });
 
       it('refuses to publish a stored grid that the edit leaves out', async () => {

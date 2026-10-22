@@ -27,9 +27,31 @@ export interface PricedItem extends ConditionalItem {
   options?: { id?: string; priceModifier?: number }[] | null;
 }
 
-/** Whether an answer to this question can change what is charged. */
+/**
+ * Whether an answer to this question can change what is charged: the grid prices on it, or it is a
+ * CHOICE question with an option supplement. The type decides, not the stored modifiers: a question
+ * turned into a matrix keeps its old options' modifiers, and its answer (an object) never charged.
+ */
 export function decidesPrice(item: PricedItem, gridQuestions: Set<string>): boolean {
-  return gridQuestions.has(item.id) || (item.options ?? []).some((o) => (o.priceModifier ?? 0) > 0);
+  if (gridQuestions.has(item.id)) return true;
+  const isChoice = SINGLE_CHOICE_TYPES.has(item.type ?? '') || item.type === MULTIPLE_CHOICE_TYPE;
+  return isChoice && (item.options ?? []).some((o) => (o.priceModifier ?? 0) > 0);
+}
+
+/**
+ * Refuses two questions with one id. Every reader of a form resolves a question by its id, and two
+ * readers resolving a duplicate differently (the first, or the last) would judge one question and
+ * price another.
+ */
+export function assertUniqueItemIds(items: readonly { id?: string }[] | null | undefined): void {
+  const seen = new Set<string>();
+  for (const item of items ?? []) {
+    if (!item.id) continue;
+    if (seen.has(item.id)) {
+      throw new BadRequestException(`Two questions share the id ${item.id}; each needs its own.`);
+    }
+    seen.add(item.id);
+  }
 }
 
 /** Whether a value is "no answer": what the fill page sends for a choice left empty. */
