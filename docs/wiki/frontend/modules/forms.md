@@ -476,8 +476,54 @@ return URL is `/f/:id`, never one the client names. `getPublic` is an allowlist 
 cash, the answer-grid slice) and the submit reply is one too (`toGuestSubmitReply`: the payer page or
 "cash owed", never the submission id). A guest's purchase record has `userId` NULL (migration 103);
 the association's Achats tab names it "Invité". Both fill pages total with ONE rule,
-`lib/forms/fillPricing.ts`. Not yet built: the return page with a reference (WP-P2) and the
-per-visitor ceiling of pending paid answers (WP-P3).
+`lib/forms/fillPricing.ts`. Not yet built: the per-visitor ceiling of pending paid answers (WP-P3).
+
+### The guest's return from Lydia: a receipt, not an id (WP-P2) - A SECURITY SURFACE
+
+A member's return page (`/forms/success`) is authorised by the session; a guest has none, and the
+submission id is no proof (it travels in URLs and logs). So `submit` mints a **receipt** for each
+guest answer paid online (`guest-receipt.ts`): 32 random bytes, handed out ONCE in the Lydia return
+URL `/f/:id/receipt?receipt=...`, stored only as their SHA-256 (`submissions.guestReceiptHash`,
+migration 104, `select: false`). Cash needs none: the guest reads the reference on the page that
+sent the answer.
+
+- **The receipt is the only key.** `POST /api/public/forms/receipts/confirm` (receipt in the BODY,
+  out of access logs) finds the row by the hash and by nothing else. A malformed receipt, an unknown
+  one, a submission id or a leaked hash all answer the same 404 (`GUEST_RECEIPT_NOT_FOUND`), with no
+  provider read.
+- **It confirms as the member's return does**: `confirmPayment`, Lydia read server to server about the
+  row's OWN request. Nothing else in the URL is read, so a forged return never marks a row paid; a
+  receipt replayed after settlement only reads (no provider call, no second record). The verified
+  callback settles a guest row on its own, with no return at all.
+- **The answer is an allowlist** (`GuestReceiptView`): reference, form id, amount, currency, status,
+  the provider state read on this call - never the submission id.
+- **Throttled per receipt** (`GuestReceiptThrottlerGuard`, keyed on the HASH) at the member's
+  `CONFIRM_PAYMENT_PER_MINUTE`; anything that is not receipt-shaped counts on the visitor.
+- **The reference** ("1A2B-3C4D") is the id's first eight hex digits (`guestReference`). It grants
+  nothing; the organiser's responses table files a paying guest under it (`toManagerView`'s
+  `reference`), so the guest quotes it and the organiser finds the row. No e-mail is sent (PP2).
+- **The receipt stays in the URL, ON PURPOSE**: it is the link the guest reopens while the payment
+  confirms (PP2), so the page does not strip it (`history.replaceState` would leave a guest who
+  closes the tab with nothing). What it would leak is cut where it is cheap (2026-10-22):
+  - the front nginx's access log drops the receipt route's query (`/f/<id>/receipt?query-redacted`,
+    the `$logged_request_uri` map in `Dockerfile.frontend`, asserted by
+    `access-log-redaction.test.mjs` and run against a real nginx);
+  - every `/f/` page is answered with the HEADER `Referrer-Policy: no-referrer` (the
+    `$public_form_referrer_policy` map, sent by `@ssr` and `@app_shell`, asserted by
+    `static-headers.test.mjs` and run against a real nginx), so the page's own requests - its
+    chunks, the confirm call, the retry link - do not carry the URL into that log's referer field.
+    It has to be a header: the page boots on the client, so its first chunk requests leave before
+    a `<meta>` could apply. The page still carries the `<meta>` for a shell served without that
+    header (a dev server).
+- **Residual risk, stated**: the receipt stays in the guest's browser history, in Lydia's copy of
+  the return URL, and in any proxy in front of this container that logs full URLs (outside this
+  repository's control). It does not expire. What bounds it: it only READS one answer's reference,
+  amount and status, and asks Lydia about that answer's own request (throttled per receipt); it
+  cannot pay, cancel, edit or reveal the answers, the payer or the submission id.
+
+Both return pages share one poll (`lib/forms/paymentReturnPoll.ts`). Each attack above is an
+integration test on a real Postgres (`guest-payment.integration.spec.ts`), with its mutation control
+written beside it.
 
 **What a priced answer may say (2026-10-22, `answer-options.ts`), for members and guests alike** -
 the price is only as good as the answer it is computed from:

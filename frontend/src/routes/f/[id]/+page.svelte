@@ -56,6 +56,8 @@
   let submitted = $state(false);
   /** The amount a guest owes in cash once the answer is recorded; null when nothing is owed. */
   let cashOwedCents = $state<number | null>(null);
+  /** The reference the server gave a cash answer, for the guest to give the organiser. */
+  let cashReference = $state<string | null>(null);
   let paymentMethodChoice = $state<'online' | 'cash'>('online');
   let askingPayerEmail = $state(false);
 
@@ -133,6 +135,7 @@
       }
       Log.d('PublicForm', `answer sent form=${form.id} cash=${reply.cashPayment === true}`);
       cashOwedCents = reply.cashPayment ? total : null;
+      cashReference = reply.cashPayment ? (reply.reference ?? null) : null;
       submitted = true;
     } catch (e) {
       Log.d('PublicForm', `submit refused form=${form.id}: ${e}`);
@@ -150,6 +153,7 @@
     selections = initialSelections(form.items);
     submitted = false;
     cashOwedCents = null;
+    cashReference = null;
     error = '';
     window.scrollTo({ top: 0 });
   }
@@ -196,6 +200,11 @@
           <p class="text-text-muted text-sm">
             {m.form_guest_cash_owed_desc({ amount: formatAmount(cashOwedCents, form.currency) })}
           </p>
+          {#if cashReference}
+            <p class="text-text-main font-mono text-lg font-bold" data-guest-reference>
+              {m.form_guest_reference({ reference: cashReference })}
+            </p>
+          {/if}
         {:else}
           <p class="text-text-main font-bold">{m.form_guest_sent_title()}</p>
         {/if}

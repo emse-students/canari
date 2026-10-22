@@ -4,7 +4,7 @@
   import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { confirmSubmissionPayment } from '$lib/forms/api';
-  import { paymentReturnVerdict } from '$lib/forms/paymentReturn';
+  import { pollPaymentReturn } from '$lib/forms/paymentReturnPoll';
   import { SocialApiError } from '$lib/associations/api';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
 
@@ -14,10 +14,6 @@
    * confirmed here; a payment the callback already confirmed reads paid at once.
    */
   const submissionId = $derived(page.url.searchParams.get('submission_id'));
-
-  /** Ceiling on how long the page keeps asking before it says the payment is still unconfirmed. */
-  const MAX_POLLS = 10;
-  const POLL_INTERVAL_MS = 3000;
 
   /**
    * A return with no submission starts on its answer: its first title, the one the route announcer
@@ -47,41 +43,17 @@
   });
   onDestroy(() => setPageTitle(null));
 
-  async function confirmBySubmission(id: string) {
-    for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
-      const submission = await confirmSubmissionPayment(id);
-      formId = submission.formId;
-      const verdict = paymentReturnVerdict(submission.paymentStatus, submission.requestState);
-      if (verdict === 'confirmed') {
-        status = 'confirmed';
-        return;
-      }
-      if (verdict === 'overCapacity') {
-        status = 'overCapacity';
-        return;
-      }
-      if (verdict === 'declined' || verdict === 'ended') {
-        // The request is dead and the server released the answer: the payer may try again.
-        console.info(`[forms/success] request ${verdict}, the answer is released for a retry`);
-        status = verdict;
-        return;
-      }
-      if (verdict === 'failed') {
-        status = 'error';
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    }
-    status = 'pending';
-  }
-
   onMount(async () => {
     if (!submissionId) {
       console.warn('[forms/success] reached without a submission_id');
       return;
     }
+    const id = submissionId;
     try {
-      await confirmBySubmission(submissionId);
+      status = await pollPaymentReturn(
+        () => confirmSubmissionPayment(id),
+        (submission) => (formId = submission.formId)
+      );
     } catch (err) {
       if (err instanceof SocialApiError && err.status === 429) {
         // The server's per-answer limit on asking Lydia (a reload after a full poll): an answer,

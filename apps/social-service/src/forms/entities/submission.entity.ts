@@ -105,6 +105,18 @@ export class Submission {
   @Column({ type: 'timestamptz', nullable: true })
   organiserNotifiedAt: Date | null;
 
+  /**
+   * The SHA-256 of a paying guest's receipt (migration 104, `guest-receipt.ts`): the proof the guest
+   * return page shows instead of a session. Null on every other row. `select: false`, so no read of
+   * a submission carries it unless it asks for it by name - and nothing does: it is only matched.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true, select: false })
+  @Index('submissions_guest_receipt_hash_uniq', {
+    unique: true,
+    where: '"guestReceiptHash" IS NOT NULL',
+  })
+  guestReceiptHash: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

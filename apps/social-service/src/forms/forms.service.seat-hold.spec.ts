@@ -6,6 +6,7 @@ import { FindOperator } from 'typeorm';
 import { FormsService } from './forms.service';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { guestReference, hashGuestReceipt } from './guest-receipt';
 import { InternalFormsController } from '../internal/internal-forms.controller';
 import {
   PENDING_HOLD_CUTOFF_SQL,
@@ -48,6 +49,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     cotisationGrantedAt?: Date | null;
     purchaseRecordedAt?: Date | null;
     organiserNotifiedAt?: Date | null;
+    guestReceiptHash?: string | null;
     answers?: Record<string, unknown>;
   };
   type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
@@ -1905,10 +1907,32 @@ describe('FormsService - the seat a pending payment holds', () => {
         connectAccountId: 'vendor',
         expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
         metadata: { userId: '' },
-        // The server chooses where a guest comes back: the public form, never /forms/success.
-        successUrl: 'http://localhost/f/f1',
-        cancelUrl: 'http://localhost/f/f1',
       });
+      // The server chooses where a guest comes back: the public form's receipt page, never
+      // /forms/success - and the URL carries the receipt, of which the row keeps only the hash.
+      const success = new URL(checkout.body.successUrl);
+      expect(`${success.origin}${success.pathname}`).toBe('http://localhost/f/f1/receipt');
+      expect([...success.searchParams.keys()]).toEqual(['receipt']);
+      const receipt = success.searchParams.get('receipt')!;
+      expect(receipt).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(checkout.body.cancelUrl).toBe(checkout.body.successUrl);
+      expect(rows[0].guestReceiptHash).toBe(hashGuestReceipt(receipt));
+      // Never the submission id: the receipt is the only key the page holds.
+      expect(checkout.body.successUrl).not.toContain(rows[0].id);
+    });
+
+    it('mints a different receipt for every guest answer', async () => {
+      const { service, core } = makeStore({
+        maxSubmissions: null,
+        basePrice: 1500,
+        rows: [],
+        provider: 'lydia',
+        isPublic: true,
+        allowMultipleSubmissions: true,
+      });
+      await service.submit('f1', { answers: {} } as any, 'guest');
+      await service.submit('f1', { answers: {} } as any, 'guest');
+      expect(core.calls[0].body.successUrl).not.toBe(core.calls[1].body.successUrl);
     });
 
     it('ignores a return URL a guest names', async () => {
@@ -1925,7 +1949,9 @@ describe('FormsService - the seat a pending payment holds', () => {
         { answers: {}, successUrl: 'http://localhost/forms/success?x=1' } as any,
         'guest'
       );
-      expect(core.calls[0].body.successUrl).toBe('http://localhost/f/f1');
+      expect(core.calls[0].body.successUrl).toMatch(
+        /^http:\/\/localhost\/f\/f1\/receipt\?receipt=/
+      );
     });
 
     it('records cash owed by a guest as waiting for the organiser, with no account', async () => {
@@ -1938,10 +1964,19 @@ describe('FormsService - the seat a pending payment holds', () => {
         allowMultipleSubmissions: true,
         allowCashPayment: true,
       });
-      await expect(
-        service.submit('f1', { answers: {}, paymentMethod: 'cash' } as any, 'guest')
-      ).resolves.toMatchObject({ cashPayment: true });
+      const result = await service.submit(
+        'f1',
+        { answers: {}, paymentMethod: 'cash' } as any,
+        'guest'
+      );
+      expect(result).toEqual({
+        submissionId: rows[0].id,
+        cashPayment: true,
+        reference: guestReference(rows[0].id),
+      });
       expect(rows[0]).toMatchObject({ userId: null, paymentStatus: 'pending_cash' });
+      // Cash never leaves the page: no receipt is minted for it.
+      expect(rows[0].guestReceiptHash ?? null).toBeNull();
       expect(core.calls).toHaveLength(0);
     });
 

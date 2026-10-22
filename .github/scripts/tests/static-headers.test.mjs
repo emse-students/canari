@@ -197,6 +197,45 @@ for (const block of locations) {
   }
 }
 
+// A PUBLIC FORM PAGE SENDS NO REFERER, AS A HEADER (2026-10-22, paid public forms WP-P2). The guest
+// receipt page carries its receipt in the query, and a <meta> in a page that boots on the client
+// applies only after its first chunk requests have left with the full URL. So both blocks that send
+// a page - the SSR answer and the degraded shell - send the policy, and the map that decides it,
+// run here on sample URIs, gives `no-referrer` to every `/f/` page and nothing to any other.
+const REFERRER_VARIABLE = 'public_form_referrer_policy';
+for (const name of ['@ssr', '@app_shell']) {
+  const block = locations.find((l) => l.name === name);
+  if (!block?.body.includes(`add_header Referrer-Policy $${REFERRER_VARIABLE} always;`)) {
+    failures.push(`location ${name} does not send Referrer-Policy $${REFERRER_VARIABLE}.`);
+  }
+}
+const referrerMap = text
+  .split('\n')
+  .map((l) => l.replace(/\\n\\$/, '').trim())
+  .join('\n')
+  .match(new RegExp(`map \\$request_uri \\$${REFERRER_VARIABLE} \\{([\\s\\S]*?)\\n\\}`))?.[1];
+if (!referrerMap) {
+  failures.push(`the map $request_uri $${REFERRER_VARIABLE} is missing.`);
+} else {
+  const rules = [...referrerMap.matchAll(/"(~\^[^"]*)"\s+"([^"]*)";/g)].map((m) => ({
+    re: new RegExp(m[1].slice(1)),
+    value: m[2],
+  }));
+  const fallback = referrerMap.match(/default\s+"([^"]*)";/)?.[1];
+  const apply = (uri) => rules.find(({ re }) => re.test(uri))?.value ?? fallback;
+  for (const [uri, expected] of [
+    ['/f/abc-123/receipt?receipt=SECRET', 'no-referrer'],
+    ['/f/abc-123', 'no-referrer'],
+    ['/forms/abc-123', ''],
+    ['/', ''],
+    ['/feed?f=1', ''],
+  ]) {
+    if (apply(uri) !== expected) {
+      failures.push(`Referrer-Policy for ${uri} is "${apply(uri)}", expected "${expected}".`);
+    }
+  }
+}
+
 if (failures.length > 0) {
   console.error(`FAIL: ${failures.length} problem(s) in the browser-facing nginx blocks:\n`);
   for (const f of failures) console.error(`  - ${f}\n`);

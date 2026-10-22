@@ -1,5 +1,7 @@
 import { BadGatewayException, Logger } from '@nestjs/common';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
+import { hashGuestReceipt, newGuestReceipt } from './guest-receipt';
+import { GuestReceiptThrottlerGuard } from './guest-receipt-throttler.guard';
 import { PublicFormsController } from './public-forms.controller';
 
 describe('PublicFormsController', () => {
@@ -44,15 +46,27 @@ describe('PublicFormsController', () => {
     expect(res).toEqual({ ok: true, checkoutUrl: 'https://lydia.example/pay' });
   });
 
-  it('answers a guest who owes cash that it is owed, and no id', async () => {
+  it('answers a guest who owes cash that it is owed and its reference, and no id', async () => {
     const service: any = {
-      submit: jest.fn(() => Promise.resolve({ submissionId: 's1', cashPayment: true })),
+      submit: jest.fn(() =>
+        Promise.resolve({ submissionId: 's1', cashPayment: true, reference: '1A2B-3C4D' })
+      ),
     };
     const res = await new PublicFormsController(service).submit('f1', {
       answers: {},
       paymentMethod: 'cash',
     });
-    expect(res).toEqual({ ok: true, cashPayment: true });
+    expect(res).toEqual({ ok: true, cashPayment: true, reference: '1A2B-3C4D' });
+  });
+
+  it('hands the receipt, and only the receipt, to the guest confirmation', async () => {
+    const view = { reference: '1A2B-3C4D', formId: 'f1', totalPaid: 1200, currency: 'eur' };
+    const service: any = { confirmGuestReceipt: jest.fn(() => Promise.resolve(view)) };
+    const res = await new PublicFormsController(service).confirmReceipt({
+      receipt: 'r'.repeat(43),
+    });
+    expect(service.confirmGuestReceipt).toHaveBeenCalledWith('r'.repeat(43));
+    expect(res).toBe(view);
   });
 
   it('refuses, rather than calls taken, a paid answer whose request was not issued', async () => {
@@ -62,6 +76,32 @@ describe('PublicFormsController', () => {
     await expect(new PublicFormsController(service).submit('f1', { answers: {} })).rejects.toThrow(
       BadGatewayException
     );
+  });
+});
+
+/**
+ * The receipt route's bucket is the RECEIPT (each read of a pending answer spends a Lydia call), keyed
+ * on its hash; anything else is counted on the visitor.
+ */
+describe('GuestReceiptThrottlerGuard', () => {
+  const guard = Object.create(GuestReceiptThrottlerGuard.prototype) as any;
+
+  it('counts a receipt by its hash, never the receipt itself, whatever address sends it', async () => {
+    const { token } = newGuestReceipt();
+    const from = (ip: string) => ({ ip, headers: { 'x-real-ip': ip }, body: { receipt: token } });
+    const a = await guard.getTracker(from('203.0.113.7'));
+    expect(a).toBe(`receipt:${hashGuestReceipt(token)}`);
+    expect(a).not.toContain(token);
+    expect(await guard.getTracker(from('198.51.100.9'))).toBe(a);
+  });
+
+  it('counts anything that is not a receipt on the visitor', async () => {
+    const req = {
+      ip: '172.25.0.1',
+      headers: { 'x-real-ip': '203.0.113.7' },
+      body: { receipt: 'x' },
+    };
+    expect(await guard.getTracker(req)).toBe('visitor:203.0.113.7');
   });
 });
 

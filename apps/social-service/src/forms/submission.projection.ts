@@ -1,4 +1,5 @@
 import type { Submission } from './entities/submission.entity';
+import { guestReference } from './guest-receipt';
 
 /**
  * WHAT A CLIENT MAY READ OF A SUBMISSION, AS AN ALLOWLIST (2026-10-15).
@@ -32,7 +33,14 @@ const SUBMITTER_FIELDS = [
 const MANAGER_FIELDS = [...SUBMITTER_FIELDS, 'userId', 'email'] as const;
 
 export type SubmitterSubmissionView = Pick<Submission, (typeof SUBMITTER_FIELDS)[number]>;
-export type ManagerSubmissionView = Pick<Submission, (typeof MANAGER_FIELDS)[number]>;
+export type ManagerSubmissionView = Pick<Submission, (typeof MANAGER_FIELDS)[number]> & {
+  /**
+   * The reference a PAYING GUEST was given (`guestReference`), so the organiser finds the answer a
+   * guest names on the phone or at the cash desk; null on every other row (a member is named, a free
+   * guest answer was given no reference).
+   */
+  reference: string | null;
+};
 
 function pick<K extends keyof Submission>(
   submission: Submission,
@@ -50,5 +58,9 @@ export function toSubmitterView(submission: Submission): SubmitterSubmissionView
 
 /** A submission as a form manager's responses list may read it. */
 export function toManagerView(submission: Submission): ManagerSubmissionView {
-  return pick(submission, MANAGER_FIELDS);
+  const paidByGuest = !submission.userId && submission.paymentStatus !== 'free';
+  return {
+    ...pick(submission, MANAGER_FIELDS),
+    reference: paidByGuest ? guestReference(submission.id) : null,
+  };
 }
