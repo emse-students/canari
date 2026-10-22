@@ -451,21 +451,16 @@ fn a_kick_then_a_re_add_seen_only_by_catch_up_still_records_the_departure() {
     carol.process_incoming_message(gid, &bob_in).unwrap();
     carol.take_device_events();
 
-    // carol is away: bob is kicked, dave arrives, then bob is re-added - not in the commit right
-    // after his removal, which is the shape of a heal (`cancel_healed_departures`).
+    // carol is away: bob is kicked, then re-added, in two commits.
     let kick = remove(&mut alice, gid, "bob:dev1");
     let removed_at = alice.get_epoch(gid).unwrap();
-    let mut dave = device("dave", "dev1");
-    let kp = dave.generate_key_package().unwrap();
-    let dave_in = add_and_join(&mut alice, &mut dave, gid, &kp, "dave:dev1");
     bob.forget_group(gid, 0);
     let kp = bob.generate_key_package().unwrap();
     let re_add = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
     assert_eq!(alice.removal_epochs(gid, "bob"), vec![removed_at]);
 
-    // carol catches up, in order, and only ever holds the tree before and after all three.
+    // carol catches up, in order, and only ever holds the tree before and after both.
     carol.process_incoming_message(gid, &kick).unwrap();
-    carol.process_incoming_message(gid, &dave_in).unwrap();
     carol.process_incoming_message(gid, &re_add).unwrap();
     assert_eq!(carol.removal_epochs(gid, "bob"), vec![removed_at]);
     assert_eq!(
@@ -475,10 +470,7 @@ fn a_kick_then_a_re_add_seen_only_by_catch_up_still_records_the_departure() {
     );
     assert!(carol.removal_epochs(gid, "carol").is_empty());
     assert!(
-        carol
-            .take_device_events()
-            .iter()
-            .all(|e| e.identity != "bob:dev1"),
+        carol.take_device_events().is_empty(),
         "a departure is never a device event"
     );
 
@@ -488,36 +480,6 @@ fn a_kick_then_a_re_add_seen_only_by_catch_up_still_records_the_departure() {
         reloaded.removal_epochs(gid, "bob"),
         vec![removed_at],
         "kept in the sealed state"
-    );
-}
-
-/// THE TWO-COMMIT REPAIR IS A HEAL, NOT A DEPARTURE (`handleWelcomeRequest`): the member that removes
-/// a device's stale leaf re-adds the same device under its pinned key in the very next commit. Seen
-/// by the committer and by a member catching up on both commits alike.
-#[test]
-fn the_two_commit_repair_by_the_member_that_removed_the_device_records_no_departure() {
-    let gid = "g-departure-repair";
-    let mut alice = device("alice", "dev1");
-    let mut bob = device("bob", "dev1");
-    let mut carol = device("carol", "dev1");
-    alice.create_group(gid.into()).expect("create");
-    let kp = carol.generate_key_package().unwrap();
-    add_and_join(&mut alice, &mut carol, gid, &kp, "carol:dev1");
-    let kp = bob.generate_key_package().unwrap();
-    let bob_in = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
-    carol.process_incoming_message(gid, &bob_in).unwrap();
-
-    let kick = remove(&mut alice, gid, "bob:dev1");
-    bob.forget_group(gid, 0);
-    let kp = bob.generate_key_package().unwrap();
-    let re_add = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
-    assert!(alice.removal_epochs(gid, "bob").is_empty(), "the committer");
-
-    carol.process_incoming_message(gid, &kick).unwrap();
-    carol.process_incoming_message(gid, &re_add).unwrap();
-    assert!(
-        carol.removal_epochs(gid, "bob").is_empty(),
-        "a member catching up"
     );
 }
 

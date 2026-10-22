@@ -54,7 +54,7 @@ let epoch = 5;
 const pins = new Map<string, Uint8Array[]>();
 /**
  * The MLS layer's departures (`removalEpochs`, #2268): the epochs at which a merged commit removed
- * a user's last leaf - live or caught up, a two-commit heal excepted.
+ * a user's last leaf - live or caught up; a device repair is one commit and records none.
  */
 const departures = new Map<string, number[]>();
 /** What the SERVER publishes for a device - never to be believed for a voucher signer. */
@@ -269,7 +269,7 @@ describe('a removal the MLS layer recorded at merge ends the admissions before i
     ]);
     expect(await admissionProven('ws-1', KG, 'newcomer')).toBe(true);
 
-    // The MLS layer records no departure for a heal (`cancel_healed_departures`): the leaf moved.
+    // A device repair is one commit that never empties the user's leaves: no departure is recorded.
     epoch = 7;
     leaves = ['alice:alice-laptop', 'carol:dev-c', 'newcomer:dev-n'];
 

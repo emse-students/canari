@@ -122,10 +122,6 @@ pub struct Departure {
     pub user_id: String,
     /// The epoch the removing commit created: the first epoch the user is no longer in.
     pub epoch: u64,
-    /// The committer of the removing commit, as its verified credential names it - what tells a
-    /// heal (the same member re-adding the device in the next commit) from a return.
-    #[serde(default)]
-    pub removed_by: Option<String>,
 }
 
 /// The most departures kept. Past it the departures of groups no held tree is any more are dropped
@@ -307,7 +303,6 @@ impl DeviceTrust {
         epoch: u64,
         before: &[LeafKey],
         after: &[LeafKey],
-        removed_by: Option<&str>,
     ) -> bool {
         let remaining: std::collections::HashSet<String> =
             after.iter().filter_map(|(_, id, _)| user_of(id)).collect();
@@ -326,84 +321,9 @@ impl DeviceTrust {
                 group_id: group_id.to_string(),
                 user_id: user_id.clone(),
                 epoch,
-                removed_by: removed_by.map(str::to_string),
             });
         }
         !gone.is_empty()
-    }
-
-    /// Cancels the departure a HEAL left: `handleWelcomeRequest` repairs a device whose leaf is in
-    /// the tree by removing it and re-adding it in TWO commits, which [`Self::record_departures`]
-    /// reads as the user leaving. A user who re-enters with this commit is a heal, and their
-    /// departure is dropped, exactly when ALL of these hold - each from this device's own merge:
-    ///
-    /// - the departure is the one the PREVIOUS commit recorded (`epoch - 1`);
-    /// - this commit's committer is the member who made that removal, was in the tree before this
-    ///   commit, and is not the returning user - so an external rejoin, which the joiner commits
-    ///   itself, never qualifies;
-    /// - every leaf the user re-enters with carries a key already PINNED for that device - the same
-    ///   devices under the same keys, never a new one.
-    ///
-    /// A kicked member who comes back by an external commit, through another member, later, or
-    /// under a new key stays departed. The rule reads the SHAPE of the two commits, never why they
-    /// were made (channel-encryption section 25).
-    ///
-    /// Runs BEFORE this commit's leaves are pinned, so "already pinned" means pinned before it.
-    ///
-    /// @returns whether anything was written.
-    fn cancel_healed_departures(
-        &mut self,
-        group_id: &str,
-        epoch: u64,
-        before: &[LeafKey],
-        after: &[LeafKey],
-        committer: Option<&str>,
-    ) -> bool {
-        let Some(committer) = committer else {
-            return false;
-        };
-        let Some(committer_user) = user_of(committer) else {
-            return false;
-        };
-        if epoch == 0 || !before.iter().any(|(_, id, _)| id == committer) {
-            return false;
-        }
-        let was_in: std::collections::HashSet<String> =
-            before.iter().filter_map(|(_, id, _)| user_of(id)).collect();
-        let mut returned: Vec<String> = after
-            .iter()
-            .filter_map(|(_, id, _)| user_of(id))
-            .filter(|u| !was_in.contains(u) && *u != committer_user)
-            .collect();
-        returned.sort();
-        returned.dedup();
-        let mut wrote = false;
-        for user in returned {
-            let all_pinned = after
-                .iter()
-                .filter(|(_, id, _)| user_of(id).as_deref() == Some(user.as_str()))
-                .all(|(_, id, key)| self.verdict(id, key) == LeafTrust::Pinned);
-            if !all_pinned {
-                continue;
-            }
-            let healed = self.departures.iter().rposition(|d| {
-                d.group_id == group_id
-                    && d.user_id == user
-                    && d.epoch + 1 == epoch
-                    && d.removed_by.as_deref() == Some(committer)
-            });
-            if let Some(index) = healed {
-                self.departures.remove(index);
-                log::info!(
-                    "[TRUST] {group_id} epoch {epoch}: {user} re-added under pinned key(s) by \
-                     {committer}, who removed them in the previous commit - a heal, departure at \
-                     epoch {} cancelled",
-                    epoch - 1
-                );
-                wrote = true;
-            }
-        }
-        wrote
     }
 
     /// The persisted form of the pins, sorted so two saves of one record are byte-identical.
@@ -612,8 +532,7 @@ impl DeviceTrust {
         added_by: Option<&str>,
         own: (&str, &[u8]),
     ) -> bool {
-        let mut wrote = self.cancel_healed_departures(group_id, epoch, before, after, added_by);
-        wrote |= self.record_departures(group_id, epoch, before, after, added_by);
+        let mut wrote = self.record_departures(group_id, epoch, before, after);
         for (_, identity, key) in after {
             let existed = before.iter().any(|(_, id, k)| id == identity && k == key);
             if existed {
@@ -762,78 +681,13 @@ mod tests {
         );
     }
 
-    /// Two commits of one group: a member's tree, `u:d`'s only leaf removed at epoch 5 by
-    /// `remover`, then re-entered at `back_epoch` by `committer` under `key`.
-    fn kick_then_return(
-        remover: &str,
-        committer: &str,
-        back_epoch: u64,
-        key: &[u8],
-    ) -> DeviceTrust {
-        let mut t = DeviceTrust::default();
-        let a = (0u32, "admin:a".to_string(), b"ka".to_vec());
-        let b = (1u32, "bob:b".to_string(), b"kb".to_vec());
-        let u = (2u32, "u:d".to_string(), b"ku".to_vec());
-        t.seed_from_tree(&[a.clone(), b.clone(), u.clone()]);
-        let own = ("me:x", b"km".as_slice());
-        let without = vec![a.clone(), b.clone()];
-        t.observe_merged_commit(
-            "g",
-            5,
-            &[a.clone(), b.clone(), u],
-            &without,
-            Some(remover),
-            own,
-        );
-        assert_eq!(
-            t.removal_epochs("g", "u"),
-            vec![5],
-            "the kick is a departure"
-        );
-        let back = vec![a, b, (3u32, "u:d".to_string(), key.to_vec())];
-        t.observe_merged_commit("g", back_epoch, &without, &back, Some(committer), own);
-        t
-    }
-
-    #[test]
-    fn a_heal_by_the_member_that_removed_the_device_is_not_a_departure() {
-        // handleWelcomeRequest's repair: the member that removed the leaf re-adds the SAME device
-        // under its pinned key, in the very next commit.
-        let t = kick_then_return("admin:a", "admin:a", 6, b"ku");
-        assert!(t.removal_epochs("g", "u").is_empty());
-    }
-
-    #[test]
-    fn a_kick_then_any_other_return_stays_a_departure() {
-        // The kicked device rejoins by itself (an external commit: it is its own committer).
-        assert_eq!(
-            kick_then_return("admin:a", "u:d", 6, b"ku").removal_epochs("g", "u"),
-            vec![5]
-        );
-        // Another member re-admits it.
-        assert_eq!(
-            kick_then_return("admin:a", "bob:b", 6, b"ku").removal_epochs("g", "u"),
-            vec![5]
-        );
-        // The same member, but not in the next commit.
-        assert_eq!(
-            kick_then_return("admin:a", "admin:a", 8, b"ku").removal_epochs("g", "u"),
-            vec![5]
-        );
-        // The same member and the next commit, under a key never pinned for the device.
-        assert_eq!(
-            kick_then_return("admin:a", "admin:a", 6, b"new").removal_epochs("g", "u"),
-            vec![5]
-        );
-    }
-
     #[test]
     fn departures_are_bounded_and_past_the_bound_keep_only_held_groups() {
         let mut t = DeviceTrust::default();
         let leaf = |id: &str| (0u32, id.to_string(), b"k".to_vec());
         // One departure per group: a tree with "u:d" that loses it.
         for i in 0..=MAX_RECORDED_DEPARTURES {
-            t.record_departures(&format!("g{i}"), 1, &[leaf("u:d")], &[], None);
+            t.record_departures(&format!("g{i}"), 1, &[leaf("u:d")], &[]);
         }
         assert_eq!(
             t.departures.len(),
@@ -848,13 +702,11 @@ mod tests {
             group_id: "g-extra".into(),
             user_id: "u".into(),
             epoch: 2,
-            removed_by: None,
         });
         t.departures.push_back(Departure {
             group_id: "g1".into(),
             user_id: "v".into(),
             epoch: 3,
-            removed_by: None,
         });
         // The push dropped g1's (the oldest left); g2 is the group still held.
         assert!(t.removal_epochs("g1", "u").is_empty());

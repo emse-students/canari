@@ -3750,7 +3750,7 @@ admissions, per account) and its MLS layer (pins and departures):
 - **Verified admissions**: each voucher that held, at the place it was signed.
 - **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
   user's last leaf from the key group (`removalEpochs`,
-  [mls-protocol](mls-protocol.md)), the two-commit repair of a device excepted. No removal seen
+  [mls-protocol](mls-protocol.md)); a device repair is one commit and records none. No removal seen
   means UNKNOWN, never proof that none happened.
 
 **A signer's key has ONE trust source**: the key the community's key-group tree holds for that
@@ -3811,8 +3811,7 @@ R = lp("canari-graine-admit-redeem-v1") || lp(workspaceId) || lp(subject) || lp(
   record of it.
 - A device that first syncs a community after the cut records its roots from the members present
   then.
-- A member whose every device left the tree, other than by the two-commit repair, needs a fresh
-  admission for the past.
+- A member whose every device left the tree needs a fresh admission for the past.
 - An invite link is a bearer proof: whoever holds the full link, `#` part included, can be admitted
   with the past. Share it as you would the community itself.
 - A newcomer admitted by an older client, or through a link without its `#` part, reads from their
@@ -3831,9 +3830,7 @@ server publishes for a rooted member is refused; a lost signer device keeps veri
 a roster row with no leaf is never a root; the roots are fixed at the first sync; a removed member's
 old voucher no longer admits, a fresh one does, a repaired device keeps its admission; a former
 bureau's voucher still admits, one signed after its signer's removal does not; any pinned key
-verifies), `device_trust.rs` and `tests/device_binding.rs` (the two-commit repair records no
-departure, live or caught up; an external rejoin, a re-add by another member, a later one or one
-under a new key stays a departure), `frameHandler.test.ts` (both answer paths floor an unproven
+verifies), `frameHandler.test.ts` (both answer paths floor an unproven
 newcomer; direct, link and chained admissions hand the past; copied, foreign or forged vouchers do
 not; the creator is a root; an unreadable roster fails closed), `rosterReconcile.test.ts` (the sync
 feeds the ledger), `inviteFragment.test.ts`, `historyOverlayStack.test.ts` and

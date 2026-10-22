@@ -30,7 +30,7 @@ import { historyVisibilityFor, requireGraineRuntime } from './runtime';
  *   key in the key group's current tree, else the keys the MLS layer pinned for that device
  *   (`pinnedSignatureKeys`) - never a key the server publishes. An unpinned signer is unproven.
  * - REMOVALS (the MLS layer): the epochs at which a merged commit - live or caught up - removed the
- *   user's last leaf from the key group (`removalEpochs`), a two-commit heal excepted. An admission
+ *   user's last leaf from the key group (`removalEpochs`); a device repair is one commit and records none. An admission
  *   placed before a removal no longer admits: a removed member who comes back with the voucher they
  *   had is a newcomer without one. NO REMOVAL SEEN IS "UNKNOWN", NOT PROOF OF CONTINUITY: a member
  *   who arrived after a commit never merged it.
