@@ -382,6 +382,10 @@ impl MlsManager {
             }
         };
 
+        // An EXTERNAL commit's added leaf is the joiner's own claim (`graine_run.rs`), so whether
+        // the verified sender is `new_member_commit` travels to the departure tracker.
+        let external_commit = matches!(processed_message.sender(), Sender::NewMemberCommit);
+
         match processed_message.into_content() {
             ProcessedMessageContent::ApplicationMessage(app_msg) => {
                 state_snapshot.borrow_mut().invalidate_ratchet();
@@ -393,7 +397,7 @@ impl MlsManager {
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
                 // The tree BEFORE the merge, for Graine's departure tracker: after it, the leaves a
                 // Remove took are gone (`graine_run.rs`).
-                let before = BeforeMerge::read(provider, group, &staged_commit);
+                let before = BeforeMerge::read(provider, group, &staged_commit, external_commit);
                 group
                     .merge_staged_commit(provider, *staged_commit)
                     .map_err(|e| MlsError::OpenMls(format!("Merge commit error: {:?}", e)))?;

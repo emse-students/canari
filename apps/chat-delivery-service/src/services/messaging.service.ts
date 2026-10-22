@@ -1841,6 +1841,20 @@ export class MessagingService {
         message: 'this commit is not accepted',
       });
     }
+    // AN EXTERNAL COMMIT JOINS AS THE CALLER'S OWN DEVICE: the leaf it adds names
+    // `committer:deviceId`, the identity every KeyPackage of this device was refused without
+    // (`DeviceSignatureKeysService.record`). Without it the credential is self-asserted on this one
+    // route, and every member would show - and Graine would count - whoever the joiner claimed to be.
+    if (frame.external && frame.leafIdentity !== `${committer}:${deviceId}`) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT external_leaf_foreign group=${groupId} device=${deviceId} ` +
+          `sender=${sanitizeLogValue(committer)} leaf=${sanitizeLogValue(frame.leafIdentity)}`
+      );
+      throw new ForbiddenException({
+        error: 'commit_identity_mismatch',
+        message: 'this commit is not accepted',
+      });
+    }
     await this.assertCommitterMayCommit(groupId, committer, deviceId, frame.external, traceId);
 
     this.logger.log(

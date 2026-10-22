@@ -73,6 +73,7 @@ none of these holds:
 | The commit carried any Remove proposal - an external commit's removal of the joiner's OWN old leaf included | `StagedCommit::remove_proposals()`, before the merge | `run reset reason=departure` |
 | A `(credential, signature key)` pair is in the tree before the merge and not after it - whatever removed it (an update that swaps a key or a credential needs no Remove proposal) | a counted diff of the two trees | `reason=departure` |
 | A leaf of a NEW USER - a user (identity before its first `:`, lower-cased as `userIdOfLeaf` reads it) with no leaf before the commit; an unreadable credential counts as new | the same diff | `reason=new-user` |
+| Any leaf an EXTERNAL commit adds (verified sender `new_member_commit`), whatever user its credential names | `ProcessedMessage::sender()`, before the merge | `reason=new-user` |
 | The commit started from another epoch than the run's last one | `fingerprint_before` | `reason=gap` |
 | No run existed | - | `reason=none` |
 
@@ -83,7 +84,7 @@ the trees before and after look the same at that seat; the Remove proposal is wh
 price: external re-joins of known identities still rotate.
 
 **A new USER rotates; a new DEVICE of a user already present does not** (lead amendment (b),
-2026-10-22, **pending the user's confirmation, decision D5**). ONE rule in ONE place:
+**decided by the user on 2026-10-22, D5**). ONE rule in ONE place:
 `ROTATE_ON_NEW_USER` in `graine_run.rs`. The reason: each message key is derived from the seed, not
 ratcheted, so a newcomer handed a seed minted before it arrived can derive every earlier index, and
 the floor that hides them is enforced only by an honest client. Rotating on a new user keeps what a
@@ -92,11 +93,24 @@ a present user opens nothing that user's other devices could not already open, a
 the measured bulk of the rotations. Turning the constant to `false` makes every Add continue the
 run; nothing else reads it.
 
+**"A device of a user already present" is believed only where something bound the credential.** An
+Add's leaf comes from a KeyPackage, and the server refuses a KeyPackage whose credential does not
+name its uploader (`DeviceSignatureKeysService.record`). An EXTERNAL commit's leaf is written by the
+joiner itself, in the commit, so the client counts every leaf an external commit adds as a new user
+(review round of #2263), and the server refuses an external commit whose path leaf does not name
+`<authenticated caller>:<deviceId>` (`readCommitFrame` + `validateCommit`, `commit_identity_mismatch`).
+**The price, stated: key groups are joined by external commit, so a device join to a KEY GROUP still
+rotates.** What still continues the run is an Add-path join; whether the client rule can be relaxed
+now that the server binds the leaf is a decision for the lead (see review item 12).
+
 **A batch applies every commit in order**, one merge at a time, so a departure in its middle ends
 the run even when Adds follow it (`a_batch_with_a_departure_in_its_middle_...`).
 
 **A summary that cannot be built never fails the merge.** The epoch has already moved; the run is
-DROPPED instead (`observe_merge`, an ERROR line), which is the fail-safe direction.
+DROPPED instead (`observe_merge`, an ERROR line), which is the fail-safe direction. The JOINER of an
+external commit never reaches that line: openmls 0.9 merges the commit inside `finalize`, so its
+`merge_pending_commit_for` finds nothing pending and logs at debug, and its run starts at its first
+read (`the_joiners_merge_of_its_own_external_commit_is_a_no_op_not_a_dropped_run`).
 
 ### 3. The outbound verdict
 
@@ -197,13 +211,18 @@ Each finding names what was wrong with the draft, or what still holds and why.
    (`userId:deviceId`): removing one device of a user who keeps another is a departure
    (`removing_one_device_of_a_user_who_keeps_another_is_a_departure`); a reinstall comes back under
    a new key and its old leaf's removal is a departure (`a_rejoin_under_a_new_key_is_a_departure`).
-9. **A restore or a downgrade (HOLDS, with a stated dependency).** A restored `mls.bin` carries the
-   run as of that state, consistent with its tree; the commits it then catches up on are observed
-   (`a_state_saved_before_a_departure_and_caught_up_afterwards_ends_the_run`). Between the restore and
-   the catch-up, the device's tree is the OLD one and a departed device is still in it. Reusing the
-   session there is no worse than today, because the seal is refused while the key group is behind
-   its server (`key-group-catching-up`, [§22.1](channel-encryption.md#221-a-key-group-behind-its-server-catches-itself-up-and-nothing-is-sealed-while-it-is-behind)).
-   A build that predates the field drops it on its next write: no run, so it rotates.
+9. **A restore or a downgrade (HOLDS ONLY ONCE THE 9a FIX SHIPS).** A restored `mls.bin` carries
+   the run as of that state, consistent with its tree; the commits it then catches up on are
+   observed (`a_state_saved_before_a_departure_and_caught_up_afterwards_ends_the_run`). Between the
+   restore and the catch-up, the device's tree is the OLD one and a departed device is still in it.
+   The catching-up gate ([§22.1](channel-encryption.md#221-a-key-group-behind-its-server-catches-itself-up-and-nothing-is-sealed-while-it-is-behind))
+   does NOT cover this on its own while queue item 9a is open: a history replay saves its stream
+   cursor BEFORE the checkpoint it claims to follow ([backlog](../backlog.md)), so a kill in that
+   window can leave a state that never merged a commit behind a cursor that says it was consumed -
+   and a departure in that commit is never observed by this device. The safety of
+   this item depends on the 9a fix landing; until then it is the same exposure the epoch rule had
+   in that window, now lasting as long as the session's caps. A build that predates the field drops
+   it on its next write: no run, so it rotates.
 10. **A joiner still gets what the history policy grants (HOLDS).** A new device of a present user
     gets the re-distributed seed from index 0, which its user's other devices already opened. A new
     user never sees a reused seed. The history bundle is untouched.
@@ -211,23 +230,44 @@ Each finding names what was wrong with the draft, or what still holds and why.
     before anything is sealed, so a commit landing in between can only make the anchor OLDER than the
     frame; the next send judges the move again. A message sealed while a Remove is in flight is the
     same race the epoch rule had.
+12. **"A new device of a present user" was the joiner's own word on an external commit (CHANGED,
+    review of #2263).** The new-user rule keys on the leaf credential. On an Add that credential
+    comes from a KeyPackage the server bound to its uploader; on an external commit the joiner
+    writes its own leaf, and nothing bound it to the caller, so a joiner could name a present user
+    and be handed the current session instead of a fresh one. Closed on both sides: the client
+    counts every external-commit leaf as a new user
+    (`an_external_join_ends_the_run_even_when_its_leaf_names_a_present_user`), and the server refuses
+    an external commit whose path leaf, read in the clear, does not name the authenticated
+    `caller:deviceId` (`mls-frame-epoch.spec.ts`, `messaging.commit-log.spec.ts`, checked against
+    two external commits openmls itself produced). Against a COMPROMISED server neither half adds
+    anything the Add path does not already lack (it can forge a KeyPackage as well), consistent with
+    section 5.
 
 ## Verification - what a compile does not prove
 
-Done in the pull request: `cargo test` in `mls-core` (`tests/graine_run.rs`, 14 cases: a device add
-continues, a new user ends, a Remove ends on both committer and receiver, the add-then-remove case,
+Done in the pull request: `cargo test` in `mls-core` (`tests/graine_run.rs`, 16 cases: a device add
+continues, a new user ends, an external join ends whatever its leaf claims, the joiner's own merge is
+a no-op, a Remove ends on both committer and receiver, the add-then-remove case,
 a batch with a departure in its middle, a same-key rejoin, a new-key rejoin, persistence across a
 reload, a restored older state catching up, a replaced instance, same-number aliasing, the summary
 fields); `sessionManager.test.ts` (the verdict table, re-distribution, the failure that persists
 nothing, the add-then-remove case at the send layer); `graineStore.test.ts` (the anchor is sealed and
-all-or-nothing).
+all-or-nothing); chat-delivery `mls-frame-epoch.spec.ts` and `messaging.commit-log.spec.ts` (the
+external commit's path leaf is read, and one naming another user or device is refused before the
+membership gate).
+
+**Owed before the server half is believed on production:** the path-leaf parse was checked against
+two external commits openmls 0.9.1 produced, not against stored rows. One read-only pass over the
+`PublicMessage` rows of the commit log - every one should parse to a leaf naming its committer's
+`userId:deviceId` - settles that no shipped client trips `commit_identity_mismatch`.
 
 **Owed, rig rows (local estate, W1, W2, W3; GRAINE rows of
 [cross-client-testing](../cross-client-testing.md)):**
 
 - **GRAINE-ROT-1, a device join.** W2's user adds a second device between two sends of W1. W1 logs
-  `[GRAINE] reused session ... re-distributed`, never `new outbound session`. The new device opens
-  W1's next message from the re-distributed frame.
+  `[GRAINE] reused session ... re-distributed`, never `new outbound session`, IF the device came in by
+  an Add; a key-group join by external commit logs `run reset reason=new-user` (review item 12). The
+  row records which route the join took. The new device opens W1's next message either way.
 - **GRAINE-ROT-2, a new user.** W3 (a user not yet in the community) joins between two sends of W1.
   W1 logs `run reset reason=new-user` and a new session.
 - **GRAINE-ROT-3, a revocation.** A device of W2 is revoked. W1's next send logs
@@ -250,4 +290,5 @@ the app is killed, then a send after it reopens: it must rotate.
 2026-10-21 (845 sessions for 1 698 messages), and the per-sender rates of the residual section, re-run
 with their query. The ratio should fall toward "senders x active days". If it does not, the reset
 reasons say why: many `reason=gap` means an epoch is moved outside the two merge functions; many
-`reason=departure` means external rejoins dominate.
+`reason=departure` means external rejoins dominate; many `reason=new-user` with one user already
+present means external key-group joins dominate (review item 12).

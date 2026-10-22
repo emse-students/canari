@@ -39,7 +39,8 @@
 //!   tree on both sides of the merge. That covers whatever removes a leaf without a Remove proposal
 //!   (an update that swaps a credential or a key), with no list of proposal shapes to keep current.
 //! - **A NEW USER**: a leaf whose user had no leaf before the commit ([`ROTATE_ON_NEW_USER`]). Only a
-//!   new DEVICE of a user already present continues the run.
+//!   new DEVICE of a user already present, admitted by an Add, continues the run; any leaf an
+//!   EXTERNAL commit brings counts as a new user, since its credential is the joiner's own claim.
 
 use std::collections::HashMap;
 
@@ -60,7 +61,12 @@ use crate::state::MlsManager;
 const FINGERPRINT_DOMAIN: &[u8] = b"canari/graine-run/epoch-fingerprint/v1";
 
 /// **THE ONE RULE FOR AN ADD: a new USER ends the run, a new DEVICE of a user already in the tree
-/// does not.** Pending the user's confirmation (decision D5, 2026-10-22).
+/// does not.** Decided by the user (D5, 2026-10-22).
+///
+/// "Already in the tree" is believed only of a leaf whose credential something BOUND to its user: an
+/// Add's leaf comes from a KeyPackage the server refused unless it named its uploader. An EXTERNAL
+/// commit's leaf is written by the joiner itself, so every leaf an external commit adds counts as a
+/// new user, whatever its credential says ([`BeforeMerge::read`]).
 ///
 /// Why a new user rotates: a newcomer handed a seed minted before it arrived can derive every index
 /// of that session (each message key is derived from the seed, not ratcheted), and the floor that
@@ -105,8 +111,12 @@ pub struct CommitSummary {
     /// Identities whose pair the commit put in and that were not there before.
     pub added: Vec<String>,
     /// Users (the part of an identity before its first `:`) with a leaf after the commit and none
-    /// before it. An unreadable credential counts as a new user.
+    /// before it - and, for an external commit, the user of every leaf it added. An unreadable
+    /// credential counts as a new user.
     pub new_users: Vec<String>,
+    /// The commit was an EXTERNAL commit (sender `new_member_commit`): its added leaf is the
+    /// joiner's own claim, bound to nothing a member can check.
+    pub external: bool,
 }
 
 impl CommitSummary {
@@ -227,21 +237,29 @@ pub(crate) struct BeforeMerge {
     fingerprint: String,
     pairs: LeafPairs,
     remove_proposals: usize,
+    external: bool,
 }
 
 impl BeforeMerge {
     /// Read the tree BEFORE the merge, with the commit about to be merged: after it, the leaves a
     /// Remove took are gone, and so is the commit.
+    ///
+    /// `external` is whether the commit's verified sender is `new_member_commit`. The StagedCommit
+    /// does not carry it, so the caller reads it from the processed message. Every leaf such a
+    /// commit adds is counted as a NEW USER: the joiner wrote its own credential, and "a device of
+    /// a user already here" is not a claim a member can check on that route.
     pub(crate) fn read(
         provider: &impl OpenMlsProvider,
         group: &MlsGroup,
         commit: &StagedCommit,
+        external: bool,
     ) -> Result<Self, MlsError> {
         Ok(Self {
             epoch: group.epoch().as_u64(),
             fingerprint: epoch_fingerprint(provider, group)?,
             pairs: leaf_pairs(group)?,
             remove_proposals: commit.remove_proposals().count(),
+            external,
         })
     }
 
@@ -252,10 +270,17 @@ impl BeforeMerge {
         group: &MlsGroup,
     ) -> Result<CommitSummary, MlsError> {
         let after = leaf_pairs(group)?;
+        let added = missing_from(&after, &self.pairs);
         let users_before = users(&self.pairs);
-        let mut new_users: Vec<String> = users(&after)
+        let mut new_users: std::collections::HashSet<Option<String>> = users(&after)
             .into_iter()
             .filter(|user| user.is_none() || !users_before.contains(user))
+            .collect();
+        if self.external {
+            new_users.extend(added.iter().map(|identity| user_of(identity)));
+        }
+        let mut new_users: Vec<String> = new_users
+            .into_iter()
             .map(|user| user.unwrap_or_else(|| "<unreadable>".to_string()))
             .collect();
         new_users.sort();
@@ -266,8 +291,9 @@ impl BeforeMerge {
             fingerprint_after: epoch_fingerprint(provider, group)?,
             removed: missing_from(&self.pairs, &after),
             remove_proposals: self.remove_proposals,
-            added: missing_from(&after, &self.pairs),
+            added,
             new_users,
+            external: self.external,
         })
     }
 }
@@ -402,10 +428,11 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
         // No pending commit: openmls merges nothing and the epoch does not move, so there is
-        // nothing for the run to observe.
+        // nothing for the run to observe. That includes the JOINER's own external commit, which
+        // openmls 0.9 merges inside `finalize` - so a commit pending here is never external.
         let before = group
             .pending_commit()
-            .map(|commit| BeforeMerge::read(&self.provider, group, commit));
+            .map(|commit| BeforeMerge::read(&self.provider, group, commit, false));
         group
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge pending commit error: {:?}", e)))?;

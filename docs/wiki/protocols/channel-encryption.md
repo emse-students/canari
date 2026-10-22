@@ -135,7 +135,7 @@ forgetting.
 | Trigger | What it buys |
 |---|---|
 | **A leaf is removed** (any Remove merged since the mint, read from the key group's clean run since 2026-10-22: [graine-removal-tracker](graine-removal-tracker.md)) | The structural one. The leaver keeps what they could already read and gets **nothing said after they left**. Without it, leaving a community would change nothing |
-| **A new user joins** (`ROTATE_ON_NEW_USER`, pending decision D5) | A newcomer is never handed a seed minted before it arrived, whose earlier indices it could derive. A new DEVICE of a user already present does not rotate: the session is re-distributed at the new epoch |
+| **A new user joins** (`ROTATE_ON_NEW_USER`, decided by the user 2026-10-22) | A newcomer is never handed a seed minted before it arrived, whose earlier indices it could derive. A new DEVICE of a user already present, admitted by an Add, does not rotate: the session is re-distributed at the new epoch. Any leaf an EXTERNAL commit adds counts as a new user, since its credential is the joiner's own claim |
 | **100 messages** (50 once re-distributed) | Slices a talkative sender, so one recovered seed does not yield years |
 | **7 days** (24 hours once re-distributed) | The same for a rare sender, whom a message counter would never slice |
 
@@ -526,6 +526,12 @@ external commit, `POST /internal/distribution-groups/entitlement` (`kind`, `scop
 Social-service answers with the SAME predicates as the routes that serve the GroupInfo
 (`isDistributionGroupEntitled`: a community's members; a private salon's readers). A conversation's
 external commit keeps its own roster check, and a member commit never reaches social-service.
+
+**Before either check, an external commit must join AS the caller's device** (2026-10-22): its path
+leaf, read in the clear by `readCommitFrame`, must name `<authenticated caller>:<deviceId>`, the same
+binding every KeyPackage upload is held to; otherwise `403 commit_identity_mismatch`. Graine's rotation
+counts the leaf an external commit adds as a new user regardless
+([graine-removal-tracker](graine-removal-tracker.md), review item 12).
 
 | Outcome | What the commit gate does |
 | --- | --- |

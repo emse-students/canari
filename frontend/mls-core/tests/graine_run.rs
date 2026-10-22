@@ -220,7 +220,6 @@ fn an_external_rejoin_with_the_same_key_still_ends_the_run() {
 fn a_rejoin_under_a_new_key_is_a_departure() {
     let gid = "g-run-reinstall";
     let (mut alice, _bob) = alice_and_bob(gid);
-    let before = run_id(&mut alice, gid);
 
     // Same identity, fresh manager: a new signature key. Its external commit cannot replace bob's
     // old leaf (that is matched on the KEY), so the old leaf stays until somebody removes it, and
@@ -231,17 +230,62 @@ fn a_rejoin_under_a_new_key_is_a_departure() {
         .join_by_external_commit(&group_info)
         .expect("reinstalled device joins");
     alice.process_incoming_message(gid, &commit).expect("join");
-    assert_eq!(
-        run_id(&mut alice, gid),
-        before,
-        "the join itself added a pair and removed none"
-    );
+    let after_join = run_id(&mut alice, gid);
     remove_device(&mut alice, gid, "bob:dev1");
     assert_ne!(
         run_id(&mut alice, gid),
-        before,
+        after_join,
         "removing the old key's leaf is a departure, though a leaf named bob:dev1 remains"
     );
+}
+
+/// AN EXTERNAL COMMIT IS A NEW USER, WHATEVER ITS CREDENTIAL SAYS. The joiner writes its own leaf,
+/// and nothing in MLS binds that credential to who it is: a device claiming to be a second device
+/// of a present user would otherwise continue the run and be handed the current seed. The server
+/// refuses a leaf that does not name the caller's own device (`readCommitFrame`), and this holds
+/// without it.
+#[test]
+fn an_external_join_ends_the_run_even_when_its_leaf_names_a_present_user() {
+    let gid = "g-run-external-claim";
+    let (mut alice, mut bob) = alice_and_bob(gid);
+    let alice_run = run_id(&mut alice, gid);
+    let bob_run = run_id(&mut bob, gid);
+
+    let mut claimant = make_device("bob", "dev2");
+    let group_info = alice.export_group_info(gid).expect("group info");
+    let (_gid, commit) = claimant
+        .join_by_external_commit(&group_info)
+        .expect("external join");
+    alice.process_incoming_message(gid, &commit).expect("alice");
+    bob.process_incoming_message(gid, &commit).expect("bob");
+
+    assert_ne!(run_id(&mut alice, gid), alice_run);
+    assert_ne!(run_id(&mut bob, gid), bob_run);
+}
+
+/// The JOINER of an external commit has nothing pending: openmls 0.9 merges the commit inside
+/// `finalize`, so the caller's `merge_pending_commit_for` is the debug-logged no-op - never the
+/// `run dropped` ERROR - and the joiner's run starts at its first read, at the epoch it joined.
+#[test]
+fn the_joiners_merge_of_its_own_external_commit_is_a_no_op_not_a_dropped_run() {
+    let gid = "g-run-joiner";
+    let (alice, _bob) = alice_and_bob(gid);
+    let mut carol = make_device("carol", "dev1");
+    let group_info = alice.export_group_info(gid).expect("group info");
+    carol
+        .join_by_external_commit(&group_info)
+        .expect("external join");
+    assert_eq!(
+        carol.merge_pending_commit_with_summary(gid).expect("merge"),
+        None,
+        "nothing pending, so nothing to summarise and nothing dropped"
+    );
+    let first = carol.graine_run(gid).expect("first read");
+    assert_eq!(
+        first.epoch, 2,
+        "the run starts at the epoch the join created"
+    );
+    assert_eq!(carol.graine_run(gid).expect("second read"), first);
 }
 
 /// The run is persisted WITH the tree, so a reload neither loses it nor desynchronises from it.

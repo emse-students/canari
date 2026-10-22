@@ -67,8 +67,10 @@ is about 2.6 MB in one MLS message. Owed, in order:
 (1) rotate on a REMOVAL or a NEW USER only - BUILT 2026-10-22, draft pull request: a clean run per
 key group kept in the MLS state by `mls-core` and judged by `graineOutboundVerdict`
 ([graine-removal-tracker](protocols/graine-removal-tracker.md)). Owed after merge: the rig rows and the
-production ratio named on that page, and the user's confirmation of D5 (a new USER still rotates,
-`ROTATE_ON_NEW_USER`); (2) bound the bundle in bytes and page it, after measuring what the gateway and
+production ratio named on that page, and one read-only pass proving every stored external commit's
+path leaf names its committer (the server now refuses one that does not). A new USER still rotates
+(D5, decided 2026-10-22), and so does any external-commit join, key-group device joins included -
+whether that can be relaxed now the server binds the leaf is open on that page; (2) bound the bundle in bytes and page it, after measuring what the gateway and
 the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
