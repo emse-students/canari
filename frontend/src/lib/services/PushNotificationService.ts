@@ -189,11 +189,9 @@ export async function startPushService(
   // against an iPad WKWebView that calls itself "Macintosh", so an iPad fell through to `null` and
   // this whole service returned as "desktop" - no token, and no report either, because the return is
   // above the reporting path. That is the same defect the login took, at a site its fix did not reach.
-  const deviceOs = detectRuntimeDeviceOs('desktop');
-  const platform: PushPlatform | null =
-    deviceOs === 'android' ? 'android' : deviceOs === 'ios' ? 'ios' : null;
+  const platform = pushPlatform();
   if (!platform) {
-    console.info(`[Push] startPushService noop (${deviceOs} - no FCM)`);
+    console.info(`[Push] startPushService noop (${detectRuntimeDeviceOs('desktop')} - no FCM)`);
     return;
   }
 
@@ -202,6 +200,10 @@ export async function startPushService(
     console.warn('[Push] startPushService aborted: missing currentUserId');
     return;
   }
+
+  // THE TOKEN A SIGN-OUT STILL OWES THE DELETION OF IS NEVER REGISTERED FOR THE NEXT SESSION: the
+  // deletion completes first, or nothing registers (see `endPushRegistration`).
+  if (!(await completeOwedPushTokenDeletion())) return;
 
   const registerOnce = async (): Promise<PushRegistrationOutcome> => {
     return await registerPushToken(async (pushToken) => {
@@ -402,6 +404,80 @@ async function reportPushUnavailable(
   } catch (err) {
     console.warn('[Push] could not report the missing push token', err);
   }
+}
+
+/**
+ * Ends THIS DEVICE's push registration at a sign-out - every sign-out, whatever the server said.
+ *
+ * The server half (`/api/auth/logout` and every revocation end the device's `push_token` row) and
+ * this half each stand alone, so neither depends on the other being reached: here the OS push token
+ * is deleted natively, the push secret erased, and the native push context reduced to the device's
+ * identity, so a push still in flight is dropped rather than shown as the account that left
+ * (`src-tauri/src/commands/push_registration.rs`). Runs with the session already dead, with the
+ * network refusing, and with no registration marker in this tab - none of those is a reason to stay
+ * a destination.
+ *
+ * A deletion that cannot complete now (offline) stays OWED in a durable mark on disk, and is
+ * completed before anything registers again ({@link startPushService}). That is logged as an error,
+ * since until then FCM may still hold this install's token.
+ *
+ * Never rejects: a sign-out does not wait on it to go on, and every failure is logged here.
+ */
+export async function endPushRegistration(): Promise<void> {
+  // The skip key describes the registration that just ended; left, the next sign-in in this tab
+  // would compare a fresh token against it instead of registering.
+  try {
+    sessionStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
+  } catch (err) {
+    console.error('[Push] could not forget the registration skip key at sign-out', err);
+  }
+  const platform = pushPlatform();
+  if (!platform) {
+    console.info('[Push] endPushRegistration noop (no push registration on this platform)');
+    return;
+  }
+  try {
+    const deleted = await invoke<boolean>('end_push_registration');
+    if (deleted) {
+      console.info(`[Push] sign-out ended this device's push registration (${platform})`);
+    } else {
+      console.error(
+        `[Push] sign-out could not delete the ${platform} push token now - the deletion is OWED and completes before the next registration`
+      );
+    }
+  } catch (err) {
+    console.error(
+      '[Push] sign-out did not end every part of the push registration - see the native log',
+      err
+    );
+  }
+}
+
+/**
+ * Completes a token deletion a previous sign-out left owed, and answers whether registering is
+ * allowed now. `false` means the deletion is still owed (logged natively and here): registering
+ * would publish the token of the account that left for the next one.
+ */
+async function completeOwedPushTokenDeletion(): Promise<boolean> {
+  try {
+    const done = await invoke<boolean>('complete_owed_push_token_deletion');
+    if (!done) {
+      console.error(
+        '[Push] registration deferred - the token deletion a sign-out owes did not complete'
+      );
+    }
+    return done;
+  } catch (err) {
+    console.error('[Push] registration deferred - the owed token deletion could not run', err);
+    return false;
+  }
+}
+
+/** The push platform this runtime registers on, or null where there is no push registration. */
+function pushPlatform(): PushPlatform | null {
+  if (!isTauriRuntime()) return null;
+  const deviceOs = detectRuntimeDeviceOs('desktop');
+  return deviceOs === 'android' ? 'android' : deviceOs === 'ios' ? 'ios' : null;
 }
 
 export async function stopPushService(

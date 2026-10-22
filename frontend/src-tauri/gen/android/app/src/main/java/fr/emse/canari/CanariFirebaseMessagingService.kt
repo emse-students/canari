@@ -2539,8 +2539,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // token) until reopen. Best-effort via PushSecret; if the context/secret is missing (device
         // not enrolled yet), the foreground will register the token at the next startup.
         runWithWakeLock("fcm_token_refresh", 15_000L) {
+            // The context first: after a sign-out there is none (the deletion that minted this
+            // token is the sign-out's), and the secret's absence is then expected, not a fault.
             val ctx = MlsContextLoader.loadPushContext(this)
-            val secret = retrievePushSecret(this)
+            val secret = ctx?.let { retrievePushSecret(this) }
             if (ctx == null || secret == null) {
                 Log.d(TAG, "onNewToken: context/secret absent -> backend refresh deferred to foreground")
                 return@runWithWakeLock
@@ -2570,6 +2572,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (msgType == "call_ring_end") {
             Log.d(TAG, "call_ring_end: call=${data["callId"]} reason=${data["reason"]}")
             cancelIncomingCallNotification(this, data["callId"] ?: "")
+            return
+        }
+
+        // A SIGNED-OUT DEVICE SHOWS NOTHING. No account owns this install's pushes until the next
+        // registration is answered (`push_registration.rs`); a push still reaching it was sent
+        // before the server ended the session's registration and FCM forgot the deleted token,
+        // and showing it would show the account that left.
+        if (PushRegistrationEnd.isSignedOut(this)) {
+            Log.w(TAG, "onMessageReceived: dropped type=$msgType - this device is signed out, no account owns its pushes")
             return
         }
 

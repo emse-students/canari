@@ -45,6 +45,25 @@ object PushSecretKeystore {
     }
 
     /**
+     * Erases the stored secret: a sign-out ends the registration it authenticated
+     * ([PushRegistrationEnd]). Only the ciphertext goes - the Keystore key is not the account's
+     * and wraps the next registration's secret. `commit()`, not `apply()`: the caller reports the
+     * sign-out finished, and a pending write a process death drops would bring the secret back.
+     */
+    fun clear(context: Context): Boolean {
+        if (!DirectBoot.storageReadable(context)) {
+            Log.e(TAG, "clear: storage still locked (pre-unlock process) - the secret was NOT erased")
+            return false
+        }
+        val erased = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .remove(PREFS_KEY_ENC)
+            .remove(PREFS_KEY_IV)
+            .commit()
+        if (!erased) Log.e(TAG, "clear: SharedPreferences commit failed - the secret was NOT erased")
+        return erased
+    }
+
+    /**
      * Decrypts the secret stored by [store] and returns the cleartext value.
      * Returns null if the secret was never stored or if the Keystore fails
      * (TEE failure, device reset) - the error is logged to logcat.

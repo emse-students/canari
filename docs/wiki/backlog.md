@@ -444,6 +444,28 @@ Measure first: the maximum number of commits per user per minute on production o
 (`mls_commit_log`, grouped by sender device and minute). Set the limit above that maximum, then add a
 test that the route answers `429` past it and never below it.
 
+## P2 - A push registration is not bound to the session that made it (2026-10-22)
+
+A sign-out ends the device's push registration on both sides since 2026-10-22
+([sessions](sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)), but the
+server half is ONE internal call per ended session, deleting by `(userId, deviceId)`. Two things it
+cannot do without a schema change, which needs the user's yes:
+
+- **A lost call is lost.** Nothing durable records that an ended session still owes its device's
+  push ending; the device's own token deletion is what covers it.
+- **It cannot name the registration it ends.** A re-sign-in on the same device that registered
+  before the call landed would be deleted with it (healing at that device's next launch).
+
+**Proposal (not built).** Migration on chat-delivery: `push_token."sessionId" uuid NULL`, written by
+`POST /mls/push/register` from the access token's session claim (if the access token does not carry
+`sid`, core-service adds it); the internal route deletes `WHERE "sessionId" = :sid` (falling back to
+`(userId, deviceId)` only for NULL rows registered before the column). Migration on core-service:
+an outbox `session_push_endings (sessionId, userId, deviceId, createdAt, attempts, lastError)`
+written in the SAME transaction as the session delete and drained like `account_erasure_jobs` until
+chat-delivery answers 2xx. Backfill: none - pre-existing rows stay NULL and age out at their next
+registration. Together these make a session's end and its push ending one durable fact, and the
+dispatcher unable to reach a device whose session ended even if a call is lost.
+
 ## P3 - A refused membership report is silent on the client (2026-10-22)
 
 A report of `active` now promotes an existing seat only, and is refused (`403 NOT_A_MEMBER`, with
