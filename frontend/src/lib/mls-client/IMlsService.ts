@@ -839,6 +839,23 @@ export interface IMlsService {
     gapAt?: number;
   }>;
   /**
+   * Resubmits every commit of this device whose outcome is unknown (`unresolvedCommits.ts`) - or
+   * only those of `groupIds` - and merges or clears each on the gate's answer. One with no answer
+   * yet stays recorded and pending. Takes the MLS lock itself, so it must never be called holding it.
+   * Called after the gateway connects and before the pending messages are drained.
+   */
+  settleUnresolvedCommits(groupIds?: string[]): Promise<void>;
+  /**
+   * Settles this device's unresolved commit of `groupId` from the server's commit log, as a replay
+   * reads it: `commitAtBase` is the log's row at the record's base epoch (`null` when it has none,
+   * which decides nothing). Our bytes there -> merged; another device's -> cleared. No lock, no
+   * request: the caller holds the client, as it does for the replay itself.
+   */
+  settleUnresolvedCommitFromLog(
+    groupId: string,
+    commitAtBase: string | null
+  ): Promise<'none' | 'merged' | 'cleared' | 'undecided'>;
+  /**
    * Refreshes the server-stored GroupInfo (external-join base) at the current epoch. Best-effort:
    * called after every commit (a new group's first member-add is itself a commit) so a member lacking
    * state can self-join. [[Phase 4]]

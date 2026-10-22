@@ -48,9 +48,13 @@ function commitCtx(accepted: boolean) {
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     clearPendingCommit: vi.fn().mockResolvedValue(undefined),
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
-    // The real one: what it reads of the log is what these cases are about.
-    ownCommitLanded: (BaseMlsService.prototype as unknown as { ownCommitLanded: unknown })
-      .ownCommitLanded,
+    // The real ones: with no unresolved commit recorded they settle nothing (see
+    // `BaseMlsService.unresolvedCommit.test.ts` for the cases where they do).
+    ...Object.fromEntries(
+      ['settleUnresolvedLocked', 'submitRecorded', 'resubmitUnresolved', 'keepUnresolved'].map(
+        (name) => [name, (BaseMlsService.prototype as unknown as Record<string, unknown>)[name]]
+      )
+    ),
   };
 }
 
@@ -66,74 +70,6 @@ describe('BaseMlsService - every accepted own commit dates the leaf', () => {
 
   it('records nothing for a refused commit - the leaf did not change', async () => {
     await expect(runCommitTransaction.call(commitCtx(false), 'g-1', staged, {})).rejects.toThrow();
-    expect(readLeafRefreshLedger(U, D)['g-1']).toBeUndefined();
-  });
-});
-
-describe('BaseMlsService.runCommitTransaction - a submission whose answer was lost', () => {
-  // THE STAGED COMMIT MUST NOT OUTLIVE AN UNANSWERED SUBMIT. Left pending, the next checkpoint
-  // persists it, and from then on openmls refuses every commit this device stages in the group -
-  // no Add, no Remove, no refresh - until something clears it, which nothing did.
-  const OURS = 'AQ=='; // base64 of the staged commit [1]
-
-  function lostAnswerCtx(
-    replay: () => Promise<{
-      commits: Array<{ baseEpoch: number; proto: string }>;
-      activeEpoch: number;
-    }>
-  ) {
-    const ctx = commitCtx(true);
-    ctx.delivery.submitCommit = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
-    return Object.assign(ctx, {
-      delivery: {
-        ...ctx.delivery,
-        fetchCommitsSince: vi.fn(async () => ({ belowFloor: false, ...(await replay()) })),
-      },
-    });
-  }
-
-  it('merges when the server log holds OUR commit at the base epoch - it was accepted', async () => {
-    const ctx = lostAnswerCtx(async () => ({
-      commits: [{ baseEpoch: 5, proto: OURS }],
-      activeEpoch: 6,
-    }));
-    await runCommitTransaction.call(ctx, 'g-1', staged, {});
-    expect(ctx.delivery.fetchCommitsSince).toHaveBeenCalledWith('g-1', 5);
-    expect(ctx.mergePendingCommit).toHaveBeenCalledTimes(1);
-    expect(ctx.clearPendingCommit).not.toHaveBeenCalled();
-    expect(readLeafRefreshLedger(U, D)['g-1']).toMatchObject({ epoch: 6 });
-  });
-
-  it('clears and rethrows when the log does not hold it - nothing was accepted', async () => {
-    const ctx = lostAnswerCtx(async () => ({ commits: [], activeEpoch: 5 }));
-    await expect(runCommitTransaction.call(ctx, 'g-1', staged, {})).rejects.toThrow(
-      'Failed to fetch'
-    );
-    expect(ctx.clearPendingCommit).toHaveBeenCalledTimes(1);
-    expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
-    expect(ctx.catchUpOnRefusedCommit).not.toHaveBeenCalled();
-  });
-
-  it('clears, catches up and rethrows when ANOTHER commit took the base epoch', async () => {
-    const ctx = lostAnswerCtx(async () => ({
-      commits: [{ baseEpoch: 5, proto: 'Ag==' }],
-      activeEpoch: 6,
-    }));
-    await expect(runCommitTransaction.call(ctx, 'g-1', staged, {})).rejects.toThrow();
-    expect(ctx.clearPendingCommit).toHaveBeenCalledTimes(1);
-    expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
-    expect(ctx.catchUpOnRefusedCommit).toHaveBeenCalledWith('g-1', 5, 6);
-  });
-
-  it('clears and rethrows when the log cannot be read either', async () => {
-    const ctx = lostAnswerCtx(async () => {
-      throw new TypeError('offline');
-    });
-    await expect(runCommitTransaction.call(ctx, 'g-1', staged, {})).rejects.toThrow(
-      'Failed to fetch'
-    );
-    expect(ctx.clearPendingCommit).toHaveBeenCalledTimes(1);
-    expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
     expect(readLeafRefreshLedger(U, D)['g-1']).toBeUndefined();
   });
 });

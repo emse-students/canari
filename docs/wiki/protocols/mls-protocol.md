@@ -691,11 +691,22 @@ commit-gate rules hold unchanged. A refused refresh clears its pending commit an
 
 **A submit with no answer (every commit, not only the refresh).** A transport failure or a non-OK
 answer to `submitCommit` used to leave the staged commit pending; the next checkpoint persisted it,
-and openmls then refused every commit the device staged in that group. `runCommitTransaction` now
-reads the server's commit log at its base epoch (`ownCommitLanded`): OUR bytes there mean the commit
-was accepted and only the answer was lost, so it merges; anything else (nothing, another device's
-commit, an unreadable log) clears it, catches up when another commit took the epoch, and rethrows.
-An unreadable log is the one case left to rung 2, exactly as a crash between accept and merge.
+and openmls then refused every commit the device staged in that group. Reading the server's log at
+that moment does not answer it either: an empty log says "not landed YET" as well as "never", so a
+clear decided from it races the request still in flight. So the answer is made definitive
+(`unresolvedCommits.ts`): `runCommitTransaction` RESUBMITS THE SAME BYTES, and the commit gate answers
+a commit it already accepted from that device at that base epoch as accepted again (`duplicate`,
+[chat-delivery](../services/chat-delivery.md)). Accepted or duplicate -> merge; a refusal (another
+commit took the epoch, or a 4xx, sent only before the gate) -> clear and catch up; still no answer
+(a transport failure, a 5xx, or `concurrent_commit` - a lock our own first request may hold) -> the
+staged commit is KEPT, recorded durably per device, checkpointed, and `CommitOutcomeUnknownError`
+(a `TransportFailureError`) is thrown. Until a resubmission answers, the group takes no commit and no
+send. The resubmission runs at the next gateway connection (before the pending messages are drained),
+before the next send or commit in the group, and a commit replay settles it from the log only when
+the log holds a row AT the record's base epoch, which is decided for good. No clock decides anything.
+Left: an Add accepted this way loses its Welcome (the welcome-request repairs cover it), a log row
+pruned before the resubmission reads as a refusal, and a crash between submit and record is the old
+class (rung 2).
 
 **Staged only on the branch the server publishes.** The server's gate compares epoch NUMBERS, so a
 device that merged a commit nobody else did is at the right number on the wrong branch, and its

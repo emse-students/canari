@@ -225,6 +225,8 @@ export interface ValidateCommitBody {
 export interface ValidateCommitResult {
   accepted: boolean;
   newEpoch?: number;
+  /** True when this exact commit had already been accepted: a resubmission, answered again. */
+  duplicate?: boolean;
   currentEpoch?: number;
   reason?: string;
 }
@@ -1879,6 +1881,21 @@ export class MessagingService {
       // accepts baseEpoch==0. The old bypass (accepting any baseEpoch when activeEpoch==0)
       // let an inconsistent device fast-forward the counter (e.g. baseEpoch=5 -> activeEpoch=6)
       // and desynchronize everyone (H4).
+      // A RESUBMISSION OF A COMMIT THIS GATE ALREADY ACCEPTED IS ANSWERED AS ACCEPTED. A committer
+      // whose first submission got no answer cannot tell "not landed yet" from "never landed", and
+      // resending the SAME bytes is how it learns which - only if the gate recognises them. The log
+      // row is the proof (keyed by base epoch, written in the advance's transaction, holding the
+      // bytes verbatim); nothing is advanced or fanned out again, since the first acceptance did both.
+      if (baseEpoch < group.activeEpoch) {
+        const prior = await this.commitLogRepo.findOne({ where: { groupId, baseEpoch } });
+        if (prior && prior.commit === commitProto && prior.senderDeviceId === deviceId) {
+          this.logger.log(
+            `[COMMIT][${traceId}] DUPLICATE group=${groupId} device=${deviceId} baseEpoch=${baseEpoch} ` +
+              `- already accepted, answered again (activeEpoch=${group.activeEpoch})`
+          );
+          return { accepted: true, newEpoch: baseEpoch + 1, duplicate: true };
+        }
+      }
       if (baseEpoch !== group.activeEpoch) {
         this.logger.warn(
           `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} activeEpoch=${group.activeEpoch}`

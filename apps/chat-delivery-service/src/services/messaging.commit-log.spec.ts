@@ -462,6 +462,59 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(fanOut).not.toHaveBeenCalled();
     });
 
+    /**
+     * A RESUBMISSION OF THE SAME COMMIT IS ANSWERED, NOT REFUSED. A committer whose first submission
+     * got no answer cannot tell "not landed yet" from "never landed"; resending the SAME bytes makes
+     * the answer definitive only if the gate recognises its own accepted commit. Before this it
+     * answered `epoch_mismatch`, and the committer cleared a commit everyone else had applied.
+     */
+    describe('a resubmission of an accepted commit', () => {
+      const resend = (proto = memberCommitFrame('group-1', 5n)) =>
+        service.validateCommit(
+          { groupId: 'group-1', deviceId: 'device-1', baseEpoch: 5, proto, senderId: 'user-1' },
+          'user-1'
+        );
+
+      it('is an idempotent success: no second advance, no second fan-out', async () => {
+        groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 6 });
+        commitLogRepo.findOne.mockResolvedValue({
+          groupId: 'group-1',
+          baseEpoch: 5,
+          commit: memberCommitFrame('group-1', 5n),
+          senderDeviceId: 'device-1',
+        });
+        const fanOut = jest.spyOn(service, 'sendMessage');
+
+        await expect(resend()).resolves.toEqual({ accepted: true, newEpoch: 6, duplicate: true });
+        expect(commitLogRepo.findOne).toHaveBeenCalledWith({
+          where: { groupId: 'group-1', baseEpoch: 5 },
+        });
+        expect(transaction).not.toHaveBeenCalled();
+        expect(fanOut).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['other bytes took the epoch', { commit: 'b3RoZXI=', senderDeviceId: 'device-1' }],
+        [
+          'the same bytes from another device',
+          { commit: memberCommitFrame('group-1', 5n), senderDeviceId: 'device-2' },
+        ],
+        ['the log row is gone', null],
+      ])('is still a mismatch when %s', async (_n, row) => {
+        groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 6 });
+        commitLogRepo.findOne.mockResolvedValue(
+          row && { groupId: 'group-1', baseEpoch: 5, ...row }
+        );
+
+        await expect(resend()).resolves.toEqual({
+          accepted: false,
+          currentEpoch: 6,
+          reason: 'epoch_mismatch',
+        });
+        expect(transaction).not.toHaveBeenCalled();
+      });
+    });
+
     it('refuses a commit with no proto instead of advancing the epoch past it', async () => {
       // The epoch it would create is one NOTHING can ever replay: the commit-log is keyed UNIQUE on
       // (groupId, baseEpoch), so the row skipped here cannot be written later by anybody. Every

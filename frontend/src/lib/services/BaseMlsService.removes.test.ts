@@ -38,6 +38,13 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
       runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
       freshEpoch: vi.fn().mockResolvedValue(5),
       mergePendingCommit: vi.fn().mockResolvedValue(undefined),
+      // REAL: with no unresolved commit recorded they settle nothing and submit once.
+      ...Object.fromEntries(
+        ['settleUnresolvedLocked', 'submitRecorded'].map((name) => [
+          name,
+          (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],
+        ])
+      ),
     };
     const run = (
       BaseMlsService.prototype as unknown as {

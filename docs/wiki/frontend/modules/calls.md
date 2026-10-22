@@ -336,8 +336,8 @@ conversation's CURRENT MLS epoch (`setupEncryption`), the caller before the ring
 the answer, so an epoch move in between gives the two ends different keys. `CallService` holds the
 periodic leaf refresh of its call's group from leaving `idle` until the call is over
 ([mls-protocol](../../protocols/mls-protocol.md#the-periodic-leaf-refresh)). It holds only THIS
-device: another device of either user, or a commit a person asked for (an Add, a Remove), can still
-move the epoch in that window - the class `onUndecryptable` reports.
+device: another device or another member can still move the epoch while a call is being set up - the
+class `onUndecryptable` reports. Calls are dev builds only, and that is accepted for now.
 
 **The switches** (`frontend/src/lib/features.ts`, pinned by `features.test.ts`):
 

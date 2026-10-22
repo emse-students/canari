@@ -320,6 +320,53 @@ fn a_base_that_does_not_parse_is_an_error_not_a_verdict() {
 }
 
 #[test]
+fn a_staged_commit_whose_answer_was_lost_survives_a_reload_and_merges_afterwards() {
+    // An UNANSWERED commit is kept pending, durably, until a resubmission settles it - possibly at
+    // the next connection, after a restart. So the pending commit must live in the saved state, and
+    // the reloaded device must be able to merge it (the resubmission says accepted) and the peer
+    // must then still follow it.
+    let gid = "g-refresh-reload";
+    let (mut alice, mut bob) = alice_and_bob(gid);
+    let epoch = bob.get_epoch(gid).expect("epoch");
+    let (commit, _base) = bob.stage_self_update(gid).expect("stage");
+    let saved = bob.save_state().expect("save with the commit pending");
+
+    let mut reloaded =
+        MlsManager::load_or_create("bob", "dev1", Some(saved.clone())).expect("reload");
+    assert_eq!(
+        reloaded.get_epoch(gid).expect("epoch"),
+        epoch,
+        "still pending"
+    );
+    assert!(
+        reloaded.stage_self_update(gid).is_err(),
+        "the pending commit is still there, so a second one is refused"
+    );
+    reloaded
+        .merge_pending_commit_for(gid)
+        .expect("merged after the reload");
+    assert_eq!(reloaded.get_epoch(gid).expect("epoch"), epoch + 1);
+    alice
+        .process_incoming_message(gid, &commit)
+        .expect("alice applies it");
+    let frame = reloaded.send_message(gid, b"after").expect("send");
+    assert_eq!(
+        alice
+            .process_incoming_message(gid, &frame)
+            .expect("decrypt")
+            .as_deref(),
+        Some(&b"after"[..])
+    );
+
+    // And the other answer: a reloaded device can clear it just as well.
+    let mut again = MlsManager::load_or_create("bob", "dev1", Some(saved)).expect("reload");
+    again
+        .clear_pending_commit_for(gid)
+        .expect("cleared after the reload");
+    assert_eq!(again.get_epoch(gid).expect("epoch"), epoch);
+}
+
+#[test]
 fn a_self_update_on_an_unknown_group_is_a_typed_absence() {
     let mut alice = make_device("alice", "dev1");
     assert!(matches!(

@@ -51,6 +51,23 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     exportRatchetTree: vi.fn().mockResolvedValue(new Uint8Array([1])),
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
+    userId: 'user-a',
+    deviceId: 'web-a',
+    getLocalGroups: vi.fn(() => []),
+    // REAL: with no unresolved commit recorded they settle nothing and submit once, which is the
+    // case here (`BaseMlsService.unresolvedCommit.test.ts` owns the others).
+    ...Object.fromEntries(
+      [
+        'settleUnresolvedLocked',
+        'settleUnresolvedCommitFromLog',
+        'submitRecorded',
+        'resubmitUnresolved',
+        'keepUnresolved',
+      ].map((name) => [
+        name,
+        (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],
+      ])
+    ),
     // The REAL method, not a stand-in: it IS the entrance under test.
     catchUpOnRefusedCommit: (
       BaseMlsService.prototype as unknown as {

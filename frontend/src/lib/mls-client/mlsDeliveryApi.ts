@@ -1107,7 +1107,14 @@ export class MlsDeliveryApi {
     groupInfoBase64?: string,
     admits?: Array<{ userId: string; deviceId: string }>,
     removes?: CommitRemoval[]
-  ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
+  ): Promise<{
+    accepted: boolean;
+    reason?: string;
+    currentEpoch?: number;
+    newEpoch?: number;
+    /** True when the gate had ALREADY accepted these exact bytes: a resubmission, answered again. */
+    duplicate?: boolean;
+  }> {
     const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
       method: 'POST',
       headers: await this.auth({ 'Content-Type': 'application/json' }),

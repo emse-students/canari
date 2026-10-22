@@ -15,6 +15,7 @@ function makeMls(overrides: Record<string, unknown>) {
     getEpoch: vi.fn().mockReturnValue(0),
     fetchCommitsSince: vi.fn(),
     processIncomingMessage: vi.fn().mockResolvedValue(null),
+    settleUnresolvedCommitFromLog: vi.fn().mockResolvedValue('none'),
     ...overrides,
   } as any;
 }
@@ -24,6 +25,53 @@ const noop = () => {};
 describe('attemptCommitReplay', () => {
   beforeEach(() => {
     noteFrameConsumed.mockReset();
+  });
+
+  /**
+   * THIS DEVICE'S OWN UNRESOLVED COMMIT IS SETTLED BY THE LOG, NEVER PROCESSED FROM IT. openmls
+   * refuses to process a commit of its own, so a replay that met ours at our base epoch stopped
+   * there and left the group to rung 2 - while the row was the very proof that it had been
+   * accepted. The row at our base epoch is handed to the settlement first, which merges (ours) or
+   * clears (another's), and the replay carries on from the epoch that decided.
+   */
+  it('hands the row at the base epoch to the unresolved-commit settlement before applying anything', async () => {
+    let epoch = 5;
+    const mls = makeMls({
+      getEpoch: vi.fn(() => epoch),
+      fetchCommitsSince: vi.fn().mockResolvedValue({
+        commits: [
+          { baseEpoch: 5, proto: 'AQ==' },
+          { baseEpoch: 6, proto: 'Ag==' },
+        ],
+        activeEpoch: 7,
+        belowFloor: false,
+      }),
+      settleUnresolvedCommitFromLog: vi.fn(async () => {
+        epoch = 6;
+        return 'merged';
+      }),
+      processIncomingMessage: vi.fn(async () => {
+        epoch++;
+        return null;
+      }),
+    });
+
+    const result = await attemptCommitReplay(mls, 'g', 'user-a', noop);
+
+    expect(mls.settleUnresolvedCommitFromLog).toHaveBeenCalledExactlyOnceWith('g', 'AQ==');
+    expect(mls.processIncomingMessage).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ healed: true, applied: 2 });
+  });
+
+  it('settles with NO row when the log has nothing at the base epoch yet', async () => {
+    const mls = makeMls({
+      getEpoch: vi.fn(() => 5),
+      fetchCommitsSince: vi
+        .fn()
+        .mockResolvedValue({ commits: [], activeEpoch: 5, belowFloor: false }),
+    });
+    await attemptCommitReplay(mls, 'g', 'user-a', noop);
+    expect(mls.settleUnresolvedCommitFromLog).toHaveBeenCalledExactlyOnceWith('g', null);
   });
 
   /**

@@ -12,6 +12,7 @@ import {
   type LeafRefreshDeps,
 } from './leafRefresh';
 import { CommitRefusedError } from './CommitRefusedError';
+import { CommitOutcomeUnknownError } from './unresolvedCommits';
 
 /**
  * THE PERIODIC LEAF REFRESH: WHEN A DEVICE REPLACES ITS OWN LEAF, AND EVERY CASE IN WHICH IT MUST NOT.
@@ -213,6 +214,15 @@ describe('refreshLeafIfDue', () => {
     refreshOwnLeaf.mockResolvedValue(undefined);
     expect(await refreshLeafIfDue(d, G)).toBe('refreshed');
     expect(refreshOwnLeaf).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a refresh whose outcome is UNKNOWN as unresolved, dating nothing', async () => {
+    refreshOwnLeaf.mockRejectedValue(new CommitOutcomeUnknownError(G, 7, 'offline'));
+    const d = deps({ ownLeafMintedAt: async () => (NOW - 8 * DAY) / 1000 });
+    expect(await refreshLeafIfDue(d, G)).toBe('unresolved');
+    expect(readLeafRefreshLedger(U, D)[G]).toBeUndefined();
+    expect(checkpoint).not.toHaveBeenCalled();
+    expect(lines.join(' | ')).toContain('UNKNOWN outcome');
   });
 
   it('is held while something in the group needs the epoch to stay put (a call being set up)', async () => {

@@ -1047,7 +1047,7 @@ group names nobody. The client removes exactly those leaves
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices); answers `receivedAt`, the `Date` written into every queued copy's `createdAt` ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)) |
-| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22) |
+| POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22). A RESUBMISSION of the exact bytes the log already holds at that base epoch from the same device is answered `{ accepted: true, duplicate: true }` with nothing advanced or fanned out again - how a committer whose first answer was lost learns the outcome ([mls-protocol](../protocols/mls-protocol.md#the-periodic-leaf-refresh)) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
