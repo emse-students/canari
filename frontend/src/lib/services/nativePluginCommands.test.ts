@@ -118,8 +118,6 @@ describe('keystore mutations stay behind the at-rest guard', () => {
     expect(permissions).not.toMatch(/allow-store|allow-delete/);
   });
 
-  it('grants no store and no delete to the app windows either', () => {
-    const capabilities = read('../../../src-tauri/capabilities/default.json');
-    expect(capabilities).not.toMatch(/keystore:allow-(store|delete)/);
-  });
+  // The app windows' side - every capability file, not only `default.json` - is held in
+  // `tauriCapabilities.test.ts`, which already reads the whole directory.
 });

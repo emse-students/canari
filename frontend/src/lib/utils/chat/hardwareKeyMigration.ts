@@ -25,7 +25,11 @@
  */
 import { endIntoKeyRecovery } from '$lib/db/deviceKeyGate';
 import type { LocalStateOpenResult } from '$lib/mls-client';
-import { HardwareKeyUnavailableError, type HardwareKeyPort } from '$lib/crypto/hardwareHeldKey';
+import {
+  HardwareKeyUnavailableError,
+  type AtRestKeyScheme,
+  type HardwareKeyPort,
+} from '$lib/crypto/hardwareHeldKey';
 import { KeyChangeInterruptedError } from './pinChange';
 
 /** What {@link migrateToHardwareHeldKey} did. */
@@ -194,4 +198,19 @@ export function startHardwareKeyMigration(
 /** Settles once no migration is running in this page. Never rejects. */
 export async function whenHardwareKeyMigrationSettled(): Promise<void> {
   if (inFlight) await inFlight.catch(() => {});
+}
+
+/**
+ * The at-rest scheme of `userId`, read only once no re-key is running in this page - THE ONE WAY a
+ * login, a PIN change or a recovery reads it. The native side settles the marker under the same lock
+ * the re-key's own writes take (`at_rest_key.rs`); this half keeps a page from acting on a scheme
+ * its own migration is about to change. The migration itself reads `port.scheme` directly: waiting
+ * here would wait on itself.
+ */
+export async function settledAtRestScheme(
+  port: Pick<HardwareKeyPort, 'scheme'>,
+  userId: string
+): Promise<AtRestKeyScheme> {
+  await whenHardwareKeyMigrationSettled();
+  return port.scheme(userId);
 }

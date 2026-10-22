@@ -44,14 +44,51 @@ use crate::keystore_bridge::PluginDeviceKeyStore;
 /// factory wipe (`clear_app_data`: not in `KEPT_AT_TOP_LEVEL`).
 pub(crate) const AT_REST_KEY_MARKER_DIR: &str = "at_rest_keys";
 
-/// The keystore alias prefix every device-key entry of `user_id` starts with.
-fn alias_prefix(user_id: &str) -> String {
-    format!("mls_device_key_{user_id}_")
+/// The keystore alias of one device's key - the entry the background push reads.
+///
+/// NOT PARSEABLE BACK INTO ITS PARTS: a user id may contain `_` (`[A-Za-z0-9_.@-]`), and a device id
+/// embeds the user id (`<platform>-<userId>-...`), so `mls_device_key_alice_x_...` may be account
+/// `alice` or account `alice_x`. The guard therefore matches the EXACT alias a marker recorded.
+pub(crate) fn device_key_alias(user_id: &str, device_id: &str) -> String {
+    format!("mls_device_key_{user_id}_{device_id}")
 }
 
-/// The keystore alias of one device's key - the entry the background push reads.
-pub(crate) fn device_key_alias(user_id: &str, device_id: &str) -> String {
-    format!("{}{device_id}", alias_prefix(user_id))
+/// ONE LOCK FOR THE MARKER AND THE KEYSTORE ENTRY IT GUARDS. Every read-modify of a marker
+/// ([`settle_scheme`], [`prepare`], [`mark_hardware`], [`forget_marker`]) and every keystore
+/// mutation with its guard verdict (`PluginDeviceKeyStore::store_guarded` / `delete_guarded`) runs
+/// under it. Without it a settle could read a `migrating` marker in the instant between [`prepare`]
+/// writing it and the key reaching the entry, and REVERT a re-key that was about to move rows.
+static AT_REST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Takes [`AT_REST_LOCK`]. It guards an ORDER, not a value: a holder that panicked leaves the files
+/// in a state every reader already handles, so a poisoned lock is taken as it is.
+pub(crate) fn at_rest_guard() -> std::sync::MutexGuard<'static, ()> {
+    AT_REST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Why the guard refused a keystore mutation - TYPED, so a caller tells a held key from a marker
+/// it cannot read without reading prose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum GuardRefusal {
+    /// A marker names this entry: it holds that account's hardware-held key.
+    HeldKey(MarkerScheme),
+    /// A marker cannot be listed or read. Which entry it guards is then unknown, so EVERY entry is
+    /// refused until it is readable or reset - failing open would be the one way to lose a key.
+    Unreadable(String),
+}
+
+impl std::fmt::Display for GuardRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GuardRefusal::HeldKey(scheme) => write!(
+                f,
+                "the entry holds a hardware-held key ({scheme:?}) - only the reset frees it"
+            ),
+            GuardRefusal::Unreadable(why) => write!(f, "an at-rest marker is unreadable ({why})"),
+        }
+    }
 }
 
 /// HKDF `info` for the key check value. Versioned: a change of derivation is a change of format.
@@ -170,12 +207,58 @@ pub(crate) fn read_marker(data_dir: &Path, user_id: &str) -> MarkerRead {
     }
 }
 
-/// Writes `marker` durably: a synced temporary file, then a rename, so a reader sees the previous
-/// marker or this one and a power loss cannot leave a torn one.
+/// Records one durability step, for the tests that hold their ORDER (a power loss cannot be
+/// simulated here, the order that makes it harmless can be checked). Nothing outside tests.
+fn durability_step(what: &str) {
+    #[cfg(test)]
+    DURABILITY_STEPS.with(|s| s.borrow_mut().push(what.to_string()));
+    let _ = what;
+}
+
+#[cfg(test)]
+thread_local! {
+    static DURABILITY_STEPS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Makes a rename, a creation or an unlink in `dir` durable by syncing the DIRECTORY itself.
+///
+/// WHY: POSIX makes a file's own bytes durable with its `fsync`, but the directory entry - which
+/// name points at which file - only with an `fsync` of the directory. F2FS, the file system of most
+/// Android phones, follows that strictly: after a power loss a rename that was never synced in its
+/// directory can come back undone, which here would resurrect the PREVIOUS marker (a `migrating`
+/// after the rows moved, or a marker the reset had removed). Windows has no directory handle to sync
+/// and journals the metadata itself, so the call is a no-op there.
+fn sync_dir(dir: &Path) -> Result<(), String> {
+    durability_step("sync dir");
+    #[cfg(unix)]
+    std::fs::File::open(dir)
+        .and_then(|d| d.sync_all())
+        .map_err(|e| format!("sync dir {}: {e}", dir.display()))?;
+    #[cfg(not(unix))]
+    log::debug!(
+        "[AT_REST_KEY] no directory sync on this platform: {}",
+        dir.display()
+    );
+    Ok(())
+}
+
+/// The marker directory, created durably the first time: the new directory's own entry lives in
+/// the data directory, which is synced for the same reason as a rename ([`sync_dir`]).
+fn ensure_marker_dir(data_dir: &Path) -> Result<PathBuf, String> {
+    let dir = marker_dir(data_dir);
+    if !dir.is_dir() {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("create marker dir: {e}"))?;
+        durability_step("create dir");
+        sync_dir(data_dir)?;
+    }
+    Ok(dir)
+}
+
+/// Writes `marker` durably: a synced temporary file, a rename, then a sync of the directory, so a
+/// reader sees the previous marker or this one, and a power loss cannot bring the previous one back.
 pub(crate) fn write_marker(data_dir: &Path, marker: &Marker) -> Result<(), String> {
     use std::io::Write;
-    let dir = marker_dir(data_dir);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dir = ensure_marker_dir(data_dir)?;
     let path = marker_path(data_dir, &marker.user_id);
     let tmp = path.with_extension("json.tmp");
     let body = serde_json::to_vec(marker).map_err(|e| e.to_string())?;
@@ -184,9 +267,11 @@ pub(crate) fn write_marker(data_dir: &Path, marker: &Marker) -> Result<(), Strin
         f.write_all(&body)
             .map_err(|e| format!("write marker tmp: {e}"))?;
         f.sync_all().map_err(|e| format!("sync marker tmp: {e}"))?;
+        durability_step("sync tmp");
     }
     std::fs::rename(&tmp, &path).map_err(|e| format!("rename marker: {e}"))?;
-    Ok(())
+    durability_step("rename");
+    sync_dir(&dir)
 }
 
 /// Removes `user_id`'s marker - THE EXPLICIT RESET, and the only way the keystore entry stops being
@@ -195,6 +280,8 @@ pub(crate) fn write_marker(data_dir: &Path, marker: &Marker) -> Result<(), Strin
 pub(crate) fn forget_marker(data_dir: &Path, user_id: &str) -> Result<(), String> {
     match std::fs::remove_file(marker_path(data_dir, user_id)) {
         Ok(()) => {
+            durability_step("remove");
+            sync_dir(&marker_dir(data_dir))?;
             log::info!("[AT_REST_KEY] marker removed - the keystore entry is no longer guarded");
             Ok(())
         }
@@ -256,13 +343,17 @@ pub(crate) fn settle_scheme(
 /// key it names (kcv): rows may already sit under it. Anything else means the key never reached the
 /// keystore, nothing is sealed under it, and a fresh key is safe.
 ///
-/// The marker is written `migrating`, naming `alias`, BEFORE the key is returned: from then on no
-/// other key may replace that entry ([`guard_write`]).
+/// The marker is written `migrating`, naming `alias`, then the key is WRITTEN TO THAT ENTRY and read
+/// back (`write_entry`), both before the key is returned - and the caller holds [`at_rest_guard`]
+/// across the whole of it. So a `migrating` marker whose entry lacks its key is only ever seen after a
+/// crash between the two writes, never by a concurrent [`settle_scheme`]: that one would revert it.
+/// A failed `write_entry` leaves exactly that crash state, which the next settle reverts.
 pub(crate) fn prepare(
     data_dir: &Path,
     user_id: &str,
     alias: &str,
     read_entry: impl FnOnce(&str) -> EntryRead,
+    write_entry: impl FnOnce(&str, &[u8; 32]) -> Result<(), String>,
 ) -> Result<[u8; 32], String> {
     match read_marker(data_dir, user_id) {
         MarkerRead::Present(m) if m.scheme == MarkerScheme::Hardware => {
@@ -294,7 +385,13 @@ pub(crate) fn prepare(
             kcv: key_check_value(&key),
         },
     )?;
-    log::info!("[AT_REST_KEY] migration started: a random key generated, marker written");
+    durability_step("marker migrating");
+    write_entry(alias, &key).map_err(|e| {
+        log::error!("[AT_REST_KEY] the new key did not reach the keystore ({e}) - no row moves");
+        format!("the new key did not reach the keystore: {e}")
+    })?;
+    durability_step("entry written");
+    log::info!("[AT_REST_KEY] migration started: a random key generated, marker and entry written");
     Ok(key)
 }
 
@@ -368,18 +465,20 @@ pub(crate) enum EntryWrite {
     /// an unchanged entry is never rewritten (every login asks).
     KeepIfHeld,
     /// Another key, or a marker that cannot be read: the entry is the only copy of the key.
-    Refused(String),
+    Refused(GuardRefusal),
 }
 
 /// What the guard answers a delete of one keystore entry.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum EntryDelete {
     Free,
-    Refused(String),
+    Refused(GuardRefusal),
 }
 
-/// The markers whose account owns `alias`, read: one in practice. Every marker file is considered, so
-/// a marker that cannot be parsed still guards its account's entries (its NAME says whose it is).
+/// The markers that guard `alias`: every readable marker whose recorded alias IS `alias` - the exact
+/// string, never a prefix, since an alias cannot be split back into its account
+/// ([`device_key_alias`]) - and every marker that cannot be read, because nothing then says which
+/// entry it guards.
 fn guarding_markers(data_dir: &Path, alias: &str) -> Result<Vec<MarkerRead>, String> {
     let entries = match std::fs::read_dir(marker_dir(data_dir)) {
         Ok(e) => e,
@@ -396,8 +495,10 @@ fn guarding_markers(data_dir: &Path, alias: &str) -> Result<Vec<MarkerRead>, Str
         let Some(user_id) = hex_decode(stem) else {
             continue;
         };
-        if alias.starts_with(&alias_prefix(&user_id)) {
-            out.push(read_marker(data_dir, &user_id));
+        match read_marker(data_dir, &user_id) {
+            MarkerRead::Present(m) if m.alias == alias => out.push(MarkerRead::Present(m)),
+            MarkerRead::Present(_) | MarkerRead::Absent => {}
+            unreadable @ MarkerRead::Unreadable(_) => out.push(unreadable),
         }
     }
     Ok(out)
@@ -408,7 +509,7 @@ fn guarding_markers(data_dir: &Path, alias: &str) -> Result<Vec<MarkerRead>, Str
 pub(crate) fn guard_write(data_dir: &Path, alias: &str, key: &[u8; 32]) -> EntryWrite {
     let markers = match guarding_markers(data_dir, alias) {
         Ok(m) => m,
-        Err(e) => return EntryWrite::Refused(e),
+        Err(e) => return EntryWrite::Refused(GuardRefusal::Unreadable(e)),
     };
     let kcv = key_check_value(key);
     let mut verdict = EntryWrite::Free;
@@ -417,28 +518,37 @@ pub(crate) fn guard_write(data_dir: &Path, alias: &str, key: &[u8; 32]) -> Entry
             MarkerRead::Absent => {}
             MarkerRead::Present(m) if m.kcv == kcv => verdict = EntryWrite::KeepIfHeld,
             MarkerRead::Present(m) => {
-                return EntryWrite::Refused(format!(
-                    "the entry holds this account's hardware-held key ({:?}) - another key may not replace it",
-                    m.scheme
-                ))
+                return EntryWrite::Refused(GuardRefusal::HeldKey(m.scheme));
             }
             MarkerRead::Unreadable(why) => {
-                return EntryWrite::Refused(format!("the at-rest marker is unreadable ({why})"))
+                return EntryWrite::Refused(GuardRefusal::Unreadable(why));
             }
         }
     }
     verdict
 }
 
-/// THE ONE RULE FOR A KEYSTORE DELETE: never while a marker of the entry's account exists.
+/// THE ONE RULE FOR A KEYSTORE DELETE: never an entry a marker names, and nothing while a marker
+/// cannot be read.
 pub(crate) fn guard_delete(data_dir: &Path, alias: &str) -> EntryDelete {
     match guarding_markers(data_dir, alias) {
-        Err(e) => EntryDelete::Refused(e),
-        Ok(markers) if markers.iter().all(|m| *m == MarkerRead::Absent) => EntryDelete::Free,
-        Ok(_) => EntryDelete::Refused(
-            "the entry may hold this account's hardware-held key - only the reset removes it"
-                .into(),
-        ),
+        Err(e) => EntryDelete::Refused(GuardRefusal::Unreadable(e)),
+        Ok(markers) => match markers.into_iter().next() {
+            None | Some(MarkerRead::Absent) => EntryDelete::Free,
+            Some(MarkerRead::Present(m)) => EntryDelete::Refused(GuardRefusal::HeldKey(m.scheme)),
+            Some(MarkerRead::Unreadable(why)) => {
+                EntryDelete::Refused(GuardRefusal::Unreadable(why))
+            }
+        },
+    }
+}
+
+/// The keystore alias `user_id`'s marker recorded, if a readable marker exists - what the account
+/// deletion must remove, which is not necessarily the alias built from today's device id.
+pub(crate) fn recorded_alias(data_dir: &Path, user_id: &str) -> Option<String> {
+    match read_marker(data_dir, user_id) {
+        MarkerRead::Present(m) => Some(m.alias),
+        MarkerRead::Absent | MarkerRead::Unreadable(_) => None,
     }
 }
 
@@ -459,6 +569,7 @@ pub(crate) async fn cle_au_repos_schema(
     user_id: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let _lock = at_rest_guard();
         let scheme = settle_scheme(&data_dir(&app)?, &user_id, |alias| read_entry(&app, alias));
         log::debug!(
             "[AT_REST_KEY] scheme for {}: {}",
@@ -482,7 +593,22 @@ pub(crate) async fn cle_au_repos_preparer(
     tauri::async_runtime::spawn_blocking(move || {
         let dir = data_dir(&app)?;
         let alias = device_key_alias(&user_id, &device_id);
-        let key = prepare(&dir, &user_id, &alias, |a| read_entry(&app, a))?;
+        let store = PluginDeviceKeyStore::new(app.clone());
+        let _lock = at_rest_guard();
+        let key = prepare(
+            &dir,
+            &user_id,
+            &alias,
+            |a| read_entry(&app, a),
+            // Already under the lock: the locked half of `store_guarded`, so the marker just written
+            // decides the verdict (`KeepIfHeld` for this key) and the write is read back.
+            |a, k| {
+                store
+                    .store_guarded_locked(k, a)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            },
+        )?;
         Ok(base64::engine::general_purpose::STANDARD.encode(key))
     })
     .await
@@ -498,13 +624,23 @@ pub(crate) fn cle_au_repos_marquer(
 ) -> Result<(), String> {
     let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+    let _lock = at_rest_guard();
     mark_hardware(&data_dir(&app)?, &user_id, &key)
 }
 
-/// The explicit reset of one account's guard - see [`forget_marker`].
+/// The explicit reset of one account's guard - see [`forget_marker`]. Answers the keystore alias the
+/// marker recorded (read under the same lock, before the removal), so the account deletion removes
+/// the entry that holds the key rather than the one today's device id would name.
 #[tauri::command]
-pub(crate) fn cle_au_repos_oublier(app: tauri::AppHandle, user_id: String) -> Result<(), String> {
-    forget_marker(&data_dir(&app)?, &user_id)
+pub(crate) fn cle_au_repos_oublier(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<Option<String>, String> {
+    let dir = data_dir(&app)?;
+    let _lock = at_rest_guard();
+    let alias = recorded_alias(&dir, &user_id);
+    forget_marker(&dir, &user_id)?;
+    Ok(alias)
 }
 
 /// Deletes one keystore entry for the WebView, THROUGH THE GUARD. The plugin's own delete is not in
@@ -544,6 +680,7 @@ pub(crate) async fn cle_au_repos_lire(
 ) -> Result<HardwareKeyAnswer, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dir = data_dir(&app)?;
+        let _lock = at_rest_guard();
         let read = read_hardware_key(&dir, &user_id, |alias| read_entry(&app, alias));
         let (status, key_b64) = match read {
             HardwareKeyRead::Key(k) => (
@@ -599,9 +736,126 @@ mod tests {
         Ok(None)
     }
 
+    fn written(_: &str, _: &[u8; 32]) -> Result<(), String> {
+        Ok(())
+    }
+
     /// A re-key that got its key into the keystore: prepared, written, read back.
     fn migrating(d: &Path) -> [u8; 32] {
-        prepare(d, "alice", ALICE_ENTRY, empty).unwrap()
+        prepare(d, "alice", ALICE_ENTRY, empty, written).unwrap()
+    }
+
+    fn steps() -> Vec<String> {
+        DURABILITY_STEPS.with(|s| std::mem::take(&mut *s.borrow_mut()))
+    }
+
+    /// The race of the re-review: a settle that read the marker between `prepare` writing it and the
+    /// key reaching the entry reverted a re-key about to move rows. Under the one lock, the settle
+    /// waits for `prepare` to finish and finds the entry holding the key.
+    #[test]
+    fn a_settle_during_a_re_key_waits_for_it_and_never_reverts() {
+        use std::sync::{mpsc, Arc, Mutex};
+        let d = dir();
+        let entry: Arc<Mutex<Option<[u8; 32]>>> = Arc::new(Mutex::new(None));
+        let (marker_written, wait_marker) = mpsc::channel();
+        let (d1, e1) = (d.clone(), entry.clone());
+        let re_key = std::thread::spawn(move || {
+            let _lock = at_rest_guard();
+            prepare(&d1, "alice", ALICE_ENTRY, empty, |_, k| {
+                marker_written.send(()).unwrap();
+                // Widen the window the race needed; correctness never depends on it.
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                *e1.lock().unwrap() = Some(*k);
+                Ok(())
+            })
+            .unwrap()
+        });
+        wait_marker.recv().unwrap();
+        let scheme = {
+            let _lock = at_rest_guard();
+            settle_scheme(&d, "alice", |_| Ok(*entry.lock().unwrap()))
+        };
+        let key = re_key.join().unwrap();
+        assert_eq!(scheme, Scheme::Migrating);
+        assert_eq!(
+            read_hardware_key(&d, "alice", holds(key)),
+            HardwareKeyRead::Key(key)
+        );
+    }
+
+    #[test]
+    fn prepare_writes_the_marker_then_the_entry() {
+        let d = dir();
+        steps();
+        migrating(&d);
+        let order = steps();
+        let marker = order.iter().position(|s| s == "marker migrating").unwrap();
+        let entry = order.iter().position(|s| s == "entry written").unwrap();
+        assert!(marker < entry, "{order:?}");
+    }
+
+    /// A key that did not reach the keystore leaves the crash state: nothing moved, the next settle
+    /// reverts it.
+    #[test]
+    fn a_failed_entry_write_returns_an_error_and_the_marker_is_reverted_next() {
+        let d = dir();
+        prepare(&d, "alice", ALICE_ENTRY, empty, |_, _| {
+            Err("keystore -25293".into())
+        })
+        .unwrap_err();
+        assert_eq!(settle_scheme(&d, "alice", empty), Scheme::PinDerived);
+    }
+
+    #[test]
+    fn a_marker_write_syncs_the_tmp_then_renames_then_syncs_the_directory() {
+        let d = dir();
+        steps();
+        migrating(&d);
+        let order = steps();
+        let tail: Vec<&str> = order
+            .iter()
+            .map(String::as_str)
+            .skip_while(|s| *s != "sync tmp")
+            .take(3)
+            .collect();
+        assert_eq!(tail, ["sync tmp", "rename", "sync dir"]);
+        // The first write created the directory, and synced its parent.
+        let create = order.iter().position(|s| s == "create dir").unwrap();
+        assert_eq!(order[create + 1], "sync dir");
+    }
+
+    #[test]
+    fn a_removal_syncs_the_directory_after_it() {
+        let d = dir();
+        migrating(&d);
+        steps();
+        forget_marker(&d, "alice").unwrap();
+        assert_eq!(steps(), ["remove", "sync dir"]);
+    }
+
+    /// Ids may contain `_`, so `mls_device_key_alice_x_dev1` may be account `alice_x`: only the exact
+    /// alias a marker recorded is guarded.
+    #[test]
+    fn an_account_whose_id_extends_another_is_not_guarded_by_it() {
+        let d = dir();
+        let key = migrating(&d);
+        mark_hardware(&d, "alice", &key).unwrap();
+        let alice_x = device_key_alias("alice_x", "dev1");
+        assert!(alice_x.starts_with("mls_device_key_alice_"));
+        assert_eq!(guard_write(&d, &alice_x, &[1u8; 32]), EntryWrite::Free);
+        assert_eq!(guard_delete(&d, &alice_x), EntryDelete::Free);
+        assert_eq!(
+            guard_write(&d, ALICE_ENTRY, &[1u8; 32]),
+            EntryWrite::Refused(GuardRefusal::HeldKey(MarkerScheme::Hardware))
+        );
+    }
+
+    #[test]
+    fn the_reset_answers_the_alias_the_marker_recorded() {
+        let d = dir();
+        migrating(&d);
+        assert_eq!(recorded_alias(&d, "alice").as_deref(), Some(ALICE_ENTRY));
+        assert_eq!(recorded_alias(&d, "bob"), None);
     }
 
     #[test]
@@ -645,7 +899,10 @@ mod tests {
     fn a_resumed_migration_keeps_the_key_the_keystore_already_holds() {
         let d = dir();
         let first = migrating(&d);
-        let resumed = prepare(&d, "alice", ALICE_ENTRY, holds(first)).unwrap();
+        let resumed = prepare(&d, "alice", ALICE_ENTRY, holds(first), |_, _| {
+            panic!("a resumed re-key never rewrites the entry")
+        })
+        .unwrap();
         assert_eq!(resumed, first);
     }
 
@@ -654,7 +911,7 @@ mod tests {
         let d = dir();
         let first = migrating(&d);
         let legacy_copy = [7u8; 32];
-        let second = prepare(&d, "alice", ALICE_ENTRY, holds(legacy_copy)).unwrap();
+        let second = prepare(&d, "alice", ALICE_ENTRY, holds(legacy_copy), written).unwrap();
         assert_ne!(second, first);
         mark_hardware(&d, "alice", &first).unwrap_err();
         mark_hardware(&d, "alice", &second).unwrap();
@@ -737,11 +994,12 @@ mod tests {
             guard_write(&d, ALICE_ENTRY, &[1u8; 32]),
             EntryWrite::Refused(_)
         ));
-        // Every entry of the account: a device identity rotated since writes under a new alias.
-        assert!(matches!(
+        // Only the entry the marker recorded: a device identity rotated since writes a NEW alias,
+        // which holds no key of record (the key stays where the marker says).
+        assert_eq!(
             guard_write(&d, "mls_device_key_alice_dev2", &[1u8; 32]),
-            EntryWrite::Refused(_)
-        ));
+            EntryWrite::Free
+        );
         mark_hardware(&d, "alice", &key).unwrap();
         assert!(matches!(
             guard_write(&d, ALICE_ENTRY, &[1u8; 32]),
@@ -784,7 +1042,7 @@ mod tests {
         let d = dir();
         let alice = migrating(&d);
         mark_hardware(&d, "alice", &alice).unwrap();
-        let bob = prepare(&d, "bob", "mls_device_key_bob_dev9", empty).unwrap();
+        let bob = prepare(&d, "bob", "mls_device_key_bob_dev9", empty, written).unwrap();
         mark_hardware(&d, "bob", &bob).unwrap();
         assert_eq!(
             read_hardware_key(&d, "alice", holds(alice)),
@@ -814,14 +1072,19 @@ mod tests {
             read_hardware_key(&d, "alice", empty),
             HardwareKeyRead::Unreadable
         );
-        prepare(&d, "alice", ALICE_ENTRY, empty).unwrap_err();
+        prepare(&d, "alice", ALICE_ENTRY, empty, written).unwrap_err();
         assert!(matches!(
             guard_write(&d, ALICE_ENTRY, &[1u8; 32]),
-            EntryWrite::Refused(_)
+            EntryWrite::Refused(GuardRefusal::Unreadable(_))
         ));
         assert!(matches!(
             guard_delete(&d, ALICE_ENTRY),
-            EntryDelete::Refused(_)
+            EntryDelete::Refused(GuardRefusal::Unreadable(_))
+        ));
+        // Which entry it guarded is unknown, so every entry is refused until it is reset.
+        assert!(matches!(
+            guard_write(&d, "mls_device_key_bob_dev9", &[1u8; 32]),
+            EntryWrite::Refused(GuardRefusal::Unreadable(_))
         ));
     }
 
@@ -830,7 +1093,7 @@ mod tests {
         let d = dir();
         let key = migrating(&d);
         mark_hardware(&d, "alice", &key).unwrap();
-        prepare(&d, "alice", ALICE_ENTRY, holds(key)).unwrap_err();
+        prepare(&d, "alice", ALICE_ENTRY, holds(key), written).unwrap_err();
     }
 
     #[test]

@@ -35,8 +35,8 @@ import {
 } from '$lib/crypto/hardwareHeldKey';
 import {
   finishMigrationAtUnlock,
+  settledAtRestScheme,
   startHardwareKeyMigration,
-  whenHardwareKeyMigrationSettled,
 } from '$lib/utils/chat/hardwareKeyMigration';
 import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
@@ -891,9 +891,10 @@ export async function loginImpl(
     loginClient = mlsService;
     // WHICH KEY SEALS THIS PHONE'S DATA, read from the marker beside `mls.bin` before any key is asked
     // for: the PIN-derived one, a hardware-held random one, or one of the two mid-migration
-    // (`hardwareHeldKey.ts`). The web and desktop builds are always `pin-derived`.
+    // (`hardwareHeldKey.ts`). The web and desktop builds are always `pin-derived`. A re-key running
+    // in this page is awaited first (`settledAtRestScheme`).
     const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
-      ? await tauriHardwareKeyPort.scheme(ctx.getUserId())
+      ? await settledAtRestScheme(tauriHardwareKeyPort, ctx.getUserId())
       : 'pin-derived';
     stopIfSignedOut('at-rest-scheme');
     if (atRestScheme === 'unreadable') {
@@ -2331,7 +2332,7 @@ async function stayingSignedInWithoutVault(
   if (
     hardwareHeldKeyApplies() &&
     isDeviceKeyPersistenceEnabled() &&
-    (await tauriHardwareKeyPort.scheme(userId)) === 'hardware'
+    (await settledAtRestScheme(tauriHardwareKeyPort, userId)) === 'hardware'
   ) {
     appendLog('[PIN] Stay signed in on a hardware-held key - keystore unlock, no prompt');
     noteUnlockUnattended(userId);
@@ -2540,9 +2541,8 @@ export async function changePinImpl(
   // ALSO BEFORE THE SERVER: a re-key to the hardware-held key re-seals the same stores, and a PIN
   // change deriving keys over rows already half moved would strand them. Wait for one in flight; refuse
   // while one is interrupted (the next unlock resumes it).
-  await whenHardwareKeyMigrationSettled();
   const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
-    ? await tauriHardwareKeyPort.scheme(userId)
+    ? await settledAtRestScheme(tauriHardwareKeyPort, userId)
     : 'pin-derived';
   if (atRestScheme === 'migrating' || atRestScheme === 'unreadable') {
     log(`[PIN_CHANGE] Refused before the server: the at-rest key is ${atRestScheme}.`);
@@ -2684,9 +2684,10 @@ export async function recoverPinImpl(
   // not touch that key. Two cases reach here. The state already opens with it - nothing to move,
   // the login follows. Or it is still under the key the PIN derived when the re-key ran (a background
   // push wrote the state back under it, or the re-key was interrupted): the old PIN derives that key,
-  // and the same path moves it onto the hardware-held one.
+  // and the same path moves it onto the hardware-held one. A re-key running in this page is awaited
+  // first (`settledAtRestScheme`).
   const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
-    ? await tauriHardwareKeyPort.scheme(userId)
+    ? await settledAtRestScheme(tauriHardwareKeyPort, userId)
     : 'pin-derived';
   if (atRestScheme === 'unreadable') throw new LocalizedError(m.auth_hardware_key_unavailable());
   let hardwareKeyB64: string | null = null;

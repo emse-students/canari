@@ -16,90 +16,6 @@ static volatile bool g_isInForeground = false;
 #import <FirebaseCore/FirebaseCore.h>
 #endif
 
-/// WP-SEC-1 one-shot migration: existing installs hold the device key only in
-/// push_context.json. Promote it to the Keychain (background-accessible item,
-/// AfterFirstUnlockThisDeviceOnly, shared via group.fr.emse.canari), then strip
-/// the field from the JSON and re-mirror. The NSE never falls back to the JSON —
-/// if the app has not run since the update, one push falls back to the generic
-/// text and the next launch fixes it permanently.
-static void CanariMigrateDeviceKeyFromJson(void) {
-  NSString *dir = CanariTauriDataDir();
-  if (dir == nil) {
-    return;
-  }
-  NSString *path = [dir stringByAppendingPathComponent:@"push_context.json"];
-  NSData *data = [NSData dataWithContentsOfFile:path];
-  if (data == nil) {
-    return;
-  }
-  id json = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
-  if (![json isKindOfClass:[NSMutableDictionary class]]) {
-    return;
-  }
-  NSMutableDictionary *dict = (NSMutableDictionary *)json;
-  NSString *deviceKeyB64 = [dict[@"deviceKeyB64"] isKindOfClass:[NSString class]] ? dict[@"deviceKeyB64"] : @"";
-  if (deviceKeyB64.length == 0) {
-    return;
-  }
-  NSString *userId = [dict[@"userId"] isKindOfClass:[NSString class]] ? dict[@"userId"] : @"";
-  NSString *deviceId = [dict[@"deviceId"] isKindOfClass:[NSString class]] ? dict[@"deviceId"] : @"";
-  if (userId.length == 0 || deviceId.length == 0) {
-    return;
-  }
-
-  // Write the background-accessible Keychain item (mirrors KeystorePlugin.swift's bg item).
-  NSString *alias = [NSString stringWithFormat:@"mls_device_key_%@_%@", userId, deviceId];
-  NSString *account = [NSString stringWithFormat:@"mls_bg_key_%@", alias];
-  // RAW bytes, matching what KeystorePlugin.storeKeyBytes writes at login - it
-  // base64-decodes before hitting the Keychain, and the readers base64-encode on the way
-  // out. Storing the base64 TEXT here would make a migrated install disagree with a
-  // freshly logged-in one, and the readers would hand the FFI a double-encoded key.
-  NSData *keyData = [[NSData alloc] initWithBase64EncodedString:deviceKeyB64 options:0];
-  if (keyData.length != 32) {
-    NSLog(@"[CanariIOS] migrateDeviceKey: deviceKeyB64 is not 32 bytes - keeping JSON field");
-    return;
-  }
-
-  NSDictionary *deleteQuery = @{
-    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
-    (__bridge id)kSecAttrService : @"fr.emse.canari",
-    (__bridge id)kSecAttrAccount : account,
-  };
-  SecItemDelete((__bridge CFDictionaryRef)deleteQuery);
-
-  NSDictionary *addQuery = @{
-    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
-    (__bridge id)kSecAttrService : @"fr.emse.canari",
-    (__bridge id)kSecAttrAccount : account,
-    (__bridge id)kSecValueData : keyData,
-    (__bridge id)kSecAttrAccessGroup : @"group.fr.emse.canari",
-    (__bridge id)kSecAttrAccessible : (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-  };
-  OSStatus status = SecItemAdd((__bridge CFDictionaryRef)addQuery, nil);
-  if (status != errSecSuccess) {
-    NSLog(@"[CanariIOS] migrateDeviceKey: Keychain write failed (status=%d) — keeping JSON field", (int)status);
-    return;
-  }
-
-  // Strip the field and rewrite.
-  [dict removeObjectForKey:@"deviceKeyB64"];
-  NSData *outData = [NSJSONSerialization dataWithJSONObject:dict options:0 error:nil];
-  if (outData != nil) {
-    [outData writeToFile:path atomically:YES];
-  }
-
-  // Delete the stale App Group mirror so the NSE copy stops carrying the key.
-  NSURL *container = [[NSFileManager defaultManager]
-      containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"];
-  if (container != nil) {
-    [[NSFileManager defaultManager]
-        removeItemAtURL:[container URLByAppendingPathComponent:@"push_context.json"]
-                  error:nil];
-  }
-
-  NSLog(@"[CanariIOS] migrateDeviceKey: key promoted to Keychain, JSON stripped, App Group mirror deleted");
-}
-
 static void CanariProcessPendingPushSecret(void) {
   NSString *secret = CanariRetrievePushSecret();
   if (secret != nil) {
@@ -578,7 +494,6 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariPublishSafeAreaInsets();
   CanariPublishDynamicType();
   CanariProcessPendingPushSecret();
-  CanariMigrateDeviceKeyFromJson();
   CanariCheckKeystoreHealth();
   CanariPushCancelMessageNotifications();
   // Pick up whatever the NSE decrypted while we were killed or backgrounded. It writes into the

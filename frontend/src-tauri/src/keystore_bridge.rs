@@ -66,9 +66,9 @@ pub enum KeyEntryWrite {
 /// a platform failure without reading prose.
 #[derive(Debug)]
 pub enum KeyEntryError {
-    /// The at-rest guard refused: the entry is the only copy of a hardware-held key
-    /// (`at_rest_key::guard_write` / `guard_delete`).
-    Refused(String),
+    /// The at-rest guard refused: the entry is the only copy of a hardware-held key, or a marker
+    /// cannot be read (`at_rest_key::guard_write` / `guard_delete`).
+    Refused(crate::commands::at_rest_key::GuardRefusal),
     /// The platform keystore failed, or the key read back is not the key written.
     Failed(String),
 }
@@ -160,8 +160,21 @@ impl<R: Runtime> PluginDeviceKeyStore<R> {
     /// THE ONE KEYSTORE WRITE. Asks the at-rest guard first: a guarded entry takes only the key its
     /// marker names, and is not rewritten when it holds it already (every login asks, and an
     /// unchanged entry must not be put at risk for nothing). Every write is then READ BACK: a key
-    /// change moves rows only after this returns, so "written" must mean "there".
+    /// change moves rows only after this returns, so "written" must mean "there". The verdict and
+    /// the write run under the at-rest lock (`at_rest_key::at_rest_guard`), so no marker changes
+    /// between them.
     pub fn store_guarded(
+        &self,
+        key: &[u8; 32],
+        alias: &str,
+    ) -> Result<KeyEntryWrite, KeyEntryError> {
+        let _lock = crate::commands::at_rest_key::at_rest_guard();
+        self.store_guarded_locked(key, alias)
+    }
+
+    /// [`Self::store_guarded`] for a caller ALREADY holding the at-rest lock - `at_rest_key::prepare`,
+    /// which writes the marker and then the entry in one locked step. Never call it without the lock.
+    pub(crate) fn store_guarded_locked(
         &self,
         key: &[u8; 32],
         alias: &str,
@@ -187,7 +200,8 @@ impl<R: Runtime> PluginDeviceKeyStore<R> {
     /// exists - whichever caller asks (the biometric toggle, a key change's cleanup, the stale-key
     /// probe of a biometric init, a wipe that ran before its marker was removed).
     pub fn delete_guarded(&self, alias: &str) -> Result<(), KeyEntryError> {
-        use crate::commands::at_rest_key::{guard_delete, EntryDelete};
+        use crate::commands::at_rest_key::{at_rest_guard, guard_delete, EntryDelete};
+        let _lock = at_rest_guard();
         if let EntryDelete::Refused(why) = guard_delete(&self.data_dir()?, alias) {
             log::warn!("[KEYSTORE] delete refused by the at-rest guard: {why}");
             return Err(KeyEntryError::Refused(why));
@@ -312,9 +326,12 @@ mod tests {
     #[test]
     fn a_refused_write_never_reaches_the_platform() {
         let e = Entry::holding(Some([1u8; 32]));
+        use crate::commands::at_rest_key::{GuardRefusal, MarkerScheme};
         assert!(matches!(
-            e.store(EntryWrite::Refused("x".into())),
-            Err(KeyEntryError::Refused(_))
+            e.store(EntryWrite::Refused(GuardRefusal::HeldKey(
+                MarkerScheme::Hardware
+            ))),
+            Err(KeyEntryError::Refused(GuardRefusal::HeldKey(_)))
         ));
         assert_eq!(e.writes.get(), 0);
     }

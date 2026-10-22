@@ -9,6 +9,7 @@ import type { LocalStateOpenResult } from '$lib/mls-client';
 import {
   finishMigrationAtUnlock,
   migrateToHardwareHeldKey,
+  settledAtRestScheme,
   startHardwareKeyMigration,
   whenHardwareKeyMigrationSettled,
 } from './hardwareKeyMigration';
@@ -139,6 +140,46 @@ describe('startHardwareKeyMigration', () => {
     expect(await startHardwareKeyMigration(deps(fakePort('pin-derived').port, failing))).toBe(
       'failed'
     );
+  });
+});
+
+describe('settledAtRestScheme', () => {
+  it('reads the scheme only once the re-key running in this page has finished', async () => {
+    const order: string[] = [];
+    const { port } = fakePort('pin-derived');
+    let release!: () => void;
+    const change = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = () => {
+            order.push('re-key done');
+            resolve();
+          };
+        })
+    );
+    const migration = startHardwareKeyMigration(deps(port, change));
+    await vi.waitFor(() => expect(change).toHaveBeenCalledTimes(1));
+
+    const reader = {
+      scheme: vi.fn(async (): Promise<AtRestKeyScheme> => {
+        order.push('scheme read');
+        return 'hardware';
+      }),
+    };
+    const read = settledAtRestScheme(reader, 'u1');
+    await Promise.resolve();
+    expect(reader.scheme).not.toHaveBeenCalled();
+
+    release();
+    expect(await read).toBe('hardware');
+    expect(await migration).toBe('migrated');
+    expect(order).toEqual(['re-key done', 'scheme read']);
+  });
+
+  it('reads at once when nothing is running', async () => {
+    const reader = { scheme: vi.fn(async () => 'pin-derived' as const) };
+    expect(await settledAtRestScheme(reader, 'u1')).toBe('pin-derived');
+    expect(reader.scheme).toHaveBeenCalledWith('u1');
   });
 });
 
