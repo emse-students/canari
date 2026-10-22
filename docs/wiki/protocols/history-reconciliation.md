@@ -1162,9 +1162,14 @@ crypto, with a shared vector against the Rust side):
 
 | Entry | Taken when | Otherwise |
 | --- | --- | --- |
-| message | the author's proof verifies and names this id and this author - content and timestamp are then read from the SIGNED bytes, never from the relayer's fields; or the relayer IS the author | no proof, or a proof signed in another conversation: kept and MARKED `restoredUnverified` ("author unverified" under the bubble); a proof that fails: REFUSED |
+| message | the author's proof verifies and names this id and this author - content and timestamp are then read from the SIGNED bytes, never from the relayer's fields; or the relayer IS the author | no proof, or a proof signed in another conversation: kept, drawn normally and MARKED `restoredUnverified` (a small "non verifie" under the bubble, explained on tap - never hidden); a proof an anchored pin contradicts, or a malformed one: REFUSED |
 | edit, deletion | the author's signed event names this message; or the relayer is the author | dropped, never applied on a third party's word |
 | reaction | the reactor's signed frame proves exactly this state; or the relayer is the reactor | dropped |
+
+**Mutations need a signature, and that has a cost (lead decision, 2026-10-22).** An unsigned edit,
+deletion or reaction is dropped, so one made by an author on a client older than signed authorship
+is missing from restored history until that author updates. The unsigned MESSAGE is the only shim,
+with its removal condition in [legacy-compatibility](../legacy-compatibility.md).
 
 **Keys - only those this device trusts, tried in order.** The author's leaf in the current tree,
 which MLS authenticated, then the keys this device pinned for that device

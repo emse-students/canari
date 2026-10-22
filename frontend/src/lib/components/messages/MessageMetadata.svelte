@@ -61,6 +61,8 @@
    */
   const showEdited = $derived(isEdited && !outsideBubble);
   const showUnverified = $derived(restoredUnverified && !outsideBubble);
+  /** Whether the "unverified" marker's explanation is open - local to this row, closed by default. */
+  let unverifiedOpen = $state(false);
   // A FAILURE IS SHOWN WHEREVER IT IS, not only on the last own message: a salon message that was
   // refused and then followed by another one must not look delivered.
   const showSendStatus = $derived(
@@ -94,10 +96,16 @@
       <span class="text-2xs font-medium italic opacity-65">{m.msg_modifie()}</span>
     {/if}
     {#if showUnverified}
-      <span
-        class="text-2xs font-medium italic opacity-65"
+      <!-- A tap explains the marker; it must not also open the bubble's own panel. -->
+      <button
+        type="button"
+        class="text-2xs font-medium italic underline decoration-dotted opacity-65"
         data-testid="message-restored-unverified"
-        title={m.msg_restored_unverified_hint()}>{m.msg_restored_unverified()}</span
+        aria-expanded={unverifiedOpen}
+        onclick={(e) => {
+          e.stopPropagation();
+          unverifiedOpen = !unverifiedOpen;
+        }}>{m.msg_restored_unverified()}</button
       >
     {/if}
     {#if showSendStatus}
@@ -195,4 +203,13 @@
       <SeenByHeads readers={readBy} withCheck />
     {/if}
   </div>
+  {#if showUnverified && unverifiedOpen}
+    <p
+      class="text-2xs mt-0.5 text-right opacity-65"
+      data-testid="message-restored-unverified-why"
+      role="note"
+    >
+      {m.msg_restored_unverified_hint()}
+    </p>
+  {/if}
 {/if}
