@@ -512,6 +512,10 @@ that works in the office.
 **Release shape.** The reader (RC-1 contract + RC-6 tile, so every client can DRAW a reel message and
 its tombstone) ships before the writer (RC-4 camera entry), the order used for Graine v2 and the
 segmented media writer: a message a client cannot draw is worse than one it draws as a plain video.
+
+**State (re-read against the tags 2026-10-22):** the reader (#1659, RC-1 with the tile) and the
+server class (#1661, RC-2) shipped in `v1.2.2`; the writer waits for RC-5 (resumable upload) and RC-7
+(native push) before any stable (user, 2026-10-14).
 RC-2's `chat-reel` class is server-side and safe to ship first (nothing sets it yet). The stable follows
 the usual two-release sequence ([CLAUDE.md](../../../../CLAUDE.md) "gesture two") with a pre-release on dev
 and the testers.

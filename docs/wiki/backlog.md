@@ -66,7 +66,7 @@ first 8 days. The history bundle carries every seed, about 330 bytes each in v2,
 is about 2.6 MB in one MLS message. Owed, in order:
 (1) rotate on a DEPARTURE only - the identity-set comparison was refused 2026-10-22 (a leaf added
 and removed between two sends is in neither set); the design is a per-key-group clean run fed by a
-commit summary from `mls-core`, DRAFT for review: [graine-removal-tracker](protocols/graine-removal-tracker.md); (2) bound the bundle in bytes and page it, after measuring what the gateway and
+commit summary from `mls-core`, DRAFT for review: [graine-removal-tracker](protocols/graine-removal-tracker.md), built on draft pull request #2263 (rotate on a removal or a new user, D5 of 2026-10-22); (2) bound the bundle in bytes and page it, after measuring what the gateway and
 the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
@@ -366,6 +366,14 @@ A row found this way is put on sale by its association's admin from the boutique
 ## P3 - The school CAS pins its OAuth cookie to the browser: production re-measure owed (2026-10-22)
 
 The school applied a setting on its TEST CAS and the IP-only and user-agent-only sign-ins went from 0 of 3 to 3 of 3 ([cas-callback-state](infrastructure/cas-callback-state.md)). Owed: the school confirms which setting it applied and whether production has it; then the same two blocks are re-run on the production CAS (one second-factor validation by a person). Production bare callbacks already fell from 14 % to 4 % of sign-ins from 2026-10-08 for a reason not yet separated. Nothing to build in this repository.
+
+## Three open items the CLAUDE.md queue alone carried (moved 2026-10-22)
+
+- **Later, not designed: association enrolment with conditions and documents.**
+- **The identity-provider change of #1866 (signing out of Canari also ends the MiConnect session) is
+  MERGED** and reaches production by an operator action tracked in the private operations notes.
+- **SEO, left from the `emse.fr` names pass:** the wiki has no sitemap and two pages carry placeholder
+  descriptions ([estate-migration](infrastructure/estate-migration.md#the-old-name-of-miconnect-redirects-and-the-dsi-replaced-the-cas-callback-2026-10-06)).
 
 ## Idea (owner, 2026-10-21): store videos and screenshots from the bench phones
 
@@ -985,7 +993,9 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 ### P1 - a history replay saves its stream cursor BEFORE the checkpoint it claims to follow (found 2026-10-21 by the review of #2078; present since the non-awaiting flush of f391c1991, 2026-08-14)
 
-`mlsBulkIngest.ts`, `history.ts` and `useConversations.svelte.ts` all state that closing a bulk-ingest window resolves only after the encrypted checkpoint landed, so the replay's stream cursor and seen hashes are saved "never ahead of persisted state". It does not: `mlsStatePersister.onBulkIngestEnd` starts the flush without awaiting it (deliberately, so durability never gates delivery), and a nested window returns at depth > 0 with no flush until the outermost one closes. So on every build since then the cursor is saved ahead of the disk for the duration of one checkpoint (about 100 ms on web, more on a big state). A process killed in that window leaves a cursor past a commit that a cold replay never applies: the `wrong-epoch` / epoch-gap class. **Not measured in the field, found by reading.** Fix candidates, to choose with the reviewer: the replay window (not the live drain) awaits its flush, or the cursor is written by the persister itself once the checkpoint lands. The inert measurement switch of #2078 does not touch this (it never skips a replay window); it only makes the existing hazard impossible to widen.
+`mlsBulkIngest.ts`, `history.ts` and `useConversations.svelte.ts` all state that closing a bulk-ingest window resolves only after the encrypted checkpoint landed, so the replay's stream cursor and seen hashes are saved "never ahead of persisted state". It does not: `mlsStatePersister.onBulkIngestEnd` starts the flush without awaiting it (deliberately, so durability never gates delivery), and a nested window returns at depth > 0 with no flush until the outermost one closes. So on every build since then the cursor is saved ahead of the disk for the duration of one checkpoint (about 100 ms on web, more on a big state). A process killed in that window leaves a cursor past a commit that a cold replay never applies: the `wrong-epoch` / epoch-gap class. **Not measured in the field, found by reading.** Fix candidates, to choose with the reviewer: the replay window (not the live drain) awaits its flush, or the cursor is written by the persister itself once the checkpoint lands. The inert measurement switch of #2078 does not touch this (it never skips a replay window); it only makes the existing hazard impossible to widen. **State (2026-10-22): the fix is MERGED as
+#2213 ("a history replay's markers wait for the checkpoint that holds it") and rides `v1.4.0-alpha.1`
+onward, no stable yet** - a merged fix is not a shipped fix; delete this entry when a stable carries it.
 
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
@@ -1098,14 +1108,18 @@ The election reads presence and waits for an online holder ([channel-encryption]
 The layout, flat pass, French prompts, redirect to Canari and signed-in `continue` are SHIPPED
 ([authentik](infrastructure/authentik.md#one-language-french-in-the-ecosystems-tu-2026-09-25)). Left:
 authentik's own untranslated "Go back". **One observation owed**: `miconnect-auth` opened while signed
-in, on the Mi 9T, should go straight through.
+in, on the Mi 9T, should go straight through. Admin accounts keep an internal path, described in the
+private operations notes.
 
 ### The MLS audit items that are still real, with their verified counts (swept 2026-09-12)
 
 **Work to the swept numbers, never the audit's** (eight came back LARGER than claimed). The duplicate
 half is gone ([triage](protocols/mls-graine-state-machine.md#8-several-paths-to-one-thing---the-duplicates),
 [durable-rules](durable-rules.md#an-open-item-whose-substance-has-never-been-in-the-repository-is-not-an-open-item));
-what follows is the whole of what is left.
+what follows is the whole of what is left. `D8` and `R-D8` are REFUTED and not to be re-opened
+([triage](protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request)). **A few
+conversations rest on ONE holder** (the counts are in the private operations notes): the hourly report
+says so and repairs nothing.
 
 **Availability dead ends - every one needs an exit that EXISTS** (user, 2026-09-12: *"on ne peut pas
 demander a un utilisateur de sortir de l'impasse lui-meme. La sortie de l'impasse doit exister pour
@@ -1248,6 +1262,15 @@ The mechanisms are on [mobile](frontend/mobile.md#one-builder-two-triggers),
 [posts](frontend/modules/posts.md#who-sees-which-control-three-served-booleans-never-authorid).
 **No identity from the users' captures enters this file.**
 
+**Rendering, where it stands (moved from `CLAUDE.md` 2026-10-22):** three of the ELEVEN 2026-09-18
+reports are open (below); 41 channels hold at 390 and 1280 px, but every rendering reading so far was
+Chrome with a device-metrics override, so REAL HARDWARE is owed. The phone agenda was rendered at last:
+its rolling window is right, the two things around it were not
+([calendar](frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)). #1223
+(2026-09-29: the tab swipe SHOWS the page it goes to, a drifting tap no longer turns it, a reply swipe
+no longer closes the thread) is blind to every gate here and owed ONE look on the reporting phone
+([design-reference](frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)).
+
 - **G1 - one human reading of a DESKTOP banner**: what a salon and a DM notification say, and where a
   tap lands.
 - **P3 - BUILT 2026-10-18, NOT SHIPPED: the push scanner's sentences are worded in Rust from the app
@@ -1272,7 +1295,9 @@ picking one changes what the others refuse is on
 
 ### P2 (hardware-owed) - a FIRST message from someone you have no conversation with, measured end to end (user, 2026-09-08)
 
-Both halves are fixed since `v0.18.18`; nothing has run them on a genuine first contact. Owed:
+Both halves are fixed since `v0.18.18`; nothing has run them on a genuine first contact. (Not part of
+this item: a reaction to your OWN message has notified since 2026-05-17, on `canari_reactions` since
+2026-09-17 - NOTIF-15 on the [board](cross-client-testing.md).) Owed:
 
 1. **Enrol a third account** (`canari-test-gamma` exists on Authentik, credentials out of tree): a
    first sign-in through the app, a Chrome profile with its `PORTS` / `ORIGIN` / `ACCOUNT_OF` entries,
@@ -1514,7 +1539,8 @@ Still so (`presenceStore.ts`). DECIDED 2026-10-18: presence is visible to those 
 
 ### P2 - a new device's join of a community's key group reaches the commit gate BEFORE its KeyPackage (2026-08-29, cause measured on production 2026-10-09)
 
-**ONE defect, and the two entries that stood here were it.** All six `[MEMBERSHIP_ACTIVE] REFUSED ... no_key_package` of 32 hours of production were on four COMMUNITY distribution groups and no conversation; each device's first run logged `[PURGE_PREKEYS]` (its key package round starting), then the join's commit and its refusal in the same second, then `[REGISTER_DEVICE] START` - the join committed between the mint and the publication, so the gate wrote no membership row and the device held a tree that routed nothing to it ("holds the group, the group holds no row", the rejoin, the extra epoch). Three of the six healed 2 min to 1 h 44 min later (an iPhone among them: seeds unrouted for that long), the other three devices are gone. **Fixed in two steps, neither in prod yet (2026-10-10):** #1666 (`externalJoin` waits for the round running) is in `v1.2.2-alpha.1` only, NOT in `v1.2.1`; the pull request `fix/join-waits-for-published-keypackage` replaces that wait by a wait on the PUBLISHED FACT (the server's own "this device has a static KeyPackage", the row `deviceAddressability` reads) - a round settling during the read is re-read, absent with no round STARTS one, overlapping rounds refuse nobody, destroy releases the parked joins; no timer, no cache - and gives every HTTP call of the round a 60 s per-request deadline that turns a hang into a typed `DeliveryDeadlineError` (the one clock, and it only reports; the prekey count propagates it and fails the round). Not covered: the native `invoke` half of the Tauri round (cannot be aborted from JS). **Measured on prod since the `v1.2.1` deploy (13:13 UTC 2026-10-09):** key-group external joins about 77/day pace, unchanged from ~70/day (the release does not carry the fix); `REFUSED no_key_package` 2 in 9.7 h, both new devices on community key groups (web 1.2.1, iOS 1.1.0), `[SENDER_MISMATCH]` 0 ([detail](protocols/campaign-measured-defects.md#a-new-devices-join-reaches-the-commit-gate-before-its-keypackage-2026-10-09)). **Owed:** the same read once a stable carries the fix; raising `minClientVersion` for it is the user's gesture and needs a stable carrying it live in BOTH stores (Play serves `1.2.1` in production, read 2026-10-10; the App Store was not readable here).
+**ONE defect, and the two entries that stood here were it.** All six `[MEMBERSHIP_ACTIVE] REFUSED ... no_key_package` of 32 hours of production were on four COMMUNITY distribution groups and no conversation; each device's first run logged `[PURGE_PREKEYS]` (its key package round starting), then the join's commit and its refusal in the same second, then `[REGISTER_DEVICE] START` - the join committed between the mint and the publication, so the gate wrote no membership row and the device held a tree that routed nothing to it ("holds the group, the group holds no row", the rejoin, the extra epoch). Three of the six healed 2 min to 1 h 44 min later (an iPhone among them: seeds unrouted for that long), the other three devices are gone. **Fixed in two steps, neither in prod yet (2026-10-10):** #1666 (`externalJoin` waits for the round running) is in `v1.2.2-alpha.1` only, NOT in `v1.2.1`; the pull request `fix/join-waits-for-published-keypackage` replaces that wait by a wait on the PUBLISHED FACT (the server's own "this device has a static KeyPackage", the row `deviceAddressability` reads) - a round settling during the read is re-read, absent with no round STARTS one, overlapping rounds refuse nobody, destroy releases the parked joins; no timer, no cache - and gives every HTTP call of the round a 60 s per-request deadline that turns a hang into a typed `DeliveryDeadlineError` (the one clock, and it only reports; the prekey count propagates it and fails the round). Not covered: the native `invoke` half of the Tauri round (cannot be aborted from JS). **Measured on prod since the `v1.2.1` deploy (13:13 UTC 2026-10-09):** key-group external joins about 77/day pace, unchanged from ~70/day (the release does not carry the fix); `REFUSED no_key_package` 2 in 9.7 h, both new devices on community key groups (web 1.2.1, iOS 1.1.0), `[SENDER_MISMATCH]` 0 ([detail](protocols/campaign-measured-defects.md#a-new-devices-join-reaches-the-commit-gate-before-its-keypackage-2026-10-09)). **State (re-read 2026-10-22): the second step merged as #1700 on 2026-10-10 and SHIPPED in the
+stable `v1.2.3`**, so the read below is owed now. **Owed:** the same read once a stable carries the fix; raising `minClientVersion` for it is the user's gesture and needs a stable carrying it live in BOTH stores (Play serves `1.2.1` in production, read 2026-10-10; the App Store was not readable here).
 
 ### P2 - a roster seat without a Welcome: the reason is typed on the client, the server report cannot partition on it yet (prod 2026-09-01)
 
@@ -1808,6 +1834,9 @@ MiGallery's offsite backup copy still lands on the old VM. **DECIDED 2026-10-18:
 **Pruned by hand 2026-10-14, 80 % -> 67 %** (unused images and build cache; three empty orphan volumes removed with the user's go). The cron is still not installed. Measured 2026-10-10: the host's disk was filling at a rate that crosses the threshold within days. **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
+
+One commit drew four notices on screen (#752, production 2026-09-16); the frame now carries an id, and
+two things still do not:
 
 - **P2 - nothing repairs a notice already duplicated on a device.** Owed: the population first (on one real device, the count of `isSystem` rows sharing `(conversation, content)`). Only if large, a one-shot pass gated on proof of breakage with an allowlist of rows - never a heuristic collapse.
 - **P2 - 13 full archive walks and 37 reconciliation answers in ten minutes, for one group.** Owed: from production logs (`[HISTORY]` carries `user=`/`device=` since 2026-09-16), walks per group per hour across the estate and the `after=start` fraction per DEVICE.
