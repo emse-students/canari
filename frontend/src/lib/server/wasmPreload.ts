@@ -46,6 +46,7 @@
  * browser raises the priority of an in-flight preload when the real `fetch` arrives.
  */
 import { MLS_DEVICE_ID_PREFIX } from '$lib/mls-client/wasmPrefetch';
+import { escapeHtmlAttribute } from '$lib/seo/renderHead';
 
 /**
  * The node `app.html` carries and the server hook replaces. A node and not a comment, for the
@@ -53,11 +54,6 @@ import { MLS_DEVICE_ID_PREFIX } from '$lib/mls-client/wasmPrefetch';
  * comment, and a placeholder that survives (Tauri shell) is an inert `<meta>`.
  */
 export const WASM_PRELOAD_MARKER = '<meta name="canari-wasm-preload" data-canari-wasm />';
-
-/** Escapes a value for a double-quoted HTML attribute. */
-function attribute(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
 
 /**
  * Builds the filled marker the `app.html` preload script reads: the content-hashed binary URL in
@@ -71,7 +67,7 @@ function attribute(value: string): string {
  */
 export function renderWasmPreloadMeta(wasmUrl: string): string {
   return (
-    `<meta name="canari-wasm-preload" content="${attribute(wasmUrl)}" ` +
-    `data-device-prefix="${attribute(MLS_DEVICE_ID_PREFIX)}" data-canari-wasm />`
+    `<meta name="canari-wasm-preload" content="${escapeHtmlAttribute(wasmUrl)}" ` +
+    `data-device-prefix="${escapeHtmlAttribute(MLS_DEVICE_ID_PREFIX)}" data-canari-wasm />`
   );
 }
