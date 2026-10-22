@@ -565,11 +565,23 @@ pub(crate) fn store_graine_seeds_json(data_dir: &std::path::Path, json: &str) ->
     };
 
     let mut stored = 0i32;
+    let mut left_to_the_app = 0usize;
     for seed in &seeds {
         let Some(entry) = MirrorSeed::from_extracted(seed) else {
             log::warn!("[GRAINE_PUSH] incomplete seed entry skipped");
             continue;
         };
+        // A RELAYED SEED (a bundle's) ONLY FOR A SALON THIS DEVICE ALREADY READS. Native code does
+        // not know which salons are private, nor which key group carried the frame, so it cannot make
+        // the app's scope check (`storeIncomingSeed`); a salon the mirror already holds a session of
+        // is one the app admitted seeds for. Any other is left to the app, which reads the same
+        // answer from its durable queue at its next start and checks it fully.
+        if seed["relayed"].as_bool() == Some(true)
+            && !mirror_holds_channel(data_dir, entry.channel_id)
+        {
+            left_to_the_app += 1;
+            continue;
+        }
         // PER SEED, so a bundle does not lose its tail to its first bad entry.
         match merge_graine_seed(data_dir, &entry) {
             Ok(_) => stored += 1,
@@ -579,8 +591,32 @@ pub(crate) fn store_graine_seeds_json(data_dir: &std::path::Path, json: &str) ->
             ),
         }
     }
+    if left_to_the_app > 0 {
+        log::info!(
+            "[GRAINE_PUSH] {left_to_the_app} relayed seed(s) for salon(s) this device has never read - not mirrored, left to the app"
+        );
+    }
     log::debug!("[GRAINE_PUSH] stored {stored}/{} seed(s)", seeds.len());
     stored
+}
+
+/// Whether the mirror holds at least one session of `channel_id` - a salon whose seeds the app has
+/// admitted. Read without the lock, as [`read_graine_seed`] reads: every writer renames a whole
+/// file over the old one. An absent or unreadable file holds nothing.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+fn mirror_holds_channel(data_dir: &std::path::Path, channel_id: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(data_dir.join("graine_seeds.json")) else {
+        return false;
+    };
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(root) => root[channel_id]
+            .as_object()
+            .is_some_and(|sessions| !sessions.is_empty()),
+        Err(e) => {
+            log::warn!("[GRAINE_PUSH] mirror unparsable while checking salon {channel_id}: {e}");
+            false
+        }
+    }
 }
 
 /// One session as the mirror HOLDS it, read back for a push to be opened against.
@@ -1712,6 +1748,26 @@ mod graine_mirror_tests {
         assert_eq!(store_graine_seeds_json(&dir, &bundle.to_string()), 1);
         assert!(mirror(&dir)["chan"].get("s-3").is_none());
         assert_eq!(mirror(&dir)["chan"]["s-4"]["firstIndex"], 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A bundle's seeds (`relayed`) reach the mirror only for a salon it already holds a session
+    /// of: native code cannot tell a private salon this viewer may not read from a public one, so
+    /// every other relayed seed is left to the app, which reads the same answer from its queue.
+    /// A seed distributed by its own sender (not relayed) is mirrored as before.
+    #[test]
+    fn a_relayed_seed_is_mirrored_only_for_a_salon_the_device_already_reads() {
+        let dir = mirror_dir("relayed");
+        merge(&dir, "read-salon", "s-held", "c2VlZA==", 1).unwrap();
+        let seeds = serde_json::json!([
+            { "channelId": "read-salon", "sessionId": "s-a", "seedB64": "c2VlZA==", "createdAt": 2, "relayed": true },
+            { "channelId": "other-salon", "sessionId": "s-b", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true },
+            { "channelId": "new-salon", "sessionId": "s-c", "seedB64": "c2VlZA==", "createdAt": 4 },
+        ]);
+        assert_eq!(store_graine_seeds_json(&dir, &seeds.to_string()), 2);
+        assert!(mirror(&dir)["read-salon"].get("s-a").is_some());
+        assert!(mirror(&dir).get("other-salon").is_none());
+        assert!(mirror(&dir)["new-salon"].get("s-c").is_some());
         std::fs::remove_dir_all(&dir).ok();
     }
 
