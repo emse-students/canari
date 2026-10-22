@@ -119,7 +119,7 @@ describe('InvitationsController - who may report a device active', () => {
       'false'
     );
 
-    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
+    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS', authority: 'report' });
   });
 
   it('promotes the same way when another member vouches for the device', async () => {
@@ -129,7 +129,7 @@ describe('InvitationsController - who may report a device active', () => {
       'false'
     );
 
-    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
+    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS', authority: 'report' });
     // The vouch still retires the invitation - that is the point of allowing it at all.
     expect(messaging.activateDeviceMembership).toHaveBeenCalledWith(
       TARGET,
@@ -161,14 +161,15 @@ describe('InvitationsController - who may report a device active', () => {
       'true'
     );
 
-    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
+    expect(promotion()).toEqual({ tag: 'INVITATION_STATUS', authority: 'report' });
   });
 
   /**
-   * A REPORT PROMOTES A SEAT AND NEVER CREATES ONE: the row must exist for this user's device, and a
-   * conversation must still name its owner. Each refusal happens before the one writer is reached.
+   * A REPORT PROMOTES A SEAT AND NEVER CREATES ONE - decided in the one writer
+   * (`messaging.one-active-writer.spec.ts`), so this door's part is to ask as a `report` and to say
+   * the writer's answer: a missing seat is the caller not being a member.
    */
-  describe('the seat a report promotes', () => {
+  describe('the answer to a refused report', () => {
     const report = (caller = TARGET) =>
       controller.updateInvitationStatus(
         { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
@@ -176,57 +177,28 @@ describe('InvitationsController - who may report a device active', () => {
         'false'
       );
 
-    it('refuses a self-report for a device that holds no seat, and asks by the triple', async () => {
-      seats = [];
+    it.each(['no_seat', 'kicked', 'not_on_roster'])(
+      'is a 403 NOT_A_MEMBER when the writer refuses for %s',
+      async (reason) => {
+        messaging.activateDeviceMembership.mockResolvedValue({ ok: false, reason });
 
-      await expect(report()).rejects.toMatchObject({ response: { code: 'NOT_A_MEMBER' } });
-      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
-        where: { userId: TARGET, deviceId: DEVICE, groupId: GROUP },
-        select: { status: true },
-      });
-      expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+        await expect(report()).rejects.toMatchObject({
+          status: 403,
+          response: { code: 'NOT_A_MEMBER', reason },
+        });
+      }
+    );
+
+    it('is a 403 for a member vouching for a device that holds no seat', async () => {
+      messaging.activateDeviceMembership.mockResolvedValue({ ok: false, reason: 'no_seat' });
+
+      await expect(report(MEMBER)).rejects.toMatchObject({ status: 403 });
     });
 
-    it("refuses a self-report resting on ANOTHER account's seat for the same device id", async () => {
-      seats = [{ userId: 'user-other', deviceId: DEVICE, groupId: GROUP, status: 'pending' }];
+    it('stays a 400 when the device is not addressable', async () => {
+      messaging.activateDeviceMembership.mockResolvedValue({ ok: false, reason: 'revoked' });
 
-      await expect(report()).rejects.toMatchObject({ response: { code: 'NOT_A_MEMBER' } });
-      expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
-    });
-
-    it('refuses a conversation self-report once its owner is off the roster', async () => {
-      roster = roster.filter((r) => r.userId !== TARGET);
-
-      await expect(report()).rejects.toMatchObject({ response: { code: 'NOT_A_MEMBER' } });
-      expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
-        where: { groupId: GROUP, userId: TARGET },
-      });
-      expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
-    });
-
-    it('refuses a vouch for a device that holds no seat, member or not', async () => {
-      seats = [];
-
-      await expect(report(MEMBER)).rejects.toMatchObject({ response: { code: 'NOT_A_MEMBER' } });
-      expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
-    });
-
-    it('accepts a report on an ACTIVE seat, which an external join already promoted', async () => {
-      seats = [{ userId: TARGET, deviceId: DEVICE, groupId: GROUP, status: 'active' }];
-
-      await report();
-
-      expect(messaging.activateDeviceMembership).toHaveBeenCalledTimes(1);
-    });
-
-    it('accepts a key group on its seat alone: it has no user roster here', async () => {
-      group = { id: GROUP, distributionWorkspaceId: 'ws-1' };
-      roster = [];
-
-      await report();
-
-      expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
-      expect(messaging.activateDeviceMembership).toHaveBeenCalledTimes(1);
+      await expect(report()).rejects.toMatchObject({ status: 400 });
     });
   });
 });

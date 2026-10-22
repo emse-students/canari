@@ -253,6 +253,14 @@ The reading has one setup and three checks:
 
 A key-group external join has no entitlement check yet; each one is logged `[COMMIT] key-group external join`. An accepted external commit also promotes its committing device to `active`, as every external join must, so the check belongs before both. A key group's Welcome target is not checked either: a conversation's Welcome target must be on its roster, and a key group has no roster here. The roster of a key group is held by social-service. Owed next, as its own pull request with an opus review: a social-service internal route answering "is this person entitled to this scope", called by chat-delivery for a key-group external commit only. A failed call refuses with a retryable 503 and never accepts, and its rate is measured against the ~77 joins/day before a stable.
 
+## P3 - A refused membership report is silent on the client (2026-10-22)
+
+A report of `active` now promotes an existing seat only, and is refused (`403 NOT_A_MEMBER`, with
+`reason` `no_seat`, `kicked` or `not_on_roster`) otherwise. `updateInvitationStatus` in
+`mlsDeliveryApi.ts` ignores the status code, so a device whose pending row was purged (the 14-day
+cleanup) before it processed its Welcome stays unrouted with no client-side line; the server's
+`REFUSED ... reason=` warn is the only trace. Owed: log a non-2xx answer at warn on the client.
+
 ## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
 
 Registration refuses a device id another account holds (`device_id_taken`) by a read before its write; `key_package` is unique on the pair only, so two concurrent registrations of one id by two accounts could both pass. Production held 0 shared ids on 2026-10-22, and a client mints its id per account. The fix is a unique index on `key_package."deviceId"`, a migration of its own.

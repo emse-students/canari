@@ -18,6 +18,7 @@ import {
   IsNull,
 } from 'typeorm';
 import * as crypto from 'crypto';
+import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
@@ -459,7 +460,41 @@ export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
  * (WP-GHOST-1). The third is not about the device at all: it is the value failing to name one, and
  * it lives here rather than at each door because two of the four doors did not check it.
  */
-export type ActivationRefusal = 'revoked' | 'no_key_package' | 'unresolved_identity';
+export type ActivationRefusal = 'revoked' | 'no_key_package' | 'unresolved_identity' | SeatRefusal;
+
+/** Why a REPORT of `active` was refused: the device holds no seat it may promote. */
+export type SeatRefusal = 'no_seat' | 'kicked' | 'not_on_roster';
+
+/**
+ * By what right a device becomes `active` - REQUIRED of every caller, so none can skip the seat.
+ *
+ * - `report`: the device, or a member for it, REPORTS a seat already written by the commit or
+ *   Welcome that admitted it. It promotes that seat and never creates one (see
+ *   {@link MessagingService.activateDeviceMembership}).
+ * - `accepted_commit`: the committer of an external commit the gate just accepted.
+ * - `group_creator`: the device that created the group, in the request that creates it.
+ * - `distribution_publisher`: the publisher of a key group's GroupInfo, on the internal route
+ *   social-service calls only after its own membership check.
+ */
+export type ActivationAuthority =
+  | 'report'
+  | 'accepted_commit'
+  | 'group_creator'
+  | 'distribution_publisher';
+
+/**
+ * The HTTP refusal a reporting door answers with: a missing seat is the caller not being a member
+ * (403), anything else the device not being addressable (400).
+ */
+export function activationRefusalException(
+  reason: ActivationRefusal | undefined
+): ForbiddenException | BadRequestException {
+  return reason === 'no_seat' || reason === 'kicked' || reason === 'not_on_roster'
+    ? new ForbiddenException(
+        refusalBody(RefusalCode.NOT_A_MEMBER, 'This device holds no seat in this group', { reason })
+      )
+    : new BadRequestException(`Device is not addressable: ${reason}`);
+}
 
 /**
  * The result of {@link MessagingService.activateDeviceMembership}.
@@ -1958,7 +1993,9 @@ export class MessagingService {
         where: { userId: committer, deviceId, groupId },
       });
       if (committerRow?.status !== 'active') {
-        await this.activateDeviceMembership(committer, deviceId, groupId).catch((e) =>
+        await this.activateDeviceMembership(committer, deviceId, groupId, {
+          authority: 'accepted_commit',
+        }).catch((e) =>
           this.logger.warn(
             `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
           )
@@ -2702,6 +2739,32 @@ export class MessagingService {
   }
 
   /**
+   * Why a REPORT of `active` may not promote this device, or `null` when it may.
+   *
+   * Every legitimate report follows a write that made the seat: the admitting commit or the
+   * Welcome (`pending`), or the accepted external commit that activated its committer (`active`, so
+   * the report is idempotent). So the `(user, device, group)` row must exist; a `pending` one must
+   * not carry a kick no commit has answered - the admitting commit clears it, and until then the
+   * device is refused at the commit gate too; and in a conversation its owner must still be on the
+   * roster. A key-distribution group has no user roster here: its seat is what an admit or a gated
+   * external commit wrote.
+   */
+  private async seatRefusal(
+    userId: string,
+    deviceId: string,
+    groupId: string
+  ): Promise<SeatRefusal | null> {
+    const seat = await this.deviceGroupRepo.findOne({
+      where: { userId, deviceId, groupId },
+      select: { status: true, kickedAt: true },
+    });
+    if (!seat) return 'no_seat';
+    if (seat.status === 'pending' && seat.kickedAt) return 'kicked';
+    if (await this.isKeyDistributionGroup(groupId)) return null;
+    return (await this.isOnRoster(groupId, userId)) ? null : 'not_on_roster';
+  }
+
+  /**
    * THE ONE WRITER OF `active`, AND THE ONE WRITER OF THE REDIS ROUTING SET.
    *
    * That sentence is in this table's entity docblock and it was NOT true until 2026-09-13. Three
@@ -2736,13 +2799,19 @@ export class MessagingService {
    * instead, at SEND time (`ValidateCommitBody.admits`), so by the time it activates everything it
    * can open is already in its queue.
    *
+   * A REPORT PROMOTES A SEAT; IT NEVER CREATES ONE (2026-10-22). Every caller names its
+   * {@link ActivationAuthority}, and a `report` - the two doors a device may call about itself - is
+   * refused unless its seat exists ({@link seatRefusal}). The other authorities create the seat
+   * under a gate of their own, which is why they may: the accepted commit, the group's creation, the
+   * publisher social-service vouched for.
+   *
    * Idempotent: upsert on the unique constraint (deviceId, groupId).
    */
   async activateDeviceMembership(
     userId: string,
     deviceId: string,
     groupId: string,
-    { tag = 'MEMBERSHIP_ACTIVE' }: { tag?: string } = {}
+    { tag = 'MEMBERSHIP_ACTIVE', authority }: { tag?: string; authority: ActivationAuthority }
   ): Promise<ActivationOutcome> {
     // A NON-IDENTITY IS REFUSED HERE, BECAUSE THE GATE BELOW CANNOT SEE IT AND TWO DOORS DID NOT
     // LOOK. `deviceAddressability` asks whether this pair is reachable; a placeholder that
@@ -2774,6 +2843,17 @@ export class MessagingService {
         `[${tag}] REFUSED group=${groupId} device=${userId}:${deviceId} reason=${addressable.reason}`
       );
       return { ok: false, reason: addressable.reason };
+    }
+
+    if (authority === 'report') {
+      const refused = await this.seatRefusal(userId, deviceId, groupId);
+      if (refused) {
+        this.logger.warn(
+          `[${tag}] REFUSED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+            `reason=${refused} - a report promotes a seat and never creates one`
+        );
+        return { ok: false, reason: refused };
+      }
     }
 
     // `kickedAt: null`: the device is IN, so nothing is owed to it and no kick is outstanding.

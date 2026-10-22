@@ -49,10 +49,13 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
  */
 describe('the ONE writer of an active membership', () => {
   let service: MessagingService;
+  /** The writer's mechanics, under an authority that creates its seat (group creation). */
+  const CREATOR = { authority: 'group_creator' as const };
   let warn: jest.SpyInstance;
 
   const redis = {
     sadd: jest.fn().mockResolvedValue(1),
+    srem: jest.fn().mockResolvedValue(1),
     xrange: jest.fn().mockResolvedValue([]),
     publish: jest.fn().mockResolvedValue(1),
   };
@@ -71,9 +74,13 @@ describe('the ONE writer of an active membership', () => {
     delete: jest.fn().mockResolvedValue({ affected: 0 }),
     create: jest.fn().mockImplementation((e: unknown) => e),
   });
+  const groupRepo = emptyRepo();
+  const groupMemberRepo = emptyRepo();
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    groupRepo.findOne.mockResolvedValue(null);
+    groupMemberRepo.findOne.mockResolvedValue(null);
     revokedDeviceRepo.findOne.mockResolvedValue(null);
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1' });
     deviceGroupRepo.findOne.mockResolvedValue(null);
@@ -83,8 +90,8 @@ describe('the ONE writer of an active membership', () => {
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
+        { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
@@ -105,7 +112,7 @@ describe('the ONE writer of an active membership', () => {
   });
 
   it('writes the row AND the routing set - the two facts a reachable device needs', async () => {
-    const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1');
+    const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
 
     expect(outcome.ok).toBe(true);
     expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(
@@ -116,7 +123,7 @@ describe('the ONE writer of an active membership', () => {
   });
 
   it('clears `kickedAt`: the device is IN, so no Add is outstanding', async () => {
-    await service.activateDeviceMembership('u1', 'd1', 'g1');
+    await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
 
     expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ kickedAt: null }),
@@ -125,7 +132,7 @@ describe('the ONE writer of an active membership', () => {
   });
 
   it('clears `admittedAtEpoch`: the status routes the device from here on', async () => {
-    await service.activateDeviceMembership('u1', 'd1', 'g1');
+    await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
 
     expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ admittedAtEpoch: null }),
@@ -136,7 +143,7 @@ describe('the ONE writer of an active membership', () => {
   it('refuses a REVOKED device and writes neither the row nor the set (WP-GHOST-1)', async () => {
     revokedDeviceRepo.findOne.mockResolvedValue({ userId: 'u1', deviceId: 'd1' });
 
-    const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1');
+    const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
 
     expect(outcome).toEqual({ ok: false, reason: 'revoked' });
     expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
@@ -146,7 +153,7 @@ describe('the ONE writer of an active membership', () => {
   it('refuses a device with NO KeyPackage - one good enough to be messaged is one good enough to be invited', async () => {
     keyPackageRepo.findOne.mockResolvedValue(null);
 
-    const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1');
+    const outcome = await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
 
     expect(outcome).toEqual({ ok: false, reason: 'no_key_package' });
     expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
@@ -155,7 +162,7 @@ describe('the ONE writer of an active membership', () => {
   it('ACCUSES under the CALLER tag, so a refusal names the door that asked', async () => {
     revokedDeviceRepo.findOne.mockResolvedValue({ userId: 'u1', deviceId: 'd1' });
 
-    await service.activateDeviceMembership('u1', 'd1', 'g1', { tag: 'CREATE_GROUP' });
+    await service.activateDeviceMembership('u1', 'd1', 'g1', { tag: 'CREATE_GROUP', ...CREATOR });
 
     const line = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('REFUSED'));
     expect(line).toBeDefined();
@@ -168,7 +175,7 @@ describe('the ONE writer of an active membership', () => {
 
     // The return value is dropped on purpose: a best-effort seam may do exactly this, and the
     // record must survive it.
-    await service.activateDeviceMembership('u1', 'd1', 'g1');
+    await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
 
     expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('REFUSED');
   });
@@ -181,7 +188,7 @@ describe('the ONE writer of an active membership', () => {
     ['userId', 'unknown', 'd1'],
     ['deviceId', 'u1', 'pending'],
   ])("refuses the client's unresolved-identity placeholder in %s", async (field, u, d) => {
-    const outcome = await service.activateDeviceMembership(u, d, 'g1');
+    const outcome = await service.activateDeviceMembership(u, d, 'g1', CREATOR);
 
     expect(outcome).toEqual({ ok: false, reason: 'unresolved_identity' });
     expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
@@ -197,7 +204,7 @@ describe('the ONE writer of an active membership', () => {
   // answer there worth spending. A typed reason rather than a message, because nothing in this
   // codebase branches on prose.
   it('refuses the placeholder without asking the database whether it is addressable', async () => {
-    await service.activateDeviceMembership('unknown', 'pending', 'g1');
+    await service.activateDeviceMembership('unknown', 'pending', 'g1', CREATOR);
 
     expect(revokedDeviceRepo.findOne).not.toHaveBeenCalled();
     expect(keyPackageRepo.findOne).not.toHaveBeenCalled();
@@ -208,9 +215,150 @@ describe('the ONE writer of an active membership', () => {
     // admission its commit recorded, never through a window read back here.
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'pending', createdAt: new Date() });
 
-    await service.activateDeviceMembership('u1', 'd1', 'g1');
+    await service.activateDeviceMembership('u1', 'd1', 'g1', CREATOR);
 
     expect(redis.xrange).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A REPORT PROMOTES A SEAT AND NEVER CREATES ONE - checked HERE, in the one writer, so neither
+   * reporting door (`invitations/status`, `push/membership-active`) can skip it. The seat table is
+   * in memory and answers by `where`, so a lookup on the wrong columns finds nothing.
+   */
+  describe('a report', () => {
+    type Seat = {
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      status: 'pending' | 'active';
+      kickedAt?: Date | null;
+      admittedAtEpoch?: number | null;
+    };
+    let seats: Seat[];
+    let roster: Array<{ groupId: string; userId: string }>;
+    const REPORT = { authority: 'report' as const, tag: 'INVITATION_STATUS' };
+    const matches = (row: Record<string, unknown>, where: Record<string, unknown>) =>
+      Object.entries(where).every(([k, v]) => row[k] === v);
+
+    beforeEach(() => {
+      seats = [{ userId: 'u1', deviceId: 'd1', groupId: 'g1', status: 'pending', kickedAt: null }];
+      roster = [{ groupId: 'g1', userId: 'u1' }];
+      groupRepo.findOne.mockResolvedValue({ id: 'g1' });
+      deviceGroupRepo.findOne.mockImplementation(
+        async ({ where }: { where: Record<string, unknown> }) =>
+          seats.find((r) => matches(r, where)) ?? null
+      );
+      // The table's unique key is (deviceId, groupId): an upsert merges into that row.
+      deviceGroupRepo.upsert.mockImplementation(async (row: Seat) => {
+        const i = seats.findIndex((r) => r.deviceId === row.deviceId && r.groupId === row.groupId);
+        if (i < 0) seats.push({ ...row });
+        else seats[i] = { ...seats[i], ...row };
+      });
+      groupMemberRepo.findOne.mockImplementation(
+        async ({ where }: { where: Record<string, unknown> }) =>
+          roster.find((r) => matches(r, where)) ?? null
+      );
+    });
+
+    it('promotes the pending seat its admission wrote, asking by the triple', async () => {
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: true,
+      });
+      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
+        where: { userId: 'u1', deviceId: 'd1', groupId: 'g1' },
+        select: { status: true, kickedAt: true },
+      });
+      expect(seats[0].status).toBe('active');
+    });
+
+    it('is idempotent on a seat an accepted external commit already made active', async () => {
+      seats[0].status = 'active';
+
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: true,
+      });
+    });
+
+    it.each([
+      ['no seat at all', () => (seats = []), 'no_seat'],
+      [
+        "only ANOTHER account's seat for this device id",
+        () => (seats[0].userId = 'u-other'),
+        'no_seat',
+      ],
+      ['a kick no admitting commit has answered', () => (seats[0].kickedAt = new Date()), 'kicked'],
+      ['an owner no longer on the roster', () => (roster = []), 'not_on_roster'],
+    ])('refuses %s, and writes neither the row nor the set', async (_name, arrange, reason) => {
+      arrange();
+      const before = JSON.stringify(seats);
+
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: false,
+        reason,
+      });
+      expect(JSON.stringify(seats)).toBe(before);
+      expect(redis.sadd).not.toHaveBeenCalled();
+      const line = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('REFUSED'));
+      expect(line).toContain('INVITATION_STATUS');
+      expect(line).toContain(`reason=${reason}`);
+    });
+
+    it('accepts a key group on its seat alone: it has no user roster here', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      roster = [];
+
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: true,
+      });
+      expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('lets every other authority create the seat it is the gate for', async () => {
+      seats = [];
+
+      for (const authority of [
+        'accepted_commit',
+        'group_creator',
+        'distribution_publisher',
+      ] as const) {
+        await expect(
+          service.activateDeviceMembership('u1', 'd1', 'g1', { authority })
+        ).resolves.toEqual({ ok: true });
+      }
+      expect(seats).toHaveLength(1);
+    });
+
+    it('follows kick-and-re-add end to end: kicked, admitted, then reported', async () => {
+      seats[0].status = 'active';
+      // 1. A member removes the device's stale leaf and records the kick.
+      await service.deactivateDeviceMembership('u1', 'd1', 'g1', {
+        removedFromTreeAt: new Date('2026-10-22T10:00:00Z'),
+        tag: 'KICK_DEVICE',
+      });
+      expect(seats[0]).toMatchObject({ status: 'pending' });
+      expect(seats[0].kickedAt).toBeInstanceOf(Date);
+
+      // 2. Before any Add answers it, the device's own report is refused: the kick stands.
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: false,
+        reason: 'kicked',
+      });
+
+      // 3. The member's accepted commit ADMITS the device - the update `validateCommit` makes, by
+      //    the pair and guarded on `pending` (asserted on its own in messaging.commit-log.spec.ts).
+      //    The Welcome that follows never touches the row (messaging.welcome-membership.spec.ts).
+      const admitted = seats.find((r) =>
+        matches(r, { userId: 'u1', deviceId: 'd1', groupId: 'g1', status: 'pending' })
+      );
+      Object.assign(admitted as Seat, { admittedAtEpoch: 6, kickedAt: null });
+
+      // 4. The device processes its Welcome and reports: promoted.
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: true,
+      });
+      expect(seats[0]).toMatchObject({ status: 'active', kickedAt: null });
+      expect(redis.sadd).toHaveBeenCalledWith('group:members:g1', 'u1:d1');
+    });
   });
 });
 

@@ -452,7 +452,7 @@ export class InternalController {
       publisherUserId,
       publisherDeviceId,
       group.id,
-      { tag: 'DISTRIBUTION_PUBLISHER' }
+      { tag: 'DISTRIBUTION_PUBLISHER', authority: 'distribution_publisher' }
     );
 
     this.logger.log(

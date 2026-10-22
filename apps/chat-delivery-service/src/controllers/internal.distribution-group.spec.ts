@@ -314,7 +314,7 @@ describe('InternalController - the community distribution group', () => {
         PUBLISHER.userId,
         PUBLISHER.deviceId,
         'g-1',
-        { tag: 'DISTRIBUTION_PUBLISHER' }
+        { tag: 'DISTRIBUTION_PUBLISHER', authority: 'distribution_publisher' }
       );
     });
 

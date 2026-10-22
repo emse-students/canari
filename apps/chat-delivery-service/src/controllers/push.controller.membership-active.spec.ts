@@ -98,8 +98,27 @@ describe('PushController - POST mls/push/membership-active', () => {
     expect(got).toEqual({ status: 'active' });
     expect(messaging.activateDeviceMembership).toHaveBeenCalledWith(USER, DEVICE, GROUP, {
       tag: 'MEMBERSHIP_ACTIVE_PUSH',
+      // A report: the writer promotes the seat its Welcome came with and never creates one.
+      authority: 'report',
     });
   });
+
+  // The same hole as `invitations/status`, through the PushSecret door: any account can hold a
+  // push secret, so a missing seat must be refused here too, as a 403 the native handler logs.
+  it.each(['no_seat', 'kicked', 'not_on_roster'] as const)(
+    'is a 403 NOT_A_MEMBER when the writer refuses the report for %s',
+    async (reason) => {
+      messaging.activateDeviceMembership.mockResolvedValue({ ok: false, reason });
+
+      await expect(
+        controller.markMembershipActivePush(HEADER, {
+          userId: USER,
+          deviceId: DEVICE,
+          groupId: GROUP,
+        })
+      ).rejects.toMatchObject({ status: 403, response: { code: 'NOT_A_MEMBER', reason } });
+    }
+  );
 
   // The fault this file exists for. Both refusals the writer can return, because the door must not
   // be right about one of them by accident.
