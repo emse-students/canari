@@ -38,13 +38,16 @@ import {
 } from './distribution-group.client';
 
 import {
+  actorMayGrantRole,
   CHANNEL_PERMISSIONS,
   DEFAULT_ADMIN_PERMISSIONS,
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
+  INVITE_ROLE_NOT_GRANTABLE,
   PIN_REQUIRES_MODERATION,
   roleGrantsChannelManagement,
   roleGrantsModeration,
+  roleGrantsRoleManagement,
   writePolicyAllows,
 } from './permissions';
 
@@ -903,6 +906,14 @@ export class ChannelService implements OnApplicationBootstrap {
     return true;
   }
 
+  /**
+   * The community's base role - its lowest-priority role, "Membre" - which is what joining grants.
+   * THE ONLY definition: an invite link grants it, and an invitation may grant it whoever sent it.
+   */
+  private baseMemberRole(roles: readonly ChannelRole[]): ChannelRole | null {
+    return roles.slice().sort((a, b) => a.priority - b.priority)[0] ?? null;
+  }
+
   /** Revokes a set of invites in one statement, saying how many and why. */
   private async revokeInvites(invites: WorkspaceInvite[], reason: string): Promise<void> {
     if (invites.length === 0) return;
@@ -1079,18 +1090,38 @@ export class ChannelService implements OnApplicationBootstrap {
     });
     if (existing) return { workspaceSlug: ws.slug, alreadyMember: true };
 
-    // Base member role = lowest priority role of the workspace (e.g. "Membre").
     const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
-    const baseRole = roles.slice().sort((a, b) => a.priority - b.priority)[0] ?? null;
-    await this.memberRepo.save(
-      this.memberRepo.create({
-        workspaceId: ws.id,
-        userId,
-        roleIds: baseRole ? [baseRole.id] : [],
-      })
-    );
+    const baseRole = this.baseMemberRole(roles);
 
-    await this.inviteRepo.increment({ id: invite.id }, 'uses', 1);
+    // COUNTING THE USE IS WHAT ADMITS, in ONE statement that carries the bound. The read above is a
+    // preview only: two accepts that both read the last free use used to both join, then both
+    // increment past `maxUses`. The conditional UPDATE takes the invite's row lock, so a concurrent
+    // accept waits for this one and then re-evaluates the WHERE against the committed count - and
+    // the member is written in the same transaction, so a refused claim leaves nobody behind.
+    const claimed = await this.inviteRepo.manager.transaction(async (tx) => {
+      const [won]: [{ id: string }[], number] = await tx.query(
+        `UPDATE workspace_invites
+            SET uses = uses + 1
+          WHERE id = $1
+            AND revoked = false
+            AND ("expiresAt" IS NULL OR "expiresAt" >= now())
+            AND ("maxUses" IS NULL OR uses < "maxUses")
+      RETURNING id`,
+        [invite.id]
+      );
+      if (won.length === 0) return false;
+      const members = tx.getRepository(ChannelMember);
+      await members.save(
+        members.create({ workspaceId: ws.id, userId, roleIds: baseRole ? [baseRole.id] : [] })
+      );
+      return true;
+    });
+    if (!claimed) {
+      this.logger.warn(
+        `[INVITE] refused - claim matched no row (exhausted, revoked or expired meanwhile) workspace=${ws.id} user=${userId.slice(0, 8)}`
+      );
+      throw new NotFoundException('Invalid or expired invitation.');
+    }
 
     // Notify connected clients (the joining user's devices + existing members) to refresh.
     const repChannel = await this.channelRepo.findOne({
@@ -1946,11 +1977,7 @@ export class ChannelService implements OnApplicationBootstrap {
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
-      );
+      hasPerm = roles.some((r) => roleGrantsRoleManagement(r.permissions));
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
@@ -2632,6 +2659,47 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * The role an invitation may grant its invitee, or a refusal - never a silent downgrade, because
+   * a member invited as something other than what was asked would be a grant nobody chose.
+   *
+   * Inviting is `member.invite` (or `channel.manage`); granting a role is role management. So the
+   * invitation grants the community's base role - what an invite link grants - unless the request
+   * names another role AND `actorMayGrantRole` lets this actor hand it out, the same right the
+   * role-management endpoints require, bounded by what the actor holds. No role named means the
+   * base role. A named role the community does not have grants nothing, as it always has.
+   *
+   * @throws ForbiddenException `INVITE_ROLE_NOT_GRANTABLE` when the actor may not grant that role
+   */
+  private async resolveInviteGrantedRole(
+    workspaceId: string,
+    actorUserId: string,
+    actorRoles: readonly ChannelRole[],
+    requestedName: string | undefined
+  ): Promise<ChannelRole | null> {
+    const roles = await this.roleRepo.find({ where: { workspaceId } });
+    const base = this.baseMemberRole(roles);
+    if (!requestedName) return base;
+    const wanted = this.mapRoleInputToWorkspaceRoleName(requestedName);
+    const role = roles.find((r) => r.name === wanted) ?? null;
+    if (!role || role.id === base?.id) return role;
+
+    const actorPermissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
+    if (actorMayGrantRole(actorPermissions, role.permissions)) {
+      this.logger.debug(
+        `[INVITE] grant of role=${role.name} allowed workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+      );
+      return role;
+    }
+    this.logger.warn(
+      `[INVITE] refused - role=${role.name} not grantable by actor workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+    );
+    throw new ForbiddenException({
+      code: INVITE_ROLE_NOT_GRANTABLE,
+      message: 'This invitation cannot grant that role.',
+    });
+  }
+
+  /**
    * Invites a user to a channel: makes them a member of the community if they are not one yet, and
    * for a private channel adds them to `allowedUsers`.
    *
@@ -2651,17 +2719,25 @@ export class ChannelService implements OnApplicationBootstrap {
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.INVITE_MEMBERS) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
-      );
-    }
+    const actorRoles =
+      actorMember.roleIds?.length > 0
+        ? await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } })
+        : [];
+    const hasPerm = actorRoles.some(
+      (r) =>
+        r.permissions.includes(CHANNEL_PERMISSIONS.INVITE_MEMBERS) ||
+        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
+        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
+    );
     if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
+
+    // Decided before anything is asked of another service: the role is in the request already.
+    const grantedRole = await this.resolveInviteGrantedRole(
+      channel.workspaceId,
+      input.actorUserId,
+      actorRoles,
+      input.roleName
+    );
 
     // A block closes this door too, and INSIDE A SHARED COMMUNITY as much as outside it. Almost
     // every salon invitation is issued from a community both people belong to, so exempting that
@@ -2703,17 +2779,10 @@ export class ChannelService implements OnApplicationBootstrap {
     const isNewMember = !targetMember;
 
     if (!targetMember) {
-      // Find the role to assign (default to Member if not specified)
-      const roleName = this.mapRoleInputToWorkspaceRoleName(input.roleName || 'Membre');
-      const role = await this.roleRepo.findOne({
-        where: { workspaceId: channel.workspaceId, name: roleName },
-      });
-      const roleIds = role ? [role.id] : [];
-
       targetMember = this.memberRepo.create({
         workspaceId: channel.workspaceId,
         userId: input.targetUserId,
-        roleIds,
+        roleIds: grantedRole ? [grantedRole.id] : [],
       });
       await this.memberRepo.save(targetMember);
     }
@@ -2743,7 +2812,7 @@ export class ChannelService implements OnApplicationBootstrap {
           workspaceSlug: workspace?.slug,
           workspaceName: workspace?.name,
           visibility: channel.isPrivate ? 'private' : 'public',
-          roleName: this.mapRoleInputToWorkspaceRoleName(input.roleName || 'Membre'),
+          roleName: grantedRole?.name ?? this.mapRoleInputToWorkspaceRoleName(input.roleName),
           joinedBy: input.targetUserId,
           invitedBy: input.actorUserId,
         },
@@ -2885,11 +2954,7 @@ export class ChannelService implements OnApplicationBootstrap {
     let hasPerm = false;
     if (adminMember.roleIds?.length > 0) {
       const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
-      );
+      hasPerm = roles.some((r) => roleGrantsRoleManagement(r.permissions));
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
@@ -4859,11 +4924,7 @@ export class ChannelService implements OnApplicationBootstrap {
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
       const actorRoles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = actorRoles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
-      );
+      hasPerm = actorRoles.some((r) => roleGrantsRoleManagement(r.permissions));
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
@@ -4890,11 +4951,7 @@ export class ChannelService implements OnApplicationBootstrap {
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
       const actorRoles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = actorRoles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
-      );
+      hasPerm = actorRoles.some((r) => roleGrantsRoleManagement(r.permissions));
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
   }

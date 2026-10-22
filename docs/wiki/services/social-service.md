@@ -1297,6 +1297,27 @@ expires. Bounds that would mint a dead link - an expiry already past, a cap belo
 (`INVITE_EXPIRY_INVALID`, `INVITE_EXPIRY_IN_THE_PAST`, `INVITE_MAX_USES_INVALID`) rather than stored,
 since `inviteIsValid` would otherwise hand back a token dead on arrival with nothing saying why.
 
+**Invite use counting is atomic (2026-10-22).** `acceptWorkspaceInvite`'s read of the invite is a
+preview; what admits is ONE conditional `UPDATE workspace_invites SET uses = uses + 1 WHERE id = $1
+AND revoked = false AND (not expired) AND ("maxUses" IS NULL OR uses < "maxUses") RETURNING id`, in
+the transaction that writes the membership. The row lock serialises concurrent accepts, each
+re-evaluates the WHERE against the committed count, and a claim that matches no row is refused
+(`404`) with nothing written. It used to read `uses`, add the member, then `increment`, so two
+accepts reading the last free use both joined. Pinned by `workspace-invite.integration.spec.ts`,
+which parks an accept on a held claim through `pg_blocking_pids`, never a sleep.
+
+### An invitation grants only a role the inviter may grant (2026-10-22)
+
+An invite LINK carries no role: whoever minted it, accepting grants the community's base role,
+its lowest-priority one (`baseMemberRole`, the one definition). A direct invitation
+(`inviteToChannel`) takes a `roleName` in its body, and since inviting is `member.invite` or
+`channel.manage` while granting a role is role management, it grants the base role unless
+`actorMayGrantRole` (`permissions.ts`) allows the named one: the actor holds
+`roleGrantsRoleManagement` - the same predicate every role-management endpoint now reads - and the
+role grants nothing the actor does not hold (`workspace.manage` holds everything). Otherwise
+`403 { code: 'INVITE_ROLE_NOT_GRANTABLE' }`, decided before the device lookup, never a silent
+downgrade. The panel offers the role picker only to `viewerCanManage`, so no client path changed.
+
 ### A user id becomes a property name, and four sites spelled the refusal differently (2026-09-23)
 
 Reactions and poll answers are both stored as a map KEYED BY USER ID (`reactions`, `votesByUser`),

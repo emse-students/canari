@@ -109,6 +109,46 @@ export function roleGrantsModeration(permissions: readonly string[]): boolean {
 }
 
 /**
+ * Whether a role lets its holder manage roles - create them, edit what they grant, assign them.
+ * THE ONLY definition: every role-management endpoint refuses without it, and an invitation that
+ * grants more than the base role asks it too (`actorMayGrantRole`).
+ */
+export function roleGrantsRoleManagement(permissions: readonly string[]): boolean {
+  return (
+    permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES) ||
+    permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
+  );
+}
+
+/**
+ * Whether an actor holding `actorPermissions` (the union over all their roles) may hand somebody a
+ * role granting `grantedPermissions` - THE ONLY definition, asked wherever a role is granted outside
+ * the role-management screen.
+ *
+ * Two conditions. The actor manages roles (`roleGrantsRoleManagement`), the same right the
+ * role-management endpoints require. AND the role grants nothing the actor does not hold, so a grant
+ * can never hand out more than its author has; `workspace.manage` holds every permission, so an
+ * administrator may grant any role.
+ *
+ * The community's base role (the one an invite link grants) is not asked about here: granting it is
+ * what inviting IS, and the caller exempts it before asking.
+ */
+export function actorMayGrantRole(
+  actorPermissions: readonly string[],
+  grantedPermissions: readonly string[]
+): boolean {
+  if (!roleGrantsRoleManagement(actorPermissions)) return false;
+  if (actorPermissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)) return true;
+  return grantedPermissions.every((p) => actorPermissions.includes(p));
+}
+
+/**
+ * The refusal code of an invitation asking to grant a role its author may not grant.
+ * A CODE, so a client maps the refusal from what the server typed rather than from its prose.
+ */
+export const INVITE_ROLE_NOT_GRANTABLE = 'INVITE_ROLE_NOT_GRANTABLE';
+
+/**
  * The refusal code of a pin or unpin by a member who may not moderate - whoever wrote the message.
  * A CODE, so a client maps the refusal from what the server typed rather than from its prose.
  */
