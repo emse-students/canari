@@ -248,6 +248,33 @@ describe("a salon's stored page", () => {
     expect(convs.conversations.get(SALON)?.messages).toEqual([]);
   });
 
+  // GRAINE-AUTH-1, 2026-10-22: a row the server page no longer serves (refused, or deleted) stayed
+  // on screen once in five. A load that DREW the copy was superseded before its page came, so it
+  // withdrew nothing; the newer load found the drawn rows already in memory, drew nothing itself,
+  // and so had nothing to withdraw either.
+  it('withdraws what a superseded load drew, when the newer load finds it already in memory', async () => {
+    const storage = makeStorage([storedRow('a', 1_000), storedRow('z', 9_000)]);
+    const answers: ((rows: unknown[]) => void)[] = [];
+    listMessages.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    const convs = useConversations();
+    convs.conversations.set(SALON, salon());
+    const ctx = makeCtx(storage);
+
+    const first = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() =>
+      expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a', 'z'])
+    );
+    convs.invalidateChannelHistoryCache(SALON);
+    const second = convs.loadHistoryForConversation(SALON, SALON, ctx);
+    await vi.waitFor(() => expect(answers).toHaveLength(2));
+    answers[0]([{ id: 'a', at: 1_000 }]);
+    await first;
+    answers[1]([{ id: 'a', at: 1_000 }]);
+    await second;
+
+    expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a']);
+  });
+
   it('never stores the older-messages notice, which is not a message', async () => {
     droppedV1.ids = ['gone'];
     const storage = makeStorage([]);
