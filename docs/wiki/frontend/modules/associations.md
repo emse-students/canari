@@ -122,6 +122,17 @@ surfaces showing it - the tile and the detail header - cannot disagree.
 `associations.service.logo-slot.spec.ts` pins that neither slot writes the other's column, that the
 replaced object deleted is the one the SAME slot held, and that the validation is shared.
 
+**What `logoUrl` may hold (input validation, 2026-10-22).** The upload writes
+`/api/media/public/<id>?v=<n>`; the create and update bodies still accept the field, and on both the
+service holds it to an allowlist - that own-media shape, or an absolute `https:` URL with no quote,
+angle bracket or whitespace - and refuses anything else with `400 ASSOCIATION_IMAGE_URL_INVALID`
+(`apps/social-service/src/associations/association-image-url.ts`; a blank value clears it). Migration
+`106` brings any stored value outside the allowlist back to the row's own media, or clears it. The
+reader's half is `imageSrcOrNull` (`frontend/src/lib/utils/imageSrc.ts`), called by
+`associationLogoSrc`: only a path or an http(s) URL is ever drawn. The two export sheets built as
+HTML strings (`calendarExport.ts`, `trombinoscope.ts`) escape every interpolated value, attributes
+included, through the one `escapeHtmlAttribute` (`frontend/src/lib/utils/escapeHtml.ts`).
+
 ### What a list's card says, and what it stopped saying
 
 Three changes, all of them about not repeating what the page already states (user, 2026-09-22):

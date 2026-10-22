@@ -2,28 +2,13 @@ import { renderJsonLdScript, serializeJsonLd } from '$lib/seo/jsonLd';
 import { formatDocumentTitle } from '$lib/seo/resolve';
 import { SITE, siteAssetUrl, siteOrigin } from '$lib/seo/site';
 import type { SeoMeta } from '$lib/seo/types';
+import { escapeHtmlAttribute } from '$lib/utils/escapeHtml';
+
+/** Re-exported: the head escapes every value it interpolates with the one shared implementation. */
+export { escapeHtmlAttribute };
 
 /** Id of the payload the client reads back to keep the head it was served. */
 export const SEO_DATA_ELEMENT_ID = 'canari-seo-data';
-
-/**
- * Escapes a value for use inside a double-quoted HTML attribute.
- *
- * Load-bearing: the strings interpolated here are post text, association names and community
- * names - user-supplied, arriving from the API into the app shell of every visitor. `"` alone
- * would be enough to break out of the attribute, and `<` to break out of the tag, so both are
- * escaped along with `&` (first, or it would double-encode the entities added after it), `'` and
- * `` ` `` (some attribute parsers accept them as delimiters).
- */
-export function escapeHtmlAttribute(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-    .replace(/`/g, '&#96;');
-}
 
 /** `<meta property="..." content="...">`, or '' when the value is empty. */
 function metaProperty(property: string, content: string | undefined | null): string {
