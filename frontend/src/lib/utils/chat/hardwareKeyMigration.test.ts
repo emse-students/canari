@@ -50,13 +50,33 @@ function fakePort(scheme: AtRestKeyScheme, read: HardwareKeyRead = { key: NEW })
   return { port, calls };
 }
 
+/** Decision 4's two hooks: whether the install held data, and what was told when it did. */
+let hadLocalData = true;
+let superseded = 0;
+const backupNotice = {
+  hadLocalData: async () => hadLocalData,
+  onBackupsSuperseded: () => {
+    superseded++;
+  },
+};
+
 function deps(port: HardwareKeyPort, changeKey = vi.fn(async () => {}), currentKeyB64 = OLD) {
-  return { userId: 'u1', deviceId: 'd1', currentKeyB64, port, changeKey, log: () => {} };
+  return {
+    userId: 'u1',
+    deviceId: 'd1',
+    currentKeyB64,
+    port,
+    changeKey,
+    ...backupNotice,
+    log: () => {},
+  };
 }
 
 let recoveries: string[] = [];
 beforeEach(() => {
   recoveries = [];
+  hadLocalData = true;
+  superseded = 0;
   setKeyRecoveryHandler((reason) => recoveries.push(reason));
 });
 afterEach(() => setKeyRecoveryHandler(null));
@@ -104,6 +124,26 @@ describe('migrateToHardwareHeldKey', () => {
     );
     expect(recoveries).toHaveLength(1);
     expect(calls.some((c) => c.startsWith('mark'))).toBe(false);
+  });
+
+  it('asks for a new backup after a re-key of an install that held data, and only then', async () => {
+    expect(await migrateToHardwareHeldKey(deps(fakePort('pin-derived').port))).toBe('migrated');
+    expect(superseded).toBe(1);
+
+    // A fresh install takes the same path and has no earlier backup to supersede.
+    hadLocalData = false;
+    expect(await migrateToHardwareHeldKey(deps(fakePort('pin-derived').port))).toBe('migrated');
+    expect(superseded).toBe(1);
+  });
+
+  it('asks for nothing when the re-key did not finish', async () => {
+    const change = vi.fn(async () => {
+      throw new KeyChangeInterruptedError('stores', true, new Error('disk'));
+    });
+    await expect(
+      migrateToHardwareHeldKey(deps(fakePort('pin-derived').port, change))
+    ).rejects.toThrow();
+    expect(superseded).toBe(0);
   });
 
   it('lets the session run on when the interruption moved nothing', async () => {
@@ -214,9 +254,16 @@ describe('finishMigrationAtUnlock', () => {
       resealStoresOnly: async (from, to) => {
         calls.push(`stores:${from}->${to}`);
       },
+      ...backupNotice,
       log: () => {},
     });
   }
+
+  it('asks for a new backup once an interrupted re-key of an install with data is finished', async () => {
+    const { port, calls } = fakePort('migrating');
+    await finish(port, calls);
+    expect(superseded).toBe(1);
+  });
 
   it('only completes the marker when the new key already opens the state', async () => {
     const { port, calls } = fakePort('migrating');

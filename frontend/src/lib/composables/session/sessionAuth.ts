@@ -38,6 +38,8 @@ import {
   settledAtRestScheme,
   startHardwareKeyMigration,
 } from '$lib/utils/chat/hardwareKeyMigration';
+import { noteBackupOwedAfterKeyMove } from '$lib/crypto/deviceRecoveryCode';
+import { showToast } from '$lib/stores/toast.svelte';
 import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
@@ -1465,6 +1467,7 @@ export async function loginImpl(
             oldKeyB64,
             newKeyB64
           ),
+        ...backupNoticeDeps(migratingUser),
         log: cb.log,
       });
     }
@@ -2275,6 +2278,24 @@ export async function loginImpl(
 }
 
 /**
+ * What the move to the hardware-held key needs for decision 4 of 2026-10-22: whether the install held
+ * conversations before it, and how to ask for a new backup once it is done - a notice the backup
+ * panel keeps until an export clears it, and a toast now.
+ */
+function backupNoticeDeps(userId: string): {
+  hadLocalData: () => Promise<boolean>;
+  onBackupsSuperseded: () => void;
+} {
+  return {
+    hadLocalData: async () => (await (await getStorage(userId)).getConversations()).length > 0,
+    onBackupsSuperseded: () => {
+      noteBackupOwedAfterKeyMove(userId);
+      showToast(m.profile_backup_owed_after_key_move(), 'info', 10_000);
+    },
+  };
+}
+
+/**
  * The PIN login's half of {@link finishMigrationAtUnlock}: wires the stored state, the recovery's
  * re-key and the stores-only move onto this login's client, and turns each failure into the login
  * outcome that names it. Runs after the server accepted the PIN and before any store is opened.
@@ -2305,6 +2326,7 @@ async function finishMigrationAtUnlockForLogin(
         ),
       resealStoresOnly: (oldKeyB64, newKeyB64) =>
         moveSealedStoresOnly(userId, oldKeyB64, newKeyB64, cb.log),
+      ...backupNoticeDeps(userId),
       log: cb.log,
     });
   } catch (e) {

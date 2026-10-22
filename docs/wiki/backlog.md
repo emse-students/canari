@@ -35,18 +35,15 @@ PIN-derived key. BUILT in a draft pull request (`feat/hardware-held-local-key`);
 [auth](frontend/modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22).
 Owed before it ships:
 
-- **Device readings, Mi 9T and iPhone**: fresh install; upgrade from the current store build (and
-  how long the re-key holds the storage gate); PIN change; a push readable with the app killed after
-  the migration; a v3 backup exported, then imported with its code on the other phone; "stay signed
-  in" across a restart; biometric unlock after the migration.
-- **The four open decisions are TAKEN (lead decisions, 2026-10-22) and the user chose option B**
-  (the PIN enters the key on the phone; the same PIN on every device; "stay signed in", ON by
-  default, and biometric unlock keep working). Both are recorded with their costs in
-  [auth](frontend/modules/auth.md#decisions-taken-on-2026-10-22-and-what-each-costs). B is
-  designed and under crypto review, NOT BUILT yet.
-- **P3 - an older build installed over a migrated phone is not guarded**: its `store_push_context`
-  writes the PIN-derived key into the keystore entry. Closes when `minClientVersion` reaches the
-  first release carrying the at-rest guard (the release this pull request ships in).
+- **Device readings, Mi 9T and iPhone**: the list is in
+  [auth](frontend/modules/auth.md#backups-get-their-own-recovery-secret) ("Owed on hardware"),
+  including the iOS build no gate here compiles.
+- **Decided (user, 2026-10-22): notifications stay complete on a locked phone, and the PIN is
+  verified by the server; the hardware key protects the device's stored data. Practicality first.**
+  The four lead decisions are BUILT and recorded with their costs in
+  [auth](frontend/modules/auth.md#decisions-taken-on-2026-10-22-and-what-each-costs).
+- **`minClientVersion` follows the first release carrying the hardware-held key** once both stores
+  serve it.
 - **Two keys stay on purpose**: #2271's push-cache key is not derived from the at-rest key, because it
   must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
   reset). Revisit only if #2271 lands with a design that tolerates a rotation.

@@ -235,7 +235,6 @@ describe('device key keystore encoding (raw bytes at rest, base64 on the wire)',
   const keystoreKt = readFileSync(KEYSTORE_PLUGIN_KT, 'utf8');
   const deviceKeyStoreKt = readFileSync(MLS_DEVICE_KEY_STORE_KT, 'utf8');
   const objcSource = readFileSync(CANARI_PUSH_MM, 'utf8');
-  const iosAppSource = readFileSync(CANARI_IOS_MM, 'utf8');
   const swiftSource = readFileSync(NOTIF_SERVICE_SWIFT, 'utf8');
 
   const storeKeyBytes = functionBody(keystoreSwift, /@objc public func storeKeyBytes/, /\n {2}}/);

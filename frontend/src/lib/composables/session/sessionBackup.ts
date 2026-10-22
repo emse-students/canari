@@ -38,7 +38,7 @@ export async function exportBackupImpl(
       log,
     });
     // A cancelled save produced no file, so there is no code to show and nothing to report.
-    return exported ? backupExportOutcome(exported.recoveryCode) : null;
+    return exported ? backupExportOutcome(exported.recoveryCode, exported.codeOrigin) : null;
   } catch (e) {
     log(`[BACKUP] Export failed: ${e}`);
     return backupExportFailure(e);

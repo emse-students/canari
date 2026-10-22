@@ -372,10 +372,12 @@ platform therefore keeps one entry that is hardware-backed yet usable unattended
 | iOS | second item, account `mls_bg_key_<alias>` | `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and **no** `kSecAttrAccessControl`; shared with the NSE through access group `group.fr.emse.canari` |
 
 Enabling biometrics changes the unlock *method*, never where this copy lives. Installs predating
-WP-SEC-1 hold the key in `push_context.json`; a one-shot migration
-(`CanariApplication.migrateDeviceKeyFromJson`, `CanariMigrateDeviceKeyFromJson`) promotes it to the
-keystore at the next app start and strips the field. The background readers have **no** JSON
-fallback, so one push before that first launch shows generic text.
+WP-SEC-1 (2026-07-28) held the key in `push_context.json`, promoted to the keystore by a one-shot
+native migration at the next start. **Both migrations were deleted on 2026-10-22**: they wrote the
+keystore entry with no at-rest guard (below), and every login since rewrote both the entry and the
+file, so nothing was left for them to promote. The background readers have **no** JSON fallback.
+`MlsDeviceKeyStore` is a reader of the device key; its one writer serves the install's native cache
+key and refuses an `mls_device_key_` alias (`pushContextFields.test.ts` pins both).
 
 ### The at-rest key on a phone is held by the hardware (2026-10-22)
 
@@ -392,7 +394,7 @@ a browser has no hardware keystore a key can be bound to (`hardwareHeldKeyApplie
 | PIN | the user's head | nothing locally; the server's `pin-check` accepts or refuses it |
 | At-rest key: 32 random bytes from the OS RNG (`at_rest_key.rs`, `generate_data_key`) | the existing keystore entry `mls_device_key_{userId}_{deviceId}` and its background copy ([above](#where-the-key-lives)) | `mls.bin`, messages, Graine seeds, outbox - every row of [the store table](#what-the-device-key-seals-and-what-a-pin-change-does-with-each) |
 | Marker `at_rest_keys/<hex(userId)>.json`, ONE PER ACCOUNT | app data dir, written tmp + fsync + rename | nothing: says which scheme seals this account's data (`pin-derived` by absence, `migrating`, `hardware`), the keystore entry the key was written to, and a 128-bit HKDF check value of the key |
-| Backup recovery code (128 bits) | shown once at export, kept by the user | one `.canari` file ([below](#backups-get-their-own-recovery-secret)) |
+| Backup recovery code (128 bits), ONE PER DEVICE | kept by the user; on the device, sealed under the at-rest key | every `.canari` file the device exports ([below](#backups-get-their-own-recovery-secret)) |
 
 **How the PIN gates the key.** The unlock still derives the verifier and asks the server, exactly as
 before (`unlockWithPin`); only the key source changes. On a `hardware` marker the PIN path reads the
@@ -459,17 +461,30 @@ entry except the explicit reset.** It lives in the Rust bridge, not at the call 
   `.userPresence` item, which cannot be updated without Face ID; Android `commit()`s and checks the
   result instead of `apply()`.
 
-Markers are per account and the guard matches an entry by its account prefix, so a second account on
-the same install neither overwrites another's marker nor touches its entry. A marker that cannot be
-read guards its account (fail closed). The vault never copies a hardware-held key (`saveDeviceKey`
+Markers are per account and the guard matches an entry by the EXACT alias its marker recorded, never
+a prefix: user ids allow `[A-Za-z0-9_.@-]` and device ids embed the user id, so one account's id can
+extend another's and an alias cannot be parsed back into its account. A marker that cannot be read
+guards EVERY alias (fail closed). Account deletion removes the entry the marker recorded as well as
+the one today's device id names (`cle_au_repos_oublier` answers the recorded alias).
+
+**One lock, one order.** A process-wide lock (`AT_REST_LOCK` in `at_rest_key.rs`) covers every marker
+read-modify AND every keystore write or delete: the settle, prepare, mark, forget and read commands,
+and the bridge's guarded store and delete. `prepare` writes the keystore entry itself, under the lock,
+after the `migrating` marker - so a settle never sees the gap between the two and never reverts a
+re-key in progress. In the page, every read of the scheme (login, "stay signed in", PIN change,
+recovery) goes through `settledAtRestScheme`, which first waits for a re-key running in that page.
+
+**A marker write is durable in its directory.** The temporary file is synced, renamed, and the
+DIRECTORY is synced; a creation and a removal sync their directory too (`sync_dir`). A rename that
+was never synced in its directory can come back undone after a power loss on F2FS, the file system
+of most Android phones - which would resurrect the previous marker. Windows has no directory handle
+to sync, so the step is a logged no-op there.
+
+The vault never copies a hardware-held key (`saveDeviceKey`
 returns on a key noted by `noteHardwareHeldDeviceKey`): a vault blob sits beside its wrap key in the
 app's files, and a copy there would undo the point. "Stay signed in" on a hardware-held phone is
 therefore the unattended keystore read (`nativeStorageLoginImpl` -> `loginImpl({ unattendedKeyRead:
 true })`).
-
-**An OLDER build installed over this one is not guarded**: its `store_push_context` writes the
-PIN-derived key into the entry. It closes when `minClientVersion` reaches the first release carrying
-the guard ([backlog](../../backlog.md)).
 
 **Why the push cache keeps its own key (#2271).** That key must exist before the first push and stay
 stable; the at-rest key does not exist before the first PIN unlock and rotates (the migration, a
@@ -496,42 +511,38 @@ marker (`cle_au_repos_oublier`) once the data is gone, which is what frees the e
 
 #### Decisions taken on 2026-10-22, and what each costs
 
-The user chose **option B: the PIN enters the key on the phone**, under two constraints - the same
-PIN on every device, and no added friction ("stay signed in" without the PIN and biometric unlock
-keep working; "stay signed in" stays ON by default). Four open questions were settled the same day
-as lead decisions; B changes the second. **B is designed and under review, not built**: what this
-branch builds today is the random keystore key above, read unattended.
+**The product decision (user, 2026-10-22): notifications stay complete on a locked phone, and the
+PIN is verified by the server; the hardware key protects the device's stored data. Practicality
+first.** So what is built above is the design: a random key held by the hardware, read unattended
+by the push and by "stay signed in", with the PIN checked by the server. A design in which the PIN
+would enter the key on the phone was studied the same day and not taken, because a locked phone's
+notifications need the key with nobody present.
 
-**What B is.** The random at-rest key D stays the data key and never changes on a PIN change. It is
-stored only wrapped, in up to three slots: a PIN slot (always), whose wrapping key mixes the PIN
-with a non-exportable hardware key of that device, so the PIN can be tried only on that phone; a
-biometric slot (when biometrics are on); and the unattended slot (only when "stay signed in" is on).
-The push keeps its own key and never needs D.
-
-**B PROTECTS ONLY THE DEVICES WHERE "STAY SIGNED IN" IS OFF.** "Stay signed in" and the background
-push read their key with nobody present, so whoever holds the unlocked phone - or code running in
-the app - reads it too, with or without the PIN. Where "stay signed in" is on (the default), B adds
-nothing against that holder; a copy of the phone's storage stays protected either way, by the
-hardware. Where it is off, opening the data needs the PIN, tried on that phone, and the PIN's length
-is what bounds those attempts.
+Four questions were settled the same day as lead decisions:
 
 | Decision | What it costs |
 |---|---|
-| 1. One backup recovery code per device | Losing that code loses every backup the device made; knowing it opens all of them. Today's build still generates one code per export, so this is owed in code. |
-| 2. The key is not bound to the device credential, **except the biometric slot (changed by B)**, which is bound to the enrolled biometrics | A new fingerprint or Face ID enrolment drops the biometric slot: the next unlock asks for the PIN once and rebuilds it, no data lost. The unattended slot and the push key stay unbound, which is what keeps locked-phone pushes and "stay signed in" working - and why they open without the user. |
-| 3. A lost keystore entry loses the local data | A keystore wipe, or an iOS restore onto a new phone, leaves rows nothing can open (under B: when every slot holding D is gone). History comes back from other members and from backups. |
-| 4. A backup made before a phone's migration stops opening on that phone | Those older backups cannot be imported there. |
-
-**B's own costs.** A device with only the PIN slot, after the PIN was changed on another device,
-asks once for the previous PIN to re-wrap its slot. A forgotten PIN on such a device loses its local
-data (decision 3). Devices with a biometric or unattended slot re-wrap silently.
+| 1. One backup recovery code per device (`crypto/deviceRecoveryCode.ts`) | Losing that code loses every backup the device made; knowing it opens all of them. |
+| 2. The key is not bound to the device credential (passcode, enrolled biometrics) | Nothing is lost when a fingerprint or a Face ID is enrolled, and locked-phone pushes and "stay signed in" keep working - which is also why those read the key without the user. |
+| 3. A lost keystore entry loses the local data | A keystore wipe, or an iOS restore onto a new phone, leaves rows nothing can open; the login says so (`hardware_key_unavailable`, whose text says the messages on that phone are lost) and offers the reset. History comes back from other members and from backups. |
+| 4. A backup made before a phone's move to the hardware key stops opening on that phone | Those older backups cannot be imported there, so once the move re-sealed existing data the phone asks for a new backup: a toast at once, and a notice in the backup panel until an export is saved (`noteBackupOwedAfterKeyMove`). A fresh install, which takes the same path with no data, is not asked. |
 
 #### Backups get their own recovery secret
 
 A `.canari` file is now **v3** (`backup.ts`, `crypto/backupRecoveryCode.ts`): sealed under
-HKDF-SHA256(code, per-file salt) where the code is 128 random bits, generated at export, shown ONCE
-in Crockford base32 (26 characters in groups of four; typed back case-insensitively, `I`/`L` read as
-`1`, `O` as `0`), and stored nowhere. 128 bits need no key stretching. Every message row and seed is
+HKDF-SHA256(code, per-file salt) where the code is 128 random bits in Crockford base32 (26
+characters in groups of four; typed back case-insensitively, `I`/`L` read as `1`, `O` as `0`). 128
+bits need no key stretching.
+
+**One code per device** (`crypto/deviceRecoveryCode.ts`): generated at the device's first export
+and kept in `localStorage`, SEALED under the device key - never in the clear, since on a phone a
+plaintext code beside the app's files would let a copy of them open every backup. It is kept only
+once a file was saved with it, so a cancelled save leaves no code nobody saw. Every device key change
+re-seals it with the stores (`moveDeviceRecoveryCode` in `performPinChange` and
+`moveSealedStoresOnly`; never fatal, idempotent for a resumed change). A stored code the key no
+longer opens - a reset, an eviction - is replaced at the next export, and the panel says the earlier
+files keep their old code. Each export shows the code with what it is: the first, the same as
+before, or a replacement. Every message row and seed is
 re-sealed from the device key to the backup key at export and into the importing session's key at
 import, so the file carries no device key and opens on any device with the code. The MLS state rides
 along with a check value of the key it is sealed under (`mlsStateKeyCheck`) and is restored only where
@@ -545,8 +556,12 @@ a device that is born, or migrated, onto its own hardware-held key, and needs no
 
 **Owed on hardware, Mi 9T and iPhone:** fresh install; upgrade from the current store build (and how
 long the storage gate is held by the re-key); PIN change; a push readable with the app killed after
-the migration; a backup exported, then imported with its code on the other phone; "stay signed in"
-across a restart; biometric unlock after the migration.
+the migration; a backup exported, then imported with its code on the other phone; a second export
+showing the same code; the new-backup notice after an upgrade with data, and its absence on a fresh
+install; "stay signed in" across a restart; biometric unlock after the migration. **No gate compiles
+the iOS side** (`KeystorePlugin.swift`, `canari_ios.mm`): it is owed a build on the Mac runner.
+Android's Kotlin was compiled locally (`:app:compileArm64DebugKotlin`,
+`:tauri-plugin-keystore:compileDebugKotlin`).
 
 ### The vault names its account - FIXED 2026-10-14
 
@@ -1086,9 +1101,10 @@ SQLite rows are AES-256-GCM blobs. Nothing negotiates, so **a commit that change
 layouts must ship the reader for the previous layout with it**. Shipping the writer first is not a
 staged rollout: installed devices hold bytes in the old shape, the new reader rejects them, and the
 failure surfaces as an unopenable state - which `classifyStateLoadFailure` reads as `sealed` or
-`mismatch`, neither of which is what happened. The one-shot migrations already in the tree
-(`CanariApplication.migrateDeviceKeyFromJson`, `CanariMigrateDeviceKeyFromJson`) are the shape this
-takes: read the old, write the new, strip the old, all at the first start after the upgrade.
+`mismatch`, neither of which is what happened. The WP-SEC-1 one-shot migrations (deleted
+2026-10-22, see [where the key lives](#where-the-key-lives)) were the shape this takes: read the
+old, write the new, strip the old, all at the first start after the upgrade - and a migration that
+WRITES a key must go through the same guard as every other writer.
 
 ### The login guard cannot tell a caller's flag from a concurrent login
 

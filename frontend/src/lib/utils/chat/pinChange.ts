@@ -19,6 +19,7 @@
  * the device.
  */
 import { openSealedBytes, sealBytes } from '$lib/encryption';
+import { resealDeviceRecoveryCode } from '$lib/crypto/deviceRecoveryCode';
 import { getStorage, type IStorage, type SealedPayloadSwap, type SealedStore } from '$lib/db';
 import {
   KeyChangeSupersededError,
@@ -285,6 +286,25 @@ export async function dropStoredFeedPages(
 }
 
 /**
+ * Moves the device's backup recovery code to the new device key, beside the sealed stores
+ * (`deviceRecoveryCode.ts`). NEVER FATAL to the key change: a code that could not be re-sealed is
+ * logged at ERROR, and the next export finds it unreadable, replaces it and TELLS the user - whereas
+ * failing the change here would leave the stores half moved for a code.
+ */
+export async function moveDeviceRecoveryCode(
+  userId: string,
+  oldDeviceKeyB64: string,
+  newDeviceKeyB64: string,
+  log: (msg: string) => void
+): Promise<void> {
+  try {
+    await resealDeviceRecoveryCode(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
+  } catch (e) {
+    log(`[DEVICEKEY_CHANGE] ERROR: the backup recovery code was not re-sealed: ${String(e)}`);
+  }
+}
+
+/**
  * Takes the OLD device key out of this device's vault - the first thing {@link performPinChange}
  * writes, BEFORE the keystore ({@link IMlsService.pointUnattendedUnlockAt}).
  *
@@ -466,6 +486,7 @@ export async function performPinChange(
           });
           // The stored feed pages are a copy the server's next answer rewrites: dropped, not moved.
           await dropStoredFeedPages(store, log);
+          await moveDeviceRecoveryCode(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
           return report;
         });
         setDeviceKey(newDeviceKeyB64);
@@ -521,6 +542,7 @@ export async function moveSealedStoresOnly(
           log,
         });
         await dropStoredFeedPages(store, log);
+        await moveDeviceRecoveryCode(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
         return report;
       });
     });

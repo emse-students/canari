@@ -52,6 +52,13 @@ export interface HardwareKeyMigrationDeps {
   port: HardwareKeyPort;
   /** `performPinChange` from `currentKeyB64` to the new key, on the live client. */
   changeKey: (oldKeyB64: string, newKeyB64: string) => Promise<void>;
+  /** Whether this install held conversations BEFORE the re-key - asked before anything moves. */
+  hadLocalData: () => Promise<boolean>;
+  /**
+   * Told once a re-key of an install that held data completed: the backups it made under the
+   * PIN-derived key no longer open here (decision 4 of 2026-10-22), so a new one is asked for.
+   */
+  onBackupsSuperseded: () => void;
   log: (msg: string) => void;
 }
 
@@ -78,10 +85,12 @@ export async function migrateToHardwareHeldKey(
   }
 
   const newKeyB64 = await port.prepare(userId, deviceId);
+  const hadData = await deps.hadLocalData();
   if (newKeyB64 === currentKeyB64) {
     // An earlier run moved everything (the MLS state last) and was killed before the marker.
     await port.mark(userId, newKeyB64);
     log('[AT_REST_KEY] the session already runs on the hardware-held key - marker completed');
+    supersedeBackupsIf(hadData, deps);
     return 'marked';
   }
 
@@ -98,7 +107,21 @@ export async function migrateToHardwareHeldKey(
   }
   await port.mark(userId, newKeyB64);
   log('[AT_REST_KEY] every store re-sealed under the hardware-held key');
+  supersedeBackupsIf(hadData, deps);
   return 'migrated';
+}
+
+/**
+ * Tells the surface that earlier backups no longer open here - only for an install that HELD data:
+ * a fresh install takes the same re-key path and has no earlier backup to supersede.
+ */
+function supersedeBackupsIf(
+  hadData: boolean,
+  deps: Pick<HardwareKeyMigrationDeps, 'onBackupsSuperseded' | 'log'>
+): void {
+  if (!hadData) return;
+  deps.log('[AT_REST_KEY] the install held data - a new backup is asked for');
+  deps.onBackupsSuperseded();
 }
 
 /** What {@link finishMigrationAtUnlock} needs - the stores and the MLS state, passed in. */
@@ -118,6 +141,10 @@ export interface FinishMigrationDeps {
   completeReKey: (oldKeyB64: string, newKeyB64: string, state: Uint8Array) => Promise<void>;
   /** Moves the sealed stores alone, for an install with no MLS state to carry. */
   resealStoresOnly: (oldKeyB64: string, newKeyB64: string) => Promise<void>;
+  /** As {@link HardwareKeyMigrationDeps.hadLocalData}. */
+  hadLocalData: () => Promise<boolean>;
+  /** As {@link HardwareKeyMigrationDeps.onBackupsSuperseded}. */
+  onBackupsSuperseded: () => void;
   log: (msg: string) => void;
 }
 
@@ -148,6 +175,7 @@ export async function finishMigrationAtUnlock(deps: FinishMigrationDeps): Promis
     throw new HardwareKeyUnavailableError(read.refusal);
   }
   const newKeyB64 = read.key;
+  const hadData = await deps.hadLocalData();
   const state = await deps.loadStoredState();
   if (!state) {
     log('[AT_REST_KEY] migrating, no stored state - moving the stores alone before the session');
@@ -171,6 +199,7 @@ export async function finishMigrationAtUnlock(deps: FinishMigrationDeps): Promis
     }
   }
   await port.mark(userId, newKeyB64);
+  supersedeBackupsIf(hadData, deps);
   return newKeyB64;
 }
 

@@ -9,6 +9,7 @@
   import type { BackupOutcome } from '$lib/utils/backupOutcome';
   import { backupFileVersion } from '$lib/backup';
   import { copyText } from '$lib/utils/clipboard';
+  import { backupOwedAfterKeyMove } from '$lib/crypto/deviceRecoveryCode';
 
   // Encrypted .canari file backup and restore. Cross-device history is pooled automatically as a
   // manifest diff between the account's own devices (see the chat wiki), so there is nothing here
@@ -20,11 +21,16 @@
   // came back, and said nothing.
   let outcome: BackupOutcome | null = $state(null);
 
-  // THE RECOVERY CODE OF THE FILE JUST EXPORTED, SHOWN ONCE (2026-10-22). It lives in this
-  // component's state only and is dropped by "I have saved the code" or by leaving the page: nothing
-  // stores it, which is what makes the file worth nothing without it.
+  // THE DEVICE'S RECOVERY CODE, SHOWN AFTER EACH EXPORT (2026-10-22): one code for every backup of
+  // this device, kept sealed under the device key (`deviceRecoveryCode.ts`). `shownNote` says whether
+  // the user already holds it. Dropped from the screen by "I have saved the code" or by leaving.
   let shownCode: string | null = $state(null);
+  let shownNote: string | null = $state(null);
   let codeCopied = $state(false);
+
+  // Decision 4 of 2026-10-22: after the move to the hardware-held key, earlier backups no longer
+  // open on this phone, so a new one is asked for until it is made. Read again after each export.
+  let backupOwed = $derived(session.isLoggedIn && backupOwedAfterKeyMove(session.userId));
 
   // A v3 file waits here while its code is typed.
   let pendingFile: File | null = $state(null);
@@ -83,6 +89,8 @@
     codeCopied = false;
     outcome = await session.handleExport(appendLog);
     shownCode = outcome?.recoveryCode ?? null;
+    shownNote = outcome?.codeNote ?? null;
+    backupOwed = backupOwedAfterKeyMove(session.userId);
   }
 
   async function copyCode() {
@@ -91,6 +99,7 @@
 
   function forgetShownCode() {
     shownCode = null;
+    shownNote = null;
     codeCopied = false;
   }
 </script>
@@ -110,6 +119,15 @@
   </p>
 
   {#if session.isLoggedIn}
+    {#if backupOwed}
+      <p
+        class="border-cn-yellow/40 bg-cn-yellow/10 text-text-main mb-4 rounded-xl border px-4 py-3 text-sm leading-relaxed font-medium"
+        role="status"
+        data-testid="backup-owed-after-key-move"
+      >
+        {m.profile_backup_owed_after_key_move()}
+      </p>
+    {/if}
     <div class="grid grid-cols-2 gap-3">
       <button
         type="button"
@@ -149,7 +167,9 @@
     {#if shownCode}
       <div class="border-cn-border mt-4 rounded-xl border px-4 py-3" role="region">
         <p class="text-text-main text-sm font-bold">{m.profile_backup_code_title()}</p>
-        <p class="text-text-muted mt-1 text-xs leading-relaxed">{m.profile_backup_code_desc()}</p>
+        <p class="text-text-muted mt-1 text-xs leading-relaxed">
+          {shownNote ?? m.profile_backup_code_desc()}
+        </p>
         <p
           class="text-text-main mt-3 font-mono text-sm font-bold tracking-wide break-all select-all"
           data-testid="backup-recovery-code"

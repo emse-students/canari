@@ -1,5 +1,10 @@
 import { exportBackup, importBackup } from '$lib/backup';
-import { formatRecoveryCode, generateRecoveryCodeBytes } from '$lib/crypto/backupRecoveryCode';
+import { formatRecoveryCode } from '$lib/crypto/backupRecoveryCode';
+import {
+  clearBackupOwedAfterKeyMove,
+  deviceRecoveryCode,
+  type RecoveryCodeOrigin,
+} from '$lib/crypto/deviceRecoveryCode';
 import { fromHex, saveMlsState, hasMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
@@ -684,9 +689,11 @@ export async function discoverMissingGroups(params: {
  * Exports the user's full backup (conversations + messages + MLS state) as a `.canari` file. In Tauri
  * opens a folder picker; in the browser triggers an anchor download.
  *
- * The file is sealed under a recovery code generated HERE for this export (`backupRecoveryCode.ts`)
- * and returned so the surface shows it ONCE - nothing keeps it. `null` when the save was cancelled:
- * a code for a file that does not exist must not be shown.
+ * The file is sealed under THIS DEVICE'S recovery code (`deviceRecoveryCode.ts`): the same code for
+ * every backup the device exports, generated at the first one and kept sealed under the device key.
+ * It is returned with where it came from, so the surface says whether it is the code the user already
+ * holds. `null` when the save was cancelled: a code for a file that does not exist is neither shown
+ * nor kept.
  */
 export async function exportUserBackup(params: {
   storage: IStorage;
@@ -694,17 +701,17 @@ export async function exportUserBackup(params: {
   deviceKeyB64: string;
   myDeviceId: string;
   log: (msg: string) => void;
-}): Promise<{ recoveryCode: string } | null> {
+}): Promise<{ recoveryCode: string; codeOrigin: RecoveryCodeOrigin } | null> {
   const { storage, userId, deviceKeyB64, myDeviceId, log } = params;
   const mlsStateHex = await exportMlsStateAsHex(userId);
-  const codeBytes = generateRecoveryCodeBytes();
+  const code = await deviceRecoveryCode(userId, deviceKeyB64, log);
   const blob = await exportBackup(
     storage,
     userId,
     deviceKeyB64,
     myDeviceId,
     mlsStateHex,
-    codeBytes
+    code.bytes
   );
   const date = new Date().toISOString().split('T')[0];
   const filename = `canari-backup-${userId}-${date}.canari`;
@@ -717,7 +724,10 @@ export async function exportUserBackup(params: {
     filename
   );
   log(saved ? `[OK] Backup exported: ${filename}` : '[..] Backup export cancelled');
-  return saved ? { recoveryCode: formatRecoveryCode(codeBytes) } : null;
+  if (!saved) return null;
+  await code.keep();
+  clearBackupOwedAfterKeyMove(userId);
+  return { recoveryCode: formatRecoveryCode(code.bytes), codeOrigin: code.origin };
 }
 
 /** Imports a `.canari` backup file: decrypts conversations/messages, restores the MLS state if this is the same device, then reloads the conversation list. */

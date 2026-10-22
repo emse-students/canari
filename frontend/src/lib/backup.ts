@@ -223,8 +223,8 @@ async function resealRows<T extends { iv: Uint8Array; cipherText: Uint8Array }>(
  *                         to detect same-device restore vs. second-device transfer).
  * @param mlsStateHex      Optional hex string of the encrypted MLS state from
  *                         localStorage - valid only for same-device restores.
- * @param recoveryCode     The 16 bytes of the code generated for THIS export
- *                         (`generateRecoveryCodeBytes`), shown to the user once by the caller.
+ * @param recoveryCode     The 16 bytes of the device's recovery code
+ *                         (`crypto/deviceRecoveryCode.ts`), shown to the user by the caller.
  * @returns Binary blob ready to be saved / downloaded as a .canari file.
  */
 export async function exportBackup(

@@ -6,7 +6,8 @@
  * derived from the PIN, so a backup file left in a cloud drive was a 4-digit problem for whoever
  * held the server's data; and on a phone the key is now random and never leaves the hardware
  * keystore, so it could not open a backup on any other device at all. A backup is now sealed under a
- * key derived from a fresh 128-bit random code, generated at export and shown ONCE.
+ * key derived from a 128-bit random code - ONE per device, generated at its first export and kept
+ * sealed under the device key (`deviceRecoveryCode.ts`).
  *
  * 128 bits needs no slow key stretching: there is nothing to grind. HKDF-SHA256 over the code bytes,
  * salted per file, is the whole derivation. The code is written in Crockford base32 (no I, L, O, U),
