@@ -370,7 +370,17 @@ Same protocol and instrument as sections 1 and 5.
     superseded it, that load returned without merging. The newer load then found the drawn rows
     already in memory, drew nothing, and so had nothing to withdraw. A row the server no longer
     served stayed on screen. GRAINE-AUTH-1 saw it once in five runs: a row the reader had refused
-    was still shown. Every early return of the draw now says why it drew nothing.
+    was still shown. Every early return of the draw now says why it drew nothing. The early
+    returns log at debug level, one line per load, because the rig's GRAINE-AUTH trail reads them.
+    A whole-history search confirms every row it decodes, so a later page cannot withdraw a row
+    the server still holds. Sign-out forgets the set with the conversations
+    (`forgetUnconfirmedSalonDraws`).
+  - **A residual, by design.** Suppose a row reached memory live, or from an earlier load, and was
+    never drawn from the store. If a later page refuses it while it is the newest row, it stays on
+    screen: it was verified when it arrived, and the merge keeps rows newer than a page. GRAINE-AUTH-1
+    cannot tell this case from the drawn-row one, so the instrumented repeat on the estate decides
+    which of the two the 2026-10-22 FAIL was.
+  - The two-tab race below predates this change and is unchanged.
   - Only then is the copy replaced in the store (`storeSalonPage`: delete, then save).
 - Nothing is deleted BEFORE the server answers any more. That includes the boot restore, which used
   to erase every salon's rows (`conversations.ts`).

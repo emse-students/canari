@@ -276,6 +276,15 @@ export function useConversations() {
    */
   const salonRowsDrawnUnconfirmed = new SvelteMap<string, SvelteSet<string>>();
 
+  /**
+   * The sign-out half of `salonRowsDrawnUnconfirmed`: the ending account's unconfirmed draws go with
+   * its conversations, so its failed load can never withdraw a row from the next account's page.
+   */
+  function forgetUnconfirmedSalonDraws(): void {
+    Log.d('CHANNEL', `forgetting ${salonRowsDrawnUnconfirmed.size} salon(s) of unconfirmed draws`);
+    salonRowsDrawnUnconfirmed.clear();
+  }
+
   function invalidateChannelHistoryCache(channelConversationId?: string) {
     salonStaleDeclarations++;
     if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
@@ -638,7 +647,7 @@ export function useConversations() {
     if (!ctx.storage) return;
     const salonTag = channelConversationId.slice(0, 16);
     if (conversations.get(channelConversationId)?.messages.some((m) => !m.status)) {
-      ctx.log(`[CHANNEL] ${salonTag} stored page not drawn - rows already on screen`);
+      Log.d('CHANNEL', `${salonTag} stored page not drawn - rows already on screen`);
       return;
     }
     let stored: Awaited<ReturnType<NonNullable<ConversationContext['storage']>['getMessagesPage']>>;
@@ -655,16 +664,16 @@ export function useConversations() {
       return;
     }
     if (stored.length === 0) {
-      ctx.log(`[CHANNEL] ${salonTag} stored page empty - nothing drawn`);
+      Log.d('CHANNEL', `${salonTag} stored page empty - nothing drawn`);
       return;
     }
     if (!salonLoadGenerations.isLatest(channelConversationId, generation)) {
-      ctx.log(`[CHANNEL] ${salonTag} stored page not drawn - a newer load started meanwhile`);
+      Log.d('CHANNEL', `${salonTag} stored page not drawn - a newer load started meanwhile`);
       return;
     }
     const current = conversations.get(channelConversationId);
     if (!current) {
-      ctx.log(`[CHANNEL] ${salonTag} stored page not drawn - the salon left memory meanwhile`);
+      Log.d('CHANNEL', `${salonTag} stored page not drawn - the salon left memory meanwhile`);
       return;
     }
     const drawn = mapStoredMessagesToChatMessages(stored, ctx.userId);
@@ -1057,6 +1066,11 @@ export function useConversations() {
     if (current) {
       const existingIds = new SvelteSet(current.messages.map((m) => m.id));
       const added = decodedAll.filter((m) => !existingIds.has(m.id));
+      // EVERY ROW THIS SWEEP DECODED IS CONFIRMED BY THE SERVER, so it leaves the unconfirmed draws.
+      // Otherwise a stored row it just merged stays pending past a failed load, and the next page,
+      // whose window starts above it, would withdraw a message the server still holds.
+      const pending = salonRowsDrawnUnconfirmed.get(channelConversationId);
+      if (pending) for (const m of decodedAll) pending.delete(m.id);
       if (added.length) {
         // A whole-history sweep brings the oldest rows of all: the notice stays above them.
         const merged = keepNoticeOnTop(
@@ -2318,6 +2332,7 @@ export function useConversations() {
     /** Reads saved conversations from IndexedDB and populates the reactive map. */
     loadAndRestoreConversations,
     invalidateRestores,
+    forgetUnconfirmedSalonDraws,
     /** Prepends an older page of messages from IndexedDB to the conversation. */
     loadOlderMessages,
     /** Asks a peer for the page below what this device holds, once the local store is exhausted. */
