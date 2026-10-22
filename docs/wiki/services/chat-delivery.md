@@ -682,6 +682,10 @@ answer, so it held an epoch nobody else had and could not read the group's next 
 - **The newcomer heals on its own cadence**: `requestReAdd` re-asks every 60 s while its app is open
   (external join first, then `welcome_request`), so it joins as soon as a base is published again or a
   member with a current state answers. A shut, stale phone alone never serves it.
+- **The base of the new epoch travels with the commit** (COMM-22), as the foreground's does: the
+  prepare exports it (`add_members_bulk_with_base`), the phone sends it as `groupInfo`, and
+  `validateCommit` publishes it in the advance's own transaction. So an accepted background add never
+  leaves the published base one epoch behind, whether or not the phone's install then succeeds.
 - **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
   to broadcast it a second time.
 - **What is left open:** an acceptance whose install is refused (the foreground started and wrote

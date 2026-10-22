@@ -3169,13 +3169,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val ratchetTree     = result.optString("ratchetTree").takeIf { it.isNotEmpty() && it != "null" }
             val commitPayload   = result.getString("commit")
             val baseEpoch       = result.getLong("baseEpoch")
+            // The external-join base of the epoch this commit creates: published by the server in
+            // the advance's own transaction, as the foreground's commit carries it (COMM-22).
+            val groupInfo       = result.optString("groupInfo").takeIf { it.isNotEmpty() }
             Log.d(TAG, "processWelcomeRequestBackground: Welcome staged, commit=${commitPayload.take(16)}… baseEpoch=$baseEpoch")
 
             // 4. Send Welcome + commit to the backend (HTTP) - outside MlsStateLock
             val outcome = sendWelcomeAndCommit(
                 ctx, secret, groupId,
                 requesterUserId, requesterDeviceId,
-                welcomePayload, ratchetTree, commitPayload, baseEpoch,
+                welcomePayload, ratchetTree, commitPayload, baseEpoch, groupInfo,
             )
             val line = "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId " +
                 BackgroundWelcomeAnswer.describe(outcome, baseEpoch)
@@ -3326,6 +3329,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ratchetTree: String?,
         commitPayload: String,
         baseEpoch: Long,
+        groupInfo: String?,
     ): BackgroundWelcomeAnswer.Outcome {
         return try {
             val url = URL("${ctx.baseUrl}/api/mls/push/send-welcome-and-commit")
@@ -3339,6 +3343,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("ratchetTreePayload", if (ratchetTree != null) ratchetTree else JSONObject.NULL)
                 put("commitPayload", commitPayload)
                 put("baseEpoch", baseEpoch)
+                if (groupInfo != null) put("groupInfo", groupInfo)
             }.toString()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000

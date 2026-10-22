@@ -760,7 +760,8 @@ export class PushController {
    * records the commit and fans it out to the members itself; this route sends only the Welcome.
    *
    * `baseEpoch` and `commitPayload` are BOTH required, and both are handed to `validateCommit` -
-   * the payload as `proto`, which is what makes the commit replayable.
+   * the payload as `proto`, which is what makes the commit replayable. `groupInfo`, the base of the
+   * epoch the commit creates, rides with it and is published in the same transaction (COMM-22).
    *
    * THE ANSWER SAYS WHAT HAPPENED, IN ITS STATUS AND ITS BODY ({@link BackgroundWelcomeAnswer}).
    * `201 {status: 'accepted'}` is the one answer after which the phone installs the state it
@@ -784,6 +785,8 @@ export class PushController {
       ratchetTreePayload?: string;
       commitPayload: string;
       baseEpoch: number;
+      /** The external-join base of the epoch this commit creates (COMM-22), base64. */
+      groupInfo?: string;
     }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
@@ -854,6 +857,13 @@ export class PushController {
         proto: body.commitPayload,
         // The one device this re-add commit puts in the tree, recorded with the advance.
         admits: [{ userId: targetUserId, deviceId: targetDeviceId }],
+        // THE BASE OF THE EPOCH THIS COMMIT CREATES, published in the advance's own transaction
+        // exactly as the foreground's `submitCommit` does (COMM-22). Only the committer can export
+        // it; without it the published base stays one epoch behind and every external join is
+        // refused as stale until a member that holds the tree republishes it.
+        ...(typeof body.groupInfo === 'string' && body.groupInfo
+          ? { groupInfo: body.groupInfo }
+          : {}),
       },
       userId
     );

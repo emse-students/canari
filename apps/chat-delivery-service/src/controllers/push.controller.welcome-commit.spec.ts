@@ -104,6 +104,18 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     expect(res).toEqual({ status: 'accepted', newEpoch: 8 });
   });
 
+  it('publishes the base of the epoch the commit creates WITH the commit, as the foreground does', async () => {
+    // COMM-22: the committer is the only device that can export the external-join base for the
+    // epoch it creates. Without it the published base stays one epoch behind, and every external
+    // join is refused as stale until a member republishes it.
+    await controller.sendWelcomeAndCommitPush(AUTH, { ...body, groupInfo: 'R0lORk8=' });
+
+    expect(validateCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ proto: 'Q09NTUlU', baseEpoch: 7, groupInfo: 'R0lORk8=' }),
+      'u1'
+    );
+  });
+
   it('leaves the fan-out to the gate, so every member receives the commit ONCE', async () => {
     // `validateCommit` fans the accepted commit out itself, under its lock. The route broadcast it
     // a second time, so every member received the same commit twice.

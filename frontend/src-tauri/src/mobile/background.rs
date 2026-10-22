@@ -442,7 +442,9 @@ fn welcome_refused(reason: &str) -> serde_json::Value {
 /// Builds the Welcome and the commit that add `key_package_b64` to `group_id`, and STAGES the state
 /// they produce beside `mls.bin`. Nothing is written to `mls.bin` here.
 ///
-/// Answers `{"ok": true, "welcome", "ratchetTree", "commit", "baseEpoch"}` (base64), or
+/// Answers `{"ok": true, "welcome", "ratchetTree", "commit", "groupInfo", "baseEpoch"}` (base64;
+/// `groupInfo` is the external-join base of the epoch the commit creates, published by the route
+/// in the advance's own transaction - COMM-22), or
 /// `{"ok": false, "reason"}` with one of: `foreground-active`, `stale-epoch-known`,
 /// `key-package-unreadable`, `state-unreadable`, `group-not-held`, `already-member`, `add-failed`,
 /// `stage-failed`.
@@ -499,21 +501,27 @@ pub fn prepare_welcome_background_with_key(
         "[BG_WELCOME] add_member group={short} kp_len={} base_epoch={base_epoch}",
         kp_bytes.len()
     );
-    let (commit, welcome) = match manager.add_member(group_id, &kp_bytes) {
-        Ok((commit, Some(welcome))) => (commit, welcome),
-        Ok((_, None)) => {
-            log::error!("[BG_WELCOME] add_member returned no welcome bytes group={short}");
-            return welcome_refused("add-failed");
-        }
-        Err(mls_core::MlsError::AlreadyMember(who)) => {
-            log::warn!("[BG_WELCOME] {who} already sits in the tree of group={short}");
-            return welcome_refused("already-member");
-        }
-        Err(e) => {
-            log::error!("[BG_WELCOME] add_member failed group={short}: {e}");
-            return welcome_refused("add-failed");
-        }
-    };
+    // `_with_base`: the external-join base of the epoch this commit CREATES travels with it, as the
+    // foreground's does (COMM-22) - only the committer can export it, and only now.
+    let (commit, welcome, group_info) =
+        match manager.add_members_bulk_with_base(group_id, &[kp_bytes.as_slice()]) {
+            Ok(((commit, Some(welcome), _, _), group_info)) => (commit, welcome, group_info),
+            Ok(((_, None, _, skipped), _)) => {
+                log::error!(
+                    "[BG_WELCOME] add produced no welcome group={short} skipped={}",
+                    skipped.len()
+                );
+                return welcome_refused("add-failed");
+            }
+            Err(mls_core::MlsError::AlreadyMember(who)) => {
+                log::warn!("[BG_WELCOME] {who} already sits in the tree of group={short}");
+                return welcome_refused("already-member");
+            }
+            Err(e) => {
+                log::error!("[BG_WELCOME] add_member failed group={short}: {e}");
+                return welcome_refused("add-failed");
+            }
+        };
     // The post-add state the new member joins: merged IN MEMORY, sealed, and staged.
     let staged = manager
         .merge_pending_commit_for(group_id)
@@ -552,6 +560,7 @@ pub fn prepare_welcome_background_with_key(
         "welcome": STANDARD.encode(&welcome),
         "ratchetTree": STANDARD.encode(&ratchet_tree),
         "commit": STANDARD.encode(&commit),
+        "groupInfo": STANDARD.encode(&group_info),
         "baseEpoch": base_epoch,
     })
 }
@@ -1853,6 +1862,50 @@ mod tests {
         assert!(
             install_staged_welcome(&dir, &gid)["reason"] == "not-staged",
             "the staged file is consumed by its install"
+        );
+    }
+
+    /// COMM-22 on the background path: the prepare exports the external-join base of the epoch its
+    /// commit creates, so the route publishes it with the advance. Without it the published base
+    /// stays one epoch behind and an external joiner is refused as stale.
+    #[test]
+    fn a_prepared_welcome_carries_the_base_of_the_epoch_it_creates() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("base");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(48)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("base", &state);
+        let carol = MlsManager::load_or_create("base-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(48),
+            "base-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let base = STANDARD
+            .decode(
+                prepared["groupInfo"]
+                    .as_str()
+                    .expect("the base travels with the commit"),
+            )
+            .unwrap();
+
+        let mut erin = MlsManager::load_or_create("base-erin", "dev-e", None).unwrap();
+        let (joined, _commit) = erin
+            .join_by_external_commit(&base)
+            .expect("an external joiner builds on the published base");
+        assert_eq!(joined, gid);
+        assert_eq!(
+            erin.get_epoch(&gid).unwrap(),
+            3,
+            "the base is the epoch the add creates (2), and the join moves it to 3"
         );
     }
 
