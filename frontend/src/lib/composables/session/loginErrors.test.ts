@@ -31,6 +31,7 @@ const EVERY_CODE: LoginErrorCode[] = [
   'device_revoked',
   'server_unreachable',
   'state_written_by_another_tab',
+  'hardware_key_unavailable',
   'other',
 ];
 
@@ -128,6 +129,21 @@ describe('provesLocalStateExists - is this device new, which is a different ques
     expect(EVERY_CODE.filter(provesLocalStateExists)).toEqual([
       'local_state_unopenable',
       'local_state_sealed_under_old_pin',
+      'hardware_key_unavailable',
     ]);
+  });
+});
+
+describe('hardware_key_unavailable - a phone whose keystore lost the at-rest key', () => {
+  it('proves a local state exists, so the reset is offered', () => {
+    expect(provesLocalStateExists('hardware_key_unavailable')).toBe(true);
+  });
+
+  it('is NOT recoverable with an old PIN - no PIN derives a hardware-held key', () => {
+    expect(isRecoverableWithOldPin('hardware_key_unavailable')).toBe(false);
+  });
+
+  it('accuses: a keystore losing its entry is never an ordinary outcome', () => {
+    expect(isExpectedLoginOutcome('hardware_key_unavailable')).toBe(false);
   });
 });

@@ -24,6 +24,19 @@ import {
 } from '$lib/utils/chat/pinChange';
 import { endIntoKeyRecovery, joinDeviceKeyLock } from '$lib/db/deviceKeyGate';
 import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
+import {
+  HardwareKeyUnavailableError,
+  hardwareHeldKeyApplies,
+  noteHardwareHeldDeviceKey,
+  readHardwareHeldKey,
+  tauriHardwareKeyPort,
+  type AtRestKeyScheme,
+} from '$lib/crypto/hardwareHeldKey';
+import {
+  settleMigratingStateAtUnlock,
+  startHardwareKeyMigration,
+  whenHardwareKeyMigrationSettled,
+} from '$lib/utils/chat/hardwareKeyMigration';
 import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
@@ -131,6 +144,7 @@ import {
   clearDeviceKey,
   clearDeviceKeyAndWrapKey,
   forgetUnlabelledDeviceKey,
+  isDeviceKeyPersistenceEnabled,
   retireUnlabelledDeviceKeyIfOwnedBy,
 } from '$lib/utils/deviceKeyVault';
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
@@ -861,6 +875,26 @@ export async function loginImpl(
     }
     const mlsService = ctx.ensureMls();
     loginClient = mlsService;
+    // WHICH KEY SEALS THIS PHONE'S DATA, read from the marker beside `mls.bin` before any key is asked
+    // for: the PIN-derived one, a hardware-held random one, or one of the two mid-migration
+    // (`hardwareHeldKey.ts`). The web and desktop builds are always `pin-derived`.
+    const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
+      ? await tauriHardwareKeyPort.scheme(ctx.getUserId())
+      : 'pin-derived';
+    stopIfSignedOut('at-rest-scheme');
+    if (atRestScheme === 'unreadable') {
+      // Never guessed into a scheme: the PIN-derived key over hardware-sealed rows would let the next
+      // re-key strand them.
+      throw new LoginFailure('hardware_key_unavailable', m.auth_hardware_key_unavailable());
+    }
+    if (isBiometric && atRestScheme === 'migrating') {
+      // Mid-migration the keystore may hold the new key while the state is still under the old one.
+      // Only the PIN path settles which (`settleMigratingStateAtUnlock`), so the keypad is asked for.
+      cb.log('[AT_REST_KEY] keystore unlock skipped - a re-key is under way, the PIN settles it');
+      throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
+    }
+    /** Set when the PIN unlock found a re-key already complete: nothing to resume after the login. */
+    let migrationCompleteAtUnlock = false;
     if (isVaultLogin && !vaultOwnerUnproven) {
       // The vault returned the device key before this function was called, so the store can be
       // opened and read now - nothing about either needs the token. `getStorage` shares one handle
@@ -1045,7 +1079,29 @@ export async function loginImpl(
           saltAhead: takePinSaltAhead(userIdForPin),
           fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken, loginAbort.signal),
           computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
-          deriveDeviceKey: (salt) => deriveDeviceKeyB64(userIdForPin, pin, salt),
+          // ON A HARDWARE-HELD PHONE THE PIN DERIVES NOTHING THAT OPENS DATA: the key is read from the
+          // keystore, and `unlockWithPin` installs it only once the server accepted the PIN - the same
+          // gate the derived key went through. A key the keystore lost is typed here, so a wrong PIN
+          // is still reported as one (the read is awaited only after the check).
+          deriveDeviceKey: async (salt) => {
+            if (atRestScheme !== 'hardware') return deriveDeviceKeyB64(userIdForPin, pin, salt);
+            try {
+              return await readHardwareHeldKey(
+                tauriHardwareKeyPort,
+                userIdForPin,
+                await mlsService.resolveDeviceId(userIdForPin),
+                cb.log
+              );
+            } catch (e) {
+              if (e instanceof HardwareKeyUnavailableError) {
+                throw new LoginFailure(
+                  'hardware_key_unavailable',
+                  m.auth_hardware_key_unavailable()
+                );
+              }
+              throw e;
+            }
+          },
           resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
           checkPin: async ({ verifier, deviceId, salt }) => {
             const res = await fetchOrUnreachable(
@@ -1081,6 +1137,26 @@ export async function loginImpl(
         'pin-check'
       );
       stopIfSignedOut('pin-check');
+      if (atRestScheme === 'migrating') {
+        // The PIN is proven: decide which of the re-key's two keys seals the state, before the init.
+        const settled = await settleMigratingStateAtUnlock({
+          userId: userIdForPin,
+          deviceId: await mlsService.resolveDeviceId(userIdForPin),
+          pinDerivedKeyB64: deviceKeyB64,
+          port: tauriHardwareKeyPort,
+          openStoredStateWith: async (keyB64) => {
+            const { loadMlsState: loadStored } = await import('$lib/utils/hex');
+            const stored = await loadStored(userIdForPin);
+            if (!stored) return 'no-state';
+            return mlsService.openLocalStateWithKey(userIdForPin, keyB64, stored);
+          },
+          log: cb.log,
+        });
+        stopIfSignedOut('at-rest-migration-settled');
+        deviceKeyB64 = settled.keyB64;
+        migrationCompleteAtUnlock = settled.migrationComplete;
+        ctx.setDeviceKey(deviceKeyB64);
+      }
       // Unlocked: any round trip a retry asked meanwhile belongs to a keypad that is gone.
       forgetPinSaltAhead('unlocked with the PIN', cb.log);
       // The first instant this path can decrypt anything: the PIN is proven and the device is not
@@ -1249,6 +1325,8 @@ export async function loginImpl(
       if (!sessionKey || !isValidDeviceKeyB64(sessionKey)) {
         throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
       }
+      // Read from the keystore: on a hardware-held phone no vault may copy it out (`saveDeviceKey`).
+      if (atRestScheme === 'hardware') noteHardwareHeldDeviceKey(sessionKey);
       ctx.setDeviceKey(sessionKey);
       // The keystore path learns its key only here, behind the single prompt and after the gate.
       // Not awaited before the session flips: the landing selects the row whenever it arrives.
@@ -1354,6 +1432,37 @@ export async function loginImpl(
           cb.log(`[VAULT] unlabelled vault proven to be ${owner.slice(0, 8)}'s - retired`);
         }
       })().catch((e: unknown) => cb.log(`[VAULT] saving the device key failed: ${String(e)}`));
+    }
+
+    // A PHONE STILL ON THE PIN-DERIVED KEY MOVES TO A HARDWARE-HELD ONE, once, in this session: every
+    // sealed store is re-sealed under a random key by the PIN change's own resumable path
+    // (`hardwareKeyMigration.ts`). The leader only, like a PIN change: it re-seals from the live client.
+    // Not awaited - the session is usable meanwhile, its storage calls held for the re-seal's length.
+    if (
+      hardwareHeldKeyApplies() &&
+      atRestScheme !== 'hardware' &&
+      !migrationCompleteAtUnlock &&
+      tabLeaderNow
+    ) {
+      const migratingUser = ctx.getUserId();
+      void startHardwareKeyMigration({
+        userId: migratingUser,
+        deviceId: ctx.getMyDeviceId(),
+        currentKeyB64: ctx.getDeviceKey(),
+        port: tauriHardwareKeyPort,
+        changeKey: (oldKeyB64, newKeyB64) =>
+          performPinChange(
+            {
+              userId: migratingUser,
+              mls: mlsService,
+              setDeviceKey: (k: string) => ctx.setDeviceKey(k),
+              log: cb.log,
+            },
+            oldKeyB64,
+            newKeyB64
+          ),
+        log: cb.log,
+      });
     }
 
     // Stamp this session with the device that just unlocked. It is the ONLY
@@ -2162,6 +2271,33 @@ export async function loginImpl(
 }
 
 /**
+ * The auto-login when this account has no vault slot. ON A HARDWARE-HELD PHONE "STAY SIGNED IN"
+ * READS THE KEYSTORE, because the vault never holds that key (`saveDeviceKey`): the same unattended
+ * read the biometric cadence and the background push make - the keystore is the factor, as the
+ * vault was. Anywhere else no slot means the PIN is asked.
+ */
+async function stayingSignedInWithoutVault(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  userId: string
+): Promise<boolean> {
+  if (
+    hardwareHeldKeyApplies() &&
+    isDeviceKeyPersistenceEnabled() &&
+    (await tauriHardwareKeyPort.scheme(userId)) === 'hardware'
+  ) {
+    appendLog('[PIN] Stay signed in on a hardware-held key - keystore unlock, no prompt');
+    noteUnlockUnattended(userId);
+    ctx.setPin('');
+    ctx.setDeviceKey('');
+    await loginImpl(ctx, cb, { unattendedKeyRead: true });
+    return ctx.isLoggedIn();
+  }
+  appendLog('[PIN] No device key in vault for this account - auto-login impossible');
+  return false;
+}
+
+/**
  * On Tauri (no biometrics), restores the device key from the vault and delegates to loginImpl().
  * Returns true if login succeeded, false if manual PIN entry is still needed.
  *
@@ -2202,10 +2338,7 @@ export async function nativeStorageLoginImpl(
     // Before the vault is read, for the reason `loginImpl` gives.
     joinDeviceKeyLock(userId);
     const vaulted = await loadDeviceKey(userId);
-    if (!vaulted) {
-      appendLog('[PIN] No device key in vault for this account - auto-login impossible');
-      return false;
-    }
+    if (!vaulted) return await stayingSignedInWithoutVault(ctx, cb, userId);
     // Builds before the derivation existed stored the raw PIN under this key. Such a value can
     // never decrypt anything, so refuse the auto-login and let the PIN modal re-derive a real
     // key rather than failing deeper in the crypto stack with an opaque error.
@@ -2357,6 +2490,17 @@ export async function changePinImpl(
   // thisTabMayChangeDeviceKey), and a verifier rotated for a change that cannot finish here costs
   // the user a recovery.
   if (!thisTabMayChangeDeviceKey(log)) throw new LocalizedError(m.auth_pin_change_follower_tab());
+  // ALSO BEFORE THE SERVER: a re-key to the hardware-held key re-seals the same stores, and a PIN
+  // change deriving keys over rows already half moved would strand them. Wait for one in flight; refuse
+  // while one is interrupted (the next unlock resumes it).
+  await whenHardwareKeyMigrationSettled();
+  const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
+    ? await tauriHardwareKeyPort.scheme(userId)
+    : 'pin-derived';
+  if (atRestScheme === 'migrating' || atRestScheme === 'unreadable') {
+    log(`[PIN_CHANGE] Refused before the server: the at-rest key is ${atRestScheme}.`);
+    throw new LocalizedError(m.auth_pin_change_key_migration_pending());
+  }
   log('[PIN_CHANGE] Starting PIN change...');
   onProgress?.({ percent: 2, stage: 'verify' });
 
@@ -2380,6 +2524,14 @@ export async function changePinImpl(
     throw new LocalizedError(describeRefusalCode(refusal.code) ?? m.auth_pin_change_server_error());
   }
   log('[PIN_CHANGE] Account verifier rotated server-side.');
+
+  if (atRestScheme === 'hardware') {
+    // THE PIN DERIVES NOTHING ON THIS PHONE: its stores are sealed under the hardware-held key, which
+    // a PIN change does not touch. The server now expects the new PIN, and that is the whole change.
+    onProgress?.({ percent: 100, stage: 'finalize' });
+    log('[PIN_CHANGE] Complete - the at-rest key is hardware-held, nothing to re-seal.');
+    return;
+  }
 
   // Derive both device keys from the same salt: the old one to read the existing state,
   // the new one to re-seal it.
@@ -2480,9 +2632,43 @@ export async function recoverPinImpl(
 
   // Both device keys come from the same salt: the old one still seals the local state,
   // the new one is what every device will derive from now on.
+  //
+  // ON A HARDWARE-HELD PHONE THE NEW KEY IS THE KEYSTORE'S, never the new PIN's: a PIN change does
+  // not touch that key. Two cases reach here. The state already opens with it - nothing to move,
+  // the login follows. Or it is still under the key the PIN derived when the re-key ran (a background
+  // push wrote the state back under it, or the re-key was interrupted): the old PIN derives that key,
+  // and the same path moves it onto the hardware-held one.
+  const atRestScheme: AtRestKeyScheme = hardwareHeldKeyApplies()
+    ? await tauriHardwareKeyPort.scheme(userId)
+    : 'pin-derived';
+  if (atRestScheme === 'unreadable') throw new LocalizedError(m.auth_hardware_key_unavailable());
+  let hardwareKeyB64: string | null = null;
+  if (atRestScheme === 'hardware' || atRestScheme === 'migrating') {
+    const deviceId = await ctx.ensureMls().resolveDeviceId(userId);
+    const read = await tauriHardwareKeyPort.read(userId, deviceId);
+    if ('key' in read) hardwareKeyB64 = read.key;
+    else if (atRestScheme === 'hardware') {
+      cb.log(`[PIN_RECOVER] The hardware-held key is unavailable (${read.refusal}).`);
+      throw new LocalizedError(m.auth_hardware_key_unavailable());
+    }
+  }
+  if (hardwareKeyB64) {
+    const opened = await ctx.ensureMls().openLocalStateWithKey(userId, hardwareKeyB64, state);
+    if (opened.opened) {
+      await tauriHardwareKeyPort.mark(userId, hardwareKeyB64);
+      cb.log('[PIN_RECOVER] The state opens with the hardware-held key - nothing to move.');
+      ctx.setPin(newPin);
+      onProgress?.({ percent: 92, stage: 'login' });
+      await loginImpl(ctx, cb);
+      if (!ctx.isLoggedIn()) throw new LocalizedError(m.auth_login_failed_after_recovery());
+      onProgress?.({ percent: 100, stage: 'login' });
+      return;
+    }
+    cb.log(`[PIN_RECOVER] The state is not under the hardware-held key (${opened.cause}).`);
+  }
   const [oldDeviceKeyB64, newDeviceKeyB64] = await Promise.all([
     deriveDeviceKeyB64(userId, oldPin, salt),
-    deriveDeviceKeyB64(userId, newPin, salt),
+    hardwareKeyB64 ?? deriveDeviceKeyB64(userId, newPin, salt),
   ]);
 
   // THE SAME PATH AS AN IN-SESSION CHANGE (`performPinChange`). Only the MLS source differs: the
@@ -2531,6 +2717,8 @@ export async function recoverPinImpl(
     }
     throw e;
   }
+  // Every store now under the hardware-held key: the marker says so (idempotent when it already did).
+  if (hardwareKeyB64) await tauriHardwareKeyPort.mark(userId, hardwareKeyB64);
   ctx.setPin(newPin);
   cb.log('[PIN_RECOVER] Local state re-sealed with the new device key.');
 

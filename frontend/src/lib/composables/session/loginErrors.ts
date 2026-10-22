@@ -83,6 +83,14 @@ export type LoginErrorCode =
    * remedy is closing the other tab, never a PIN or a reset.
    */
   | 'state_written_by_another_tab'
+  /**
+   * PIN accepted, on a phone whose data is sealed under a HARDWARE-HELD key (2026-10-22), and the
+   * keystore no longer holds that key - or holds another one, or the marker naming it cannot be read.
+   * No PIN can open data sealed under a random key, so the old-PIN recovery is NOT offered; the local
+   * state exists, so the reset is. Accused, never an ordinary outcome: a keystore that loses its entry
+   * is the event the device readings are watching for.
+   */
+  | 'hardware_key_unavailable'
   /** Anything else (network, server, unexpected). */
   | 'other';
 
@@ -135,6 +143,8 @@ export function loginErrorCode(error: unknown): LoginErrorCode {
 
 /** True when the "PIN changed on another device" recovery flow can resolve this failure. */
 export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
+  // Not a lost hardware-held key: no PIN derives it, so the recovery could only fail.
+  if (code === 'hardware_key_unavailable') return false;
   return code === 'pin_mismatch' || provesLocalStateExists(code);
 }
 
@@ -155,7 +165,11 @@ export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
  * keeps the reset off the screen. Measured on W2, 2026-09-21.
  */
 export function provesLocalStateExists(code: LoginErrorCode): boolean {
-  return code === 'local_state_unopenable' || code === 'local_state_sealed_under_old_pin';
+  return (
+    code === 'local_state_unopenable' ||
+    code === 'local_state_sealed_under_old_pin' ||
+    code === 'hardware_key_unavailable'
+  );
 }
 
 /**
@@ -192,7 +206,7 @@ export function provesLocalStateExists(code: LoginErrorCode): boolean {
 export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
   return (
     code === 'pin_mismatch' ||
-    provesLocalStateExists(code) ||
+    (provesLocalStateExists(code) && code !== 'hardware_key_unavailable') ||
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
     code === 'account_deleted' ||

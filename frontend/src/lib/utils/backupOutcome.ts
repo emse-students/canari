@@ -11,8 +11,11 @@ import { m } from '$lib/paraglide/messages';
  * file is a sentence the next surface writes again, differently.
  */
 
-/** What happened, and what to say about it. `ok` decides which way the banner is coloured. */
-export type BackupOutcome = { ok: boolean; text: string };
+/**
+ * What happened, and what to say about it. `ok` decides which way the banner is coloured.
+ * `recoveryCode` is set on a successful export only: the code that opens the file, shown ONCE.
+ */
+export type BackupOutcome = { ok: boolean; text: string; recoveryCode?: string };
 
 /**
  * The sentence for one refusal.
@@ -40,6 +43,10 @@ function sentenceFor(code: BackupErrorCode): string {
       return m.profile_backup_error_too_old();
     case 'wrong_key':
       return m.profile_backup_error_wrong_key();
+    case 'code_required':
+      return m.profile_backup_error_code_required();
+    case 'wrong_code':
+      return m.profile_backup_error_wrong_code();
     case 'corrupted':
       return m.profile_backup_error_corrupted();
     case 'too_large':
@@ -70,9 +77,9 @@ export function backupImportOutcome(result: {
   };
 }
 
-/** The sentence for an export that produced a file. */
-export function backupExportOutcome(): BackupOutcome {
-  return { ok: true, text: m.profile_backup_export_ok() };
+/** The sentence for an export that produced a file, with the code that opens it. */
+export function backupExportOutcome(recoveryCode: string): BackupOutcome {
+  return { ok: true, text: m.profile_backup_export_ok(), recoveryCode };
 }
 
 /** The sentence for an export that did not. Exports have one failure mode: it did not happen. */

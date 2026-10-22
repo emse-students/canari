@@ -281,7 +281,13 @@ pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
 
 /// [`delete_mls_state`] minus the `AppHandle`, so the pair it removes is tested on a real directory.
 fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
-    for name in ["mls.bin", MLS_STATE_OWNER_FILE] {
+    // The at-rest key marker goes with the state: both callers are resets that clear the message
+    // stores too, and the next sign-in starts as a fresh install (`at_rest_key.rs`).
+    for name in [
+        "mls.bin",
+        MLS_STATE_OWNER_FILE,
+        crate::commands::at_rest_key::AT_REST_KEY_MARKER_FILE,
+    ] {
         let path = data_dir.join(name);
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| format!("remove {name}: {e}"))?;
@@ -1102,8 +1108,14 @@ mod tests {
         // a later reset over nothing.
         record_mls_state_owner(&dir, "user-a").unwrap();
         file(&dir, "mls.bin");
+        // The at-rest key marker goes too: the reset clears the stores, and a marker left naming a
+        // keystore entry of the old device id would refuse the next sign-in's unlock.
+        file(&dir, crate::commands::at_rest_key::AT_REST_KEY_MARKER_FILE);
         remove_mls_state_in(&dir).unwrap();
         assert!(!dir.join("mls.bin").exists());
+        assert!(!dir
+            .join(crate::commands::at_rest_key::AT_REST_KEY_MARKER_FILE)
+            .exists());
         assert_eq!(read_mls_state_owner(&dir), None);
         // And it is idempotent on an install that holds neither.
         remove_mls_state_in(&dir).unwrap();

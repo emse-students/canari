@@ -1061,12 +1061,21 @@ pub(crate) fn store_push_context(
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
 
     let alias = format!("mls_device_key_{user_id}_{device_id}");
-    let keystore = PluginDeviceKeyStore::new(app.clone());
-    // WP-SEC-1: the keystore is now the ONLY copy of the device key (no JSON fallback).
-    // A failed write means background decrypt is dead — return Err, do not log::warn!.
-    keystore
-        .store_device_key(&key_bytes, &alias)
-        .map_err(|e| format!("keystore write failed (background decrypt will not work): {e}"))?;
+    // THE KEYSTORE ENTRY MAY HOLD THE HARDWARE-HELD KEY, AND THEN THIS SESSION'S KEY DOES NOT REPLACE
+    // IT. During a re-key the session still runs on the old key while rows already sit under the new
+    // one, whose only copy is this entry (`at_rest_key.rs`). Not an error: the push context is still
+    // written, and the entry already holds the key the background push needs once the re-key ends.
+    match crate::commands::at_rest_key::keystore_write_allowed(&data_dir, &user_id, &key_bytes) {
+        Ok(()) => {
+            let keystore = PluginDeviceKeyStore::new(app.clone());
+            // WP-SEC-1: the keystore is now the ONLY copy of the device key (no JSON fallback).
+            // A failed write means background decrypt is dead — return Err, do not log::warn!.
+            keystore.store_device_key(&key_bytes, &alias).map_err(|e| {
+                format!("keystore write failed (background decrypt will not work): {e}")
+            })?;
+        }
+        Err(why) => log::info!("[AT_REST_KEY] store_push_context: keystore left as it is - {why}"),
+    }
 
     write_session_push_context(
         &data_dir,

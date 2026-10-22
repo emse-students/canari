@@ -18,6 +18,8 @@ const ALL_CODES: BackupErrorCode[] = [
   'not_a_backup',
   'too_old',
   'wrong_key',
+  'code_required',
+  'wrong_code',
   'corrupted',
   'too_large',
 ];
@@ -92,7 +94,10 @@ describe('backupImportOutcome', () => {
 
 describe('the export outcomes', () => {
   it('separates a file produced from one that was not', () => {
-    expect(backupExportOutcome().ok).toBe(true);
+    expect(backupExportOutcome('ABCD').ok).toBe(true);
+    // The code travels with the outcome so the surface can show it once; a failure has none.
+    expect(backupExportOutcome('ABCD').recoveryCode).toBe('ABCD');
+    expect(backupExportFailure(new Error('x')).recoveryCode).toBeUndefined();
     expect(backupExportFailure(new Error('disk full')).ok).toBe(false);
   });
 

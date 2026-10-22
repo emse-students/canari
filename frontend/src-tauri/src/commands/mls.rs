@@ -1104,10 +1104,16 @@ pub(crate) async fn actualiser_cle_keystore_avec_devicekey(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let alias = format!("mls_device_key_{user_id}_{device_id}");
-    let keystore = PluginDeviceKeyStore::new(app);
+    let keystore = PluginDeviceKeyStore::new(app.clone());
 
     let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+    // REFUSED, NOT SKIPPED, when the entry holds the hardware-held key and this is another one: the
+    // caller (a key change) must not move data while the unattended unlock points elsewhere.
+    let data_dir = tauri::Manager::path(&app)
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    crate::commands::at_rest_key::keystore_write_allowed(&data_dir, &user_id, &key_bytes)?;
 
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         keystore.store_device_key(&key_bytes, &alias).map_err(|e| {

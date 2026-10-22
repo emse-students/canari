@@ -308,7 +308,7 @@ domain-separated PBKDF2-SHA256 derivations over the same server-issued salt:
 | Derivation | Where | Iterations | Used for |
 |---|---|---|---|
 | `computePinVerifier` | `crypto/pinVerifier.ts` | 100 000 | Sent to `POST /api/mls/security/pin-check`; detects a PIN changed on another device |
-| `deriveDeviceKeyB64` | `crypto/deviceKey.ts` | 310 000 | 32-byte at-rest key (`deviceKeyB64`) - the only thing that decrypts `mls.bin` and local messages |
+| `deriveDeviceKeyB64` | `crypto/deviceKey.ts` | 310 000 | 32-byte at-rest key (`deviceKeyB64`) - the only thing that decrypts `mls.bin` and local messages. **Web and desktop only since 2026-10-22**: a phone's key is random and hardware-held ([below](#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22)) |
 
 `deviceKeyB64` is the single at-rest key: `mls.bin` is ChaCha20-Poly1305 (`[nonce 12 || ct]`),
 local messages, Graine seeds and outbox payloads are AES-256-GCM (`[iv 12 || ct]`). Rotating the
@@ -376,6 +376,108 @@ WP-SEC-1 hold the key in `push_context.json`; a one-shot migration
 (`CanariApplication.migrateDeviceKeyFromJson`, `CanariMigrateDeviceKeyFromJson`) promotes it to the
 keystore at the next app start and strips the field. The background readers have **no** JSON
 fallback, so one push before that first launch shows generic text.
+
+### The at-rest key on a phone is held by the hardware (2026-10-22)
+
+**The user's decision of 2026-10-22, "cle materielle + PIN":** on the phone apps the local at-rest
+key is a random key held by the device's secure hardware, the PIN only unlocks it, the PIN stays
+short, and backups get their own recovery secret. Web and desktop keep the PIN-derived key above:
+a browser has no hardware keystore a key can be bound to (`hardwareHeldKeyApplies()` is
+`isMobileTauriRuntime()`).
+
+**The key hierarchy on a phone.**
+
+| Secret | Where it lives | What it opens |
+|---|---|---|
+| PIN | the user's head | nothing locally; the server's `pin-check` accepts or refuses it |
+| At-rest key: 32 random bytes from the OS RNG (`at_rest_key.rs`, `generate_data_key`) | the existing keystore entry `mls_device_key_{userId}_{deviceId}` and its background copy ([above](#where-the-key-lives)) | `mls.bin`, messages, Graine seeds, outbox - every row of [the store table](#what-the-device-key-seals-and-what-a-pin-change-does-with-each) |
+| Marker `at_rest_key.json`, beside `mls.bin` | app data dir, written tmp + fsync + rename | nothing: says which scheme seals this install (`pin-derived` by absence, `migrating`, `hardware`), for which account, and a 128-bit HKDF check value of the key |
+| Backup recovery code (128 bits) | shown once at export, kept by the user | one `.canari` file ([below](#backups-get-their-own-recovery-secret)) |
+
+**How the PIN gates the key.** The unlock still derives the verifier and asks the server, exactly as
+before (`unlockWithPin`); only the key source changes. On a `hardware` marker the PIN path reads the
+key from the keystore (`cle_au_repos_lire`, which refuses unless the key's check value matches the
+marker) and installs it ONLY after the server answers `ok`/`registered`. A refusal of the read is a
+type, `HardwareKeyUnavailableError`, turned into the login code `hardware_key_unavailable`: no PIN
+can derive a random key, so the old-PIN recovery is not offered and the reset is.
+
+**What the server holds, and why it is not enough.** The server still holds the salt and the PIN
+verifier, so it can still check the PIN. On a phone the at-rest key is no longer a function of the PIN
+and that salt: it is random and lives in the hardware keystore, so nothing the server holds - even
+together with a copy of the app's files - yields it without the phone itself. What hardware-holding
+does not change: code running on the unlocked phone can read the unattended key, as the background
+push already does.
+
+**The migration of an existing install is a RE-KEY, not a re-wrap** (`utils/chat/hardwareKeyMigration.ts`).
+Wrapping the PIN-derived key in the keystore would leave every row sealed under a key that is still
+PIN + salt, which is the thing the decision removes. So after the first PIN login on a new build the
+tab leader runs, once, in the background:
+
+1. `cle_au_repos_preparer`: generates the key, writes the marker `migrating` with its check value
+   BEFORE answering. If the marker already says `migrating` and the keystore holds a key whose check
+   value matches, that SAME key is returned (rows may already sit under it).
+2. `performPinChange(old, new)` - the PIN change's own resumable order: vault slot retired, keystore
+   pointed at the new key, every store re-sealed under the storage gate, the session adopts the key,
+   the MLS state re-sealed LAST.
+3. `cle_au_repos_marquer`: marker `hardware`, only for that user and that check value.
+
+Every kill leaves a state the next unlock finishes: before step 2 reached the keystore the check
+value does not match and a fresh key is generated (nothing was sealed under the lost one); inside
+step 2 the PIN-derived key still opens the MLS state and the migration resumes with the same key;
+between 2 and 3, `settleMigratingStateAtUnlock` finds that the keystore key opens the state and
+completes the marker. An interruption that moved data ends the session into the key recovery, as an
+interrupted PIN change does. A fresh install takes the same path (cheap: nothing is stored yet), so
+there is ONE code path for every install. While the marker says `migrating` a biometric unlock is
+sent to the PIN pad, and a PIN change waits for the migration and refuses
+(`auth_pin_change_key_migration_pending`) rather than racing it.
+
+**The keystore guard.** Every login's `store_push_context`, and `actualiser_cle_keystore_avec_devicekey`,
+wrote the session key into the keystore. During a migration that session key is still the old one,
+and writing it would strand rows already under the new key. `keystore_write_allowed` refuses a write
+of any key other than the one the marker names once the marker exists; the push context itself is
+still written. The vault never copies a hardware-held key (`saveDeviceKey` returns on a key noted by
+`noteHardwareHeldDeviceKey`): a vault blob sits beside its wrap key in the app's files, and a copy
+there would undo the point. "Stay signed in" on a hardware-held phone is therefore the unattended
+keystore read (`nativeStorageLoginImpl` -> `loginImpl({ unattendedKeyRead: true })`).
+
+**The notification processes need no change.** The Android `MlsDeviceKeyStore` and the iOS NSE read
+the same alias and the same background copy as before (`AfterFirstUnlockThisDeviceOnly`, no access
+control; Android key with no user authentication), so a push on a locked phone still decrypts. After
+the migration that entry holds the random key instead of the PIN-derived one - the readers never knew
+which it was.
+
+**A PIN change on a hardware-held phone re-seals nothing**: only the server verifier rotates, since
+the key is not a function of the PIN. A PIN changed on ANOTHER device needs no recovery here either:
+the new PIN passes the server check and the key is read as before. The recovery path still exists
+for a phone mid-migration, and moves the state to the hardware-held key rather than to PBKDF2 of the
+new PIN.
+
+**A lost keystore entry loses the local data.** A keystore wipe, or an iOS restore onto a new phone
+(`ThisDeviceOnly` items do not migrate), leaves rows nothing can open: `hardware_key_unavailable`,
+the reset, and history from peers and backups. The reset deletes the marker with `mls.bin`
+(`remove_mls_state_in`).
+
+#### Backups get their own recovery secret
+
+A `.canari` file is now **v3** (`backup.ts`, `crypto/backupRecoveryCode.ts`): sealed under
+HKDF-SHA256(code, per-file salt) where the code is 128 random bits, generated at export, shown ONCE
+in Crockford base32 (26 characters in groups of four; typed back case-insensitively, `I`/`L` read as
+`1`, `O` as `0`), and stored nowhere. 128 bits need no key stretching. Every message row and seed is
+re-sealed from the device key to the backup key at export and into the importing session's key at
+import, so the file carries no device key and opens on any device with the code. The MLS state rides
+along with a check value of the key it is sealed under (`mlsStateKeyCheck`) and is restored only where
+that key is the session's. The settings panel shows the code with a copy button and an "I have saved
+it" dismissal, and reads a file's header to ask for the code BEFORE an import (`backupFileVersion`).
+v2 files are still read, and open only where the exporting key is the session's - so a v2 file
+exported before a phone's migration no longer opens on that phone after it.
+
+**Account restore (WP-RESTORE-1, #2065)** restores a server session, never keys: a restored phone is
+a device that is born, or migrated, onto its own hardware-held key, and needs nothing from this page.
+
+**Owed on hardware, Mi 9T and iPhone:** fresh install; upgrade from the current store build (and how
+long the storage gate is held by the re-key); PIN change; a push readable with the app killed after
+the migration; a backup exported, then imported with its code on the other phone; "stay signed in"
+across a restart; biometric unlock after the migration.
 
 ### The vault names its account - FIXED 2026-10-14
 
@@ -607,7 +709,7 @@ non-destructively by `IMlsService.openLocalStateWithKey`).
 | Graine native mirror | `graine_seeds.json` (native) | not sealed (app-private plaintext): nothing to do | same | same |
 | Feed cache | memory only (`posts/feedCache.ts`) | not sealed, not persisted | same | same |
 | Stored feed first pages (#1896) | `IStorage` `feedPages` / `feed_pages` | dropped (`dropStoredFeedPages`) | dropped | DROPPED inside the storage hold, not re-sealed: a copy the server's next answer rewrites |
-| Exported backup file | wherever the user saved it | NOT re-sealed: a file the device no longer holds; its import refuses it as "a different device key" | same | same |
+| Exported backup file | wherever the user saved it | NOT re-sealed: a file the device no longer holds; a v2 import refuses it as "a different device key" | same | v3 (2026-10-22) is sealed under its own recovery code, so a PIN change does not touch it ([hardware-held key](#backups-get-their-own-recovery-secret)) |
 
 **What went wrong, and why both paths are now one.** The rule "what the device key seals, the
 change must re-seal" was honoured by the change for the seeds (2026-09, [channel-encryption
