@@ -99,6 +99,8 @@ permission - the route would be open to the internet.
 - **Audit:** every session opened, every refusal, and every cookie refused for a bad signature or a lost
   role is a `warn` line in core-service's log.
 
+**PHP hardening (2026-10-22, host IT):** `infrastructure/adminer/php-hardening.ini` is mounted read-only into the container and sets `session.upload_progress.enabled = Off` (measured on the pinned image: default `1`, `0`-equivalent with the file). The image already runs the CLI SAPI (`php -S`), so there is no FPM or Apache to move; PHP is patched by moving the digest, never by the host's unattended-upgrades, which cannot reach a container. IT was told Docker is the chosen route.
+
 **The database account Adminer asks for is the user's decision** (2026-10-02). A `SELECT`-only role
 is the way to narrow the route and is tracked in the [backlog](../backlog.md).
 
