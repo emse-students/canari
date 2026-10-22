@@ -12,11 +12,12 @@
  *   here with the BOUND it stated; the answer echoes it;
  * - the inviter's push is solicited by this device's own admission: processing a Welcome records a
  *   `join` ask for the group;
- * - an ask is closed PER ANSWERING DEVICE by that device's chunk marked `last`: the rendezvous may
- *   hand one ask to a second responder (a re-election over a stored probe), whose answer is held to
- *   the same bound and only adds, so it is taken rather than refused. The open asks are a bounded
- *   FIFO per conversation ({@link MAX_OPEN_ASKS_PER_GROUP}) - state, never a clock - and leave only
- *   through it; a restarted page has asked nothing, so it accepts nothing addressed.
+ * - an ask takes at most {@link MAX_ANSWERERS_PER_ASK} answering devices - the elected responder and
+ *   one re-elected over a stored probe - each closing it for itself with its chunk marked `last`,
+ *   and is gone once they all have. The answerer is the device MLS verified (the caller refuses an
+ *   addressed answer whose envelope names no device). The open asks are also a bounded FIFO per
+ *   conversation ({@link MAX_OPEN_ASKS_PER_GROUP}) - state, never a clock; a restarted page has
+ *   asked nothing, so it accepts nothing addressed.
  *
  * What an accepted answer may DO is decided by the bundle handler (add messages, nothing else); what
  * it may CARRY is decided here ({@link boundAddressedMessages}).
@@ -49,11 +50,22 @@ export type HistoryAsk =
  */
 export const MAX_OPEN_ASKS_PER_GROUP = 32;
 
+/**
+ * How many devices may answer one ask. The rendezvous ELECTS one responder per solicitation; a
+ * re-election can reuse a stored probe and hand the same ask to ONE more (an older probe answered
+ * after the first responder went quiet). Nothing honest produces a third, so a third is refused and
+ * logged by the caller - the bound is on the TOTAL answers an ask takes, not only on each answer.
+ */
+export const MAX_ANSWERERS_PER_ASK = 2;
+
 /** The key a `join` ask is kept under - the push carries no request id, nobody asked it one. */
 const JOIN_ASK = '__join__';
 
-/** One open ask, and the answering devices (`sender:senderDeviceId`) whose `last` chunk closed it. */
-type OpenAsk = { ask: HistoryAsk; closedBy: Set<string> };
+/**
+ * One open ask: the answering devices (`sender:senderDeviceId`) it has taken, and those whose `last`
+ * chunk closed it.
+ */
+type OpenAsk = { ask: HistoryAsk; answerers: Set<string>; closedBy: Set<string> };
 
 /** Open asks, per conversation, in the order they were made. Insertion order is the FIFO. */
 const openAsks = new Map<string, Map<string, OpenAsk>>();
@@ -80,7 +92,7 @@ function remember(groupId: string, requestId: string, ask: HistoryAsk): void {
     openAsks.set(groupId, asks);
   }
   asks.delete(requestId);
-  asks.set(requestId, { ask, closedBy: new Set() });
+  asks.set(requestId, { ask, answerers: new Set(), closedBy: new Set() });
   while (asks.size > MAX_OPEN_ASKS_PER_GROUP) {
     const oldest = asks.keys().next().value;
     if (oldest === undefined) break;
@@ -104,10 +116,9 @@ export function noteJoinSolicited(groupId: string, now: number = Date.now()): vo
 /**
  * The ask an addressed answer in `groupId` claims to answer, or `null` when this device asked no
  * such thing - the frame is then refused by the caller. `requestId` absent is the inviter's push.
- * `answerer` is the device the answer came from (`sender:senderDeviceId`): its chunk marked `last`
- * closes the ask FOR IT, so a later chunk of its own naming the ask is refused while another
- * responder's answer is still taken. A forged device id only buys its sender another answer held
- * to the same bound, which one answer of many chunks already gives it.
+ * `answerer` is the device the answer came from (`sender:senderDeviceId`, checked against the MLS
+ * credential on decrypt): its chunk marked `last` closes the ask FOR IT, a device beyond the first
+ * {@link MAX_ANSWERERS_PER_ASK} is refused, and the ask is gone once every answerer it took is done.
  */
 export function takeAddressedAsk(
   groupId: string,
@@ -115,10 +126,27 @@ export function takeAddressedAsk(
   answerer: string,
   last: boolean
 ): HistoryAsk | null {
-  const open = openAsks.get(groupId)?.get(requestId ?? JOIN_ASK);
+  const asks = openAsks.get(groupId);
+  const id = requestId ?? JOIN_ASK;
+  const open = asks?.get(id);
   if (!open || open.closedBy.has(answerer)) return null;
-  if (last) open.closedBy.add(answerer);
+  if (!open.answerers.has(answerer)) {
+    if (open.answerers.size >= MAX_ANSWERERS_PER_ASK) return null;
+    open.answerers.add(answerer);
+  }
+  if (last) {
+    open.closedBy.add(answerer);
+    if (open.closedBy.size >= MAX_ANSWERERS_PER_ASK) {
+      asks?.delete(id);
+      if (asks?.size === 0) openAsks.delete(groupId);
+    }
+  }
   return open.ask;
+}
+
+/** How many asks `groupId` holds open - the tests, and a diagnostic. */
+export function openHistoryAskCount(groupId: string): number {
+  return openAsks.get(groupId)?.size ?? 0;
 }
 
 /** Forgets every open ask - a sign-out, and the tests. */

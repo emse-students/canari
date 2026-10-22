@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService, SendMessageBody } from './messaging.service';
@@ -47,6 +48,29 @@ describe('MessagingService - visibility vs durability', () => {
     pipeline: jest.fn(() => pipelineDouble()),
     hgetall: jest.fn().mockResolvedValue({}),
     hdel: jest.fn().mockResolvedValue(1),
+    /**
+     * `ADDRESSABLE_PUBLISH_LUA`, replayed over the doubles above: its real atomicity is proven against
+     * a real Redis in `addressing.redis.spec.ts`; here it only has to answer what the keys say.
+     */
+    eval: jest.fn(
+      async (
+        _script: string,
+        _keys: number,
+        presenceKey: string,
+        hashKey: string,
+        channel: string,
+        payload: string,
+        capability: string,
+        marker: string
+      ) => {
+        const presence = await redis.get(presenceKey);
+        const declared = (await redis.hvals(hashKey)) as string[];
+        if (presence !== marker || declared.length === 0) return 0;
+        if (declared.some((d) => d !== capability)) return 0;
+        if (channel) await redis.publish(channel, payload);
+        return 1;
+      }
+    ),
   };
 
   /**
@@ -729,6 +753,29 @@ describe('MessagingService - visibility vs durability', () => {
         });
         expect(queuedMessageRepo.save).not.toHaveBeenCalled();
         expect(redis.publish).not.toHaveBeenCalled();
+      });
+
+      /**
+       * Review of #2270: the check and the publish were two round trips, so a session registering
+       * between them received the frame. The publish now re-checks in the SAME script; the row stays
+       * queued for the declared session to pull.
+       */
+      it('re-checks AT the publish - a session that registered after the check gets no frame', async () => {
+        conversation();
+        declares('u2:dB');
+        const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        redis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        expect(queuedDevices()).toEqual(['dB']);
+        expect(redis.publish).not.toHaveBeenCalled();
+        expect(
+          error.mock.calls.some(([l]) => String(l).includes('ADDRESSED row NOT published'))
+        ).toBe(true);
+        error.mockRestore();
       });
 
       /**

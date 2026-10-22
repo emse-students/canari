@@ -20,6 +20,11 @@ import {
 import * as crypto from 'crypto';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import Redis from 'ioredis';
+import {
+  ADDRESSED_HISTORY_CAPABILITY,
+  declaresAddressedHistory,
+  publishIfAddressable,
+} from './addressing';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { QueuedMessage } from '../entities/queued-message.entity';
@@ -312,31 +317,6 @@ const MAX_MEMBER_KEY_LENGTH = 256;
  * the bound is what a hostile client can make the server hold and compare per send.
  */
 const MAX_ADDRESSED_DEVICES = 16;
-
-/**
- * The capability a device's live sessions declare on their socket (`caps=` on `/api/ws`) when their
- * code refuses an addressed conversation frame that is not a solicited history answer. The gateway
- * records each session's declaration as one field of {@link addressingSessionsKey} - this literal, or
- * `-`. The same literal is in `apps/chat-gateway/src/addressing.rs` and the client's
- * `frameDelivery.ts`; a new rule 5 would be a new capability, never a reinterpretation of this one.
- */
-export const ADDRESSED_HISTORY_CAPABILITY = 'addressed-history-1';
-
-/**
- * The presence key's value written by a gateway that records every session in
- * {@link addressingSessionsKey}. An older gateway writes `true` and records nothing, and a current
- * one never overwrites that `true` - so any other value means a session this service cannot see the
- * declaration of may be live (`apps/chat-gateway/src/addressing.rs`).
- */
-export const PRESENCE_SESSIONS = 'sessions-1';
-
-/**
- * The hash holding one field per live session of a device, on every gateway process, valued with
- * what that session declared. Deliberately outside `user:*`, which the presence scans match.
- */
-export function addressingSessionsKey(userId: string, deviceId: string): string {
-  return `addressing:sessions:${userId}:${deviceId}`;
-}
 
 /**
  * Reads `SendMessageBody.recipientDevices` into lower-cased `userId:deviceId` keys, or `null` when
@@ -1139,13 +1119,9 @@ export class MessagingService {
   ): Promise<void> {
     const incapable: string[] = [];
     for (const t of targets) {
-      const presence = await this.redis.get(this.presenceKey(t.userId, t.deviceId));
-      const declared = await this.redis.hvals(addressingSessionsKey(t.userId, t.deviceId));
-      const addressable =
-        presence === PRESENCE_SESSIONS &&
-        declared.length > 0 &&
-        declared.every((d) => d === ADDRESSED_HISTORY_CAPABILITY);
-      if (!addressable) incapable.push(`${t.userId}:${t.deviceId}`);
+      if (!(await publishIfAddressable(this.redis, t.userId, t.deviceId))) {
+        incapable.push(`${t.userId}:${t.deviceId}`);
+      }
     }
     if (incapable.length === 0) {
       this.logger.log(
@@ -1239,29 +1215,48 @@ export class MessagingService {
       return false;
     }
 
-    await this.redis.publish(
-      'chat:messages',
-      JSON.stringify({
-        recipientId: queued.recipientId,
-        deviceId: queued.deviceId,
-        senderId,
-        senderDeviceId: queued.senderDeviceId ?? '',
-        groupId,
-        isWelcome: queued.isWelcome ?? false,
-        isCommit: queued.isCommit ?? false,
-        // Only a Welcome carries one; `JSON.stringify` drops the key when it is undefined, which is
-        // what every other frame published before this was one function.
-        ratchetTree: queued.ratchetTree,
-        proto: queued.proto ?? queued.content ?? '',
-        // Without this id a frame processed in realtime cannot be ACKed, so the durable row
-        // survives and the next pull redelivers it - destructively, for a Welcome.
-        queuedMessageId: queued.id,
-        createdAt: queued.createdAt.toISOString(),
-        // Only when true, like `ratchetTree`: the receiver refuses an addressed conversation frame
-        // that is not a solicited history answer (history-answer-addressing, rule 5).
-        ...(queued.addressed ? { addressed: true } : {}),
-      })
-    );
+    const frame = JSON.stringify({
+      recipientId: queued.recipientId,
+      deviceId: queued.deviceId,
+      senderId,
+      senderDeviceId: queued.senderDeviceId ?? '',
+      groupId,
+      isWelcome: queued.isWelcome ?? false,
+      isCommit: queued.isCommit ?? false,
+      // Only a Welcome carries one; `JSON.stringify` drops the key when it is undefined, which is
+      // what every other frame published before this was one function.
+      ratchetTree: queued.ratchetTree,
+      proto: queued.proto ?? queued.content ?? '',
+      // Without this id a frame processed in realtime cannot be ACKed, so the durable row
+      // survives and the next pull redelivers it - destructively, for a Welcome.
+      queuedMessageId: queued.id,
+      createdAt: queued.createdAt.toISOString(),
+      // Only when true, like `ratchetTree`: the receiver refuses an addressed conversation frame
+      // that is not a solicited history answer (history-answer-addressing, rule 5).
+      ...(queued.addressed ? { addressed: true } : {}),
+    });
+    if (queued.addressed) {
+      // THE CHECK AND THE PUBLISH ARE ONE SCRIPT (history-answer-addressing, rule 6): the sender's
+      // check ran before the rows were written, and a session that registered since - an older tab -
+      // would otherwise receive the frame. Refused here, the row stays queued for the declared
+      // session's pull, which withholds it from any session that did not declare.
+      const published = await publishIfAddressable(
+        this.redis,
+        queued.recipientId,
+        queued.deviceId,
+        { channel: 'chat:messages', payload: frame }
+      );
+      if (!published) {
+        this.logger.error(
+          `[${tag}][${traceId}] ADDRESSED row NOT published recipient=${queued.recipientId}:${queued.deviceId} ` +
+            `queuedId=${queued.id} - a session that did not declare ${ADDRESSED_HISTORY_CAPABILITY} ` +
+            `registered after the check; the row stays queued for a declared session to pull`
+        );
+        return false;
+      }
+    } else {
+      await this.redis.publish('chat:messages', frame);
+    }
     if (!batch) {
       this.logger.log(
         `[${tag}][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} ` +
@@ -4167,9 +4162,15 @@ export class MessagingService {
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
     limit = 500,
-    after?: string
+    after?: string,
+    caps?: string
   ): Promise<QueuedMessage[]> {
     const traceId = this.makeTraceId('fetch-msg');
+    // AN ADDRESSED ROW REACHES ONLY A SESSION THAT DECLARED IT APPLIES RULE 5
+    // (history-answer-addressing, rule 6): the same `caps` its socket declares, sent on the fetch.
+    // Withheld IN THE QUERY, so the page and the client's cursor are untouched and the row stays
+    // queued for the session that can read it.
+    const readsAddressed = declaresAddressedHistory(caps);
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     assertCallerOwnsUserId(
@@ -4210,6 +4211,7 @@ export class MessagingService {
       if (after?.trim()) {
         qb.andWhere('q.createdAt > :after', { after: new Date(after) });
       }
+      if (!readsAddressed) qb.andWhere('q.addressed = false');
 
       const chunk = await qb.getMany();
       if (chunk.length === 0) break;
@@ -4287,6 +4289,20 @@ export class MessagingService {
               `so the path that deleted them left residue: ${leaked.join(', ')}`
             : '')
       );
+    }
+
+    if (!readsAddressed) {
+      const withheld = await this.queuedMessageRepo.count({
+        where: { recipientId: safeUserId, deviceId: safeDeviceId, addressed: true },
+      });
+      if (withheld > 0) {
+        // An older session pulling while an addressed answer waits for a declared one: the window
+        // rule 6 names, closed here. Warned rather than errored - the row is not lost, it waits.
+        this.logger.warn(
+          `[MSG_FETCH][${traceId}] WITHHELD ${withheld} addressed row(s) from user=${safeUserId} ` +
+            `device=${safeDeviceId} - this fetch did not declare ${ADDRESSED_HISTORY_CAPABILITY}`
+        );
+      }
     }
 
     this.logger.log(

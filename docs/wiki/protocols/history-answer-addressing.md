@@ -85,13 +85,19 @@ Making the answer unreadable to everyone but the asker is option B below, and it
    - **It is SOLICITED.** Every ask (`history_digest`, `history_pull`, `history_range`) carries a fresh
      `requestId`, kept in memory with the bound it states; the answer echoes it. The push is
      solicited by the receiver's own admission: processing a Welcome for the group records a `join`
-     ask. An ask is closed PER ANSWERING DEVICE (`sender:senderDeviceId`) by that device's chunk
-     marked `last`, and leaves only through the FIFO below: the rendezvous elects one responder, but
-     a re-election over a stored probe can hand the same ask to a second one, whose answer is held
-     to the same bound and only adds - so it is taken, not refused. *Changed from the #2270 review,
-     which found the ask consumed by the FIRST answerer and the second one's content dropped at
-     error.* A forged device id buys its sender only another answer under the same bound, which one
-     answer of many chunks already gives it. When a last chunk was entirely withheld, no frame
+     ask. **An ask takes at most TWO answering devices** (`MAX_ANSWERERS_PER_ASK`): the rendezvous
+     elects one responder, and a re-election over a stored probe can hand the same ask to one more,
+     whose answer is held to the same bound and only adds - so it is taken, not refused. Each closes
+     the ask for itself with its chunk marked `last`; once both have, the ask is gone, and a third
+     device is refused at error, because nothing honest produces one. *Changed twice by the #2270
+     reviews: the first build consumed the ask on the FIRST answerer and dropped the second one's
+     content at error; the second let any number of answerers in.* **The answerer is the device MLS
+     verified**: the decrypt compares the envelope's sending device with the credential and refuses
+     a disagreement (`verifiedSender`), which it can do only when the envelope names one - so an
+     addressed answer naming none is refused. chat-delivery has no device in its auth context (the
+     token names a user), and binds the claim the only way it can: the route requires the caller as
+     sender with a device, and refuses a device that is not an active member of the group for that
+     authenticated user. When a last chunk was entirely withheld, no frame
      carries `last` and the ask stays open until newer asks push it out. A page
      reloaded between its ask and the answer refuses the answer, and the comparison runs again on
      the next connection. *Changed from the review, which
@@ -118,17 +124,24 @@ Making the answer unreadable to everyone but the asker is option B below, and it
    **The declaration is a CROSS-PROCESS fact** (`apps/chat-gateway/src/addressing.rs`). *Changed
    from the #2270 review: the first build aggregated the sessions inside one gateway process, so in a
    deploy overlap an old-build tab on one gateway and a new tab on another wrote competing presence
-   values, and the device looked addressable.* Two writes, in one Lua script per refresh:
+   values, and the device looked addressable.* Every write is one Lua script, validated before its
+   first write so a failing one leaves nothing, and tested against the production Redis in CI
+   (`redis_it`):
    - **one field per session** in the hash `addressing:sessions:{userId}:{deviceId}` (outside `user:*`,
-     which the presence scans match), field `{process}:{connection}`, value the capability or `-`.
-     Each field has its own expiry (`HEXPIRE`, the presence TTL), refreshed by its own session only,
-     and is removed when that session ends. The expiry decides LIVENESS - how long a crashed
-     process's field lingers - never safety: a lingering `-` only keeps the device unaddressable, a
-     lingering declared field changes nothing;
+     which the presence scans match), field `{process}:{connection}`, value the capability or `-`,
+     written WITH its expiry in one command (`HSETEX`, the presence TTL), refreshed by its own session
+     only. The expiry decides LIVENESS - how long a crashed process's field lingers - never safety:
+     a lingering `-` only keeps the device unaddressable, a lingering declared field changes nothing;
+   - **a retired session is recorded as LEFT** (`addressing:left:{userId}:{deviceId}`, for one TTL)
+     before its field is removed. A field name is never reused, so it is the session's generation
+     token: a refresh in flight when its session left writes nothing, and never resurrects it;
    - **the presence value `sessions-1`**, never written over an existing `true`. A gateway that
      predates this writes `true` and records no field, and a current one neither overwrites nor
      deletes that `true`, so it lasts exactly as long as the older gateway's session refreshes it -
-     the only trace of a session whose declaration nobody can read.
+     the only trace of a session whose declaration nobody can read;
+   - **the presence goes with the LAST field**, asked of the shared hash inside the leave script:
+     a session on another process keeps the device online, and a leave in flight cannot delete a
+     presence that a later session wrote.
 
    chat-delivery addresses a device only when its presence value is `sessions-1` AND every field of
    its hash is the capability: ANY undeclared session of the device, on any process, refuses it. So:
@@ -137,19 +150,27 @@ Making the answer unreadable to everyone but the asker is option B below, and it
    - the native background paths never read an addressed frame: they skip every silent frame
      (Android `handleMlsFrame`, the iOS NSE), and nothing native drains the queue.
 
-   **The gateway also filters at its EDGE** (`addressed_recipients`): a session may connect between
-   chat-delivery's check and the frame's arrival, so the pub/sub loop hands an addressed frame only
-   to the local sessions that declared the capability, and logs every one it withholds at **error**
-   (`[PubSub] ADDRESSED frame NOT delivered`). *Added from the #2270 review, which found the
-   capability checked once, before the publish.*
+   **The check and the PUBLISH are one script** (`ADDRESSABLE_PUBLISH_LUA`, `addressing.ts`). The
+   sender's check runs before the rows are written; the publish re-asks the same question in the
+   same atomic step, so no session registered in between receives the frame. Refused there, the row
+   stays queued and the refusal is logged at **error** (`ADDRESSED row NOT published`). *Added from
+   the #2270 re-review.*
 
-   **What is left is a window on code that cannot filter**: a gateway process that predates the
-   edge filter forwards to every session it holds, and an older-build tab that connects to one
-   between the check and the publish - or that pulls the queue row before the asker's session ACKs
-   it - receives the frame. It is an honest history answer to that device, so the only exposure is
-   a malicious sender winning a sub-second window against an older build, during a deploy overlap.
-   The pull half closes only when `minClientVersion` carries this build - owed, in the
-   [backlog](../backlog.md).
+   **The PULL withholds it too.** The pending fetch carries the same `caps` the socket does, and a
+   fetch that does not declare the capability is served no addressed row - filtered in the query,
+   so the page and its cursor are untouched and the row waits for a session that can read it
+   (`WITHHELD ... addressed row(s)`, warn). *Added from the #2270 re-review: an older tab pulling the
+   queue was the other way in.*
+
+   **The gateway also filters at its EDGE** (`addressed_recipients`): the pub/sub loop hands an
+   addressed frame only to the local sessions that declared the capability, and logs every one it
+   withholds at **error** (`[PubSub] ADDRESSED frame NOT delivered`).
+
+   **What is left is one window on code that cannot filter, and it ends with the deploy**: a gateway
+   process that predates all of this registers a session in its own memory before it writes that
+   session's presence, so a frame published in that instant reaches the session through it. It is an
+   honest history answer to that device; the only exposure is a malicious sender winning that
+   instant against an older build while an older gateway process still runs.
 
    The answerer then does not answer that device (`[HISTORY_BUNDLE] ... cannot be addressed`), and
    sends no broadcast in its place. The older device is served by older peers exactly as before.
@@ -210,12 +231,18 @@ returns to key groups only.
   of the group gets no queued row and no publish; a durable or incapable addressee is refused; the
   row and the live frame carry `addressed`.
 - chat-delivery: the same block - one undeclared session field, an older gateway's `true`, or no
-  field at all refuses the device; a key-group answer is never marked. `migrations.lock-timeout.spec.ts`
-  - 035 sets its `lock_timeout` before it alters the table.
-- gateway: `addressing.rs` tests - the edge filter hands an addressed frame only to sessions that
-  declared, the session field is unique across processes, the hash stays out of `user:*`.
+  field at all refuses the device; the publish re-checks atomically; a key-group answer is never
+  marked. `addressing.redis.spec.ts` runs the check-and-publish script against a real Redis (CI:
+  `boot-nest-apps`, refused if skipped). `messaging.pending-page.spec.ts` - a fetch that does not
+  declare the capability is served no addressed row. `migrations.lock-timeout.spec.ts` - 035 sets
+  its `lock_timeout` before it alters the table.
+- gateway: `addressing.rs` - the edge filter, the field naming; `redis_it` runs both presence
+  scripts against a real Redis (CI: `test-rust`, failing rather than skipping when unset): the
+  expiry, an older gateway's `true`, the presence going with the last session on any process, no
+  resurrection after a leave, nothing written by a refused call, concurrent sessions.
 - client: `frameDelivery.socketUrl.test.ts` - both socket openers declare the capability through
-  `gatewaySocketUrl`.
+  `gatewaySocketUrl`; `mlsDeliveryApi.pending.test.ts` - so does every page of the pull;
+  `historyAddressing.test.ts` - at most two answerers per ask.
 - client: `historyAddressing.test.ts` (the open asks, the bounds, every ask carries an id),
   `systemMessageHandler.bundleAddressing.test.ts` (rule 5 on receipt),
   `setupMessageHandler.addressedGate.test.ts` (only a history answer may be addressed),

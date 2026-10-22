@@ -1,5 +1,7 @@
 import {
+  MAX_ANSWERERS_PER_ASK,
   MAX_OPEN_ASKS_PER_GROUP,
+  openHistoryAskCount,
   boundAddressedMessages,
   forgetHistoryAsks,
   noteHistoryAsk,
@@ -32,6 +34,26 @@ describe('historyAddressing - the open asks', () => {
    * stored probe), so an ask is consumed PER ANSWERER. A second device's answer is accepted - it is
    * held to the same bound - and the same device after its `last` is refused.
    */
+  /**
+   * Re-review of #2270: per-answerer closing alone let an ask stay open to any number of answerers.
+   * The rendezvous elects ONE, and a re-election can add ONE more - so an ask takes at most
+   * MAX_ANSWERERS_PER_ASK, and is gone once they all sent `last`.
+   */
+  it(`takes at most ${MAX_ANSWERERS_PER_ASK} answerers per ask, and closes once they are done`, () => {
+    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+
+    expect(takeAddressedAsk(GROUP, 'req-a', 'bob:p1', false)).not.toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:p2', false)).not.toBeNull();
+    // A third device is refused while the ask is open...
+    expect(takeAddressedAsk(GROUP, 'req-a', 'dave:p3', false)).toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', 'bob:p1', true)).not.toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:p2', true)).not.toBeNull();
+    // ...and once both answerers are done the ask is gone for everybody.
+    expect(takeAddressedAsk(GROUP, 'req-a', 'dave:p3', false)).toBeNull();
+    noteHistoryAsk(GROUP, 'req-b', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+    expect(openHistoryAskCount(GROUP)).toBe(1);
+  });
+
   it('a second answerer is accepted after the first one closed the ask, the first is not', () => {
     noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT });
 

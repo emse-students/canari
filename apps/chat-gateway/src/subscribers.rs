@@ -268,7 +268,10 @@ pub fn spawn_redis_subscriber(
                                                 // Presence only: each dead session's field goes
                                                 // with its own ConnectionGuard (crate::addressing).
                                                 if let Err(e) = crate::addressing::leave_session(
-                                                    &mut con, &k2, None, true,
+                                                    &mut con,
+                                                    &k2,
+                                                    None,
+                                                    crate::handlers::PRESENCE_TTL_SECS,
                                                 )
                                                 .await
                                                 {

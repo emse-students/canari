@@ -36,9 +36,7 @@ and the remove-then-re-add rule of 2026-10-14 stays. Step C (the push withholds 
 the receiver drops its own) is on `main`. **Step A is BUILT (draft PR): every history answer, the
 push included, is addressed to the asking device and filtered on its own windows; migration `035`
 is applied by the deploy, so the user's yes is the release.** Owed, in order: the rig row GRP-ADDR-1; a `minClientVersion` carrying A
-once both stores serve it (older clients broadcast until then, and it is also the only thing that
-closes the one path A leaves open: an older-build tab pulling an addressed queue row during a deploy
-overlap, [rule 6](protocols/history-answer-addressing.md)); option B, sealing the answer to the
+once both stores serve it (older clients broadcast until then); option B, sealing the answer to the
 asker (X25519 in `mls-core`), which is what makes it hold against a malicious server. **DECIDED by
 the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer the quoted text;
 nothing is built for it. Design and limits:

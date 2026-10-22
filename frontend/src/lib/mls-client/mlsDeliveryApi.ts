@@ -1,7 +1,7 @@
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
 import { fetchJsonUnderProgressDeadline } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
-import { DELIVERY, type FrameDelivery } from './frameDelivery';
+import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
 import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
@@ -630,6 +630,9 @@ export class MlsDeliveryApi {
       const url = new URL(`${this.historyUrl}/api/mls/messages/${this.userId}/${this.deviceId}`);
       url.searchParams.set('limit', String(pageLimit));
       if (afterCreatedAt) url.searchParams.set('after', afterCreatedAt);
+      // The same declaration the socket makes: the server hands an ADDRESSED row only to a session
+      // that applies rule 5 (history-answer-addressing, rule 6), and withholds it from any other.
+      url.searchParams.set('caps', ADDRESSED_HISTORY_CAPABILITY);
 
       let batch: Array<{ createdAt?: string }>;
       // OUTSIDE the try below: a token that cannot be had is not a page asked for too big. It used to

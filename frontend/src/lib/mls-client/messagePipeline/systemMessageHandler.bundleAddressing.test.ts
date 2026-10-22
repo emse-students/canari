@@ -356,6 +356,27 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
     error.mockRestore();
   });
 
+  /**
+   * Re-review of #2270: the answerer an ask is closed for must be the device MLS verified. The live
+   * and pull paths check the envelope's device against the credential only when the envelope names
+   * one, so an addressed answer that names none is refused rather than keyed on nothing.
+   */
+  it('refuses an addressed answer whose envelope names no sending device', async () => {
+    noteHistoryAsk(GROUP, 'req-00000001', { kind: 'digest', since: 0, askedAt: ASKED_AT });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx({ deliveryMeta: { channel: 'live', addressed: true } });
+
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [BUNDLE_MSG], to: TO_ME, requestId: 'req-00000001', last: true },
+      ctx as any
+    );
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(refusedLines(error)).toHaveLength(1);
+    error.mockRestore();
+  });
+
   it('drops, at error, what lies outside the range we asked for', async () => {
     noteHistoryAsk(GROUP, 'req-00000002', {
       kind: 'range',

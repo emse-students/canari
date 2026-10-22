@@ -249,10 +249,14 @@ Presence keys are stored in Redis as `user:online:{userId}:{deviceId}` with a 90
 **Each session's declared capability is kept across processes (step A, 2026-10-22; `addressing.rs`).**
 A socket opened with `caps=addressed-history-1` declares that its code refuses an addressed
 conversation frame that is not a solicited, bounded history answer. Every presence write is one Lua
-script: the session's field in `addressing:sessions:{userId}:{deviceId}` (`{process}:{connection}`,
-the capability or `-`, its own `HEXPIRE`), then the presence value `sessions-1` - unless an older
-gateway's `true` is there, which is neither overwritten nor deleted, because it is the only trace of
-a session whose declaration nobody can read. Every reader that only tests existence is unchanged.
+script, validated before its first write: the session's field in
+`addressing:sessions:{userId}:{deviceId}` (`{process}:{connection}`, the capability or `-`, written
+with its expiry by `HSETEX`), then the presence value `sessions-1` - unless an older gateway's `true`
+is there, which is neither overwritten nor deleted, because it is the only trace of a session whose
+declaration nobody can read. A session that ends is recorded in `addressing:left:{userId}:{deviceId}`
+for one TTL before its field goes, so a refresh in flight cannot resurrect it, and the presence goes
+in the same script only when the hash holds no field on any process - which is why neither the
+explicit disconnect nor the "every sender dead" path decides it from this process's own map. Every reader that only tests existence is unchanged.
 chat-delivery addresses a history answer only to a device whose value is `sessions-1` and every field
 of whose hash is the capability ([history-answer-addressing](../protocols/history-answer-addressing.md),
 rule 6). The pub/sub loop forwards the row's `addressed` flag, and hands an addressed frame only to the

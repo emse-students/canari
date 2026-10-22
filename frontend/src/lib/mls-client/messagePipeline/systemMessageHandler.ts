@@ -907,12 +907,16 @@ export async function handleSystemEvent(
     if (deliveryMeta?.addressed === true) {
       const requestId = parseHistoryRequestId(data?.requestId);
       const claimsJoin = data?.join === true && requestId === undefined;
+      // THE ANSWERER IS THE DEVICE MLS VERIFIED: the decrypt compared the envelope's device with the
+      // credential, which it can only do when the envelope names one - so an answer naming none has
+      // no device to close the ask for, and is refused.
+      const answeringDevice = deliveryMeta.senderDeviceId;
       const ask =
-        addressee.toLowerCase() === me && (requestId !== undefined || claimsJoin)
+        addressee.toLowerCase() === me && answeringDevice && (requestId !== undefined || claimsJoin)
           ? takeAddressedAsk(
               convoKey,
               requestId,
-              `${senderNorm}:${deliveryMeta.senderDeviceId ?? ''}`,
+              `${senderNorm}:${answeringDevice}`,
               data?.last === true
             )
           : null;
@@ -921,9 +925,10 @@ export async function handleSystemEvent(
         // this is a forged frame, a defect, or an ask this page no longer holds (a reload between
         // ask and answer, or more than MAX_OPEN_ASKS_PER_GROUP open at once) - each worth a
         // reader's attention, and the comparison runs again on the next connection either way. A
-        // SECOND responder to the same ask is not here: asks close per answering device.
+        // SECOND responder to the same ask is not here (the rendezvous can re-elect once); a THIRD
+        // is, because nothing honest produces one (MAX_ANSWERERS_PER_ASK).
         console.error(
-          `[HISTORY_ADDRESSED] REFUSED an addressed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - ${addressee.toLowerCase() !== me ? `addressed to ${addressee.slice(0, 8) || 'nobody'}…, not us` : requestId === undefined && !claimsJoin ? 'it names no ask' : 'it answers no ask this device has open'} (${incoming.length} message(s) not ingested)`
+          `[HISTORY_ADDRESSED] REFUSED an addressed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - ${addressee.toLowerCase() !== me ? `addressed to ${addressee.slice(0, 8) || 'nobody'}…, not us` : !answeringDevice ? 'its envelope names no sending device' : requestId === undefined && !claimsJoin ? 'it names no ask' : 'it answers no ask this device has open, or its answerers are all taken'} (${incoming.length} message(s) not ingested)`
         );
         return true;
       }

@@ -86,23 +86,6 @@ impl AppState {
             .unwrap()
             .insert(conn_id, addressed_history);
     }
-
-    /// Answer the same question WITHOUT unregistering: does any live session other
-    /// than `conn_id` hold `conn_key` right now?
-    ///
-    /// The presence key `user:online:{userId}:{deviceId}` is per DEVICE, and two
-    /// tabs of one browser share a `deviceId`. A connection leaving may therefore
-    /// only delete it when it is the last one - which is the question this answers
-    /// for the explicit `{"type":"disconnect"}` frame, whose sender is still
-    /// registered at the moment it is handled.
-    pub fn has_other_sessions(&self, conn_key: &str, conn_id: u64) -> bool {
-        let map = self.connected_users.lock().unwrap();
-        map.get(conn_key).is_some_and(|senders| {
-            senders
-                .iter()
-                .any(|(id, s)| *id != conn_id && !s.is_closed())
-        })
-    }
 }
 
 #[cfg(test)]
@@ -140,7 +123,6 @@ mod tests {
         let state = state();
         let _rx = register(&state, KEY, 1);
 
-        assert!(!state.has_other_sessions(KEY, 1));
         assert!(!state.remove_session(KEY, 1));
         assert!(!state.connected_users.lock().unwrap().contains_key(KEY));
     }
@@ -154,9 +136,7 @@ mod tests {
         let _leaving = register(&state, KEY, 1);
         let _staying = register(&state, KEY, 2);
 
-        assert!(state.has_other_sessions(KEY, 1));
         assert!(state.remove_session(KEY, 1));
-        assert!(!state.has_other_sessions(KEY, 2));
     }
 
     /// A sender whose receiver is gone is not a session: it must not hold the
@@ -167,7 +147,6 @@ mod tests {
         let _leaving = register(&state, KEY, 1);
         drop(register(&state, KEY, 2));
 
-        assert!(!state.has_other_sessions(KEY, 1));
         assert!(!state.remove_session(KEY, 1));
         assert!(!state.connected_users.lock().unwrap().contains_key(KEY));
     }
@@ -180,7 +159,6 @@ mod tests {
         let _here = register(&state, KEY, 1);
         let _elsewhere = register(&state, "user-1:device-2", 2);
 
-        assert!(!state.has_other_sessions(KEY, 1));
         assert!(!state.remove_session(KEY, 1));
         assert!(
             state
@@ -198,7 +176,6 @@ mod tests {
     fn removing_an_unknown_connection_is_not_an_error() {
         let state = state();
 
-        assert!(!state.has_other_sessions(KEY, 99));
         assert!(!state.remove_session(KEY, 99));
     }
 }

@@ -123,19 +123,15 @@ impl Drop for ConnectionGuard {
         // the explicit-disconnect path asks exactly the same question.
         let still_connected = self.state.remove_session(&self.conn_key, self.conn_id);
 
-        if still_connected {
-            tracing::info!(
-                "[presence] Keeping presence for {} - another session is still active; removing session field {}",
-                self.conn_key,
-                self.field
-            );
-        } else {
-            tracing::info!(
-                "[presence] Cleaning up presence and session field {} for {}",
-                self.field,
-                self.conn_key
-            );
-        }
+        // The presence itself is decided by the shared hash inside the script (crate::addressing):
+        // it goes when no session of the device is left on ANY process. `still_connected` is this
+        // process's view only, logged for the reader.
+        tracing::info!(
+            "[presence] Retiring session {} of {} (another local session: {})",
+            self.field,
+            self.conn_key,
+            still_connected
+        );
         let state = self.state.clone();
         let field = self.field.clone();
         let conn_key = self.conn_key.clone();
@@ -153,16 +149,15 @@ impl Drop for ConnectionGuard {
                             &mut con,
                             &conn_key,
                             Some(&field),
-                            !still_connected,
+                            PRESENCE_TTL_SECS,
                         )
                         .await
                         {
                             Ok(()) => {
                                 tracing::info!(
-                                    "[presence] Session {} of {} left (last={}, attempt {})",
+                                    "[presence] Session {} of {} retired (attempt {})",
                                     field,
                                     conn_key,
-                                    !still_connected,
                                     attempt + 1
                                 );
                                 return;
@@ -680,7 +675,17 @@ async fn refresh_presence(
         match crate::addressing::write_session(con, conn_key, field, declared, PRESENCE_TTL_SECS)
             .await
         {
-            Ok(_) => return,
+            Ok(true) => return,
+            Ok(false) => {
+                // The session was retired while this refresh was in flight: nothing was written,
+                // which is the point (crate::addressing, the left hash).
+                tracing::info!(
+                    "[presence] Refresh of retired session {} of {} wrote nothing",
+                    field,
+                    conn_key
+                );
+                return;
+            }
             Err(e) => {
                 tracing::warn!(
                     "[presence] presence refresh failed for {} (will reconnect): {}",
