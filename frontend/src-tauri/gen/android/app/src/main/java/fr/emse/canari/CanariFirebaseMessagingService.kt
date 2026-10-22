@@ -3187,6 +3187,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             when (val settlement = BackgroundWelcomeAnswer.settle(outcome, baseEpoch)) {
                 BackgroundWelcomeAnswer.Settlement.Install -> {
                     val installed = withMlsStateLock(10) { JSONObject(nativeInstallStagedWelcome(filesDir, groupId)) }
+                    if (installed == null) {
+                        // The lock was not acquired, so the install never ran and its staged file is
+                        // still there: deleted now, so no old epoch secret outlives this attempt.
+                        nativeDiscardStagedWelcome(filesDir, groupId, -1L, -1L)
+                    }
                     if (installed?.optBoolean("ok", false) == true) {
                         Log.d(TAG, "$line - state installed")
                     } else {
@@ -3360,6 +3365,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val text = stream?.bufferedReader()?.use { it.readText() }
                 val json = try { text?.let { JSONObject(it) } } catch (e: Exception) { null }
                 Log.d(TAG, "sendWelcomeAndCommit: HTTP $code status=${json?.optString("status")} group=$groupId target=$targetUserId:$targetDeviceId")
+                if (json?.optBoolean("welcomeQueued", true) == false) {
+                    // Accepted, and the server could not queue the Welcome: the commit stands, so the
+                    // staged state is still installed; the newcomer recovers on its own re-ask cadence.
+                    Log.e(TAG, "sendWelcomeAndCommit: commit accepted and the Welcome NOT queued group=$groupId target=$targetUserId:$targetDeviceId")
+                }
                 BackgroundWelcomeAnswer.classify(
                     code,
                     json?.optString("status")?.takeIf { it.isNotEmpty() },

@@ -343,8 +343,8 @@ pub fn decrypt_media_blob(raw_key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Optio
     }
 }
 
-/// The ledger of background Welcome answers the server refused as STALE, in the app data dir.
-pub const STALE_WELCOME_LEDGER_FILE: &str = "welcome_request_stale.json";
+// The staged-state prefix and the stale ledger are named where `mls.bin`'s deletion sweeps them.
+use crate::commands::storage::{STAGED_WELCOME_PREFIX, STALE_WELCOME_LEDGER_FILE};
 /// The most groups the stale ledger names. A capacity, not a clock: a full ledger is emptied before
 /// the next entry, which costs each forgotten group ONE more refused answer and nothing else.
 pub const STALE_WELCOME_LEDGER_CAPACITY: usize = 64;
@@ -354,7 +354,7 @@ pub const STALE_WELCOME_LEDGER_CAPACITY: usize = 64;
 /// `digest of the loaded mls.bin (32) || sealed post-add state`.
 fn staged_welcome_path(files_dir: &Path, group_id: &str) -> std::path::PathBuf {
     let tag = hex(&crate::concurrency::mls_bin_digest(group_id.as_bytes())[..8]);
-    files_dir.join(format!("mls.bin.welcome-{tag}"))
+    files_dir.join(format!("{STAGED_WELCOME_PREFIX}{tag}"))
 }
 
 /// Writes a staged file by rename from a temporary of ITS OWN name, so two groups staged at once
@@ -619,7 +619,8 @@ pub fn install_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::V
 /// from in the stale ledger, so they are not offered again ([`welcome_request_known_stale`]).
 ///
 /// `stale` is `Some((base_epoch, server_epoch))` for an `epoch_mismatch` and `None` otherwise: a
-/// racing commit or a removed target says nothing about the next request.
+/// racing commit or a removed target says nothing about the next request. It is recorded only when
+/// `server_epoch > base_epoch`.
 pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, stale: Option<(u64, u64)>) {
     let short: String = group_id.chars().take(8).collect();
     let path = staged_welcome_path(files_dir, group_id);
@@ -637,6 +638,15 @@ pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, stale: Option<(u
     let (Some((base_epoch, server_epoch)), Some(digest)) = (stale, digest) else {
         return;
     };
+    // ONLY A BASE BEHIND THE SERVER IS STALE. A base at or ahead of the server's counter (a phone
+    // ahead of a lagging counter) is a refusal the same bytes may not meet again, so it is not
+    // remembered: the memo must never hold back an answer that could later be valid.
+    if server_epoch <= base_epoch {
+        log::warn!(
+            "[BG_WELCOME] group={short} refused at base {base_epoch} with the server at {server_epoch} - not behind, not recorded"
+        );
+        return;
+    }
     let recorded = with_stale_ledger(files_dir, |map| {
         if !map.contains_key(group_id) && map.len() >= STALE_WELCOME_LEDGER_CAPACITY {
             log::warn!(
@@ -1981,6 +1991,33 @@ mod tests {
         assert!(
             !welcome_request_known_stale(&dir, &stale, "another-group"),
             "and only this group is known stale"
+        );
+    }
+
+    /// A phone AHEAD of a lagging server counter is not stale: the counter can reach its base, and
+    /// a later answer from the same bytes may then be valid. Only `server > base` is recorded.
+    #[test]
+    fn a_refusal_from_a_base_ahead_of_the_server_records_nothing() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (stale, _bob, _moved, kp, gid) = shut_phone_behind_its_group("ahead", 49);
+        let dir = dir_holding("ahead", &stale);
+        let first = prepare_welcome_background_with_key(
+            &dir,
+            &stale,
+            &key_b64(49),
+            "ahead-alice",
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(first["ok"], true);
+        discard_staged_welcome(&dir, &gid, Some((3, 2)));
+        assert!(!welcome_request_known_stale(&dir, &stale, &gid));
+        discard_staged_welcome(&dir, &gid, Some((2, 2)));
+        assert!(
+            !welcome_request_known_stale(&dir, &stale, &gid),
+            "equal is not stale either"
         );
     }
 

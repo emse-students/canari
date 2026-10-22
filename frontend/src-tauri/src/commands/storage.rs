@@ -279,12 +279,35 @@ pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
     remove_mls_state_in(&data_dir)
 }
 
-/// [`delete_mls_state`] minus the `AppHandle`, so the pair it removes is tested on a real directory.
+/// The prefix of a background Welcome's staged post-add state beside `mls.bin`, one file per group
+/// (`mobile/background.rs`). It holds that state's epoch secrets, so it leaves with `mls.bin`.
+pub(crate) const STAGED_WELCOME_PREFIX: &str = "mls.bin.welcome-";
+
+/// The memo of background Welcomes the server refused as stale, keyed by the digest of `mls.bin`
+/// (`mobile/background.rs`). It describes `mls.bin`, so it leaves with it.
+pub(crate) const STALE_WELCOME_LEDGER_FILE: &str = "welcome_request_stale.json";
+
+/// [`delete_mls_state`] minus the `AppHandle`, so what it removes is tested on a real directory:
+/// `mls.bin`, its owner record, and the background Welcome files built from it - no epoch secret
+/// outlives the state it belongs to.
 fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
-    for name in ["mls.bin", MLS_STATE_OWNER_FILE] {
+    for name in ["mls.bin", MLS_STATE_OWNER_FILE, STALE_WELCOME_LEDGER_FILE] {
         let path = data_dir.join(name);
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| format!("remove {name}: {e}"))?;
+        }
+    }
+    let entries = match std::fs::read_dir(data_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("list {}: {e}", data_dir.display())),
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with(STAGED_WELCOME_PREFIX) {
+            std::fs::remove_file(entry.path())
+                .map_err(|e| format!("remove {}: {e}", name.to_string_lossy()))?;
+            log::info!("[MLS] staged background Welcome state removed with mls.bin");
         }
     }
     Ok(())
@@ -1107,6 +1130,22 @@ mod tests {
         assert_eq!(read_mls_state_owner(&dir), None);
         // And it is idempotent on an install that holds neither.
         remove_mls_state_in(&dir).unwrap();
+
+        // A background Welcome's staged state and stale memo go with the state they were built
+        // from: a staged file holds that state's epoch secrets.
+        file(&dir, "mls.bin");
+        file(&dir, "mls.bin.welcome-0123456789abcdef");
+        file(&dir, "mls.bin.welcome-0123456789abcdef.tmp");
+        file(&dir, "welcome_request_stale.json");
+        file(&dir, "unrelated.json");
+        remove_mls_state_in(&dir).unwrap();
+        assert!(!dir.join("mls.bin.welcome-0123456789abcdef").exists());
+        assert!(!dir.join("mls.bin.welcome-0123456789abcdef.tmp").exists());
+        assert!(!dir.join("welcome_request_stale.json").exists());
+        assert!(
+            dir.join("unrelated.json").exists(),
+            "only what belongs to mls.bin"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -666,8 +666,9 @@ from epoch 1 to 3, built its add on base 1, the gate refused it (`epoch_mismatch
 `201`, and the phone logged "Welcome sent". Worse, it had merged the add into `mls.bin` before the
 answer, so it held an epoch nobody else had and could not read the group's next message.
 
-- **The route's answer is typed.** `201 {status: 'accepted', newEpoch}` after the gate accepted and the
-  Welcome was queued; `409 {status: 'rejected', reason, currentEpoch?}` otherwise. The phone classifies
+- **The route's answer is typed.** `201 {status: 'accepted', newEpoch}` after the gate accepted (with
+  `welcomeQueued: false`, logged at ERROR, when the Welcome could not be queued afterwards - the commit
+  stands, so the phone still installs); `409 {status: 'rejected', reason, currentEpoch?}` otherwise. The phone classifies
   the body's `status` token (`push/BackgroundWelcomeAnswer.kt`), so it reads a pre-2026-10-22 server
   (`201 {status: 'rejected'}`, `201 {status: 'done'}`) correctly too.
 - **The phone stages, and installs only an acceptance** - the foreground's order since C7. The post-add
@@ -676,9 +677,12 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   `unknown`: not installed, because installing a refusal is the fork this exists to prevent.
 - **No catch-up and no retry.** The background never applies the group's commits to `mls.bin` (the
   foreground's replay owns that, and what it does around a commit); a stale phone is refused, and the
-  request is left to the foreground or another member. An `epoch_mismatch` is recorded in
+  request is left to the foreground or another member. An `epoch_mismatch` whose server epoch is
+  AHEAD of the base (never a base at or past a lagging counter) is recorded in
   `welcome_request_stale.json` against the digest of `mls.bin`, so the newcomer's re-ask every 60 s is
-  not answered again from the same bytes; any write to `mls.bin` lifts it.
+  not answered again from the same bytes; any write to `mls.bin` lifts it. Deleting the MLS state
+  (`remove_mls_state_in`) sweeps the memo and every staged `mls.bin.welcome-*` with it, since a staged
+  file holds that state's epoch secrets.
 - **The newcomer heals on its own cadence**: `requestReAdd` re-asks every 60 s while its app is open
   (external join first, then `welcome_request`), so it joins as soon as a base is published again or a
   member with a current state answers. A shut, stale phone alone never serves it.
