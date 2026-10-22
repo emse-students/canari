@@ -1,8 +1,7 @@
 # ── Runtime: Nginx, point d'entree public ────────────────────────────────────
 # Le build Svelte est effectué en amont par le CI (job build-frontend) avec les
 # variables VITE_* publiques (URLs des services) et BUILD_WEB=1, qui selectionne
-# adapter-node. Aucun secret n'est embarque dans le bundle (rien dans frontend/src ne lit
-# VITE_JWT_SECRET). L'artifact compilé est téléchargé dans frontend/build/ avant que
+# adapter-node. Aucun secret n'est embarque dans le bundle. L'artifact compilé est téléchargé dans frontend/build/ avant que
 # cette image soit construite.
 # NE PAS rebuilder ici : les variables VITE_* du build ne seraient pas disponibles dans ce contexte.
 # Et `--build` sur ce service NE RECONSTRUIT RIEN : cette image n'est qu'une COPY

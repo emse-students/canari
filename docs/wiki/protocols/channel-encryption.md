@@ -1158,17 +1158,12 @@ key" will otherwise assume more than is true.
 **The server still decides WHO is a member, so it still decides who may enter the distribution
 group.** Entry is by external commit against a published `mls_group_info`, and eligibility is read
 from a roster the server owns. A server that wanted future seeds would not read them out of a column
-any more - it would admit a device it controls. That is a strictly better position than before (a
-newly admitted device cannot read a past it was never given a seed for, and every commit is visible
-to the members in the group's log) but it is not nothing, and no client currently WATCHES that log
-for an unexpected admission. **The PAST is handed over on a member's signature, not on the roster**
-since 2026-10-22: a member gives a community's history only to a newcomer whose admission it can
-verify
+any more - it would admit a device it controls. That is a strictly better position than before (every
+commit is visible to the members in the group's log) but it is not nothing, and no client currently
+WATCHES that log for an unexpected admission. **The PAST is handed over on a member's signature, not
+on the roster** since 2026-10-22: a member gives a community's history only to a newcomer whose
+admission it can verify
 ([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)).
-
-What an admitted device is given depends on the community's `history_visibility`. Under `shared`,
-an admitted device whose admission its answerer can verify is handed the past that answerer holds;
-under `joined`, or without that proof, it is handed only what `joined` allows.
 
 **`history_visibility` is a policy guarantee, never a cryptographic one.** Only a device holding a
 seed can withhold it, so the rule is applied by the answering member. A modified client answers

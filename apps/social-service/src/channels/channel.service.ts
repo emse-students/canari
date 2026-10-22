@@ -3088,8 +3088,8 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /** Removes a user from a specific channel without removing them from the workspace.
-   *  For private channels, removes them from allowedUsers; either way the removed user is cut off
-   *  from the channel's key distribution (the user is still a workspace member and can re-join if invited again).
+   *  For a private channel, removes them from allowedUsers and cuts them off from the channel's key
+   *  distribution; a public channel has no per-user roster to edit (the user is still a workspace member and can re-join if invited again).
    *  Requires MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by
    *  `assertActorMayRemoveMember`. */
   async removeMemberFromChannel(channelId: string, targetUserId: string, actorUserId: string) {
