@@ -2652,6 +2652,7 @@ export function tearDownLiveSession(
   // restore this session queued would refill the map as the account that just left.
   cb.invalidateRestores();
   cb.conversations.clear();
+  cb.forgetUnconfirmedSalonDraws();
   resetSalonUnread();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);

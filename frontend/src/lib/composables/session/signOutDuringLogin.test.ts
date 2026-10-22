@@ -182,6 +182,7 @@ function session(clients: IMlsService[], pin = '') {
     log: vi.fn(),
     conversations: new Map(),
     invalidateRestores: vi.fn(),
+    forgetUnconfirmedSalonDraws: vi.fn(),
     setSelectedContact: vi.fn(),
     beginConversationSource: vi.fn(),
     endConversationSource: vi.fn(),

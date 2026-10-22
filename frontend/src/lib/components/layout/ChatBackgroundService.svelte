@@ -912,6 +912,7 @@
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
       invalidateRestores: () => globalConvs.invalidateRestores(),
+      forgetUnconfirmedSalonDraws: () => globalConvs.forgetUnconfirmedSalonDraws(),
       beginConversationSource: () => globalConvs.beginConversationSource(),
       endConversationSource: () => globalConvs.endConversationSource(),
       previewLandingTarget: (input: {

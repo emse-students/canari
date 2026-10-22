@@ -265,6 +265,25 @@ export function useConversations() {
     string,
     { sentAt: number | null; generation: number; done: Promise<void> }
   >();
+  /**
+   * The rows of each salon drawn from the store that no server page has confirmed yet (F4).
+   *
+   * OWNED BY THE SALON, NOT BY THE LOAD THAT DREW THEM. A load that drew the copy and was then
+   * superseded never merges, and the newer load finds those rows already in memory and draws nothing -
+   * so when the draw was the load's own, NEITHER withdrew a row the server no longer serves, and a
+   * refused or deleted message stayed on screen (GRAINE-AUTH-1, 2026-10-22). Whichever load merges
+   * withdraws every row here its page does not name, then clears the entry.
+   */
+  const salonRowsDrawnUnconfirmed = new SvelteMap<string, SvelteSet<string>>();
+
+  /**
+   * The sign-out half of `salonRowsDrawnUnconfirmed`: the ending account's unconfirmed draws go with
+   * its conversations, so its failed load can never withdraw a row from the next account's page.
+   */
+  function forgetUnconfirmedSalonDraws(): void {
+    Log.d('CHANNEL', `forgetting ${salonRowsDrawnUnconfirmed.size} salon(s) of unconfirmed draws`);
+    salonRowsDrawnUnconfirmed.clear();
+  }
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
     salonStaleDeclarations++;
@@ -614,8 +633,8 @@ export function useConversations() {
   /**
    * Draws a salon's last page from this device's store, before its server page (F4 of
    * community-open-budget). Only on the first draw of the salon in this process - a salon already in
-   * memory has newer rows than any copy - and only for the load still the latest. Returns the rows it
-   * drew, which the server page later confirms or withdraws.
+   * memory has newer rows than any copy - and only for the load still the latest. The rows it draws
+   * join `salonRowsDrawnUnconfirmed`, which the next server page merged confirms or withdraws.
    *
    * Never fatal: a store that cannot be read costs the early draw, said in the log, and the server
    * page draws the salon as it always did.
@@ -624,9 +643,13 @@ export function useConversations() {
     channelConversationId: string,
     ctx: ConversationContext,
     generation: number
-  ): Promise<ChatMessage[]> {
-    if (!ctx.storage) return [];
-    if (conversations.get(channelConversationId)?.messages.some((m) => !m.status)) return [];
+  ): Promise<void> {
+    if (!ctx.storage) return;
+    const salonTag = channelConversationId.slice(0, 16);
+    if (conversations.get(channelConversationId)?.messages.some((m) => !m.status)) {
+      Log.d('CHANNEL', `${salonTag} stored page not drawn - rows already on screen`);
+      return;
+    }
     let stored: Awaited<ReturnType<NonNullable<ConversationContext['storage']>['getMessagesPage']>>;
     try {
       stored = await ctx.storage.getMessagesPage(
@@ -636,23 +659,34 @@ export function useConversations() {
       );
     } catch (e) {
       ctx.log(
-        `[CHANNEL] stored page of ${channelConversationId.slice(0, 16)} not read - the server page draws it: ${String(e)}`
+        `[CHANNEL] stored page of ${salonTag} not read - the server page draws it: ${String(e)}`
       );
-      return [];
+      return;
     }
-    if (stored.length === 0) return [];
-    if (!salonLoadGenerations.isLatest(channelConversationId, generation)) return [];
+    if (stored.length === 0) {
+      Log.d('CHANNEL', `${salonTag} stored page empty - nothing drawn`);
+      return;
+    }
+    if (!salonLoadGenerations.isLatest(channelConversationId, generation)) {
+      Log.d('CHANNEL', `${salonTag} stored page not drawn - a newer load started meanwhile`);
+      return;
+    }
     const current = conversations.get(channelConversationId);
-    if (!current) return [];
+    if (!current) {
+      Log.d('CHANNEL', `${salonTag} stored page not drawn - the salon left memory meanwhile`);
+      return;
+    }
     const drawn = mapStoredMessagesToChatMessages(stored, ctx.userId);
     conversations.set(channelConversationId, {
       ...current,
       messages: mergeMessagePage(current.messages, drawn),
     });
+    const pending = salonRowsDrawnUnconfirmed.get(channelConversationId) ?? new SvelteSet<string>();
+    for (const m of drawn) pending.add(m.id);
+    salonRowsDrawnUnconfirmed.set(channelConversationId, pending);
     ctx.log(
-      `[CHANNEL] ${channelConversationId.slice(0, 16)} stored page drawn (${drawn.length} row(s)) before the server page`
+      `[CHANNEL] ${salonTag} stored page drawn (${drawn.length} row(s)) before the server page`
     );
-    return drawn;
   }
 
   /**
@@ -783,7 +817,7 @@ export function useConversations() {
         (error: unknown) => ({ ok: false as const, error })
       );
       // THE STORED PAGE IS DRAWN WHILE THE SERVER PAGE IS ON THE WIRE (F4): the request has left.
-      const drawnFirst = await drawStoredSalonPage(channelConversationId, ctx, generation);
+      await drawStoredSalonPage(channelConversationId, ctx, generation);
       const settledPage = await pageRequest;
       if (!settledPage.ok) throw settledPage.error;
       const [rows, rawMarks] = settledPage.answer;
@@ -898,18 +932,19 @@ export function useConversations() {
         // alone cannot say it: memory is authoritative outside a page's window, so a deleted newest
         // row reads as a live arrival and an emptied salon's page removes nothing. A drawn row older
         // than a full page is withdrawn too: what lies between it and the page is unknown, and a row
-        // shown across a hidden gap is worse than one fetched again on scroll. Only rows this load
-        // drew from the store: a message that arrived live after the draw is not in `drawnFirst`.
+        // shown across a hidden gap is worse than one fetched again on scroll. Only rows drawn from
+        // the store and not yet confirmed - by THIS load or by one it superseded (see
+        // `salonRowsDrawnUnconfirmed`): a message that arrived live after the draw is in neither.
         let base = current.messages;
         // The server's rows alone: the older-messages notice is not a message, and is never stored.
         const serverRows = loadedEdited.filter(
           (m) => m.id !== olderMessagesNoticeId(channelConversationId)
         );
-        if (drawnFirst.length > 0) {
+        const drawnUnconfirmed = salonRowsDrawnUnconfirmed.get(channelConversationId);
+        salonRowsDrawnUnconfirmed.delete(channelConversationId);
+        if (drawnUnconfirmed && drawnUnconfirmed.size > 0) {
           const inPage = new SvelteSet(serverRows.map((m) => m.id));
-          const withdrawn = new SvelteSet(
-            drawnFirst.filter((m) => !inPage.has(m.id)).map((m) => m.id)
-          );
+          const withdrawn = new SvelteSet([...drawnUnconfirmed].filter((id) => !inPage.has(id)));
           if (withdrawn.size > 0) {
             ctx.log(
               `[CHANNEL] ${channelConversationId.slice(0, 16)} ${withdrawn.size} stored row(s) the fresh page does not name withdrawn`
@@ -1031,6 +1066,11 @@ export function useConversations() {
     if (current) {
       const existingIds = new SvelteSet(current.messages.map((m) => m.id));
       const added = decodedAll.filter((m) => !existingIds.has(m.id));
+      // EVERY ROW THIS SWEEP DECODED IS CONFIRMED BY THE SERVER, so it leaves the unconfirmed draws.
+      // Otherwise a stored row it just merged stays pending past a failed load, and the next page,
+      // whose window starts above it, would withdraw a message the server still holds.
+      const pending = salonRowsDrawnUnconfirmed.get(channelConversationId);
+      if (pending) for (const m of decodedAll) pending.delete(m.id);
       if (added.length) {
         // A whole-history sweep brings the oldest rows of all: the notice stays above them.
         const merged = keepNoticeOnTop(
@@ -2292,6 +2332,7 @@ export function useConversations() {
     /** Reads saved conversations from IndexedDB and populates the reactive map. */
     loadAndRestoreConversations,
     invalidateRestores,
+    forgetUnconfirmedSalonDraws,
     /** Prepends an older page of messages from IndexedDB to the conversation. */
     loadOlderMessages,
     /** Asks a peer for the page below what this device holds, once the local store is exhausted. */
