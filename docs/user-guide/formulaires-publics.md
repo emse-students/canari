@@ -31,7 +31,12 @@ reglages est actif, avec la raison en dessous.
 
 1. Creez ou modifiez le formulaire (onglet **Formulaires** de l'association).
 2. Reglez le prix, les supplements, la grille sur les reponses et le paiement en especes
-   comme pour un formulaire normal.
+   comme pour un formulaire normal, avec deux obligations propres au formulaire public :
+   - si vous acceptez les especes, **fixez un delai de paiement en especes** (obligatoire : une
+     reponse en especes non payee garde sa place jusqu'a ce delai) ;
+   - avec une grille de prix, la case **"tous les autres"** ne peut pas valoir 0 si un invite
+     peut y tomber (question de prix facultative, masquee par une autre reponse, ou option rangee
+     dans aucun groupe) : donnez-lui un prix ou marquez-la indisponible.
 3. Dans **Parametres avances**, activez **"Formulaire public"**. Les reponses multiples
    s'activent toutes seules : un invite peut repondre plusieurs fois.
 4. **Ajoutez une question "Nom prenom"** (obligatoire) : c'est la seule facon de savoir qui a
@@ -65,6 +70,8 @@ reglages est actif, avec la raison en dessous.
 - **Une place est retenue pendant le paiement.** Une reponse en ligne non payee bloque sa
   place 30 minutes, puis la libere. Une reponse en especes bloque sa place jusqu'a la date
   limite de paiement en especes que vous avez fixee.
+- **Un paiement arrive au-dela de la capacite n'est pas signale pour l'instant** : seul le
+  tableau des reponses le montre (en tete, "paye hors capacite"). Regardez-le apres l'evenement.
 - **Trois reponses en attente au plus par connexion.** Une meme connexion internet ne peut
   pas avoir plus de trois reponses payantes en attente de paiement sur un formulaire : cela
   empeche un robot de bloquer toutes les places. Dans une salle ou tout le monde partage le
