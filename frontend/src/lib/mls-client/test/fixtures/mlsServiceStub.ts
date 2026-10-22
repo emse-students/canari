@@ -18,6 +18,10 @@ export function createMlsServiceStub(
     vetKeyPackage: vi.fn().mockResolvedValue('pinned'),
     takeDeviceEvents: vi.fn().mockResolvedValue([]),
     setDeviceEventConsumer: vi.fn(),
+    // Default: a device never seen - a verifier test overrides it with the key it pins.
+    pinnedSignatureKeys: vi.fn().mockResolvedValue(null),
+    // Default: no departure seen.
+    removalEpochs: vi.fn().mockResolvedValue([]),
     addMembersBulk: vi.fn().mockResolvedValue({
       addedDeviceIds: [],
       skipped: [],

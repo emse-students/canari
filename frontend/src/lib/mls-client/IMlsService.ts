@@ -687,6 +687,20 @@ export interface IMlsService {
    */
   setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
   /**
+   * The signature keys this device has seen for `userId:deviceId` in a signed tree it merged or
+   * joined, or `null` for a device it never saw - THE SINGLE SOURCE OF TRUST for "a key this device
+   * has seen", for any verifier of a device-key signature: a key the server published alone proves
+   * nothing against the server. `null` means UNVERIFIED, never FORGED - pins of devices no held tree
+   * contains may be dropped past their bound. See `BaseMlsService.pinnedSignatureKeys`.
+   */
+  pinnedSignatureKeys(userId: string, deviceId: string): Promise<Uint8Array[] | null>;
+  /**
+   * The epochs at which this device saw `userId` leave `groupId`'s tree (its last leaf removed by a
+   * merged commit, live or caught up), oldest first. Empty means NOT SEEN, never "never happened".
+   * Never user-visible. See `BaseMlsService.removalEpochs`.
+   */
+  removalEpochs(groupId: string, userId: string): Promise<number[]>;
+  /**
    * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
    * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts
    * the commit (skipping `excludeDeviceIds`), and returns the Welcome + post-merge ratchet tree.

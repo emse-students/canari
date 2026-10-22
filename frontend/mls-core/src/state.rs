@@ -42,6 +42,9 @@ pub struct PersistedState {
     /// Device admissions seen in merged commits and not yet taken (`crate::device_trust`).
     #[serde(default)]
     pub device_events: Vec<crate::device_trust::DeviceEvent>,
+    /// Users seen leaving a group's tree in merged commits (`crate::device_trust::Departure`).
+    #[serde(default)]
+    pub device_departures: Vec<crate::device_trust::Departure>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -59,6 +62,7 @@ pub(crate) struct PersistedStateSer<'a> {
     pub(crate) forgotten_group_min_epochs: &'a HashMap<String, u64>,
     pub(crate) device_pins: &'a [crate::device_trust::PersistedPin],
     pub(crate) device_events: &'a [crate::device_trust::DeviceEvent],
+    pub(crate) device_departures: &'a [crate::device_trust::Departure],
 }
 
 // Struct request wrapper for serialization
@@ -720,6 +724,7 @@ impl MlsManager {
             let mut device_trust = crate::device_trust::DeviceTrust::from_persisted(
                 state.device_pins,
                 state.device_events,
+                state.device_departures,
             );
             // THE TREES THIS STATE ALREADY HOLDS ARE FIRST SIGHT. Every leaf in them was admitted by
             // a commit this device merged; a state written before pins existed holds none, and an
@@ -753,6 +758,9 @@ impl MlsManager {
                     held_leaves.iter().map(|(_, id, _)| id.as_str()).collect();
                 held.insert(own.as_str());
                 device_trust.prune_absent(&held);
+                let held_groups: std::collections::HashSet<&str> =
+                    groups.keys().map(String::as_str).collect();
+                device_trust.prune_departures(&held_groups);
             }
 
             let manager = Self {
@@ -930,6 +938,7 @@ impl MlsManager {
         // 4. Encode the global state without copying storage_values
         let device_pins = self.device_trust.persisted_pins();
         let device_events = self.device_trust.persisted_events();
+        let device_departures = self.device_trust.persisted_departures();
         let persisted = PersistedStateSer {
             identity_bundle: &bundle_bytes,
             storage_values: &storage_lock,
@@ -937,6 +946,7 @@ impl MlsManager {
             forgotten_group_min_epochs: &self.forgotten_group_min_epochs,
             device_pins: &device_pins,
             device_events: &device_events,
+            device_departures: &device_departures,
         };
 
         let mut final_bytes = Vec::new();

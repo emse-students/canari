@@ -381,6 +381,148 @@ fn an_external_join_pins_its_tree_only_once_merged() {
     );
 }
 
+/// THE KEY A VERIFIER MAY TRUST IS THE ONE THIS DEVICE SAW IN A SIGNED TREE. `pinned_signature_keys`
+/// answers from the pins alone: the key a merged Add admitted, under any spelling of the user half,
+/// and `None` for a device never seen or an identity that is not one - which a verifier reads as
+/// "unverified", never as "forged".
+#[test]
+fn the_pinned_signature_key_is_the_one_a_signed_tree_carried() {
+    let gid = "g-pinned-key";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+
+    assert_eq!(
+        alice.pinned_signature_keys("bob", "dev1"),
+        None,
+        "never seen"
+    );
+
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let admitted = alice.take_device_events();
+    assert_eq!(admitted.len(), 1);
+
+    let keys = alice
+        .pinned_signature_keys("bob", "dev1")
+        .expect("a device admitted by a merged commit is pinned");
+    assert_eq!(keys.len(), 1);
+    assert_eq!(
+        mls_core::device_trust::key_fingerprint(&keys[0]),
+        admitted[0].key_fingerprint,
+        "the pinned key is the leaf's key"
+    );
+    assert_eq!(
+        alice.pinned_signature_keys("BOB", "dev1"),
+        Some(keys.clone()),
+        "the user half ignores case, as the binding does"
+    );
+    assert_eq!(
+        alice.pinned_signature_keys("bob", "DEV1"),
+        None,
+        "the device half is exact"
+    );
+    assert_eq!(
+        alice.pinned_signature_keys("bob", "dev1:x"),
+        None,
+        "not an identity"
+    );
+    // The joiner pinned the tree it joined: the creator's key is known to it, once.
+    let alice_from_bob = bob
+        .pinned_signature_keys("alice", "dev1")
+        .expect("the joiner pins the tree it joined");
+    assert_eq!(alice_from_bob.len(), 1);
+}
+
+/// A DEPARTURE IS RECORDED AT MERGE TIME, so a device that never saw the tree between a kick and a
+/// re-add - it caught up on both commits later - records the removal all the same, in the sealed
+/// state, and as no device event.
+#[test]
+fn a_kick_then_a_re_add_seen_only_by_catch_up_still_records_the_departure() {
+    let gid = "g-departure-catchup";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut carol = device("carol", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = carol.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut carol, gid, &kp, "carol:dev1");
+    let kp = bob.generate_key_package().unwrap();
+    let bob_in = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    carol.process_incoming_message(gid, &bob_in).unwrap();
+    carol.take_device_events();
+
+    // carol is away: bob is kicked, then re-added, in two commits.
+    let kick = remove(&mut alice, gid, "bob:dev1");
+    let removed_at = alice.get_epoch(gid).unwrap();
+    bob.forget_group(gid, 0);
+    let kp = bob.generate_key_package().unwrap();
+    let re_add = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    assert_eq!(alice.removal_epochs(gid, "bob"), vec![removed_at]);
+
+    // carol catches up, in order, and only ever holds the tree before and after both.
+    carol.process_incoming_message(gid, &kick).unwrap();
+    carol.process_incoming_message(gid, &re_add).unwrap();
+    assert_eq!(carol.removal_epochs(gid, "bob"), vec![removed_at]);
+    assert_eq!(
+        carol.removal_epochs(gid, "BOB"),
+        vec![removed_at],
+        "the user half ignores case"
+    );
+    assert!(carol.removal_epochs(gid, "carol").is_empty());
+    assert!(
+        carol.take_device_events().is_empty(),
+        "a departure is never a device event"
+    );
+
+    let saved = carol.save_state().expect("save");
+    let reloaded = MlsManager::load_or_create("carol", "dev1", Some(saved)).expect("reload");
+    assert_eq!(
+        reloaded.removal_epochs(gid, "bob"),
+        vec![removed_at],
+        "kept in the sealed state"
+    );
+}
+
+/// A HEAL IS NOT A DEPARTURE: a resync that swaps a device's leaf in ONE commit (an external rejoin
+/// under the same key, whose commit removes the old leaf) and the removal of one device among
+/// several leave the user in the tree, and record nothing.
+#[test]
+fn a_resync_or_the_removal_of_one_device_among_several_records_no_departure() {
+    let gid = "g-departure-heal";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut bob2 = device("bob", "dev2");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+
+    // bob lost the group and rejoins by external commit: one commit, old leaf out, new leaf in.
+    bob.forget_group(gid, 0);
+    let info = alice.export_group_info(gid).expect("group info");
+    let (_gid, rejoin) = bob.join_by_external_commit(&info).expect("rejoin");
+    bob.merge_pending_commit_for(gid).expect("merge rejoin");
+    let before = alice.get_epoch(gid).unwrap();
+    alice.process_incoming_message(gid, &rejoin).unwrap();
+    assert_eq!(
+        alice.get_epoch(gid).unwrap(),
+        before + 1,
+        "the rejoin merged"
+    );
+    assert!(
+        alice.removal_epochs(gid, "bob").is_empty(),
+        "a resync is not a departure"
+    );
+
+    // bob's second device joins, then the first is removed: bob is still in the tree.
+    let kp = bob2.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob2, gid, &kp, "bob:dev2");
+    remove(&mut alice, gid, "bob:dev1");
+    assert!(
+        alice.removal_epochs(gid, "bob").is_empty(),
+        "one device among several leaving is not the user leaving"
+    );
+}
+
 /// What a notice is built from (user decision 2026-10-22): a device NEW to a user who was ALREADY in
 /// the conversation is "X added a device"; a user joining with their devices is not - that is the
 /// member-added line, and announcing each of their devices would turn every new conversation into

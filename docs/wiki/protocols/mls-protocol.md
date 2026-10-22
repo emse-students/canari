@@ -641,6 +641,23 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   commit another member made is applied as signed - refusing it would fork the group - and what it
   admitted is recorded.
 
+- **A key this device has seen: `pinnedSignatureKeys(userId, deviceId)`.** THE one source for any
+  verifier of a signature made by a device key (an admission voucher, a signed history entry): the
+  pins, never a key the server published alone. `null` is a device never seen, or one whose pin was
+  pruned past the bound - a verifier reads it as UNVERIFIED, never as FORGED. Several keys come back
+  only for a state seeded from trees that disagreed; a signature verifying under any of them was
+  made by a key this device saw. Rust `MlsManager::pinned_signature_keys`, WASM
+  `pinned_signature_keys`, Tauri `cles_signature_epinglees`.
+- **Departures: `removalEpochs(groupId, userId)`.** When a merged commit - live, replayed on
+  catch-up, or our own - removes a USER's last leaf from a tree, `(groupId, user, epoch)` is recorded
+  in the sealed state (`PersistedState.device_departures`, bounded at 8192 like the pins: past it,
+  the departures of groups no longer held are dropped). Recorded at merge time, so a device that
+  only caught up on a kick and a re-add still sees the removal. Compared per user over the trees: a
+  one-commit leaf swap (an external rejoin, a heal) and one device among several leaving record
+  nothing; a kick and a re-add in two commits is a departure whatever the kick was for. Never a
+  device event and never shown. An empty answer is NOT SEEN, never "never happened". Rust
+  `MlsManager::removal_epochs`, Tauri `epoques_departs`.
+
 ### What each legitimate flow does
 
 | Flow | Outcome |

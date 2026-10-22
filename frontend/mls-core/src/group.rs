@@ -158,6 +158,7 @@ impl MlsManager {
 
     /// Bounds the pins once trees shrink: past `MAX_PINNED_IDENTITIES`, the identities no held tree
     /// contains are dropped (`DeviceTrust::prune_absent`). This device's own identity always stays.
+    /// The departures follow the same rule, by group (`DeviceTrust::prune_departures`).
     pub(crate) fn prune_device_pins(&mut self) {
         let leaves: Vec<_> = self
             .groups
@@ -169,6 +170,9 @@ impl MlsManager {
             leaves.iter().map(|(_, id, _)| id.as_str()).collect();
         held.insert(own.as_str());
         self.device_trust.prune_absent(&held);
+        let held_groups: std::collections::HashSet<&str> =
+            self.groups.keys().map(String::as_str).collect();
+        self.device_trust.prune_departures(&held_groups);
     }
 
     /// Forgets the local MLS state of a group: in-memory AND persistent OpenMLS storage.
