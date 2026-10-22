@@ -207,10 +207,15 @@
             type="number"
             bind:value={cashPaymentExpiryDays}
             min="1"
+            required={isPublic}
             placeholder={m.form_cash_expiry_placeholder()}
             class="{controlClass()} sm:w-48"
           />
-          <p class={CONTROL_HINT_CLASS}>{m.form_cash_expiry_hint()}</p>
+          <!-- A public form needs a deadline (the server refuses one without): a guest's unpaid cash
+               answer holds its seat, and its visitor's place under the ceiling, until then. -->
+          <p class={CONTROL_HINT_CLASS}>
+            {isPublic ? m.form_cash_expiry_required_public() : m.form_cash_expiry_hint()}
+          </p>
         </div>
       {/if}
     </div>

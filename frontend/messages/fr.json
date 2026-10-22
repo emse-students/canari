@@ -2388,6 +2388,7 @@
   "form_cash_expiry_label": "Expiration du paiement en attente (jours)",
   "form_cash_expiry_placeholder": "Jamais (laisser vide)",
   "form_cash_expiry_hint": "Les paiements en espèces non validés après ce délai passent automatiquement à \"expiré\". Laissez vide pour ne jamais expirer.",
+  "form_cash_expiry_required_public": "Obligatoire sur un formulaire public : une réponse en espèces non payée garde sa place jusqu'à ce délai.",
   "form_questions_count": "{count} questions",
   "form_questions_count_one": "1 question",
   "form_add_question_button": "Ajouter une question",

@@ -13,7 +13,8 @@ import { createHmac, hkdfSync } from 'node:crypto';
  * under the form's seat lock - never from a clock or a counter in memory, which a restart forgets
  * and two replicas would each keep.
  *
- * The visitor is its ADDRESS (`clientAddress`), and the key is never the address itself: an
+ * The visitor is its ADDRESS (`clientAddress`: an IPv4 address, or the /64 an IPv6 host picks its
+ * addresses from), and the key is never the address itself: an
  * HMAC-SHA256 of the form id and the address. Keyed, because an address is 32 bits and a plain hash
  * of one is reversed by trying them all; per form, so two forms' rows cannot be joined into one
  * visitor's trail. The key is pseudonymous personal data and lives only while it counts:

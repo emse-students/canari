@@ -271,6 +271,15 @@ export class FormsService {
           'mark it unavailable.'
       );
     }
+    // A guest's cash answer holds its seat - and its place under the visitor's ceiling of waiting
+    // answers (WP-P3) - until it is validated or its deadline passes. With no deadline it would
+    // hold both for ever, and three of them from one shared network would shut that network out.
+    if (input.allowCashPayment === true && input.cashPaymentExpiryDays == null) {
+      throw new BadRequestException(
+        'A public form that accepts cash needs a cash deadline: an unpaid cash answer holds its ' +
+          'seat until then.'
+      );
+    }
     if (input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion)) {
       throw new BadRequestException(
         'A public form cannot depend on who answers: a guest has no profile to match a criterion ' +
@@ -687,6 +696,8 @@ export class FormsService {
       submitCondition:
         input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
       allowMultipleSubmissions: input.allowMultipleSubmissions ?? form.allowMultipleSubmissions,
+      allowCashPayment: input.allowCashPayment ?? form.allowCashPayment,
+      cashPaymentExpiryDays: input.cashPaymentExpiryDays ?? form.cashPaymentExpiryDays ?? undefined,
     });
     // An absent condition keeps the stored one, which still meets the questions sent now.
     this.assertFileQuestionConfigValid({

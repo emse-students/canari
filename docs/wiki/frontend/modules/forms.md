@@ -489,8 +489,15 @@ event with answers nobody pays. `submit` refuses a visitor's FOURTH waiting answ
   answer carries `guestVisitorKey` (migration 105) and the count is its rows still WAITING - an online
   one within its hold (`livePendingWhere`), a cash one not validated. A paid, cancelled or expired
   answer frees its place at once, with no job.
+- **A cash answer has a deadline, always**: a public form that accepts cash is refused without
+  `cashPaymentExpiryDays` (at publication and on every edit; the editor says so under the field).
+  Without one, an unpaid cash answer would hold its seat and its visitor's place for ever, and three
+  of them from one shared network would shut that network out of the form.
 - **The visitor is its address** (`clientAddress`, the `X-Real-IP` nginx sets - the throttle's own
-  key, one function for both), and the key is never the address: an HMAC-SHA256 of the form id and
+  key, one function for both). An IPv6 address counts as its **/64** (`visitorNetwork`): a host is
+  routinely given a whole /64 and picks its address in it at will, so keyed on the full address one
+  visitor would be 2^64 visitors to the throttle and the ceiling. An IPv4-mapped address is its
+  IPv4. The key is never the address: an HMAC-SHA256 of the form id and
   the address (keyed, because a plain hash of 32 bits is reversed by trying them all; per form, so
   two forms' rows cannot be joined). Its HMAC key is DEDICATED: HKDF-SHA256 of `INTERNAL_SECRET`
   under the label `canari:guest-visitor-key:v1` (`guestVisitorHmacKey`), never the raw secret, which
