@@ -40,7 +40,7 @@ in the comparison below follows from that difference.
 | Property | DM | Community |
 | --- | --- | --- |
 | Forward secrecy | **Strong** - an epoch's keys are deleted once used. | **Weak, by decision** - whoever holds a seed opens every index of its session, and old seeds are kept so that newcomers can read the past ([§4.4](channel-encryption.md#44-joining-and-what-a-share-link-is-worth)). |
-| Post-compromise security | **Available but unused** - MLS heals a compromised leaf at its next update, and no device ever updates its leaf. | Bounded by rotation: a stolen seed opens one session. |
+| Post-compromise security | **Available but unused** - MLS heals a compromised leaf at its next update, and no device ever updates its leaf. | Bounded by seed rotation (on a removal or a new user); see the [backlog](../backlog.md) for the policy. |
 | Author authenticity | MLS signature, verified by OpenMLS. | v1: none (any member could forge). v2: Ed25519 per session plus an endorsement, and the server refuses an unsigned v2 row ([§21](channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)). |
 | A newcomer reads the past | Never from MLS. Today the inviter re-sends it all; decided 2026-10-21 that a new member gets nothing from before their arrival (not built). | Yes, from one bundle of seeds (`shared`, decided 2026-08-17). |
 | Tolerance of a device that fell behind | Low: a missed commit is the failure class [mls-desync-prevention](mls-desync-prevention.md) exists for. | High for messages, which stay readable once the seed arrives. The key group is still MLS, so the same class exists there, but it delays seeds rather than losing text. |
