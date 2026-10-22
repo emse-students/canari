@@ -114,8 +114,9 @@ function mutationIsAuthorised(
   kind: 'edit' | 'delete',
   log: (msg: string) => void
 ): boolean {
-  const owner = (target.senderId ?? '').toLowerCase();
-  if (owner && owner === senderNorm.toLowerCase()) return true;
+  // The ONE canonical user id (leafIdentity.ts), as the replay and MLS compare it.
+  const owner = canonicalUserId(target.senderId ?? '');
+  if (owner && owner === canonicalUserId(senderNorm)) return true;
   log(
     `[MLS] Refused ${kind === 'edit' ? 'an edit' : 'a delete'} of a message owned by ${owner.slice(0, 8) || 'unknown'} from ${senderNorm.slice(0, 8)} - only the author may mutate it`
   );

@@ -6,6 +6,7 @@ import {
 } from '$lib/utils/chat/conversations';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { recordAuthorship } from '$lib/crypto/messageAuthorship';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { drainForkFindings } from '$lib/mls-client/integrityFindings';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
@@ -189,7 +190,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
   mlsService.onMessage(
     async (sender, content, groupId, isWelcome, ratchetTreeBytes, isCommit, deliveryMeta) => {
-      const senderNorm = sender.toLowerCase();
+      // The ONE canonical user id (leafIdentity.ts): ASCII letters folded, as MLS and the replay do.
+      const senderNorm = canonicalUserId(sender);
 
       // ── Welcome ──────────────────────────────────────────────────────────────
       if (isWelcome) {

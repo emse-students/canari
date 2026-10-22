@@ -1088,6 +1088,30 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(groupId, expect.anything());
   });
 
+  it('names the sender in the ONE canonical user id - ASCII letters folded, nothing else', async () => {
+    // leafIdentity.ts `canonicalUserId`, as the replay and MLS read it: 'Élise' keeps its 'É'.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([9, 9]));
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+    await onMsg('ÉLISE', new Uint8Array([1]), groupId, false, undefined, false);
+    expect(deps.addMessageToChat).toHaveBeenCalledWith(
+      'Élise',
+      expect.anything(),
+      groupId,
+      expect.anything()
+    );
+  });
+
   it('delivers decrypted app text for known group (non-welcome)', async () => {
     vi.mocked(codec.decodeAppMessage).mockReturnValueOnce({
       text: { body: 'hello-dm' },
