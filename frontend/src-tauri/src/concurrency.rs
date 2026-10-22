@@ -279,6 +279,50 @@ pub(crate) fn background_write_mls_bin_if_unchanged(
     write_mls_bin_atomically(path, data)
 }
 
+/// The digest a background engine takes of the `mls.bin` bytes it LOADED, so that
+/// [`background_write_mls_bin_if_unchanged`] can refuse to write over a file that moved since.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn mls_bin_digest(bytes: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).into()
+}
+
+/// [`background_write_mls_bin`], AND ONLY OVER THE FILE THE CALLER LOADED - a compare-and-swap.
+///
+/// The plain background write closes the foreground race with a guard (a foreground that is
+/// active, or a foreground operation in flight) and leaves one lost update open, named in
+/// `docs/wiki/durable-rules.md`: a background engine writing back a blob that changed since it
+/// loaded it. Every background path so far finishes in seconds, under `MlsStateLock`, without a
+/// network round trip. A key-group join from a push (channel-encryption section 25) does not: it
+/// holds its loaded state across TWO round trips to the server, and the foreground can start,
+/// checkpoint and stop again inside that span - after which the guard reads "inactive" and the
+/// write would erase what the foreground did. So this write compares the file's CURRENT bytes with
+/// the digest of the bytes the caller loaded, under the same write lock every `mls.bin` writer
+/// takes (the foreground's [`write_mls_state_blob`] included), and refuses on any difference.
+///
+/// A refusal is an error the caller must say out loud: the work it wanted to persist is lost.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn background_write_mls_bin_if_unchanged(
+    path: &std::path::Path,
+    loaded_digest: &[u8; 32],
+    data: &[u8],
+) -> Result<(), String> {
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    if foreground_is_active() {
+        return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
+    }
+    let current = std::fs::read(path).map_err(|e| format!("re-read mls.bin: {e}"))?;
+    if &mls_bin_digest(&current) != loaded_digest {
+        return Err(
+            "mls.bin changed since it was loaded - background write abandoned (lost update refused)"
+                .to_string(),
+        );
+    }
+    write_mls_bin_atomically(path, data)
+}
+
 /// Writes `data` to `path` atomically: write to a temporary file followed by a `rename(2)`, which
 /// is atomic on Linux/Android within the same filesystem. Guarantees a reader never sees a
 /// partially written file.

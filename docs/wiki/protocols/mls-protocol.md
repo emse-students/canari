@@ -164,6 +164,7 @@ kick gets. The current device has no delete button at all.
 | POST | `/api/mls/push/register` | Register FCM push token |
 | DELETE | `/api/mls/push/unregister/:deviceId` | Deregister push token |
 | POST | `/api/mls/push/commits` | PushSecret-authed ordered commits `sinceEpoch` (background in-memory catch-up) |
+| POST | `/api/mls/push/key-group-base`, `/api/mls/push/key-group-join` | PushSecret-authed key-group base and external commit: a shut phone joining a salon's key group from the push ([channel-encryption section 25](channel-encryption.md#25-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)) |
 | GET | `/api/mls/history/:groupId` | Redis Stream history (incremental) |
 
 **`sinceEpoch` IS REQUIRED ON BOTH REPLAY ROUTES, AND THEY SHARE ONE POLICY** (`sanitizeEpoch`):

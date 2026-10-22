@@ -206,6 +206,7 @@ import {
   stopConnectionWatchdogImpl,
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
+import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
 import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
@@ -1381,6 +1382,9 @@ export async function loginImpl(
     // is one read. Wired first, so the loop's own registrations below are stored too.
     mlsService.setDistributionGroupStore(storageSettled.value);
     await mlsService.hydrateDistributionGroups();
+    // The key groups the push service joined while the app was shut (channel-encryption section
+    // 25): their trees are in the state just loaded, their registry rows are not - until this.
+    await takeKeyGroupPushJoins(mlsService, (line) => console.log(line));
     stopIfSignedOut('distribution-groups');
 
     // Notify only on genuine private browsing (blocked / ephemeral storage).

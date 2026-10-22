@@ -935,6 +935,62 @@ export class PushController {
   }
 
   /**
+   * The external-join base of a key group, for a phone whose app is killed and that just received a
+   * salon push sealed on a key group it holds no seat in (channel-encryption section 25). Gated by
+   * the same social-service entitlement as the app's own join - see
+   * {@link MessagingService.readKeyGroupBaseForPush}.
+   *
+   * Auth: PushSecret (no JWT - app may be killed).
+   */
+  @Post('mls/push/key-group-base')
+  async getKeyGroupBasePush(
+    @Headers('authorization') authHeader: string,
+    @Body() body: { userId: string; deviceId: string; groupId: string }
+  ) {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+    const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
+    return this.messagingService.readKeyGroupBaseForPush(groupId, userId, deviceId);
+  }
+
+  /**
+   * Submits the external commit a killed app built from {@link getKeyGroupBasePush}'s base. Only an
+   * external commit into a key group is taken here; everything else about it is `validateCommit`'s
+   * - see {@link MessagingService.submitKeyGroupJoinForPush}.
+   *
+   * Auth: PushSecret (no JWT - app may be killed).
+   */
+  @Post('mls/push/key-group-join')
+  async submitKeyGroupJoinPush(
+    @Headers('authorization') authHeader: string,
+    @Body()
+    body: {
+      userId: string;
+      deviceId: string;
+      groupId: string;
+      baseEpoch: number;
+      proto: string;
+      groupInfo?: string;
+    }
+  ) {
+    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
+    return this.messagingService.submitKeyGroupJoinForPush(
+      {
+        groupId: body.groupId ?? '',
+        deviceId,
+        senderId: userId,
+        baseEpoch: body.baseEpoch,
+        proto: body.proto,
+        groupInfo: body.groupInfo,
+      },
+      userId
+    );
+  }
+
+  /**
    * Sends a queued outbound MLS message (text/reply) on behalf of a device whose app is killed.
    * Called by the Android background service after encrypting the proto against the live epoch via
    * Rust JNI (nativeSendMessageBackground). `proto` is base64(raw MLS ciphertext); recipients are

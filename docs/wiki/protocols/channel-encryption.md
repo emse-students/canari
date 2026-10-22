@@ -3955,3 +3955,68 @@ COMM-26..31): a fresh link with its fragment gives the past, on the web and thro
 handler; an old link joins and reads from arrival; a member's add gives the past; a new device of a
 rooted member gets the past; a kicked member re-added with their old voucher reads from arrival; the
 `admission is not proven` line on the answerer for an unproven newcomer.
+
+## 25. A shut phone joins a salon's key group from the push - DECIDED BY THE USER 2026-10-22
+
+**The gap.** A member's seat in a key group is committed by an admitter's Welcome
+([section 20](#20-whoever-admits-a-newcomer-welcomes-them---decided-by-the-user-2026-09-27)) or by
+the member's own external commit when the app loads the community. A member nobody admitted (added
+before section 20, or by a path with no online admitter) whose phone does not open the app got every
+salon push as a blind banner: the push service said "not in the salon's key group" and stopped.
+Asked whether the phone should join from the push, as it joins a DM from a Welcome, the user chose:
+*"Oui, rejoindre au push"*. Section 20's admitter stays the first door; this is the one for a seat
+nobody committed.
+
+### What happens on Android
+
+A salon push whose seed frame is refused and whose key group is ABSENT from this device
+(`SeedFrameLadder`'s `onAbsent`) posts its generic banner as before, then queues
+`joinKeyGroupFromPush` on the push service's single MLS lane:
+
+| Step | Where | What it decides |
+| --- | --- | --- |
+| Claim | `mobile/key_group_join.rs` `claim` (`key_group_push_joins.json`, file-locked) | ONE attempt per group until the app starts. Written `attempting` before anything is fetched, so a crash mid-join is never retried from a push; capped at 64 entries |
+| Base | `POST /api/mls/push/key-group-base` (PushSecret) -> `readKeyGroupBaseForPush` | Key group only (403 otherwise); the same entitlement ask as `assertCommitterMayCommit` (403 not entitled, 503 unanswered); `welcomeOwed` when a Welcome is queued or the add lock is held (one door at a time); the scope; the base |
+| Prepare | `prepare_key_group_join` under `MlsStateLock` | The client checks below; builds the external commit and STAGES `digest(mls.bin) + sealed post-join state` - nothing is installed |
+| Commit | `POST /api/mls/push/key-group-join` (PushSecret) -> `submitKeyGroupJoinForPush` | External commits into key groups only (400/403 otherwise), then `validateCommit` unchanged: entitlement, strict epoch, base republished |
+| Install | `finish_key_group_join` -> `background_write_mls_bin_if_unchanged` | Under the write lock: refused while the app is in the foreground, refused if `mls.bin` changed since the prepare read it (a compare-and-swap, never a lost update) |
+| Settle | `settle`; `KeyGroupPushJoin.kt` maps every answer | `joined` (with the server's scope), `refused` (the server ANSWERED, or the push was inconsistent), `lost` (accepted, not installed), `retryable` (no answer, 503, stale or missing base, Welcome owed) |
+
+Only the server answering is a refusal; a transport failure, a 503 or an unexpected status claims
+nothing about membership. The app takes and clears the ledger at its next start
+(`take_key_group_push_joins` -> `adoptKeyGroupPushJoins`, right after `hydrateDistributionGroups`):
+a `joined` group the loaded MLS state really holds is registered (workspace scope, or a salon whose
+community this start already knows; otherwise noted as a key group until its community loads);
+every other entry is left to the community load, which joins the ordinary way.
+
+### What the client checks before committing
+
+- the seed frame's clear MLS header names the group the push names (`frame-group-mismatch`);
+- the base names that group too (`base-group-mismatch`) and sits at the epoch the server states
+  (`epoch-mismatch`);
+- the push's author holds a leaf in the base's tree (`sender-not-in-tree`);
+- this device holds no leaf of the group already (`already-held`).
+
+Entitlement itself is the server's gate, asked on both round trips: a phone that never loaded the
+community has no roster of its own to compare with.
+
+### What the triggering push shows
+
+The generic banner already posted. Its frame was sealed before this device's join epoch, which a
+joiner cannot open by construction. The join is a commit, a commit rotates every sender's session,
+and [section 19](#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27) puts
+the new seed on the next message - so the NEXT salon push is readable. No new string.
+
+### iOS
+
+The notification service extension reads an App Group MIRROR of `mls.bin` and never writes the
+app's state, so it cannot join. It logs that the app joins at its next foreground and shows the
+generic localized banner; the app's community load joins the group.
+
+### Owed
+
+Compiled only by CI: the Kotlin service and the JNI entry points (Android), the Swift line (iOS).
+Device readings: on the Mi 9T, a member whose phone never opened community X receives a salon push
+for X - a generic banner, `joinKeyGroupFromPush: settled joined`, the next push readable, and the
+app's next start logging `[KEY_GROUP_PUSH_JOIN] ... registered`; on the iPhone, the generic banner
+and the join at the next foreground.
