@@ -11,11 +11,16 @@
 -- never a gap. Design: docs/wiki/protocols/history-reconciliation.md.
 --
 -- BACKFILL: every OPEN interval whose person holds a device row in the group older than the
--- interval's `joinedAt` gets that row's instant. Open only: a removal deletes the person's device
--- rows, so any row present belongs to the current stretch. This is exactly what the reader derives
--- from the device rows today, so the backfill changes no answer - it only makes the current answer
+-- interval's `joinedAt` gets that row's instant. Open only, and only rows YOUNGER than the person's
+-- last `leftAt`: a removal deletes the device rows and closes the interval in two transactions, so
+-- a `registerDevice` in between can leave a row of the PREVIOUS membership, which must not date the
+-- current stretch (review of #2254). The first arrival the reader derives is unchanged (a stale row
+-- is never earlier than the first interval it outlived), so the backfill only makes today's answer
 -- survive the next purge. An arrival already erased by a purge before this migration cannot be
 -- reconstructed.
+--
+-- Applied by the deploy itself (`infrastructure/lib/migrations.sh` runs every file its ledger has not
+-- recorded), so the release that carries this file IS the application.
 --
 -- Additive and idempotent: ADD COLUMN IF NOT EXISTS, and the backfill writes only a NULL column.
 
@@ -25,9 +30,14 @@ ALTER TABLE dm_group_membership_intervals
 UPDATE dm_group_membership_intervals i
 SET "admittedAt" = d."firstDeviceAt"
 FROM (
-    SELECT "groupId", "userId", MIN("createdAt") AS "firstDeviceAt"
-    FROM dm_device_group_memberships
-    GROUP BY "groupId", "userId"
+    SELECT dg."groupId", dg."userId", MIN(dg."createdAt") AS "firstDeviceAt"
+    FROM dm_device_group_memberships dg
+    WHERE dg."createdAt" > COALESCE(
+        (SELECT MAX(c."leftAt")
+         FROM dm_group_membership_intervals c
+         WHERE c."groupId" = dg."groupId" AND c."userId" = dg."userId"),
+        '-infinity'::timestamp)
+    GROUP BY dg."groupId", dg."userId"
 ) d
 WHERE i."groupId" = d."groupId"
   AND i."userId" = d."userId"

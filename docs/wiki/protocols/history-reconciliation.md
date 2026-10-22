@@ -775,9 +775,16 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   interval it opens, as `admittedAt`, when it is older than the enrolment. The first arrival is the
   earliest of every interval's `joinedAt` and `admittedAt` and of the device rows still present (an
   invitee admitted and not yet enrolled has only those). `admittedAt` never moves a gap: the
-  2026-10-14 window still ends at the re-enrolment's `joinedAt`. The migration backfills every open
-  interval from the device rows present, which is what the reader derived from them already, so it
-  changes no answer. Two arrivals stay lost: one a purge erased before the migration ran, and one
+  2026-10-14 window still ends at the re-enrolment's `joinedAt`. **Only a row younger than the
+  person's last `leftAt` counts** (review of #2254): a removal deletes the device rows and closes
+  the interval in two transactions, and a `registerDevice` in between can leave a row of the
+  previous membership, which would date the re-add from before the removal and reopen `for` for
+  people added while they were out. **A database clock running ahead of chat-delivery's** makes a
+  genuine earlier admission look no earlier than the enrolment, so nothing is recorded and the
+  arrival is the enrolment: history lost, nothing handed out. The migration backfills every open
+  interval from the device rows present under the same bound, which is what the reader derived from
+  them already, so it changes no answer. The deploy applies it, so the release carrying it is the
+  application. Two arrivals stay lost: one a purge erased before the migration ran, and one
   whose device is revoked between its admission and the enrolment. Both cost that person history
   and hand nobody anything.
 - **Two clocks, bounded.** An interval is stamped by chat-delivery's process clock, and a device row

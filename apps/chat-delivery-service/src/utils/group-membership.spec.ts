@@ -32,7 +32,10 @@ describe('ensureGroupMember', () => {
    * Records every INSERT the helper builds, one entry per `insert()`. `firstDeviceAt` is what the
    * person's earliest device row in the group says, read before the interval is opened.
    */
-  function managerWithRecorder(firstDeviceAt: Date | null = null): {
+  function managerWithRecorder(
+    firstDeviceAt: Date | Date[] | null = null,
+    lastLeftAt: Date | null = null
+  ): {
     manager: EntityManager;
     inserts: Insert[];
     deviceReads: unknown[];
@@ -64,14 +67,32 @@ describe('ensureGroupMember', () => {
     };
 
     const deviceReads: unknown[] = [];
-    const deviceQb: Record<string, unknown> = {};
-    for (const name of ['select', 'where', 'andWhere']) deviceQb[name] = () => deviceQb;
-    deviceQb.getRawOne = () => Promise.resolve({ firstDeviceAt });
+    // A small table: the person's device rows and closed intervals in the group. The device read
+    // honours the `lastLeftAt` bound it is given, as the SQL does.
+    const rows = Array.isArray(firstDeviceAt)
+      ? firstDeviceAt
+      : firstDeviceAt
+        ? [firstDeviceAt]
+        : [];
     const manager = {
       createQueryBuilder: () => builder,
       getRepository: (entity: unknown) => {
         deviceReads.push(entity);
-        return { createQueryBuilder: () => deviceQb };
+        let bound: Date | null = null;
+        const qb: Record<string, unknown> = {};
+        qb.select = () => qb;
+        qb.where = () => qb;
+        qb.andWhere = (_sql: string, params?: { lastLeftAt?: Date }) => {
+          if (params?.lastLeftAt) bound = params.lastLeftAt;
+          return qb;
+        };
+        qb.getRawOne = () => {
+          if (entity === GroupMembershipInterval) return Promise.resolve({ lastLeftAt });
+          const kept = rows.filter((r) => bound === null || r.getTime() > bound.getTime());
+          const min = kept.length > 0 ? new Date(Math.min(...kept.map((r) => r.getTime()))) : null;
+          return Promise.resolve({ firstDeviceAt: min });
+        };
+        return { createQueryBuilder: () => qb };
       },
     } as unknown as EntityManager;
     return { manager, inserts, deviceReads };
@@ -129,9 +150,29 @@ describe('ensureGroupMember', () => {
 
     await ensureGroupMember(manager, 'g-1', 'alice');
 
-    expect(deviceReads).toEqual([DeviceGroupMembership]);
+    expect(deviceReads).toEqual([GroupMembershipInterval, DeviceGroupMembership]);
     const interval = inserts.find((i) => i.target === GroupMembershipInterval);
     expect(interval?.values?.admittedAt).toEqual(admitted);
+  });
+
+  // A removal deletes the device rows, then closes the interval in another transaction; a
+  // registerDevice in between can leave a pending row of the PREVIOUS membership (review of #2254).
+  it('ignores a stale device row older than the last departure - it belongs to the previous stretch', async () => {
+    const stale = new Date('2026-10-02T23:59:59Z');
+    const leftAt = new Date('2026-10-03T00:00:00Z');
+    const readmitted = new Date('2026-10-05T00:00:00Z');
+
+    const alone = managerWithRecorder([stale], leftAt);
+    await ensureGroupMember(alone.manager, 'g-1', 'alice');
+    expect(
+      alone.inserts.find((i) => i.target === GroupMembershipInterval)?.values?.admittedAt
+    ).toBe(null);
+
+    const withNew = managerWithRecorder([stale, readmitted], leftAt);
+    await ensureGroupMember(withNew.manager, 'g-1', 'alice');
+    expect(
+      withNew.inserts.find((i) => i.target === GroupMembershipInterval)?.values?.admittedAt
+    ).toEqual(readmitted);
   });
 
   it('records nothing when the earliest device row is not earlier than the enrolment', async () => {

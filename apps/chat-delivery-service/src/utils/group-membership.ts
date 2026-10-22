@@ -49,6 +49,18 @@ const logger = new Logger('GroupMembership');
  * its admission and the enrolment is not recorded: the arrival is then the enrolment, later, which
  * costs that person history and hands nobody anything.
  *
+ * **ONLY A ROW YOUNGER THAN THE PERSON'S LAST DEPARTURE COUNTS** (review of #2254). A removal deletes
+ * the device rows, then closes the interval in a separate transaction, and a `registerDevice`
+ * running in between can leave a pending row from the PREVIOUS membership. Taken as the re-add's
+ * admission, it would date the new stretch from before the removal, and `for` would again answer
+ * for people added while the person was out. So the read is bounded by the latest `leftAt`.
+ *
+ * **TWO CLOCKS AGAIN.** The device row's instant is the database's, `joinedAt` and `leftAt` are this
+ * process's. A database clock running AHEAD makes a genuine earlier admission look no earlier than
+ * the enrolment, and nothing is recorded - the arrival is then the enrolment, later: history lost,
+ * nothing handed out. The same skew can make a row written just after a departure read as before
+ * it, with the same outcome.
+ *
  * @param manager Entity manager to run on - pass the transaction's manager where one is open, so
  *                the enrolment commits with the device memberships beside it.
  * @param groupId Group being joined.
@@ -67,13 +79,24 @@ export async function ensureGroupMember(
     .orIgnore()
     .execute();
   const joinedAt = new Date();
-  const earliest = await manager
+  // Only a row of THIS stretch may stand for its admission: one older than the person's last
+  // departure belongs to a previous membership (see the docstring).
+  const previous = await manager
+    .getRepository(GroupMembershipInterval)
+    .createQueryBuilder('i')
+    .select('MAX(i.leftAt)', 'lastLeftAt')
+    .where('i.groupId = :groupId', { groupId })
+    .andWhere('i.userId = :userId', { userId })
+    .getRawOne<{ lastLeftAt: Date | string | null }>();
+  const lastLeftAt = previous?.lastLeftAt ? new Date(previous.lastLeftAt) : null;
+  const deviceQuery = manager
     .getRepository(DeviceGroupMembership)
     .createQueryBuilder('d')
     .select('MIN(d.createdAt)', 'firstDeviceAt')
     .where('d.groupId = :groupId', { groupId })
-    .andWhere('d.userId = :userId', { userId })
-    .getRawOne<{ firstDeviceAt: Date | string | null }>();
+    .andWhere('d.userId = :userId', { userId });
+  if (lastLeftAt) deviceQuery.andWhere('d.createdAt > :lastLeftAt', { lastLeftAt });
+  const earliest = await deviceQuery.getRawOne<{ firstDeviceAt: Date | string | null }>();
   const firstDeviceAt = earliest?.firstDeviceAt ? new Date(earliest.firstDeviceAt) : null;
   const admittedAt =
     firstDeviceAt && firstDeviceAt.getTime() < joinedAt.getTime() ? firstDeviceAt : null;
