@@ -261,6 +261,12 @@ A report of `active` now promotes an existing seat only, and is refused (`403 NO
 cleanup) before it processed its Welcome stays unrouted with no client-side line; the server's
 `REFUSED ... reason=` warn is the only trace. Owed: log a non-2xx answer at warn on the client.
 
+A kicked device's report is refused until an ADMITTING commit clears the kick, and only clients from
+`0.18.28` (`commitAdmits.ts`) send admits. Measured on production 2026-10-22: `min_client_version` is
+`1.2.7` (enforced by the client, which refuses to sign in below it), and of the 398 devices that
+committed in the 30 days before, 0 reporting a version below `0.18.28` and 0 reporting none committed
+after 2026-10-17, the day the floor reached `1.2.7`. So no re-add without admits is expected.
+
 ## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
 
 Registration refuses a device id another account holds (`device_id_taken`) by a read before its write; `key_package` is unique on the pair only, so two concurrent registrations of one id by two accounts could both pass. Production held 0 shared ids on 2026-10-22, and a client mints its id per account. The fix is a unique index on `key_package."deviceId"`, a migration of its own.

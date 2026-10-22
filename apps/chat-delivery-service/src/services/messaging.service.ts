@@ -2739,15 +2739,63 @@ export class MessagingService {
   }
 
   /**
-   * Why a REPORT of `active` may not promote this device, or `null` when it may.
+   * A REPORT of `active`: promotes the seat in ONE conditional UPDATE, and never inserts.
    *
    * Every legitimate report follows a write that made the seat: the admitting commit or the
    * Welcome (`pending`), or the accepted external commit that activated its committer (`active`, so
-   * the report is idempotent). So the `(user, device, group)` row must exist; a `pending` one must
-   * not carry a kick no commit has answered - the admitting commit clears it, and until then the
-   * device is refused at the commit gate too; and in a conversation its owner must still be on the
-   * roster. A key-distribution group has no user roster here: its seat is what an admit or a gated
-   * external commit wrote.
+   * the report is idempotent). So the statement matches only the `(user, device, group)` row; a
+   * `pending` one only without a kick no commit has answered - the admitting commit clears it, and
+   * until then the device is refused at the commit gate too; and, in a conversation, only while its
+   * owner is on the roster. A key-distribution group has no user roster here: its seat is what an
+   * admit or a gated external commit wrote.
+   *
+   * ONE STATEMENT, BECAUSE A READ THEN A WRITE IS A RACE. A removal deletes the rows and a kick
+   * stamps `kickedAt`; a report checked by a read and then upserted could land between them and
+   * re-create an active row, or clear the kick. The UPDATE re-checks its own WHERE on the row it
+   * locks, so a row deleted first is simply not matched, and nothing is ever inserted. The routing
+   * set is written only when the statement promoted exactly that row.
+   */
+  private async promoteReportedSeat(
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    tag: string
+  ): Promise<ActivationOutcome> {
+    const result = await this.deviceGroupRepo
+      .createQueryBuilder()
+      .update(DeviceGroupMembership)
+      .set({ status: 'active' as const, kickedAt: null, admittedAtEpoch: null })
+      .where('"userId" = :userId AND "deviceId" = :deviceId AND "groupId" = :groupId', {
+        userId,
+        deviceId,
+        groupId,
+      })
+      .andWhere(`(status = 'active' OR "kickedAt" IS NULL)`)
+      .andWhere(
+        `(EXISTS (SELECT 1 FROM dm_groups g WHERE g.id = :groupId
+            AND (g."distributionWorkspaceId" IS NOT NULL OR g."distributionChannelId" IS NOT NULL))
+          OR EXISTS (SELECT 1 FROM dm_group_members m
+            WHERE m."groupId" = :groupId AND m."userId" = :userId))`
+      )
+      .execute();
+    if (result.affected === 1) {
+      await this.redis.sadd(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
+      this.logger.log(`[${tag}] group=${groupId} device=${userId}:${deviceId}`);
+      return { ok: true };
+    }
+    // The statement decided; this read only NAMES why, for the log and the answer. If the row moved
+    // in between, the name may be stale but the refusal is not.
+    const reason = (await this.seatRefusal(userId, deviceId, groupId)) ?? 'no_seat';
+    this.logger.warn(
+      `[${tag}] REFUSED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+        `reason=${reason} affected=${result.affected ?? 0} - a report promotes a seat and never creates one`
+    );
+    return { ok: false, reason };
+  }
+
+  /**
+   * Why a report found no seat to promote - the NAME of the refusal {@link promoteReportedSeat}
+   * already made, read after it. Never the decision itself.
    */
   private async seatRefusal(
     userId: string,
@@ -2801,7 +2849,8 @@ export class MessagingService {
    *
    * A REPORT PROMOTES A SEAT; IT NEVER CREATES ONE (2026-10-22). Every caller names its
    * {@link ActivationAuthority}, and a `report` - the two doors a device may call about itself - is
-   * refused unless its seat exists ({@link seatRefusal}). The other authorities create the seat
+   * refused unless its seat exists, in one conditional UPDATE that never inserts
+   * ({@link promoteReportedSeat}). The other authorities create the seat
    * under a gate of their own, which is why they may: the accepted commit, the group's creation, the
    * publisher social-service vouched for.
    *
@@ -2845,16 +2894,7 @@ export class MessagingService {
       return { ok: false, reason: addressable.reason };
     }
 
-    if (authority === 'report') {
-      const refused = await this.seatRefusal(userId, deviceId, groupId);
-      if (refused) {
-        this.logger.warn(
-          `[${tag}] REFUSED group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
-            `reason=${refused} - a report promotes a seat and never creates one`
-        );
-        return { ok: false, reason: refused };
-      }
-    }
+    if (authority === 'report') return this.promoteReportedSeat(userId, deviceId, groupId, tag);
 
     // `kickedAt: null`: the device is IN, so nothing is owed to it and no kick is outstanding.
     // `admittedAtEpoch: null`: its status routes it from here on, so its admission has done its job.

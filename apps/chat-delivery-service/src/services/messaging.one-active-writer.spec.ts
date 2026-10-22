@@ -65,6 +65,7 @@ describe('the ONE writer of an active membership', () => {
     findOne: jest.fn().mockResolvedValue(null),
     upsert: jest.fn().mockResolvedValue(undefined),
     find: jest.fn().mockResolvedValue([]),
+    createQueryBuilder: jest.fn(),
   };
 
   const emptyRepo = () => ({
@@ -236,6 +237,11 @@ describe('the ONE writer of an active membership', () => {
     };
     let seats: Seat[];
     let roster: Array<{ groupId: string; userId: string }>;
+    let groupRow: Record<string, unknown> | null;
+    /** Runs at the instant the UPDATE executes - a concurrent writer landing before it. */
+    let racing: (() => void) | null;
+    /** Every clause the UPDATE was built with, so its guards are asserted as SQL too. */
+    let clauses: string[];
     const REPORT = { authority: 'report' as const, tag: 'INVITATION_STATUS' };
     const matches = (row: Record<string, unknown>, where: Record<string, unknown>) =>
       Object.entries(where).every(([k, v]) => row[k] === v);
@@ -243,7 +249,39 @@ describe('the ONE writer of an active membership', () => {
     beforeEach(() => {
       seats = [{ userId: 'u1', deviceId: 'd1', groupId: 'g1', status: 'pending', kickedAt: null }];
       roster = [{ groupId: 'g1', userId: 'u1' }];
-      groupRepo.findOne.mockResolvedValue({ id: 'g1' });
+      groupRow = { id: 'g1' };
+      racing = null;
+      clauses = [];
+      groupRepo.findOne.mockImplementation(async () => groupRow);
+      // THE CONDITIONAL UPDATE, evaluated against the tables as they stand WHEN IT RUNS: the row by
+      // its triple, active or unkicked, in a key group or with its owner on the roster. It never
+      // inserts. The guards are also asserted as SQL below, so the two cannot drift apart silently.
+      deviceGroupRepo.createQueryBuilder.mockImplementation(() => {
+        let params: Record<string, unknown> = {};
+        let values: Partial<Seat> = {};
+        const qb = {
+          update: () => qb,
+          set: (v: Partial<Seat>) => ((values = v), qb),
+          where: (c: string, p: Record<string, unknown>) => (clauses.push(c), (params = p), qb),
+          andWhere: (c: string) => (clauses.push(c), qb),
+          execute: async () => {
+            racing?.();
+            const keyGroup =
+              !!groupRow &&
+              (!!groupRow.distributionWorkspaceId || !!groupRow.distributionChannelId);
+            const row = seats.find(
+              (r) =>
+                matches(r, params) &&
+                (r.status === 'active' || !r.kickedAt) &&
+                (keyGroup ||
+                  roster.some((m) => matches(m, { groupId: r.groupId, userId: r.userId })))
+            );
+            if (row) Object.assign(row, values);
+            return { affected: row ? 1 : 0 };
+          },
+        };
+        return qb;
+      });
       deviceGroupRepo.findOne.mockImplementation(
         async ({ where }: { where: Record<string, unknown> }) =>
           seats.find((r) => matches(r, where)) ?? null
@@ -260,15 +298,47 @@ describe('the ONE writer of an active membership', () => {
       );
     });
 
-    it('promotes the pending seat its admission wrote, asking by the triple', async () => {
+    it('promotes the pending seat its admission wrote, in one UPDATE by the triple', async () => {
       await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
         ok: true,
       });
-      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
-        where: { userId: 'u1', deviceId: 'd1', groupId: 'g1' },
-        select: { status: true, kickedAt: true },
+      expect(seats[0]).toMatchObject({ status: 'active', kickedAt: null });
+      expect(redis.sadd).toHaveBeenCalledWith('group:members:g1', 'u1:d1');
+      // NO INSERT PATH: a report never upserts.
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+      const sql = clauses.join(' ');
+      expect(sql).toContain(
+        '"userId" = :userId AND "deviceId" = :deviceId AND "groupId" = :groupId'
+      );
+      expect(sql).toContain(`(status = 'active' OR "kickedAt" IS NULL)`);
+      expect(sql).toContain('dm_group_members');
+      expect(sql).toContain('"distributionWorkspaceId" IS NOT NULL');
+    });
+
+    it('does not re-create a row a removal deleted between any read and the write', async () => {
+      // The removal lands at the instant the UPDATE runs: the statement matches nothing, and
+      // nothing is inserted or routed - a read-then-upsert re-created the active row here.
+      racing = () => (seats = []);
+
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: false,
+        reason: 'no_seat',
       });
-      expect(seats[0].status).toBe('active');
+      expect(seats).toEqual([]);
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+      expect(redis.sadd).not.toHaveBeenCalled();
+    });
+
+    it('does not clear a kick that lands between any read and the write', async () => {
+      racing = () => (seats[0].kickedAt = new Date('2026-10-22T10:00:00Z'));
+
+      await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
+        ok: false,
+        reason: 'kicked',
+      });
+      expect(seats[0]).toMatchObject({ status: 'pending' });
+      expect(seats[0].kickedAt).toBeInstanceOf(Date);
+      expect(redis.sadd).not.toHaveBeenCalled();
     });
 
     it('is idempotent on a seat an accepted external commit already made active', async () => {
@@ -304,13 +374,12 @@ describe('the ONE writer of an active membership', () => {
     });
 
     it('accepts a key group on its seat alone: it has no user roster here', async () => {
-      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'ws-1' });
+      groupRow = { id: 'g1', distributionWorkspaceId: 'ws-1' };
       roster = [];
 
       await expect(service.activateDeviceMembership('u1', 'd1', 'g1', REPORT)).resolves.toEqual({
         ok: true,
       });
-      expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
     });
 
     it('lets every other authority create the seat it is the gate for', async () => {
