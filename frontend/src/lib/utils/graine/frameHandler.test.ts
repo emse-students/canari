@@ -17,6 +17,7 @@ import { ed25519PublicKeyOf, webCryptoEngine } from '$lib/crypto/graineV2.testEn
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { handleDistributionFrame } from './frameHandler';
 import {
+  announceGraineRepair,
   graineRepairHoldObserver,
   holdGraineRepairs,
   registerCommunityHistoryVisibility,
@@ -189,7 +190,32 @@ function wire(storage: IStorage) {
   });
 }
 
-afterEach(() => setGraineRuntime(null));
+/**
+ * Closes every repair hold a test left open. The hold depth is module state that `setGraineRuntime`
+ * deliberately keeps, since in production the MLS service closes what it opened. A test interrupted
+ * between its hold and its release (a timeout under suite load) used to leave the depth at 1, and
+ * every later test expecting an announcement then failed: one timeout became six failures. The probe
+ * is announced through the public path, and releases go on until it is delivered, which is the
+ * moment the depth is back to 0.
+ */
+function closeLeftoverHolds() {
+  let delivered = false;
+  setGraineRepairListener(() => {
+    delivered = true;
+  });
+  announceGraineRepair(['probe']);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  for (let closed = 0; !delivered; closed++) {
+    if (closed === 16) throw new Error('a repair hold could not be closed after 16 releases');
+    releaseGraineRepairs();
+  }
+  warn.mockRestore();
+}
+
+afterEach(() => {
+  closeLeftoverHolds();
+  setGraineRuntime(null);
+});
 
 describe('a seed arriving on the distribution group', () => {
   it('is stored with no counters of ours', async () => {
@@ -417,12 +443,14 @@ describe('a seed arriving on the distribution group', () => {
     const repaired: string[][] = [];
     setGraineRepairListener((ids) => repaired.push(ids));
 
-    holdGraineRepairs();
+    // Signed BEFORE the hold: 26 endorsements are the heaviest work in this file, and a test cut off
+    // by a timeout should not be cut off holding the drain open.
     const salons = ['chan-1', 'chan-2', 'chan-3'];
-    for (let i = 0; i < 26; i++) {
-      const channelId = salons[i % 3];
-      await handleDistributionFrame(frame(await v2SeedFor(channelId, `sess-${i}`, 0)));
-    }
+    const seeds = await Promise.all(
+      Array.from({ length: 26 }, (_, i) => v2SeedFor(salons[i % 3], `sess-${i}`, 0))
+    );
+    holdGraineRepairs();
+    for (const seed of seeds) await handleDistributionFrame(frame(seed));
     // Twenty-six seeds stored, nothing re-read yet: the drain still has frames to read.
     expect(repaired).toEqual([]);
 

@@ -95,11 +95,27 @@ async function settle(): Promise<void> {
 }
 
 /** Two taps on `el`, as an engine sends them: two clicks with a pointer behind them. */
+/**
+ * Two clicks at the SAME instant. The gesture reads `performance.now()` against a 250 ms window, and
+ * two back-to-back dispatches were more than 250 ms apart under suite load: the first click's work
+ * ran between them, so the double tap read as two single taps. The clock is held still for the pair.
+ */
 function doubleTap(el: Element) {
-  for (const detail of [1, 2]) {
-    el.dispatchEvent(
-      new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 50, clientY: 50, detail })
-    );
+  const now = vi.spyOn(performance, 'now').mockReturnValue(performance.now());
+  try {
+    for (const detail of [1, 2]) {
+      el.dispatchEvent(
+        new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          clientX: 50,
+          clientY: 50,
+          detail,
+        })
+      );
+    }
+  } finally {
+    now.mockRestore();
   }
   flushSync();
 }
