@@ -494,6 +494,38 @@ the reset, and history from peers and backups. Markers stay IN the backup on pur
 a restored `migrating` marker without its key is reverted (nothing moved). The reset forgets the
 marker (`cle_au_repos_oublier`) once the data is gone, which is what frees the entry.
 
+#### Decisions taken on 2026-10-22, and what each costs
+
+The user chose **option B: the PIN enters the key on the phone**, under two constraints - the same
+PIN on every device, and no added friction ("stay signed in" without the PIN and biometric unlock
+keep working; "stay signed in" stays ON by default). Four open questions were settled the same day
+as lead decisions; B changes the second. **B is designed and under review, not built**: what this
+branch builds today is the random keystore key above, read unattended.
+
+**What B is.** The random at-rest key D stays the data key and never changes on a PIN change. It is
+stored only wrapped, in up to three slots: a PIN slot (always), whose wrapping key mixes the PIN
+with a non-exportable hardware key of that device, so the PIN can be tried only on that phone; a
+biometric slot (when biometrics are on); and the unattended slot (only when "stay signed in" is on).
+The push keeps its own key and never needs D.
+
+**B PROTECTS ONLY THE DEVICES WHERE "STAY SIGNED IN" IS OFF.** "Stay signed in" and the background
+push read their key with nobody present, so whoever holds the unlocked phone - or code running in
+the app - reads it too, with or without the PIN. Where "stay signed in" is on (the default), B adds
+nothing against that holder; a copy of the phone's storage stays protected either way, by the
+hardware. Where it is off, opening the data needs the PIN, tried on that phone, and the PIN's length
+is what bounds those attempts.
+
+| Decision | What it costs |
+|---|---|
+| 1. One backup recovery code per device | Losing that code loses every backup the device made; knowing it opens all of them. Today's build still generates one code per export, so this is owed in code. |
+| 2. The key is not bound to the device credential, **except the biometric slot (changed by B)**, which is bound to the enrolled biometrics | A new fingerprint or Face ID enrolment drops the biometric slot: the next unlock asks for the PIN once and rebuilds it, no data lost. The unattended slot and the push key stay unbound, which is what keeps locked-phone pushes and "stay signed in" working - and why they open without the user. |
+| 3. A lost keystore entry loses the local data | A keystore wipe, or an iOS restore onto a new phone, leaves rows nothing can open (under B: when every slot holding D is gone). History comes back from other members and from backups. |
+| 4. A backup made before a phone's migration stops opening on that phone | Those older backups cannot be imported there. |
+
+**B's own costs.** A device with only the PIN slot, after the PIN was changed on another device,
+asks once for the previous PIN to re-wrap its slot. A forgotten PIN on such a device loses its local
+data (decision 3). Devices with a biometric or unattended slot re-wrap silently.
+
 #### Backups get their own recovery secret
 
 A `.canari` file is now **v3** (`backup.ts`, `crypto/backupRecoveryCode.ts`): sealed under

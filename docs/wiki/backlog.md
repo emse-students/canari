@@ -39,11 +39,11 @@ Owed before it ships:
   how long the re-key holds the storage gate); PIN change; a push readable with the app killed after
   the migration; a v3 backup exported, then imported with its code on the other phone; "stay signed
   in" across a restart; biometric unlock after the migration.
-- **Decisions** (listed in the user table below): one recovery code per export or one per device;
-  whether the key should also be bound to the device credential (it is not today, so a new
-  fingerprint enrolment does not invalidate it - binding it would, and would cut the locked-phone
-  push); accepting that a lost keystore entry loses the local data (history comes back from peers
-  and backups); accepting that a v2 backup made before a phone's migration no longer opens on it.
+- **The four open decisions are TAKEN (lead decisions, 2026-10-22) and the user chose option B**
+  (the PIN enters the key on the phone; the same PIN on every device; "stay signed in", ON by
+  default, and biometric unlock keep working). Both are recorded with their costs in
+  [auth](frontend/modules/auth.md#decisions-taken-on-2026-10-22-and-what-each-costs). B is
+  designed and under crypto review, NOT BUILT yet.
 - **P3 - an older build installed over a migrated phone is not guarded**: its `store_push_context`
   writes the PIN-derived key into the keystore entry. Closes when `minClientVersion` reaches the
   first release carrying the at-rest guard (the release this pull request ships in).
@@ -508,7 +508,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **the hardware-held phone key: four decisions** - recovery code per export or per device; bind the key to the device credential or not; a lost keystore entry loses local data; a pre-migration v2 backup stops opening on that phone | decision | [backlog](#decided-by-the-user-on-2026-10-22---the-local-key-on-a-phone-is-held-by-secure-hardware) |
 | **optional: count `LEGACY_CONTENT_PATH` in the 30-day chat-delivery deploy-log archive** (`zgrep -c` over the production project's archived chat-delivery logs, in the runner account's home). A confirmation of a removal already made on other evidence, not a blocker | 1 command | [legacy-compatibility](legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration) |
 | **open dev's calls once after the deploy that carries migration 014** (B12): `/admin/platform`, `Audio et video` - the migration lands `off` on an existing database. (The TURN meter's four secrets EXIST since 2026-10-21, Account Analytics read only.) | 1 click | [calls](frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) |
 | **write the terms' lives paragraph and the filtering statement for the store review** (strike policy, retention, the 24 h commitment and the reactions are decided, 2026-10-20) | 1 text, 1 statement | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19) |
