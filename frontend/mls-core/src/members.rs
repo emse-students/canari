@@ -3,7 +3,8 @@ use openmls::prelude::*;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::device_trust::{
-    DeviceTrust, LeafTrust, identity_names, is_well_formed_identity, key_fingerprint, leaf_keys,
+    DeviceTrust, LeafTrust, canonical_identity, canonical_user_id, canonical_user_of,
+    identity_names, is_well_formed_identity, key_fingerprint, leaf_keys,
 };
 use crate::state::MlsManager;
 use crate::{
@@ -153,12 +154,58 @@ impl MlsManager {
             .groups
             .get(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        // Matched as the binding matches (one canonical identity): a spelling of a device that IS a
+        // leaf must find that leaf, never fall through to the server's published keys.
         for member in group.members() {
-            if leaf_identity(&member)? == identity {
+            if identity_names(&leaf_identity(&member)?, identity) {
                 return Ok(Some(member.signature_key));
             }
         }
         log::debug!("[GRAINE_SIG] no leaf for {identity} in {group_id}");
+        Ok(None)
+    }
+
+    /// The identity of the leaf of `group_id` whose signature key is `key_package`'s, or `None`
+    /// when no leaf carries it.
+    ///
+    /// For the caller an Add refused as a DUPLICATE SIGNATURE KEY: the refusal says the key is in
+    /// the tree, not whose leaf holds it, and treating the duplicate as the identity the package was
+    /// fetched for would vouch for, or replace, a device on another device's key. The tree answers
+    /// that locally, so it is asked instead of assumed.
+    pub fn leaf_holding_key_of(
+        &self,
+        group_id: &str,
+        key_package: &[u8],
+    ) -> Result<Option<String>, MlsError> {
+        let kp = KeyPackageIn::tls_deserialize(&mut &key_package[..])
+            .map_err(|e| {
+                MlsError::OpenMls(format!(
+                    "leaf_holding_key_of: undecodable KeyPackage: {e:?}"
+                ))
+            })?
+            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|e| {
+                MlsError::OpenMls(format!("leaf_holding_key_of: invalid KeyPackage: {e:?}"))
+            })?;
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        let key = kp.leaf_node().signature_key().as_slice();
+        for member in group.members() {
+            if member.signature_key == key {
+                let holder = leaf_identity(&member)?;
+                log::debug!(
+                    "[TRUST] key {} is held by {holder}'s leaf in {group_id}",
+                    key_fingerprint(key)
+                );
+                return Ok(Some(holder));
+            }
+        }
+        log::debug!(
+            "[TRUST] key {} is held by no leaf of {group_id}",
+            key_fingerprint(key)
+        );
         Ok(None)
     }
 
@@ -182,10 +229,11 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
+        // The user half of the ONE canonical identity, against the canonical user id: a leaf the
+        // binding admitted under another spelling of this user is this user's.
+        let wanted: Vec<String> = user_ids.iter().map(|u| canonical_user_id(u)).collect();
         let leaf_indices = leaf_indices_where(group, |identity| {
-            user_ids
-                .iter()
-                .any(|uid| identity == *uid || identity.starts_with(&format!("{}:", uid)))
+            canonical_user_of(identity).is_some_and(|user| wanted.contains(&user))
         })?;
 
         if leaf_indices.is_empty() {
@@ -223,8 +271,11 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        let leaf_indices =
-            leaf_indices_where(group, |identity| device_identities.contains(&identity))?;
+        let leaf_indices = leaf_indices_where(group, |identity| {
+            device_identities
+                .iter()
+                .any(|wanted| identity_names(identity, wanted))
+        })?;
 
         // NOTHING TO REMOVE IS ITS OWN ANSWER, not a crypto failure - see `MlsError::NoSuchMember`.
         // The caller that clears a stale leaf must distinguish "the leaf was never there" from "the
@@ -260,7 +311,9 @@ impl MlsManager {
     /// the re-added device.
     ///
     /// The package is bound and pinned exactly as an Add's is ([`vet_validated`]): a package naming
-    /// another device or carrying an unpinned key stages nothing. No leaf for `identity` is
+    /// another device or carrying an unpinned key stages nothing. Its key must also EQUAL the key of
+    /// every leaf it removes (matched by [`identity_names`], the one canonical identity), pin or no
+    /// pin. No leaf for `identity` is
     /// [`MlsError::NoSuchMember`] - the caller then adds, it does not replace.
     pub fn replace_device_with_base(
         &mut self,
@@ -284,10 +337,29 @@ impl MlsManager {
             .groups
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
-        let leaf_indices = leaf_indices_where(group, |found| found == identity)?;
+        let leaf_indices = leaf_indices_where(group, |found| identity_names(found, identity))?;
         if leaf_indices.is_empty() {
             return Err(MlsError::NoSuchMember(format!(
                 "no leaf carries {identity} - nothing to replace"
+            )));
+        }
+        // THE TREE IS THE PROOF, NOT ONLY THE PIN: the leaf being removed carries a key signed into
+        // a tree this device holds, and the device it names must come back under THAT key. A pin
+        // may be missing (a state seeded late, a pin pruned); this evidence is always local.
+        let new_key = kp.leaf_node().signature_key().as_slice();
+        let removed_keys: Vec<Vec<u8>> = group
+            .members()
+            .filter(|m| leaf_indices.contains(&m.index))
+            .map(|m| m.signature_key)
+            .collect();
+        if removed_keys.iter().any(|k| k.as_slice() != new_key) {
+            log::error!(
+                "[TRUST] replace refused: {identity} in {group_id} offers key {}, not the key of the \
+                 leaf it would replace - nothing staged",
+                key_fingerprint(new_key)
+            );
+            return Err(MlsError::OpenMls(format!(
+                "replace_device: the KeyPackage for {identity} does not carry the key of its leaf"
             )));
         }
         let bundle = group
@@ -376,9 +448,8 @@ impl MlsManager {
     /// anything: `first-sight` / `pinned` when it may, otherwise the
     /// [`SkippedKeyPackageReason`] wire name an Add would skip it for.
     ///
-    /// For the caller that must decide BEFORE a destructive step - the re-add that first removes the
-    /// device's stale leaf (`kickStaleLeaf`): a removal made for a replacement the Add then refuses
-    /// would take the device out of the group for nothing. The Add itself re-runs the same check.
+    /// For the caller that must decide BEFORE staging - the one-commit replace of a device whose leaf
+    /// is still in the tree (`replaceMember`). The Add and the replace re-run the same check.
     pub fn vet_key_package(
         &self,
         key_package_bytes: &[u8],
@@ -489,6 +560,15 @@ impl MlsManager {
         group
             .clear_pending_commit(self.provider.storage())
             .map_err(|e| MlsError::OpenMls(format!("Clear pending commit error: {:?}", e)))?;
+        // A GROUP THE LOAD LEFT UNSEEDED is seeded NOW: with its own commit cleared (and no marker,
+        // so it is no external join), the tree it holds is the one this device held before staging -
+        // a tree it had accepted, the reason the load seeds every held tree.
+        if self.device_trust.forget_unseeded(group_id) {
+            log::info!(
+                "clear_pending_commit_for: {group_id} was not seeded at load - seeding the tree it falls back to"
+            );
+            self.device_trust.seed_from_tree(&leaf_keys(group));
+        }
         self.mark_state_dirty();
         Ok(())
     }
@@ -580,11 +660,16 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        let mut known_identities: std::collections::HashSet<Vec<u8>> =
+        // Keyed by the ONE canonical identity, as the binding reads it: two spellings of one device
+        // are one member, in the tree and within this batch.
+        let mut known_identities: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         for member in group.members() {
-            if let Ok(credential) = BasicCredential::try_from(member.credential.clone()) {
-                known_identities.insert(credential.identity().to_vec());
+            if let Some(identity) = credential_identity(&member.credential)
+                .ok()
+                .and_then(|id| canonical_identity(&id))
+            {
+                known_identities.insert(identity);
             }
         }
 
@@ -642,9 +727,9 @@ impl MlsManager {
                 continue;
             }
 
-            let identity = BasicCredential::try_from(kp.leaf_node().credential().clone())
+            let identity = credential_identity(kp.leaf_node().credential())
                 .ok()
-                .map(|c| c.identity().to_vec());
+                .and_then(|id| canonical_identity(&id));
             if let Some(identity) = &identity {
                 if known_identities.contains(identity) {
                     log::warn!("Skipping KeyPackage already a member of the group");

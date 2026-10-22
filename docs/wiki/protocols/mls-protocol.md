@@ -632,7 +632,18 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   (`add_members_bulk_with_base(.., expected_identities)`). A credential naming anything else is
   skipped as `identity-mismatch`. The user half compares case-insensitively, the device half
   exactly, and an identity holds exactly one `:` - the TypeScript parsers (`leafIdentity.ts`) read
-  an identity with more as naming nobody.
+  an identity with more as naming nobody. Pin lookup and binding use ONE canonical identity
+  (`canonical_identity`: user half lowercased, device half as is): the pin store is keyed by it,
+  every lookup and comparison goes through it - the tree-key lookup a seed endorsement is checked
+  against (`member_signature_key`), the removals by user and by device, the batch dedupe, and the
+  native push checks (`canonical_user_of`, `canonical_user_id`). `canonical_user_of` also reads the
+  LEGACY BARE `userId` credential as its user with no device; it is never pinned and never matches a
+  device ([legacy-compatibility](../legacy-compatibility.md)). A persisted record NOT keyed
+  canonically is dropped with an ERROR at load, never merged into a pin: merging would turn a key
+  conflict between two records into trust. Its TypeScript twin is `leafIdentity.ts` (`canonicalIdentity`,
+  `canonicalUserId`, `sameDeviceIdentity`, `treeHoldsDevice`), tested on the same cases. It is used
+  by every TypeScript tree check and every comparison against a leaf's user half, so a spelling Rust
+  takes for a device never reads as absent and falls through to an Add.
 - **Pins.** Each identity maps to the SET of signature keys this device has seen for it, kept in the
   sealed MLS state (`PersistedState.device_pins`, CBOR, `#[serde(default)]`). A state written before
   pins existed is seeded at load from every tree it holds, so nothing already trusted is refused. A
@@ -646,7 +657,13 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   A pin of a device still in a held tree is never dropped. A dropped identity is remembered
   (`device_pins_pruned`, bounded at 8192), and a pin written for it again is UNANCHORED: learned
   from a tree after this device had already forgotten it, so it vouches for less than a pin held
-  since first sight.
+  since first sight. A prune is reported at WARN (`PINS PRUNED`, with the counts), and every load's
+  `state composition` line carries `pins <n>, <m> pruned remembered`. Both go to the device log
+  only - pins are client state the server never sees.
+- **A group the load does not seed.** A group with a staged commit at load is not seeded (its tree
+  may be an external join's server-served one). It is seeded from the tree the first merged commit
+  was built on - ours accepted, or a member's - or, if its commit is refused, from the tree it falls
+  back to at that moment.
 - **Reaffirmations.** A pin counts the merged commits that showed its device holding the pinned key -
   its leaf re-entering under that key, or a commit it signed. This is what lifts a remembered
   refusal (below).
@@ -656,10 +673,17 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   Welcome goes to the re-added device. It used to kick the leaf, then re-add it in a second commit,
   which left the device out of the group in between and recorded a departure for a device that never
   left. The package is vetted FIRST, in TypeScript and again in Rust: a refused package stages
-  nothing. `addMember` and `replaceMember` throw the typed `DeviceTrustRefusedError` before staging,
+  nothing. Its signature key must also EQUAL the key of every leaf it removes - local signed
+  evidence that holds with or without a pin. `addMember` and `replaceMember` throw the typed `DeviceTrustRefusedError` before staging,
   and the callers log it once per identity per session (`reportDeviceTrustRefusal`) and retire
-  nothing. The `DuplicateSignature` catch (`handleDuplicateLeafError`) still kicks only, the re-add
-  following on a later request.
+  nothing. No path kicks any more: an Add refused as a `DuplicateSignature` asks the tree WHOSE
+  leaf carries the package's key (`leafHoldingKeyOf`, Rust `leaf_holding_key_of`) - the tree merely
+  containing the identity does not make the duplicate its leaf. If the holder is this identity, a
+  welcome request replaces it in one commit, and a pending invitation is already fulfilled (vouched,
+  no commit). If another identity holds it, which no legitimate flow produces (a device that changes
+  id starts with a fresh key), nothing is vouched, replaced or removed, and the line is an ERROR of
+  its own (`DUPLICATE KEY HELD BY ANOTHER DEVICE`). A holder that cannot be read, or a key no leaf
+  carries any more, is a WARN and the next request decides.
 - **A refusal no retry can lift is remembered.** Every package of a device carries the same
   signature key, so a `signature-key-changed` refusal would come back at every sweep, each one
   spending a one-time KeyPackage. It is recorded per own device (`refusedDevices.ts`,

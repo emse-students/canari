@@ -1,4 +1,4 @@
-import { deviceIdOfLeaf, userIdOfLeaf } from './leafIdentity';
+import { canonicalUserId, deviceIdOfLeaf, userIdOfLeaf } from './leafIdentity';
 import type { SkippedKeyPackageReason } from './skippedKeyPackage';
 
 /**
@@ -101,7 +101,7 @@ export function deviceEventAudience(
   ctx: { ownUserId: string; isKeyDistributionGroup: boolean }
 ): DeviceEventAudience {
   if (event.addedBy === null) return 'none';
-  if (userIdOfLeaf(event.identity) === ctx.ownUserId.toLowerCase()) return 'owner-alert';
+  if (userIdOfLeaf(event.identity) === canonicalUserId(ctx.ownUserId)) return 'owner-alert';
   return ctx.isKeyDistributionGroup ? 'none' : 'contact-line';
 }
 

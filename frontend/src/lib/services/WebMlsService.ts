@@ -1529,6 +1529,13 @@ export class WebMlsService extends BaseMlsService {
     return (this.client.member_signature_key(groupId, identity) as Uint8Array | undefined) ?? null;
   }
 
+  /** WASM client wrapper - `leaf_holding_key_of`, the leaf carrying a package's key, or null. */
+  async leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
+    return (this.client.leaf_holding_key_of(groupId, keyPackage) as string | undefined) ?? null;
+  }
+
   /** The WASM crate's Ed25519 free functions (`wasmGraineSignatureEngine`). */
   graineSignatureEngine(): GraineSignatureEngine {
     return wasmGraineSignatureEngine();

@@ -1,5 +1,6 @@
 import type { Conversation } from '$lib/types';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/incomingDelivery';
+import { canonicalIdentity, canonicalUserId, canonicalUserOf } from '$lib/mls-client/leafIdentity';
 import {
   serializeEnvelope,
   applyEditToBody,
@@ -151,9 +152,11 @@ function probeSender(
   tag: string
 ): string | null {
   const from = String(data?.from ?? '');
-  const claimedUser = from.split(':')[0]?.toLowerCase();
-  const deviceId = from.slice(from.indexOf(':') + 1);
-  if (!claimedUser || !deviceId || claimedUser !== senderNorm) {
+  // Parsed by the ONE identity reader (`leafIdentity.ts`): `from` must name a DEVICE, so a bare user
+  // id or a second colon names nobody, and the user half compares as Rust compares it.
+  const device = canonicalIdentity(from);
+  const claimedUser = device === null ? null : canonicalUserOf(device);
+  if (claimedUser === null || claimedUser !== canonicalUserId(senderNorm)) {
     log(`[${tag}] Rejected: "${from}" does not match the MLS sender ${senderNorm}`);
     return null;
   }

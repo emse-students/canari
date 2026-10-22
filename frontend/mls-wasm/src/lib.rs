@@ -529,6 +529,20 @@ impl WasmMlsClient {
             .to_string()
     }
 
+    /// The identity of the leaf of `group_id` carrying `key_package`'s signature key, or
+    /// `undefined` - who holds the key an Add was refused as a duplicate of. See
+    /// `MlsManager::leaf_holding_key_of`.
+    #[wasm_bindgen]
+    pub fn leaf_holding_key_of(
+        &self,
+        group_id: String,
+        key_package: Vec<u8>,
+    ) -> Result<Option<String>, JsValue> {
+        self.manager
+            .leaf_holding_key_of(&group_id, &key_package)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// The pin of `user_id:device_id` as `{ keys: Uint8Array[], anchored, reaffirmations }`, or
     /// `undefined` for a device never seen - "unverified", never "forged". See
     /// `MlsManager::pinned_signature_keys`.

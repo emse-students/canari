@@ -61,9 +61,9 @@ afterEach(() => {
 });
 
 describe('devicesToAdmit', () => {
-  it('keeps only the devices the tree holds no leaf for, case-insensitively', () => {
+  it('keeps only the devices the tree holds no leaf for, the user half without case', () => {
     const missing = devicesToAdmit({
-      leafIdentities: ['admin:web-1', 'BOB:Phone'],
+      leafIdentities: ['admin:web-1', 'BOB:phone'],
       newcomerUserId: 'bob',
       devices: [
         { deviceId: 'phone', keyPackage: kp(1) },
@@ -71,6 +71,17 @@ describe('devicesToAdmit', () => {
       ],
     });
     expect(missing.map((d) => d.deviceId)).toEqual(['web']);
+  });
+
+  // THE DEVICE HALF IS EXACT, as the canonical identity Rust binds and pins by: `bob:Phone` is not
+  // `bob:phone`, so reading it as one would leave a device of the newcomer unadmitted.
+  it('reads the device half exactly, as Rust does', () => {
+    const missing = devicesToAdmit({
+      leafIdentities: ['bob:Phone'],
+      newcomerUserId: 'bob',
+      devices: [{ deviceId: 'phone', keyPackage: kp(1) }],
+    });
+    expect(missing).toHaveLength(1);
   });
 
   it('is not fooled by another user holding a device of the same name', () => {

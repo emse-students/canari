@@ -12,7 +12,6 @@ import {
   persistMlsStateAfterMutation,
   purgeLocalConversationRecord,
   isGroupActiveOnServer,
-  handleDuplicateLeafError,
 } from '$lib/utils/chat/groupActions';
 import {
   awaitProbe,
@@ -44,6 +43,7 @@ import {
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { sameDeviceIdentity, treeHoldsDevice } from '$lib/mls-client/leafIdentity';
 import {
   DeviceTrustRefusedError,
   isDeviceTrustRefusal,
@@ -90,14 +90,120 @@ async function leafIsInLocalTree(deps: {
   try {
     const identities = await mlsService.getGroupMemberIdentities(groupId);
     // The WHOLE identity, never a bare device id: leaves are `userId:deviceId`, so a suffix or
-    // substring test would let one id answer for another's.
-    return identities.includes(`${userId}:${deviceId}`);
+    // substring test would let one id answer for another's. Compared under the ONE canonical
+    // identity Rust binds and pins by, so a leaf Rust takes for this device is never read as absent
+    // here - that would send an Add Rust then refuses.
+    return treeHoldsDevice(identities, userId, deviceId);
   } catch (e) {
     log(
       `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${deviceId.slice(0, 12)}... is a leaf: ${String(e).slice(0, 100)}`
     );
     return null;
   }
+}
+
+/**
+ * Confirms to the server that an invitation is fulfilled because the device's leaf is already in our
+ * tree - the vouch the server endpoint authorises ("adds no new authority"). Best-effort: a failure
+ * leaves the row pending and the next sync says so again.
+ */
+function vouchInvitationFulfilled(
+  mlsService: Pick<IMlsService, 'updateInvitationStatus'>,
+  inv: { userId: string; deviceId: string },
+  groupId: string,
+  log: (message: string) => void
+): void {
+  mlsService
+    .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'active')
+    .catch((e: unknown) =>
+      log(
+        `[PENDING] ${inv.deviceId} in tree for ${groupId} but the vouch failed: ${String(e).slice(0, 120)}`
+      )
+    );
+}
+
+/**
+ * Whose leaf carries the key an Add of `userId:deviceId` was refused as a DUPLICATE of.
+ *
+ * The refusal says the key is in the tree, never whose leaf holds it, and a tree that merely
+ * CONTAINS this identity does not say the duplicate is its leaf: assuming so would vouch for, or
+ * replace, a device on another device's key. So the tree is asked for the leaf carrying the
+ * package's key (`leafHoldingKeyOf`), and only that leaf being this identity's makes it ours.
+ *
+ * - `this`: the key is this identity's own leaf - the invitation is fulfilled, or the leaf is
+ *   repaired in ONE commit.
+ * - `another`: another identity's leaf carries it - nothing is vouched, replaced or removed.
+ * - `nowhere`: no leaf carries it any more (the tree moved since the refusal), and `unreadable`: the
+ *   tree or the package could not be read - a destructive action is never taken on doubt.
+ */
+type DuplicateKeyHolder =
+  | { kind: 'this' }
+  | { kind: 'another'; holder: string }
+  | { kind: 'nowhere' }
+  | { kind: 'unreadable' };
+
+async function duplicateKeyHolder(deps: {
+  mlsService: Pick<IMlsService, 'leafHoldingKeyOf'>;
+  groupId: string;
+  keyPackage: Uint8Array;
+  userId: string;
+  deviceId: string;
+  /** The caller's log tag, so the line reads in the sequence it belongs to. */
+  tag: string;
+  log: (message: string) => void;
+}): Promise<DuplicateKeyHolder> {
+  const { mlsService, groupId, keyPackage, userId, deviceId, tag, log } = deps;
+  try {
+    const holder = await mlsService.leafHoldingKeyOf(groupId, keyPackage);
+    if (holder === null) return { kind: 'nowhere' };
+    return sameDeviceIdentity(holder, `${userId}:${deviceId}`)
+      ? { kind: 'this' }
+      : { kind: 'another', holder };
+  } catch (e) {
+    log(
+      `${tag} Cannot say whose leaf holds the duplicate key of ${deviceId.slice(0, 12)}... in ${groupId.slice(0, 8)}...: ${String(e).slice(0, 100)}`
+    );
+    return { kind: 'unreadable' };
+  }
+}
+
+/**
+ * Says why an Add refused as a duplicate signature key is NOT repaired here, from the holder lookup
+ * that decided it ({@link duplicateKeyHolder}).
+ *
+ * A duplicate under the SAME identity is repaired by replacing that identity in one commit (or, for
+ * a pending invitation, is already fulfilled). Here the key sits on ANOTHER identity's leaf, which no
+ * legitimate flow produces - a device that changes id starts from a fresh state and a fresh key - so
+ * that is an ERROR line of its own, and nothing is vouched, replaced or removed: the leaf holding it
+ * is not this request's to touch. `nowhere` and `unreadable` are doubt, said at WARN, and the next
+ * request decides.
+ */
+function reportDuplicateKeyNotRepaired(
+  tag: string,
+  groupId: string,
+  identity: string,
+  found: DuplicateKeyHolder
+): void {
+  if (found.kind === 'another') {
+    console.error(
+      `${tag} DUPLICATE KEY HELD BY ANOTHER DEVICE: the package for ${sanitizeLogIdentity(identity)} carries the key of ${sanitizeLogIdentity(found.holder)}'s leaf in ${groupId.slice(0, 8)}... - not vouched, not replaced, nothing removed`
+    );
+    return;
+  }
+  const why = {
+    this: 'it is still its own leaf after a refused replace',
+    nowhere: 'no leaf carries it now',
+    unreadable: 'its holder is unreadable',
+  }[found.kind];
+  console.warn(
+    `${tag} Duplicate signature key for ${sanitizeLogIdentity(identity)} in ${groupId.slice(0, 8)}... and ${why} - nothing removed, the next request decides`
+  );
+}
+
+/** Shortens `userId:deviceId` for a log line the way the other lines of these paths do. */
+function sanitizeLogIdentity(identity: string): string {
+  const [user = '', device = ''] = identity.split(':');
+  return `${user.slice(0, 8)}:${device.slice(0, 12)}`;
 }
 
 /**
@@ -226,6 +332,9 @@ export async function processPendingInvitations(params: {
           reportRefusedDeviceSkipped('[PENDING]', groupId, inv.userId, inv.deviceId);
           continue;
         }
+        // The package the Add is built from, kept for the catch: a duplicate key is attributed by
+        // asking which leaf carries THIS package's key (`duplicateKeyHolder`).
+        let packageAdded: Uint8Array | null = null;
         try {
           // Fetch fresh KeyPackage for the pending device. fetchUserDevices only returns
           // devices active within the last 30 days; fall back to fetchDeviceKeyPackage for
@@ -322,13 +431,7 @@ export async function processPendingInvitations(params: {
             //
             // Best-effort and re-driven: a failure leaves the row pending and the next sync says
             // this again, which is exactly today's behaviour.
-            mlsService
-              .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'active')
-              .catch((e: unknown) =>
-                log(
-                  `[PENDING] ${inv.deviceId} in tree for ${groupId} but the vouch failed: ${String(e).slice(0, 120)}`
-                )
-              );
+            vouchInvitationFulfilled(mlsService, inv, groupId, log);
             log(
               `[PENDING] ${inv.deviceId} already in tree for ${groupId} - invitation fulfilled, vouching`
             );
@@ -340,6 +443,7 @@ export async function processPendingInvitations(params: {
           // or roll back on reject. A rejected commit throws WITHOUT advancing the local epoch (no
           // fork) and is handled by the outer catch as a benign retryable failure; the Welcome is
           // only sent once the commit is accepted. [[C7]]
+          packageAdded = targetDevice.keyPackage;
           const result = await mlsService.addMember(
             groupId,
             { keyPackage: targetDevice.keyPackage, userId: inv.userId, deviceId: inv.deviceId },
@@ -403,21 +507,30 @@ export async function processPendingInvitations(params: {
 
           if (errStr.includes('DuplicateSignatur')) {
             log(`[PENDING] ${inv.deviceId} already in MLS tree of ${groupId}`);
-            // The kick triggered here itself generates a commit: if rejected for fork,
-            // handleDuplicateLeafError surfaces the error -> we switch to recovery.
-            try {
-              await handleDuplicateLeafError({
-                mlsService,
+            // NOTHING IS KICKED, AND NO COMMIT IS MADE. The tree is asked WHOSE leaf carries the
+            // package's key: this identity's, and the invitation is fulfilled - the `alreadyALeaf`
+            // case above, which never repairs a valid leaf (a device that really lost its state asks
+            // by welcome_request, and that path replaces it in ONE commit). Any other leaf, and
+            // there is nothing this invitation may vouch for or remove.
+            const found: DuplicateKeyHolder = packageAdded
+              ? await duplicateKeyHolder({
+                  mlsService,
+                  groupId,
+                  keyPackage: packageAdded,
+                  userId: inv.userId,
+                  deviceId: inv.deviceId,
+                  tag: '[PENDING]',
+                  log,
+                })
+              : { kind: 'unreadable' };
+            if (found.kind === 'this') {
+              vouchInvitationFulfilled(mlsService, inv, groupId, log);
+            } else {
+              reportDuplicateKeyNotRepaired(
+                '[PENDING]',
                 groupId,
-                targetUserId: inv.userId,
-                targetDeviceId: inv.deviceId,
-                userId,
-                deviceKeyB64,
-                log,
-              });
-            } catch (kickErr) {
-              log(
-                `[PENDING] Kick error for ${inv.deviceId} in ${groupId}: ${String(kickErr).slice(0, 100)}`
+                `${inv.userId}:${inv.deviceId}`,
+                found
               );
             }
           } else if (
@@ -944,6 +1057,9 @@ export async function handleWelcomeRequest(params: {
     return;
   }
 
+  // The package the Add or the replace is built from, kept for the catch: a duplicate key is
+  // attributed by asking which leaf carries THIS package's key (`duplicateKeyHolder`).
+  let packageSent: Uint8Array | null = null;
   try {
     const attemptKey = `${groupId}:${requesterDeviceId}`;
     const now = Date.now();
@@ -1080,11 +1196,40 @@ export async function handleWelcomeRequest(params: {
       userId: requesterUserId,
       deviceId: requesterDeviceId,
     };
+    packageSent = invitee.keyPackage;
     const exclude = [`${requesterUserId}:${requesterDeviceId}`];
-    const result =
-      leafPresent === true
-        ? await mlsService.replaceMember(groupId, invitee, exclude)
-        : await mlsService.addMember(groupId, invitee, exclude);
+    let result: { welcome?: Uint8Array; ratchetTree?: Uint8Array };
+    if (leafPresent === true) {
+      result = await mlsService.replaceMember(groupId, invitee, exclude);
+    } else {
+      try {
+        result = await mlsService.addMember(groupId, invitee, exclude);
+      } catch (e) {
+        // A DUPLICATE SIGNATURE KEY: the Add met a leaf already carrying this key. The tree is
+        // asked WHOSE leaf carries it. This identity's (the first read was unreadable, or the leaf
+        // arrived since), and it is the repair above, in ONE commit - never a kick and a re-add,
+        // which left the device out of the group for an epoch. Any other leaf, and nothing is
+        // replaced or removed (`reportDuplicateKeyNotRepaired`).
+        if (!String(e).includes('DuplicateSignatur')) throw e;
+        const found = await duplicateKeyHolder({
+          mlsService,
+          groupId,
+          keyPackage: invitee.keyPackage,
+          userId: requesterUserId,
+          deviceId: requesterDeviceId,
+          tag: '[WELCOME_REQ]',
+          log,
+        });
+        if (found.kind !== 'this') {
+          reportDuplicateKeyNotRepaired('[WELCOME_REQ]', groupId, exclude[0], found);
+          return;
+        }
+        log(
+          `[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - remove + re-add in one commit (found by a duplicate key)`
+        );
+        result = await mlsService.replaceMember(groupId, invitee, exclude);
+      }
+    }
     await mlsService.registerMember(groupId, requesterUserId);
 
     // Send the Welcome + post-merge ratchet tree to the requesting device.
@@ -1127,19 +1272,25 @@ export async function handleWelcomeRequest(params: {
         `[WELCOME_REQ] ${requesterDeviceId} already a member of ${groupId.slice(0, 8)}... - skip`
       );
     } else if (errStr.includes('DuplicateSignatur')) {
-      try {
-        await handleDuplicateLeafError({
-          mlsService,
-          groupId,
-          targetUserId: requesterUserId,
-          targetDeviceId: requesterDeviceId,
-          userId,
-          deviceKeyB64,
-          log,
-        });
-      } catch (kickErr) {
-        log(`[WELCOME_REQ] Kick error for ${requesterDeviceId}: ${String(kickErr).slice(0, 100)}`);
-      }
+      // Reached only from a REPLACE: it removed every leaf of this identity in the same commit, so a
+      // leaf still carrying the key is another identity's - named from the tree, not assumed.
+      const found: DuplicateKeyHolder = packageSent
+        ? await duplicateKeyHolder({
+            mlsService,
+            groupId,
+            keyPackage: packageSent,
+            userId: requesterUserId,
+            deviceId: requesterDeviceId,
+            tag: '[WELCOME_REQ]',
+            log,
+          })
+        : { kind: 'unreadable' };
+      reportDuplicateKeyNotRepaired(
+        '[WELCOME_REQ]',
+        groupId,
+        `${requesterUserId}:${requesterDeviceId}`,
+        found
+      );
     } else {
       log(`[WELCOME_REQ] Error for ${requesterDeviceId}: ${errStr.slice(0, 100)}`);
     }
