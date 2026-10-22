@@ -54,10 +54,11 @@ export function visitorNetwork(address: string): string {
 /** The eight 16-bit groups of a valid IPv6 address, `::` and an embedded IPv4 tail expanded. */
 function ipv6Groups(address: string): number[] {
   let text = address.toLowerCase();
-  const v4Tail = text.match(/(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (v4Tail) {
-    const [a, b, c, d] = v4Tail.slice(1).map(Number);
-    text = `${text.slice(0, v4Tail.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  const lastColon = text.lastIndexOf(':');
+  const lastGroup = text.slice(lastColon + 1);
+  if (lastGroup.includes('.')) {
+    const [a, b, c, d] = lastGroup.split('.').map(Number);
+    text = `${text.slice(0, lastColon + 1)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
   }
   const [head, tail] = text.includes('::') ? text.split('::') : [text, null];
   const headGroups = head ? head.split(':') : [];
