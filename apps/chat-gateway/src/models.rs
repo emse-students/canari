@@ -20,8 +20,12 @@ pub struct Claims {
 /// `token`: JWT access token fallback for Tauri Android/mobile, where the
 /// native WebSocket plugin (outside the WebView) cannot send WebView cookies.
 /// Used ONLY when the `canari_ws_token` cookie is absent.
+///
+/// `caps`: comma-separated capabilities the code behind this socket declares. The one read today is
+/// [`crate::state::ADDRESSED_HISTORY_CAPABILITY`]; absent on every build that predates it.
 #[derive(Deserialize)]
 pub struct AuthParams {
     pub device_id: Option<String>,
     pub token: Option<String>,
+    pub caps: Option<String>,
 }

@@ -1139,6 +1139,14 @@ export interface IMlsService {
    */
   getGroupWithheld(groupId: string, forUserId?: string): Promise<GroupExclusions>;
   /**
+   * Whether the delivery service routes a history answer ADDRESSED to one device of a conversation
+   * (`addressedAnswers` on the same exclusions read - step A,
+   * docs/wiki/protocols/history-answer-addressing.md). `false` from a server that predates it, which
+   * is an ordinary state while a store build runs ahead of production. Same failures as
+   * {@link getGroupExclusions}, and asked with the same `forUserId` it shares that one request.
+   */
+  getAddressedAnswersSupported(groupId: string, forUserId?: string): Promise<boolean>;
+  /**
    * The user-level rosters of many groups in one read (`POST /api/mls/group-rosters`). Never throws:
    * a group it did not answer is absent from both sets, and nothing is decided for it.
    */

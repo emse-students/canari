@@ -9,6 +9,25 @@ use tokio::sync::mpsc;
 /// and stores senders here so it can push frames without holding the lock.
 type ConnectedUser = mpsc::Sender<String>;
 
+/// The capability a socket declares (`caps=` on `/api/ws`) when the code behind it refuses an
+/// ADDRESSED conversation frame that is not a solicited history answer
+/// (`docs/wiki/protocols/history-answer-addressing.md`, rules 5 and 6). chat-delivery addresses a
+/// history answer on a conversation only to a device whose presence key holds exactly this value.
+/// The same literal is `ADDRESSED_HISTORY_CAPABILITY` in chat-delivery and in the client.
+pub const ADDRESSED_HISTORY_CAPABILITY: &str = "addressed-history-1";
+
+/// The presence key's value when not every live session of the device declared the capability -
+/// the value every build wrote before it existed.
+pub const PRESENCE_PLAIN: &str = "true";
+
+/// Whether a `caps=` query value declares [`ADDRESSED_HISTORY_CAPABILITY`].
+pub fn declares_addressed_history(caps: Option<&str>) -> bool {
+    caps.is_some_and(|c| {
+        c.split(',')
+            .any(|cap| cap.trim() == ADDRESSED_HISTORY_CAPABILITY)
+    })
+}
+
 /// Shared application state injected into every Axum handler via `State<Arc<AppState>>`.
 pub struct AppState {
     /// Handle to the Redis instance used for pub/sub, presence keys, and `pending_welcome_notify` lists.
@@ -21,6 +40,9 @@ pub struct AppState {
     /// Allows `ConnectionGuard::drop` to remove exactly one entry from `connected_users`
     /// without risking a race on `is_closed()`.
     pub next_conn_id: AtomicU64,
+    /// Per connection (`conn_id`): whether its socket declared [`ADDRESSED_HISTORY_CAPABILITY`].
+    /// Read by [`AppState::presence_value`] over every live session of a device.
+    pub session_caps: Mutex<HashMap<u64, bool>>,
     /// HS256 secret used to validate the `canari_ws_token` JWT on upgrade.
     pub jwt_secret: String,
     /// Who may see whose presence: asked of chat-delivery and social-service on every
@@ -40,6 +62,7 @@ impl AppState {
             redis_client,
             connected_users: Arc::new(Mutex::new(HashMap::new())),
             next_conn_id: AtomicU64::new(0),
+            session_caps: Mutex::new(HashMap::new()),
             jwt_secret,
             presence_audience,
         }
@@ -56,6 +79,7 @@ impl AppState {
     /// can still report `false` until the runtime drops its receiver, so the
     /// authoritative removal is by `conn_id`.
     pub fn remove_session(&self, conn_key: &str, conn_id: u64) -> bool {
+        self.session_caps.lock().unwrap().remove(&conn_id);
         let mut map = self.connected_users.lock().unwrap();
         let Some(senders) = map.get_mut(conn_key) else {
             return false;
@@ -67,6 +91,36 @@ impl AppState {
             return false;
         }
         true
+    }
+
+    /// Record what the socket `conn_id` declared on upgrade (`caps=`).
+    pub fn note_session_caps(&self, conn_id: u64, addressed_history: bool) {
+        self.session_caps
+            .lock()
+            .unwrap()
+            .insert(conn_id, addressed_history);
+    }
+
+    /// The value to write to the device's presence key `user:online:{userId}:{deviceId}`.
+    ///
+    /// [`ADDRESSED_HISTORY_CAPABILITY`] only while EVERY live session of the device declared it, and
+    /// [`PRESENCE_PLAIN`] otherwise. Every session receives every frame routed to the device (the
+    /// pub/sub loop sends to all of them), so one tab left open on an older build - which would apply
+    /// an addressed frame as an ordinary one - must make the whole device unaddressable while it is
+    /// connected. A session whose declaration was never recorded counts as not declaring. Nothing
+    /// else reads the value: presence is the key's EXISTENCE.
+    pub fn presence_value(&self, conn_key: &str) -> &'static str {
+        let map = self.connected_users.lock().unwrap();
+        let caps = self.session_caps.lock().unwrap();
+        let all_declare = map.get(conn_key).is_some_and(|senders| {
+            let mut live = senders.iter().filter(|(_, s)| !s.is_closed()).peekable();
+            live.peek().is_some() && live.all(|(id, _)| caps.get(id).copied().unwrap_or(false))
+        });
+        if all_declare {
+            ADDRESSED_HISTORY_CAPABILITY
+        } else {
+            PRESENCE_PLAIN
+        }
     }
 
     /// Answer the same question WITHOUT unregistering: does any live session other
@@ -171,6 +225,43 @@ mod tests {
                 .unwrap()
                 .contains_key("user-1:device-2")
         );
+    }
+
+    #[test]
+    fn the_capability_is_read_from_the_caps_query_value() {
+        assert!(declares_addressed_history(Some("addressed-history-1")));
+        assert!(declares_addressed_history(Some(
+            "other, addressed-history-1"
+        )));
+        assert!(!declares_addressed_history(Some("addressed-history-2")));
+        assert!(!declares_addressed_history(None));
+    }
+
+    /// Rule 6 of history-answer-addressing: a device is addressable only while EVERY session of it
+    /// declared the capability, because every session receives the frame.
+    #[test]
+    fn the_capability_holds_only_while_every_session_declares_it() {
+        let state = state();
+        let _new_tab = register(&state, KEY, 1);
+        state.note_session_caps(1, true);
+        assert_eq!(state.presence_value(KEY), ADDRESSED_HISTORY_CAPABILITY);
+
+        // A tab still open on an older build connects: the device is no longer addressable.
+        let _old_tab = register(&state, KEY, 2);
+        state.note_session_caps(2, false);
+        assert_eq!(state.presence_value(KEY), PRESENCE_PLAIN);
+
+        // It leaves: the device is addressable again.
+        state.remove_session(KEY, 2);
+        assert_eq!(state.presence_value(KEY), ADDRESSED_HISTORY_CAPABILITY);
+    }
+
+    #[test]
+    fn a_session_with_no_recorded_declaration_does_not_declare() {
+        let state = state();
+        let _rx = register(&state, KEY, 1);
+        assert_eq!(state.presence_value(KEY), PRESENCE_PLAIN);
+        assert_eq!(state.presence_value("nobody:none"), PRESENCE_PLAIN);
     }
 
     /// Removing a connection that is not registered answers "offline" rather than

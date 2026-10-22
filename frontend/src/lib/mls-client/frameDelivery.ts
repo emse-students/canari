@@ -78,3 +78,31 @@ export const DELIVERY = {
 export function addressedKeyMaterial(device: string): FrameDelivery {
   return { ...DELIVERY.keyMaterial, recipients: [device] };
 }
+
+/**
+ * A history answer on a conversation, to the ONE device that asked (step A,
+ * docs/wiki/protocols/history-answer-addressing.md): transport, as every history frame, and
+ * addressed - the server refuses an addressed conversation frame that is durable, and one to a device
+ * that did not declare {@link ADDRESSED_HISTORY_CAPABILITY}.
+ *
+ * @param device The asking device as `userId:deviceId`, the user id lower-cased (`digestIdentity`).
+ */
+export function addressedHistoryAnswer(device: string): FrameDelivery {
+  return { ...DELIVERY.transport, recipients: [device] };
+}
+
+/**
+ * The capability this build declares on its socket (`caps=` on `/api/ws`): it refuses an addressed
+ * conversation frame that is not a solicited, bounded history answer (`historyAddressing.ts`). The
+ * gateway publishes it only while every live session of the device declares it, and chat-delivery
+ * addresses a conversation frame only to such a device. The same literal is in chat-delivery
+ * (`ADDRESSED_HISTORY_CAPABILITY`) and the gateway (`state.rs`).
+ */
+export const ADDRESSED_HISTORY_CAPABILITY = 'addressed-history-1';
+
+/**
+ * The capabilities query both socket openers append to `/api/ws` (web and Tauri), so the two cannot
+ * declare different things. Declared by every session: a tab is a reader of every frame routed to
+ * the device, so each one says what it applies.
+ */
+export const GATEWAY_CAPS_QUERY = `&caps=${encodeURIComponent(ADDRESSED_HISTORY_CAPABILITY)}`;

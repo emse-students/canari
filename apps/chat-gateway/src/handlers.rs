@@ -256,8 +256,17 @@ pub async fn ws_handler(
                 .map(|id| id.to_string())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+            // What the code behind this socket declared (history-answer-addressing, rule 6).
+            let addressed_history =
+                crate::state::declares_addressed_history(params.caps.as_deref());
             ws.on_upgrade(move |socket| {
-                handle_socket(socket, state, token_data.claims.sub, device_id)
+                handle_socket(
+                    socket,
+                    state,
+                    token_data.claims.sub,
+                    device_id,
+                    addressed_history,
+                )
             })
         }
         Err(_) => (StatusCode::UNAUTHORIZED, "Invalid parameters").into_response(),
@@ -282,11 +291,13 @@ async fn handle_socket(
     state: Arc<AppState>,
     user_id: String,
     device_id: String,
+    addressed_history: bool,
 ) {
     tracing::info!(
-        "New WebSocket connection: User={}, Device={}",
+        "New WebSocket connection: User={}, Device={}, addressed-history={}",
         user_id,
-        device_id
+        device_id,
+        addressed_history
     );
 
     let (mut ws_sender, mut receiver) = socket.split();
@@ -303,6 +314,9 @@ async fn handle_socket(
         map.entry(conn_key.clone())
             .or_default()
             .insert(conn_id, tx.clone());
+        // Recorded while the map lock is held, so no presence write can see this session without
+        // its declaration (`AppState::presence_value` reads both).
+        state.note_session_caps(conn_id, addressed_history);
         tracing::info!(
             "Registered connection key: {} (conn_id={}, {} active)",
             conn_key,
@@ -338,8 +352,11 @@ async fn handle_socket(
     {
         Ok(mut con) => {
             // ── Set initial presence key ───────────────────────────────
+            // The VALUE says whether every live session of the device declared the addressed-history
+            // capability; presence itself is the key's existence.
+            let presence = state.presence_value(&conn_key);
             if let Err(e) = con
-                .set_ex::<_, _, ()>(&redis_key, "true", PRESENCE_TTL_SECS)
+                .set_ex::<_, _, ()>(&redis_key, presence, PRESENCE_TTL_SECS)
                 .await
             {
                 tracing::warn!(
@@ -638,11 +655,13 @@ async fn refresh_presence(
     conn_key: &str,
 ) {
     let redis_key = format!("user:online:{}:{}", user_id, device_id);
+    // Recomputed on every refresh, so a sibling session that joined or left is reflected.
+    let presence = state.presence_value(conn_key);
 
     // Try the existing connection first.
     if let Some(con) = con_opt.as_mut() {
         match con
-            .set_ex::<_, _, ()>(&redis_key, "true", PRESENCE_TTL_SECS)
+            .set_ex::<_, _, ()>(&redis_key, presence, PRESENCE_TTL_SECS)
             .await
         {
             Ok(_) => return,
@@ -661,7 +680,7 @@ async fn refresh_presence(
     match state.redis_client.get_multiplexed_async_connection().await {
         Ok(mut new_con) => {
             if let Err(e) = new_con
-                .set_ex::<_, _, ()>(&redis_key, "true", PRESENCE_TTL_SECS)
+                .set_ex::<_, _, ()>(&redis_key, presence, PRESENCE_TTL_SECS)
                 .await
             {
                 tracing::warn!(

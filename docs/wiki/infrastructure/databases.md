@@ -421,7 +421,7 @@ Redis is used for three distinct purposes:
 
 ### Presence keys
 
-`user:online:{userId}:{deviceId}` — TTL 20 seconds, refreshed on each WebSocket Pong. Deleted immediately on clean disconnect.
+`user:online:{userId}:{deviceId}` — TTL 20 seconds, refreshed on each WebSocket Pong. Deleted immediately on clean disconnect. Its value is `true`, or `addressed-history-1` while every live session of the device declared that capability ([chat-gateway](../services/chat-gateway.md#presence)).
 
 ### History streams
 

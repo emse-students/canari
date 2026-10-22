@@ -143,7 +143,12 @@ pub fn spawn_redis_subscriber(redis_client: redis::Client, connected_users: Conn
                                 "isCommit": json.get("isCommit").and_then(|v| v.as_bool()).unwrap_or(false),
                                 "ratchetTree": json.get("ratchetTree").cloned().unwrap_or(serde_json::Value::Null),
                                 "proto": proto_b64,
-                                "queuedMessageId": json.get("queuedMessageId").and_then(|v| v.as_str()).unwrap_or("")
+                                "queuedMessageId": json.get("queuedMessageId").and_then(|v| v.as_str()).unwrap_or(""),
+                                // The routing fact the receiver needs to refuse an addressed
+                                // conversation frame that is not a solicited history answer
+                                // (history-answer-addressing, rules 4-5). Dropping it here would
+                                // make every live addressed frame look like a broadcast.
+                                "addressed": json.get("addressed").and_then(|v| v.as_bool()).unwrap_or(false)
                             })
                             .to_string()
                             };

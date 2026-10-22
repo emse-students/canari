@@ -38,6 +38,8 @@ describe('MessagingService - visibility vs durability', () => {
     xrange: jest.fn().mockResolvedValue([]),
     sadd: jest.fn().mockResolvedValue(1),
     exists: jest.fn().mockResolvedValue(0),
+    // The presence key's VALUE: what the device's live sessions declared (`caps=` on the socket).
+    get: jest.fn().mockResolvedValue(null),
     publish: jest.fn().mockResolvedValue(1),
     smembers: jest.fn().mockResolvedValue([]),
     pipeline: jest.fn(() => pipelineDouble()),
@@ -156,6 +158,8 @@ describe('MessagingService - visibility vs durability', () => {
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
     keyPackageRepo.find.mockResolvedValue([]);
     groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: 'w1' });
+    redis.exists.mockResolvedValue(0);
+    redis.get.mockResolvedValue(null);
     execResult = [
       [null, '1-0'],
       [null, 0],
@@ -630,15 +634,86 @@ describe('MessagingService - visibility vs durability', () => {
       ).rejects.toThrow('refused on a commit or a Welcome');
     });
 
-    it('refuses an addressed frame on a conversation group, where it would let a member equivocate', async () => {
-      groupOfThree();
-      groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: null });
+    /**
+     * STEP A (docs/wiki/protocols/history-answer-addressing.md): a history answer on a CONVERSATION
+     * is addressed to the device that asked. Held to rules 3 and 6 - transport only, and only to a
+     * device whose every live session declared that it refuses an addressed frame that is not a
+     * solicited history answer.
+     */
+    describe('on a conversation group', () => {
+      const conversation = () => {
+        groupOfThree();
+        groupRepo.findOne.mockResolvedValue({ id: 'g1', distributionWorkspaceId: null });
+        // Every device is online - a transport frame reaches nobody else.
+        redis.exists.mockResolvedValue(1);
+      };
+      const declares = (...devices: string[]) =>
+        redis.get.mockImplementation(async (key: string) =>
+          devices.some((d) => key === `user:online:${d}`) ? 'addressed-history-1' : 'true'
+        );
 
-      await expect(
-        service.sendMessage(send({ silent: true, durable: true, recipientDevices: ['u2:dB'] }))
-      ).rejects.toThrow('key-distribution group only');
-      expect(queuedMessageRepo.save).not.toHaveBeenCalled();
-      expect(redis.xadd).not.toHaveBeenCalled();
+      it('queues the answer for the asking device ONLY - another device of the group gets no row', async () => {
+        conversation();
+        declares('u2:dB');
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        expect(queuedDevices()).toEqual(['dB']);
+        // The newcomer's device and the asker's own sibling device: no row, no realtime frame.
+        const published = redis.publish.mock.calls.map((c) => JSON.parse(String(c[1])));
+        expect(published.map((f) => f.deviceId)).toEqual(['dB']);
+        expect(redis.xadd).not.toHaveBeenCalled();
+      });
+
+      it('marks the row and the live frame `addressed`, the routing fact the receiver needs', async () => {
+        conversation();
+        declares('u2:dB');
+
+        await service.sendMessage(
+          send({ silent: true, durable: false, recipientDevices: ['u2:dB'] })
+        );
+
+        const rows = queuedMessageRepo.save.mock.calls[0][0] as unknown as { addressed: boolean }[];
+        expect(rows.map((r) => r.addressed)).toEqual([true]);
+        expect(JSON.parse(String(redis.publish.mock.calls[0][1])).addressed).toBe(true);
+      });
+
+      it('a frame that is not addressed is never marked', async () => {
+        conversation();
+
+        await service.sendMessage(send({ silent: true, durable: false }));
+
+        const rows = queuedMessageRepo.save.mock.calls[0][0] as unknown as { addressed: boolean }[];
+        expect(rows.every((r) => r.addressed === false)).toBe(true);
+        expect(
+          redis.publish.mock.calls.every((c) => !('addressed' in JSON.parse(String(c[1]))))
+        ).toBe(true);
+      });
+
+      it('refuses a DURABLE addressed frame - an answer may not enter the queue of an offline device', async () => {
+        conversation();
+        declares('u2:dB');
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: true, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({ response: { error: 'addressed_durable' } });
+        expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('refuses a device whose live sessions did not ALL declare the capability, and names it', async () => {
+        conversation();
+        declares('u2:dA');
+
+        await expect(
+          service.sendMessage(send({ silent: true, durable: false, recipientDevices: ['u2:dB'] }))
+        ).rejects.toMatchObject({
+          response: { error: 'addressed_unsupported', devices: ['u2:dB'] },
+        });
+        expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+        expect(redis.publish).not.toHaveBeenCalled();
+      });
     });
 
     it('refuses an empty or malformed list rather than reading it as "the whole group"', async () => {

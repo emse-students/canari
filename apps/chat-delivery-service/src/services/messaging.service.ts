@@ -314,6 +314,15 @@ const MAX_MEMBER_KEY_LENGTH = 256;
 const MAX_ADDRESSED_DEVICES = 16;
 
 /**
+ * The capability a device's live sessions declare on their socket (`caps=` on `/api/ws`) when their
+ * code refuses an addressed conversation frame that is not a solicited history answer. The gateway
+ * writes it as the presence key's VALUE while every session of the device declared it, `true`
+ * otherwise. The same literal is in `apps/chat-gateway/src/state.rs` and the client's
+ * `historyAddressing.ts`; a new rule 5 would be a new capability, never a reinterpretation of this one.
+ */
+export const ADDRESSED_HISTORY_CAPABILITY = 'addressed-history-1';
+
+/**
  * Reads `SendMessageBody.recipientDevices` into lower-cased `userId:deviceId` keys, or `null` when
  * the frame is addressed to the whole group (field absent).
  *
@@ -1090,6 +1099,53 @@ export class MessagingService {
   }
 
   /**
+   * Refuses an addressed CONVERSATION frame unless every device it reaches applies rule 5 of
+   * docs/wiki/protocols/history-answer-addressing.md - refuse any addressed frame that is not a
+   * solicited, bounded history answer.
+   *
+   * THE EVIDENCE IS DECLARED BY THE CODE THAT WILL DECRYPT THE FRAME, not by a version. The gateway
+   * writes the presence key's value as {@link ADDRESSED_HISTORY_CAPABILITY} only while every live
+   * session of the device opened its socket declaring it (`AppState::presence_value`), so a tab left
+   * open on an older build makes its device unaddressable for as long as it is connected. The frame
+   * is transport-only (checked by the caller), so its addressee is online by construction and the
+   * live sessions are exactly the readers. An offline addressee answers no capability and is refused
+   * too: a transport frame would not have been queued for it anyway.
+   *
+   * @throws BadRequestException `{ error: 'addressed_unsupported', devices }` naming the devices that
+   *   did not declare it - the answerer then answers nobody, and never by broadcast.
+   */
+  private async assertConversationAddressable(
+    groupId: string,
+    targets: ReadonlyArray<{ userId: string; deviceId: string }>,
+    traceId: string
+  ): Promise<void> {
+    const incapable: string[] = [];
+    for (const t of targets) {
+      const declared = await this.redis.get(this.presenceKey(t.userId, t.deviceId));
+      if (declared !== ADDRESSED_HISTORY_CAPABILITY) incapable.push(`${t.userId}:${t.deviceId}`);
+    }
+    if (incapable.length === 0) {
+      this.logger.log(
+        `[SEND][${traceId}] ADDRESSED_CONVERSATION group=${groupId} to=${targets
+          .map((t) => t.deviceId)
+          .join(',')} - every addressee declared ${ADDRESSED_HISTORY_CAPABILITY}`
+      );
+      return;
+    }
+    // EXPECTED while older builds are online, so not an error here: the answerer is told and answers
+    // nobody, and the older device is served by an older peer as before.
+    this.logger.log(
+      `[SEND][${traceId}] REJECT addressed_unsupported group=${groupId} devices=${incapable.join(',')}` +
+        ` - no live session declared ${ADDRESSED_HISTORY_CAPABILITY}`
+    );
+    throw new BadRequestException({
+      error: 'addressed_unsupported',
+      message: `the addressed device(s) did not declare ${ADDRESSED_HISTORY_CAPABILITY}`,
+      devices: incapable,
+    });
+  }
+
+  /**
    * HANDS ONE QUEUED ROW TO ONE DEVICE, AND IT IS THE ONLY WAY A FRAME LEAVES THIS SERVICE.
    *
    * Online: publish the envelope on `chat:messages` for the gateway to route, then arm the deferred
@@ -1178,6 +1234,9 @@ export class MessagingService {
         // survives and the next pull redelivers it - destructively, for a Welcome.
         queuedMessageId: queued.id,
         createdAt: queued.createdAt.toISOString(),
+        // Only when true, like `ratchetTree`: the receiver refuses an addressed conversation frame
+        // that is not a solicited history answer (history-answer-addressing, rule 5).
+        ...(queued.addressed ? { addressed: true } : {}),
       })
     );
     if (!batch) {
@@ -1270,21 +1329,26 @@ export class MessagingService {
         // performed BY a device that is legitimately not active yet - `validateCommit` promotes it
         // precisely because such a device never receives a Welcome - so gating commits and Welcomes
         // here would wall up the one door out of `pending`.
-        // AN ADDRESSED FRAME IS ALLOWED ON A KEY-DISTRIBUTION GROUP ONLY - an allowlist, not a
-        // denylist. Its one sender is a Graine answer (channel-encryption section 23). On a
-        // conversation group the same field would let a member show different ciphertexts to
-        // different members and keep each out of the shared history stream - an equivocation the
-        // ordinary fan-out (one ciphertext, every member) makes impossible.
-        if (addressed) {
-          if (!(await this.isKeyDistributionGroup(groupId))) {
-            this.logger.warn(
-              `[SEND][${traceId}] REJECT addressed_not_key_group group=${groupId} - ` +
-                `recipientDevices is accepted on a key-distribution group only`
-            );
-            throw new BadRequestException(
-              'recipientDevices is accepted on a key-distribution group only'
-            );
-          }
+        // AN ADDRESSED FRAME ON A CONVERSATION IS A HISTORY ANSWER, AND IS HELD TO WHAT MAKES THAT SAFE.
+        // On a key-distribution group its one sender is a Graine answer (channel-encryption section
+        // 23) and nothing changes. On a conversation the same field lets a member show one device a
+        // frame the rest of the group never sees - an equivocation the ordinary fan-out (one
+        // ciphertext, every member) makes impossible. It is accepted there since step A
+        // (docs/wiki/protocols/history-answer-addressing.md, rules 3 and 6) only as a TRANSPORT
+        // frame, and only to devices whose every live session declared that it refuses an addressed
+        // frame that is not a solicited history answer - checked below, once the targets are known.
+        const addressedConversation = addressed
+          ? !(await this.isKeyDistributionGroup(groupId))
+          : false;
+        if (addressedConversation && (body.durable ?? !body.silent)) {
+          this.logger.warn(
+            `[SEND][${traceId}] REJECT addressed_durable group=${groupId} - an addressed frame on a ` +
+              `conversation must be transport-only`
+          );
+          throw new BadRequestException({
+            error: 'addressed_durable',
+            message: 'an addressed frame on a conversation must be transport-only (durable: false)',
+          });
         }
 
         const isHandshake = !!body.isCommit || !!body.isWelcome;
@@ -1425,6 +1489,9 @@ export class MessagingService {
             );
           }
         }
+        if (addressedConversation) {
+          await this.assertConversationAddressable(groupId, targets, traceId);
+        }
         const ghosts = recipients.filter(
           (m) =>
             !isSender(m) &&
@@ -1462,6 +1529,9 @@ export class MessagingService {
               isCommit: body.isCommit,
               proto,
               createdAt: receivedAt,
+              // The ROUTING fact the receiver needs: MLS encrypts for the whole group, so only the
+              // server can say this copy went to this device alone (history-answer-addressing, 4).
+              addressed: addressed !== null,
             })
           );
         }
