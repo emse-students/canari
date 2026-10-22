@@ -128,7 +128,7 @@ key-rotation decision.
 
 **The caps.** A session never re-distributed keeps 100 messages and 7 days. A re-distributed one
 (`anchor.redistributed`) has 50 messages and 24 hours FROM ITS MINT, and a session already past those
-rotates instead of being re-distributed. See the residual below.
+rotates instead of being re-distributed.
 
 ### 4. A reused session re-distributes the same seed
 
@@ -154,29 +154,7 @@ fresh seed), and its access to the past comes from the history paths, not from r
 NEW USER still rotates (new-user rule), and a removal it cannot hide from this device's own merges
 still ends the run.
 
-## The named residual: a stolen seed lives longer (accepted 2026-10-22)
-
-**Rotate-on-add bounded a stolen copy of the Graine store without anyone intending it.** On
-production a session lived about two messages, because the next Add replaced it. A copy of a device's
-seeds, taken without removing its leaf (a backup, a debug dump, a briefly borrowed unlocked phone),
-was therefore worth almost nothing a few messages later. Reuse removes that accident for device
-joins. A seed now lives until a removal, a new user or a cap. Key-group leaves never self-update
-(see the backlog P3 on the 109-seat group conversation), so nothing else shortens its life.
-
-**Accepted by Master on 2026-10-22, under the user's mandate on MLS robustness, with the caps as the
-stated bound.** The measurement behind them was taken on production, read-only, on 2026-10-22: 1,667
-salon messages in the last 30 days, counted per (salon, sender).
-
-| Per (salon, sender) | p50 | p90 | p99 | max |
-| --- | --- | --- | --- | --- |
-| messages in one week | 3 | 13 | 55 | 79 |
-| messages in one day | 2 | 10 | 38 | 58 |
-
-- **24 hours.** A sender uses about one session per salon per active DAY: about 387 sender-days in
-  the 30 days, against about 830 sessions under rotate-on-add. The exposure of a stolen copy drops
-  from a week to a day.
-- **50 messages.** Above the p99 day (38), so the age cap normally fires first; it bounds a burst.
-- **A session never re-distributed keeps 100 messages and 7 days.** It has been live through no Add.
+Seeds rotate on a removal or a new user; see the [backlog](../backlog.md) for the rotation policy.
 
 ## The adversarial review of the first draft, and what it changed
 
@@ -268,8 +246,7 @@ outside these two functions moved the epoch, worth a line in the report); a Remo
 the app is killed, then a send after it reopens: it must rotate.
 
 **Owed, production, after a stable:** the seeds-per-message ratio, re-run with the query of
-2026-10-21 (845 sessions for 1 698 messages), and the per-sender rates of the residual section, re-run
-with their query. The ratio should fall toward "senders x active days". If it does not, the reset
+2026-10-21 (845 sessions for 1 698 messages), and the per-(salon, sender) message rates. The ratio should fall toward "senders x active days". If it does not, the reset
 reasons say why: many `reason=gap` means an epoch is moved outside the two merge functions; many
 `reason=departure` means external rejoins dominate; many `reason=new-user` with one user already
 present means external key-group joins dominate (review item 12).
