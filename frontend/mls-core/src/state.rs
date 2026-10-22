@@ -10,6 +10,7 @@ use std::collections::{BTreeSet, HashMap};
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::MlsError;
+use crate::graine_run::GraineRun;
 
 // --- 1. Persistence model (on disk) ---
 
@@ -33,6 +34,13 @@ pub struct PersistedState {
     /// #[serde(default)] ensures compatibility with states saved before this field was added.
     #[serde(default)]
     pub forgotten_group_min_epochs: HashMap<String, u64>,
+    /// Graine's departure tracker, one clean run per group (`graine_run.rs`). Kept in THIS blob so
+    /// it is written by the same checkpoint as the tree it describes. `#[serde(default)]`: a state
+    /// written before the field has no runs, so its first sends rotate exactly as before. A build
+    /// that predates the field ignores it on read and drops it on its next write - the fail-safe
+    /// direction, since no run means rotate.
+    #[serde(default)]
+    pub graine_runs: HashMap<String, GraineRun>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -48,6 +56,7 @@ pub(crate) struct PersistedStateSer<'a> {
     #[serde(with = "crate::byte_compat::bytes_vec")]
     pub(crate) group_ids: &'a [Vec<u8>],
     pub(crate) forgotten_group_min_epochs: &'a HashMap<String, u64>,
+    pub(crate) graine_runs: &'a HashMap<String, GraineRun>,
 }
 
 // Struct request wrapper for serialization
@@ -162,6 +171,9 @@ pub struct MlsManager {
     /// Set by forget_group to prevent a stale Welcome (from a device itself behind on epoch)
     /// from putting this device back on the wrong branch.
     pub(crate) forgotten_group_min_epochs: HashMap<String, u64>,
+
+    /// Graine's departure tracker, persisted with the state (`graine_run.rs`).
+    pub(crate) graine_runs: HashMap<String, GraineRun>,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
 }
@@ -703,6 +715,7 @@ impl MlsManager {
                 credential,
                 groups,
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
+                graine_runs: state.graine_runs,
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -810,6 +823,7 @@ impl MlsManager {
                 credential,
                 groups: HashMap::new(),
                 forgotten_group_min_epochs: HashMap::new(),
+                graine_runs: HashMap::new(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
             })
         }
@@ -863,6 +877,7 @@ impl MlsManager {
             storage_values: &storage_lock,
             group_ids: &group_ids,
             forgotten_group_min_epochs: &self.forgotten_group_min_epochs,
+            graine_runs: &self.graine_runs,
         };
 
         let mut final_bytes = Vec::new();

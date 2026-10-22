@@ -60,16 +60,28 @@ predicate should follow it to the caller's current interval.
 
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
-Every device joining a community's key group commits, and `shouldRotateGraineSession` rotates on any
+Every device joining a community's key group commits, and the outbound rotation rotated on any
 epoch change. Production: 845 sessions for 1 698 messages, and 458 seeds in the largest community's
 first 8 days. The history bundle carries every seed, about 330 bytes each in v2, so its 8 000-seed cap
 is about 2.6 MB in one MLS message. Owed, in order:
-(1) rotate on a DEPARTURE only - the identity-set comparison was refused 2026-10-22 (a leaf added
-and removed between two sends is in neither set); the design is a per-key-group clean run fed by a
-commit summary from `mls-core`, DRAFT for review: [graine-removal-tracker](protocols/graine-removal-tracker.md); (2) bound the bundle in bytes and page it, after measuring what the gateway and
+(1) rotate on a REMOVAL or a NEW USER only - BUILT 2026-10-22, draft pull request: a clean run per
+key group kept in the MLS state by `mls-core` and judged by `graineOutboundVerdict`
+([graine-removal-tracker](protocols/graine-removal-tracker.md)). Owed after merge: the rig rows and the
+production ratio named on that page, and one read-only pass proving every stored external commit's
+path leaf names its committer (the server now refuses one that does not). A new USER still rotates
+(D5, decided 2026-10-22); a new device of a present user continues, by an Add or an external
+commit alike; (2) bound the bundle in bytes and page it, after measuring what the gateway and
 the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
+
+### P3 - one identity reader for rotation and device trust (#2263 / #2268)
+
+`user_of` in `frontend/mls-core/src/graine_run.rs` reads the canonical user of a leaf (well-formed
+`user:device`, user half ASCII-lowercased). It becomes #2268's shared reader `canonical_user_of`,
+done by whichever of #2263 and #2268 lands second, so rotation and trust never disagree on who a
+user is. One difference the swap changes: `canonical_user_of` reads a legacy bare `userId`
+credential as that user, while `user_of` treats it as malformed and so rotates on it.
 
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
 
