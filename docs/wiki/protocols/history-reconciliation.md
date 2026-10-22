@@ -1166,12 +1166,20 @@ crypto, with a shared vector against the Rust side):
 | edit, deletion | the author's signed event names this message; or the relayer is the author | dropped, never applied on a third party's word |
 | reaction | the reactor's signed frame proves exactly this state; or the relayer is the reactor | dropped |
 
-**Keys - only those this device trusts.** The author's leaf in the current tree, which MLS
-authenticated; the device-key pins of the key-binding work join it when that work exposes them. A
-key the SERVER publishes is never evidence either way: it can neither verify a proof (a server could
-list a key for a device that never existed) nor accuse one (an erasure, or a server, can drop a real
-key). So `forged` means a TRUSTED key contradicts the signature, and an author with no trusted key
-is `unproven` - kept, marked, exactly like an unsigned message.
+**Keys - only those this device trusts, tried in order.** The author's leaf in the current tree,
+which MLS authenticated, then the keys this device pinned for that device
+(`pinnedSignatureKeys`, the key-binding work) - so an author who has LEFT the tree still verifies.
+A key the SERVER publishes is never evidence either way: it can neither verify a proof (a server
+could list a key for a device that never existed) nor accuse one (an erasure, or a server, can drop
+a real key). An author with no trusted key is `unproven` - kept, marked, exactly like an unsigned
+message.
+
+**Verifying and accusing are different questions.** A key that verifies proves the author; a key
+that fails to verify accuses only if it is the key the author held WHEN it signed. The current tree
+cannot say so - a heal's re-Welcome replaces the leaf, and the proof names no epoch - and a pin
+re-taken by a heal past the pin cap may be a server-served key. So neither accuses: a contradiction
+is `unproven`, and `forged` is left to a malformed proof. Only a pin the key-binding work marks
+ANCHORED (first seen in an authenticated tree) may accuse, once it exposes that mark.
 
 **An edited message is verified only with its edit.** The signed bytes are the ORIGINAL body. A
 restored message marked edited whose edit is not proven by the author's signed `edit_message` keeps

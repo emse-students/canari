@@ -78,14 +78,14 @@ describe('checking a relayed proof', () => {
     expect(check.kind === 'verified' && check.group).toBe('g-elsewhere');
   });
 
-  it('refuses a proof whose recorded group was rewritten to this conversation', async () => {
+  it('never verifies a proof whose recorded group was rewritten to this conversation', async () => {
     const alice = await newTestAuthor('alice:dev-a');
     const rec = await signedBy(alice, 'g-elsewhere', HELLO);
     const check = await checkRecordedAuthorship(keySource({ tree: [alice] }), GROUP, {
       ...rec,
       group: GROUP,
     });
-    expect(check.kind).toBe('forged');
+    expect(check.kind).toBe('unproven');
   });
 
   it('refuses a proof that names no group', async () => {
@@ -98,7 +98,7 @@ describe('checking a relayed proof', () => {
     expect(check.kind).toBe('forged');
   });
 
-  it('refuses a body whose text or timestamp was changed after signing', async () => {
+  it('never verifies a body whose text or timestamp was changed after signing', async () => {
     const alice = await newTestAuthor('alice:dev-a');
     const rec = await signedBy(alice, GROUP, HELLO);
     for (const altered of [
@@ -108,17 +108,17 @@ describe('checking a relayed proof', () => {
       const forged = { ...rec, body: toBase64(encodeAppMessage(altered)) };
       expect(
         (await checkRecordedAuthorship(keySource({ tree: [alice] }), GROUP, forged)).kind
-      ).toBe('forged');
+      ).toBe('unproven');
     }
   });
 
-  it('refuses a proof signed by one member in another member name', async () => {
+  it('never verifies a proof signed by one member in another member name', async () => {
     const alice = await newTestAuthor('alice:dev-a');
     const mallory = await newTestAuthor('mallory:dev-m');
     // Mallory signs with HER key, claiming to be alice: alice's key does not verify it.
     const rec = await signedBy(mallory, GROUP, HELLO, { claim: 'alice:dev-a' });
     const check = await checkRecordedAuthorship(keySource({ tree: [alice, mallory] }), GROUP, rec);
-    expect(check.kind).toBe('forged');
+    expect(check.kind).toBe('unproven');
   });
 
   it('neither verifies nor accuses an author with no leaf in the tree - the server is no evidence', async () => {
@@ -154,24 +154,32 @@ describe('checking a relayed proof', () => {
     expect(check.kind).toBe('unproven');
   });
 
-  it('accuses when the only trusted key is a pin that contradicts the signature', async () => {
+  it('does not accuse on an unanchored pin that contradicts the signature', async () => {
+    // A pin may have been re-taken from a server-served key by a heal past the pin cap: a genuine
+    // old signature under the real key must not read as a forgery.
     const alice = await newTestAuthor('alice:dev-a');
     const substitute = await newTestAuthor('alice:dev-a');
-    const rec = await signedBy(substitute, GROUP, HELLO);
+    const rec = await signedBy(alice, GROUP, HELLO);
     const check = await checkRecordedAuthorship(
-      keySource({ tree: [], pinned: [alice] }),
+      keySource({ tree: [], pinned: [substitute] }),
       GROUP,
       rec
     );
-    expect(check.kind).toBe('forged');
+    expect(check.kind).toBe('unproven');
   });
 
-  it('accuses only when a trusted key contradicts the signature', async () => {
+  it('does not accuse on a current tree key - it may come from a re-Welcome, not the message epoch', async () => {
+    // A re-Welcome tree carries whatever leaf the device holds NOW; the proof names no epoch, so the
+    // current tree cannot say it is the tree the message was sent in.
     const alice = await newTestAuthor('alice:dev-a');
-    const substitute = await newTestAuthor('alice:dev-a');
-    const rec = await signedBy(substitute, GROUP, HELLO);
-    const check = await checkRecordedAuthorship(keySource({ tree: [alice] }), GROUP, rec);
-    expect(check.kind).toBe('forged');
+    const rewelcomed = await newTestAuthor('alice:dev-a');
+    const rec = await signedBy(alice, GROUP, HELLO);
+    const check = await checkRecordedAuthorship(
+      keySource({ tree: [rewelcomed], pinned: [rewelcomed] }),
+      GROUP,
+      rec
+    );
+    expect(check.kind).toBe('unproven');
   });
 
   it('refuses a proof that does not decode', async () => {

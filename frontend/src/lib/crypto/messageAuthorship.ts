@@ -150,12 +150,11 @@ export type AuthorshipCheck =
  * Checks a relayed proof: decodes it, finds the author device's TRUSTED key and verifies the
  * signature over the descriptor of the group the proof NAMES (`recorded.group`).
  *
- * - `forged`: the proof is malformed, names no group or device, or the keys this device trusts (the
- *   author's leaf in `treeGroupId`'s tree, then its pins) exist and none verifies the signature.
- *   Only local evidence accuses.
- * - `unproven`: no trusted key for the author (not in the tree, never pinned - a ghost device, or
- *   one met before pinning). That says nothing about the proof - the server's word is not evidence
- *   either way - and the caller treats it as unsigned.
+ * - `forged`: the proof is malformed, or names no group or device. A key that fails to verify does
+ *   NOT accuse: the current tree may be a re-Welcome's, and a pin not anchored may be server-served.
+ * - `unproven`: no trusted key verifies it - none exists (a ghost device, or one met before
+ *   pinning), or the ones known may not accuse. That says nothing about the proof, and the caller
+ *   treats it as unsigned.
  *
  * A proof that verifies in ANOTHER group is `verified` with that group, and whether it may stand for
  * a message of this conversation is the caller's decision.
@@ -207,16 +206,19 @@ export async function checkRecordedAuthorship(
   for (const pin of pins) {
     if (await verifiesUnder(pin)) return verified('pinned');
   }
-  const trusted = pins.length + (treeKey ? 1 : 0);
-  if (trusted === 0) {
+  if (pins.length === 0 && !treeKey) {
     return {
       kind: 'unproven',
       why: `${author} has no leaf in the tree and no pin - no trusted key`,
     };
   }
+  // NO KEY HERE MAY ACCUSE. The current tree may be a re-Welcome's, holding a leaf the author did not
+  // sign this message with, and the proof names no epoch to tie it to the tree it was sent in; and no
+  // pin is known to be ANCHORED (first seen in an authenticated tree rather than re-taken by a heal),
+  // so each may be a server-served key. Only an anchored pin may accuse, once the pin source says so.
   return {
-    kind: 'forged',
-    why: `the signature verifies under none of ${author}'s ${trusted} trusted key(s) (tree, pins)`,
+    kind: 'unproven',
+    why: `the signature verifies under none of ${author}'s ${pins.length + (treeKey ? 1 : 0)} known key(s) (tree, unanchored pins) - none may accuse`,
   };
 }
 

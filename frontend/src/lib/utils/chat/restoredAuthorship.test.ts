@@ -43,7 +43,7 @@ describe('a restored message', () => {
     expect(verdict).toMatchObject({ kind: 'verified', content: helloContent, timestamp: SENT_AT });
   });
 
-  it('is REFUSED when a member forges another member message', async () => {
+  it('is never verified when a member forges another member message', async () => {
     const { mallory, keys } = await cast();
     const authorship = await signedBy(mallory, GROUP, HELLO, { claim: 'alice:dev-a' });
     const verdict = await vetRestoredMessage(
@@ -53,7 +53,7 @@ describe('a restored message', () => {
       'mallory',
       silent
     );
-    expect(verdict.kind).toBe('forged');
+    expect(verdict.kind).toBe('unverified');
   });
 
   it('is REFUSED when a genuine proof is pinned on another message id or another author', async () => {
@@ -137,7 +137,7 @@ describe('a restored message', () => {
     expect(verdict.kind).toBe('unverified');
   });
 
-  it('is REFUSED when a proof from another conversation is relabelled as this one', async () => {
+  it('is never verified when a proof from another conversation is relabelled as this one', async () => {
     const { alice, keys } = await cast();
     const signed = await signedBy(alice, 'g-other', HELLO);
     const verdict = await vetRestoredMessage(
@@ -153,7 +153,7 @@ describe('a restored message', () => {
       'mallory',
       silent
     );
-    expect(verdict.kind).toBe('forged');
+    expect(verdict.kind).toBe('unverified');
   });
 
   it('is taken on the relayer word when the relayer IS its author', async () => {
