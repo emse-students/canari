@@ -1,4 +1,4 @@
-import { ForbiddenException, Logger } from '@nestjs/common';
+import { ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { FindOperator, Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
@@ -27,7 +27,9 @@ describe('removals bounded by the actor', () => {
   const SALON = 'salon-1';
   const P = CHANNEL_PERMISSIONS;
 
-  function makeService() {
+  function makeService(
+    salon: { isPrivate: boolean; allowedUsers?: string[] } = { isPrivate: true }
+  ) {
     const roles = [
       {
         id: 'r-admin',
@@ -49,16 +51,21 @@ describe('removals bounded by the actor', () => {
     ].map((m) => ({ ...m, workspaceId: WS })) as ChannelMember[];
 
     const workspaceRepo = { findOne: jest.fn().mockResolvedValue({ id: WS, slug: 'ws' }) };
+    // ONE row, mutated by every save, so a sequence of edits reads its own previous result.
+    const channel = {
+      id: SALON,
+      workspaceId: WS,
+      name: 'prive',
+      isPrivate: salon.isPrivate,
+      allowedUsers: salon.allowedUsers ?? (salon.isPrivate ? members.map((m) => m.userId) : []),
+    };
     const channelRepo = {
-      findOne: jest.fn().mockResolvedValue({
-        id: SALON,
-        workspaceId: WS,
-        name: 'prive',
-        isPrivate: true,
-        allowedUsers: members.map((m) => m.userId),
-      }),
+      findOne: jest.fn(() => Promise.resolve({ ...channel })),
       find: jest.fn().mockResolvedValue([]),
-      save: jest.fn((c: unknown) => Promise.resolve(c)),
+      save: jest.fn((c: typeof channel) => {
+        Object.assign(channel, c);
+        return Promise.resolve(c);
+      }),
     };
     const roleRepo = {
       find: jest.fn(
@@ -79,7 +86,17 @@ describe('removals bounded by the actor', () => {
       find: jest.fn(() => Promise.resolve(members)),
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
       save: jest.fn((m: unknown) => Promise.resolve(m)),
+      manager: { transaction: jest.fn() },
     };
+    // The removal lock's transaction hands out the same repositories; `query` takes the lock.
+    const tx = {
+      query: jest.fn().mockResolvedValue(undefined),
+      getRepository: (entity: unknown) =>
+        entity === ChannelMember ? memberRepo : entity === ChannelRole ? roleRepo : channelRepo,
+    };
+    memberRepo.manager.transaction.mockImplementation((work: (t: typeof tx) => unknown) =>
+      work(tx)
+    );
     const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
@@ -97,6 +114,8 @@ describe('removals bounded by the actor', () => {
       'cutOffEveryPrivateChannel',
       'cutOffChannelKeyDistribution',
       'hardDeleteWorkspace',
+      'ensureChannelDistributionGroup',
+      'retireChannelDistributionGroup',
     ]) {
       jest.spyOn(service as never, name as never).mockResolvedValue(undefined as never);
     }
@@ -107,7 +126,7 @@ describe('removals bounded by the actor', () => {
     jest
       .spyOn(service as never, 'writeDecisionsFor' as never)
       .mockResolvedValue(new Map() as never);
-    return { service, memberRepo, channelRepo };
+    return { service, memberRepo, channelRepo, tx };
   }
 
   beforeEach(() => {
@@ -191,6 +210,74 @@ describe('removals bounded by the actor', () => {
         await outcome(service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-member')))
       ).toBe('allowed');
       expect(channelRepo.save).toHaveBeenCalled();
+    });
+
+    it('skips an allowlist entry who is no longer a member of the community', async () => {
+      const { service, channelRepo } = makeService({
+        isPrivate: true,
+        allowedUsers: ['u-salons', 'u-member', 'u-gone'],
+      });
+      expect(
+        await outcome(
+          service.updateChannelAccess(SALON, 'u-salons', true, ['u-salons', 'u-member'])
+        )
+      ).toBe('allowed');
+      expect(channelRepo.save).toHaveBeenCalled();
+    });
+
+    it('checks, cuts off and saves under the community removal lock', async () => {
+      const { service, tx } = makeService();
+      await service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-member'));
+      expect(tx.query).toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'), [WS]);
+    });
+  });
+
+  describe('by making a public salon private', () => {
+    const everyoneBut = (...out: string[]) =>
+      ['u-admin', 'u-admin-2', 'u-mod', 'u-mod-2', 'u-salons', 'u-member'].filter(
+        (u) => !out.includes(u)
+      );
+
+    it('refuses leaving out a member whose roles grant more than the actor holds', async () => {
+      // Every community member sees a public salon; going private takes it from whoever is left off.
+      const { service, channelRepo } = makeService({ isPrivate: false });
+      expect(
+        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-mod')))
+      ).toBe(BOUND);
+      expect(channelRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses it through a detour by public, from a private salon that listed them', async () => {
+      const { service } = makeService();
+      expect(await outcome(service.updateChannelAccess(SALON, 'u-salons', false, []))).toBe(
+        'allowed'
+      );
+      expect(
+        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-mod')))
+      ).toBe(BOUND);
+    });
+
+    it('lets a salon manager leave out plain members, and an administrator anyone', async () => {
+      const salonManager = makeService({ isPrivate: false });
+      expect(
+        await outcome(
+          salonManager.service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-member'))
+        )
+      ).toBe('allowed');
+      const admin = makeService({ isPrivate: false });
+      expect(await outcome(admin.service.updateChannelAccess(SALON, 'u-admin', true, []))).toBe(
+        'allowed'
+      );
+    });
+  });
+
+  describe('a removal target who is not a member', () => {
+    it('is refused as not found when removed from the community', async () => {
+      const { service, memberRepo } = makeService();
+      await expect(service.kickFromWorkspace(WS, 'u-ghost', 'u-admin')).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+      expect(memberRepo.delete).not.toHaveBeenCalled();
     });
   });
 });

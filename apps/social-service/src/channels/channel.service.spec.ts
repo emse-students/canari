@@ -130,6 +130,21 @@ describe('ChannelService security hardening', () => {
       ),
     };
 
+    // The community removal lock runs its work in one transaction over these same repositories.
+    Object.assign(memberRepo, {
+      manager: {
+        transaction: (work: (tx: unknown) => unknown) =>
+          work({
+            query: () => Promise.resolve(undefined),
+            getRepository: (entity: unknown) =>
+              entity === ChannelMember
+                ? memberRepo
+                : entity === ChannelRole
+                  ? roleRepo
+                  : channelRepo,
+          }),
+      },
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,
@@ -2765,9 +2780,35 @@ describe('ChannelService security hardening', () => {
     expect(repos.hardDeletes).not.toHaveBeenCalled();
   });
 
-  it('account deletion promotes the survivor holding the most permissions first', async () => {
-    // Custom roles share one rank (`createRole` places each just above the base role), so the
-    // successor is chosen by what the roles GRANT, then by priority, then by user id.
+  it('account deletion promotes by rank before what the roles grant', async () => {
+    // A Moderateur outranks a custom role even where the custom role grants more: counting
+    // permissions alone would promote 'aaa'.
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'aaa', roleIds: ['r-custom-big'] },
+      { userId: 'mod', roleIds: ['r-mod'] },
+    ]);
+    repos.roleRepo.find.mockResolvedValue([
+      ...GOVERNED_ROLES,
+      {
+        id: 'r-custom-big',
+        name: 'Gardien',
+        priority: 11,
+        permissions: ['channel.manage', 'channel.moderate', 'member.invite', 'member.kick'],
+      },
+    ]);
+
+    await repos.service.removeAccountFromWorkspaces('boss');
+
+    expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
+    expect(rows.find((r) => r.userId === 'aaa')?.roleIds).toEqual(['r-custom-big']);
+  });
+
+  it('account deletion breaks a tie in rank by what the roles grant, before the user id', async () => {
+    // Custom roles share one rank (`createRole` places each just above the base role), so among
+    // them the successor is the one whose roles grant the most: rank and user id alone would
+    // promote 'aaa'.
     const repos = makeService();
     const rows = arrangeGovernedCommunity(repos, [
       { userId: 'boss', roleIds: ['r-admin'] },

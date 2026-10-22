@@ -210,6 +210,15 @@
    * `accessIsPrivate` is not flipped until the write succeeds, so it stays the server's truth at
    * every moment nothing is in flight - there is no separate "pending" toggle state to track.
    */
+  /**
+   * What a failed access write tells the user - ONE mapping for every control that changes who
+   * reads the salon (visibility, write policy, adding and removing a member). A coded refusal (the
+   * member holds more than the actor) is named; anything else is the control's own generic error.
+   */
+  function accessWriteError(e: unknown, generic: string): string {
+    return describeCommunityRefusal(refusalCode(e)) ?? generic;
+  }
+
   async function handleTogglePrivacy() {
     if (privacySaving) return;
     const next = !accessIsPrivate;
@@ -226,7 +235,7 @@
       if (!next) accessAllowedUserIds = [];
     } catch (e) {
       Log.d('channelSettings.handleTogglePrivacy failed', e);
-      saveError = m.chat_channel_access_save_error();
+      saveError = accessWriteError(e, m.chat_channel_access_save_error());
     } finally {
       privacySaving = false;
     }
@@ -249,7 +258,7 @@
     } catch (e) {
       Log.d('channelSettings.setWritePolicy failed', e);
       writePolicy = previous;
-      saveError = m.chat_channel_access_save_error();
+      saveError = accessWriteError(e, m.chat_channel_access_save_error());
     } finally {
       writePolicySaving = false;
     }
@@ -284,7 +293,7 @@
       if (accessIsPrivate) void admitSalonGrantee(selectedChannelId, uid, appendLog);
     } catch (e) {
       Log.d('channelSettings.addAllowedUser failed', e);
-      membersError = m.chat_channel_add_access_error();
+      membersError = accessWriteError(e, m.chat_channel_add_access_error());
     } finally {
       memberAdding = false;
     }
@@ -304,9 +313,7 @@
       channelMembers = channelMembers.filter((m) => m.userId !== userId);
     } catch (e) {
       Log.d('channelSettings.handleRemoveMemberFromChannel failed', e);
-      // A coded refusal (the member holds more than the actor) is named; anything else stays generic.
-      membersError =
-        describeCommunityRefusal(refusalCode(e)) ?? m.chat_channel_remove_access_error();
+      membersError = accessWriteError(e, m.chat_channel_remove_access_error());
     } finally {
       const updated = { ...memberRemoving };
       delete updated[userId];

@@ -1,3 +1,3 @@
-### Fixed - an access-list rewrite faces the removal bound, and its refusals are named
+### Changed - salon access-list updates use the shared removal check, under the community lock
 
-Dropping a member from a private salon's allowlist goes through the same removal gate as the remove button, the three permission refusals show their own sentence, a named role is matched before "Membre" falls back to the base role, and successor promotion orders custom roles by what they grant ([social-service](docs/wiki/services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).
+Salon access-list updates (visibility, write policy, the allowlist) use the shared removal check in one transaction under the community lock, three refusal codes get their own sentence in French and English, and successor promotion orders by priority, then permissions held ([social-service](docs/wiki/services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).

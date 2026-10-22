@@ -319,6 +319,16 @@ A kicked device's report is refused until an ADMITTING commit clears the kick, a
 committed in the 30 days before, 0 reporting a version below `0.18.28` and 0 reporting none committed
 after 2026-10-17, the day the floor reached `1.2.7`. So no re-add without admits is expected.
 
+## P3 - An invitation reads `Membre` as the base role, so a role literally named Membre is not grantable by invitation (2026-10-22)
+
+`inviteToChannel` maps `roleName: 'Membre'` (and the base role's own name) to the base role, because
+every client before #2277 sends `Membre` for an ordinary invitation, whatever the community calls its
+lowest role ([social-service](services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).
+A community that names a higher role `Membre` cannot grant it by invitation; a role change after the
+join still can. **Lifted when `minClientVersion` reaches the first version carrying #2277's client**
+(which sends no `roleName` for an ordinary invitation): then match a role by its own name before the
+`Membre` fallback, with the test that a role literally named Membre above the base role is granted.
+
 ## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
 
 Registration refuses a device id another account holds (`device_id_taken`) by a read before its write; `key_package` is unique on the pair only, so two concurrent registrations of one id by two accounts could both pass. Production held 0 shared ids on 2026-10-22, and a client mints its id per account. The fix is a unique index on `key_package."deviceId"`, a migration of its own.

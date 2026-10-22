@@ -178,6 +178,48 @@ describe('ChannelSettingsPanel - access tab', () => {
     );
   });
 
+  it('names a coded refusal of an added member instead of the generic error', async () => {
+    // Adding a member rewrites the whole access list, so the server judges it like any other access
+    // write - and a refusal it names is shown by name, from the same mapping as a removal.
+    service.updateChannelAccess.mockRejectedValue(
+      new ApiRefusalError(403, 'REMOVAL_EXCEEDS_ACTOR', 'refused')
+    );
+    await mountOnAccessTab('salon-a');
+
+    const input = document.getElementById('channel-access-autocomplete') as HTMLInputElement;
+    input.value = 'Peer';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(350);
+    await settle();
+    document
+      .querySelector('[role=option]')!
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await settle();
+    buttonByText(m.common_add_button()).click();
+    await settle();
+
+    expect(service.updateChannelAccess).toHaveBeenCalledWith('salon-a', true, ['owner', 'peer']);
+    expect(document.querySelector('[role=alert]')?.textContent).toBe(
+      m.chat_community_removal_exceeds_actor_error()
+    );
+  });
+
+  it('names a coded refusal of a visibility change instead of the generic error', async () => {
+    // Making a salon private takes it from every member left off the list, so it can be refused.
+    service.updateChannelAccess.mockRejectedValue(
+      new ApiRefusalError(403, 'REMOVAL_EXCEEDS_ACTOR', 'refused')
+    );
+    await mountOnAccessTab('public-salon');
+
+    (document.querySelector('button[role=switch]') as HTMLButtonElement).click();
+    await settle();
+
+    expect(service.updateChannelAccess).toHaveBeenCalledWith('public-salon', true, []);
+    expect(document.querySelector('[role=alert]')?.textContent?.trim()).toBe(
+      m.chat_community_removal_exceeds_actor_error()
+    );
+  });
+
   it('reloads the access settings when the panel moves to another salon', async () => {
     const props = await mountOnAccessTab('salon-a');
     expect(service.getChannelAccess).toHaveBeenLastCalledWith('salon-a');

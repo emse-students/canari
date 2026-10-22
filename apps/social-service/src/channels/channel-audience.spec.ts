@@ -95,6 +95,21 @@ describe('channel audience', () => {
     );
     const redis = { publishChannelEvent: jest.fn(() => Promise.resolve()) };
 
+    // The community removal lock runs its work in one transaction over these same repositories.
+    Object.assign(memberRepo, {
+      manager: {
+        transaction: (work: (tx: unknown) => unknown) =>
+          work({
+            query: () => Promise.resolve(undefined),
+            getRepository: (entity: unknown) =>
+              entity === ChannelMember
+                ? memberRepo
+                : entity === ChannelRole
+                  ? roleRepo
+                  : channelRepo,
+          }),
+      },
+    });
     const service = new ChannelService(
       workspaceRepo as unknown as Repository<Workspace>,
       channelRepo as unknown as Repository<Channel>,
