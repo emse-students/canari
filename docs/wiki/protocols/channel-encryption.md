@@ -1704,7 +1704,7 @@ the laptop coming online and joining - which is itself the commit that moves the
 **Seeds are STORED per community, whichever key group brought them** (`IMlsService.DistributionFrame`),
 so a device's store does not say on its own which roster a seed was sealed to. Both answer paths -
 the HISTORY bundle (`gatherCommunityHistory`) and a SESSIONS repair (`gatherNamedSessions`) - read
-that store, and an answer goes back on the key group the request ARRIVED on. So both now keep only
+that store, and an answer goes back on the key group the request ARRIVED on. So both keep only
 the sessions whose salon rides that group (`seedOutsideScope` in `frameHandler.ts`):
 
 - on the community's group, the seeds of PUBLIC salons only;

@@ -1884,7 +1884,7 @@ describe('the salon scope of an answer', () => {
     info.mockRestore();
   });
 
-  /** A bundle on the community's group, as an answerer that predates the filter sends it. */
+  /** A bundle on the community's group, carrying the seeds named. */
   async function oldAnswerersBundle(sessions: [string, string][]) {
     return {
       scope: workspaceScope('ws-1'),
@@ -1919,7 +1919,7 @@ describe('the salon scope of an answer', () => {
     );
 
     expect(saved.map((s) => s.sessionId)).toEqual(['s-pub']);
-    // One warn per bundle: an answerer that predates the filter relays such seeds honestly.
+    // One warn per bundle, however many seeds it carries.
     const said = warn.mock.calls.flat().join(' ');
     expect(said).toContain('not storing 1 seed(s) relayed by bob');
     expect(said).toContain('(s-priv)');

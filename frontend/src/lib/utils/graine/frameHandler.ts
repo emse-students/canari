@@ -46,7 +46,7 @@ import { checkSeedEndorsement, type EndorsementSource } from './endorsement';
  *   bundle, not once per seed. Never folded into `already-held`: it repairs nothing.
  * `out-of-scope` - a NEW seed of a salon whose key group is not the one it arrived on
  *   ({@link seedOutsideScope}); nothing was stored. Said by the caller, once per bundle, for the
- *   reason `v1-refused` is: an answerer that predates the scope filter relays such seeds honestly.
+ *   reason `v1-refused` is: one answer can carry many.
  * `awaiting-listing` - a NEW seed, on the community's group, of a salon the community's answered
  *   listing did not name: not stored, held in memory until a registration says whether the salon is
  *   public (`awaitSalonListing`).
@@ -288,10 +288,10 @@ function seedConflict(
  *   registration decides ({@link storeIncomingSeed}).
  * - `not-listed-yet`: the community's group, and its listing has not answered yet. The RECEIVER
  *   keeps the seed: a public salon's seeds arrive with the key group, before the listing, and
- *   honest answerers filter at the source.
+ *   answerers filter at the source.
  *
- * The ANSWERER withholds every non-null answer: handing a seed whose roster it does not know over
- * is the leak if the salon is private.
+ * The ANSWERER withholds every non-null answer: a seed whose roster it does not know is not one it
+ * can place on a key group.
  */
 function seedOutsideScope(
   channelId: string,
@@ -775,8 +775,7 @@ async function absorbSeedBundle(
   }
 
   if (refusedOutOfScope.length + awaitingListing > 0) {
-    // ONE line per bundle, and a warn: an answerer that predates the scope filter relays the seeds of
-    // every salon it holds, honestly. Nothing of those seeds is stored or named beyond their ids.
+    // ONE line per bundle, at warn: one answer can carry many seeds, and only their ids are named.
     const why: string[] = [];
     if (refusedOutOfScope.length > 0) {
       why.push(
