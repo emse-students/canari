@@ -624,8 +624,8 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   only - pins are client state the server never sees.
 - **A group the load does not seed.** A group with a staged commit at load is not seeded (its tree
   may be an external join's server-served one). It is seeded from the tree the first merged commit
-  was built on - ours accepted, or a member's - and stays unseeded until the next load if its commit
-  is refused.
+  was built on - ours accepted, or a member's - or, if its commit is refused, from the tree it falls
+  back to at that moment.
 - **Reaffirmations.** A pin counts the merged commits that showed its device holding the pinned key -
   its leaf re-entering under that key, or a commit it signed. This is what lifts a remembered
   refusal (below).

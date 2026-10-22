@@ -495,13 +495,6 @@ impl MlsManager {
         // AN EXTERNAL JOIN HAS NO STATE TO FALL BACK TO: clearing its commit leaves a group this
         // device never entered, holding the tree the server served - which a later load would then
         // pin. The marker goes and the group with it, so nothing of a refused join survives.
-        // A group the load left unseeded stays so: the commit built on its tree was refused, and the
-        // next load seeds it like any held tree.
-        if self.device_trust.forget_unseeded(group_id) {
-            log::info!(
-                "clear_pending_commit_for: {group_id}'s staged commit did not merge - its tree stays unseeded until the next load"
-            );
-        }
         if self.pending_external_joins.remove(group_id) {
             log::warn!(
                 "clear_pending_commit_for: {group_id} was an external join not merged - the group is forgotten, its tree never pinned"
@@ -516,6 +509,15 @@ impl MlsManager {
         group
             .clear_pending_commit(self.provider.storage())
             .map_err(|e| MlsError::OpenMls(format!("Clear pending commit error: {:?}", e)))?;
+        // A GROUP THE LOAD LEFT UNSEEDED is seeded NOW: with its own commit cleared (and no marker,
+        // so it is no external join), the tree it holds is the one this device held before staging -
+        // a tree it had accepted, the reason the load seeds every held tree.
+        if self.device_trust.forget_unseeded(group_id) {
+            log::info!(
+                "clear_pending_commit_for: {group_id} was not seeded at load - seeding the tree it falls back to"
+            );
+            self.device_trust.seed_from_tree(&leaf_keys(group));
+        }
         self.mark_state_dirty();
         Ok(())
     }

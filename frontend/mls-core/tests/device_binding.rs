@@ -886,3 +886,19 @@ fn a_group_left_unseeded_by_a_staged_commit_is_seeded_at_its_merge() {
         "signature-key-changed"
     );
 }
+
+/// AND WHEN ITS STAGED COMMIT IS REFUSED: the tree it falls back to is the one this device held
+/// before staging, so it is seeded then - not left unpinned until the next load.
+#[test]
+fn a_group_left_unseeded_by_a_staged_commit_is_seeded_when_the_commit_is_cleared() {
+    let gid = "g-seed-at-clear";
+    let (mut alice, _bob) = unpinned_with_a_staged_commit(gid);
+    alice.clear_pending_commit_for(gid).expect("clear");
+    assert_eq!(
+        alice.vet_key_package(
+            &device("bob", "dev1").generate_key_package().unwrap(),
+            "bob:dev1"
+        ),
+        "signature-key-changed"
+    );
+}

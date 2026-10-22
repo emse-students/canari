@@ -188,7 +188,7 @@ pub struct DeviceTrust {
     departures_full_reported: bool,
     /// Groups the load did NOT seed because a commit was staged in them. In memory only: the next
     /// load decides again. Seeded at the first commit merged on their tree
-    /// ([`Self::observe_merged_commit`]).
+    /// ([`Self::observe_merged_commit`]), or when their staged commit is cleared.
     unseeded: std::collections::HashSet<String>,
 }
 
