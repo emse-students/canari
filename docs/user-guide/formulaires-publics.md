@@ -72,11 +72,13 @@ reglages est actif, avec la raison en dessous.
   limite de paiement en especes que vous avez fixee.
 - **Un paiement arrive au-dela de la capacite n'est pas signale pour l'instant** : seul le
   tableau des reponses le montre (en tete, "paye hors capacite"). Regardez-le apres l'evenement.
-- **Trois reponses en attente au plus par connexion.** Une meme connexion internet ne peut
-  pas avoir plus de trois reponses payantes en attente de paiement sur un formulaire : cela
-  empeche un robot de bloquer toutes les places. Dans une salle ou tout le monde partage le
-  meme Wi-Fi, le quatrieme invite doit attendre qu'une des trois soit payee (ou expire), ou
-  repasser un peu plus tard.
+- **Trois reponses en attente au plus par reseau.** Un meme reseau (une meme adresse IPv4, ou
+  un meme reseau IPv6 /64, c'est-a-dire en pratique une meme box ou un meme Wi-Fi) ne peut pas
+  avoir plus de trois reponses payantes en attente de paiement sur un formulaire : cela empeche
+  un robot de bloquer toutes les places. Dans une salle ou tout le monde partage le meme Wi-Fi,
+  le quatrieme invite doit attendre qu'une des trois soit payee (ou expire), ou repasser un peu
+  plus tard. Canari ne garde pas l'adresse, seulement une empreinte effacee une fois la reponse
+  reglee.
 - **Un paiement arrive trop tard** (apres la liberation de la place, sur un formulaire
   complet) apparait en tete des reponses comme "paye hors capacite" : c'est a vous de
   **rembourser** l'invite en dehors de Canari (Canari ne rembourse pas).
