@@ -491,7 +491,9 @@ event with answers nobody pays. `submit` refuses a visitor's FOURTH waiting answ
   answer frees its place at once, with no job.
 - **A cash answer has a deadline, always**: a public form that accepts cash is refused without
   `cashPaymentExpiryDays` (at publication and on every edit; the editor says so under the field).
-  Without one, an unpaid cash answer would hold its seat and its visitor's place for ever, and three
+  An edit that sends an explicit `null` is judged on that null, since that is what it saves. A form
+  that charges nothing is not asked: it never reaches cash, so a cash flag left over from when it
+  charged is not read (`chargesMoney`). Without a deadline, an unpaid cash answer would hold its seat and its visitor's place for ever, and three
   of them from one shared network would shut that network out of the form.
 - **The visitor is its address** (`clientAddress`, the `X-Real-IP` nginx sets - the throttle's own
   key, one function for both). An IPv6 address counts as its **/64** (`visitorNetwork`): a host is

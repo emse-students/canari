@@ -92,6 +92,7 @@ import {
 import {
   assertDeclaredOptionAnswers,
   assertUniqueItemIds,
+  decidesPrice,
   freeFallbackCells,
   type PricedItem,
 } from './answer-options';
@@ -124,6 +125,17 @@ function formRequiresStripeReadyAssociation(input: {
   // makes this a paid form, so the beneficiary has to be able to receive the money.
   const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
   return !!cells && Object.values(cells).some((c) => (c ?? 0) > 0);
+}
+
+/**
+ * Whether a form can charge a submitter: payment switched on, a base price, a grid cell above 0, or
+ * a choice option with a supplement - each of which `submit` turns into a total above 0.
+ */
+function chargesMoney(input: CreateFormDto): boolean {
+  if (input.requiresPayment === true || (input.basePrice ?? 0) > 0) return true;
+  const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
+  if (cells && Object.values(cells).some((c) => (c ?? 0) > 0)) return true;
+  return ((input.items ?? []) as PricedItem[]).some((item) => decidesPrice(item, new Set()));
 }
 
 /**
@@ -274,7 +286,13 @@ export class FormsService {
     // A guest's cash answer holds its seat - and its place under the visitor's ceiling of waiting
     // answers (WP-P3) - until it is validated or its deadline passes. With no deadline it would
     // hold both for ever, and three of them from one shared network would shut that network out.
-    if (input.allowCashPayment === true && input.cashPaymentExpiryDays == null) {
+    // A free form never reaches cash (`submit` offers it only on a total above 0), so a cash flag
+    // left over from when it charged - the editor stops sending it once payment is off - is not read.
+    if (
+      input.allowCashPayment === true &&
+      input.cashPaymentExpiryDays == null &&
+      chargesMoney(input)
+    ) {
       throw new BadRequestException(
         'A public form that accepts cash needs a cash deadline: an unpaid cash answer holds its ' +
           'seat until then.'
@@ -697,7 +715,14 @@ export class FormsService {
         input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
       allowMultipleSubmissions: input.allowMultipleSubmissions ?? form.allowMultipleSubmissions,
       allowCashPayment: input.allowCashPayment ?? form.allowCashPayment,
-      cashPaymentExpiryDays: input.cashPaymentExpiryDays ?? form.cashPaymentExpiryDays ?? undefined,
+      // `!== undefined`, not `??`: an explicit null CLEARS the deadline when the form is saved, so
+      // the check must see the null, not the stored value it is about to replace.
+      cashPaymentExpiryDays:
+        input.cashPaymentExpiryDays !== undefined
+          ? input.cashPaymentExpiryDays
+          : (form.cashPaymentExpiryDays ?? undefined),
+      requiresPayment: input.requiresPayment ?? form.requiresPayment,
+      basePrice: input.basePrice ?? form.basePrice,
     });
     // An absent condition keeps the stored one, which still meets the questions sent now.
     this.assertFileQuestionConfigValid({
