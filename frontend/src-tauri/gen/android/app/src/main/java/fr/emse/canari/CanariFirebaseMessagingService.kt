@@ -2136,9 +2136,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             // The repost after that cancel is a NEW post, which `setOnlyAlertOnce` does not silence -
             // see [RepostAlert].
-            val alertMode = RepostAlert.of(redraw = alreadyPosted || supersedes != 0L, switchesChannel = switchesChannel)
+            val alertMode = RepostAlert.of(
+                redraw = alreadyPosted || supersedes != 0L,
+                switchesChannel = switchesChannel,
+                hasExistingPost = existingNotif != null,
+            )
             if (alertMode == RepostAlert.Mode.SILENT) {
-                Log.d(TAG, "showMessageNotification: a re-draw moves channel -> reposted silent (groupId=${groupId.take(8)} channel=$channel)")
+                Log.d(TAG, "showMessageNotification: a re-draw is a new post -> reposted silent (groupId=${groupId.take(8)} channel=$channel existing=${existingNotif != null})")
             }
 
             val isReactionNotif = channel == CHANNEL_REACTIONS
@@ -2174,7 +2178,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // generic line went up; buzzing again to correct its wording would be a second
                 // notification for one message, which is the defect, not the fix.
                 .setOnlyAlertOnce(alertMode != RepostAlert.Mode.ALERT)
-                // A cancelled-and-reposted re-draw: the group child does not alert (GROUP_ALERT_SUMMARY).
+                // A re-draw that is a NEW post (after a channel-switch cancel, or after the reader
+                // swiped the old line away): `setSilent` - compat mutes the post itself, which
+                // `setOnlyAlertOnce` cannot do for a post that is not an update.
                 .setSilent(alertMode == RepostAlert.Mode.SILENT)
 
             // A REACTION DOES NOT JOIN THE MESSAGES BUNDLE. [refreshBadgeSummary] builds that bundle's
