@@ -64,8 +64,9 @@ Every device joining a community's key group commits, and `shouldRotateGraineSes
 epoch change. Production: 845 sessions for 1 698 messages, and 458 seeds in the largest community's
 first 8 days. The history bundle carries every seed, about 330 bytes each in v2, so its 8 000-seed cap
 is about 2.6 MB in one MLS message. Owed, in order:
-(1) rotate on a REMOVAL only, by comparing the leaf identities recorded at mint with the current tree,
-with no durable marker; (2) bound the bundle in bytes and page it, after measuring what the gateway and
+(1) rotate on a DEPARTURE only - the identity-set comparison was refused 2026-10-22 (a leaf added
+and removed between two sends is in neither set); the design is a per-key-group clean run fed by a
+commit summary from `mls-core`, DRAFT for review: [graine-removal-tracker](protocols/graine-removal-tracker.md); (2) bound the bundle in bytes and page it, after measuring what the gateway and
 the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
