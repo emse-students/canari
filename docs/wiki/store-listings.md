@@ -181,6 +181,15 @@ iPhone when it is usable (1170x2532 is accepted, the mandatory class is 1179x255
 Account: a dev account on FICTIONAL data only (sections 4 and 5); language fr first, en second from
 the same data with the app in English. Order, same story on both stores, at most 8:
 
+Where each screen lives in `v1.4.0-alpha.4` (read from `places.ts`, 2026-10-22): the phone's bottom bar has
+FOUR icon-only tabs, in order Posts (`/posts`), Communities (`/communities`), Chats (`/chat`) and
+Dashboard (`/dashboard`). The agenda (`/calendar`), notifications, forms, bookings and shop are NOT
+tabs: they are reached from the dashboard (the sections hub). An association page is
+`/associations/<slug>`, and the Canareels camera is the tab LEFT of the feed (swipe right). Shot 4 is
+therefore taken from the dashboard, not from a tab, and the entry point of the Canareels viewer and of
+the carte de la vie asso is still to be confirmed on the device before shooting. The shop route exists
+but no shot or text shows it while payments are disabled.
+
 1. Conversation list, then one open conversation (encrypted messaging, the lock shown).
 2. A community with its channels and a few messages.
 3. The news feed with a poll that has votes.
