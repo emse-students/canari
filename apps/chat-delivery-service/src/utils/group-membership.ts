@@ -313,7 +313,7 @@ export function exclusionWindows(
  * to 268 hours before their recorded first interval, and their next device would have lost that span.
  *
  * **A device row is not durable, so the enrolment copies it onto the interval** (`admittedAt`,
- * migration 106, review of #2226): revoking a device deletes its rows, and a late-enrolled member's
+ * migration 033, review of #2226): revoking a device deletes its rows, and a late-enrolled member's
  * first row was the only record of their arrival, so their next device lost the span. The first
  * arrival is therefore the earliest of every interval's `joinedAt` and `admittedAt` and of the
  * device rows still present - the rows still count for an invitee admitted and not yet enrolled.

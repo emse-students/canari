@@ -768,7 +768,7 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   device rows, but 4 of the 24 late joiners held a device row up to 268 hours before their first
   interval. The likeliest reading is an offline invitee whose admitted row waited. Without the device
   row, their next device would have lost those 268 hours.
-- **The arrival survives a revoked device (migration `106`, review of #2226).** A device row is not
+- **The arrival survives a revoked device (migration `033`, review of #2226).** A device row is not
   durable: revoking the device (`purgeDeviceFootprint`) deletes its rows, and for a member enrolled
   late the first row was the only record of the real arrival, so it moved later and their next
   device lost the span. `ensureGroupMember` now copies the person's earliest device row onto the

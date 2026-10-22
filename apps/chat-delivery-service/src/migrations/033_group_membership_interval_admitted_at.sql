@@ -1,4 +1,4 @@
--- Migration 106: a membership interval keeps the ADMISSION that preceded its enrolment
+-- Migration 033: a membership interval keeps the ADMISSION that preceded its enrolment
 -- (review of #2226, 2026-10-22).
 --
 -- A group conversation withholds from a person everything before their first arrival, and that

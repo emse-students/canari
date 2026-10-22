@@ -51,7 +51,7 @@ export class GroupMembershipInterval {
 
   /**
    * When a commit admitted this person's first device into the stretch, if that was EARLIER than
-   * `joinedAt`; `null` when no device row preceded the enrolment (migration 106).
+   * `joinedAt`; `null` when no device row preceded the enrolment (migration 033).
    *
    * **WHY IT IS HERE, AND NOT READ FROM THE DEVICE ROWS** (review of #2226). A commit can admit an
    * invitee's device days before their enrolment opens this row (added = arrived, see
