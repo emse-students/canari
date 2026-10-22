@@ -135,7 +135,7 @@ forgetting.
 | Trigger | What it buys |
 |---|---|
 | **A leaf is removed** (any Remove merged since the mint, read from the key group's clean run since 2026-10-22: [graine-removal-tracker](graine-removal-tracker.md)) | The structural one. The leaver keeps what they could already read and gets **nothing said after they left**. Without it, leaving a community would change nothing |
-| **A new user joins** (`ROTATE_ON_NEW_USER`, decided by the user 2026-10-22) | A newcomer is never handed a seed minted before it arrived, whose earlier indices it could derive. A new DEVICE of a user already present, admitted by an Add, does not rotate: the session is re-distributed at the new epoch. Every leaf an external commit adds counts as a new user, and the server checks that the leaf names the caller |
+| **A new user joins** (`ROTATE_ON_NEW_USER`, decided by the user 2026-10-22) | A newcomer is never handed a seed minted before it arrived, whose earlier indices it could derive. A new DEVICE of a user already present (by an Add or an external commit; user half of the leaf's credential, lower-cased) does not rotate: the session is re-distributed at the new epoch. The server checks that an external commit's leaf names the caller |
 | **100 messages** (50 once re-distributed) | Slices a talkative sender, so one recovered seed does not yield years |
 | **7 days** (24 hours once re-distributed) | The same for a rare sender, whom a message counter would never slice |
 
@@ -530,8 +530,7 @@ external commit keeps its own roster check, and a member commit never reaches so
 **Before either check, an external commit must join AS the caller's device** (2026-10-22): its path
 leaf, read in the clear by `readCommitFrame`, must name `<authenticated caller>:<deviceId>`, the same
 binding every KeyPackage upload is held to; otherwise `403 commit_identity_mismatch`. Graine's rotation
-counts the leaf an external commit adds as a new user regardless
-([graine-removal-tracker](graine-removal-tracker.md), review item 12).
+reads the user from that leaf's own credential ([graine-removal-tracker](graine-removal-tracker.md)).
 
 | Outcome | What the commit gate does |
 | --- | --- |

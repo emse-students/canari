@@ -39,8 +39,8 @@
 //!   tree on both sides of the merge. That covers whatever removes a leaf without a Remove proposal
 //!   (an update that swaps a credential or a key), with no list of proposal shapes to keep current.
 //! - **A NEW USER**: a leaf whose user had no leaf before the commit ([`ROTATE_ON_NEW_USER`]). Only a
-//!   new DEVICE of a user already present, admitted by an Add, continues the run; any leaf an
-//!   EXTERNAL commit brings counts as a new user.
+//!   new DEVICE of a user already present continues the run, whether it came by an Add or by an
+//!   external commit.
 
 use std::collections::HashMap;
 
@@ -60,11 +60,9 @@ use crate::state::MlsManager;
 /// authenticator.
 const FINGERPRINT_DOMAIN: &[u8] = b"canari/graine-run/epoch-fingerprint/v1";
 
-/// **THE ONE RULE FOR AN ADD: a new USER ends the run, a new DEVICE of a user already in the tree
-/// does not.** Decided by the user (D5, 2026-10-22).
-///
-/// "A new device of a present user" applies to an Add. Every leaf an external commit adds counts as
-/// a new user, and the server checks that the leaf names the caller ([`BeforeMerge::read`]).
+/// **THE ONE RULE FOR A JOIN: a new USER ends the run, a new DEVICE of a user already in the tree
+/// does not.** Decided by the user (D5, 2026-10-22), for an Add and an external commit alike. The
+/// user is read from the leaf's own credential ([`user_of`]), never from server input.
 ///
 /// Why a new user rotates: a newcomer handed a seed minted before it arrived can derive every index
 /// of that session (each message key is derived from the seed, not ratcheted), and the floor that
@@ -108,12 +106,10 @@ pub struct CommitSummary {
     pub remove_proposals: usize,
     /// Identities whose pair the commit put in and that were not there before.
     pub added: Vec<String>,
-    /// Users (the part of an identity before its first `:`) with a leaf after the commit and none
-    /// before it - and, for an external commit, the user of every leaf it added. An unreadable
-    /// credential counts as a new user.
+    /// Canonical users ([`user_of`]) with a leaf after the commit and none before it, judged the same
+    /// way for an Add and an external commit. A credential that names no user counts as new.
     pub new_users: Vec<String>,
-    /// The commit was an EXTERNAL commit (sender `new_member_commit`); every leaf it added counts
-    /// as a new user.
+    /// The commit was an EXTERNAL commit (sender `new_member_commit`), named in the reset log.
     pub external: bool,
 }
 
@@ -124,14 +120,16 @@ impl CommitSummary {
     }
 }
 
-/// The user an identity belongs to, lower-cased, or `None` for one that is not `userId:deviceId`.
-/// Split on the FIRST colon and lower-cased exactly as the client's `userIdOfLeaf` reads a leaf, so
-/// the two layers cannot disagree on who a user is.
+/// The CANONICAL user an identity belongs to: the user half, ASCII-lowercased - the normalisation
+/// device trust's `identity_names` uses (user ids are UUIDs; a case difference names the same
+/// account). `None` for anything that is not exactly `user:device` with both halves non-empty, so a
+/// malformed credential names no user and counts as new.
 fn user_of(identity: &str) -> Option<String> {
-    identity
-        .split_once(':')
-        .map(|(user, _)| user.to_lowercase())
-        .filter(|user| !user.is_empty())
+    let (user, device) = identity.split_once(':')?;
+    if user.is_empty() || device.is_empty() || device.contains(':') {
+        return None;
+    }
+    Some(user.to_ascii_lowercase())
 }
 
 fn users(pairs: &LeafPairs) -> std::collections::HashSet<Option<String>> {
@@ -243,8 +241,8 @@ impl BeforeMerge {
     /// Remove took are gone, and so is the commit.
     ///
     /// `external` is whether the commit's verified sender is `new_member_commit`. The StagedCommit
-    /// does not carry it, so the caller reads it from the processed message. Every leaf such a
-    /// commit adds is counted as a NEW USER ([`ROTATE_ON_NEW_USER`]).
+    /// does not carry it, so the caller reads it from the processed message; it is reported in the
+    /// summary and the reset log, and the new-user rule is the same for both routes.
     pub(crate) fn read(
         provider: &impl OpenMlsProvider,
         group: &MlsGroup,
@@ -269,18 +267,20 @@ impl BeforeMerge {
         let after = leaf_pairs(group)?;
         let added = missing_from(&after, &self.pairs);
         let users_before = users(&self.pairs);
-        let mut new_users: std::collections::HashSet<Option<String>> = users(&after)
-            .into_iter()
-            .filter(|user| user.is_none() || !users_before.contains(user))
-            .collect();
-        if self.external {
-            new_users.extend(added.iter().map(|identity| user_of(identity)));
-        }
-        let mut new_users: Vec<String> = new_users
-            .into_iter()
-            .map(|user| user.unwrap_or_else(|| "<unreadable>".to_string()))
+        // The same rule for an Add and an external commit (D5), judged on each ADDED leaf's own
+        // credential: a canonical user with no leaf before the commit is new, and a credential that
+        // is not a well-formed `user:device` names no user and counts as new. Only added leaves
+        // are judged, so a malformed leaf already in the tree does not reset every later commit.
+        let mut new_users: Vec<String> = added
+            .iter()
+            .filter_map(|identity| match user_of(identity) {
+                Some(user) if users_before.contains(&Some(user.clone())) => None,
+                Some(user) => Some(user),
+                None => Some("<no user>".to_string()),
+            })
             .collect();
         new_users.sort();
+        new_users.dedup();
         Ok(CommitSummary {
             epoch_before: self.epoch,
             epoch_after: group.epoch().as_u64(),
@@ -339,7 +339,7 @@ pub(crate) fn observe_commit(
             let run_id = new_run_id(provider)?;
             log::info!(
                 "[GRAINE] run reset reason={} group={} epoch {}->{} removes={} pairs_gone={} \
-                 added={} new_users={} new run {}",
+                 added={} new_users={} external={} new run {}",
                 reason.as_str(),
                 short,
                 summary.epoch_before,
@@ -348,6 +348,7 @@ pub(crate) fn observe_commit(
                 summary.removed.len(),
                 summary.added.len(),
                 summary.new_users.len(),
+                summary.external,
                 &run_id[..8]
             );
             runs.insert(

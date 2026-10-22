@@ -382,8 +382,8 @@ impl MlsManager {
             }
         };
 
-        // Every leaf an EXTERNAL commit adds counts as a new user (`graine_run.rs`), so whether
-        // the verified sender is `new_member_commit` travels to the departure tracker.
+        // Whether the verified sender is `new_member_commit` travels to the departure tracker,
+        // which reports it beside each run reset (`graine_run.rs`).
         let external_commit = matches!(processed_message.sender(), Sender::NewMemberCommit);
 
         match processed_message.into_content() {

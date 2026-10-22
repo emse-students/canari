@@ -72,8 +72,7 @@ none of these holds:
 | --- | --- | --- |
 | The commit carried any Remove proposal - an external commit's removal of the joiner's OWN old leaf included | `StagedCommit::remove_proposals()`, before the merge | `run reset reason=departure` |
 | A `(credential, signature key)` pair is in the tree before the merge and not after it - whatever removed it (an update that swaps a key or a credential needs no Remove proposal) | a counted diff of the two trees | `reason=departure` |
-| A leaf of a NEW USER - a user (identity before its first `:`, lower-cased as `userIdOfLeaf` reads it) with no leaf before the commit; an unreadable credential counts as new | the same diff | `reason=new-user` |
-| Any leaf an EXTERNAL commit adds (verified sender `new_member_commit`), whatever user its credential names | `ProcessedMessage::sender()`, before the merge | `reason=new-user` |
+| An ADDED leaf of a NEW USER - the canonical user half of the leaf's own credential (ASCII-lowercased, as device trust's `identity_names` reads it) had no leaf before the commit; a credential that is not exactly `user:device` counts as new. The same for an Add and an external commit | the same diff | `reason=new-user` |
 | The commit started from another epoch than the run's last one | `fingerprint_before` | `reason=gap` |
 | No run existed | - | `reason=none` |
 
@@ -93,11 +92,11 @@ a present user opens nothing that user's other devices could not already open, a
 the measured bulk of the rotations. Turning the constant to `false` makes every Add continue the
 run; nothing else reads it.
 
-**Every leaf an external commit adds counts as a new user, and the server checks that the leaf names
-the caller** (`readCommitFrame` + `validateCommit`, `commit_identity_mismatch`). Key groups are joined
-by external commit, so a device join to a key group rotates; an Add-path join continues the run.
-Whether external joins of a present user's device should continue it too is a product choice open
-for the lead.
+**The same rule holds for an external commit (decided under D5, 2026-10-22).** Key groups are joined
+by external commit: a leaf naming a user who already has a leaf continues the run, a leaf naming a
+user with none - or not a well-formed `user:device` - ends it. The user is read from the leaf's own
+credential, never from server input; the server separately checks that the leaf names the caller
+(`readCommitFrame` + `validateCommit`, `commit_identity_mismatch`).
 
 **A batch applies every commit in order**, one merge at a time, so a departure in its middle ends
 the run even when Adds follow it (`a_batch_with_a_departure_in_its_middle_...`).
@@ -197,15 +196,17 @@ Each finding names what was wrong with the draft, or what still holds and why.
     before anything is sealed, so a commit landing in between can only make the anchor OLDER than the
     frame; the next send judges the move again. A message sealed while a Remove is in flight is the
     same race the epoch rule had.
-12. **External-commit joins (CHANGED, review of #2263).** Every leaf an external commit adds counts
-    as a new user (`an_external_join_ends_the_run_even_when_its_leaf_names_a_present_user`), and the
-    server checks that the leaf names the caller (`mls-frame-epoch.spec.ts`,
-    `messaging.commit-log.spec.ts`, checked against two external commits openmls itself produced).
+12. **External-commit joins (DECIDED under D5, review of #2263).** Judged by the same new-user rule
+    as an Add, on the leaf's own credential with the canonical user half (`an_external_join_*` in
+    `tests/graine_run.rs`: a present user's new device continues, a new user and a malformed
+    identity end the run, `BOB` is `bob`). The server checks that the leaf names the caller
+    (`mls-frame-epoch.spec.ts`, `messaging.commit-log.spec.ts`, checked against two external commits
+    openmls itself produced).
 
 ## Verification - what a compile does not prove
 
-Done in the pull request: `cargo test` in `mls-core` (`tests/graine_run.rs`, 16 cases: a device add
-continues, a new user ends, an external join ends whatever its leaf claims, the joiner's own merge is
+Done in the pull request: `cargo test` in `mls-core` (`tests/graine_run.rs`, 19 cases: a device add
+continues, a new user ends, the four external-join cases of item 12, the joiner's own merge is
 a no-op, a Remove ends on both committer and receiver, the add-then-remove case,
 a batch with a departure in its middle, a same-key rejoin, a new-key rejoin, persistence across a
 reload, a restored older state catching up, a replaced instance, same-number aliasing, the summary
@@ -224,9 +225,8 @@ two external commits openmls 0.9.1 produced, not against stored rows. One read-o
 [cross-client-testing](../cross-client-testing.md)):**
 
 - **GRAINE-ROT-1, a device join.** W2's user adds a second device between two sends of W1. W1 logs
-  `[GRAINE] reused session ... re-distributed`, never `new outbound session`, IF the device came in by
-  an Add; a key-group join by external commit logs `run reset reason=new-user` (review item 12). The
-  row records which route the join took. The new device opens W1's next message either way.
+  `[GRAINE] reused session ... re-distributed`, never `new outbound session`, whether the device came
+  in by an Add or by the key group's external commit. The new device opens W1's next message.
 - **GRAINE-ROT-2, a new user.** W3 (a user not yet in the community) joins between two sends of W1.
   W1 logs `run reset reason=new-user` and a new session.
 - **GRAINE-ROT-3, a revocation.** A device of W2 is revoked. W1's next send logs
@@ -248,5 +248,4 @@ the app is killed, then a send after it reopens: it must rotate.
 **Owed, production, after a stable:** the seeds-per-message ratio, re-run with the query of
 2026-10-21 (845 sessions for 1 698 messages), and the per-(salon, sender) message rates. The ratio should fall toward "senders x active days". If it does not, the reset
 reasons say why: many `reason=gap` means an epoch is moved outside the two merge functions; many
-`reason=departure` means external rejoins dominate; many `reason=new-user` with one user already
-present means external key-group joins dominate (review item 12).
+`reason=departure` means external rejoins dominate (the reset line names `external=`).

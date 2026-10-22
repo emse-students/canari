@@ -239,25 +239,62 @@ fn a_rejoin_under_a_new_key_is_a_departure() {
     );
 }
 
-/// AN EXTERNAL COMMIT IS A NEW USER, whatever user its leaf names. The server also checks that the
-/// leaf names the caller (`readCommitFrame`); this rule does not depend on it.
-#[test]
-fn an_external_join_ends_the_run_even_when_its_leaf_names_a_present_user() {
-    let gid = "g-run-external-claim";
+/// A device `user:device` joins `gid` by EXTERNAL commit; alice and bob apply it. Returns whether
+/// each one's run continued.
+fn external_join_continues(gid: &str, user: &str, device: &str) -> (bool, bool) {
     let (mut alice, mut bob) = alice_and_bob(gid);
     let alice_run = run_id(&mut alice, gid);
     let bob_run = run_id(&mut bob, gid);
 
-    let mut claimant = make_device("bob", "dev2");
+    let mut joiner = make_device(user, device);
     let group_info = alice.export_group_info(gid).expect("group info");
-    let (_gid, commit) = claimant
+    let (_gid, commit) = joiner
         .join_by_external_commit(&group_info)
         .expect("external join");
     alice.process_incoming_message(gid, &commit).expect("alice");
     bob.process_incoming_message(gid, &commit).expect("bob");
 
-    assert_ne!(run_id(&mut alice, gid), alice_run);
-    assert_ne!(run_id(&mut bob, gid), bob_run);
+    (
+        run_id(&mut alice, gid) == alice_run,
+        run_id(&mut bob, gid) == bob_run,
+    )
+}
+
+/// D5 ON THE EXTERNAL ROUTE: a new device of a user who already has a leaf continues the run, as on
+/// an Add - key groups are joined this way, so this is where the saving is.
+#[test]
+fn an_external_join_of_a_present_users_new_device_continues_the_run() {
+    assert_eq!(
+        external_join_continues("g-run-external-device", "bob", "dev2"),
+        (true, true)
+    );
+}
+
+/// An external join by a user with no leaf in the group ends the run.
+#[test]
+fn an_external_join_of_a_new_user_ends_the_run() {
+    assert_eq!(
+        external_join_continues("g-run-external-user", "carol", "dev1"),
+        (false, false)
+    );
+}
+
+/// The user half is canonical (ASCII-lowercased, as device trust reads it): `BOB` is bob.
+#[test]
+fn an_external_join_judges_the_user_by_its_canonical_lowercase_half() {
+    assert_eq!(
+        external_join_continues("g-run-external-case", "BOB", "dev2"),
+        (true, true)
+    );
+}
+
+/// A credential that is not exactly `user:device` names no user, so it ends the run.
+#[test]
+fn an_external_join_whose_leaf_is_not_a_well_formed_identity_ends_the_run() {
+    assert_eq!(
+        external_join_continues("g-run-external-malformed", "bob", "dev2:x"),
+        (false, false)
+    );
 }
 
 /// The JOINER of an external commit has nothing pending: openmls 0.9 merges the commit inside
