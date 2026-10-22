@@ -37,6 +37,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
     isGroup: boolean;
     distributionWorkspaceId?: string | null;
     distributionChannelId?: string | null;
+    createdAt?: Date;
   } | null;
 
   const T = (iso: string) => new Date(iso);
@@ -241,6 +242,17 @@ describe('MembersController - membership intervals and the exclusions read', () 
     });
     // The union field keeps its meaning for a broadcast answer.
     expect(Object.keys(got.exclusions)).toEqual(['bob']);
+  });
+
+  it('withholds nothing before the arrival of the person who arrived WITH the group - the creator', async () => {
+    // alice's interval opened 4 ms after the group row, as measured on the local estate.
+    group = { ...group!, createdAt: new Date(T('2026-10-01T00:00:00Z').getTime() - 4) };
+
+    expect((await controller.getGroupExclusions('g-1', 'alice')).withheld).toEqual({ alice: [] });
+    // A member who joined later keeps the span before their own arrival.
+    expect((await controller.getGroupExclusions('g-1', 'carol')).withheld).toEqual({
+      carol: [{ from: 0, until: T('2026-10-07T00:00:00Z').getTime() }],
+    });
   });
 
   /** carol's device was added on the 7th, after alice arrived - as at an inviter's push. */

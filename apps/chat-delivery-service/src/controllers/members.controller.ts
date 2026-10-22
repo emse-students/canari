@@ -903,7 +903,12 @@ export class MembersController {
     // `withheldWindows`). A key group never reaches this route's consumers, and is read as a 1:1.
     const group = await this.groupRepo.findOne({
       where: { id: safeGroupId },
-      select: { isGroup: true, distributionWorkspaceId: true, distributionChannelId: true },
+      select: {
+        isGroup: true,
+        distributionWorkspaceId: true,
+        distributionChannelId: true,
+        createdAt: true,
+      },
     });
     if (!group) {
       // A roster with no group row: answered as a 1:1 (gaps only), which withholds nothing before
@@ -936,10 +941,12 @@ export class MembersController {
       : undefined;
     for (const userId of new Set([caller, ...(forCounted ? [forCounted] : [])])) {
       if (!counted.has(userId)) continue;
+      // The group's own instant: the person who arrived with it has nothing before them to withhold.
       withheld[userId] = withheldWindows(
         byUser.get(userId) ?? [],
         beforeFirstArrival,
-        firstDeviceAt.get(userId) ?? null
+        firstDeviceAt.get(userId) ?? null,
+        group?.createdAt ?? null
       );
     }
     return { exclusions, withheld };

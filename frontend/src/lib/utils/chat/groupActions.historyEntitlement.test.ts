@@ -506,4 +506,21 @@ describe('historyEntitlement - the placement rules', () => {
     expect(messageServerTime({})).toBeNull();
     expect(messageServerTime({ serverTimestamp: 0 })).toBeNull();
   });
+
+  // THE CREATOR (2026-10-22): the server no longer gives the person who arrived WITH the group a
+  // before-arrival span, so their windows are empty, and an undated message from the group's first
+  // hour - inside the margin of the old `[0, creation)` edge - is KEPT. GRP-7 saw it dropped.
+  const CREATED = 1_700_000_000_000;
+
+  it('an undated message 10 min after creation is kept for a member with no window', () => {
+    expect(withholdReason({ timestamp: CREATED + 10 * 60_000 }, [])).toBeNull();
+  });
+
+  it("a joiner's undated message from before their arrival is still withheld", () => {
+    const joinerArrival = CREATED + 60 * 60_000;
+    const joiner = [{ from: 0, until: joinerArrival }];
+    expect(withholdReason({ timestamp: joinerArrival - 10 * 60_000 }, joiner)).toBe(
+      'undated-near-window'
+    );
+  });
 });

@@ -377,6 +377,72 @@ describe('withheldWindows', () => {
   it('a person with neither an interval nor a device row is withheld everything, open-ended', () => {
     expect(withheldWindows([], true, null)).toEqual([{ from: 0, until: null }]);
   });
+
+  // THE CREATOR ARRIVES WITH THE GROUP, so nothing precedes them and the span is empty - yet a client
+  // reads an UNDATED copy against every window edge with a one-hour skew margin, so `[0, creation)`
+  // dropped every undated history entry of the group's first hour on the creator (GRP-7, 2026-10-22).
+  // Measured on the local estate: the creator's interval 4 ms after `createdAt`, the next member 13.5 s.
+  const created = at('2026-10-22T04:50:00.000Z');
+
+  it('the person who arrived WITH the group has no before-arrival span', () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-22T04:50:00.004Z'), leftAt: null }],
+        true,
+        null,
+        created
+      )
+    ).toEqual([]);
+  });
+
+  it('a device row written a moment BEFORE the group row (two clocks) is still the creation', () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-22T04:50:00.004Z'), leftAt: null }],
+        true,
+        at('2026-10-22T04:49:59.990Z'),
+        created
+      )
+    ).toEqual([]);
+  });
+
+  it("the creator's later gaps are still withheld", () => {
+    expect(
+      withheldWindows(
+        [
+          { joinedAt: at('2026-10-22T04:50:00.004Z'), leftAt: at('2026-10-22T06:00:00Z') },
+          { joinedAt: at('2026-10-22T07:00:00Z'), leftAt: null },
+        ],
+        true,
+        null,
+        created
+      )
+    ).toEqual([
+      { from: at('2026-10-22T06:00:00Z').getTime(), until: at('2026-10-22T07:00:00Z').getTime() },
+    ]);
+  });
+
+  it("a joiner's protection is unchanged: arriving 13.5 s after the group keeps the span", () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-22T04:50:13.504Z'), leftAt: null }],
+        true,
+        null,
+        created
+      )
+    ).toEqual([{ from: 0, until: at('2026-10-22T04:50:13.504Z').getTime() }]);
+  });
+
+  it('a 1:1 is untouched by the creation rule', () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-22T04:50:00.004Z'), leftAt: null }],
+        false,
+        null,
+        created
+      )
+    ).toEqual([]);
+  });
 });
 
 describe('withholdExcludedHistoryRows', () => {

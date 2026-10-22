@@ -203,16 +203,25 @@ export function exclusionWindows(
  *
  * A person with neither - nothing admitted, nothing enrolled - is withheld everything.
  *
+ * **THE PERSON WHO ARRIVED WITH THE GROUP HAS NO SPAN** (2026-10-22). Nothing precedes the creation,
+ * so their span is empty - but not harmless: a client reads an UNDATED copy against every window
+ * EDGE with a one-hour skew margin (`historyEntitlement.ts`), so `[0, creation)` made the creator drop
+ * every undated history entry of the group's first hour, for good (GRP-7). An arrival within
+ * {@link CREATION_ARRIVAL_BOUND_MS} of `groupCreatedAt`, on either side, is the creation. Measured on
+ * the local estate: the creator's interval 4 ms after the group row, the next member 13.5 s.
+ *
  * Pure, so the arithmetic is tested without a database.
  *
  * @param intervals one person's intervals in one group, in any order.
  * @param beforeFirstArrival true for a group conversation, false for a 1:1.
  * @param firstDeviceAt when the person's earliest device row in the group was written, or `null`.
+ * @param groupCreatedAt when the group row was written, or `null` when it is not known.
  */
 export function withheldWindows(
   intervals: ReadonlyArray<{ joinedAt: Date; leftAt: Date | null }>,
   beforeFirstArrival: boolean,
-  firstDeviceAt: Date | null
+  firstDeviceAt: Date | null,
+  groupCreatedAt: Date | null = null
 ): ExclusionWindow[] {
   const gaps = exclusionWindows(intervals);
   if (!beforeFirstArrival) return gaps;
@@ -221,8 +230,23 @@ export function withheldWindows(
     ...(firstDeviceAt ? [firstDeviceAt.getTime()] : []),
   ];
   if (arrivals.length === 0) return [{ from: 0, until: null }];
-  return [{ from: 0, until: Math.min(...arrivals) }, ...gaps];
+  const firstArrival = Math.min(...arrivals);
+  if (
+    groupCreatedAt !== null &&
+    Math.abs(firstArrival - groupCreatedAt.getTime()) <= CREATION_ARRIVAL_BOUND_MS
+  ) {
+    return gaps;
+  }
+  return [{ from: 0, until: firstArrival }, ...gaps];
 }
+
+/**
+ * How close to the group row's instant a first arrival must be to BE the creation. The creator's
+ * interval is written by the same request as the group row, on another clock (this process against
+ * the database's): 4 ms apart on the local estate. A member added by the next commit arrives seconds
+ * later (13.5 s measured), so one second separates the two with room on both sides.
+ */
+export const CREATION_ARRIVAL_BOUND_MS = 1000;
 
 /**
  * Whether the server instant `at` falls inside one of `windows` - start included, end excluded, the
