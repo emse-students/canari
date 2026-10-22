@@ -165,6 +165,50 @@ impl MlsManager {
         Ok(None)
     }
 
+    /// The identity of the leaf of `group_id` whose signature key is `key_package`'s, or `None`
+    /// when no leaf carries it.
+    ///
+    /// For the caller an Add refused as a DUPLICATE SIGNATURE KEY: the refusal says the key is in
+    /// the tree, not whose leaf holds it, and treating the duplicate as the identity the package was
+    /// fetched for would vouch for, or replace, a device on another device's key. The tree answers
+    /// that locally, so it is asked instead of assumed.
+    pub fn leaf_holding_key_of(
+        &self,
+        group_id: &str,
+        key_package: &[u8],
+    ) -> Result<Option<String>, MlsError> {
+        let kp = KeyPackageIn::tls_deserialize(&mut &key_package[..])
+            .map_err(|e| {
+                MlsError::OpenMls(format!(
+                    "leaf_holding_key_of: undecodable KeyPackage: {e:?}"
+                ))
+            })?
+            .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            .map_err(|e| {
+                MlsError::OpenMls(format!("leaf_holding_key_of: invalid KeyPackage: {e:?}"))
+            })?;
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        let key = kp.leaf_node().signature_key().as_slice();
+        for member in group.members() {
+            if member.signature_key == key {
+                let holder = leaf_identity(&member)?;
+                log::debug!(
+                    "[TRUST] key {} is held by {holder}'s leaf in {group_id}",
+                    key_fingerprint(key)
+                );
+                return Ok(Some(holder));
+            }
+        }
+        log::debug!(
+            "[TRUST] key {} is held by no leaf of {group_id}",
+            key_fingerprint(key)
+        );
+        Ok(None)
+    }
+
     /// Remove all leaf nodes whose credential identity matches any of the provided user IDs.
     /// Returns `(commit, group_info)` (see [`StagedRemovalResult`]): the serialized commit that must
     /// be broadcast to all group members, and the external-join base for the epoch it creates,

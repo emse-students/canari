@@ -644,12 +644,14 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   nothing. Its signature key must also EQUAL the key of every leaf it removes - local signed
   evidence that holds with or without a pin. `addMember` and `replaceMember` throw the typed `DeviceTrustRefusedError` before staging,
   and the callers log it once per identity per session (`reportDeviceTrustRefusal`) and retire
-  nothing. No path kicks any more: an Add refused as a `DuplicateSignature` reads the tree again.
-  If the key's identity is in the tree, a welcome request replaces it in one commit, and a pending
-  invitation is already fulfilled (vouched, no commit). Otherwise the key sits on ANOTHER identity's
-  leaf, which no legitimate flow produces (a device that changes id starts with a fresh key). The
-  requester's identity has no leaf to remove, and the other leaf is not this request's to remove, so
-  nothing is removed and the line is an error.
+  nothing. No path kicks any more: an Add refused as a `DuplicateSignature` asks the tree WHOSE
+  leaf carries the package's key (`leafHoldingKeyOf`, Rust `leaf_holding_key_of`) - the tree merely
+  containing the identity does not make the duplicate its leaf. If the holder is this identity, a
+  welcome request replaces it in one commit, and a pending invitation is already fulfilled (vouched,
+  no commit). If another identity holds it, which no legitimate flow produces (a device that changes
+  id starts with a fresh key), nothing is vouched, replaced or removed, and the line is an ERROR of
+  its own (`DUPLICATE KEY HELD BY ANOTHER DEVICE`). A holder that cannot be read, or a key no leaf
+  carries any more, is a WARN and the next request decides.
 - **A refusal no retry can lift is remembered.** Every package of a device carries the same
   signature key, so a `signature-key-changed` refusal would come back at every sweep, each one
   spending a one-time KeyPackage. It is recorded per own device (`refusedDevices.ts`,

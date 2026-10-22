@@ -837,6 +837,27 @@ fn a_persisted_pin_under_another_spelling_lends_its_key_to_nobody() {
     );
 }
 
+/// A DUPLICATE KEY IS ATTRIBUTED FROM THE TREE: the leaf carrying a KeyPackage's signature key is
+/// named, so a caller never assumes the duplicate is the identity it asked for.
+#[test]
+fn the_leaf_holding_a_key_packages_key_is_named() {
+    let gid = "g-key-holder";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+
+    let again = bob.generate_key_package().unwrap();
+    assert_eq!(
+        alice.leaf_holding_key_of(gid, &again).unwrap().as_deref(),
+        Some("bob:dev1")
+    );
+    let stranger = device("carol", "dev1").generate_key_package().unwrap();
+    assert_eq!(alice.leaf_holding_key_of(gid, &stranger).unwrap(), None);
+    assert!(alice.leaf_holding_key_of(gid, b"not a package").is_err());
+}
+
 /// A GRAINE MINTER IS FOUND IN THE TREE UNDER ANY SPELLING THE BINDING ACCEPTS: a seed naming a
 /// device that IS a leaf is judged against that leaf's key, never against the server's published
 /// keys - which a different spelling missing the leaf would fall back to.

@@ -17,6 +17,8 @@ export function createMlsServiceStub(
     replaceMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
     // Default: the package is the device's pinned one - a test about a refusal overrides it.
     vetKeyPackage: vi.fn().mockResolvedValue('pinned'),
+    // Default: no leaf carries the package's key - a duplicate-key test names the holder.
+    leafHoldingKeyOf: vi.fn().mockResolvedValue(null),
     takeDeviceEvents: vi.fn().mockResolvedValue([]),
     // Default: a device never seen - a verifier test overrides it with the key it pins.
     pinnedSignatureKeys: vi.fn().mockResolvedValue(null),

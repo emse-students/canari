@@ -416,8 +416,8 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
 });
 
 // A DUPLICATE SIGNATURE KEY IS NO LONGER A KICK. The Add met a leaf already carrying the key: the
-// tree is read again, a leaf of THIS identity is replaced in ONE commit (no epoch without the device,
-// so no departure), and a key on any other identity's leaf removes nothing at all.
+// tree names the leaf that carries it, a leaf of THIS identity is replaced in ONE commit (no epoch
+// without the device, so no departure), and a key on any other identity's leaf removes nothing.
 describe('handleWelcomeRequest - a duplicate signature key', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -453,11 +453,13 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
         .fn()
         .mockRejectedValueOnce(new Error('busy'))
         .mockResolvedValue(['me:self', 'legit-user:dev-1']),
+      leafHoldingKeyOf: vi.fn().mockResolvedValue('legit-user:dev-1'),
       addMember: duplicate(),
     });
 
     await run('g-dup-same', mlsService);
 
+    expect(mlsService.leafHoldingKeyOf).toHaveBeenCalledWith('g-dup-same', new Uint8Array([7]));
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
     expect(mlsService.replaceMember).toHaveBeenCalledTimes(1);
@@ -468,6 +470,7 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const mlsService = requester({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:dev-9']),
+      leafHoldingKeyOf: vi.fn().mockResolvedValue('legit-user:dev-9'),
       addMember: duplicate(),
     });
 
@@ -477,7 +480,33 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
     expect(mlsService.replaceMember).not.toHaveBeenCalled();
     expect(mlsService.sendWelcome).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("ANOTHER identity's leaf"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('DUPLICATE KEY HELD BY ANOTHER DEVICE')
+    );
+    error.mockRestore();
+  });
+
+  // THE TREE HOLDING THIS IDENTITY DOES NOT MAKE THE DUPLICATE ITS LEAF: replacing it would put the
+  // device back on another device's key.
+  it('does not replace when the identity arrived in the tree but another leaf holds the key', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = requester({
+      getGroupMemberIdentities: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('busy'))
+        .mockResolvedValue(['me:self', 'legit-user:dev-1', 'legit-user:dev-9']),
+      leafHoldingKeyOf: vi.fn().mockResolvedValue('legit-user:dev-9'),
+      addMember: duplicate(),
+    });
+
+    await run('g-dup-arrived', mlsService);
+
+    expect(mlsService.replaceMember).not.toHaveBeenCalled();
+    expect(mlsService.sendWelcome).not.toHaveBeenCalled();
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('DUPLICATE KEY HELD BY ANOTHER DEVICE')
+    );
     error.mockRestore();
   });
 
@@ -485,6 +514,7 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const mlsService = requester({
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['legit-user:dev-1']),
+      leafHoldingKeyOf: vi.fn().mockResolvedValue('other-user:dev-3'),
       replaceMember: duplicate(),
     });
 
@@ -493,7 +523,9 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
     expect(mlsService.replaceMember).toHaveBeenCalledTimes(1);
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("ANOTHER identity's leaf"));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('DUPLICATE KEY HELD BY ANOTHER DEVICE')
+    );
     error.mockRestore();
   });
 });
