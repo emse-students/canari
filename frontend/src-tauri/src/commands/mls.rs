@@ -627,6 +627,24 @@ pub(crate) fn verifier_key_package(
         .to_string())
 }
 
+/// The identity of the leaf of `group_id` carrying `key_package`'s signature key, or `None` - who
+/// holds the key an Add was refused as a duplicate of. See `MlsManager::leaf_holding_key_of`.
+#[tauri::command]
+pub(crate) fn feuille_portant_cle(
+    group_id: String,
+    key_package: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<Option<String>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .leaf_holding_key_of(&group_id, &key_package)
+        .map_err(|e| e.to_string())
+}
+
 /// The pin of `user_id:device_id` (`{ keys, anchored, reaffirmations }`, keys as byte arrays), or
 /// `None` for a device never seen (unverified, never forged) - see
 /// `MlsManager::pinned_signature_keys`.

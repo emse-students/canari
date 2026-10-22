@@ -150,5 +150,56 @@
     "isKeyDistributionGroup": false,
     "audience": "none",
     "key": "alice:web-9|cc"
+  },
+  {
+    "name": "an identity with two colons names no device - no alert, no key",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "alice:web:9",
+      "keyFingerprint": "cc",
+      "trust": "first-sight",
+      "addedBy": "carol:phone-1",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": null
+  },
+  {
+    "name": "a contact identity with two colons gets no line either",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "bob:web:2",
+      "keyFingerprint": "cc",
+      "trust": "first-sight",
+      "addedBy": "bob:phone-1",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": null
+  },
+  {
+    "name": "a bare legacy identity names no device - no alert, no key",
+    "event": {
+      "groupId": "g",
+      "epoch": 5,
+      "identity": "alice",
+      "keyFingerprint": "cc",
+      "trust": "first-sight",
+      "addedBy": "carol:phone-1",
+      "memberAlreadyPresent": true
+    },
+    "ownUserId": "alice",
+    "ownDeviceId": "phone-a",
+    "isKeyDistributionGroup": false,
+    "audience": "none",
+    "key": null
   }
 ]

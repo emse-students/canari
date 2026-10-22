@@ -631,3 +631,84 @@ describe('processPendingInvitations - a device key this member refuses', () => {
     error.mockRestore();
   });
 });
+
+// A DUPLICATE SIGNATURE KEY ON A PENDING INVITATION IS NOT A KICK: a leaf of this identity means the
+// invitation is fulfilled (vouched, no commit), and a key on another identity's leaf removes nothing.
+describe('processPendingInvitations - a duplicate signature key', () => {
+  const sweep = (mlsService: IMlsService) =>
+    processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
+      log: vi.fn(),
+    });
+  // The first tree read (before the Add) does not hold the device; the second, after the refusal,
+  // is `afterRefusal`. `holder` is the leaf the tree says carries the package's key.
+  const withTree = (afterRefusal: string[], holder: string | null) =>
+    makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      getGroupMemberIdentities: vi
+        .fn()
+        .mockResolvedValueOnce(['self:self-device'])
+        .mockResolvedValue(afterRefusal),
+      leafHoldingKeyOf: vi.fn().mockResolvedValue(holder),
+      addMember: vi.fn().mockRejectedValue(new Error('AddMembers: DuplicateSignatureKey')),
+    });
+
+  it('vouches a leaf of the same identity as fulfilled, with no commit', async () => {
+    const mlsService = withTree(['self:self-device', 'peer:peer-dev'], 'peer:peer-dev');
+
+    await sweep(mlsService);
+
+    expect(mlsService.leafHoldingKeyOf).toHaveBeenCalledWith('g1', new Uint8Array([1]));
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.updateInvitationStatus).toHaveBeenCalledWith(
+      'peer-dev',
+      'peer',
+      'g1',
+      'active'
+    );
+  });
+
+  it('removes nothing when the key sits on another identity, and says so as an error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = withTree(['self:self-device', 'peer:other-dev'], 'peer:other-dev');
+
+    await sweep(mlsService);
+
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('DUPLICATE KEY HELD BY ANOTHER DEVICE')
+    );
+    error.mockRestore();
+  });
+
+  // THE TREE HOLDING THIS IDENTITY DOES NOT MAKE THE DUPLICATE ITS LEAF: the key may be another
+  // device's, and vouching would tell the server a device is in on another device's key.
+  it('does not vouch when the identity is in the tree but another leaf holds the key', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = withTree(['self:self-device', 'peer:peer-dev'], 'peer:other-dev');
+
+    await sweep(mlsService);
+
+    expect(mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('DUPLICATE KEY HELD BY ANOTHER DEVICE')
+    );
+    error.mockRestore();
+  });
+});

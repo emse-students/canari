@@ -2,6 +2,7 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import type { DeviceTrustRefusedError } from './deviceTrust';
 import type { IMlsService } from './IMlsService';
+import { canonicalUserId } from './leafIdentity';
 
 /**
  * The devices THIS device refused to add because their signature key changed under a pinned id -
@@ -39,9 +40,9 @@ interface RefusedEntry {
   reaffirmations: number;
 }
 
-/** `userId:deviceId` as the pin reads it: the user half case-insensitive, the device half exact. */
+/** `userId:deviceId` as the pin reads it: the one canonical identity (`canonicalUserId`). */
 function identityOf(userId: string, deviceId: string): string {
-  return `${userId.toLowerCase()}:${deviceId}`;
+  return `${canonicalUserId(userId)}:${deviceId}`;
 }
 
 function readRefused(own: OwnDevice): RefusedEntry[] {
@@ -71,7 +72,7 @@ function writeRefused(own: OwnDevice, entries: RefusedEntry[]): void {
 }
 
 /**
- * Every device this device remembers as refused, as `userId:deviceId` (user half lower-cased),
+ * Every device this device remembers as refused, as `userId:deviceId` (canonical, `canonicalUserId`),
  * oldest first - what the owner's in-app notice of a refused device of their own is built from
  * (`deviceNotices.svelte.ts`). An entry {@link isRefusedDevice} lifted is no longer listed.
  */

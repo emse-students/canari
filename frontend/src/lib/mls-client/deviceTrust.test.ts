@@ -95,7 +95,7 @@ describe('deviceEventAudience and deviceEventKey - the table shared with Rust', 
     ownDeviceId: string;
     isKeyDistributionGroup: boolean;
     audience: string;
-    key: string;
+    key: string | null;
   }>;
 
   it.each(cases.map((c) => [c.name, c] as const))('%s', (_name, c) => {

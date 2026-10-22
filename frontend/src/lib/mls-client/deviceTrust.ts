@@ -1,4 +1,4 @@
-import { deviceIdOfLeaf, userIdOfLeaf } from './leafIdentity';
+import { canonicalIdentity, canonicalUserId, deviceIdOfLeaf, userIdOfLeaf } from './leafIdentity';
 import type { SkippedKeyPackageReason } from './skippedKeyPackage';
 
 /**
@@ -133,19 +133,24 @@ export function deviceEventAudience(
   ctx: { ownUserId: string; ownDeviceId: string; isKeyDistributionGroup: boolean }
 ): DeviceEventAudience {
   if (!announcesNewDevice(event)) return 'none';
-  if (userIdOfLeaf(event.identity) === ctx.ownUserId.toLowerCase()) {
-    return deviceIdOfLeaf(event.identity) === ctx.ownDeviceId ? 'none' : 'owner-alert';
+  // An identity that names no device (`canonicalIdentity`) announces nothing to anyone.
+  const identity = canonicalIdentity(event.identity);
+  if (identity === null) return 'none';
+  if (userIdOfLeaf(identity) === canonicalUserId(ctx.ownUserId)) {
+    return deviceIdOfLeaf(identity) === ctx.ownDeviceId ? 'none' : 'owner-alert';
   }
   return ctx.isKeyDistributionGroup ? 'none' : 'contact-line';
 }
 
 /**
  * The key a device event is de-duplicated on: one device under one key is announced once, however
- * many groups admitted it.
+ * many groups admitted it. The identity in its canonical form (`canonicalIdentity`), so it equals
+ * Rust's `DeviceEvent::notice_key`; `null` for an identity that names no device - such an event has
+ * the audience `'none'` and is never keyed.
  */
-export function deviceEventKey(event: DeviceEvent): string {
-  // The user half is case-insensitive and the device half exact, as `identity_names` reads them.
-  return `${userIdOfLeaf(event.identity)}:${deviceIdOfLeaf(event.identity)}|${event.keyFingerprint}`;
+export function deviceEventKey(event: DeviceEvent): string | null {
+  const identity = canonicalIdentity(event.identity);
+  return identity === null ? null : `${identity}|${event.keyFingerprint}`;
 }
 
 /**

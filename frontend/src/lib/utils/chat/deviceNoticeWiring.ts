@@ -5,6 +5,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { listRefusedDevices, setRefusedDeviceListener } from '$lib/mls-client/refusedDevices';
 import { isNewToItsOwner, keyFingerprintOf } from '$lib/mls-client/deviceTrust';
+import { canonicalIdentity } from '$lib/mls-client/leafIdentity';
 import {
   deliverDeviceEvents,
   forgetDeviceNotices,
@@ -160,6 +161,8 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
     const old: string[] = [];
     for (const d of devices) {
       if (d.deviceId === deviceId) continue;
+      const identity = canonicalIdentity(`${userId}:${d.deviceId}`);
+      if (identity === null) continue;
       const facts = await keyFactsOf(mls, userId, d.deviceId);
       if (facts === 'unanswered') continue;
       for (const fingerprint of facts.fingerprints) {
@@ -169,7 +172,7 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
           ownEnrolledAt: enrolledAt,
           isOwnAccount: true,
         });
-        if (!isNew) old.push(`${userId.toLowerCase()}:${d.deviceId}|${fingerprint}`);
+        if (!isNew) old.push(`${identity}|${fingerprint}`);
       }
     }
     if (old.length > 0) await claimNativeDeviceNotices(old);

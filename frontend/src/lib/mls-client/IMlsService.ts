@@ -685,6 +685,14 @@ export interface IMlsService {
     deviceId: string
   ): Promise<KeyPackageVerdict>;
   /**
+   * The identity (`userId:deviceId`) of the leaf of `groupId` carrying `keyPackage`'s signature
+   * key, or `null` when no leaf does. Asked after an Add refused as a DUPLICATE SIGNATURE KEY: the
+   * refusal says the key is in the tree, not whose leaf holds it, and assuming it is the identity
+   * the package was fetched for would vouch for, or replace, a device on another device's key.
+   * Throws for a group this device does not hold or a package it cannot read.
+   */
+  leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
+  /**
    * The new devices (first sight or a changed key) recorded from merged signed commits since the
    * last call, oldest first; taking them forgets them. The new-device notices take them through
    * `setDeviceEventConsumer`.

@@ -135,28 +135,25 @@ impl DeviceEvent {
     /// The native background engines decide with this; the app decides with its TypeScript twin
     /// `deviceEventAudience`, and both are held to one table (`tests/fixtures/device_notices.json`).
     pub fn is_owner_alert(&self, own_user_id: &str, own_device_id: &str) -> bool {
-        let Some((user, device)) = self.identity.split_once(':') else {
+        // An identity that names no device ([`canonical_identity`]) alerts nobody.
+        let Some(identity) = canonical_identity(&self.identity) else {
+            return false;
+        };
+        let Some((user, device)) = identity.split_once(':') else {
             return false;
         };
         self.announces_new_device()
-            && user.eq_ignore_ascii_case(own_user_id)
+            && user == canonical_user_id(own_user_id)
             && device != own_device_id
     }
 
     /// The key a notice is de-duplicated on: one device under one key is announced once, however
     /// many groups admitted it and whichever engine (app or background) saw it first. Identical to
-    /// the TypeScript `deviceEventKey`: the user half lower-cased, the device half and the
-    /// fingerprint as they are.
-    pub fn notice_key(&self) -> String {
-        let (user, device) = self
-            .identity
-            .split_once(':')
-            .unwrap_or((self.identity.as_str(), ""));
-        format!(
-            "{}:{device}|{}",
-            user.to_ascii_lowercase(),
-            self.key_fingerprint
-        )
+    /// the TypeScript `deviceEventKey`: the [`canonical_identity`], then the fingerprint; `None` for
+    /// an identity that names no device, which [`Self::is_owner_alert`] never alerts for.
+    pub fn notice_key(&self) -> Option<String> {
+        canonical_identity(&self.identity)
+            .map(|identity| format!("{identity}|{}", self.key_fingerprint))
     }
 }
 
@@ -245,16 +242,55 @@ pub struct DeviceTrust {
     departures: VecDeque<Departure>,
     /// Whether this process already said the departure record is full.
     departures_full_reported: bool,
+    /// Groups the load did NOT seed because a commit was staged in them. In memory only: the next
+    /// load decides again. Seeded at the first commit merged on their tree
+    /// ([`Self::observe_merged_commit`]), or when their staged commit is cleared.
+    unseeded: std::collections::HashSet<String>,
 }
 
-/// The user half of `identity`, lowercased, or `None` for an identity that is not well formed.
-fn user_of(identity: &str) -> Option<String> {
+/// The user `identity` names, ASCII-lowercased, or `None` for an identity that names nobody. Every
+/// comparison of a leaf's user with a user id goes through it.
+///
+/// TWO SHAPES ARE READ. A device identity `user:device` ([`canonical_identity`]), and the LEGACY
+/// BARE `user` credential that builds before device identities wrote (no colon at all): it names
+/// its user and NO device, so it is removed with that user and a push it signed is that user's, but
+/// [`canonical_identity`] refuses it - it is never pinned and never matches `user:device`. Kept
+/// until no held tree carries a bare leaf (docs/wiki/legacy-compatibility.md).
+pub fn canonical_user_of(identity: &str) -> Option<String> {
+    if is_legacy_bare_identity(identity) {
+        return Some(canonical_user_id(identity));
+    }
+    canonical_identity(identity).and_then(|c| c.split_once(':').map(|(user, _)| user.to_string()))
+}
+
+/// Whether `identity` is the LEGACY BARE credential shape: a non-empty user id with no colon.
+pub fn is_legacy_bare_identity(identity: &str) -> bool {
+    !identity.is_empty() && !identity.contains(':')
+}
+
+/// A bare user id in the form [`canonical_user_of`] returns: ASCII-lowercased, so a roster's or a
+/// push's user id compares with a leaf's user half as the binding compares them.
+pub fn canonical_user_id(user_id: &str) -> String {
+    user_id.to_ascii_lowercase()
+}
+
+/// THE ONE CANONICAL FORM OF A DEVICE IDENTITY: the user half ASCII-lowercased, the device half as
+/// is, or `None` for an identity that is not well formed.
+///
+/// Every comparison of two identities and every key of the pin store goes through it - the binding
+/// ([`identity_names`]), the pins, the lookups, the leaf a replace removes. Two spellings the
+/// binding accepts as one device must be one device everywhere else too.
+pub fn canonical_identity(identity: &str) -> Option<String> {
     if !is_well_formed_identity(identity) {
         return None;
     }
-    identity
-        .split_once(':')
-        .map(|(user, _)| user.to_ascii_lowercase())
+    let (user, device) = identity.split_once(':')?;
+    Some(format!("{}:{device}", user.to_ascii_lowercase()))
+}
+
+/// Whether two identities are the same device under [`canonical_identity`].
+fn same_identity(a: &str, b: &str) -> bool {
+    matches!((canonical_identity(a), canonical_identity(b)), (Some(a), Some(b)) if a == b)
 }
 
 /// The most pinned identities kept before those absent from every held tree are dropped
@@ -281,12 +317,7 @@ pub fn is_well_formed_identity(identity: &str) -> bool {
 /// from the token's subject, the expectation from a roster): a case difference names the same
 /// account and must not refuse it.
 pub fn identity_names(found: &str, expected: &str) -> bool {
-    if !is_well_formed_identity(found) || !is_well_formed_identity(expected) {
-        return false;
-    }
-    let (fu, fd) = found.split_once(':').unwrap_or_default();
-    let (eu, ed) = expected.split_once(':').unwrap_or_default();
-    fu.eq_ignore_ascii_case(eu) && fd == ed
+    same_identity(found, expected)
 }
 
 /// Whether two identities name the same USER (the user half, ignoring ASCII case, as
@@ -340,26 +371,62 @@ impl DeviceTrust {
         events: Vec<DeviceEvent>,
         departures: Vec<Departure>,
     ) -> Self {
+        // EVERY PIN THIS CODE WRITES IS KEYED CANONICALLY ([`Self::insert_pin`]), and no released
+        // build wrote pins before that. A record under any other key is therefore not a pin of this
+        // code and is NOT merged into one: merging two records would turn a key conflict between
+        // them into trust. No lookup could reach it, so it is dropped, loudly.
+        let mut loaded: HashMap<String, Pin> = HashMap::new();
+        for p in pins {
+            if canonical_identity(&p.identity).as_deref() != Some(p.identity.as_str()) {
+                // ERROR, not WARN: no code wrote this record, so the sealed state is inconsistent.
+                log::error!(
+                    "[TRUST] a persisted pin is not keyed by a canonical identity ({}) - dropped",
+                    p.identity
+                );
+                continue;
+            }
+            loaded.insert(
+                p.identity,
+                Pin {
+                    keys: p.keys,
+                    anchored: p.anchored,
+                    reaffirmations: p.reaffirmations,
+                },
+            );
+        }
+        let pruned: VecDeque<String> = pruned
+            .into_iter()
+            .filter(|p| {
+                let canonical = canonical_identity(p).as_deref() == Some(p.as_str());
+                if !canonical {
+                    log::error!(
+                        "[TRUST] a pruned record is not a canonical identity ({p}) - dropped"
+                    );
+                }
+                canonical
+            })
+            .collect();
         Self {
-            pins: pins
-                .into_iter()
-                .map(|p| {
-                    (
-                        p.identity,
-                        Pin {
-                            keys: p.keys,
-                            anchored: p.anchored,
-                            reaffirmations: p.reaffirmations,
-                        },
-                    )
-                })
-                .collect(),
-            pruned: pruned.into_iter().collect(),
+            pins: loaded,
+            pruned,
             events: events.into_iter().collect(),
             full_reported: false,
             departures: departures.into_iter().collect(),
             departures_full_reported: false,
+            unseeded: Default::default(),
         }
+    }
+
+    /// Records that the load did not seed `group_id` (a commit was staged in it).
+    pub(crate) fn mark_unseeded(&mut self, group_id: &str) {
+        self.unseeded.insert(group_id.to_string());
+    }
+
+    /// Forgets that `group_id` was left unseeded: its staged commit was refused or the group went.
+    ///
+    /// @returns whether it was.
+    pub(crate) fn forget_unseeded(&mut self, group_id: &str) -> bool {
+        self.unseeded.remove(group_id)
     }
 
     /// The departures, oldest first, as they are persisted.
@@ -428,11 +495,13 @@ impl DeviceTrust {
         before: &[LeafKey],
         after: &[LeafKey],
     ) -> bool {
-        let remaining: std::collections::HashSet<String> =
-            after.iter().filter_map(|(_, id, _)| user_of(id)).collect();
+        let remaining: std::collections::HashSet<String> = after
+            .iter()
+            .filter_map(|(_, id, _)| canonical_user_of(id))
+            .collect();
         let mut gone: Vec<String> = before
             .iter()
-            .filter_map(|(_, id, _)| user_of(id))
+            .filter_map(|(_, id, _)| canonical_user_of(id))
             .filter(|u| !remaining.contains(u))
             .collect();
         gone.sort();
@@ -473,6 +542,11 @@ impl DeviceTrust {
 
     /// Writes a NEW pin for `identity`: anchored unless its previous pin was pruned.
     fn insert_pin(&mut self, identity: &str, keys: Vec<Vec<u8>>) {
+        let Some(identity) = canonical_identity(identity) else {
+            log::warn!("[TRUST] {identity} names no device - nothing pinned");
+            return;
+        };
+        let identity = identity.as_str();
         let anchored = match self.pruned.iter().position(|p| p == identity) {
             Some(at) => {
                 self.pruned.remove(at);
@@ -496,7 +570,10 @@ impl DeviceTrust {
 
     /// Counts one proof that `identity` holds a pinned key `key` (see [`Pin::reaffirmations`]).
     fn reaffirm(&mut self, identity: &str, key: &[u8]) -> bool {
-        match self.pins.get_mut(identity) {
+        let Some(identity) = canonical_identity(identity) else {
+            return false;
+        };
+        match self.pins.get_mut(&identity) {
             Some(pin) if pin.keys.iter().any(|k| k.as_slice() == key) => {
                 pin.reaffirmations += 1;
                 true
@@ -512,57 +589,31 @@ impl DeviceTrust {
 
     /// How `key` relates to what is pinned for `identity`, WITHOUT pinning anything.
     pub fn verdict(&self, identity: &str, key: &[u8]) -> LeafTrust {
-        match self.pins.get(identity) {
+        match self.pin_of(identity) {
             None => LeafTrust::FirstSight,
             Some(pin) if pin.keys.iter().any(|k| k.as_slice() == key) => LeafTrust::Pinned,
             Some(_) => LeafTrust::KeyChanged,
         }
     }
 
-    /// The keys pinned for `identity`, if any.
-    pub fn pinned_keys(&self, identity: &str) -> Option<&[Vec<u8>]> {
-        self.pins.get(identity).map(|pin| pin.keys.as_slice())
+    /// The pin of `identity` under its [`canonical_identity`] - the ONE lookup every reader uses.
+    fn pin_of(&self, identity: &str) -> Option<&Pin> {
+        canonical_identity(identity).and_then(|id| self.pins.get(&id))
     }
 
-    /// The pin of the device `expected` names, matched as [`identity_names`] matches a credential
-    /// (user half ignoring ASCII case, device half exact), or `None` when no pin names it or
-    /// `expected` is not a well-formed identity.
-    ///
-    /// A pin is stored under the identity AS ITS CREDENTIAL SPELT IT, and a caller asking from a
-    /// roster may spell the user half differently - so an exact miss falls back to a scan. Several
-    /// spellings merge: their keys without duplicates, anchored only if every one is, and the
-    /// reaffirmations summed.
+    /// The keys pinned for `identity`, if any.
+    pub fn pinned_keys(&self, identity: &str) -> Option<&[Vec<u8>]> {
+        self.pin_of(identity).map(|pin| pin.keys.as_slice())
+    }
+
+    /// The pin of the device `expected` names, or `None` when no pin names it or `expected` is not a
+    /// well-formed identity. Any spelling the binding accepts finds the one canonical pin.
     pub fn pin_naming(&self, expected: &str) -> Option<PinView> {
-        if !is_well_formed_identity(expected) {
-            return None;
-        }
-        let view = |pin: &Pin| PinView {
+        self.pin_of(expected).map(|pin| PinView {
             keys: pin.keys.clone(),
             anchored: pin.anchored,
             reaffirmations: pin.reaffirmations,
-        };
-        if let Some(pin) = self.pins.get(expected) {
-            return Some(view(pin));
-        }
-        let mut out: Option<PinView> = None;
-        for (identity, pin) in &self.pins {
-            if !identity_names(identity, expected) {
-                continue;
-            }
-            match out.as_mut() {
-                None => out = Some(view(pin)),
-                Some(acc) => {
-                    for k in &pin.keys {
-                        if !acc.keys.contains(k) {
-                            acc.keys.push(k.clone());
-                        }
-                    }
-                    acc.anchored &= pin.anchored;
-                    acc.reaffirmations += pin.reaffirmations;
-                }
-            }
-        }
-        out
+        })
     }
 
     /// Records a leaf seen in a signed tree: pins it on first sight, never moves an existing pin.
@@ -618,6 +669,10 @@ impl DeviceTrust {
             return 0;
         }
         let before = self.pins.len();
+        let held: std::collections::HashSet<String> = held
+            .iter()
+            .filter_map(|id| canonical_identity(id))
+            .collect();
         let mut gone: Vec<String> = self
             .pins
             .keys()
@@ -633,11 +688,26 @@ impl DeviceTrust {
             self.pruned.pop_front();
         }
         let dropped = before - self.pins.len();
-        log::info!(
-            "[TRUST] {before} pinned identities passed the bound of {MAX_PINNED_IDENTITIES}: \
-             dropped the {dropped} no held tree contains"
+        // A REPORT, NOT A ROUTINE LINE: every dropped pin turns a later contradiction for that
+        // device from "forged" into "unverified". WARN, with the numbers a reader needs; the count
+        // also rides every load's state-composition line (`pin_summary`).
+        log::warn!(
+            "[TRUST] PINS PRUNED: {before} pinned identities passed the bound of \
+             {MAX_PINNED_IDENTITIES}; dropped the {dropped} no held tree contains, {} kept, {} \
+             pruned identities remembered - a pin written for one of them again is UNANCHORED",
+            self.pins.len(),
+            self.pruned.len()
         );
         dropped
+    }
+
+    /// `pins <n>, <m> pruned remembered` - the line every load's state composition carries.
+    pub(crate) fn pin_summary(&self) -> String {
+        format!(
+            "pins {}, {} pruned remembered",
+            self.pins.len(),
+            self.pruned.len()
+        )
     }
 
     /// Pins every leaf of a tree whose identity has no pin yet, and nothing else.
@@ -649,19 +719,22 @@ impl DeviceTrust {
     ///
     /// @returns whether any pin was written.
     pub(crate) fn seed_from_tree(&mut self, leaves: &[LeafKey]) -> bool {
-        let mut fresh: HashMap<&str, Vec<Vec<u8>>> = HashMap::new();
+        let mut fresh: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
         for (_, identity, key) in leaves {
-            if self.pins.contains_key(identity.as_str()) {
+            let Some(identity) = canonical_identity(identity) else {
+                continue;
+            };
+            if self.pins.contains_key(&identity) {
                 continue;
             }
-            let keys = fresh.entry(identity.as_str()).or_default();
+            let keys = fresh.entry(identity).or_default();
             if !keys.iter().any(|k| k == key) {
                 keys.push(key.clone());
             }
         }
         let wrote = !fresh.is_empty();
         for (identity, keys) in fresh {
-            self.insert_pin(identity, keys);
+            self.insert_pin(&identity, keys);
         }
         wrote
     }
@@ -678,6 +751,8 @@ impl DeviceTrust {
         leaves: &[LeafKey],
         own_identity: &str,
     ) -> bool {
+        // Joining pins the whole tree below, which is everything a later seed would do.
+        self.unseeded.remove(group_id);
         let mut wrote = false;
         for (_, identity, key) in leaves {
             let (trust, pinned) = self.observe(identity, key);
@@ -699,7 +774,7 @@ impl DeviceTrust {
                     member_already_present: false,
                 });
                 wrote = true;
-            } else if identity == own_identity && trust != LeafTrust::Pinned {
+            } else if same_identity(identity, own_identity) && trust != LeafTrust::Pinned {
                 log::debug!("[TRUST] pinned this device's own key on joining {group_id}");
             }
         }
@@ -726,21 +801,33 @@ impl DeviceTrust {
         added_by: Option<&str>,
         own: (&str, &[u8]),
     ) -> bool {
-        let mut wrote = self.record_departures(group_id, epoch, before, after);
+        // A GROUP THE LOAD LEFT UNSEEDED is seeded from the tree this commit was built on: a commit
+        // merged on it - ours accepted by the server, or a member's - makes it a tree this device
+        // accepted, the reason the load seeds every other held tree.
+        let mut wrote = false;
+        if self.unseeded.remove(group_id) {
+            log::info!(
+                "[TRUST] {group_id}: not seeded at load (a commit was staged) - seeding the tree a merged commit was built on"
+            );
+            wrote |= self.seed_from_tree(before);
+        }
+        wrote |= self.record_departures(group_id, epoch, before, after);
         // The committer signed this commit with the key its leaf carries: a proof it holds that key.
         if let Some(committer) = added_by
-            && let Some((_, _, key)) = after.iter().find(|(_, id, _)| id == committer)
+            && let Some((_, _, key)) = after.iter().find(|(_, id, _)| same_identity(id, committer))
         {
             wrote |= self.reaffirm(committer, key);
         }
         for (_, identity, key) in after {
-            let existed = before.iter().any(|(_, id, k)| id == identity && k == key);
+            let existed = before
+                .iter()
+                .any(|(_, id, k)| same_identity(id, identity) && k == key);
             if existed {
                 continue;
             }
             // This device's own leaf entering its own group (an external join it made) is not a
             // device being added to anybody's conversation.
-            if identity == own.0 && key.as_slice() == own.1 {
+            if same_identity(identity, own.0) && key.as_slice() == own.1 {
                 wrote |= self.observe(identity, key).1;
                 continue;
             }
@@ -984,12 +1071,12 @@ mod tests {
             own_user_id: String,
             own_device_id: String,
             audience: String,
-            key: String,
+            key: Option<String>,
         }
         let cases: Vec<Case> =
             serde_json::from_str(include_str!("../tests/fixtures/device_notices.json"))
                 .expect("fixture parses");
-        assert!(cases.len() >= 9);
+        assert!(cases.len() >= 12);
         for c in cases {
             assert_eq!(
                 c.event.is_owner_alert(&c.own_user_id, &c.own_device_id),

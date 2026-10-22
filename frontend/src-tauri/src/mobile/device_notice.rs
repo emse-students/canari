@@ -52,7 +52,11 @@ pub fn owner_alert_keys_of(
         if !event.is_owner_alert(user_id, device_id) {
             continue;
         }
-        let key = event.notice_key();
+        let Some(key) = event.notice_key() else {
+            // Unreachable: `is_owner_alert` holds only for an identity that names a device.
+            log::error!("[DEVICE_NOTICE] an owner alert whose identity names no device - skipped");
+            continue;
+        };
         if !keys.contains(&key) {
             log::info!(
                 "[DEVICE_NOTICE] a device was added to this account in {} at epoch {} - key {}",

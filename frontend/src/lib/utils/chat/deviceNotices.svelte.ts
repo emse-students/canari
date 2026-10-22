@@ -8,7 +8,12 @@ import {
   isNewToItsOwner,
   type DeviceEvent,
 } from '$lib/mls-client/deviceTrust';
-import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import {
+  canonicalIdentity,
+  canonicalUserId,
+  deviceIdOfLeaf,
+  userIdOfLeaf,
+} from '$lib/mls-client/leafIdentity';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
@@ -301,7 +306,7 @@ export async function deliverDeviceEvents(
         isKeyDistributionGroup: false,
       });
       const key = deviceEventKey(event);
-      if (audience === 'none') {
+      if (audience === 'none' || key === null) {
         silent++;
         continue;
       }
@@ -420,7 +425,7 @@ async function writeContactLines(
 
 /** One own device this device refused for a changed key: it cannot be re-added until it is reset. */
 export interface RefusedDeviceNotice {
-  /** `userId:deviceId`, the user half lower-cased (`refusedDevices.ts`). */
+  /** `userId:deviceId` in its canonical form (`canonicalIdentity`, `leafIdentity.ts`). */
   identity: string;
   deviceId: string;
   /** The name the account gave the device, when the device list knows it. */
@@ -446,10 +451,11 @@ export async function noteRefusedOwnDevices(
     console.error('[DEVICE_NOTICE] no account bound - refused-device notice not recorded');
     return;
   }
-  const own = ctx.ownUserId.toLowerCase();
+  const own = canonicalUserId(ctx.ownUserId);
   for (const raw of identities) {
-    const identity = `${userIdOfLeaf(raw)}:${deviceIdOfLeaf(raw)}`;
-    if (userIdOfLeaf(raw) !== own || refusedSeen.includes(identity)) continue;
+    const identity = canonicalIdentity(raw);
+    if (identity === null) continue;
+    if (userIdOfLeaf(identity) !== own || refusedSeen.includes(identity)) continue;
     if (refusedNotices.has(identity)) continue;
     const deviceId = deviceIdOfLeaf(raw);
     try {
