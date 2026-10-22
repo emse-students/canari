@@ -354,7 +354,6 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | POST | `/api/channels/invites/:token/accept` | Join through an invite. Refuses a community with no members left (`WORKSPACE_HAS_NO_MEMBERS`) |
 | POST | `/api/channels` | Create channel |
 | POST | `/api/channels/:channelId/messages` | Send encrypted message |
-| POST | `/api/channels/:channelId/members/join` | Join channel |
 | POST | `/api/channels/:channelId/members/invite` | Invite user |
 | POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (400 on a public one) |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message |

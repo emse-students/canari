@@ -210,7 +210,8 @@ built.
   URL carrying it, and it is attached to MinoWiki and Archives MINO, so it was readable in a claim. The value is not written here. Closed by WP0 on 2026-09-30
   ([section 4](#the-work-packages-in-order)).
 - **The Alumni source's `sso_url` is a placeholder** while the source is enabled and promoted.
-  Whether its button renders on the sign-in page was not observed.
+  Whether its button renders on the sign-in page was not observed. The SP metadata the IdP needs
+  is served and was measured 2026-10-22 ([authentik](infrastructure/authentik.md#the-alumni-saml-source-what-to-hand-the-idp-and-what-is-still-missing-2026-10-22)).
 
 ## 4. The technical plan - VALIDATED by the user 2026-09-29
 
