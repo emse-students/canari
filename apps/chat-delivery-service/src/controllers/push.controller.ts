@@ -48,15 +48,16 @@ const PUSH_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
  * What `POST mls/push/send-welcome-and-commit` answers, typed so a native caller branches on a
  * TOKEN and never on prose.
  *
- * - `accepted` (HTTP 201): the commit passed the gate at `newEpoch - 1`, the members have it, and
- *   the Welcome is queued. The caller installs the state it staged, and only on this answer.
+ * - `accepted` (HTTP 201): the commit passed the gate at `newEpoch - 1` and the members have it.
+ *   The caller installs the state it staged, and only on this answer. `welcomeQueued: false` says
+ *   the Welcome could not be queued after that - still an acceptance, since the commit stands.
  * - `rejected` (HTTP 409): nothing was recorded, fanned out or sent. `reason` is the gate's token -
  *   `epoch_mismatch` (the caller's base is not the group's epoch, `currentEpoch` says which is),
  *   `concurrent_commit` (another commit held the lock), `not_a_member` (the target was removed) -
  *   and the caller discards what it staged.
  */
 export type BackgroundWelcomeAnswer =
-  | { status: 'accepted'; newEpoch?: number }
+  | { status: 'accepted'; newEpoch?: number; welcomeQueued?: false }
   | { status: 'rejected'; reason: string; currentEpoch?: number };
 
 /** A refusal of the background Welcome route: HTTP 409 carrying the typed body. */
@@ -806,8 +807,8 @@ export class PushController {
     //
     // `baseEpoch` was optional, and its absence meant "broadcast without validating" - the exact
     // hole `validateCommit`'s own `proto` guard exists to close, reached by the one door that
-    // skipped it. Both native callers send it whenever their JNI reports one, and the current JNI
-    // always does (`nativeCreateWelcomeBackground` puts `baseEpoch` in its result unconditionally),
+    // skipped it. The native caller sends it whenever its JNI reports one, and the current JNI
+    // always does (`nativePrepareWelcomeBackground` puts `baseEpoch` in its result unconditionally),
     // so the only client that can omit it now is one whose NATIVE code predates that. Such a client
     // is told it is too old instead of silently advancing an epoch nothing recorded.
     if (typeof body.baseEpoch !== 'number' || !Number.isFinite(body.baseEpoch)) {
@@ -884,17 +885,32 @@ export class PushController {
     // Send Welcome to target device (null authUserId skips membership check). The commit itself
     // was fanned out by `validateCommit`, which excludes the admitted target; broadcasting it here
     // as well delivered it twice to every member.
-    await this.messagingService.sendWelcome(undefined, {
-      targetDeviceId,
-      targetUserId,
-      senderUserId: userId,
-      welcomePayload: body.welcomePayload,
-      ratchetTreePayload: body.ratchetTreePayload,
-      groupId,
-    });
+    //
+    // THE ANSWER STAYS `accepted` IF THE WELCOME CANNOT BE QUEUED. The commit is recorded and fanned
+    // out, so the phone must install the state it staged to stay in step with the group; a 500 here
+    // would make it discard that state and fall one commit behind its own advance. The newcomer,
+    // whose seat is now `pending`, recovers on its own re-ask cadence.
+    let welcomeQueued = true;
+    try {
+      await this.messagingService.sendWelcome(undefined, {
+        targetDeviceId,
+        targetUserId,
+        senderUserId: userId,
+        welcomePayload: body.welcomePayload,
+        ratchetTreePayload: body.ratchetTreePayload,
+        groupId,
+      });
+    } catch (e) {
+      welcomeQueued = false;
+      this.logger.error(
+        `[BG_WELCOME][${traceId}] commit ACCEPTED at activeEpoch=${validation.newEpoch} and the Welcome NOT queued for ${targetUserId}:${targetDeviceId}: ${String(e)}`
+      );
+    }
 
-    this.logger.log(`[BG_WELCOME][${traceId}] DONE`);
-    const answer: BackgroundWelcomeAnswer = { status: 'accepted', newEpoch: validation.newEpoch };
+    this.logger.log(`[BG_WELCOME][${traceId}] DONE welcomeQueued=${welcomeQueued}`);
+    const answer: BackgroundWelcomeAnswer = welcomeQueued
+      ? { status: 'accepted', newEpoch: validation.newEpoch }
+      : { status: 'accepted', newEpoch: validation.newEpoch, welcomeQueued: false };
     return answer;
   }
 

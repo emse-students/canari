@@ -116,6 +116,16 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     );
   });
 
+  it('still answers accepted when the Welcome cannot be queued after the gate accepted', async () => {
+    // The commit is recorded and fanned out: the phone must install it to stay in step with the
+    // server, so a failed Welcome is said in the answer, never turned into a refusal or a 500.
+    sendWelcome.mockRejectedValue(new Error('queue down'));
+
+    const res = await controller.sendWelcomeAndCommitPush(AUTH, body);
+
+    expect(res).toEqual({ status: 'accepted', newEpoch: 8, welcomeQueued: false });
+  });
+
   it('leaves the fan-out to the gate, so every member receives the commit ONCE', async () => {
     // `validateCommit` fans the accepted commit out itself, under its lock. The route broadcast it
     // a second time, so every member received the same commit twice.
