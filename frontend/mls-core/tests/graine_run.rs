@@ -239,11 +239,8 @@ fn a_rejoin_under_a_new_key_is_a_departure() {
     );
 }
 
-/// AN EXTERNAL COMMIT IS A NEW USER, WHATEVER ITS CREDENTIAL SAYS. The joiner writes its own leaf,
-/// and nothing in MLS binds that credential to who it is: a device claiming to be a second device
-/// of a present user would otherwise continue the run and be handed the current seed. The server
-/// refuses a leaf that does not name the caller's own device (`readCommitFrame`), and this holds
-/// without it.
+/// AN EXTERNAL COMMIT IS A NEW USER, whatever user its leaf names. The server also checks that the
+/// leaf names the caller (`readCommitFrame`); this rule does not depend on it.
 #[test]
 fn an_external_join_ends_the_run_even_when_its_leaf_names_a_present_user() {
     let gid = "g-run-external-claim";

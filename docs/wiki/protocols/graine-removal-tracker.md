@@ -93,15 +93,11 @@ a present user opens nothing that user's other devices could not already open, a
 the measured bulk of the rotations. Turning the constant to `false` makes every Add continue the
 run; nothing else reads it.
 
-**"A device of a user already present" is believed only where something bound the credential.** An
-Add's leaf comes from a KeyPackage, and the server refuses a KeyPackage whose credential does not
-name its uploader (`DeviceSignatureKeysService.record`). An EXTERNAL commit's leaf is written by the
-joiner itself, in the commit, so the client counts every leaf an external commit adds as a new user
-(review round of #2263), and the server refuses an external commit whose path leaf does not name
-`<authenticated caller>:<deviceId>` (`readCommitFrame` + `validateCommit`, `commit_identity_mismatch`).
-**The price, stated: key groups are joined by external commit, so a device join to a KEY GROUP still
-rotates.** What still continues the run is an Add-path join; whether the client rule can be relaxed
-now that the server binds the leaf is a decision for the lead (see review item 12).
+**Every leaf an external commit adds counts as a new user, and the server checks that the leaf names
+the caller** (`readCommitFrame` + `validateCommit`, `commit_identity_mismatch`). Key groups are joined
+by external commit, so a device join to a key group rotates; an Add-path join continues the run.
+Whether external joins of a present user's device should continue it too is a product choice open
+for the lead.
 
 **A batch applies every commit in order**, one merge at a time, so a departure in its middle ends
 the run even when Adds follow it (`a_batch_with_a_departure_in_its_middle_...`).
@@ -211,18 +207,11 @@ Each finding names what was wrong with the draft, or what still holds and why.
    (`userId:deviceId`): removing one device of a user who keeps another is a departure
    (`removing_one_device_of_a_user_who_keeps_another_is_a_departure`); a reinstall comes back under
    a new key and its old leaf's removal is a departure (`a_rejoin_under_a_new_key_is_a_departure`).
-9. **A restore or a downgrade (HOLDS ONLY ONCE THE 9a FIX SHIPS).** A restored `mls.bin` carries
-   the run as of that state, consistent with its tree; the commits it then catches up on are
-   observed (`a_state_saved_before_a_departure_and_caught_up_afterwards_ends_the_run`). Between the
-   restore and the catch-up, the device's tree is the OLD one and a departed device is still in it.
-   The catching-up gate ([§22.1](channel-encryption.md#221-a-key-group-behind-its-server-catches-itself-up-and-nothing-is-sealed-while-it-is-behind))
-   does NOT cover this on its own while queue item 9a is open: a history replay saves its stream
-   cursor BEFORE the checkpoint it claims to follow ([backlog](../backlog.md)), so a kill in that
-   window can leave a state that never merged a commit behind a cursor that says it was consumed -
-   and a departure in that commit is never observed by this device. The safety of
-   this item depends on the 9a fix landing; until then it is the same exposure the epoch rule had
-   in that window, now lasting as long as the session's caps. A build that predates the field drops
-   it on its next write: no run, so it rotates.
+9. **A restore or a downgrade (depends on queue item 9a).** A restored `mls.bin` carries the run as
+   of that state, consistent with its tree; the commits it then catches up on are observed
+   (`a_state_saved_before_a_departure_and_caught_up_afterwards_ends_the_run`). This item relies on
+   the replay cursor and the checkpoint agreeing, which is what 9a ([backlog](../backlog.md)) makes
+   true. A build that predates the field drops it on its next write: no run, so it rotates.
 10. **A joiner still gets what the history policy grants (HOLDS).** A new device of a present user
     gets the re-distributed seed from index 0, which its user's other devices already opened. A new
     user never sees a reused seed. The history bundle is untouched.
@@ -230,18 +219,10 @@ Each finding names what was wrong with the draft, or what still holds and why.
     before anything is sealed, so a commit landing in between can only make the anchor OLDER than the
     frame; the next send judges the move again. A message sealed while a Remove is in flight is the
     same race the epoch rule had.
-12. **"A new device of a present user" was the joiner's own word on an external commit (CHANGED,
-    review of #2263).** The new-user rule keys on the leaf credential. On an Add that credential
-    comes from a KeyPackage the server bound to its uploader; on an external commit the joiner
-    writes its own leaf, and nothing bound it to the caller, so a joiner could name a present user
-    and be handed the current session instead of a fresh one. Closed on both sides: the client
-    counts every external-commit leaf as a new user
-    (`an_external_join_ends_the_run_even_when_its_leaf_names_a_present_user`), and the server refuses
-    an external commit whose path leaf, read in the clear, does not name the authenticated
-    `caller:deviceId` (`mls-frame-epoch.spec.ts`, `messaging.commit-log.spec.ts`, checked against
-    two external commits openmls itself produced). Against a COMPROMISED server neither half adds
-    anything the Add path does not already lack (it can forge a KeyPackage as well), consistent with
-    section 5.
+12. **External-commit joins (CHANGED, review of #2263).** Every leaf an external commit adds counts
+    as a new user (`an_external_join_ends_the_run_even_when_its_leaf_names_a_present_user`), and the
+    server checks that the leaf names the caller (`mls-frame-epoch.spec.ts`,
+    `messaging.commit-log.spec.ts`, checked against two external commits openmls itself produced).
 
 ## Verification - what a compile does not prove
 

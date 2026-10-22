@@ -135,7 +135,7 @@ forgetting.
 | Trigger | What it buys |
 |---|---|
 | **A leaf is removed** (any Remove merged since the mint, read from the key group's clean run since 2026-10-22: [graine-removal-tracker](graine-removal-tracker.md)) | The structural one. The leaver keeps what they could already read and gets **nothing said after they left**. Without it, leaving a community would change nothing |
-| **A new user joins** (`ROTATE_ON_NEW_USER`, decided by the user 2026-10-22) | A newcomer is never handed a seed minted before it arrived, whose earlier indices it could derive. A new DEVICE of a user already present, admitted by an Add, does not rotate: the session is re-distributed at the new epoch. Any leaf an EXTERNAL commit adds counts as a new user, since its credential is the joiner's own claim |
+| **A new user joins** (`ROTATE_ON_NEW_USER`, decided by the user 2026-10-22) | A newcomer is never handed a seed minted before it arrived, whose earlier indices it could derive. A new DEVICE of a user already present, admitted by an Add, does not rotate: the session is re-distributed at the new epoch. Every leaf an external commit adds counts as a new user, and the server checks that the leaf names the caller |
 | **100 messages** (50 once re-distributed) | Slices a talkative sender, so one recovered seed does not yield years |
 | **7 days** (24 hours once re-distributed) | The same for a rare sender, whom a message counter would never slice |
 

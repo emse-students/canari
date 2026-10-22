@@ -40,7 +40,7 @@
 //!   (an update that swaps a credential or a key), with no list of proposal shapes to keep current.
 //! - **A NEW USER**: a leaf whose user had no leaf before the commit ([`ROTATE_ON_NEW_USER`]). Only a
 //!   new DEVICE of a user already present, admitted by an Add, continues the run; any leaf an
-//!   EXTERNAL commit brings counts as a new user, since its credential is the joiner's own claim.
+//!   EXTERNAL commit brings counts as a new user.
 
 use std::collections::HashMap;
 
@@ -63,10 +63,8 @@ const FINGERPRINT_DOMAIN: &[u8] = b"canari/graine-run/epoch-fingerprint/v1";
 /// **THE ONE RULE FOR AN ADD: a new USER ends the run, a new DEVICE of a user already in the tree
 /// does not.** Decided by the user (D5, 2026-10-22).
 ///
-/// "Already in the tree" is believed only of a leaf whose credential something BOUND to its user: an
-/// Add's leaf comes from a KeyPackage the server refused unless it named its uploader. An EXTERNAL
-/// commit's leaf is written by the joiner itself, so every leaf an external commit adds counts as a
-/// new user, whatever its credential says ([`BeforeMerge::read`]).
+/// "A new device of a present user" applies to an Add. Every leaf an external commit adds counts as
+/// a new user, and the server checks that the leaf names the caller ([`BeforeMerge::read`]).
 ///
 /// Why a new user rotates: a newcomer handed a seed minted before it arrived can derive every index
 /// of that session (each message key is derived from the seed, not ratcheted), and the floor that
@@ -114,8 +112,8 @@ pub struct CommitSummary {
     /// before it - and, for an external commit, the user of every leaf it added. An unreadable
     /// credential counts as a new user.
     pub new_users: Vec<String>,
-    /// The commit was an EXTERNAL commit (sender `new_member_commit`): its added leaf is the
-    /// joiner's own claim, bound to nothing a member can check.
+    /// The commit was an EXTERNAL commit (sender `new_member_commit`); every leaf it added counts
+    /// as a new user.
     pub external: bool,
 }
 
@@ -246,8 +244,7 @@ impl BeforeMerge {
     ///
     /// `external` is whether the commit's verified sender is `new_member_commit`. The StagedCommit
     /// does not carry it, so the caller reads it from the processed message. Every leaf such a
-    /// commit adds is counted as a NEW USER: the joiner wrote its own credential, and "a device of
-    /// a user already here" is not a claim a member can check on that route.
+    /// commit adds is counted as a NEW USER ([`ROTATE_ON_NEW_USER`]).
     pub(crate) fn read(
         provider: &impl OpenMlsProvider,
         group: &MlsGroup,

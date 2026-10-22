@@ -382,7 +382,7 @@ impl MlsManager {
             }
         };
 
-        // An EXTERNAL commit's added leaf is the joiner's own claim (`graine_run.rs`), so whether
+        // Every leaf an EXTERNAL commit adds counts as a new user (`graine_run.rs`), so whether
         // the verified sender is `new_member_commit` travels to the departure tracker.
         let external_commit = matches!(processed_message.sender(), Sender::NewMemberCommit);
 

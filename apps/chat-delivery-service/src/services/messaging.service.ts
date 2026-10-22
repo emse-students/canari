@@ -1843,8 +1843,7 @@ export class MessagingService {
     }
     // AN EXTERNAL COMMIT JOINS AS THE CALLER'S OWN DEVICE: the leaf it adds names
     // `committer:deviceId`, the identity every KeyPackage of this device was refused without
-    // (`DeviceSignatureKeysService.record`). Without it the credential is self-asserted on this one
-    // route, and every member would show - and Graine would count - whoever the joiner claimed to be.
+    // (`DeviceSignatureKeysService.record`) - one binding for every route a leaf enters a tree by.
     if (frame.external && frame.leafIdentity !== `${committer}:${deviceId}`) {
       this.logger.warn(
         `[COMMIT][${traceId}] REJECT external_leaf_foreign group=${groupId} device=${deviceId} ` +
