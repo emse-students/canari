@@ -454,7 +454,41 @@ void CanariMirrorPushStateToAppGroup(void) {
            options:opts
              error:nil];
   }
+  CanariExcludeNativeCacheFilesFromBackup(container.path);
   NSLog(@"[CanariPush] mirror to App Group done");
+}
+
+void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir) {
+  if (dir == nil) {
+    NSLog(@"[CanariPush] backupExclusion: directory unavailable");
+    return;
+  }
+  NSError *listErr = nil;
+  NSArray<NSString *> *names = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir
+                                                                                   error:&listErr];
+  if (names == nil) {
+    NSLog(@"[CanariPush] backupExclusion: ERROR %@ not listed: %@", dir.lastPathComponent,
+          listErr.localizedDescription);
+    return;
+  }
+  NSUInteger excluded = 0;
+  for (NSString *name in names) {
+    BOOL isCache = [name isEqualToString:kGraineSeedsFileName] ||
+                   ([name hasPrefix:@"fcm_message_cache"] && [name hasSuffix:@".ndjson"]);
+    if (!isCache) {
+      continue;
+    }
+    NSURL *url = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:name] isDirectory:NO];
+    NSError *err = nil;
+    if ([url setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&err]) {
+      excluded++;
+    } else {
+      NSLog(@"[CanariPush] backupExclusion: ERROR %@ not excluded: %@", name,
+            err.localizedDescription);
+    }
+  }
+  NSLog(@"[CanariPush] backupExclusion: %lu cache file(s) excluded in %@", (unsigned long)excluded,
+        dir.lastPathComponent);
 }
 
 /**
@@ -1007,6 +1041,7 @@ static void CanariAppendFcmCacheEntry(NSDictionary *entry, NSString *messageId) 
     [lines addObject:entryLine];
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    CanariExcludeNativeCacheFilesFromBackup(dir);
     NSLog(@"[CanariPush] writeFcmCache messageId=%@", [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)]);
   } @finally {
     [g_cacheLock unlock];
@@ -1114,6 +1149,7 @@ void CanariDrainAppGroupFcmCache(void) {
     }
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    CanariExcludeNativeCacheFilesFromBackup(dst);
     NSLog(@"[CanariPush] drainAppGroupFcmCache: %lu entry/entries carried over", (unsigned long)lines.count);
   } @finally {
     [g_cacheLock unlock];

@@ -23,6 +23,7 @@ const read = (p: string) => readFileSync(resolve(here, p), 'utf8');
 
 const ANDROID = '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/';
 const nativeCacheRs = read('../../../src-tauri/src/native_cache.rs');
+const pushRs = read('../../../src-tauri/src/commands/push.rs');
 const nativeCacheKeyKt = read(`${ANDROID}NativeCacheKey.kt`);
 const firebaseKt = read(`${ANDROID}CanariFirebaseMessagingService.kt`);
 const applicationKt = read(`${ANDROID}CanariApplication.kt`);
@@ -53,6 +54,23 @@ describe('one key, under one alias, on every side', () => {
     expect(source).toContain(spelling);
   });
 
+  it('Android unwraps it ONCE per salon push, and hands that copy down', () => {
+    // Each Keystore unwrap is a hardware-backed decrypt; a salon push asks the mirror up to four
+    // times, opens a frame and decrypts - one unwrap serves them all.
+    const handler = between(firebaseKt, /private fun handleChannelMessage\(/, /\n {4}}\n/);
+    expect(handler.match(/NativeCacheKey\.retrieve\(/g)).toHaveLength(1);
+    for (const fn of [
+      /private fun graineSeedHeld\(cacheKey: String,/,
+      /private fun absorbGraineSeeds\(cacheKey: String,/,
+      /private fun drainPendingChannelFrames\(cacheKey: String\)/,
+      /private fun postChannelNotification\(\n\s*cacheKey: String,/,
+      /private fun openSeedFrame\(\n\s*cacheKey: String,/,
+    ]) {
+      expect(firebaseKt).toMatch(fn);
+      expect(between(firebaseKt, fn, /\n {4}}\n/)).not.toContain('NativeCacheKey.retrieve(');
+    }
+  });
+
   it('Android creates it at process start, and only there', () => {
     expect(applicationKt).toContain('NativeCacheKey.ensure(this)');
     expect(firebaseKt).not.toContain('NativeCacheKey.ensure(');
@@ -75,6 +93,14 @@ describe('every writer of the push cache seals the line first', () => {
     expect(body).toContain('nativeSealCacheLine(');
     expect(body).toContain('(kept + sealed)');
     expect(body).not.toContain('kept + entry.toString()');
+  });
+
+  it('Kotlin survives a native library without the seal symbol', () => {
+    // The seal is a JNI call: an UnsatisfiedLinkError is an Error, which `catch (e: Exception)`
+    // lets through to crash the push handler.
+    const body = between(firebaseKt, /internal fun appendFcmCacheEntry\(/, /\n {8}}\n/);
+    expect(body).toContain('catch (e: Throwable)');
+    expect(body).not.toContain('catch (e: Exception)');
   });
 
   it('Swift', () => {
@@ -100,6 +126,17 @@ describe('the sealed seed mirror is read by Rust alone', () => {
     expect(source).not.toMatch(opener);
   });
 
+  it('Rust reads the file in ONE place, the function that opens it', () => {
+    // A second reader of the raw file - `read_to_string` + `serde_json` on graine_seeds.json -
+    // still compiles against a sealed mirror and answers "holds nothing" for every salon. Any
+    // question about the mirror's contents goes through `read_graine_mirror` with the key.
+    const production = pushRs.slice(0, pushRs.indexOf('\n#[cfg(test)]\nmod '));
+    const rawReads = production.match(/fs::read(?:_to_string)?\([^;]*graine_seeds\.json/g) ?? [];
+    expect(rawReads).toHaveLength(1);
+    const reader = between(production, /pub\(crate\) fn read_graine_mirror\(/, /\n}\n/);
+    expect(reader).toMatch(/fs::read\(data_dir\.join\("graine_seeds\.json"\)\)/);
+  });
+
   it.each([
     ['Kotlin', firebaseKt, 'nativeGraineSeedHeld('],
     ['Swift', swift, 'canari_native_graine_seed_held('],
@@ -109,12 +146,49 @@ describe('the sealed seed mirror is read by Rust alone', () => {
   });
 });
 
-describe('iOS keeps the caches out of backups', () => {
-  it('excludes the data directory and the App Group container', () => {
-    const exclude = between(iosMm, /static void CanariExcludeNativeCachesFromBackup\(/, /\n}\n/);
-    expect(iosMm).toContain('NSURLIsExcludedFromBackupKey');
-    expect(exclude).toContain('CanariTauriDataDir()');
-    expect(exclude).toContain('containerURLForSecurityApplicationGroupIdentifier');
+describe('iOS keeps the caches out of backups, and nothing else', () => {
+  it('excludes the two cache files, never a directory', () => {
+    // The data directory also holds mls.bin, push_context.json and the identity files: a restore
+    // that brought IndexedDB back without them would look like a damaged MLS state.
+    const perFile = between(
+      pushMm,
+      /void CanariExcludeNativeCacheFilesFromBackup\(NSString/,
+      /\n}\n/
+    );
+    expect(perFile).toContain('NSURLIsExcludedFromBackupKey');
+    expect(perFile).toContain('isEqualToString:kGraineSeedsFileName');
+    expect(perFile).toContain('hasPrefix:@"fcm_message_cache"');
+    expect(perFile).toContain('isDirectory:NO');
+    for (const source of [iosMm, pushMm, swift]) {
+      expect(source).not.toMatch(/isDirectory:YES\][^;]*\n?[^;]*NSURLIsExcludedFromBackupKey/);
+      expect(source).not.toContain('CanariExcludeDirectoryFromBackup');
+    }
+    const pass = between(iosMm, /static void CanariExcludeNativeCachesFromBackup\(/, /\n}\n/);
+    expect(pass).toContain('CanariExcludeNativeCacheFilesFromBackup(CanariTauriDataDir())');
+    expect(pass).toContain('containerURLForSecurityApplicationGroupIdentifier');
+    expect(iosMm).not.toContain('NSURLIsExcludedFromBackupKey');
+  });
+
+  it('every writer re-applies it after its atomic write', () => {
+    // An atomic write is a new inode renamed over the old one: the flag does not travel.
+    const append = between(pushMm, /static void CanariAppendFcmCacheEntry\(/, /\n}\n/);
+    const drain = between(pushMm, /void CanariDrainAppGroupFcmCache\(void\) \{/, /\n}\n/);
+    const mirror = between(pushMm, /void CanariMirrorPushStateToAppGroup\(void\) \{/, /\n}\n/);
+    expect(append).toMatch(
+      /writeToFile:path[^\n]*\n\s*CanariExcludeNativeCacheFilesFromBackup\(dir\);/
+    );
+    expect(drain).toMatch(
+      /writeToFile:path[^\n]*\n\s*CanariExcludeNativeCacheFilesFromBackup\(dst\);/
+    );
+    expect(mirror).toContain('CanariExcludeNativeCacheFilesFromBackup(container.path);');
+    const nse = between(swift, /private func writeFcmCache\(/, /\n {2}}\n/);
+    expect(nse).toMatch(
+      /\.completeFileProtectionUntilFirstUserAuthentication\]\)\n\s*Self\.excludeFromBackup\(fileUrl\)/
+    );
+    const rustWriter = between(pushRs, /fn with_graine_mirror_inner</, /\n}\n/);
+    expect(rustWriter).toMatch(
+      /fs::rename\(&tmp, &path\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*crate::native_cache::exclude_from_backup\(&path\);/
+    );
   });
 
   it('at bootstrap and at every activation', () => {

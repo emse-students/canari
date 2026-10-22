@@ -753,6 +753,21 @@ class NotificationService: UNNotificationServiceExtension {
     return epoch >= 0 ? .local : .absent
   }
 
+  /// Keeps one native cache file out of iCloud and computer backups. Per FILE, and re-applied
+  /// after every write: an atomic write is a new inode renamed over the old one, and the flag does
+  /// not survive it. Only the caches are excluded - never their directory, which also holds the
+  /// state a restore must bring back. Twin: `CanariExcludeNativeCacheFilesFromBackup`.
+  private static func excludeFromBackup(_ url: URL) {
+    var target = url
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = true
+    do {
+      try target.setResourceValues(values)
+    } catch {
+      NSLog("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent) not excluded: \(error.localizedDescription)")
+    }
+  }
+
   /// Writes a decrypted message entry to `fcm_message_cache.ndjson` in the host app's
   /// App Group container, bounded to `maxFcmCacheEntries`. The app drains it into its own
   /// `app_data_dir` copy on the next activation, and `take_fcm_cache` pre-injects
@@ -830,6 +845,7 @@ class NotificationService: UNNotificationServiceExtension {
       // file created with the default class cannot be written at all.
       try Data(body.utf8).write(
         to: fileUrl, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+      Self.excludeFromBackup(fileUrl)
       NSLog("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8)) groupId=\(groupId.prefix(8))")
     } catch {
       NSLog("[CanariNSE] writeFcmCache: failed: \(error.localizedDescription)")

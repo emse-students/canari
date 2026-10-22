@@ -144,41 +144,20 @@ static void CanariEnsureNativeCacheKey(void) {
   }
 }
 
-/// Marks one directory excluded from iCloud and computer backups. On the DIRECTORY, not the files:
-/// every writer replaces its file by an atomic rename, which would drop a per-file flag, and an
-/// excluded directory excludes everything in it.
-static void CanariExcludeDirectoryFromBackup(NSURL *_Nullable url, NSString *what) {
-  if (url == nil) {
-    NSLog(@"[CanariIOS] backupExclusion: %@ unavailable", what);
-    return;
-  }
-  NSError *err = nil;
-  if ([url setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&err]) {
-    NSLog(@"[CanariIOS] backupExclusion: %@ excluded", what);
-  } else {
-    NSLog(@"[CanariIOS] backupExclusion: ERROR %@ not excluded: %@", what, err.localizedDescription);
-  }
-}
-
-/// Keeps the native caches, and the device-bound state beside them, out of every backup: the app's
-/// data directory and the App Group container the notification extension reads. Nothing in either
-/// is restorable anyway - every key that opens it is a ThisDeviceOnly Keychain item - and Android
-/// already excludes its whole data domain (`data_extraction_rules.xml`). Idempotent; run at every
-/// bootstrap and activation, so a directory created later is covered too.
+/// Keeps the two native caches - `graine_seeds.json` and the push cache - out of every backup, in
+/// the app's data directory and in the App Group container the notification extension reads. THE
+/// CACHES ONLY, NEVER THEIR DIRECTORY: it also holds `mls.bin`, `push_context.json` and the identity
+/// files, and those must come back with a restore - the device key that opens `mls.bin` is derived
+/// from the PIN, so a restored state is openable, and a restore that brought back WebKit's
+/// IndexedDB without it would look like a damaged MLS state. The caches gain nothing from a restore:
+/// their key is a ThisDeviceOnly Keychain item that does not travel. Per file, so every writer
+/// re-applies it after its atomic write; this pass at bootstrap and activation covers a file an
+/// older build wrote. Android excludes its data domain (`data_extraction_rules.xml`).
 static void CanariExcludeNativeCachesFromBackup(void) {
-  NSString *dir = CanariTauriDataDir();
-  if (dir != nil) {
-    [[NSFileManager defaultManager] createDirectoryAtPath:dir
-                              withIntermediateDirectories:YES
-                                               attributes:nil
-                                                    error:nil];
-  }
-  CanariExcludeDirectoryFromBackup(dir == nil ? nil : [NSURL fileURLWithPath:dir isDirectory:YES],
-                                   @"app data directory");
-  CanariExcludeDirectoryFromBackup([[NSFileManager defaultManager]
-                                       containerURLForSecurityApplicationGroupIdentifier:
-                                           @"group.fr.emse.canari"],
-                                   @"App Group container");
+  CanariExcludeNativeCacheFilesFromBackup(CanariTauriDataDir());
+  CanariExcludeNativeCacheFilesFromBackup([[NSFileManager defaultManager]
+      containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"]
+                                              .path);
 }
 
 static void CanariProcessPendingPushSecret(void) {

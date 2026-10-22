@@ -649,6 +649,8 @@ fn with_graine_mirror_inner<R>(
         )
         .map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+        // After the rename: the new inode does not carry the old one's flag.
+        crate::native_cache::exclude_from_backup(&path);
     }
     Ok((result, write))
 }

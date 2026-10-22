@@ -901,6 +901,16 @@ mod tests {
     }
 
     /// A temp directory of its own, so the `mls.bin` each test writes is its own.
+    /// `send_messages_background_with_key` writes `mls.bin` through `background_write_mls_bin`,
+    /// which refuses while the PROCESS-global foreground guard is up - and other modules' tests
+    /// raise it. So every test here that sends holds the shared serialiser and clears the guard,
+    /// or it fails whenever a foreground test runs beside it.
+    fn quiet_foreground() -> std::sync::MutexGuard<'static, ()> {
+        let guard = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        guard
+    }
+
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("canari-bg-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
@@ -962,6 +972,7 @@ mod tests {
     /// it. A test that only checked the five would pass with a save that persisted just the first.
     #[test]
     fn one_load_and_one_save_cover_every_advance_in_the_batch() {
+        let _fg = quiet_foreground();
         let (alice, mut bob, group_id) = joined_pair("batch");
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(7)).expect("key");
         let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
@@ -1026,6 +1037,7 @@ mod tests {
     /// own result and the entries around it still encrypt and still decrypt in order.
     #[test]
     fn a_failing_entry_is_isolated_and_the_batch_continues() {
+        let _fg = quiet_foreground();
         let (alice, mut bob, group_id) = joined_pair("isolate");
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(9)).expect("key");
         let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
@@ -1075,6 +1087,7 @@ mod tests {
 
     #[test]
     fn an_empty_batch_writes_nothing_and_returns_no_results() {
+        let _fg = quiet_foreground();
         let dir = temp_dir("empty");
         let _ = std::fs::remove_file(dir.join("mls.bin"));
         let out = send_messages_background_with_key(&dir, &[], &key_b64(3), "u", "d", &[])
@@ -1139,6 +1152,7 @@ mod tests {
     /// invariant is enforced by the type, which is stronger than a test of it.
     #[test]
     fn a_graine_seed_survives_the_push_path_that_used_to_drop_it() {
+        let _fg = quiet_foreground();
         let (alice, bob, group_id) = joined_pair("graine");
         let key = decode_base64_to_32_bytes(&key_b64(11)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
@@ -1191,6 +1205,7 @@ mod tests {
     /// shut phone behind its community's key group never received the seed of any new session.
     #[test]
     fn a_graine_seed_sealed_one_commit_ahead_survives_the_catch_up() {
+        let _fg = quiet_foreground();
         let (mut alice, bob, group_id) = joined_pair("graine-ahead");
         let key = decode_base64_to_32_bytes(&key_b64(13)).expect("key");
         let bob_behind = bob.save_encrypted_with_key(&key).expect("encrypt bob");
@@ -1310,6 +1325,7 @@ mod tests {
     /// `mls-refused` - see `a_graine_seed_sealed_one_commit_ahead_survives_the_catch_up`.
     #[test]
     fn a_spent_generation_is_refused_for_good_and_not_handed_to_the_catch_up() {
+        let _fg = quiet_foreground();
         let tag = "spent";
         let (alice, mut bob, group_id) = joined_pair(tag);
         let key = decode_base64_to_32_bytes(&key_b64(19)).expect("key");
@@ -1384,6 +1400,7 @@ mod tests {
     /// section 21.5): forged, or minted by a device the tree does not hold, it waits for the app.
     #[test]
     fn a_v2_seed_is_kept_only_when_the_tree_endorses_it() {
+        let _fg = quiet_foreground();
         use super::super::graine::{encode_endorsement_v2, seed_commitment, GraineEndorsementV2};
         use super::super::proto_fields::{build_graine_v2_app_message, GraineV2Fields};
 

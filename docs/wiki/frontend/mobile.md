@@ -2613,11 +2613,28 @@ sealed since 2026-10-22 by `src-tauri/src/native_cache.rs`, the only copy of the
   sealed by the first write and by `migrate_legacy_files` (run once per process from
   `take_fcm_cache`, for the data dir and the iOS App Group copy; the file's marker is the durable
   record, so it is idempotent). `channel_keys.json` has no reader and is deleted. Plaintext cache
-  lines are taken beside sealed ones and leave with the ack.
+  lines are taken beside sealed ones and leave with the ack. The plaintext reader has a removal
+  condition, in [legacy-compatibility](../legacy-compatibility.md#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal).
+- **Any question about the mirror's contents goes through `read_graine_mirror` with the key.** A
+  second reader that parses the raw file still compiles, and against a sealed file it answers
+  "holds nothing" for every salon. `nativeCacheSeal.test.ts` allows exactly one raw read.
+- **One key read per push, and absence said once.** A salon push on Android unwraps the key once
+  and hands it down. `take_fcm_cache` runs on a poll, so `app_cache_key` logs a missing key when it
+  goes missing and again when it comes back, never once per poll.
 - **Backups**: Android already excludes its whole data domain (`data_extraction_rules.xml`, see
-  below). iOS sets `NSURLIsExcludedFromBackupKey` on the app data DIRECTORY and the App Group
-  container (`CanariExcludeNativeCachesFromBackup`) - on directories because every writer replaces
-  its file by an atomic rename, which would drop a per-file flag.
+  below). iOS sets `NSURLIsExcludedFromBackupKey` on the two CACHE FILES only, in the data
+  directory and in the App Group container - **never on a directory**. Those directories also hold
+  `mls.bin`, `push_context.json` and the identity files. The device key that opens `mls.bin` is
+  derived from the PIN, so a restored `mls.bin` can be opened, and a restore that brought back
+  WebKit's IndexedDB without it would look like a damaged MLS state. The flag is per file, and an
+  atomic write is a new inode that does not carry it, so EVERY writer re-applies it after its write:
+  - Rust `with_graine_mirror_inner` (`native_cache::exclude_from_backup`, through the Objective-C
+    runtime because `libapp.a` is linked into the NSE too);
+  - `CanariAppendFcmCacheEntry`, `CanariDrainAppGroupFcmCache` and `CanariMirrorPushStateToAppGroup`
+    (`CanariExcludeNativeCacheFilesFromBackup`);
+  - the NSE's `writeFcmCache` (`excludeFromBackup`).
+
+  A pass at bootstrap and on each activation covers a file an older build wrote.
 - **Desktop has no reader**, so it writes no mirror and deletes a plaintext one an older build left.
 
 `nativeCacheSeal.test.ts` pins the alias across the five files, that every cache writer seals,

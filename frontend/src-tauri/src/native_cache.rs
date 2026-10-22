@@ -240,16 +240,57 @@ pub(crate) fn platform_key(b64: &str) -> Option<CacheKey> {
 /// `Err` when it cannot be read - the native side creates it at process start, so its absence is a
 /// failed creation (an iPhone whose Keychain refused, a process started before the first unlock)
 /// and is reported as such. Never cached across calls: a wipe can delete it under a live process.
+///
+/// Reported on the TRANSITION, not on every read: `take_fcm_cache` asks on a poll, and one fact
+/// repeated every few seconds is a line its reader learns to skip ([`KeyPresence`]).
 #[cfg(mobile)]
 pub(crate) fn app_cache_key<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<CacheKey, String> {
     use mls_core::keystore::DeviceKeyStore;
     let keystore = crate::keystore_bridge::PluginDeviceKeyStore::new(app.clone()).unattended(true);
-    keystore.retrieve_device_key(CACHE_KEY_ALIAS).ok_or_else(|| {
-        log::error!("[NATIVE_CACHE] the install's cache key cannot be read - nothing sealed is read or written");
-        "native cache key unavailable".to_string()
-    })
+    let key = keystore.retrieve_device_key(CACHE_KEY_ALIAS);
+    match APP_KEY_PRESENCE.observe(key.is_some()) {
+        Some(false) => log::error!(
+            "[NATIVE_CACHE] the install's cache key cannot be read - nothing sealed is read or \
+             written until it can (said once, until it changes)"
+        ),
+        Some(true) => log::info!("[NATIVE_CACHE] the install's cache key is readable again"),
+        None => {}
+    }
+    key.ok_or_else(|| "native cache key unavailable".to_string())
+}
+
+#[cfg(mobile)]
+static APP_KEY_PRESENCE: KeyPresence = KeyPresence::new();
+
+/// Whether the cache key was readable at the last read in this process, so that its absence is
+/// logged when it BEGINS and its return when it ENDS - never once per poll. The first read that
+/// finds no key is a transition (from "not yet asked"); the first that finds one is not.
+#[cfg(any(mobile, test))]
+pub(crate) struct KeyPresence(std::sync::atomic::AtomicU8);
+
+#[cfg(any(mobile, test))]
+impl KeyPresence {
+    const UNKNOWN: u8 = 0;
+    const PRESENT: u8 = 1;
+    const ABSENT: u8 = 2;
+
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::atomic::AtomicU8::new(Self::UNKNOWN))
+    }
+
+    /// Records one read, and returns `Some(present)` when it CHANGED what the last one found and
+    /// is worth a line: an absence after anything else, a presence after an absence.
+    pub(crate) fn observe(&self, present: bool) -> Option<bool> {
+        let now = if present { Self::PRESENT } else { Self::ABSENT };
+        let before = self.0.swap(now, std::sync::atomic::Ordering::AcqRel);
+        match (before, present) {
+            (b, false) if b != Self::ABSENT => Some(false),
+            (Self::ABSENT, true) => Some(true),
+            _ => None,
+        }
+    }
 }
 
 /// Seals a seed mirror an older build left in the clear, under the writers' lock, and says whether
@@ -309,6 +350,74 @@ pub(crate) fn migrate_legacy_files(data_dir: &std::path::Path, key: &CacheKey) {
     if !failed {
         DONE.store(true, Ordering::Release);
     }
+}
+
+/// Keeps one native cache file out of iCloud and computer backups (iOS); nothing anywhere else -
+/// Android excludes its whole data domain in `data_extraction_rules.xml`, desktop writes no cache.
+///
+/// Per FILE and after EVERY write: the writers replace the file by an atomic rename, a new inode,
+/// and the flag does not travel with the name. Never the directory: it also holds `mls.bin` and the
+/// identity files, which a restore must bring back (the ObjC twin,
+/// `CanariExcludeNativeCacheFilesFromBackup`, says why). A failure is logged and changes nothing
+/// else: the file is sealed whichever way, so a backup of it carries ciphertext under a key that
+/// does not travel.
+pub(crate) fn exclude_from_backup(path: &std::path::Path) {
+    #[cfg(target_os = "ios")]
+    if let Err(e) = ios_exclude_from_backup(path) {
+        log::error!(
+            "[NATIVE_CACHE] {} not excluded from backups: {e}",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
+    #[cfg(not(target_os = "ios"))]
+    let _ = path;
+}
+
+/// `[[NSURL fileURLWithPath:path] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey]`,
+/// through the Objective-C runtime like `app_group::app_group_dir` and for its reason: `libapp.a`
+/// is linked into the notification extension too, so a function of ours in `canari_push.mm` would
+/// leave the extension's link with an undefined symbol. Foundation is linked into both.
+#[cfg(target_os = "ios")]
+fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject, Bool};
+
+    #[link(name = "Foundation", kind = "framework")]
+    extern "C" {
+        static NSURLIsExcludedFromBackupKey: *const AnyObject;
+    }
+
+    let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())
+        .map_err(|e| format!("path has a NUL byte: {e}"))?;
+    objc2::rc::autoreleasepool(|_| {
+        let str_class = AnyClass::get(c"NSString").ok_or("NSString is not loaded")?;
+        let url_class = AnyClass::get(c"NSURL").ok_or("NSURL is not loaded")?;
+        let num_class = AnyClass::get(c"NSNumber").ok_or("NSNumber is not loaded")?;
+        // SAFETY: plain Foundation messages with the argument and return types their headers
+        // declare; every object returned is autoreleased into the pool around this block, and the
+        // key is a Foundation constant that lives as long as the process.
+        unsafe {
+            let ns_path: *mut AnyObject =
+                msg_send![str_class, stringWithUTF8String: c_path.as_ptr()];
+            if ns_path.is_null() {
+                return Err("path is not UTF-8".to_string());
+            }
+            let url: *mut AnyObject = msg_send![url_class, fileURLWithPath: ns_path];
+            let yes: *mut AnyObject = msg_send![num_class, numberWithBool: Bool::YES];
+            let no_error: *mut *mut AnyObject = std::ptr::null_mut();
+            let ok: Bool = msg_send![
+                url,
+                setResourceValue: yes,
+                forKey: NSURLIsExcludedFromBackupKey,
+                error: no_error
+            ];
+            if ok.as_bool() {
+                Ok(())
+            } else {
+                Err("setResourceValue refused".to_string())
+            }
+        }
+    })
 }
 
 /// Removes `channel_keys.json`, the epoch-key mirror an older build wrote in the clear. Nothing has
@@ -423,6 +532,22 @@ mod tests {
     }
 
     /// The alias the native creators use; `nativeCacheSeal.test.ts` holds the other spellings.
+    /// A key that stays absent across a poll is said ONCE, and again only after it came back.
+    #[test]
+    fn a_missing_key_is_logged_on_the_transition_not_on_every_poll() {
+        let presence = KeyPresence::new();
+        assert_eq!(presence.observe(false), Some(false));
+        assert_eq!(presence.observe(false), None);
+        assert_eq!(presence.observe(false), None);
+        assert_eq!(presence.observe(true), Some(true));
+        assert_eq!(presence.observe(true), None);
+        assert_eq!(presence.observe(false), Some(false));
+
+        let healthy = KeyPresence::new();
+        assert_eq!(healthy.observe(true), None);
+        assert_eq!(healthy.observe(true), None);
+    }
+
     #[test]
     fn the_alias_is_the_one_the_platforms_spell() {
         assert_eq!(CACHE_KEY_ALIAS, "canari_native_cache_key");
