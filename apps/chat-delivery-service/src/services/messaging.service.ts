@@ -220,7 +220,20 @@ export interface ValidateCommitBody {
    * device the server did not itself part from this group.
    */
   removes?: { userId: string; deviceId?: string }[];
+  /**
+   * The Welcome of the device this commit adds, when the committer hands it over WITH the commit
+   * (the background re-add, `POST mls/push/send-welcome-and-commit`).
+   *
+   * Its target is held to {@link sendWelcome}'s bar BEFORE the epoch moves, and its row is written
+   * in the advance's own transaction, so an accepted commit always has its Welcome stored. Queued
+   * in a second call after the advance, a failure there left the newcomer in the tree with no
+   * Welcome, and every holder then answered it `already-member`: nothing durable recovered it.
+   */
+  welcome?: { userId: string; deviceId: string; payload: string; ratchetTree?: string };
 }
+
+/** Why a Welcome's target is refused: no device registered under it, or not in the group. */
+export type WelcomeTargetRefusal = 'welcome_target_unknown' | 'welcome_target_not_member';
 
 export interface ValidateCommitResult {
   accepted: boolean;
@@ -1843,6 +1856,41 @@ export class MessagingService {
     }
     await this.assertCommitterMayCommit(groupId, committer, deviceId, frame.external, traceId);
 
+    // A CARRIED WELCOME'S TARGET IS DECIDED BEFORE THE EPOCH MOVES, and outside the lock: a key
+    // group asks social-service, a network call the 5 s lock must not wait on. A refusal here
+    // records, fans out and sends nothing, so the committer discards what it staged.
+    let welcome: (NonNullable<ValidateCommitBody['welcome']> & { userId: string }) | null = null;
+    if (body.welcome) {
+      const targetDeviceId = sanitizeQueryValue(body.welcome.deviceId ?? '', 'welcome.deviceId');
+      const targetUserId = sanitizeQueryValue(body.welcome.userId ?? '', 'welcome.userId');
+      if (typeof body.welcome.payload !== 'string' || !body.welcome.payload) {
+        throw new BadRequestException('welcome.payload required');
+      }
+      const targetGroup = await this.groupRepo.findOne({ where: { id: groupId } });
+      const target = await this.resolveWelcomeTarget(
+        targetGroup,
+        groupId,
+        targetUserId,
+        targetDeviceId,
+        traceId,
+        'COMMIT'
+      );
+      if ('refused' in target) {
+        return {
+          accepted: false,
+          currentEpoch: targetGroup?.activeEpoch ?? 0,
+          reason: target.refused,
+        };
+      }
+      welcome = {
+        userId: target.userId,
+        deviceId: targetDeviceId,
+        payload: body.welcome.payload,
+        ratchetTree:
+          typeof body.welcome.ratchetTree === 'string' ? body.welcome.ratchetTree : undefined,
+      };
+    }
+
     this.logger.log(
       `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`
     );
@@ -1926,7 +1974,26 @@ export class MessagingService {
       // device is not optional, and failing to write it fails the commit. The cost is one retry by
       // the committer, which `submitCommit` is already built for - it rolls the staged commit back
       // on a reject - against a loss that no later call can repair.
+      let queuedWelcome: QueuedMessage | null = null;
       await this.groupRepo.manager.transaction(async (m) => {
+        // A WELCOME IS NEVER STORED FOR A GROUP THAT ENDED while this commit was in flight - the
+        // device handed one asks for a group nobody can serve, on every reconnection. Read under a
+        // row lock so the deletion and this write cannot interleave (the guard of
+        // `enqueueForLiveGroup`, held here because this row is written in the advance).
+        if (welcome) {
+          const [live] = await m.getRepository(Group).find({
+            where: { id: groupId },
+            select: { id: true, deletedAt: true },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (!live || live.deletedAt) {
+            this.logger.warn(
+              `[COMMIT][${traceId}] REJECT group_deleted group=${groupId} - the Welcome it carries ` +
+                `would be undeliverable for ever, so the commit is not recorded`
+            );
+            throw new GoneException({ error: 'group_deleted', groupId });
+          }
+        }
         await m.getRepository(Group).update({ id: groupId }, { activeEpoch: baseEpoch + 1 });
         if (newBase) {
           await this.putGroupInfo(groupId, newBase, baseEpoch + 1, m);
@@ -1968,6 +2035,28 @@ export class MessagingService {
               { userId: a.userId, deviceId: a.deviceId, groupId, status: 'pending' as const },
               { admittedAtEpoch: baseEpoch + 1, kickedAt: null }
             );
+        }
+        // THE WELCOME LANDS WITH THE ADVANCE OR NEITHER DOES (`ValidateCommitBody.welcome`). Its
+        // seat is guaranteed as `sendWelcome` guarantees it - inserted, never overwriting a row -
+        // when the admits above did not already write it.
+        if (welcome) {
+          const target = welcome;
+          if (!admitted.some((a) => a.userId === target.userId && a.deviceId === target.deviceId)) {
+            await m
+              .getRepository(DeviceGroupMembership)
+              .createQueryBuilder()
+              .insert()
+              .values({
+                userId: target.userId,
+                deviceId: target.deviceId,
+                groupId,
+                status: 'pending' as const,
+              })
+              .orIgnore()
+              .execute();
+          }
+          const repo = m.getRepository(QueuedMessage);
+          queuedWelcome = await repo.save(repo.create(this.welcomeRow(groupId, committer, target)));
         }
       });
       group.activeEpoch = baseEpoch + 1;
@@ -2041,6 +2130,19 @@ export class MessagingService {
           `[COMMIT][${traceId}] commit fan-out failed group=${groupId}: ${String(e)}`
         )
       );
+
+      // The Welcome goes out FROM ITS STORED ROW, after the members have the commit. Best-effort
+      // like the fan-out: the row is durable, so a device this misses gets it on its next pull.
+      if (queuedWelcome) {
+        const stored: QueuedMessage = queuedWelcome;
+        await this.deliverWelcome(stored, traceId).catch((e: unknown) =>
+          this.logger.warn(
+            `[COMMIT][${traceId}] Welcome STORED id=${stored.id} and its realtime delivery failed ` +
+              `group=${groupId} target=${stored.recipientId}:${stored.deviceId} - the device takes ` +
+              `it on its next pull: ${String(e)}`
+          )
+        );
+      }
 
       this.logger.log(`[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}`);
 
@@ -2584,6 +2686,94 @@ export class MessagingService {
   }
 
   /**
+   * Whether a Welcome may be addressed to `targetUserId:targetDeviceId` in `groupId`, and whose
+   * device it is. The ONE bar for both doors that store a Welcome: {@link sendWelcome}, and a
+   * commit carrying its Welcome ({@link validateCommit}).
+   *
+   * The device must be registered (its KeyPackage row; the user narrows the lookup when given, so
+   * two accounts sharing a raw device id stay apart). THE TARGET OF A CONVERSATION'S WELCOME IS ON
+   * ITS ROSTER: every client path registers the member (`registerMember`) before it delivers the
+   * Welcome, so this refuses only a device whose owner the group does not name - the row a Welcome
+   * writes would otherwise make it a device of the group. A key-distribution group has no user
+   * roster here, so its target is asked of social-service, exactly as its external joins are
+   * (WP-KEYGROUP-JOIN-GATE); a grant is written there before the granting device Welcomes anyone.
+   */
+  private async resolveWelcomeTarget(
+    group: Group | null,
+    groupId: string,
+    targetUserId: string | undefined,
+    targetDeviceId: string,
+    traceId: string,
+    tag: string
+  ): Promise<{ userId: string } | { refused: WelcomeTargetRefusal }> {
+    const query: Record<string, string> = { deviceId: targetDeviceId };
+    if (targetUserId) {
+      query.userId = targetUserId;
+    }
+    const deviceInfo = await this.keyPackageRepo.findOne({ where: query });
+    if (!deviceInfo) {
+      this.logger.error(
+        `[${tag}][${traceId}] REJECT welcome_target_unknown group=${groupId} ` +
+          `target=${targetUserId ?? 'unknown'}:${targetDeviceId} - no device registered under it`
+      );
+      return { refused: 'welcome_target_unknown' };
+    }
+    const scope = distributionScopeOf(group);
+    const admissible = scope
+      ? await isEntitledToDistributionGroup(scope, deviceInfo.userId, traceId)
+      : await this.isOnRoster(groupId, deviceInfo.userId);
+    if (!admissible) {
+      this.logger.warn(
+        `[${tag}][${traceId}] REJECT welcome_target_not_member group=${groupId} ` +
+          `target=${sanitizeLogValue(deviceInfo.userId)}:${targetDeviceId}`
+      );
+      return { refused: 'welcome_target_not_member' };
+    }
+    return { userId: deviceInfo.userId };
+  }
+
+  /** The queued row of a Welcome, as both doors that store one write it. */
+  private welcomeRow(
+    groupId: string,
+    senderId: string,
+    w: { userId: string; deviceId: string; payload: string; ratchetTree?: string }
+  ): Partial<QueuedMessage> {
+    return {
+      recipientId: w.userId,
+      deviceId: w.deviceId,
+      senderId,
+      groupId,
+      proto: w.payload,
+      isWelcome: true,
+      ratchetTree: w.ratchetTree,
+      createdAt: new Date(),
+    };
+  }
+
+  /**
+   * Delivers a STORED Welcome row through the one delivery, exactly like an application frame.
+   *
+   * A Welcome is always SILENT - it is routed by `data.isWelcome=true` to the Android background
+   * receiver, which joins the group without telling the user - and always PUSHABLE: a device that is
+   * never woken for it stays outside the group, and the next message push then fails to decrypt
+   * with "Groupe introuvable" and shows a generic "Nouveau message de X".
+   *
+   * `pushable` also arms the deferred fallback. A frozen Android app reads as online, so a Welcome
+   * published into a socket nobody was reading was followed by nothing: the device stayed unjoined
+   * until its next foreground pull.
+   */
+  private async deliverWelcome(queued: QueuedMessage, traceId: string): Promise<void> {
+    const isOnline = await this.redis.exists(this.presenceKey(queued.recipientId, queued.deviceId));
+    await this.deliverQueuedFrame(queued, {
+      tag: 'WELCOME',
+      traceId,
+      online: !!isOnline,
+      silent: true,
+      pushable: true,
+    });
+  }
+
+  /**
    * Delivers an MLS Welcome message and optional ratchet tree to a target device.
    * Verifies the sender is a member of the group, queues the welcome, performs
    * real-time delivery if the target is online, and updates DeviceGroupMembership status.
@@ -2627,55 +2817,35 @@ export class MessagingService {
       `[WELCOME][${traceId}] START group=${safeGroupId} sender=${senderUserId} target=${targetUserId ?? 'unknown'}:${targetDeviceId} payloadLen=${body.welcomePayload?.length ?? 0} ratchetTreeLen=${body.ratchetTreePayload?.length ?? 0}`
     );
 
-    // Look up recipient device - include userId in the query when provided so the lookup
-    // is unambiguous even if two users happen to share the same raw device ID string
-    // (common in same-browser multi-tab testing).
-    const query: Record<string, string> = { deviceId: targetDeviceId };
-    if (targetUserId) {
-      query.userId = targetUserId;
-    }
-    const deviceInfo = await this.keyPackageRepo.findOne({ where: query });
-
-    if (!deviceInfo) {
-      this.logger.error(
-        `[WELCOME][${traceId}] Target device not found target=${targetUserId ?? 'unknown'}:${targetDeviceId}`
-      );
-      throw new Error(
-        `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`
-      );
-    }
-
-    // THE TARGET OF A CONVERSATION'S WELCOME IS ON ITS ROSTER. Every client path registers the
-    // member (`registerMember`) before it delivers the Welcome, so this refuses only a device whose
-    // owner the group does not name - the row written below would otherwise make it a device of
-    // the group. A key-distribution group has no user roster here, so its target is asked of
-    // social-service, exactly as its external joins are (WP-KEYGROUP-JOIN-GATE); a grant is
-    // written there before the granting device Welcomes anyone.
-    const scope = distributionScopeOf(group);
-    const targetAdmissible = scope
-      ? await isEntitledToDistributionGroup(scope, deviceInfo.userId, traceId)
-      : await this.isOnRoster(safeGroupId, deviceInfo.userId);
-    if (!targetAdmissible) {
-      this.logger.warn(
-        `[WELCOME][${traceId}] REJECT welcome_target_not_member group=${safeGroupId} ` +
-          `target=${sanitizeLogValue(deviceInfo.userId)}:${targetDeviceId}`
-      );
+    const target = await this.resolveWelcomeTarget(
+      group,
+      safeGroupId,
+      targetUserId,
+      targetDeviceId,
+      traceId,
+      'WELCOME'
+    );
+    if ('refused' in target) {
+      if (target.refused === 'welcome_target_unknown') {
+        throw new Error(
+          `Device ${targetDeviceId} (user: ${targetUserId ?? 'unknown'}) not found. Cannot deliver Welcome message.`
+        );
+      }
       throw new ForbiddenException({
         error: 'welcome_target_not_member',
         message: 'this Welcome is not accepted',
       });
     }
+    const deviceInfo = target;
 
-    const queuedWelcome = this.queuedMessageRepo.create({
-      recipientId: deviceInfo.userId,
-      deviceId: targetDeviceId,
-      senderId: senderUserId,
-      groupId: safeGroupId,
-      proto: body.welcomePayload,
-      isWelcome: true,
-      ratchetTree: body.ratchetTreePayload,
-      createdAt: new Date(),
-    });
+    const queuedWelcome = this.queuedMessageRepo.create(
+      this.welcomeRow(safeGroupId, senderUserId, {
+        userId: deviceInfo.userId,
+        deviceId: targetDeviceId,
+        payload: body.welcomePayload,
+        ratchetTree: body.ratchetTreePayload,
+      })
+    );
     // Same seam as the send: a Welcome for a group that ended between the target lookup and this
     // write is worse than an undeliverable message - the device that receives it asks for a group
     // nobody can hand it, on every reconnection. See {@link enqueueForLiveGroup}.
@@ -2683,25 +2853,7 @@ export class MessagingService {
     this.logger.log(
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
     );
-
-    // Delivered through the one delivery, exactly like an application frame.
-    //
-    // A Welcome is always SILENT - it is routed by `data.isWelcome=true` to the Android background
-    // receiver, which joins the group without telling the user - and always PUSHABLE: a device that
-    // is never woken for it stays outside the group, and the next message push then fails to
-    // decrypt with "Groupe introuvable" and shows a generic "Nouveau message de X".
-    //
-    // `pushable` also arms the deferred fallback this route did not have. A frozen Android app
-    // reads as online, so the Welcome was published into a socket nobody was reading and nothing
-    // followed it: the device stayed unjoined until its next foreground pull.
-    const isOnline = await this.redis.exists(this.presenceKey(deviceInfo.userId, targetDeviceId));
-    await this.deliverQueuedFrame(queuedWelcome, {
-      tag: 'WELCOME',
-      traceId,
-      online: !!isOnline,
-      silent: true,
-      pushable: true,
-    });
+    await this.deliverWelcome(queuedWelcome, traceId);
 
     // Ensure a DeviceGroupMembership row EXISTS, and never demote one that is already active.
     // INSERT ... ON CONFLICT guarantees record creation even when no prior invitation existed

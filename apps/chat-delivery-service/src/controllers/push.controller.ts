@@ -49,15 +49,16 @@ const PUSH_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
  * TOKEN and never on prose.
  *
  * - `accepted` (HTTP 201): the commit passed the gate at `newEpoch - 1` and the members have it.
- *   The caller installs the state it staged, and only on this answer. `welcomeQueued: false` says
- *   the Welcome could not be queued after that - still an acceptance, since the commit stands.
+ *   Its Welcome was stored in the same transaction, so an acceptance always has its Welcome. The
+ *   caller installs the state it staged, and only on this answer.
  * - `rejected` (HTTP 409): nothing was recorded, fanned out or sent. `reason` is the gate's token -
  *   `epoch_mismatch` (the caller's base is not the group's epoch, `currentEpoch` says which is),
- *   `concurrent_commit` (another commit held the lock), `not_a_member` (the target was removed) -
+ *   `concurrent_commit` (another commit held the lock), `not_a_member` (the target was removed),
+ *   `welcome_target_unknown` / `welcome_target_not_member` (the Welcome's target is refused) -
  *   and the caller discards what it staged.
  */
 export type BackgroundWelcomeAnswer =
-  | { status: 'accepted'; newEpoch?: number; welcomeQueued?: false }
+  | { status: 'accepted'; newEpoch?: number }
   | { status: 'rejected'; reason: string; currentEpoch?: number };
 
 /** A refusal of the background Welcome route: HTTP 409 carrying the typed body. */
@@ -758,7 +759,8 @@ export class PushController {
    * The commit is validated (epoch-gated) before any Welcome, exactly like the foreground
    * `/api/mls/commit` path: this keeps the server's `activeEpoch` in phase with the real MLS epoch
    * so subsequent foreground commits are not rejected as `epoch_mismatch` (C6). `validateCommit`
-   * records the commit and fans it out to the members itself; this route sends only the Welcome.
+   * records the commit, stores its Welcome in the same transaction, fans the commit out and
+   * delivers the Welcome from its stored row; this route only authenticates and answers.
    *
    * `baseEpoch` and `commitPayload` are BOTH required, and both are handed to `validateCommit` -
    * the payload as `proto`, which is what makes the commit replayable. `groupInfo`, the base of the
@@ -840,10 +842,10 @@ export class PushController {
 
     // The background commit advances the real epoch: validate it first (same as foreground path)
     // to keep activeEpoch in sync, otherwise the next foreground commit is wrongly rejected (C6).
-    // Validate BEFORE sending the Welcome: a rejection must neither broadcast the commit nor deliver
-    // a Welcome into a state other members won't adopt.
+    // A rejection neither broadcasts the commit nor stores a Welcome into a state other members
+    // won't adopt.
     //
-    // `proto` is the commit itself, and it is the same value broadcast below. Without it
+    // `proto` is the commit itself, the value recorded and fanned out. Without it
     // `validateCommit` refuses outright - a commit it cannot record may not move the counter,
     // because `IDX_mls_commit_log_group_epoch` is UNIQUE and no later call can refill a skipped
     // epoch.
@@ -865,6 +867,16 @@ export class PushController {
         ...(typeof body.groupInfo === 'string' && body.groupInfo
           ? { groupInfo: body.groupInfo }
           : {}),
+        // ITS WELCOME, held to the Welcome's bar before the epoch moves and stored in the same
+        // transaction as the advance - so an accepted commit always has its Welcome.
+        welcome: {
+          userId: targetUserId,
+          deviceId: targetDeviceId,
+          payload: body.welcomePayload,
+          ...(typeof body.ratchetTreePayload === 'string'
+            ? { ratchetTree: body.ratchetTreePayload }
+            : {}),
+        },
       },
       userId
     );
@@ -882,35 +894,12 @@ export class PushController {
       `[BG_WELCOME][${traceId}] commit accepted -> activeEpoch=${validation.newEpoch}`
     );
 
-    // Send Welcome to target device (null authUserId skips membership check). The commit itself
-    // was fanned out by `validateCommit`, which excludes the admitted target; broadcasting it here
-    // as well delivered it twice to every member.
-    //
-    // THE ANSWER STAYS `accepted` IF THE WELCOME CANNOT BE QUEUED. The commit is recorded and fanned
-    // out, so the phone must install the state it staged to stay in step with the group; a 500 here
-    // would make it discard that state and fall one commit behind its own advance. The newcomer,
-    // whose seat is now `pending`, recovers on its own re-ask cadence.
-    let welcomeQueued = true;
-    try {
-      await this.messagingService.sendWelcome(undefined, {
-        targetDeviceId,
-        targetUserId,
-        senderUserId: userId,
-        welcomePayload: body.welcomePayload,
-        ratchetTreePayload: body.ratchetTreePayload,
-        groupId,
-      });
-    } catch (e) {
-      welcomeQueued = false;
-      this.logger.error(
-        `[BG_WELCOME][${traceId}] commit ACCEPTED at activeEpoch=${validation.newEpoch} and the Welcome NOT queued for ${targetUserId}:${targetDeviceId}: ${String(e)}`
-      );
-    }
-
-    this.logger.log(`[BG_WELCOME][${traceId}] DONE welcomeQueued=${welcomeQueued}`);
-    const answer: BackgroundWelcomeAnswer = welcomeQueued
-      ? { status: 'accepted', newEpoch: validation.newEpoch }
-      : { status: 'accepted', newEpoch: validation.newEpoch, welcomeQueued: false };
+    // THE WELCOME WAS STORED WITH THE ADVANCE (`ValidateCommitBody.welcome`) and delivered from
+    // that row by `validateCommit`, which also fanned the commit out, excluding the admitted target.
+    // There is no second call left to fail after the epoch moved, so an acceptance always has its
+    // Welcome.
+    this.logger.log(`[BG_WELCOME][${traceId}] DONE Welcome stored with the commit`);
+    const answer: BackgroundWelcomeAnswer = { status: 'accepted', newEpoch: validation.newEpoch };
     return answer;
   }
 

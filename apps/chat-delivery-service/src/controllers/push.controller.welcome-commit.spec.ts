@@ -80,7 +80,7 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     controller = module.get(PushController);
   });
 
-  it('hands the commit to validateCommit as `proto`, then sends the Welcome', async () => {
+  it('hands the commit to validateCommit as `proto`, WITH the Welcome it stores in the advance', async () => {
     const res = await controller.sendWelcomeAndCommitPush(AUTH, body);
 
     // THE REGRESSION THIS FILE EXISTS FOR: without `proto`, validateCommit throws a 400 and the
@@ -96,10 +96,13 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
         proto: 'Q09NTUlU',
         // The re-added device is recorded with the advance, before its Welcome.
         admits: [{ userId: 'u2', deviceId: 'd2' }],
+        // AND ITS WELCOME, stored in the transaction that moves the epoch: an accepted commit
+        // always has its Welcome, so there is no second call left to fail after the advance.
+        welcome: { userId: 'u2', deviceId: 'd2', payload: 'V0VMQ09NRQ==', ratchetTree: 'VFJFRQ==' },
       },
       'u1'
     );
-    expect(sendWelcome).toHaveBeenCalledTimes(1);
+    expect(sendWelcome).not.toHaveBeenCalled();
     // A TYPED ANSWER: the phone installs its staged state on `accepted` and on nothing else.
     expect(res).toEqual({ status: 'accepted', newEpoch: 8 });
   });
@@ -116,14 +119,22 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     );
   });
 
-  it('still answers accepted when the Welcome cannot be queued after the gate accepted', async () => {
-    // The commit is recorded and fanned out: the phone must install it to stay in step with the
-    // server, so a failed Welcome is said in the answer, never turned into a refusal or a 500.
-    sendWelcome.mockRejectedValue(new Error('queue down'));
+  it('answers a Welcome target the gate refuses with 409 and its typed reason, sending nothing', async () => {
+    // Decided BEFORE the epoch moves now, so it is a refusal like any other: the phone discards
+    // what it staged and the group never holds a newcomer without a Welcome.
+    validateCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'welcome_target_not_member',
+      currentEpoch: 7,
+    });
 
-    const res = await controller.sendWelcomeAndCommitPush(AUTH, body);
+    const refusal = await refusalOf(controller.sendWelcomeAndCommitPush(AUTH, body));
 
-    expect(res).toEqual({ status: 'accepted', newEpoch: 8, welcomeQueued: false });
+    expect(refusal).toEqual({
+      status: 409,
+      body: { status: 'rejected', reason: 'welcome_target_not_member', currentEpoch: 7 },
+    });
+    expect(sendWelcome).not.toHaveBeenCalled();
   });
 
   it('leaves the fan-out to the gate, so every member receives the commit ONCE', async () => {

@@ -666,9 +666,8 @@ from epoch 1 to 3, built its add on base 1, the gate refused it (`epoch_mismatch
 `201`, and the phone logged "Welcome sent". Worse, it had merged the add into `mls.bin` before the
 answer, so it held an epoch nobody else had and could not read the group's next message.
 
-- **The route's answer is typed.** `201 {status: 'accepted', newEpoch}` after the gate accepted (with
-  `welcomeQueued: false`, logged at ERROR, when the Welcome could not be queued afterwards - the commit
-  stands, so the phone still installs); `409 {status: 'rejected', reason, currentEpoch?}` otherwise. The phone classifies
+- **The route's answer is typed.** `201 {status: 'accepted', newEpoch}` after the gate accepted;
+  `409 {status: 'rejected', reason, currentEpoch?}` otherwise. The phone classifies
   the body's `status` token (`push/BackgroundWelcomeAnswer.kt`), so it reads a pre-2026-10-22 server
   (`201 {status: 'rejected'}`, `201 {status: 'done'}`) correctly too.
 - **The phone stages, and installs only an acceptance** - the foreground's order since C7. The post-add
@@ -681,8 +680,9 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   AHEAD of the base (never a base at or past a lagging counter) is recorded in
   `welcome_request_stale.json` against the digest of `mls.bin`, so the newcomer's re-ask every 60 s is
   not answered again from the same bytes; any write to `mls.bin` lifts it. Deleting the MLS state
-  (`remove_mls_state_in`) sweeps the memo and every staged `mls.bin.welcome-*` with it, since a staged
-  file holds that state's epoch secrets.
+  (`remove_mls_state_in`) sweeps the memo, its `.tmp` and every staged `mls.bin.welcome-*` with it,
+  since a staged file holds that state's epoch secrets - and deletes `mls.bin` LAST, so a sweep that
+  fails part-way leaves the state intact for the next reset to finish.
 - **The newcomer heals on its own cadence**: `requestReAdd` re-asks every 60 s while its app is open
   (external join first, then `welcome_request`), so it joins as soon as a base is published again or a
   member with a current state answers. A shut, stale phone alone never serves it.
@@ -690,8 +690,19 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   prepare exports it (`add_members_bulk_with_base`), the phone sends it as `groupInfo`, and
   `validateCommit` publishes it in the advance's own transaction. So an accepted background add never
   leaves the published base one epoch behind, whether or not the phone's install then succeeds.
+- **An accepted commit always has its Welcome.** The route hands the Welcome to `validateCommit`
+  (`ValidateCommitBody.welcome`), which holds its target to `sendWelcome`'s bar (a registered device,
+  on the roster or entitled by social-service) BEFORE the epoch moves - a refusal is a typed
+  `welcome_target_unknown` / `welcome_target_not_member` 409 - and writes the Welcome row in the
+  advance's own transaction, then delivers it from that row. The Welcome used to be queued by a second
+  call after the advance; when that failed, the newcomer sat in the tree with no Welcome, every holder
+  then answered it `already-member`, and nothing durable recovered it. A failed realtime delivery now
+  costs nothing: the row is the delivery, and the device takes it on its next pull.
 - **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
   to broadcast it a second time.
+- **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a
+  `StagedWelcome` seam the JVM tests drive: an install that finds the MLS state lock busy never ran, so
+  the staged file is deleted there and the line says `lock busy`.
 - **What is left open:** an acceptance whose install is refused (the foreground started and wrote
   `mls.bin` inside the round trip) leaves the server one commit ahead of this device, logged
   `ACCEPTED AND NOT INSTALLED`; the device then recovers through the usual ladder. iOS has no
@@ -1149,7 +1160,7 @@ those groups' first pages itself, which is the path every group took before the 
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package for background service |
 | POST | `/api/mls/push/commits` | PushSecret | Replayable commits since `sinceEpoch`, for the in-memory catch-up of a device whose app is killed |
-| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit and fans it out (the route sends only the Welcome). **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member` |
+| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit, stores its Welcome in the same transaction, fans the commit out and delivers the Welcome from its row. **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member`, `welcome_target_unknown`, `welcome_target_not_member` |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices of caller |
 | POST | `/api/mls/push/unavailable` | JWT | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |
