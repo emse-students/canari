@@ -767,6 +767,13 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   by the database (the transaction's start). The admitting transaction commits before the commit
   that lets the device read anything is fanned out, so the database instant can only be early, by at
   most one transaction. Unifying them needs a column and a migration for that bound, and was declined.
+- **The person who arrived WITH the group has no span (2026-10-22).** Nothing precedes the creation,
+  so `[0, creation)` is empty, but it was not harmless: an undated copy is placed against every
+  window edge widened by one hour (below), so the creator dropped every undated history entry of the
+  group's first hour, for good (read on the rig's GRP-7). A first arrival within
+  `CREATION_ARRIVAL_BOUND_MS` (1 s, either side) of the group row's `createdAt` is the creation, and
+  gets its gaps only. Measured on the local estate: the creator's interval 4 ms after the group row,
+  the next member 13.5 s. A joiner's span is unchanged.
 - `sendFullHistoryBundle` passes the invitee (`userIdOfLeaf(to)`) to `entitledHistorySelection`,
   whose filter becomes the union of gaps plus that one person's withheld windows. This is safe as a
   broadcast because every other member is entitled to a superset of what the invitee is. For a new
