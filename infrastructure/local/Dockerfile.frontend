@@ -51,7 +51,8 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 #   /api/mls/gifs so KLIPY never sees a reader's query, IP or identifier (gifSearch.ts).
 # img-src stays wide (https:) because it renders arbitrary user-posted image URLs;
 # connect-src must not, since it governs what the app can read into memory. It names
-# no bare ws:/wss: either: both WebSockets are same-origin, which 'self' matches.
+# no bare ws:/wss: either: both WebSockets are same-origin, and the estate's own wss://
+# names are listed because 'self' matches wss: only under CSP Level 3 (older Safari).
 #
 # NO 'unsafe-inline' FOR SCRIPTS, AND A PAGE IS NOT GOVERNED BY THIS SNIPPET (2026-10-22).
 # These directives are written ONCE MORE, in frontend/src/lib/security/cspPolicy.js, and
@@ -62,7 +63,7 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 # (@ssr, @app_shell) must NOT include it: a second policy is intersected with the first,
 # and this one, holding no hash, would refuse the page's own scripts. It includes
 # csp-page.conf instead, which says only what a <meta> policy cannot (frame-ancestors).
-RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss://canari.emse.fr wss://canari-emse.fr wss://www.canari-emse.fr wss://dev.canari-emse.fr https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
 RUN printf 'add_header Content-Security-Policy "frame-ancestors '"'"'none'"'"'" always;\n' > /etc/nginx/snippets/csp-page.conf
 
 # The headers of an error this nginx makes itself on an API route (@api_error_*): JSON, never cached,

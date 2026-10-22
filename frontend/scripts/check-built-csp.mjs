@@ -64,12 +64,12 @@ if (!web) {
 
 if (policies.length !== 1) fail(`app-shell.html carries ${policies.length} policies, expected 1`);
 const policy = policies[0];
-const scriptSrc =
-  policy
-    .split(';')
-    .map((d) => d.trim().split(/\s+/))
-    .find((d) => d[0] === 'script-src')
-    ?.slice(1) ?? fail(`the policy has no script-src: ${policy}`);
+const scriptDirective = policy
+  .split(';')
+  .map((d) => d.trim().split(/\s+/))
+  .find((d) => d[0] === 'script-src');
+if (!scriptDirective) fail(`the policy has no script-src: ${policy}`);
+const scriptSrc = scriptDirective.slice(1);
 
 for (const forbidden of ["'unsafe-inline'", "'unsafe-eval'"]) {
   if (scriptSrc.includes(forbidden)) fail(`script-src allows ${forbidden}: ${policy}`);

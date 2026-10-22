@@ -17,12 +17,13 @@
  * (narrow `connect-src`), so the feature looked alive and did nothing.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { sourceFiles } from '../../test/sourceTree';
 import {
   WEB_POLICY_DIRECTIVES,
   inlineScriptHashes,
+  inlineScripts,
   quoteSource,
   serializePolicy,
   webDocumentCsp,
@@ -172,6 +173,20 @@ describe('the served Content-Security-Policy', () => {
     for (const [, policy] of ALL_POLICIES) expect(policy()).not.toMatch(/stripe/i);
   });
 
+  it("names the estate's own wss:// origins, not only 'self' (older Safari)", () => {
+    // 'self' matches wss: only under CSP Level 3; a Safari before it refuses the socket otherwise.
+    for (const policy of [siteWide, webPagePolicy]) {
+      expect(sources(policy(), 'connect-src')).toEqual(
+        expect.arrayContaining([
+          'wss://canari.emse.fr',
+          'wss://canari-emse.fr',
+          'wss://www.canari-emse.fr',
+          'wss://dev.canari-emse.fr',
+        ])
+      );
+    }
+  });
+
   it('never widens connect-src to a bare scheme', () => {
     // `img-src` is deliberately `https:`, because it renders arbitrary user-posted image URLs.
     // `connect-src` governs what the app may read into memory and must stay an allowlist - a
@@ -217,7 +232,7 @@ describe('no script runs unless the policy names it (2026-10-22)', () => {
     expect(csp.mode).toBe('hash');
     // The theme, the safe-area inset, iOS Dynamic Type and the WASM preload: four scripts, four
     // hashes. A fifth script without its hash would be refused on every page, before first paint.
-    const scriptCount = [...appHtml.matchAll(/<script>/g)].length;
+    const scriptCount = inlineScripts(appHtml).length;
     expect(scriptCount).toBe(4);
     const hashes = inlineScriptHashes(appHtml);
     expect(hashes).toHaveLength(scriptCount);
@@ -229,6 +244,13 @@ describe('no script runs unless the policy names it (2026-10-22)', () => {
     expect(inlineScriptHashes('<script>alert(1)</script>')).toEqual([
       'sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI=',
     ]);
+    // Where a script ENDS is the HTML tokenizer's decision, so the parser must agree with it: an
+    // end tag with a space, in capitals, or carrying junk attributes still ends the element.
+    for (const end of ['</script >', '</SCRIPT>', '</script foo="bar">']) {
+      expect(inlineScriptHashes(`<script>alert(1)${end}<script>x</script>`)[0]).toBe(
+        'sha256-bhHHL3z2vDgxUt0W3dWQOrprscmda2Y5pLsLg4GF+pI='
+      );
+    }
     // A script with a src is allowed by its origin, a data block never runs: neither is hashed.
     expect(
       inlineScriptHashes(
@@ -311,6 +333,39 @@ describe('the native WebView policy (tauri.conf.json, 2026-10-22)', () => {
       for (const source of release[name].split(/\s+/)) expect(localSources, name).toContain(source);
     }
     expect(local['connect-src'].split(/\s+/)).toEqual(expect.arrayContaining(['http:', 'ws:']));
+  });
+
+  it('keeps the dev policy as strict for scripts, and lets `tauri dev` reach its Vite server', () => {
+    const security = JSON.parse(readFileSync(resolve(SRC_TAURI, 'tauri.conf.json'), 'utf8')).app
+      .security;
+    const dev: Record<string, string> = security.devCsp;
+    const script = dev['script-src'].split(/\s+/);
+    expect(script).not.toContain("'unsafe-inline'");
+    expect(script).not.toContain("'unsafe-eval'");
+    // Vite's hot reload is a WebSocket to the dev server (`devUrl`, port 1420).
+    expect(dev['connect-src'].split(/\s+/)).toEqual(
+      expect.arrayContaining(['ws://localhost:1420', 'ws://127.0.0.1:1420'])
+    );
+  });
+
+  it('ships the policy on iOS too, which is why the app needs iOS 16 (owner decision 2026-10-22)', () => {
+    // WebKit before 16 does not know 'wasm-unsafe-eval' and refuses WebAssembly under any policy
+    // without 'unsafe-eval': the MLS engine would not load. So no iOS override may remove the
+    // policy, and every place that states the app's minimum iOS says 16.
+    expect(existsSync(resolve(SRC_TAURI, 'tauri.ios.conf.json'))).toBe(false);
+    const conf = JSON.parse(readFileSync(resolve(SRC_TAURI, 'tauri.conf.json'), 'utf8'));
+    expect(conf.bundle.iOS.minimumSystemVersion).toBe('16.0');
+    const apple = resolve(SRC_TAURI, 'gen/apple');
+    expect(readFileSync(resolve(apple, 'project.yml'), 'utf8')).toMatch(/iOS: 16\.0/);
+    expect(readFileSync(resolve(apple, 'Podfile'), 'utf8')).toContain("platform :ios, '16.0'");
+    const targets = [
+      ...readFileSync(resolve(apple, 'canari.xcodeproj/project.pbxproj'), 'utf8').matchAll(
+        /IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);/g
+      ),
+    ].map((m) => Number(m[1]));
+    expect(targets.length).toBeGreaterThan(0);
+    // The app and the project at 16; the notification extension's own 18.2 is higher, never lower.
+    expect(Math.min(...targets)).toBe(16);
   });
 
   it('gives no remote origin access to the IPC: no capability declares `remote`', () => {

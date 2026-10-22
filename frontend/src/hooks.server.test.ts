@@ -18,6 +18,7 @@ import { preloadableAsset } from '$lib/server/preload';
 import { WASM_PRELOAD_MARKER, renderWasmPreloadMeta } from '$lib/server/wasmPreload';
 import { MLS_DEVICE_ID_PREFIX } from '$lib/mls-client/wasmPrefetch';
 import { SITE } from '$lib/seo/site';
+import { inlineScripts } from '$lib/security/cspPolicy.js';
 
 // Read from the project root rather than from `import.meta.url`: under Vitest's transform that URL
 // is not a `file:` one, and `app.html` is not a module anyway - it is the artefact being asserted.
@@ -134,7 +135,7 @@ describe('the WASM preload (wasmPreload.ts) starts the download beside the JS', 
 
   /** The one inline script of app.html that reads the marker: fixed text, so the CSP hashes it. */
   function preloadScript(): string {
-    const scripts = [...appHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    const scripts = inlineScripts(appHtml);
     const found = scripts.filter((s) => s.includes('canari-wasm-preload'));
     expect(found).toHaveLength(1);
     return found[0];

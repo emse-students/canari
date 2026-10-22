@@ -103,7 +103,8 @@ narrowing must not touch: `'wasm-unsafe-eval'` (`WebAssembly.instantiate` of the
 it every encrypted conversation stops), `img-src https:` (a GIF pasted from any host is drawn
 directly, owner decision 2026-10-18, [chat](../frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18)),
 and `style-src 'unsafe-inline'` (Svelte `style=` attributes; styles cannot run code). `connect-src`
-names no bare `ws:`/`wss:` any more: both WebSockets are same-origin, which `'self'` matches.
+names no bare `ws:`/`wss:` any more: both WebSockets are same-origin, and the estate's own `wss://`
+names are listed, because `'self'` matches `wss:` only under CSP Level 3 (an older Safari).
 
 **What made the inline scripts hashable.** `app.html`'s WASM preload used to be written by the server
 with the content-hashed binary URL INSIDE it - a new text, so an unhashable one, on every build. The
@@ -130,10 +131,26 @@ network is given the IPC.
   template HTML to `innerHTML`, and `{@html}` does the same. Under Trusted Types each of those throws
   unless a DEFAULT policy passes strings through - which is the absence of the control under its
   name. Not feasible without a renderer that does not write `innerHTML`.
-- **WebKit before 16** (Safari, and iOS 15 or older in the native app) does not know
-  `'wasm-unsafe-eval'` and refuses WebAssembly under any policy without `'unsafe-eval'`. The web
-  policy already had this shape; the native policy is new, so an iPhone on iOS 15 would lose the MLS
-  engine. Owed: the lowest iOS the App Store build is installed on, read before a stable.
+- **WebKit before 16 and Chromium before 97 do not know `'wasm-unsafe-eval'`** and refuse
+  WebAssembly under any policy without `'unsafe-eval'` - which stays out. So:
+  - **the iOS app needs iOS 16** (owner decision 2026-10-22, [mobile](../frontend/mobile.md#ios-project));
+    a web visitor on Safari 15 had the same limit before this change;
+  - **Android**: the native WebView is the Android System WebView, updated through the Play Store
+    apart from the OS. One older than 97 (released January 2022) would refuse the MLS engine; the
+    app requires API 28, and a device that has not updated its WebView since then is the only case.
+
+**What the edge may inject, and the policy now refuses.** Several Cloudflare features rewrite an HTML
+response to add an inline or a third-party script: Bot Fight Mode / JavaScript detections, Web
+Analytics (automatic injection), Rocket Loader, Email Address Obfuscation, Zaraz, Browser Insights,
+the challenge / "Under Attack" interstitials and Automatic Platform Optimization. Under this policy
+each one is refused on the page (and Rocket Loader would break every script). Which of them are on for
+the zones in front of the web estates has NOT been read; it is a check owed before the stable, in
+the dashboard - none is fixed by widening the policy.
+
+**Also in the policy's wake.** pdf.js needs no eval: the 6.x line dropped its `new Function` glyph
+compiler and the `isEvalSupported` option with it (no `new Function` in `pdfjs-dist/build`), so there
+is nothing to switch off. `tauri dev` has its own `devCsp`: the same
+script rules, plus the Vite server on port 1420 (its scripts and its hot-reload WebSocket).
 
 **The reading this owes**, because a refusal is indistinguishable from an ordinary failure: load the
 web app and the Android app, open a chat, a community, an image and a video, the GIF picker, the PDF
