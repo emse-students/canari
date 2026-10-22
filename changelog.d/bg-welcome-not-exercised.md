@@ -1,0 +1,1 @@
+The background Welcome reading on the Mi 9T was attempted and not exercised: a new device only asks for a Welcome when its own external join fails. The trigger and what is owed are in the [backlog](../docs/wiki/backlog.md#owed-before-the-stable-that-carries-the-commit-caller-checks-one-background-welcome-read-on-the-mi-9t-on-the-local-estate-2026-10-22).
