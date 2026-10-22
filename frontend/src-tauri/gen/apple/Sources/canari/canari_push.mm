@@ -2616,11 +2616,16 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
 // `namesMentionAuthor` is YES on the SALON path only: its title is the salon, so a mention of this
 // reader names its author in the subtitle (`CanariMentionAuthorLine`, WP-MENTION-NAME). An MLS
 // banner passes NO - its push already names the sender in the title or the subtitle.
+//
+// `scansBodyForMention` is YES on the MLS path only. The salon caller has already DECIDED the
+// mention (`mentionedByServer` is its answer, and NO on a blind banner, which nothing proved), and a
+// scan of a blind banner's body would read the generic line, whose salon name the server wrote -
+// a salon named `@[<id>]` would mention that reader again.
 static void CanariShowMessageNotification(NSString *senderName, NSString *groupName, NSString *body,
                                           NSString *groupId, NSString *senderId,
                                           CanariDecryptedMessage *_Nullable decrypted,
                                           BOOL mentionedByServer, NSString *_Nullable initialsName,
-                                          BOOL namesMentionAuthor) {
+                                          BOOL namesMentionAuthor, BOOL scansBodyForMention) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
@@ -2650,7 +2655,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // @-mention of me (WP-XP-5): the decrypted body carries inline `@[uuid]` tokens; when one
   // targets my own userId the notification is delivered time-sensitive (Focus breakthrough).
   BOOL mentionsMe = mentionedByServer;
-  if (!mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {
+  if (scansBodyForMention && !mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {
     NSString *needle = [NSString stringWithFormat:@"@[%@]", ctx.userId];
     mentionsMe = [body rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
   }
@@ -3091,7 +3096,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     dispatch_async(dispatch_get_main_queue(), ^{
       // MLS: the server cannot know who is mentioned, so the body scan inside decides.
       CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO,
-                                    senderName, NO);
+                                    senderName, NO, YES);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -3261,7 +3266,7 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       // pass nil. The initials fall back to the SALON, not to the composed title: Android twin uses
       // channelName for exactly the same reason.
       CanariShowMessageNotification(displayName, @"", body, conversationId, shownSenderId, nil,
-                                    shownMentionsMe, channelName, YES);
+                                    shownMentionsMe, channelName, YES, NO);
     });
   });
 }

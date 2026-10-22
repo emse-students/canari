@@ -248,15 +248,67 @@ describe('channel push payload contract (social-service writer vs the three nati
 
   it('a blind banner draws no author and no mention on all three - only an open proves them', () => {
     // The pure rule is tested on each platform (Android `ChannelBannerAttributionTest`, the NSE's
-    // `ChannelBannerAttributionTests`); this pins that each handler goes through it.
+    // `ChannelBannerAttributionTests`); this pins that each handler goes through it. AN ALLOWLIST OF
+    // EVERY USE of the server's words, not a presence check: each allowed use must be there, and once
+    // they are cut out nothing else may read the claim - so a route, a sound or a face taken from it
+    // anywhere else in the handler fails here.
+    const onlyThrough = (source: string, claim: RegExp, allowed: string[]) => {
+      let rest = source;
+      for (const use of allowed) {
+        expect(rest, `allowed use missing: ${use}`).toContain(use);
+        rest = rest.split(use).join('');
+      }
+      expect(rest.match(claim), 'a use of the claim outside the allowlist').toBeNull();
+    };
+
+    onlyThrough(kotlinHandler, /\bserverSaysMentioned\b|data\["mentioned"\]/g, [
+      'val serverSaysMentioned = data["mentioned"] == "true"',
+      'ChannelBannerAttribution.of(showsMessage, senderId, serverSaysMentioned)',
+      'if (!showsMessage && (senderId.isNotEmpty() || serverSaysMentioned)) {',
+      'mentioned=$serverSaysMentioned)',
+    ]);
+    onlyThrough(kotlinHandler, /\bval mentionsMe\b|\bfetchAvatar\(|\bmentionAuthorLine\(/g, [
+      'val mentionsMe = attribution.mentionsMe',
+      'attribution.authorId?.let { fetchAvatar(it) }',
+      'if (mentionsMe) "${mentionAuthorLine(',
+    ]);
     expect(kotlinHandler).toContain(
-      'ChannelBannerAttribution.of(showsMessage, senderId, serverSaysMentioned)'
+      'channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES'
     );
-    expect(kotlinHandler).toContain('attribution.authorId?.let { fetchAvatar(it) }');
-    expect(swiftHandler).toContain('Self.channelBannerAttribution(');
-    expect(swiftHandler).toContain('let authorId = attribution.authorId');
-    expect(objcHandler).toContain('BOOL shownMentionsMe = showsMessage && mentionsMe;');
-    expect(objcHandler).toContain('NSString *shownSenderId = showsMessage ? senderId : @"";');
+
+    // The NSE handler ALONE: the shared slice runs on past it, into the rule's own definition.
+    const swiftChannelOnly = functionBody(
+      swiftSource,
+      /private func handleChannelMessage\(/,
+      /\n {2}\/\/\/ Opens the seed frame a salon push carries/
+    );
+    onlyThrough(swiftChannelOnly, /\bserverSaysMentioned\b|userInfo\["mentioned"\]/g, [
+      'let serverSaysMentioned = Self.string(userInfo["mentioned"]) == "true"',
+      'showsMessage: body != nil, senderId: senderId, serverSaysMentioned: serverSaysMentioned)',
+      'if serverSaysMentioned, !mentionsMe {',
+      'if body == nil, !senderId.isEmpty || serverSaysMentioned {',
+      'mentioned=\\(serverSaysMentioned)',
+    ]);
+    onlyThrough(swiftChannelOnly, /\blet mentionsMe\b|\bfetchAvatar\(|\bmentionAuthorLine\(/g, [
+      'let mentionsMe = attribution.mentionsMe',
+      'let authorId = attribution.authorId,\n      let avatarUrl = fetchAvatar(',
+      'if mentionsMe {\n      content.subtitle = Self.mentionAuthorLine(',
+    ]);
+
+    onlyThrough(objcHandler, /\bmentionsMe\b|data\[@"mentioned"\]/g, [
+      'BOOL mentionsMe = [data[@"mentioned"] isKindOfClass:[NSString class]] &&\n                    [(NSString *)data[@"mentioned"]',
+      'BOOL shownMentionsMe = showsMessage && mentionsMe;',
+      'if (senderId.length > 0 || mentionsMe) {',
+      ', mentionsMe, channelId);',
+    ]);
+    // The salon caller decided the mention, so the shared builder must not re-derive it by scanning
+    // a body whose blind form carries the server's salon name (the last `NO`).
+    expect(objcHandler).toMatch(
+      /CanariShowMessageNotification\(displayName, @"", body, conversationId, shownSenderId, nil,\s*shownMentionsMe, channelName, YES, NO\);/
+    );
+    expect(objcSource).toContain(
+      'if (scansBodyForMention && !mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {'
+    );
   });
 });
 

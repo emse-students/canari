@@ -91,6 +91,7 @@ const CASES = [
   // The author and the mention a blind banner leaves out - the banner itself is the notable line.
   [line('D', 'CanariFCM', 'handleChannelMessage: blind banner -> no author, no mention (server named sender=0000abcd mentioned=true) channel=6333a324'), 'explained'],
   [line('D', 'CanariFCM', 'showNotification: notifId=1 messages=1 group=false'), 'explained'],
+  [line('D', 'CanariFCM', 'showMessageNotification: a re-draw moves channel -> reposted silent (groupId=channel_ channel=canari_mentions)'), 'explained'],
   [line('D', 'CanariFCM', 'fetchAvatar: from cache for 0000'), 'explained'],
   // THE REACTION ARM'S OWN SUCCESS LINE, which left NOTIF-15 `PASS-DIRTY` over the very thing the
   // row was measuring. Only the `D` site is claimed: its `W` sibling - "reaction push without

@@ -65,6 +65,10 @@ class NotificationService: UNNotificationServiceExtension {
   /// is the one the server cannot see. Twin of `kCanariSoundMention` in `canari_push.mm`;
   /// `iosNotificationSounds.test.ts` holds the names together.
   private static let mentionSoundFile = "canari_gazouillis_mention.wav"
+  /// The palette-A "message" trill, which the server names on a salon push it does not call a
+  /// mention. Set here only to take back the mention trill the server named on a BLIND salon banner,
+  /// whose mention nothing proved - see `channelBannerAttribution`.
+  private static let messageSoundFile = "canari_gazouillis_message.wav"
 
   /// Serializes NSE writes to `fcm_message_cache.ndjson`. The NSE runs in a separate
   /// process from the app, so it does not need to share the app's lock, but its own
@@ -1024,6 +1028,10 @@ class NotificationService: UNNotificationServiceExtension {
     let attribution = Self.channelBannerAttribution(
       showsMessage: body != nil, senderId: senderId, serverSaysMentioned: serverSaysMentioned)
     let mentionsMe = attribution.mentionsMe
+    // The APNs `sound` is the server's too: it named the mention trill from the same claim.
+    if serverSaysMentioned, !mentionsMe {
+      content.sound = UNNotificationSound(named: UNNotificationSoundName(Self.messageSoundFile))
+    }
     if body == nil, !senderId.isEmpty || serverSaysMentioned {
       NSLog(
         "[CanariNSE] handleChannelMessage: blind banner -> no author, no mention (server named sender=\(senderId.prefix(8)) mentioned=\(serverSaysMentioned)) channel=\(channelId)"

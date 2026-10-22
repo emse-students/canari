@@ -2469,6 +2469,9 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-requeue-behind-welcome', /^tryDecrypt refused group=[0-9a-f]+: its Welcome is queued behind this frame -> re-queued after it$/],
     ['fcm-channel-requeue-behind-welcome', /^handleChannelMessage: the Welcome into key group [0-9a-f]+ is queued behind this push -> re-queued after it channel=\S+ index=\d+$/],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
+    // A re-draw of an announced message that moves channel (a held salon mention, redrawn once its
+    // seed lands) is reposted silent - see `RepostAlert`. Expected wherever that redraw is.
+    ['fcm-repost-silent', /^showMessageNotification: a re-draw moves channel -> reposted silent \(groupId=\S+ channel=\S+\)$/],
     // ── the silent half of the notification surface, which the list knew nothing about ──
     // Every one of these is a DECISION, not a tick: a silent frame shows nothing, and a silent frame
     // FROM SELF means another device of this account read the conversation, so this device's
