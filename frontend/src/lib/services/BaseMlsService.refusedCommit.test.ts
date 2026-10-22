@@ -9,6 +9,7 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 }));
 
 import { BaseMlsService } from './BaseMlsService';
+import { recordingStage } from '../../test/recordingStage';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { isInEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
 
@@ -33,8 +34,11 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
   // One mutable epoch, read by `freshEpoch` (the commit gate) and `getEpoch` (the replay), advanced
   // by applying a commit - so "did the replay actually catch us up" is a fact and not a mock's say-so.
   const state = { epoch: 195 };
+  const recorder = recordingStage(() => state.epoch);
   return {
     state,
+    recorder,
+    pendingSubmission: recorder.pendingSubmission,
     delivery: {
       submitCommit: vi.fn(),
       fetchCommitsSince: vi.fn(),
@@ -55,7 +59,6 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     deviceId: 'web-a',
     // No staged commit kept in the state: every commit here is answered at once.
     groupsWithPendingCommit: vi.fn(async () => []),
-    recordPendingSubmission: vi.fn(async () => {}),
     // REAL: with no staged commit kept they settle nothing and submit once, which is the
     // case here (`BaseMlsService.unresolvedCommit.test.ts` owns the others).
     ...Object.fromEntries(
@@ -84,14 +87,18 @@ const runCommit = (ctx: Ctx, groupId: string) =>
     BaseMlsService.prototype as unknown as {
       runCommitTransaction: (
         g: string,
-        stageFn: () => Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>,
+        stageFn: (intent: Uint8Array) => Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>,
         opts?: Record<string, unknown>
       ) => Promise<unknown>;
     }
-  ).runCommitTransaction.call(ctx, groupId, async () => ({
-    commit: new Uint8Array([1, 2, 3]),
-    groupInfo: new Uint8Array([7, 8, 9]),
-  }));
+  ).runCommitTransaction.call(
+    ctx,
+    groupId,
+    ctx.recorder.wrap(async () => ({
+      commit: new Uint8Array([1, 2, 3]),
+      groupInfo: new Uint8Array([7, 8, 9]),
+    }))
+  );
 
 describe('BaseMlsService - a commit refused for a stale epoch', () => {
   beforeEach(() => resetEpochGapRegistry());

@@ -21,6 +21,7 @@ import {
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -1253,7 +1254,8 @@ export class TauriMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    keyPackages: Uint8Array[],
+    intent: Uint8Array
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1264,7 +1266,7 @@ export class TauriMlsService extends BaseMlsService {
     const keyPackagesBytes = keyPackages.map((kp) => Array.from(kp));
     const result = await invoke<
       [number[], number[] | null, number[], SkippedKeyPackage[], number[]]
-    >('ajouter_membres_bulk', { groupId, keyPackagesBytes });
+    >('ajouter_membres_bulk', { groupId, keyPackagesBytes, intent: Array.from(intent) });
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
@@ -1277,11 +1279,13 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - stages a Remove commit for all devices of the given users (no merge). */
   protected async stageRemoveMembers(
     groupId: string,
-    userIds: string[]
+    userIds: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const [commit, groupInfo] = await invoke<[number[], number[]]>('retirer_membres', {
       groupId,
       userIds,
+      intent: Array.from(intent),
     });
     return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
   }
@@ -1289,21 +1293,25 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - stages a Remove commit for specific device identities (no merge). */
   protected async stageRemoveMembersByDevice(
     groupId: string,
-    deviceIdentities: string[]
+    deviceIdentities: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const [commit, groupInfo] = await invoke<[number[], number[]]>('retirer_membres_par_appareil', {
       groupId,
       deviceIdentities,
+      intent: Array.from(intent),
     });
     return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
   }
 
   /** Tauri-native `invoke` wrapper - stages a refresh of this device's own leaf (no merge). */
   protected async stageSelfUpdate(
-    groupId: string
+    groupId: string,
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const [commit, groupInfo] = await invoke<[number[], number[]]>('rafraichir_feuille', {
       groupId,
+      intent: Array.from(intent),
     });
     return { commit: Uint8Array.from(commit), groupInfo: Uint8Array.from(groupInfo) };
   }
@@ -1321,15 +1329,32 @@ export class TauriMlsService extends BaseMlsService {
     });
   }
 
-  /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.recordPendingSubmission}. */
-  protected async recordPendingSubmission(groupId: string, submission: Uint8Array): Promise<void> {
-    await invoke('noter_soumission', { groupId, submission: Array.from(submission) });
-  }
-
   /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.pendingSubmission}. */
-  protected async pendingSubmission(groupId: string): Promise<Uint8Array | null> {
-    const bytes = await invoke<number[] | null>('soumission_en_attente', { groupId });
-    return bytes ? new Uint8Array(bytes) : null;
+  protected async pendingSubmission(groupId: string): Promise<PendingSubmissionRead> {
+    const res = await invoke<
+      | { status: 'none' | 'unreadable' }
+      | {
+          status: 'recorded';
+          intent: number[];
+          baseEpoch: number;
+          commit: number[];
+          groupInfo: number[];
+          welcome: number[] | null;
+          addedIndices: number[];
+        }
+    >('soumission_en_attente', { groupId });
+    if (res.status !== 'recorded') return { status: res.status };
+    return {
+      status: 'recorded',
+      record: {
+        intent: Uint8Array.from(res.intent),
+        baseEpoch: res.baseEpoch,
+        commit: Uint8Array.from(res.commit),
+        groupInfo: Uint8Array.from(res.groupInfo),
+        welcome: res.welcome ? Uint8Array.from(res.welcome) : undefined,
+        addedIndices: res.addedIndices,
+      },
+    };
   }
 
   /** Tauri-native `invoke` wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */

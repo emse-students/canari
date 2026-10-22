@@ -21,15 +21,20 @@
  *   committed or sent in that group until a resubmission answers - at the next connection, the next
  *   send or commit in the group, or a replay that finds the log decided at that epoch.
  *
- * ## One store
+ * ## One store, one call
  *
- * The submission is kept BESIDE the staged commit, in the MLS state itself
- * (`mls-core/src/pending_submission.rs`), and recorded BEFORE the first request. So the two cannot
- * disagree on disk, and a staged commit found without a submission was never sent - clearing it is
- * definitive. No clock decides anything.
+ * The record is kept BESIDE the staged commit, in the MLS state itself
+ * (`mls-core/src/pending_submission.rs`), and written by the SAME platform call that stages the
+ * commit, from the client's {@link CommitIntent} and the stage's own output. A checkpoint does not
+ * take the MLS lock, so it can run between any two calls the client makes; one call leaves it no
+ * moment to export a staged commit without its record. A staged commit found with no record was
+ * therefore never submitted through the gate, and clearing it is definitive. No clock decides
+ * anything.
  */
+import { commitAdmits } from './commitAdmits';
 import type { CommitRemoval } from './mlsDeliveryApi';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { toBase64 } from '$lib/utils/hex';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /** One submission: everything needed to send exactly the same request again. */
@@ -52,28 +57,81 @@ export interface CommitSubmission {
   welcome?: string;
 }
 
-/** Encodes a submission for the MLS state (opaque bytes there). */
-export function encodeSubmission(submission: CommitSubmission): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(submission));
+/**
+ * What this client says about a commit BEFORE it is staged, handed to the stage itself so the
+ * platform records it with the commit in one call. Everything else a submission carries is the
+ * stage's own output.
+ */
+export interface CommitIntent {
+  groupId: string;
+  /** This device, `userId:deviceId` - never one of the commit's admits. */
+  self: string;
+  excludeDeviceIds?: string[];
+  removes?: CommitRemoval[];
+  /** For an Add of several devices: the device of each key package, by position. */
+  keyPackageDevices?: string[];
 }
 
-/** Decodes a submission read back from the MLS state; `null` (said loudly) when unreadable. */
-export function decodeSubmission(bytes: Uint8Array): CommitSubmission | null {
+/** Encodes an intent for the stage (opaque bytes to the platform). */
+export function encodeIntent(intent: CommitIntent): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(intent));
+}
+
+/** A staged commit's record, as the platform wrote it in the same call that staged it. */
+export interface StagedRecord {
+  intent: Uint8Array;
+  baseEpoch: number;
+  commit: Uint8Array;
+  groupInfo: Uint8Array;
+  welcome?: Uint8Array;
+  addedIndices: number[];
+}
+
+/**
+ * What a group's state says about its staged commit's record: none (no staged commit, or one that
+ * never went through the gate), unreadable (a record that does not decode - the outcome is NOT known
+ * from it), or the record itself.
+ */
+export type PendingSubmissionRead =
+  | { status: 'none' }
+  | { status: 'unreadable' }
+  | { status: 'recorded'; record: StagedRecord };
+
+/**
+ * The submission a record describes - the ONE spelling of it, used for the first request and for
+ * every resubmission alike, so both are the same bytes. `null` (said loudly) when its intent does
+ * not decode: the record is then unreadable, never "absent".
+ */
+export function composeSubmission(record: StagedRecord): CommitSubmission | null {
+  let intent: CommitIntent;
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Partial<CommitSubmission>;
-    if (
-      typeof parsed?.groupId !== 'string' ||
-      typeof parsed.baseEpoch !== 'number' ||
-      typeof parsed.commit !== 'string' ||
-      typeof parsed.groupInfo !== 'string'
-    ) {
+    const parsed = JSON.parse(new TextDecoder().decode(record.intent)) as Partial<CommitIntent>;
+    if (typeof parsed?.groupId !== 'string' || typeof parsed.self !== 'string') {
       throw new Error('missing fields');
     }
-    return parsed as CommitSubmission;
+    intent = parsed as CommitIntent;
   } catch (e) {
-    console.error('[COMMIT] a kept submission is UNREADABLE:', String(e).slice(0, 120));
+    console.error('[COMMIT] the intent of a staged commit is UNREADABLE:', String(e).slice(0, 120));
     return null;
   }
+  // The devices this commit adds, recorded by the server WITH the advance (`commitAdmits`).
+  const admits = commitAdmits(
+    intent.excludeDeviceIds,
+    intent.keyPackageDevices
+      ? record.addedIndices.map((i) => intent.keyPackageDevices![i])
+      : undefined,
+    intent.self
+  );
+  return {
+    groupId: intent.groupId,
+    baseEpoch: record.baseEpoch,
+    commit: toBase64(record.commit),
+    groupInfo: toBase64(record.groupInfo),
+    ...(intent.excludeDeviceIds ? { excludeDeviceIds: intent.excludeDeviceIds } : {}),
+    ...(admits.length > 0 ? { admits } : {}),
+    ...(intent.removes ? { removes: intent.removes } : {}),
+    ...(record.welcome ? { welcome: toBase64(record.welcome) } : {}),
+  };
 }
 
 /**

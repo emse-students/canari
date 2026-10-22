@@ -705,14 +705,27 @@ at the next gateway connection (before the pending messages are drained), before
 commit in the group, and a commit replay settles it from the log only when the log holds a row AT its
 base epoch, which is decided for good. No clock decides anything.
 
-**One store.** What a resubmission needs - the commit, its successor base, whom it admits and
-removes, and an Add's Welcome - is kept BESIDE the staged commit in the MLS state itself
-(`mls-core/src/pending_submission.rs`), recorded BEFORE the first request. A record in a second store
-could disagree with `mls.bin`; here a checkpoint holds both or neither, so a staged commit found with
-no submission provably never left the device, and is cleared. The crate ties the submission's life to
-the staged commit: a new stage, the merge, the clear, a forget, or another member's commit (which
-clears ours) each end it, and only live ones are saved. The client keeps a derived in-memory index of
-the groups holding one, so a send does not cross into the platform to ask.
+**One store, one call.** What a resubmission needs - the commit, its successor base, its Welcome,
+and the client's intent (whom it excludes, admits and removes) - is kept BESIDE the staged commit in
+the MLS state itself (`mls-core/src/pending_submission.rs`), and written by the SAME platform call
+that stages the commit (`*_recorded` in the crate; the WASM stage bindings and the Tauri stage
+commands take the intent as an argument). It used to be two calls, and a checkpoint - which does not
+take the MLS lock - could run between them and save a staged commit with no record; a device killed
+after sending then read "no record" as "never sent" and cleared a commit the server had accepted. One
+call leaves no such moment. The request is composed from the record (`composeSubmission`), so the
+first submission and every resubmission are the same bytes. A staged commit found with no record was
+never submitted through the gate, and is cleared. The crate ties the record's life to the staged
+commit: a new stage, the merge, the clear, a forget, or another member's commit (which clears ours)
+each end it, and only live ones are saved - in a `#[serde(default)]` field of the state, so an older
+state loads with none and an older build drops the field when it saves. The client keeps a derived
+in-memory index of the groups holding one, so a send does not cross into the platform to ask.
+
+**A record that cannot be read decides nothing.** "No record" proves the commit never left; a record
+that does not decode (the crate's CBOR, or the intent inside it) proves nothing, and the bytes a
+resubmission or a log comparison would need are the unreadable part. Clearing would be one guess,
+merging the other. So the staged commit is KEPT and the group is marked in the epoch-gap registry,
+which keeps sends out of it and hands it to the sync watchdog's rung 2 (forget + re-Welcome) - the
+one repair right whichever way the commit went - with a `[COMMIT] ... UNREADABLE` line at error level.
 
 **An Add accepted only through a later resubmission still delivers its Welcome**: the Welcome is a
 separate request after the accept, and the call that staged the Add is gone by then, so the settlement

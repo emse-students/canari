@@ -10,6 +10,10 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 import { BaseMlsService } from './BaseMlsService';
 import { DELIVERY, addressedKeyMaterial, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import { LeafRefreshUnverifiedError, readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
+import { recordingStage } from '../../test/recordingStage';
+
+/** Any intent: the refresh only hands it on to its stage. */
+const INTENT = new Uint8Array([9]);
 
 /**
  * THE WIRING OF THE PERIODIC LEAF REFRESH INTO THE TWO SEAMS IT HANGS FROM.
@@ -25,7 +29,7 @@ const D = 'web-a';
 
 type RunCommit = (
   g: string,
-  stage: () => Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>,
+  stage: (intent: Uint8Array) => Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>,
   opts?: Record<string, unknown>
 ) => Promise<unknown>;
 const runCommitTransaction = (
@@ -33,7 +37,10 @@ const runCommitTransaction = (
 ).runCommitTransaction;
 
 function commitCtx(accepted: boolean) {
+  const recorder = recordingStage(() => 5);
   return {
+    recorder,
+    pendingSubmission: recorder.pendingSubmission,
     userId: U,
     deviceId: D,
     delivery: {
@@ -50,7 +57,6 @@ function commitCtx(accepted: boolean) {
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
     // No staged commit kept in the state: every commit here is answered at once.
     groupsWithPendingCommit: vi.fn(async () => []),
-    recordPendingSubmission: vi.fn(async () => {}),
     // The real ones: with no staged commit kept they settle nothing (see
     // `BaseMlsService.unresolvedCommit.test.ts` for the cases where they do).
     ...Object.fromEntries(
@@ -68,12 +74,16 @@ beforeEach(() => localStorage.clear());
 
 describe('BaseMlsService - every accepted own commit dates the leaf', () => {
   it('records the epoch the accepted commit created', async () => {
-    await runCommitTransaction.call(commitCtx(true), 'g-1', staged, {});
+    const ctx = commitCtx(true);
+    await runCommitTransaction.call(ctx, 'g-1', ctx.recorder.wrap(staged), {});
     expect(readLeafRefreshLedger(U, D)['g-1']).toMatchObject({ epoch: 6 });
   });
 
   it('records nothing for a refused commit - the leaf did not change', async () => {
-    await expect(runCommitTransaction.call(commitCtx(false), 'g-1', staged, {})).rejects.toThrow();
+    const ctx = commitCtx(false);
+    await expect(
+      runCommitTransaction.call(ctx, 'g-1', ctx.recorder.wrap(staged), {})
+    ).rejects.toThrow();
     expect(readLeafRefreshLedger(U, D)['g-1']).toBeUndefined();
   });
 });
@@ -89,10 +99,12 @@ describe('BaseMlsService.refreshOwnLeaf - staged only on the branch the server p
       commit: new Uint8Array([1]),
       groupInfo: new Uint8Array([2]),
     });
-    const run = vi.fn(async (_g: string, stage: () => Promise<unknown>, _opts?: unknown) => {
-      await stage();
-      return {};
-    });
+    const run = vi.fn(
+      async (_g: string, stage: (intent: Uint8Array) => Promise<unknown>, _opts?: unknown) => {
+        await stage(INTENT);
+        return {};
+      }
+    );
     return {
       delivery: { fetchGroupInfo: vi.fn().mockResolvedValue(opts.base) },
       freshEpoch: vi.fn().mockResolvedValue(5),
@@ -116,7 +128,7 @@ describe('BaseMlsService.refreshOwnLeaf - staged only on the branch the server p
       'g-1',
       new Uint8Array([0x66, 0x6f, 0x6f])
     );
-    expect(ctx.stageSelfUpdate).toHaveBeenCalledExactlyOnceWith('g-1');
+    expect(ctx.stageSelfUpdate).toHaveBeenCalledExactlyOnceWith('g-1', INTENT);
   });
 
   it.each([

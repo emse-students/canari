@@ -8,6 +8,7 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 }));
 
 import { BaseMlsService } from './BaseMlsService';
+import { recordingStage } from '../../test/recordingStage';
 
 /**
  * A STAGED REMOVE DECLARES WHOM IT REMOVES (third review of #1878). The server's half of a removal
@@ -31,7 +32,9 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
 
   it('the commit transaction submits the declaration with the commit', async () => {
     const submitCommit = vi.fn().mockResolvedValue({ accepted: true, newEpoch: 6 });
+    const recorder = recordingStage(() => 5);
     const ctx = {
+      pendingSubmission: recorder.pendingSubmission,
       userId: 'user-a',
       deviceId: 'web-a',
       delivery: { submitCommit },
@@ -40,7 +43,6 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
       mergePendingCommit: vi.fn().mockResolvedValue(undefined),
       // No staged commit kept in the state: the commit here is answered at once.
       groupsWithPendingCommit: vi.fn(async () => []),
-      recordPendingSubmission: vi.fn(async () => {}),
       // REAL: with no staged commit kept they settle nothing and submit once.
       ...Object.fromEntries(
         ['settleUnresolvedLocked', 'submitRecorded'].map((name) => [
@@ -53,7 +55,7 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
       BaseMlsService.prototype as unknown as {
         runCommitTransaction(
           g: string,
-          stage: () => Promise<unknown>,
+          stage: (intent: Uint8Array) => Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>,
           opts: unknown
         ): Promise<unknown>;
       }
@@ -62,7 +64,7 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
     await run.call(
       ctx,
       'g-1',
-      async () => ({ commit: new Uint8Array([1]), groupInfo: new Uint8Array([2]) }),
+      recorder.wrap(async () => ({ commit: new Uint8Array([1]), groupInfo: new Uint8Array([2]) })),
       { removes: [{ userId: 'user-b' }] }
     );
 

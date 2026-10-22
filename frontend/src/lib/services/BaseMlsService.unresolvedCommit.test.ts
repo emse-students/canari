@@ -12,12 +12,14 @@ import { BaseMlsService } from './BaseMlsService';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import {
   CommitOutcomeUnknownError,
-  decodeSubmission,
-  encodeSubmission,
-  type CommitSubmission,
+  encodeIntent,
+  type CommitIntent,
+  type PendingSubmissionRead,
+  type StagedRecord,
 } from '$lib/mls-client/commitSubmission';
 import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
 
 /**
@@ -26,13 +28,13 @@ import { TransportFailureError, isTransportFailure } from '$lib/utils/transportF
  * Reading the server's log after a lost answer cannot tell "not landed yet" from "never landed": a
  * clear decided from an empty log races the request still in flight. So the SAME bytes are sent
  * again, the gate answers a duplicate of an accepted commit as accepted, and an outcome that stays
- * unknown is KEPT - beside the staged commit, in the same state, recorded before the first request,
- * so the two can never disagree on disk. A staged commit with no submission was therefore never
- * sent. These cases pin each verdict and each place a resubmission is owed.
+ * unknown is KEPT - beside the staged commit, in the same state, written by the same platform call
+ * that staged it, so no checkpoint can hold one without the other. A staged commit with no record
+ * was therefore never sent. These cases pin each verdict and each place a resubmission is owed.
  *
- * The platform's staged commit and its submission are modelled by `state`, with the crate's rules
- * (`mls-core/tests/pending_submission.rs` pins them): a stage starts a commit with no submission,
- * a merge or a clear ends both.
+ * The platform's staged commit and its record are modelled by `state`, with the crate's rules
+ * (`mls-core/tests/pending_submission.rs` pins them): a stage starts a commit WITH its record, a
+ * merge or a clear ends both.
  */
 
 const U = 'user-a';
@@ -58,17 +60,27 @@ function submitting(...steps: Step[]) {
 
 const lost = () => new TransportFailureError(new TypeError('Failed to fetch'));
 
-/** group id -> its staged commit's submission (`null`: staged, never submitted). */
-type PendingState = Map<string, Uint8Array | null>;
+/** group id -> what its state says of its staged commit's record (`none`: staged, never submitted). */
+type PendingState = Map<string, PendingSubmissionRead>;
 
-function primitives(state: PendingState, order: string[]) {
+/** A record as the crate writes it: this client's intent, and the stage's own output. */
+function recordOf(
+  intent: Partial<CommitIntent> = {},
+  out: { welcome?: Uint8Array; addedIndices?: number[] } = {}
+): StagedRecord {
   return {
-    recordPendingSubmission: vi.fn(async (g: string, s: Uint8Array) => {
-      order.push('record');
-      if (!state.has(g)) throw new Error('InvalidData: no staged commit');
-      state.set(g, s);
-    }),
-    pendingSubmission: vi.fn(async (g: string) => state.get(g) ?? null),
+    intent: encodeIntent({ groupId: G, self: `${U}:${D}`, ...intent }),
+    baseEpoch: 5,
+    commit: new Uint8Array([1]),
+    groupInfo: new Uint8Array([2]),
+    ...(out.welcome ? { welcome: out.welcome } : {}),
+    addedIndices: out.addedIndices ?? [],
+  };
+}
+
+function primitives(state: PendingState) {
+  return {
+    pendingSubmission: vi.fn(async (g: string) => state.get(g) ?? { status: 'none' }),
     groupsWithPendingCommit: vi.fn(async () => [...state.keys()]),
     mergePendingCommit: vi.fn(async (g: string) => {
       state.delete(g);
@@ -81,17 +93,11 @@ function primitives(state: PendingState, order: string[]) {
 
 function ctx(submitCommit: ReturnType<typeof vi.fn>, opts: { state?: PendingState } = {}) {
   const state: PendingState = opts.state ?? new Map();
-  const order: string[] = [];
-  const submit = vi.fn(async (...args: unknown[]) => {
-    order.push('submit');
-    return (submitCommit as (...a: unknown[]) => unknown)(...args);
-  });
   const c: Record<string, unknown> = {
     userId: U,
     deviceId: D,
     state,
-    order,
-    delivery: { submitCommit: submit },
+    delivery: { submitCommit },
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     freshEpoch: vi.fn().mockResolvedValue(5),
     getEpoch: vi.fn(() => 5),
@@ -99,12 +105,13 @@ function ctx(submitCommit: ReturnType<typeof vi.fn>, opts: { state?: PendingStat
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
     unresolvedGroups: null,
-    ...primitives(state, order),
+    ...primitives(state),
   };
   // The real seams under test: what they decide from the gate's answers is what these cases are about.
   for (const name of [
     'runCommitTransaction',
     'settleUnresolvedLocked',
+    'escalateUnreadableSubmission',
     'submitRecorded',
     'resubmitUnresolved',
     'awaitCommitCheckpoint',
@@ -117,11 +124,10 @@ function ctx(submitCommit: ReturnType<typeof vi.fn>, opts: { state?: PendingStat
   }
   return c as unknown as Record<string, ReturnType<typeof vi.fn>> & {
     state: PendingState;
-    order: string[];
     delivery: { submitCommit: ReturnType<typeof vi.fn> };
     runCommitTransaction(
       g: string,
-      stage: () => Promise<unknown>,
+      stage: (intent: Uint8Array) => Promise<unknown>,
       opts?: Record<string, unknown>
     ): Promise<unknown>;
     settleUnresolvedCommits(groupIds?: string[]): Promise<void>;
@@ -129,40 +135,108 @@ function ctx(submitCommit: ReturnType<typeof vi.fn>, opts: { state?: PendingStat
   };
 }
 
-/** A stage as the crate does it: the group now holds a staged commit with no submission. */
-function stagerOf(c: ReturnType<typeof ctx>) {
-  return vi.fn(async () => {
-    c.state.set(G, null);
-    return { commit: new Uint8Array([1]), groupInfo: new Uint8Array([2]) };
+/** A stage as the crate does it: ONE call stages the commit and records it with `intent`. */
+function stagerOf(c: ReturnType<typeof ctx>, out: { welcome?: Uint8Array } = {}) {
+  return vi.fn(async (intent: Uint8Array) => {
+    c.state.set(G, {
+      status: 'recorded',
+      record: { ...recordOf({}, out), intent },
+    });
+    return { commit: new Uint8Array([1]), groupInfo: new Uint8Array([2]), ...out };
   });
 }
 
 const run = (c: ReturnType<typeof ctx>, stage = stagerOf(c)) =>
   c.runCommitTransaction(G, stage, { removes: [{ userId: 'user-z' }] });
 
-function submission(over: Partial<CommitSubmission> = {}): CommitSubmission {
-  return { groupId: G, baseEpoch: 5, commit: OURS, groupInfo: BASE, ...over };
-}
-
-/** A group whose state holds a staged commit and the submission kept beside it. */
-function kept(over: Partial<CommitSubmission> = {}): PendingState {
-  return new Map([[G, encodeSubmission(submission(over))]]);
+/** A group whose state holds a staged commit and the record its stage wrote. */
+function kept(
+  intent: Partial<CommitIntent> = {},
+  out: { welcome?: Uint8Array; addedIndices?: number[] } = {}
+): PendingState {
+  return new Map([[G, { status: 'recorded', record: recordOf(intent, out) }]]);
 }
 
 beforeEach(() => {
   localStorage.clear();
+  clearEpochGap(G);
   persistMlsStructuralCheckpoint.mockReset().mockResolvedValue(true);
 });
 
-describe('runCommitTransaction - a submission that got no answer', () => {
-  it('keeps the submission beside the staged commit BEFORE the first request', async () => {
+describe('runCommitTransaction - the record is written by the stage, never after it', () => {
+  it('hands the stage its intent, and submits what the record holds', async () => {
     const c = ctx(submitting({ accepted: true }));
-    await run(c);
-    expect(c.order).toEqual(['record', 'submit']);
-    const recorded = c.recordPendingSubmission.mock.calls[0][1] as Uint8Array;
-    expect(decodeSubmission(recorded)).toEqual(submission({ removes: [{ userId: 'user-z' }] }));
+    const stage = stagerOf(c);
+    await run(c, stage);
+    const intent = JSON.parse(new TextDecoder().decode(stage.mock.calls[0][0])) as CommitIntent;
+    expect(intent).toEqual({ groupId: G, self: `${U}:${D}`, removes: [{ userId: 'user-z' }] });
+    expect(c.delivery.submitCommit).toHaveBeenCalledExactlyOnceWith(
+      G,
+      5,
+      OURS,
+      undefined,
+      BASE,
+      undefined,
+      [{ userId: 'user-z' }]
+    );
   });
 
+  it('never lets a checkpoint running concurrently see the staged commit without its record', async () => {
+    // A checkpoint does not take the MLS lock: it exports whenever it runs. Here one runs on every
+    // turn of the event loop for the whole transaction, and every snapshot it takes must hold the
+    // staged commit together with its record, or neither.
+    const c = ctx(submitting(lost(), lost()));
+    // Every crossing to the platform or the network takes a turn of the event loop, as a real one
+    // does, so the checkpointer below runs between each of them.
+    const turn = () => new Promise((r) => setTimeout(r, 0));
+    for (const name of ['pendingSubmission', 'groupsWithPendingCommit', 'freshEpoch'] as const) {
+      const real = c[name].getMockImplementation()!;
+      c[name].mockImplementation(async (...a: unknown[]) => {
+        await turn();
+        return (real as (...x: unknown[]) => unknown)(...a);
+      });
+    }
+    const submit = c.delivery.submitCommit;
+    c.delivery.submitCommit = vi.fn(async (...a: unknown[]) => {
+      await turn();
+      return (submit as (...x: unknown[]) => unknown)(...a);
+    });
+    const stage = stagerOf(c);
+    const slowStage = vi.fn(async (intent: Uint8Array) => {
+      await turn();
+      const out = await stage(intent);
+      await turn();
+      return out;
+    });
+    const snapshots: PendingSubmissionRead[] = [];
+    let running = true;
+    const checkpointer = (async () => {
+      while (running) {
+        const now = c.state.get(G);
+        if (now) snapshots.push(now);
+        await turn();
+      }
+    })();
+    await run(c, slowStage).catch(() => {});
+    running = false;
+    await checkpointer;
+    expect(snapshots.length).toBeGreaterThan(0);
+    expect(snapshots.every((s) => s.status === 'recorded')).toBe(true);
+  });
+
+  it('sends nothing and clears when the stage left no usable record', async () => {
+    const c = ctx(submitting());
+    const stage = vi.fn(async () => {
+      c.state.set(G, { status: 'unreadable' });
+      return { commit: new Uint8Array([1]), groupInfo: new Uint8Array([2]) };
+    });
+    await expect(run(c, stage)).rejects.toThrow('no usable record');
+    expect(c.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('runCommitTransaction - a submission that got no answer', () => {
   it('resubmits the SAME request, and merges when the resubmission is accepted', async () => {
     const c = ctx(submitting(lost(), { accepted: true }));
     await run(c);
@@ -214,7 +288,7 @@ describe('runCommitTransaction - a submission that got no answer', () => {
       { accepted: false, reason: 'concurrent_commit', currentEpoch: 5 },
     ],
   ] as Array<[string, Step]>)(
-    'KEEPS the staged commit and its submission, and checkpoints them, after %s',
+    'KEEPS the staged commit and its record, and checkpoints them, after %s',
     async (_name, second) => {
       const c = ctx(submitting(lost(), second));
       const err = await run(c).catch((e: unknown) => e);
@@ -223,34 +297,22 @@ describe('runCommitTransaction - a submission that got no answer', () => {
       expect(isTransportFailure(err)).toBe(true);
       expect(c.clearPendingCommit).not.toHaveBeenCalled();
       expect(c.mergePendingCommit).not.toHaveBeenCalled();
-      expect(decodeSubmission(c.state.get(G)!)).toMatchObject({ baseEpoch: 5, commit: OURS });
+      expect(c.state.get(G)).toMatchObject({ status: 'recorded', record: { baseEpoch: 5 } });
       expect(persistMlsStructuralCheckpoint).toHaveBeenCalledTimes(1);
     }
   );
 
-  it('sends nothing and clears when the submission cannot be kept beside the commit', async () => {
-    const c = ctx(submitting());
-    c.recordPendingSubmission.mockRejectedValueOnce(new Error('state unavailable'));
-    await expect(run(c)).rejects.toThrow('state unavailable');
-    expect(c.delivery.submitCommit).not.toHaveBeenCalled();
-    expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
-  });
-
   it('delivers nothing itself when the Add is accepted at once - its caller sends the Welcome', async () => {
     const c = ctx(submitting(lost(), { accepted: true }));
-    const stage = vi.fn(async () => {
-      c.state.set(G, null);
-      return {
-        commit: new Uint8Array([1]),
-        groupInfo: new Uint8Array([2]),
-        welcome: new Uint8Array([3]),
-      };
-    });
-    const out = (await c.runCommitTransaction(G, stage, {
+    const out = (await c.runCommitTransaction(G, stagerOf(c, { welcome: new Uint8Array([3]) }), {
       excludeDeviceIds: ['user-b:dev-b'],
     })) as { welcome?: Uint8Array };
     expect(out.welcome).toEqual(new Uint8Array([3]));
     expect(c.sendWelcome).not.toHaveBeenCalled();
+    // The admits travel with the commit, derived from the intent the stage recorded.
+    expect(c.delivery.submitCommit.mock.calls[0][5]).toEqual([
+      { userId: 'user-b', deviceId: 'dev-b' },
+    ]);
   });
 });
 
@@ -276,7 +338,7 @@ describe('runCommitTransaction - a group whose last commit is unresolved', () =>
 });
 
 describe('settleUnresolvedCommits - the resubmission at the next connection', () => {
-  it('merges on a duplicate answer, from the submission kept in the state, and checkpoints', async () => {
+  it('merges on a duplicate answer, from the record kept in the state, and checkpoints', async () => {
     const c = ctx(submitting({ accepted: true, duplicate: true }), {
       state: kept({ excludeDeviceIds: ['u-b:d-b'] }),
     });
@@ -287,7 +349,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
       OURS,
       ['u-b:d-b'],
       BASE,
-      undefined,
+      [{ userId: 'u-b', deviceId: 'd-b' }],
       undefined
     );
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
@@ -297,13 +359,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
 
   it("delivers an Add's Welcome to every device it admits - nobody else is left to send it", async () => {
     const c = ctx(submitting({ accepted: true, duplicate: true }), {
-      state: kept({
-        welcome: 'Aw==',
-        admits: [
-          { userId: 'u-b', deviceId: 'd-b1' },
-          { userId: 'u-b', deviceId: 'd-b2' },
-        ],
-      }),
+      state: kept({ excludeDeviceIds: ['u-b:d-b1', 'u-b:d-b2'] }, { welcome: new Uint8Array([3]) }),
     });
     await c.settleUnresolvedCommits();
     // AFTER the merge: the tree the joiner needs is the one of the epoch the Add created.
@@ -318,7 +374,7 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
 
   it('delivers no Welcome when the kept Add is refused', async () => {
     const c = ctx(submitting({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 7 }), {
-      state: kept({ welcome: 'Aw==', admits: [{ userId: 'u-b', deviceId: 'd-b' }] }),
+      state: kept({ excludeDeviceIds: ['u-b:d-b'] }, { welcome: new Uint8Array([3]) }),
     });
     await c.settleUnresolvedCommits();
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
@@ -335,22 +391,44 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
     expect(c.state.has(G)).toBe(true);
   });
 
-  it('clears, with no request, a staged commit that has no submission - it was never sent', async () => {
-    // The crash this answers: the checkpoint landed after the stage and before the submission was
-    // kept, which happens before the first request - so the reloaded state holds a commit that
-    // never left the device.
-    const c = ctx(submitting(), { state: new Map([[G, null]]) });
+  it('clears, with no request, a staged commit that has no record - it was never sent', async () => {
+    const c = ctx(submitting(), { state: new Map([[G, { status: 'none' }]]) });
     await c.settleUnresolvedCommits();
     expect(c.delivery.submitCommit).not.toHaveBeenCalled();
     expect(c.clearPendingCommit).toHaveBeenCalledTimes(1);
     expect(c.state.size).toBe(0);
   });
+
+  it.each([
+    ['a record that does not decode', { status: 'unreadable' } as PendingSubmissionRead],
+    [
+      'a record whose intent does not decode',
+      {
+        status: 'recorded',
+        record: { ...recordOf(), intent: new Uint8Array([0xff]) },
+      } as PendingSubmissionRead,
+    ],
+  ])(
+    'neither clears nor merges %s - the outcome is undecided, and rung 2 is owed',
+    async (_n, read) => {
+      const c = ctx(submitting(), { state: new Map([[G, read]]) });
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await c.settleUnresolvedCommits();
+      expect(c.delivery.submitCommit).not.toHaveBeenCalled();
+      expect(c.clearPendingCommit).not.toHaveBeenCalled();
+      expect(c.mergePendingCommit).not.toHaveBeenCalled();
+      expect(c.state.has(G)).toBe(true);
+      expect(isInEpochGap(G)).toBe(true);
+      expect(error.mock.calls.some((a) => String(a[0]).includes('UNREADABLE'))).toBe(true);
+      error.mockRestore();
+    }
+  );
 });
 
 describe('settleUnresolvedCommitFromLog - the log decided at the base epoch', () => {
   it("merges when the row at the base epoch is OUR commit, and delivers an Add's Welcome", async () => {
     const c = ctx(submitting(), {
-      state: kept({ welcome: 'Aw==', admits: [{ userId: 'u-b', deviceId: 'd-b' }] }),
+      state: kept({ excludeDeviceIds: ['u-b:d-b'] }, { welcome: new Uint8Array([3]) }),
     });
     expect(await c.settleUnresolvedCommitFromLog(G, OURS)).toBe('merged');
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
@@ -370,8 +448,17 @@ describe('settleUnresolvedCommitFromLog - the log decided at the base epoch', ()
     expect(c.clearPendingCommit).not.toHaveBeenCalled();
   });
 
+  it('decides NOTHING from an unreadable record, whatever the log holds', async () => {
+    const c = ctx(submitting(), { state: new Map([[G, { status: 'unreadable' }]]) });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await c.settleUnresolvedCommitFromLog(G, 'Bw==')).toBe('undecided');
+    expect(c.clearPendingCommit).not.toHaveBeenCalled();
+    expect(isInEpochGap(G)).toBe(true);
+    vi.mocked(console.error).mockRestore();
+  });
+
   it('clears a staged commit that was never sent', async () => {
-    const c = ctx(submitting(), { state: new Map([[G, null]]) });
+    const c = ctx(submitting(), { state: new Map([[G, { status: 'none' }]]) });
     expect(await c.settleUnresolvedCommitFromLog(G, null)).toBe('cleared');
   });
 });
@@ -387,7 +474,7 @@ abstract class SendHarness extends BaseMlsService {
       delivery: { postApplicationMessage: async () => null, submitCommit },
       scheduleLeafRefresh: () => {},
       getEpoch: () => 5,
-      ...primitives(state, []),
+      ...primitives(state),
     });
   }
   protected async encryptForSend(groupId: string): Promise<Uint8Array> {

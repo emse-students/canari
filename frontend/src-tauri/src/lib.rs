@@ -41,11 +41,10 @@ use crate::commands::mls::{
     graine_member_signature_key, graine_session_keypair, graine_sign_with_device_credential,
     graine_sign_with_session_key, graine_verify_signature, groupe_actif, groupes_commit_en_attente,
     initialiser_mls, key_package_a_clef_privee, lister_groupes, lister_identites_membres,
-    noter_soumission, obtenir_epoch, oublier_groupe, oublier_key_packages, rafraichir_feuille,
-    recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
-    recuperer_cle_session_mls, rejoindre_par_commit_externe, retirer_membres,
-    retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
-    soumission_en_attente, trailer_welcome,
+    obtenir_epoch, oublier_groupe, oublier_key_packages, rafraichir_feuille, recenser_key_packages,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, retirer_membres, retirer_membres_par_appareil,
+    sauvegarder_mls_et_persister, skip_send_generations, soumission_en_attente, trailer_welcome,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
@@ -1089,7 +1088,6 @@ pub fn run() {
             rafraichir_feuille,
             date_feuille,
             contexte_correspond_base,
-            noter_soumission,
             soumission_en_attente,
             groupes_commit_en_attente,
             confirmer_commit,

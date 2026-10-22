@@ -1,9 +1,9 @@
 import {
-  decodeSubmission,
-  encodeSubmission,
+  composeSubmission,
+  encodeIntent,
   isDefinitiveCommitRefusal,
   resubmissionVerdict,
-  type CommitSubmission,
+  type StagedRecord,
 } from './commitSubmission';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -35,22 +35,43 @@ describe('resubmissionVerdict', () => {
   });
 });
 
-describe('the submission kept in the MLS state', () => {
-  it('round-trips every field, the Welcome included', () => {
-    const s: CommitSubmission = {
+describe('composeSubmission - the one spelling of a request, from the record its stage wrote', () => {
+  const record = (intent: Uint8Array, addedIndices: number[] = []): StagedRecord => ({
+    intent,
+    baseEpoch: 5,
+    commit: new Uint8Array([1]),
+    groupInfo: new Uint8Array([2]),
+    welcome: new Uint8Array([3]),
+    addedIndices,
+  });
+
+  it('carries every field, and admits only the key packages the stage included', () => {
+    const intent = encodeIntent({
+      groupId: 'g-1',
+      self: 'u-a:d-a',
+      excludeDeviceIds: ['u-a:d-a', 'u-b:d-b1', 'u-b:d-b2'],
+      keyPackageDevices: ['d-b1', 'd-b2'],
+    });
+    expect(composeSubmission(record(intent, [1]))).toEqual({
       groupId: 'g-1',
       baseEpoch: 5,
       commit: 'AQ==',
       groupInfo: 'Ag==',
-      admits: [{ userId: 'u-b', deviceId: 'd-b' }],
-      excludeDeviceIds: ['u-b:d-b'],
+      excludeDeviceIds: ['u-a:d-a', 'u-b:d-b1', 'u-b:d-b2'],
+      admits: [{ userId: 'u-b', deviceId: 'd-b2' }],
       welcome: 'Aw==',
-    };
-    expect(decodeSubmission(encodeSubmission(s))).toEqual(s);
+    });
   });
 
-  it('reads unreadable bytes as null', () => {
-    expect(decodeSubmission(new TextEncoder().encode('[1]'))).toBeNull();
-    expect(decodeSubmission(new Uint8Array([0xff]))).toBeNull();
+  it('is the same bytes every time it is asked - a resubmission equals the first request', () => {
+    const r = record(encodeIntent({ groupId: 'g-1', self: 'u-a:d-a', removes: [{ userId: 'z' }] }));
+    expect(JSON.stringify(composeSubmission(r))).toBe(JSON.stringify(composeSubmission(r)));
+  });
+
+  it('reads an intent that does not decode as null - unreadable, never absent', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(composeSubmission(record(new TextEncoder().encode('[1]')))).toBeNull();
+    expect(composeSubmission(record(new Uint8Array([0xff])))).toBeNull();
+    error.mockRestore();
   });
 });

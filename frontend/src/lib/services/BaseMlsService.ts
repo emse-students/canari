@@ -143,15 +143,17 @@ import {
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
-import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
+import { commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import {
   CommitOutcomeUnknownError,
-  decodeSubmission,
-  encodeSubmission,
+  composeSubmission,
+  encodeIntent,
   isDefinitiveCommitRefusal,
   resubmissionVerdict,
+  type CommitIntent,
   type CommitSubmission,
+  type PendingSubmissionRead,
   type ResubmissionVerdict,
 } from '$lib/mls-client/commitSubmission';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
@@ -3374,10 +3376,12 @@ export abstract class BaseMlsService implements IMlsService {
   /** Stages an Add commit WITHOUT merging. Returns the commit, shared Welcome, the input
    *  positions actually added / dropped-as-invalid (already-member dedup is silent), and
    *  `groupInfo`: the external-join base for the epoch the commit CREATES (see
-   *  {@link runCommitTransaction}). */
+   *  {@link runCommitTransaction}). Every stage below RECORDS its submission from `intent` and its
+   *  own output in the same platform call (`commitSubmission.ts`). */
   protected abstract stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    keyPackages: Uint8Array[],
+    intent: Uint8Array
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -3389,18 +3393,21 @@ export abstract class BaseMlsService implements IMlsService {
    *  and the external-join base for the epoch it creates. */
   protected abstract stageRemoveMembers(
     groupId: string,
-    userIds: string[]
+    userIds: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
   /** Stages a Remove commit for specific devices ("userId:deviceId") WITHOUT merging. Returns the
    *  commit and the external-join base for the epoch it creates. */
   protected abstract stageRemoveMembersByDevice(
     groupId: string,
-    deviceIdentities: string[]
+    deviceIdentities: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
   /** Stages a refresh of this device's own leaf - an empty commit with a path and no proposal -
    *  WITHOUT merging. Returns the commit and the external-join base for the epoch it creates. */
   protected abstract stageSelfUpdate(
-    groupId: string
+    groupId: string,
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }>;
   /** When this device's leaf in `groupId` was minted (Unix seconds), `null` once a commit replaced
    *  it. See `MlsManager::own_leaf_minted_at` and `leafRefresh.ts`. */
@@ -3442,23 +3449,30 @@ export abstract class BaseMlsService implements IMlsService {
    * accepting the commit makes it true. Nothing is left to mint after the merge, so there is no
    * follow-up to lose and no window between "the epoch moved" and "its base exists".
    *
-   * **A SUBMISSION THAT GETS NO ANSWER IS RESUBMITTED, NEVER GUESSED** (`unresolvedCommits.ts`). The
+   * **A SUBMISSION THAT GETS NO ANSWER IS RESUBMITTED, NEVER GUESSED** (`commitSubmission.ts`). The
    * same request goes again and the gate's verdict decides: accepted or answered as a duplicate ->
-   * merge; refused -> clear and catch up; still no answer -> the staged commit is KEPT, recorded
-   * durably and checkpointed, and {@link CommitOutcomeUnknownError} is thrown. Until a resubmission
+   * merge; refused -> clear and catch up; still no answer -> the staged commit is KEPT with the
+   * record its stage wrote beside it, a checkpoint is awaited so both reach disk, and
+   * {@link CommitOutcomeUnknownError} is thrown. Until a resubmission
    * answers - at the next connection, the next send, the next commit in the group, or a replay that
    * finds the log decided at that epoch - the group takes no commit and no send.
    */
   protected async runCommitTransaction(
     groupId: string,
-    stageFn: () => Promise<{
+    stageFn: (intent: Uint8Array) => Promise<{
       commit: Uint8Array;
       welcome?: Uint8Array;
       groupInfo: Uint8Array;
       addedDeviceIds?: string[];
       skipped?: SkippedDevice[];
     }>,
-    opts: { excludeDeviceIds?: string[]; exportTree?: boolean; removes?: CommitRemoval[] } = {}
+    opts: {
+      excludeDeviceIds?: string[];
+      exportTree?: boolean;
+      removes?: CommitRemoval[];
+      /** For an Add of several devices: the device of each key package, by position. */
+      keyPackageDevices?: string[];
+    } = {}
   ): Promise<{
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;
@@ -3491,50 +3505,43 @@ export abstract class BaseMlsService implements IMlsService {
               'the previous commit of this group is still unresolved'
             );
           }
-          const staged = await stageFn();
-          // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
-          const baseEpoch = await this.freshEpoch(groupId);
-          // The devices this commit adds, recorded by the server WITH the advance so each is a
-          // recipient of what it can open before its Welcome is even sent (`commitAdmits`).
-          const admits = commitAdmits(
-            opts.excludeDeviceIds,
-            staged.addedDeviceIds,
-            `${this.userId}:${this.deviceId}`
-          );
-          if (admits.length > 0) {
+          // WHAT THIS CLIENT KNOWS OF THE COMMIT GOES INTO THE STAGE ITSELF, and the platform records
+          // it with the staged commit in the SAME call (`commitSubmission.ts`): a checkpoint does not
+          // take this lock, so a record written by a second call could miss one that ran between.
+          const intent: CommitIntent = {
+            groupId,
+            self: `${this.userId}:${this.deviceId}`,
+            ...(opts.excludeDeviceIds ? { excludeDeviceIds: opts.excludeDeviceIds } : {}),
+            // Whom this commit removes, so the server queues it to the devices its half of the
+            // removal already parted (`commitRemovals`).
+            ...(opts.removes ? { removes: opts.removes } : {}),
+            ...(opts.keyPackageDevices ? { keyPackageDevices: opts.keyPackageDevices } : {}),
+          };
+          const staged = await stageFn(encodeIntent(intent));
+          // THE REQUEST IS COMPOSED FROM THE RECORD, never from the values in hand, so the first
+          // submission and any resubmission are one spelling of the same bytes.
+          const read = await this.pendingSubmission(groupId);
+          const submission = read.status === 'recorded' ? composeSubmission(read.record) : null;
+          if (!submission) {
+            // The platform staged without the record its contract promises: nothing has been sent,
+            // so clearing is safe - and this is a defect of the stage, said as one.
+            await this.clearPendingCommit(groupId).catch(() => {});
+            console.error(
+              `[COMMIT] ${groupId.slice(0, 8)}... the stage left ${read.status === 'recorded' ? 'an unreadable' : read.status} ` +
+                'record beside its commit - cleared before sending anything'
+            );
+            throw new Error(`staged commit of ${groupId.slice(0, 8)}... has no usable record`);
+          }
+          const { baseEpoch } = submission;
+          if (submission.admits) {
             console.log(
-              `[COMMIT] ${groupId.slice(0, 8)}... admits ${admits.length} device(s) at epoch ${baseEpoch + 1}: ${admits.map((a) => `${a.userId.slice(0, 8)}:${a.deviceId}`).join(', ')}`
+              `[COMMIT] ${groupId.slice(0, 8)}... admits ${submission.admits.length} device(s) at epoch ${baseEpoch + 1}: ${submission.admits.map((a) => `${a.userId.slice(0, 8)}:${a.deviceId}`).join(', ')}`
             );
           }
           // One atomic server round-trip: validate the epoch, and on accept the server records the
           // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
           // between this accept and the local merge below, our epoch lags the server by one - a gap
           // the rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
-          const submission: CommitSubmission = {
-            groupId,
-            baseEpoch,
-            commit: toBase64(staged.commit),
-            groupInfo: toBase64(staged.groupInfo),
-            ...(opts.excludeDeviceIds ? { excludeDeviceIds: opts.excludeDeviceIds } : {}),
-            ...(admits.length > 0 ? { admits } : {}),
-            // Whom this commit removes, so the server queues it to the devices its half of the
-            // removal already parted (`commitRemovals`).
-            ...(opts.removes ? { removes: opts.removes } : {}),
-            ...(staged.welcome ? { welcome: toBase64(staged.welcome) } : {}),
-          };
-          // KEPT BESIDE THE STAGED COMMIT, IN THE SAME STATE, BEFORE THE FIRST REQUEST
-          // (`commitSubmission.ts`). From here on any checkpoint holds both or neither, and a staged
-          // commit found without its submission provably never left this device.
-          try {
-            await this.recordPendingSubmission(groupId, encodeSubmission(submission));
-          } catch (e) {
-            await this.clearPendingCommit(groupId).catch(() => {});
-            console.error(
-              `[COMMIT] ${groupId.slice(0, 8)}... could not keep the submission beside the staged ` +
-                `commit - cleared before sending anything: ${String(e).slice(0, 120)}`
-            );
-            throw e;
-          }
           let validation: Awaited<ReturnType<typeof this.delivery.submitCommit>>;
           try {
             validation = await this.submitRecorded(submission);
@@ -3634,7 +3641,7 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Submits `submission` AGAIN and reads the gate's verdict (`unresolvedCommits.ts`): accepted (the
+   * Submits `submission` AGAIN and reads the gate's verdict (`commitSubmission.ts`): accepted (the
    * first time, or answered as a duplicate), refused (an epoch conflict, or a 4xx), or unknown (no
    * answer, a 5xx, or `concurrent_commit` - a lock our own first request may hold).
    */
@@ -3680,13 +3687,8 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
-  /** Keeps `submission` beside `groupId`'s staged commit, in the MLS state (`commitSubmission.ts`). */
-  protected abstract recordPendingSubmission(
-    groupId: string,
-    submission: Uint8Array
-  ): Promise<void>;
-  /** The submission kept beside `groupId`'s staged commit; `null` when it has none or never sent it. */
-  protected abstract pendingSubmission(groupId: string): Promise<Uint8Array | null>;
+  /** The record its stage wrote beside `groupId`'s staged commit (`commitSubmission.ts`). */
+  protected abstract pendingSubmission(groupId: string): Promise<PendingSubmissionRead>;
   /** Every group whose state holds a staged commit not yet merged or cleared. */
   protected abstract groupsWithPendingCommit(): Promise<string[]>;
 
@@ -3713,9 +3715,10 @@ export abstract class BaseMlsService implements IMlsService {
    * - `none`: no staged commit;
    * - `merged`: the gate accepted it (first time or duplicate) - merged, and an Add's Welcome
    *   delivered to the devices it admits, since nobody else is left to send it;
-   * - `cleared`: refused (and caught up), or staged and NEVER SENT - no submission beside it, which
-   *   the record-before-send order makes a proof, not a guess;
-   * - `unknown`: still no answer; the staged commit and its submission stay.
+   * - `cleared`: refused (and caught up), or staged and NEVER SENT - no record beside it, which the
+   *   one-call stage makes a proof, not a guess;
+   * - `unknown`: still no answer, or a record that cannot be read
+   *   ({@link escalateUnreadableSubmission}); the staged commit and its record stay.
    */
   private async settleUnresolvedLocked(
     groupId: string
@@ -3725,18 +3728,21 @@ export abstract class BaseMlsService implements IMlsService {
       return 'none';
     }
     const short = groupId.slice(0, 8);
-    const bytes = await this.pendingSubmission(groupId);
-    const submission = bytes ? decodeSubmission(bytes) : null;
-    if (!submission) {
+    const read = await this.pendingSubmission(groupId);
+    if (read.status === 'none') {
       await this.clearPendingCommit(groupId).catch((e: unknown) =>
         console.error(`[COMMIT] ${short}... could not clear an unsent staged commit: ${String(e)}`)
       );
       this.unresolvedGroups?.delete(groupId);
       console.warn(
-        `[COMMIT] ${short}... a staged commit with ${bytes ? 'an UNREADABLE' : 'no'} submission ` +
-          `beside it - ${bytes ? 'it cannot be resubmitted' : 'it was never sent'}; cleared`
+        `[COMMIT] ${short}... a staged commit with no record beside it was never sent - cleared`
       );
       return 'cleared';
+    }
+    const submission = read.status === 'recorded' ? composeSubmission(read.record) : null;
+    if (!submission) {
+      this.escalateUnreadableSubmission(groupId);
+      return 'unknown';
     }
     const answer = await this.resubmitUnresolved(submission);
     if (answer.verdict === 'unknown') {
@@ -3756,6 +3762,27 @@ export abstract class BaseMlsService implements IMlsService {
     );
     await this.catchUpOnRefusedCommit(groupId, submission.baseEpoch, answer.answer?.currentEpoch);
     return 'cleared';
+  }
+
+  /**
+   * A staged commit whose record cannot be read: its outcome is UNDECIDED, and nothing here can
+   * decide it - the bytes a resubmission needs are the unreadable part, and the commit log can only
+   * be compared against them. Clearing would be a guess (the commit may have landed, and a cleared
+   * device then forks); merging would be the opposite guess.
+   *
+   * THE RUNG TAKEN IS THE LADDER'S SECOND, forget + re-Welcome, because it is the one repair that is
+   * right whichever way the commit went: the group is marked in the epoch-gap registry, which keeps
+   * every send out of it and hands it to the sync watchdog that owns rung 2. The staged commit stays
+   * until then, so no new commit is built on an epoch nobody knows.
+   */
+  private escalateUnreadableSubmission(groupId: string): void {
+    this.unresolvedGroups?.add(groupId);
+    markEpochGap(groupId);
+    console.error(
+      `[COMMIT] ${groupId.slice(0, 8)}... the record of the staged commit is UNREADABLE - its outcome ` +
+        'cannot be learnt, so it is neither merged nor cleared; the group is handed to rung 2 ' +
+        '(forget + re-Welcome) through the epoch-gap registry'
+    );
   }
 
   /**
@@ -3822,8 +3849,12 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<'none' | 'merged' | 'cleared' | 'undecided'> {
     if (!(await this.groupsWithPendingCommit()).includes(groupId)) return 'none';
     const short = groupId.slice(0, 8);
-    const bytes = await this.pendingSubmission(groupId);
-    const submission = bytes ? decodeSubmission(bytes) : null;
+    const read = await this.pendingSubmission(groupId);
+    const submission = read.status === 'recorded' ? composeSubmission(read.record) : null;
+    if (read.status !== 'none' && !submission) {
+      this.escalateUnreadableSubmission(groupId);
+      return 'undecided';
+    }
     if (submission && commitAtBase === null) return 'undecided';
     this.unresolvedGroups?.delete(groupId);
     if (submission && commitAtBase === submission.commit) {
@@ -5069,8 +5100,8 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
     const result = await this.runCommitTransaction(
       groupId,
-      async () => {
-        const staged = await this.stageAddMembers(groupId, [keyPackageBytes]);
+      async (intent) => {
+        const staged = await this.stageAddMembers(groupId, [keyPackageBytes], intent);
         return {
           commit: staged.commit,
           welcome: staged.welcome,
@@ -5094,10 +5125,11 @@ export abstract class BaseMlsService implements IMlsService {
   }> {
     return this.runCommitTransaction(
       groupId,
-      async () => {
+      async (intent) => {
         const staged = await this.stageAddMembers(
           groupId,
-          devices.map((d) => d.keyPackage)
+          devices.map((d) => d.keyPackage),
+          intent
         );
         return {
           commit: staged.commit,
@@ -5110,20 +5142,28 @@ export abstract class BaseMlsService implements IMlsService {
           })),
         };
       },
-      { excludeDeviceIds, exportTree: true }
+      {
+        excludeDeviceIds,
+        exportTree: true,
+        keyPackageDevices: devices.map((d) => d.deviceId),
+      }
     );
   }
 
   async removeMember(groupId: string, userIds: string[]): Promise<void> {
-    await this.runCommitTransaction(groupId, () => this.stageRemoveMembers(groupId, userIds), {
-      removes: commitRemovals({ userIds }),
-    });
+    await this.runCommitTransaction(
+      groupId,
+      (intent) => this.stageRemoveMembers(groupId, userIds, intent),
+      {
+        removes: commitRemovals({ userIds }),
+      }
+    );
   }
 
   async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
     await this.runCommitTransaction(
       groupId,
-      () => this.stageRemoveMembersByDevice(groupId, deviceIdentities),
+      (intent) => this.stageRemoveMembersByDevice(groupId, deviceIdentities, intent),
       { removes: commitRemovals({ deviceIdentities }) }
     );
   }
@@ -5140,13 +5180,13 @@ export abstract class BaseMlsService implements IMlsService {
     const base = await this.delivery.fetchGroupInfo(groupId);
     if (!base) throw new LeafRefreshUnverifiedError(groupId, 'no-base');
     const baseBytes = fromBase64(base.groupInfo);
-    await this.runCommitTransaction(groupId, async () => {
+    await this.runCommitTransaction(groupId, async (intent) => {
       const epoch = await this.freshEpoch(groupId);
       if (base.baseEpoch !== epoch) throw new LeafRefreshUnverifiedError(groupId, 'other-epoch');
       if (!(await this.ownContextMatchesBase(groupId, baseBytes))) {
         throw new LeafRefreshUnverifiedError(groupId, 'diverged');
       }
-      return this.stageSelfUpdate(groupId);
+      return this.stageSelfUpdate(groupId, intent);
     });
   }
 

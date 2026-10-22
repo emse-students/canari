@@ -9,6 +9,7 @@ use crate::state::{
     decrypt_messages_batch, AppState, BatchDecryptItem, DecryptedFrame, KeyPackageBatchResult,
     PendingDb,
 };
+use mls_core::pending_submission::PendingSubmissionRead;
 use mls_core::{DecryptErrorKind, DeviceKeyStore, MlsManager};
 use std::sync::Mutex;
 
@@ -563,6 +564,7 @@ type StagedBulkAdd = (
 pub(crate) fn ajouter_membres_bulk(
     group_id: String,
     key_packages_bytes: Vec<Vec<u8>>,
+    intent: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<StagedBulkAdd, String> {
     let mut lock = state
@@ -576,11 +578,19 @@ pub(crate) fn ajouter_membres_bulk(
     // ratchet tree via exporter_ratchet_tree.
     let refs: Vec<&[u8]> = key_packages_bytes.iter().map(|v| v.as_slice()).collect();
     // The fifth element is the external-join base for the epoch the commit creates: submitted WITH
-    // the commit by the caller, never published on its own (COMM-22).
-    let ((commit, welcome, added, skipped), group_info) = manager
-        .add_members_bulk_with_base(&group_id, &refs)
+    // the commit by the caller, never published on its own (COMM-22). Recorded with `intent` in
+    // this same call, under this same lock: no checkpoint holds the staged commit without it.
+    let (record, skipped) = manager
+        .add_members_recorded(&group_id, &refs, intent)
         .map_err(|e| e.to_string())?;
-    Ok((commit, welcome, added, skipped, group_info))
+    let welcome = (!record.welcome.is_empty()).then_some(record.welcome);
+    Ok((
+        record.commit,
+        welcome,
+        record.added_indices,
+        skipped,
+        record.group_info,
+    ))
 }
 
 #[tauri::command]
@@ -674,6 +684,7 @@ pub(crate) fn lister_identites_membres(
 pub(crate) fn retirer_membres(
     group_id: String,
     user_ids: Vec<String>,
+    intent: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<mls_core::StagedRemovalResult, String> {
     let mut lock = state
@@ -684,7 +695,8 @@ pub(crate) fn retirer_membres(
 
     let id_slices: Vec<&str> = user_ids.iter().map(|s| s.as_str()).collect();
     manager
-        .remove_members_for_users(&group_id, &id_slices)
+        .remove_members_for_users_recorded(&group_id, &id_slices, intent)
+        .map(|r| (r.commit, r.group_info))
         .map_err(|e| e.to_string())
 }
 
@@ -692,6 +704,7 @@ pub(crate) fn retirer_membres(
 pub(crate) fn retirer_membres_par_appareil(
     group_id: String,
     device_identities: Vec<String>,
+    intent: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<mls_core::StagedRemovalResult, String> {
     let mut lock = state
@@ -702,16 +715,19 @@ pub(crate) fn retirer_membres_par_appareil(
 
     let id_slices: Vec<&str> = device_identities.iter().map(|s| s.as_str()).collect();
     manager
-        .remove_members_for_devices(&group_id, &id_slices)
+        .remove_members_for_devices_recorded(&group_id, &id_slices, intent)
+        .map(|r| (r.commit, r.group_info))
         .map_err(|e| e.to_string())
 }
 
-/// Stages a refresh of this device's own leaf in `group_id` (`MlsManager::stage_self_update`): an
-/// empty commit with a path and no proposal. Merged by `confirmer_commit` or cleared by
-/// `annuler_commit` on the server's answer, like every other staged commit.
+/// Stages a refresh of this device's own leaf in `group_id` (`MlsManager::stage_self_update_recorded`):
+/// an empty commit with a path and no proposal, recorded with `intent` in the same call. Merged by
+/// `confirmer_commit` or cleared by `annuler_commit` on the server's answer, like every other staged
+/// commit.
 #[tauri::command]
 pub(crate) fn rafraichir_feuille(
     group_id: String,
+    intent: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<mls_core::StagedSelfUpdateResult, String> {
     let mut lock = state
@@ -720,7 +736,8 @@ pub(crate) fn rafraichir_feuille(
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
     manager
-        .stage_self_update(&group_id)
+        .stage_self_update_recorded(&group_id, intent)
+        .map(|r| (r.commit, r.group_info))
         .map_err(|e| e.to_string())
 }
 
@@ -759,37 +776,47 @@ pub(crate) fn contexte_correspond_base(
         .map_err(|e| e.to_string())
 }
 
-/// Records the submission of `group_id`'s staged commit beside it, in the same state
-/// (`MlsManager::record_pending_submission`) - BEFORE its first request is sent.
-#[tauri::command]
-pub(crate) fn noter_soumission(
-    group_id: String,
-    submission: Vec<u8>,
-    state: tauri::State<AppState>,
-) -> Result<(), String> {
-    let mut lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-    manager
-        .record_pending_submission(&group_id, submission)
-        .map_err(|e| e.to_string())
+/// The record of a staged commit, as `soumission_en_attente` hands it to TypeScript: the same
+/// three answers, in the same order, as the WASM binding's array.
+#[derive(serde::Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub(crate) enum SoumissionLue {
+    None,
+    Unreadable,
+    #[serde(rename_all = "camelCase")]
+    Recorded {
+        intent: Vec<u8>,
+        base_epoch: u64,
+        commit: Vec<u8>,
+        group_info: Vec<u8>,
+        welcome: Option<Vec<u8>>,
+        added_indices: Vec<u32>,
+    },
 }
 
-/// The submission of `group_id`'s staged commit, or `None` when it has none or was never sent
-/// (`MlsManager::pending_submission`).
+/// The record of `group_id`'s staged commit (`MlsManager::pending_submission`).
 #[tauri::command]
 pub(crate) fn soumission_en_attente(
     group_id: String,
     state: tauri::State<AppState>,
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<SoumissionLue, String> {
     let lock = state
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-    Ok(manager.pending_submission(&group_id))
+    Ok(match manager.pending_submission(&group_id) {
+        PendingSubmissionRead::None => SoumissionLue::None,
+        PendingSubmissionRead::Unreadable => SoumissionLue::Unreadable,
+        PendingSubmissionRead::Recorded(r) => SoumissionLue::Recorded {
+            intent: r.intent,
+            base_epoch: r.base_epoch,
+            commit: r.commit,
+            group_info: r.group_info,
+            welcome: (!r.welcome.is_empty()).then_some(r.welcome),
+            added_indices: r.added_indices,
+        },
+    })
 }
 
 /// Every group holding a staged commit (`MlsManager::groups_with_pending_commit`).

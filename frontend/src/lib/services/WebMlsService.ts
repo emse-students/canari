@@ -1,5 +1,6 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { sealWebMlsState } from '$lib/mls-client/mlsEncryptWorkerSession';
@@ -1176,7 +1177,8 @@ export class WebMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    keyPackages: Uint8Array[],
+    intent: Uint8Array
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1188,7 +1190,7 @@ export class WebMlsService extends BaseMlsService {
       arr.push(kp);
       return arr;
     }, [] as Uint8Array[]);
-    const res = this.client.add_members_bulk(groupId, jsArray);
+    const res = this.client.add_members_bulk(groupId, jsArray, intent);
     return {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array | undefined,
@@ -1201,34 +1203,37 @@ export class WebMlsService extends BaseMlsService {
   /** WASM client wrapper - stages a Remove commit for all devices of the given users (no merge). */
   protected async stageRemoveMembers(
     groupId: string,
-    userIds: string[]
+    userIds: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const jsArray = userIds.reduce((arr, id) => {
       arr.push(id);
       return arr;
     }, [] as string[]);
-    const res = this.client.remove_members(groupId, jsArray);
+    const res = this.client.remove_members(groupId, jsArray, intent);
     return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
   }
 
   /** WASM client wrapper - stages a Remove commit for specific device identities (no merge). */
   protected async stageRemoveMembersByDevice(
     groupId: string,
-    deviceIdentities: string[]
+    deviceIdentities: string[],
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
     const jsArray = deviceIdentities.reduce((arr, id) => {
       arr.push(id);
       return arr;
     }, [] as string[]);
-    const res = this.client.remove_members_by_device(groupId, jsArray);
+    const res = this.client.remove_members_by_device(groupId, jsArray, intent);
     return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
   }
 
   /** WASM client wrapper - stages a refresh of this device's own leaf (no merge). */
   protected async stageSelfUpdate(
-    groupId: string
+    groupId: string,
+    intent: Uint8Array
   ): Promise<{ commit: Uint8Array; groupInfo: Uint8Array }> {
-    const res = this.client.self_update(groupId);
+    const res = this.client.self_update(groupId, intent);
     return { commit: res[0] as Uint8Array, groupInfo: res[1] as Uint8Array };
   }
 
@@ -1242,14 +1247,21 @@ export class WebMlsService extends BaseMlsService {
     return this.client.own_context_matches_base(groupId, groupInfo);
   }
 
-  /** WASM client wrapper - see {@link BaseMlsService.recordPendingSubmission}. */
-  protected async recordPendingSubmission(groupId: string, submission: Uint8Array): Promise<void> {
-    this.client.record_pending_submission(groupId, submission);
-  }
-
   /** WASM client wrapper - see {@link BaseMlsService.pendingSubmission}. */
-  protected async pendingSubmission(groupId: string): Promise<Uint8Array | null> {
-    return this.client.pending_submission(groupId) ?? null;
+  protected async pendingSubmission(groupId: string): Promise<PendingSubmissionRead> {
+    const res = this.client.pending_submission(groupId) as unknown[];
+    if (res[0] === 'none' || res[0] === 'unreadable') return { status: res[0] };
+    return {
+      status: 'recorded',
+      record: {
+        intent: res[1] as Uint8Array,
+        baseEpoch: res[2] as number,
+        commit: res[3] as Uint8Array,
+        groupInfo: res[4] as Uint8Array,
+        welcome: (res[5] as Uint8Array | undefined) ?? undefined,
+        addedIndices: res[6] as number[],
+      },
+    };
   }
 
   /** WASM client wrapper - see {@link BaseMlsService.groupsWithPendingCommit}. */
