@@ -152,11 +152,11 @@ export type AuthorshipCheck =
  * Checks a relayed proof: decodes it, finds the author device's TRUSTED key and verifies the
  * signature over the descriptor of the group the proof NAMES (`recorded.group`).
  *
- * - `forged`: the proof is malformed, names no group or device, or the author's ANCHORED pin holds
+ * - `forged`: the proof is malformed, names no group, or the author's ANCHORED pin holds
  *   keys and none verifies it. No other key accuses: the current tree may be a re-Welcome's, and an
  *   unanchored pin was re-taken after a prune.
- * - `unproven`: no trusted key verifies it - none exists (a ghost device, or one met before
- *   pinning), or the ones known may not accuse. That says nothing about the proof, and the caller
+ * - `unproven`: no trusted key verifies it - none exists (a ghost device, one met before pinning,
+ *   or an author naming no single device), or the ones known may not accuse. That says nothing about the proof, and the caller
  *   treats it as unsigned.
  *
  * A proof that verifies in ANOTHER group is `verified` with that group, and whether it may stand for
@@ -182,11 +182,13 @@ export async function checkRecordedAuthorship(
   }
   // The SIGNED spelling stays as it is - it is in the descriptor; every comparison and lookup uses
   // the ONE canonical form Rust keys the tree and the pins by. A bare legacy `userId` names a user
-  // and no device, so it never verifies as one.
+  // and no device, so no key is its key: never verified. Nor forged - mls-core signs as the
+  // credential, always `user:device` (the one constructor in `state.rs`, and its loader refuses any
+  // other), but a user id holding a colon would still yield this shape from an honest build.
   const author = proof.author ?? '';
   const canonical = canonicalIdentity(author);
   if (canonical === null) {
-    return { kind: 'forged', why: 'the proof names no device' };
+    return { kind: 'unproven', why: 'the proof names no single device - no key can be its key' };
   }
   const sep = canonical.indexOf(':');
   const authorUserId = canonical.slice(0, sep);

@@ -98,14 +98,19 @@ describe('checking a relayed proof', () => {
     expect(check.kind === 'verified' && check.source).toBe('pinned');
   });
 
-  it('never verifies a bare legacy identity as a device, even with a key under that name', async () => {
-    const legacy = await newTestAuthor('alice');
-    const check = await checkRecordedAuthorship(
-      keySource({ tree: [legacy], pinned: [legacy] }),
-      GROUP,
-      await signedBy(legacy, GROUP, HELLO)
-    );
-    expect(check.kind).not.toBe('verified');
+  it('neither verifies nor accuses a proof naming no single device - a bare legacy id, or two colons', async () => {
+    // A bare `userId` names a user and no device, so no key can be ITS key. And it says nothing
+    // about forgery: a signing build always signs as its credential (`user:device`), but nothing
+    // here proves a user id can never hold a colon - so such a proof reads as unsigned.
+    for (const identity of ['alice', 'a:b:dev']) {
+      const author = await newTestAuthor(identity);
+      const check = await checkRecordedAuthorship(
+        keySource({ tree: [author], pinned: [author] }),
+        GROUP,
+        await signedBy(author, GROUP, HELLO)
+      );
+      expect(check.kind).toBe('unproven');
+    }
   });
 
   it('names the group a proof was signed in, so a replay elsewhere is never taken for this one', async () => {

@@ -1179,7 +1179,9 @@ could list a key for a device that never existed) nor accuse one (an erasure, or
 a real key). An author with no trusted key is `unproven` - kept, marked, exactly like an unsigned
 message. Every lookup and comparison uses the ONE canonical identity of `leafIdentity.ts` (Rust's:
 ASCII letters lowered, nothing else), and a bare legacy `userId` names a user, never a device, so
-a proof naming one never verifies.
+a proof naming one never verifies - and never accuses either: it reads `unproven`. mls-core signs
+as its credential, always `user:device` (one constructor in `state.rs`, whose loader refuses any
+other identity), but nothing proves a user id can never hold a colon.
 
 **Verifying and accusing are different questions.** A key that verifies proves the author; a key
 that fails to verify accuses only if it is the key the author held WHEN it signed. The current tree
