@@ -24,6 +24,7 @@ import { canari } from '$lib/proto/canari.js';
 import { Writer, type GraineSignatureEngine } from '$lib/crypto/graineV2';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type { DevicePin } from '$lib/mls-client/deviceTrust';
+import { canonicalIdentity } from '$lib/mls-client/leafIdentity';
 
 /** The label opening every descriptor - distinct from every Graine label. */
 export const AUTHOR_DESCRIPTOR_LABEL = 'canari-mls-author-v1';
@@ -133,8 +134,9 @@ export function recordOwnAuthorship(
 export type AuthorshipCheck =
   | {
       kind: 'verified';
-      /** `userId:deviceId` that signed, lower-cased user. */
+      /** `userId:deviceId` that signed, as the proof spells it (the spelling it signed). */
       author: string;
+      /** The signer's user id in its canonical form (`canonicalUserId`) - compare only with it. */
       authorUserId: string;
       /** The decoded body - the message as its author sent it. */
       message: canari.AppMessage;
@@ -178,12 +180,17 @@ export async function checkRecordedAuthorship(
   if (proof.version !== AUTHOR_PROOF_VERSION) {
     return { kind: 'forged', why: `unknown proof version ${proof.version}` };
   }
+  // The SIGNED spelling stays as it is - it is in the descriptor; every comparison and lookup uses
+  // the ONE canonical form Rust keys the tree and the pins by. A bare legacy `userId` names a user
+  // and no device, so it never verifies as one.
   const author = proof.author ?? '';
-  const sep = author.indexOf(':');
-  if (sep <= 0 || sep === author.length - 1) {
+  const canonical = canonicalIdentity(author);
+  if (canonical === null) {
     return { kind: 'forged', why: 'the proof names no device' };
   }
-  const authorUserId = author.slice(0, sep).toLowerCase();
+  const sep = canonical.indexOf(':');
+  const authorUserId = canonical.slice(0, sep);
+  const authorDeviceId = canonical.slice(sep + 1);
   const message = decodeBody(body);
   if (!message) return { kind: 'forged', why: 'the signed bytes are not a message' };
 
@@ -200,10 +207,9 @@ export async function checkRecordedAuthorship(
     source,
   });
 
-  const treeKey = await mls.memberSignatureKey(treeGroupId, author);
+  const treeKey = await mls.memberSignatureKey(treeGroupId, canonical);
   if (treeKey && (await verifiesUnder(treeKey))) return verified('tree');
-  // Pinned under the user id as MLS names it (the author string keeps the sender's casing).
-  const pin = await mls.pinnedSignatureKeys(author.slice(0, sep), author.slice(sep + 1));
+  const pin = await mls.pinnedSignatureKeys(authorUserId, authorDeviceId);
   const pinned = pin?.keys ?? [];
   for (const key of pinned) {
     if (await verifiesUnder(key)) return verified('pinned');

@@ -13,7 +13,7 @@ import {
  * A HISTORY BUNDLE IS WRITTEN BY WHICHEVER MEMBER ANSWERED, so nothing in it is believed on that
  * member's word: a message, an edit, a deletion or a reaction attributed to SOMEONE ELSE is taken
  * only with that person's own signature (history-reconciliation, "Restored history carries its
- * author's signature"). These tests are the attacks, one per shape.
+ * author's signature"). One case per shape.
  */
 
 const GROUP = 'g-restore';
@@ -255,7 +255,7 @@ describe('a restored deletion', () => {
     expect(verdict.kind).toBe('apply');
   });
 
-  it('is DROPPED when another member relays a tombstone with no proof - it used to erase the message', async () => {
+  it('is DROPPED when another member relays a tombstone with no proof', async () => {
     const { keys } = await cast();
     const verdict = await vetRestoredDelete(keys, GROUP, target, {}, 'mallory', silent);
     expect(verdict.kind).toBe('none');
@@ -325,5 +325,64 @@ describe('restored reactions', () => {
     );
     expect(outcome.kept).toEqual([]);
     expect(outcome.forged).toBe(1);
+  });
+});
+
+describe('one canonical identity (leafIdentity.ts), as Rust keys the pins', () => {
+  // `canonicalUserId` lowercases ASCII letters ONLY - Rust's `to_ascii_lowercase`. 'Élise' and
+  // 'élise' are two users there, and must be two users here.
+  it('verifies an ASCII case variant of the author as the same user', async () => {
+    const alice = await newTestAuthor('Alice:dev-a');
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const verdict = await vetRestoredMessage(
+      keySource({ tree: [alice] }),
+      GROUP,
+      { id: 'm-1', senderId: 'alice', content: helloContent, timestamp: SENT_AT, authorship },
+      'mallory',
+      silent
+    );
+    expect(verdict.kind).toBe('verified');
+  });
+
+  it('never reads a non-ASCII case variant of the signer as the claimed author', async () => {
+    const elise = await newTestAuthor('Élise:dev-e');
+    const authorship = await signedBy(elise, GROUP, HELLO);
+    const verdict = await vetRestoredMessage(
+      keySource({ tree: [elise] }),
+      GROUP,
+      { id: 'm-1', senderId: 'élise', content: helloContent, timestamp: SENT_AT, authorship },
+      'mallory',
+      silent
+    );
+    expect(verdict.kind).toBe('forged');
+  });
+
+  it('never takes a relayer as the author under a non-ASCII case variant', async () => {
+    const verdict = await vetRestoredMessage(
+      keySource({}),
+      GROUP,
+      { id: 'm-1', senderId: 'Élise', content: helloContent, timestamp: SENT_AT },
+      'élise',
+      silent
+    );
+    expect(verdict.kind).toBe('unverified');
+  });
+
+  it('never applies a tombstone relayed under a non-ASCII case variant of its author', async () => {
+    const target = { id: 'm-1', senderId: 'Élise' };
+    const verdict = await vetRestoredDelete(keySource({}), GROUP, target, {}, 'élise', silent);
+    expect(verdict.kind).toBe('none');
+  });
+
+  it('never keeps a reaction relayed under a non-ASCII case variant of its reactor', async () => {
+    const outcome = await vetRestoredReactions(
+      keySource({}),
+      GROUP,
+      'm-1',
+      [{ userId: 'Élise', emoji: '👍', at: 10 }],
+      'élise',
+      silent
+    );
+    expect(outcome.kept).toEqual([]);
   });
 });

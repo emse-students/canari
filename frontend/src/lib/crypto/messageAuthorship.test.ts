@@ -71,6 +71,43 @@ describe('checking a relayed proof', () => {
     expect(check.message.text?.content).toBe('hello');
   });
 
+  it('names its author in the ONE canonical form - ASCII letters lowered, nothing else', async () => {
+    const elise = await newTestAuthor('Élise:dev-e');
+    const check = await checkRecordedAuthorship(
+      keySource({ tree: [elise] }),
+      GROUP,
+      await signedBy(elise, GROUP, HELLO)
+    );
+    expect(check.kind === 'verified' && check.authorUserId).toBe('Élise');
+    const alice = await newTestAuthor('ALICE:dev-a');
+    const ascii = await checkRecordedAuthorship(
+      keySource({ tree: [alice] }),
+      GROUP,
+      await signedBy(alice, GROUP, HELLO)
+    );
+    expect(ascii.kind === 'verified' && ascii.authorUserId).toBe('alice');
+  });
+
+  it('asks for the pin under the canonical identity, as Rust keys it', async () => {
+    const alice = await newTestAuthor('Alice:dev-a');
+    const check = await checkRecordedAuthorship(
+      keySource({ pinned: [alice] }),
+      GROUP,
+      await signedBy(alice, GROUP, HELLO)
+    );
+    expect(check.kind === 'verified' && check.source).toBe('pinned');
+  });
+
+  it('never verifies a bare legacy identity as a device, even with a key under that name', async () => {
+    const legacy = await newTestAuthor('alice');
+    const check = await checkRecordedAuthorship(
+      keySource({ tree: [legacy], pinned: [legacy] }),
+      GROUP,
+      await signedBy(legacy, GROUP, HELLO)
+    );
+    expect(check.kind).not.toBe('verified');
+  });
+
   it('names the group a proof was signed in, so a replay elsewhere is never taken for this one', async () => {
     const alice = await newTestAuthor('alice:dev-a');
     const rec = await signedBy(alice, 'g-elsewhere', HELLO);

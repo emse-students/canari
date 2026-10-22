@@ -1177,7 +1177,9 @@ which MLS authenticated, then the keys this device pinned for that device
 A key the SERVER publishes is never evidence either way: it can neither verify a proof (a server
 could list a key for a device that never existed) nor accuse one (an erasure, or a server, can drop
 a real key). An author with no trusted key is `unproven` - kept, marked, exactly like an unsigned
-message.
+message. Every lookup and comparison uses the ONE canonical identity of `leafIdentity.ts` (Rust's:
+ASCII letters lowered, nothing else), and a bare legacy `userId` names a user, never a device, so
+a proof naming one never verifies.
 
 **Verifying and accusing are different questions.** A key that verifies proves the author; a key
 that fails to verify accuses only if it is the key the author held WHEN it signed. The current tree

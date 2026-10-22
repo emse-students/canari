@@ -27,6 +27,7 @@ import {
   type RecordedAuthorship,
 } from '$lib/crypto/messageAuthorship';
 import { applyEditToBody } from '$lib/envelope';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import type { MessageReaction } from '$lib/types';
 import { appMsgToEnvelope } from './messageUtils';
 
@@ -57,6 +58,8 @@ type Log = (msg: string) => void;
 
 /**
  * Decides a restored message. `relayerUserId` is the user MLS authenticated the bundle frame from.
+ * Every user id is compared in its ONE canonical form (`canonicalUserId`, Rust's): a case variant
+ * Rust takes for another user is another user here.
  * A proof with no trusted key to check it against is `unverified`, not `forged`: that says nothing
  * about the message, and it is kept with its proof so a later relay can still prove it.
  *
@@ -72,8 +75,8 @@ export async function vetRestoredMessage(
   relayerUserId: string,
   log: Log
 ): Promise<RestoredMessageVerdict> {
-  const relayer = relayerUserId.toLowerCase();
-  const claimed = entry.senderId.toLowerCase();
+  const relayer = canonicalUserId(relayerUserId);
+  const claimed = canonicalUserId(entry.senderId);
   if (!entry.authorship) {
     if (claimed === relayer) return { kind: 'relayer-is-author' };
     return { kind: 'unverified', why: 'no author proof, relayed by another member' };
@@ -149,7 +152,7 @@ async function signedEventAbout(
   if (check.group !== groupId) {
     return { kind: 'refused', why: 'the proof was signed in another conversation', forged: false };
   }
-  if (check.authorUserId !== targetAuthor.toLowerCase()) {
+  if (check.authorUserId !== canonicalUserId(targetAuthor)) {
     return {
       kind: 'refused',
       why: `signed by ${check.authorUserId}, not the author`,
@@ -191,7 +194,7 @@ export async function vetRestoredEdit(
   log: Log
 ): Promise<RestoredEditVerdict> {
   if (!entry.editProof) {
-    return relayerUserId.toLowerCase() === target.senderId.toLowerCase()
+    return canonicalUserId(relayerUserId) === canonicalUserId(target.senderId)
       ? { kind: 'relayer' }
       : { kind: 'none' };
   }
@@ -250,7 +253,7 @@ export async function vetRestoredDelete(
       `[AUTHORSHIP] restored deletion of ${target.id.slice(0, 8)} not provable now: ${signed.why}`
     );
   }
-  if (relayerUserId.toLowerCase() === target.senderId.toLowerCase()) return { kind: 'apply' };
+  if (canonicalUserId(relayerUserId) === canonicalUserId(target.senderId)) return { kind: 'apply' };
   log(
     `[AUTHORSHIP] dropped a tombstone on ${target.id.slice(0, 8)} relayed by ${relayerUserId.slice(0, 8)} - its author did not sign it`
   );
@@ -278,11 +281,11 @@ export async function vetRestoredReactions(
   relayerUserId: string,
   log: Log
 ): Promise<RestoredReactions> {
-  const relayer = relayerUserId.toLowerCase();
+  const relayer = canonicalUserId(relayerUserId);
   const out: RestoredReactions = { kept: [], unproven: 0, forged: 0 };
   for (const r of reactions) {
     if (!r?.userId || !r.emoji) continue;
-    if (r.userId.toLowerCase() === relayer) {
+    if (canonicalUserId(r.userId) === relayer) {
       out.kept.push(r);
       continue;
     }
@@ -298,7 +301,7 @@ export async function vetRestoredReactions(
     const reaction = check.kind === 'verified' ? check.message.reaction : null;
     const holds =
       check.kind === 'verified' &&
-      check.authorUserId === r.userId.toLowerCase() &&
+      check.authorUserId === canonicalUserId(r.userId) &&
       reaction != null &&
       reaction.messageId === messageId &&
       reaction.emoji === r.emoji &&

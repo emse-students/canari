@@ -12,6 +12,7 @@ import {
 import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { MediaRef } from '$lib/media';
 import { recordOwnAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import {
   decodeAppMessage,
   encodeAppMessage,
@@ -803,7 +804,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         } else if (frame?.reaction) {
           const r = frame.reaction;
           reactions = reactions?.map((x) =>
-            x.userId.toLowerCase() === deps.userId.toLowerCase() &&
+            canonicalUserId(x.userId) === canonicalUserId(deps.userId) &&
             x.emoji === r.emoji &&
             (x.at ?? 0) === Number(r.at ?? 0)
               ? { ...x, proof: mine }

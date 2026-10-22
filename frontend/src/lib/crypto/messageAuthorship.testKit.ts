@@ -7,6 +7,7 @@ import { canari } from '$lib/proto/canari.js';
 import { encodeAppMessage, type IAppMessage } from '$lib/proto/codec';
 import { webCryptoEngine } from '$lib/crypto/graineV2.testEngine';
 import { toBase64 } from '$lib/utils/hex';
+import { canonicalIdentity, sameDeviceIdentity } from '$lib/mls-client/leafIdentity';
 import {
   authorDescriptor,
   type AuthorKeySource,
@@ -55,12 +56,14 @@ export function keySource(opts: {
   anchored?: boolean;
 }): AuthorKeySource {
   return {
+    // Matched as mls-core's `identity_names` matches: one canonical identity, a bare one names no leaf.
     async memberSignatureKey(_groupId, identity) {
-      return opts.tree?.find((a) => a.identity === identity)?.publicKey ?? null;
+      return opts.tree?.find((a) => sameDeviceIdentity(a.identity, identity))?.publicKey ?? null;
     },
+    // Rust keys its pins by the canonical identity: a lookup under any other spelling finds nothing.
     async pinnedSignatureKeys(userId, deviceId) {
       const keys = (opts.pinned ?? [])
-        .filter((a) => a.identity === `${userId}:${deviceId}`)
+        .filter((a) => canonicalIdentity(a.identity) === `${userId}:${deviceId}`)
         .map((a) => a.publicKey);
       return keys.length > 0 ? { keys, anchored: opts.anchored ?? true, reaffirmations: 0 } : null;
     },
