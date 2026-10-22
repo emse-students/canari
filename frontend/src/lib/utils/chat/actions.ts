@@ -1246,6 +1246,7 @@ export async function handleHistoryRequest(params: {
       before: probe.before,
       limit: probe.limit,
       since: probe.since,
+      requestId: probe.requestId,
     }).catch((e) => log(`[HISTORY_RANGE] Answer failed for ${short}...: ${String(e)}`));
     await ourCoverage(probe.since);
     return;
@@ -1299,6 +1300,14 @@ export async function handleHistoryRequest(params: {
     return;
   }
 
-  const { digest, since } = probe;
-  await answerHistoryDigest({ groupId, requesterIdentity, selfIdentity, digest, since, deps });
+  const { digest, since, requestId } = probe;
+  await answerHistoryDigest({
+    groupId,
+    requesterIdentity,
+    selfIdentity,
+    digest,
+    since,
+    requestId,
+    deps,
+  });
 }

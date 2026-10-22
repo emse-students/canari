@@ -807,6 +807,11 @@ export class MembersController {
    * predicate then starved the push it was written for. The caller witnessed that add, so the
    * arrival it reads is one the group showed it. Anybody else has no entry: a member cannot read the
    * arrival of somebody whose devices all predate their own.
+   *
+   * **`addressedAnswers: true`** says this server routes an addressed history answer on a
+   * conversation (step A, docs/wiki/protocols/history-answer-addressing.md). It rides this route
+   * because every answerer reads it per chunk anyway: a client running ahead of an older server sees
+   * the field missing and keeps the broadcast answer, rather than learning it by a refused send.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/exclusions')
@@ -817,6 +822,7 @@ export class MembersController {
   ): Promise<{
     exclusions: Record<string, ExclusionWindow[]>;
     withheld: Record<string, ExclusionWindow[]>;
+    addressedAnswers: true;
   }> {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
@@ -949,6 +955,6 @@ export class MembersController {
         group?.createdAt ?? null
       );
     }
-    return { exclusions, withheld };
+    return { exclusions, withheld, addressedAnswers: true };
   }
 }
