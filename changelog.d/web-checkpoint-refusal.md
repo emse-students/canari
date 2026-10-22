@@ -1,3 +1,0 @@
-### Fixed - a web checkpoint the version guard dropped is no longer reported as durable
-
-A checkpoint refused behind another tab's state now fails, typed and in one log line, while one superseded by this tab's own later write still counts. A device rotation whose checkpoint is refused moves nothing shared and deletes no device another tab may serve; the login says to close the other tabs, and a revoked tab writes no state again and reloads, at most twice before it tells the member to close the other tabs ([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md#a-web-checkpoint-resolves-only-when-its-state-is-on-disk-2026-10-21)).
