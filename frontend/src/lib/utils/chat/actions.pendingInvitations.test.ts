@@ -631,3 +631,62 @@ describe('processPendingInvitations - a device key this member refuses', () => {
     error.mockRestore();
   });
 });
+
+// A DUPLICATE SIGNATURE KEY ON A PENDING INVITATION IS NOT A KICK: a leaf of this identity means the
+// invitation is fulfilled (vouched, no commit), and a key on another identity's leaf removes nothing.
+describe('processPendingInvitations - a duplicate signature key', () => {
+  const sweep = (mlsService: IMlsService) =>
+    processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
+      log: vi.fn(),
+    });
+  const withTree = (...reads: string[][]) => {
+    const fn = vi.fn();
+    for (const r of reads) fn.mockResolvedValueOnce(r);
+    return makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      getGroupMemberIdentities: fn,
+      addMember: vi.fn().mockRejectedValue(new Error('AddMembers: DuplicateSignatureKey')),
+    });
+  };
+
+  it('vouches a leaf of the same identity as fulfilled, with no commit', async () => {
+    const mlsService = withTree(['self:self-device'], ['self:self-device', 'peer:peer-dev']);
+
+    await sweep(mlsService);
+
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.updateInvitationStatus).toHaveBeenCalledWith(
+      'peer-dev',
+      'peer',
+      'g1',
+      'active'
+    );
+  });
+
+  it('removes nothing when the key sits on another identity, and says so as an error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = withTree(['self:self-device'], ['self:self-device', 'peer:other-dev']);
+
+    await sweep(mlsService);
+
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.updateInvitationStatus).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("ANOTHER identity's leaf"));
+    error.mockRestore();
+  });
+});

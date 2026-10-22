@@ -628,8 +628,12 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   left. The package is vetted FIRST, in TypeScript and again in Rust: a refused package stages
   nothing. `addMember` and `replaceMember` throw the typed `DeviceTrustRefusedError` before staging,
   and the callers log it once per identity per session (`reportDeviceTrustRefusal`) and retire
-  nothing. The `DuplicateSignature` catch (`handleDuplicateLeafError`) still kicks only, the re-add
-  following on a later request.
+  nothing. No path kicks any more: an Add refused as a `DuplicateSignature` reads the tree again.
+  If the key's identity is in the tree, a welcome request replaces it in one commit, and a pending
+  invitation is already fulfilled (vouched, no commit). Otherwise the key sits on ANOTHER identity's
+  leaf, which no legitimate flow produces (a device that changes id starts with a fresh key). The
+  requester's identity has no leaf to remove, and the other leaf is not this request's to remove, so
+  nothing is removed and the line is an error.
 - **A refusal no retry can lift is remembered.** Every package of a device carries the same
   signature key, so a `signature-key-changed` refusal would come back at every sweep, each one
   spending a one-time KeyPackage. It is recorded per own device (`refusedDevices.ts`,

@@ -705,3 +705,41 @@ fn a_repair_refuses_an_unpinned_key_and_stages_nothing() {
         "nothing to replace is not an add"
     );
 }
+
+/// THE DUPLICATE-KEY CASE IS THE SAME REPAIR. A device that kept its key but lost the group offers a
+/// package whose key a leaf already carries: the plain Add does not put it beside that leaf, and the
+/// replacement of the same identity is one commit that records no departure, live or committed.
+#[test]
+fn a_duplicate_key_is_repaired_in_one_commit_with_no_departure() {
+    let gid = "g-repair-duplicate";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    let mut carol = device("carol", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = carol.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut carol, gid, &kp, "carol:dev1");
+    let kp = bob.generate_key_package().unwrap();
+    let bob_in = add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    carol.process_incoming_message(gid, &bob_in).unwrap();
+    let epoch = alice.get_epoch(gid).unwrap();
+
+    bob.forget_group(gid, 0);
+    let kp = bob.generate_key_package().unwrap();
+    match alice.add_members_bulk_with_base(gid, &[&kp], &["bob:dev1"]) {
+        Err(_) => {}
+        Ok(((_, _, added, _), _)) => assert!(added.is_empty(), "never beside the live leaf"),
+    }
+    assert_eq!(alice.get_epoch(gid).unwrap(), epoch, "nothing merged");
+    alice.clear_pending_commit_for(gid).expect("clear");
+
+    let (repair, welcome, _base) = alice
+        .replace_device_with_base(gid, "bob:dev1", &kp)
+        .expect("the same identity is replaced in one commit");
+    alice.merge_pending_commit_for(gid).expect("merge");
+    let tree = alice.export_ratchet_tree_for(gid).expect("tree");
+    bob.process_welcome(&welcome, Some(&tree))
+        .expect("the Welcome reaches the re-added device");
+    carol.process_incoming_message(gid, &repair).unwrap();
+    assert!(alice.removal_epochs(gid, "bob").is_empty(), "committer");
+    assert!(carol.removal_epochs(gid, "bob").is_empty(), "live");
+}

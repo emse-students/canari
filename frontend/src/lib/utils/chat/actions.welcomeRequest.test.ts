@@ -401,3 +401,86 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
     warn.mockRestore();
   });
 });
+
+// A DUPLICATE SIGNATURE KEY IS NO LONGER A KICK. The Add met a leaf already carrying the key: the
+// tree is read again, a leaf of THIS identity is replaced in ONE commit (no epoch without the device,
+// so no departure), and a key on any other identity's leaf removes nothing at all.
+describe('handleWelcomeRequest - a duplicate signature key', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetWelcomeSent();
+  });
+  const duplicate = () => vi.fn().mockRejectedValue(new Error('AddMembers: DuplicateSignatureKey'));
+  const requester = (overrides = {}) =>
+    createMlsServiceStub({
+      getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
+      getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
+      ...overrides,
+    });
+  const run = (groupId: string, mlsService: ReturnType<typeof createMlsServiceStub>) =>
+    handleWelcomeRequest({
+      mlsService,
+      storage: null,
+      userId: 'me',
+      deviceKeyB64: 'pin',
+      conversations: activeConversations(groupId),
+      log: vi.fn(),
+      requesterUserId: 'legit-user',
+      requesterDeviceId: 'dev-1',
+      groupId,
+    });
+
+  it('replaces a leaf of the same identity in one commit and welcomes it, removing nothing alone', async () => {
+    const mlsService = requester({
+      // The first read could not tell; the second, after the refusal, sees the leaf.
+      getGroupMemberIdentities: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('busy'))
+        .mockResolvedValue(['me:self', 'legit-user:dev-1']),
+      addMember: duplicate(),
+    });
+
+    await run('g-dup-same', mlsService);
+
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.replaceMember).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendWelcome).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes nothing when the key sits on another identity, and says so as an error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = requester({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:dev-9']),
+      addMember: duplicate(),
+    });
+
+    await run('g-dup-other', mlsService);
+
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(mlsService.replaceMember).not.toHaveBeenCalled();
+    expect(mlsService.sendWelcome).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("ANOTHER identity's leaf"));
+    error.mockRestore();
+  });
+
+  it('removes nothing when a replace itself meets the key: another identity holds it', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = requester({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['legit-user:dev-1']),
+      replaceMember: duplicate(),
+    });
+
+    await run('g-dup-replace', mlsService);
+
+    expect(mlsService.replaceMember).toHaveBeenCalledTimes(1);
+    expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
+    expect(mlsService.kickStaleDevice).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("ANOTHER identity's leaf"));
+    error.mockRestore();
+  });
+});
