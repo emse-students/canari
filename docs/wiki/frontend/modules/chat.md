@@ -612,6 +612,40 @@ it always did.
   `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
   ([backlog](../../backlog.md)).
 
+### The GIF picker loads in a controlled way, and a comment GIF says what it is doing (2026-10-22)
+
+User report: the picker shifted its content, was slow to fill, and GIFs struggled to send. Measured
+with a CDP harness (headless Chrome, a modelled relay that answers 503 `busy` past 16 distinct
+downloads, a shared pipe slowing each download as more run together):
+
+| | before | after |
+| --- | --- | --- |
+| relay refusals (blank tiles) | 7 phone / 5 desktop | 0 / 0 |
+| downloads in flight at once | 16 | 6 |
+| tiles that moved (desktop) | 13 (the scrollbar appearing narrowed the grid) | 0 |
+| layout shift (desktop) | 0.0044 | 0 |
+
+- **Weight.** The server adds the provider's smallest rendition as an optional `tiny` when it is
+  strictly narrower than `preview` (`klipy.ts`). `pickGridRendition(gif, tileWidth)` draws the
+  lightest rendition that still covers the tile, from the declared sizes. A comment attaches the
+  small rendition (`commentGifRendition`), not the medium one a chat sends: it is shown at most
+  224 px wide, and the medium one (median 1.1 MB, up to 11.7 MB against the relay's 12 MiB ceiling)
+  was downloaded only to be re-encrypted and uploaded.
+- **Order.** `gifImageGate` lets 6 thumbnails download together, in the order tiles asked (top
+  first); a tile that scrolls away before its turn leaves the queue and never asks the network.
+  `GifTileImage` retries a failed thumbnail once, then shows an icon instead of staying blank.
+- **No shift.** Tiles are always rendered at their declared box (a skeleton tone until the picture
+  lands) and the scroller carries `scrollbar-gutter: stable`, so the grid width never changes.
+- **Reopening is instant.** `gifSearchCache` keeps the pages read in the last five minutes (the
+  server's own `max-age`), in memory only. The query stays the same private, never-logged request.
+- **A failed page can be retried**: a button for the first page and under the grid for a later one,
+  and a search that does not answer in 10 s counts as failed.
+- **Comments.** `fetchGifFile` reads the body as it arrives (progress), under a 25 s deadline, and
+  throws a typed `GifRelayError` (`busy` for the relay's 503, `timeout`, `too-large`, `network`,
+  `rejected`). The composer shows the chip at once with a progress bar, the cause in words and a
+  retry, and holds the send button while the GIF is still arriving. The relay ticket is asked as the
+  composer mounts.
+
 ### The GIF search is the whole screen, and a quoted GIF is a picture (2026-10-05)
 
 **Two reports from the user.** Typing in the panel's search left the picker as a 200 px strip above

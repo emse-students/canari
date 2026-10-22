@@ -165,6 +165,7 @@ impl MlsManager {
     /// Without this purge, the "forget + re-Welcome" recovery never converges.
     pub fn forget_group(&mut self, group_id: &str, min_epoch: u64) {
         self.groups.remove(group_id);
+        self.drop_graine_run(group_id);
         if min_epoch > 0 {
             self.forgotten_group_min_epochs
                 .insert(group_id.to_string(), min_epoch);
