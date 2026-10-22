@@ -120,9 +120,9 @@ impl CommitSummary {
     }
 }
 
-/// The CANONICAL user an identity belongs to: the user half, ASCII-lowercased - the normalisation
-/// device trust's `identity_names` uses (user ids are UUIDs; a case difference names the same
-/// account). `None` for anything that is not exactly `user:device` with both halves non-empty, so a
+/// The CANONICAL user an identity belongs to: the user half, ASCII-lowercased (user ids are UUIDs;
+/// a case difference names the same account). One reader shared with device trust is owed
+/// (`docs/wiki/backlog.md`, "P3 - one identity reader for rotation and device trust"). `None` for anything that is not exactly `user:device` with both halves non-empty, so a
 /// malformed credential names no user and counts as new.
 fn user_of(identity: &str) -> Option<String> {
     let (user, device) = identity.split_once(':')?;
