@@ -679,10 +679,15 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   request is left to the foreground or another member. An `epoch_mismatch` whose server epoch is
   AHEAD of the base (never a base at or past a lagging counter) is recorded in
   `welcome_request_stale.json` against the digest of `mls.bin`, so the newcomer's re-ask every 60 s is
-  not answered again from the same bytes; any write to `mls.bin` lifts it. Deleting the MLS state
+  not answered again from the same bytes; any write to `mls.bin` lifts it. A refused TARGET
+  (`welcome_target_unknown` / `welcome_target_not_member`) is remembered the same way, for that target
+  alone (`{group}|{userId:deviceId}`), so a holder does not commit and get refused on every ask; a
+  target admitted later is answered from the next bytes, or by another holder or the foreground. Deleting the MLS state
   (`remove_mls_state_in`) sweeps the memo, its `.tmp` and every staged `mls.bin.welcome-*` with it,
-  since a staged file holds that state's epoch secrets - and deletes `mls.bin` LAST, so a sweep that
-  fails part-way leaves the state intact for the next reset to finish.
+  since a staged file holds that state's epoch secrets - and deletes `mls.bin` after them, so a sweep
+  that fails part-way leaves the state intact for the next reset to finish; the owner record
+  (`mls.owner` and its `.tmp`) goes after `mls.bin`, so a failed removal never leaves a state nobody
+  is named for.
 - **The newcomer heals on its own cadence**: `requestReAdd` re-asks every 60 s while its app is open
   (external join first, then `welcome_request`), so it joins as soon as a base is published again or a
   member with a current state answers. A shut, stale phone alone never serves it.
@@ -698,6 +703,12 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   call after the advance; when that failed, the newcomer sat in the tree with no Welcome, every holder
   then answered it `already-member`, and nothing durable recovered it. A failed realtime delivery now
   costs nothing: the row is the delivery, and the device takes it on its next pull.
+  `welcome` is the background route's alone: `POST /mls/commit` hands the gate an allowlist of the
+  fields `submitCommit` sends (`foregroundCommitBody` in `messaging.controller.ts`), so a foreground
+  body carrying one stores nothing. And a removal (`removeGroupMember`) deletes the Welcomes still
+  queued for the removed person in the transaction that ends their membership: a device pulls its
+  queue whatever the roster says, so a Welcome left behind would let them enter the epoch it was
+  built for.
 - **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
   to broadcast it a second time.
 - **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a

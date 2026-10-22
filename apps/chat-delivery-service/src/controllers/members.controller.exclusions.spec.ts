@@ -395,10 +395,24 @@ describe('MembersController - membership intervals and the exclusions read', () 
   it('a removal deletes the live row AND closes the interval in one transaction', async () => {
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
 
-    expect(txDeletes).toEqual([{ entity: GroupMember, where: { groupId: 'g-1', userId: 'bob' } }]);
+    expect(txDeletes).toContainEqual({
+      entity: GroupMember,
+      where: { groupId: 'g-1', userId: 'bob' },
+    });
     expect(txUpdates).toHaveLength(1);
     expect(txUpdates[0].entity).toBe(GroupMembershipInterval);
     expect(txUpdates[0].where).toMatchObject({ groupId: 'g-1', userId: 'bob' });
+  });
+
+  it('a removal takes the Welcomes still queued for the removed person, in the same transaction', async () => {
+    // A queued Welcome is pulled by its device whatever the roster says: left behind, it would let
+    // the removed person enter the epoch it was built for and read what members seal there.
+    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+
+    expect(txDeletes).toContainEqual({
+      entity: QueuedMessage,
+      where: { groupId: 'g-1', recipientId: 'bob', isWelcome: true },
+    });
   });
 
   it("a removal by ANOTHER member names the removed person's devices as parting, before their rows go", async () => {

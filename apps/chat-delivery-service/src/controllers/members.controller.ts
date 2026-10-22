@@ -735,9 +735,20 @@ export class MembersController {
     // The live row goes and the membership interval closes in ONE transaction: the interval is what
     // makes this removal hold against a later re-add (user, 2026-10-14), so a removal that deleted
     // the row and not the interval would be a removal a re-add silently undoes.
-    const ended = await this.dataSource.transaction((manager) =>
-      endGroupMembership(manager, safeGroupId, safeUserId)
-    );
+    //
+    // AND THE WELCOMES STILL QUEUED FOR THEM GO WITH IT. A device pulls its queue whatever the roster
+    // says, so a Welcome left behind would let the removed person enter the epoch it was built for
+    // and read what members seal there until a commit removes the leaf - and a self-leave makes no
+    // such commit. A later re-add queues a new Welcome.
+    const { ended, welcomesDropped } = await this.dataSource.transaction(async (manager) => {
+      const welcomes = await manager
+        .getRepository(QueuedMessage)
+        .delete({ groupId: safeGroupId, recipientId: safeUserId, isWelcome: true });
+      return {
+        ended: await endGroupMembership(manager, safeGroupId, safeUserId),
+        welcomesDropped: welcomes.affected ?? 0,
+      };
+    });
     if (ended.deleted > 0 && ended.closed === 0) {
       // A member with no open interval: enrolled by a writer running pre-030 code during the deploy
       // that applied the migration. Their exclusion window starts nowhere, so a re-add will NOT
@@ -755,7 +766,7 @@ export class MembersController {
     }
 
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0} intervalClosed=${ended.closed}`
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0} intervalClosed=${ended.closed} queuedWelcomesDropped=${welcomesDropped}`
     );
     return { status: 'removed' };
   }
