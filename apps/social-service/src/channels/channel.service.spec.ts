@@ -2765,6 +2765,32 @@ describe('ChannelService security hardening', () => {
     expect(repos.hardDeletes).not.toHaveBeenCalled();
   });
 
+  it('account deletion promotes the survivor holding the most permissions first', async () => {
+    // Custom roles share one rank (`createRole` places each just above the base role), so the
+    // successor is chosen by what the roles GRANT, then by priority, then by user id.
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'aaa', roleIds: ['r-custom-1'] },
+      { userId: 'bbb', roleIds: ['r-custom-2'] },
+    ]);
+    repos.roleRepo.find.mockResolvedValue([
+      ...GOVERNED_ROLES,
+      { id: 'r-custom-1', name: 'Aide', priority: 11, permissions: ['member.invite'] },
+      {
+        id: 'r-custom-2',
+        name: 'Gardien',
+        priority: 11,
+        permissions: ['member.invite', 'member.kick'],
+      },
+    ]);
+
+    await repos.service.removeAccountFromWorkspaces('boss');
+
+    expect(rows.find((r) => r.userId === 'bbb')?.roleIds).toEqual(['r-admin']);
+    expect(rows.find((r) => r.userId === 'aaa')?.roleIds).toEqual(['r-custom-1']);
+  });
+
   it('account deletion deletes a community it emptied', async () => {
     const repos = makeService();
     arrangeGovernedCommunity(repos, [{ userId: 'boss', roleIds: ['r-admin'] }]);

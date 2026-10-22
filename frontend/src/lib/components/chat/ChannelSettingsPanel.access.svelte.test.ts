@@ -46,6 +46,7 @@ vi.mock('$lib/utils/apiFetch', () => ({
 
 import ChannelSettingsPanel from './ChannelSettingsPanel.svelte';
 import { m } from '$lib/paraglide/messages';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // Picking a write policy closes the Picker, which plays an outro.
@@ -154,6 +155,27 @@ describe('ChannelSettingsPanel - access tab', () => {
     // Whoever admits a newcomer Welcomes them (channel-encryption section 20): the grant is
     // followed by the admission into the salon's own key group, after the server accepted it.
     expect(admitSalonGrantee).toHaveBeenCalledWith('salon-a', 'peer', expect.any(Function));
+  });
+
+  it('names a coded removal refusal instead of the generic error', async () => {
+    // The server refuses removing a member who holds more than the actor, with a CODE: the panel
+    // shows the sentence that code names, never the generic "could not remove".
+    service.removeMemberFromChannel.mockRejectedValue(
+      new ApiRefusalError(403, 'REMOVAL_EXCEEDS_ACTOR', 'refused')
+    );
+    await mountOnAccessTab('salon-a');
+
+    const remove = document.querySelector(
+      `button[title="${m.chat_channel_remove_access_title()}"]`
+    ) as HTMLButtonElement | null;
+    expect(remove).not.toBeNull();
+    remove!.click();
+    await settle();
+
+    expect(service.removeMemberFromChannel).toHaveBeenCalledWith('salon-a', 'owner');
+    expect(document.querySelector('[role=alert]')?.textContent).toBe(
+      m.chat_community_removal_exceeds_actor_error()
+    );
   });
 
   it('reloads the access settings when the panel moves to another salon', async () => {

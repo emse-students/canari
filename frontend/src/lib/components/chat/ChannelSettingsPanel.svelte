@@ -22,6 +22,8 @@
     type ChannelWritePolicy,
   } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { noteSalonNotificationLevel } from '$lib/utils/chat/salonUnread';
   import Picker from '../ui/Picker.svelte';
   import NotificationLevelControl from './NotificationLevelControl.svelte';
@@ -302,7 +304,9 @@
       channelMembers = channelMembers.filter((m) => m.userId !== userId);
     } catch (e) {
       Log.d('channelSettings.handleRemoveMemberFromChannel failed', e);
-      membersError = m.chat_channel_remove_access_error();
+      // A coded refusal (the member holds more than the actor) is named; anything else stays generic.
+      membersError =
+        describeCommunityRefusal(refusalCode(e)) ?? m.chat_channel_remove_access_error();
     } finally {
       const updated = { ...memberRemoving };
       delete updated[userId];

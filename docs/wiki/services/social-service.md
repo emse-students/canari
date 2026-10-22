@@ -1276,8 +1276,9 @@ sweep, which collects them once nothing accesses them again.
 **Account deletion is the one path that cannot refuse.** It bypasses every guard above, because
 the account is going regardless. `ChannelService.removeAccountFromWorkspaces` takes each community
 in turn: cut off its private channels, repair it as if the account were already gone - a community
-left with nobody is hard-deleted, one left with members but no admin promotes its highest-priority
-survivor, ties broken by the lowest user id - and only THEN delete the membership row. A failed
+left with nobody is hard-deleted, one left with members but no admin promotes the survivor whose
+roles grant the most distinct permissions, then the highest priority, then the lowest user id
+(custom roles all rank just above the base role, so priority alone ties between them) - and only THEN delete the membership row. A failed
 repair keeps that row and the call throws, so the erasure queue's retry finds the community again
 ([account-erasure](../account-erasure.md)); a swallowed failure used to strand an adminless
 community for ever. Logged at `warn` because an automatic promotion is something a human should be
@@ -1314,9 +1315,10 @@ its lowest-priority one (`baseMemberRole`, the one definition). A direct invitat
 `roleGrantsRoleManagement` - the same predicate every role-management endpoint now reads - and the
 role grants nothing the actor does not hold (`workspace.manage` holds everything). Otherwise
 `403 { code: 'INVITE_ROLE_NOT_GRANTABLE' }`, decided before the device lookup, never a silent
-downgrade. A request naming `Membre` (or the base role's own name) means the base role, so an
-ordinary invitation works in a community whose lowest role is called otherwise; the client sends
-no `roleName` at all for one, and names a role only when the inviter picked one.
+downgrade. A named role is matched by its own name first, the base role included; `Membre` means
+the base role only where no role carries that name, so an older client's ordinary invitation works
+in a community whose lowest role is called otherwise. The client sends no `roleName` at all for an
+ordinary invitation, and names a role only when the inviter picked one.
 
 **Role changes are bounded by the actor's own permissions, by the same function.** Every
 role-management write goes through `assertActorManagesRoles` (the `roleGrantsRoleManagement` gate,
@@ -1329,10 +1331,13 @@ returning the union of what the actor holds) and then `actorMayGrantRole`:
 | `createRole` | the new role grants nothing the actor lacks; it ranks just above the base role (`priority` is the server's, the body's is not read) | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
 
 **Removals are bounded by the actor's own permissions, by the sibling predicate.**
-`kickFromWorkspace` and `removeMemberFromChannel` share one gate, `assertActorMayRemoveMember`:
-the actor holds `member.kick`, `channel.manage` or `workspace.manage`, and `permissionsCover` -
-the "holds at least as much" that `actorMayGrantRole` is built on - holds between the actor's
-permissions and the target's. Otherwise `403 REMOVAL_EXCEEDS_ACTOR`.
+`kickFromWorkspace`, `removeMemberFromChannel` and every member an access-list rewrite drops
+(`updateChannelAccess`) share one gate, `assertActorMayRemoveMembers`: the actor holds
+`member.kick`, `channel.manage` or `workspace.manage`, and `permissionsCover` - the "holds at least
+as much" that `actorMayGrantRole` is built on - holds between the actor's permissions and each
+target's. Otherwise `403 REMOVAL_EXCEEDS_ACTOR`, which the client names (`COMMUNITY_REFUSALS`, as
+`ROLE_CHANGE_EXCEEDS_ACTOR` and `INVITE_ROLE_NOT_GRANTABLE`). An allowlist entry whose user is no
+longer a member has nothing to compare and is dropped.
 
 `workspace.manage` holds every permission, so an administrator keeps all of it. Pinned by
 `role-change-bound.spec.ts` and `removal-bound.spec.ts`.

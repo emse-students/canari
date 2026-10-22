@@ -205,15 +205,35 @@ describe('the role an invitation grants', () => {
     expect(grantedRoleIds(unnamed.memberRepo)).toEqual(['r-member']);
   });
 
-  it('reads "Membre" as the base role even where Membre is not the lowest one', async () => {
-    // Deployed clients send `roleName: 'Membre'` for every ordinary invitation. A community whose
-    // lowest role is another one must still let a moderator invite: the request names the base
-    // role, and the base role is what it gets.
+  it('reads "Membre" as the base role where no role has that name', async () => {
+    // Older clients send `roleName: 'Membre'` for every ordinary invitation. A community whose base
+    // role is called otherwise, and that has no role named Membre, must still let a moderator
+    // invite: the request means the base role, and the base role is what it gets.
+    const roles = [
+      ...ROLES.filter((r) => r.name !== 'Membre'),
+      { id: 'r-guest', name: 'Invite', priority: 5, permissions: [] },
+    ] as unknown as ChannelRole[];
+    const { result, memberRepo } = invite('r-mod', 'Membre', roles);
+    expect(await result).toMatchObject({ success: true });
+    expect(grantedRoleIds(memberRepo)).toEqual(['r-guest']);
+  });
+
+  it('grants a role literally named "Membre" when one exists above the base role', async () => {
     const roles = [
       ...ROLES,
       { id: 'r-guest', name: 'Invite', priority: 5, permissions: [] },
     ] as unknown as ChannelRole[];
-    const { result, memberRepo } = invite('r-mod', 'Membre', roles);
+    const { result, memberRepo } = invite('r-admin', 'Membre', roles);
+    expect(await result).toMatchObject({ success: true });
+    expect(grantedRoleIds(memberRepo)).toEqual(['r-member']);
+  });
+
+  it('matches the base role by its own name', async () => {
+    const roles = [
+      ...ROLES,
+      { id: 'r-guest', name: 'Invite', priority: 5, permissions: [] },
+    ] as unknown as ChannelRole[];
+    const { result, memberRepo } = invite('r-mod', 'Invite', roles);
     expect(await result).toMatchObject({ success: true });
     expect(grantedRoleIds(memberRepo)).toEqual(['r-guest']);
   });

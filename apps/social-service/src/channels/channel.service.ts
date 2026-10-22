@@ -861,12 +861,21 @@ export class ChannelService implements OnApplicationBootstrap {
       return;
     }
 
-    const priorityOf = new Map(roles.map((r) => [r.id, r.priority]));
+    // WHAT THE ROLES GRANT FIRST, then their rank, then the user id. `createRole` places every
+    // custom role just above the base role, so priority alone ties between custom roles; the number
+    // of distinct permissions a member holds is what actually orders who governs, and the user id
+    // leaves nothing to chance.
+    const byId = new Map(roles.map((r) => [r.id, r]));
+    const powerOf = (m: ChannelMember): number =>
+      new Set((m.roleIds ?? []).flatMap((id) => byId.get(id)?.permissions ?? [])).size;
     const rankOf = (m: ChannelMember): number =>
-      Math.max(0, ...(m.roleIds ?? []).map((id) => priorityOf.get(id) ?? 0));
+      Math.max(0, ...(m.roleIds ?? []).map((id) => byId.get(id)?.priority ?? 0));
     const successor = members
       .slice()
-      .sort((a, b) => rankOf(b) - rankOf(a) || a.userId.localeCompare(b.userId))[0];
+      .sort(
+        (a, b) =>
+          powerOf(b) - powerOf(a) || rankOf(b) - rankOf(a) || a.userId.localeCompare(b.userId)
+      )[0];
 
     successor.roleIds = [adminRole.id];
     await this.memberRepo.save(successor);
@@ -2395,6 +2404,9 @@ export class ChannelService implements OnApplicationBootstrap {
     // access as ordinary community members would be work with no reader.
     const dropped =
       wasPrivate && isPrivate ? [...previousAllowed].filter((u) => !nextAllowed.includes(u)) : [];
+    // DROPPING SOMEONE FROM THE LIST IS A REMOVAL, and it faces the removal gate: the actor may not
+    // cut off a member whose roles grant more than they hold, whichever control they used.
+    await this.assertActorMayRemoveMembers(channel.workspaceId, actorUserId, dropped, 'skip');
 
     // BEFORE THE SAVE, and allowed to abort it - the same asymmetry as a community departure. Going
     // private without a group would leave the salon's seeds nowhere to go; cutting someone off
@@ -2644,10 +2656,12 @@ export class ChannelService implements OnApplicationBootstrap {
     const base = this.baseMemberRole(roles);
     if (!requestedName) return base;
     const wanted = this.mapRoleInputToWorkspaceRoleName(requestedName);
-    // "Membre" is how every client names the ordinary invitation, so it means the base role even in
-    // a community whose lowest role is called something else.
-    if (wanted === 'Membre' || wanted === base?.name) return base;
-    const role = roles.find((r) => r.name === wanted) ?? null;
+    // A role is matched by its OWN name first, the base role included. "Membre" is how older clients
+    // name the ordinary invitation, so it means the base role only where no role carries that name.
+    if (wanted === base?.name) return base;
+    const named = roles.find((r) => r.name === wanted) ?? null;
+    if (!named && wanted === 'Membre') return base;
+    const role = named;
     if (!role || role.id === base?.id) return role;
 
     const actorPermissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
@@ -2840,20 +2854,24 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
-   * The actor's right to remove `targetUserId` from this workspace or one of its salons - refused
-   * here, never returned. THE ONE GATE of both removals (`kickFromWorkspace`,
-   * `removeMemberFromChannel`), so they cannot disagree about who may remove whom.
+   * The actor's right to remove each of `targetUserIds` from this workspace or one of its salons -
+   * refused here, never returned. THE ONE GATE of every removal: `kickFromWorkspace`,
+   * `removeMemberFromChannel`, and the members an access-list rewrite drops
+   * (`updateChannelAccess`), so no path can disagree about who may remove whom.
    *
-   * The actor holds `member.kick`, `channel.manage` or `workspace.manage`, the target is a member,
-   * and the target's roles grant nothing the actor does not hold (`permissionsCover`, the bound
-   * every role change asks): an actor may not take away more than they hold.
+   * The actor holds `member.kick`, `channel.manage` or `workspace.manage`, and each target's roles
+   * grant nothing the actor does not hold (`permissionsCover`, the bound every role change asks): an
+   * actor may not take away more than they hold. A target who is not a member is refused as not
+   * found when `absentTarget` is `'refuse'` (a removal NAMING someone), and has nothing to compare
+   * when it is `'skip'` (an allowlist entry that outlived its membership).
    *
-   * @throws ForbiddenException `REMOVAL_EXCEEDS_ACTOR` when the target holds more than the actor
+   * @throws ForbiddenException `REMOVAL_EXCEEDS_ACTOR` when a target holds more than the actor
    */
-  private async assertActorMayRemoveMember(
+  private async assertActorMayRemoveMembers(
     workspaceId: string,
     actorUserId: string,
-    targetUserId: string
+    targetUserIds: readonly string[],
+    absentTarget: 'refuse' | 'skip'
   ): Promise<void> {
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: actorUserId },
@@ -2867,19 +2885,28 @@ export class ChannelService implements OnApplicationBootstrap {
       actorPermissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS);
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
 
-    const targetMember = await this.memberRepo.findOne({
-      where: { workspaceId, userId: targetUserId },
-    });
-    if (!targetMember) throw new NotFoundException('Target member not found in workspace');
-
-    if (!permissionsCover(actorPermissions, await this.permissionsOfMember(targetMember))) {
-      this.logger.warn(
-        `[WORKSPACE] refused removal - target holds more than the actor workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
-      );
-      throw new ForbiddenException({
-        code: REMOVAL_EXCEEDS_ACTOR,
-        message: 'This member holds permissions you do not have.',
+    for (const targetUserId of targetUserIds) {
+      const targetMember = await this.memberRepo.findOne({
+        where: { workspaceId, userId: targetUserId },
       });
+      if (!targetMember) {
+        if (absentTarget === 'refuse') {
+          throw new NotFoundException('Target member not found in workspace');
+        }
+        this.logger.debug(
+          `[WORKSPACE] removal of a non-member, nothing to compare workspace=${workspaceId} target=${targetUserId.slice(0, 8)}`
+        );
+        continue;
+      }
+      if (!permissionsCover(actorPermissions, await this.permissionsOfMember(targetMember))) {
+        this.logger.warn(
+          `[WORKSPACE] refused removal - target holds more than the actor workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
+        );
+        throw new ForbiddenException({
+          code: REMOVAL_EXCEEDS_ACTOR,
+          message: 'This member holds permissions you do not have.',
+        });
+      }
     }
   }
 
@@ -2892,13 +2919,13 @@ export class ChannelService implements OnApplicationBootstrap {
 
   /**
    * Kicks a member from the workspace entirely (removes from all channels). Requires
-   * MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by `assertActorMayRemoveMember`.
+   * MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by `assertActorMayRemoveMembers`.
    */
   async kickFromWorkspace(workspaceId: string, targetUserId: string, actorUserId: string) {
     const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
-    await this.assertActorMayRemoveMember(workspaceId, actorUserId, targetUserId);
+    await this.assertActorMayRemoveMembers(workspaceId, actorUserId, [targetUserId], 'refuse');
 
     // The actor's permission was checked; the TARGET's roles never were, so KICK_MEMBERS alone
     // used to remove the sole Administrateur.
@@ -3058,12 +3085,17 @@ export class ChannelService implements OnApplicationBootstrap {
    *  For public channels, only rotates the key so the removed user's cached epoch key
    *  is invalidated (the user is still a workspace member and can re-join if invited again).
    *  Requires MANAGE_WORKSPACE, MANAGE_CHANNEL or KICK_MEMBERS, bounded by
-   *  `assertActorMayRemoveMember`. */
+   *  `assertActorMayRemoveMembers`. */
   async removeMemberFromChannel(channelId: string, targetUserId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
-    await this.assertActorMayRemoveMember(channel.workspaceId, actorUserId, targetUserId);
+    await this.assertActorMayRemoveMembers(
+      channel.workspaceId,
+      actorUserId,
+      [targetUserId],
+      'refuse'
+    );
 
     // Remove from private channel's allowedUsers list
     if (channel.isPrivate) {

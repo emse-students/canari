@@ -101,6 +101,12 @@ describe('removals bounded by the actor', () => {
       jest.spyOn(service as never, name as never).mockResolvedValue(undefined as never);
     }
     jest.spyOn(service as never, 'channelAudience' as never).mockResolvedValue([] as never);
+    jest
+      .spyOn(service as never, 'announceChannelAccessGranted' as never)
+      .mockResolvedValue(undefined as never);
+    jest
+      .spyOn(service as never, 'writeDecisionsFor' as never)
+      .mockResolvedValue(new Map() as never);
     return { service, memberRepo, channelRepo };
   }
 
@@ -161,6 +167,30 @@ describe('removals bounded by the actor', () => {
       expect(await outcome(service.removeMemberFromChannel(SALON, 'u-mod', 'u-admin'))).toBe(
         'allowed'
       );
+    });
+  });
+
+  describe('by rewriting the access list of a private salon', () => {
+    const everyoneBut = (...out: string[]) =>
+      ['u-admin', 'u-admin-2', 'u-mod', 'u-mod-2', 'u-salons', 'u-member'].filter(
+        (u) => !out.includes(u)
+      );
+
+    it('refuses dropping a member whose roles grant more than the actor holds', async () => {
+      // The same removal, reached through the allowlist instead of the remove button.
+      const { service, channelRepo } = makeService();
+      expect(
+        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-mod')))
+      ).toBe(BOUND);
+      expect(channelRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lets a salon manager drop a plain member', async () => {
+      const { service, channelRepo } = makeService();
+      expect(
+        await outcome(service.updateChannelAccess(SALON, 'u-salons', true, everyoneBut('u-member')))
+      ).toBe('allowed');
+      expect(channelRepo.save).toHaveBeenCalled();
     });
   });
 });
