@@ -2112,7 +2112,10 @@ them. The name never rides the push and is never fetched on the push path (user 
   (`mentionAuthorLine`) and the subtitle on iOS (the NSE's `mentionAuthorLine`,
   `CanariMentionAuthorLine`), from the existing `notif_social_mention_title` /
   `notif.social.mention.title` sentence - no new string. An MLS (DM or group) banner is unchanged:
-  its push has always carried `senderName`, which is the title or the subtitle.
+  its push has always carried `senderName`, which is the title or the subtitle. **Only on a banner
+  that shows the decrypted text** (2026-10-22): a blind salon banner draws no author line, no face
+  and no mention route, because nothing proved the server's `senderId`
+  ([channel-encryption 21.5](../protocols/channel-encryption.md#215-the-native-readers-wp-g2-4b)).
 - **The mentioned person, inside the text, comes from the same file**: a body carries
   `@[<64 hex>]`, rendered by every native composer (Android `renderMentions`, the NSE's
   `renderMentions`, `CanariRenderMentions`). This device's own id is "you", anybody else is named

@@ -238,12 +238,25 @@ describe('channel push payload contract (social-service writer vs the three nati
     // Matched among the ARGUMENTS, not against the closing paren: this used to read `mentionsMe\)`
     // and broke the day a later argument was added after it (the initials name), which is a change
     // this assertion has no opinion about. What it pins is that the flag is handed on at all.
-    expect(objcHandler).toMatch(/CanariShowMessageNotification\([^;]*\bmentionsMe\b/s);
+    expect(objcHandler).toMatch(/CanariShowMessageNotification\([^;]*\bshownMentionsMe\b/s);
     // And the flag is the server's, never the `@[uuid]` scan the MLS path has to use: a channel
     // push whose ciphertext was too large to inline carries no text to scan.
     expect(kotlinHandler).not.toContain('@[$');
     expect(swiftHandler).not.toContain('@[\\(');
     expect(objcHandler).not.toContain('@[%@]');
+  });
+
+  it('a blind banner draws no author and no mention on all three - only an open proves them', () => {
+    // The pure rule is tested on each platform (Android `ChannelBannerAttributionTest`, the NSE's
+    // `ChannelBannerAttributionTests`); this pins that each handler goes through it.
+    expect(kotlinHandler).toContain(
+      'ChannelBannerAttribution.of(showsMessage, senderId, serverSaysMentioned)'
+    );
+    expect(kotlinHandler).toContain('attribution.authorId?.let { fetchAvatar(it) }');
+    expect(swiftHandler).toContain('Self.channelBannerAttribution(');
+    expect(swiftHandler).toContain('let authorId = attribution.authorId');
+    expect(objcHandler).toContain('BOOL shownMentionsMe = showsMessage && mentionsMe;');
+    expect(objcHandler).toContain('NSString *shownSenderId = showsMessage ? senderId : @"";');
   });
 });
 

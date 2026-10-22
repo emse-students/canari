@@ -88,6 +88,8 @@ const CASES = [
   [line('D', 'CanariFCM', 'handleChannelMessage: no seed/ciphertext -> generic notification channel=6333a324 session=q1JykLP1 missing=seed'), 'notable'],
   [line('D', 'CanariFCM', 'handleChannelMessage: no seed/ciphertext -> generic notification channel=6333a324 session= missing=ciphertext,nonce'), 'notable'],
   [line('I', 'CanariFCM', 'handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=6333a324 index=0'), 'notable'],
+  // The author and the mention a blind banner leaves out - the banner itself is the notable line.
+  [line('D', 'CanariFCM', 'handleChannelMessage: blind banner -> no author, no mention (server named sender=0000abcd mentioned=true) channel=6333a324'), 'explained'],
   [line('D', 'CanariFCM', 'showNotification: notifId=1 messages=1 group=false'), 'explained'],
   [line('D', 'CanariFCM', 'fetchAvatar: from cache for 0000'), 'explained'],
   // THE REACTION ARM'S OWN SUCCESS LINE, which left NOTIF-15 `PASS-DIRTY` over the very thing the

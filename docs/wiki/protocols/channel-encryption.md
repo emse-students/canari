@@ -2988,6 +2988,16 @@ killed app. **A replay is not refused here**: a notification path keeps no recor
 opened, so a replayed push shows its banner again. The app, which does keep that record, shows the row
 once.
 
+**A blind banner names no author (2026-10-22).** The push's `senderId` and `mentioned` are the
+server's words, and only the open above proves the author. So the face, the "<name> mentioned you"
+line and the mention route (`canari_mentions` on Android, the time-sensitive level on iOS) are drawn
+only on a banner that shows the decrypted text. A banner on the generic line - no seed, no inlined
+ciphertext, a refused open - draws the salon's initials and nothing about an author. One pure rule
+on each platform: Android `push/ChannelBannerAttribution` (tested in `android-tests`) and the NSE's
+`channelBannerAttribution`; `canari_push.mm` applies the same rule inline. A held v1 session still
+opens with no author check, as the app's v1 reader does
+([legacy-compatibility](../legacy-compatibility.md)).
+
 **The verified sender of an MLS push (the native half of WP-G2-1b).** Both push decrypts
 (`decrypt_push_message_with_key` and the commit catch-up) now take the push's `senderId` in a
 `PushFrame`. They decrypt with `process_incoming_message_with_sender`, and a frame whose verified

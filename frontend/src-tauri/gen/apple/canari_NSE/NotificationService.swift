@@ -952,7 +952,7 @@ class NotificationService: UNNotificationServiceExtension {
     // fact that honours the `mentions` level). The MLS path has to scan the decrypted text because
     // the server cannot read it - and that scan is impossible anyway when the ciphertext was too
     // large to inline, where this flag still holds.
-    let mentionsMe = Self.string(userInfo["mentioned"]) == "true"
+    let serverSaysMentioned = Self.string(userInfo["mentioned"]) == "true"
 
     guard !channelId.isEmpty else {
       NSLog("[CanariNSE] handleChannelMessage: channelId missing")
@@ -1019,6 +1019,16 @@ class NotificationService: UNNotificationServiceExtension {
     // same format is spelled by the social-service alert title, the Kotlin service and
     // `canari_push.mm`; `channelPushFields.test.ts` holds the four together.
     content.title = workspaceName.isEmpty ? "#\(channelName)" : "\(workspaceName) - #\(channelName)"
+    // THE AUTHOR AND THE MENTION ARE THE SERVER'S WORDS until the open proves them, so a blind
+    // banner draws neither - see `channelBannerAttribution`.
+    let attribution = Self.channelBannerAttribution(
+      showsMessage: body != nil, senderId: senderId, serverSaysMentioned: serverSaysMentioned)
+    let mentionsMe = attribution.mentionsMe
+    if body == nil, !senderId.isEmpty || serverSaysMentioned {
+      NSLog(
+        "[CanariNSE] handleChannelMessage: blind banner -> no author, no mention (server named sender=\(senderId.prefix(8)) mentioned=\(serverSaysMentioned)) channel=\(channelId)"
+      )
+    }
     // The phone's names, read at most once for this banner: the author line and the tokens share it.
     let nameBook = Self.mentionNameBook(myUserId: ctx?.userId)
     content.body =
@@ -1041,11 +1051,12 @@ class NotificationService: UNNotificationServiceExtension {
     if mentionsMe, #available(iOS 15.0, *) {
       content.interruptionLevel = .timeSensitive
     }
-    // The sender's face, exactly as the MLS path and both Android paths do it. Without this the
-    // killed-app iPhone was the only surface showing a salon message with no avatar at all, while
-    // the payload had carried `senderId` for it all along. No media thumbnail: WP-XP-3 is MLS-only.
+    // The sender's face, exactly as the MLS path and both Android paths do it, once the open proved
+    // who the sender is. No media thumbnail: WP-XP-3 is MLS-only.
     var attachedFace = false
-    if let ctx = ctx, !senderId.isEmpty, let avatarUrl = fetchAvatar(ctx: ctx, userId: senderId) {
+    if let ctx = ctx, let authorId = attribution.authorId,
+      let avatarUrl = fetchAvatar(ctx: ctx, userId: authorId)
+    {
       attachedFace = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
     }
     // The SALON's letter, not the composed title's - `<Communaute> - #<salon>` would draw the
@@ -1182,6 +1193,18 @@ class NotificationService: UNNotificationServiceExtension {
       }
       return names
     }
+  }
+
+  /// What a salon banner may say about WHO wrote it (2026-10-22). The push's `senderId` and
+  /// `mentioned` are the server's words, and only the open proves the author (under a v2 session,
+  /// channel-encryption section 21.5). So a banner showing the decrypted text draws the author's
+  /// face and "<name> mentioned you" and takes the time-sensitive level; a BLIND banner draws none
+  /// of it - the salon's initials and the generic line. Android twin: `ChannelBannerAttribution`.
+  static func channelBannerAttribution(
+    showsMessage: Bool, senderId: String, serverSaysMentioned: Bool
+  ) -> (authorId: String?, mentionsMe: Bool) {
+    guard showsMessage else { return (nil, false) }
+    return (senderId.isEmpty ? nil : senderId, serverSaysMentioned)
   }
 
   /// "Alice mentioned you" for a salon banner that mentions this reader (WP-MENTION-NAME,

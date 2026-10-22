@@ -2426,6 +2426,9 @@ export function logcatReport(lines, label = 'A1') {
     // REQUIRED - the call site emits it unconditionally since 2026-09-24, and a rule that tolerated
     // its absence would go on matching a build that had quietly lost the discriminator.
     ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/],
+    // What that generic banner leaves out: the author and the mention the server named, which only an
+    // open proves. Explained, because the blind banner it rides on is already `notable` on its own.
+    ['fcm-channel-blind-no-author', /^handleChannelMessage: blind banner -> no author, no mention \(server named sender=\S* mentioned=(true|false)\) channel=\S+$/],
     // The generic banner above, COUNTED: the phone tells `/api/mls/push/blind-banner` once the
     // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
     ['fcm-channel-blind-reported', /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/],

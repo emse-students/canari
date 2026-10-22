@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
@@ -4734,7 +4735,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val ciphertext  = data["ciphertext"]?.takeIf { it.isNotEmpty() }
         val nonce       = data["nonce"]?.takeIf { it.isNotEmpty() }
         val senderId    = data["senderId"] ?: ""
-        val mentionsMe  = data["mentioned"] == "true"
+        val serverSaysMentioned = data["mentioned"] == "true"
         // THE MESSAGE'S OWN INSTANT, AND IT IS WHAT LETS THE TWO TRIGGERS RECOGNISE ONE MESSAGE.
         // Both this push and the socket frame carry `channel_messages.createdAt` - the same stored
         // column, to the millisecond - so `showMessageNotification` compares exactly. 0 when the
@@ -4811,10 +4812,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             buildChannelFallbackText(res, channelName)
         }
 
+        // THE AUTHOR AND THE MENTION ARE THE SERVER'S WORDS until the open proves them, so a blind
+        // banner draws neither - see `ChannelBannerAttribution`.
+        val attribution = ChannelBannerAttribution.of(showsMessage, senderId, serverSaysMentioned)
+        val mentionsMe = attribution.mentionsMe
+        if (!showsMessage && (senderId.isNotEmpty() || serverSaysMentioned)) {
+            Log.d(TAG, "handleChannelMessage: blind banner -> no author, no mention (server named sender=${senderId.take(8)} mentioned=$serverSaysMentioned) channel=$channelId")
+        }
         // A salon banner names no author (its "sender" is the salon's title), so a mention of this
         // reader says WHO above the line - the iOS twin is the banner's subtitle (WP-MENTION-NAME).
         val shownBody = if (mentionsMe) "${mentionAuthorLine(senderId, nameBook, res)}\n$body" else body
-        val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
+        val avatarBitmap = attribution.authorId?.let { fetchAvatar(it) }
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
         val title = buildChannelPushTitle(workspaceName, channelName)
         Log.d(TAG, "handleChannelMessage: notification title=$title body=${body.take(60)} mentionsMe=$mentionsMe")

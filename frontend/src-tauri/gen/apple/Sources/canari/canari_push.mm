@@ -3234,8 +3234,18 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
             @"channel=%@",
             channelId);
     }
-    if (body.length == 0) {
+    // THE AUTHOR AND THE MENTION ARE THE SERVER'S WORDS until the open proves them, so a blind
+    // banner draws neither: no face, no mention route. Android twin: `ChannelBannerAttribution`.
+    BOOL showsMessage = body.length > 0;
+    NSString *shownSenderId = showsMessage ? senderId : @"";
+    BOOL shownMentionsMe = showsMessage && mentionsMe;
+    if (!showsMessage) {
       body = CanariBuildChannelFallbackText(channelName);
+      if (senderId.length > 0 || mentionsMe) {
+        NSLog(@"[CanariPush] handleChannelMessage: blind banner -> no author, no mention "
+              @"(server named sender=%@ mentioned=%d) channel=%@",
+              senderId.length > 8 ? [senderId substringToIndex:8] : senderId, mentionsMe, channelId);
+      }
     }
 
     // `<Communaute> - #<salon>`: a salon name alone is ambiguous, two communities may both have a
@@ -3246,12 +3256,12 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
                                 ? [NSString stringWithFormat:@"%@ - #%@", workspaceName, channelName]
                                 : [NSString stringWithFormat:@"#%@", channelName];
     dispatch_async(dispatch_get_main_queue(), ^{
-      // groupName empty + senderName as the title -> the banner shows it as-is; avatar from senderId.
-      // No media thumbnail for channels (WP-XP-3 is MLS DM/group only) -> pass nil.
-      // The initials fall back to the SALON, not to the composed title: Android twin uses
+      // groupName empty + senderName as the title -> the banner shows it as-is; avatar from senderId
+      // when the open proved it. No media thumbnail for channels (WP-XP-3 is MLS DM/group only) ->
+      // pass nil. The initials fall back to the SALON, not to the composed title: Android twin uses
       // channelName for exactly the same reason.
-      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil,
-                                    mentionsMe, channelName, YES);
+      CanariShowMessageNotification(displayName, @"", body, conversationId, shownSenderId, nil,
+                                    shownMentionsMe, channelName, YES);
     });
   });
 }
