@@ -18,6 +18,9 @@ import { m } from '$lib/paraglide/messages';
 import type { PublishReelDeps } from '$lib/reels/publishReel';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+import { giveMediaStreamGetTracks } from '$lib/reels/mediaStreamTracks.test-helper';
+
+giveMediaStreamGetTracks();
 
 // The publish step fades in, and a test closes it mid-fade.
 afterAll(adoptTransitionAnimations());
@@ -196,6 +199,103 @@ describe('ReelCapture', () => {
     const { hold } = await render();
     await hold();
     expect(Recorder.instances[0].options.videoBitsPerSecond).toBe(3_000_000);
+  });
+
+  it('the held finger zooms the take: UP zooms in, DOWN zooms out, and the next take starts at 1x (user, 2026-10-22)', async () => {
+    const session = new CameraSession(() => Promise.resolve(stream()));
+    const { target, shutter } = await render({ session });
+    const finger = (type: string, clientY: number, timeStamp: number) => {
+      const event = new PointerEvent(type, { pointerId: 1, bubbles: true, clientY });
+      Object.defineProperty(event, 'timeStamp', { value: timeStamp });
+      shutter().dispatchEvent(event);
+    };
+    finger('pointerdown', 700, 1000);
+    // A slide BEFORE the press is a take decides nothing: a photo is still possible.
+    finger('pointermove', 600, 1100);
+    expect(session.zoom).toBe(1);
+    vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+    await settle();
+
+    finger('pointermove', 600, 1500); // the slide's base
+    finger('pointermove', 450, 1600); // 150 px up: half the travel, sqrt(5)x
+    expect(session.zoom).toBeCloseTo(Math.sqrt(5));
+    finger('pointermove', 300, 1700);
+    expect(session.zoom).toBeCloseTo(5);
+    finger('pointermove', 450, 1800);
+    expect(session.zoom).toBeCloseTo(Math.sqrt(5));
+    flushSync();
+    expect(target.querySelector('video')!.style.transform).toContain('scale(2.23');
+
+    finger('pointerup', 450, 4000);
+    await settle();
+    // The review holds the camera off; discarding reopens it at 1x.
+    expect(session.zoom).toBe(1);
+  });
+
+  it('a DOUBLE TAP during a held take flips the lens and the SAME recorder films on (user, 2026-10-22)', async () => {
+    const mic = { kind: 'audio', readyState: 'live', stop: vi.fn(), addEventListener: vi.fn() };
+    const lens = (facing: string) => ({
+      kind: 'video',
+      readyState: 'live',
+      facing,
+      stop: vi.fn(),
+      getCapabilities: () => ({}),
+      addEventListener: vi.fn(),
+    });
+    const front = lens('user');
+    const openLens = vi.fn(() =>
+      Promise.resolve(new MediaStream([lens('environment')] as unknown as MediaStreamTrack[]))
+    );
+    const session = new CameraSession(
+      () => Promise.resolve(new MediaStream([front, mic] as unknown as MediaStreamTrack[])),
+      openLens
+    );
+    const { target, pointer } = await render({ session });
+    pointer('pointerdown', 1000);
+    vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+    await settle();
+    expect(Recorder.instances).toHaveLength(1);
+
+    // A second finger taps twice on the preview while the first holds the shutter.
+    const preview = target.querySelector('video')!;
+    for (const [type, t] of [
+      ['pointerdown', 2000],
+      ['pointerup', 2040],
+      ['pointerdown', 2120],
+      ['pointerup', 2160],
+    ] as const) {
+      const event = new PointerEvent(type, { pointerId: 2, bubbles: true, clientX: 9, clientY: 9 });
+      Object.defineProperty(event, 'timeStamp', { value: t });
+      preview.dispatchEvent(event);
+    }
+    await settle();
+
+    expect(openLens).toHaveBeenCalledWith('environment');
+    expect(session.facing).toBe('environment');
+    expect(front.stop).toHaveBeenCalled();
+    expect(mic.stop).not.toHaveBeenCalled();
+    // Still the one take: no second recorder, no second framed stream, still recording.
+    expect(Recorder.instances).toHaveLength(1);
+    expect(framed.start).toHaveBeenCalledTimes(1);
+    expect(target.querySelector('[data-reel-shutter]')!.getAttribute('aria-pressed')).toBe('true');
+
+    pointer('pointerup', 4000);
+    await settle();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+
+  it('a lens lost DURING a take ends the take and keeps it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const openLens = vi.fn(() => Promise.reject(new CameraAccessError('busy', 'busy')));
+    const session = new CameraSession(() => Promise.resolve(stream()), openLens);
+    const { target, pointer } = await render({ session });
+    pointer('pointerdown', 1000);
+    vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+    await settle();
+    await session.flipDuringTake();
+    await settle();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
   });
 
   it('a cancelled touch after the threshold ends the take and keeps it', async () => {
