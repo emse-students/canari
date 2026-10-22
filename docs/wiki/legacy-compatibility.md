@@ -155,6 +155,22 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
 
+### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
+
+**Sites:** `entitledHistorySelection` (the inviter's push) and `dropOwnExcludedMessages` (the
+receiver), both in `frontend/src/lib/utils/chat/historyEntitlement.ts`, on `WithheldUnsupportedError`
+(thrown by `MlsDeliveryApi.getGroupWithheld`) and on nothing else.
+**Shim (2026-10-22):** a server that predates the field answers the exclusions route without
+`withheld`, which is an ordinary state while a store build runs ahead of production. Both sites then
+do exactly what they did before the field existed. The push filters on the union of gaps, so a
+continuous member's new device and a 1:1 keep their restore. The receiver filters on its own gaps.
+**What it costs:** in that window a genuine newcomer to a group conversation is still pushed what
+preceded their arrival - the leak the field exists to close, unchanged from before it. That is why
+the push's branch is a FALLBACK and accuses: one `console.error` per session. The receiver's line is
+per bundle. Every other failure of the read still sends and ingests nothing.
+**Removal condition:** every estate's chat-delivery answers `withheld`; then both branches go and the
+error is an ordinary refusal. A server version, not a client floor.
+
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
 **Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,

@@ -1127,9 +1127,17 @@ export interface IMlsService {
   /**
    * The windows during which each current member of `groupId` was out of it, from
    * `GET /api/mls/groups/:groupId/exclusions`. Throws on any failure: a history answer that cannot
-   * read them sends nothing (see `historyEntitlement.ts`).
+   * read them sends nothing (see `historyEntitlement.ts`). `forUserId` only shares the request with
+   * {@link getGroupWithheld} asked for the same person.
    */
-  getGroupExclusions(groupId: string): Promise<GroupExclusions>;
+  getGroupExclusions(groupId: string, forUserId?: string): Promise<GroupExclusions>;
+  /**
+   * What this device's user, and `forUserId` when given, may never be handed in `groupId`: their gaps
+   * and, in a group conversation, everything before their first arrival. Nobody else is named. A
+   * person the server counts always has an entry, an empty one included - so a missing key means
+   * "not counted", never "nothing withheld". Same failures as {@link getGroupExclusions}.
+   */
+  getGroupWithheld(groupId: string, forUserId?: string): Promise<GroupExclusions>;
   /**
    * The user-level rosters of many groups in one read (`POST /api/mls/group-rosters`). Never throws:
    * a group it did not answer is absent from both sets, and nothing is decided for it.

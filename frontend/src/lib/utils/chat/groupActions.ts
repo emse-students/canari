@@ -13,6 +13,7 @@ import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
 import { entitledHistorySelection } from './historyEntitlement';
+import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import {
   buildHistoryDigest,
   chunkIds,
@@ -778,11 +779,15 @@ export async function sendFullHistoryBundle(
     return;
   }
 
+  // THE INVITEE'S OWN SPAN JOINS THE FILTER (user, 2026-10-21: a new member of a group conversation
+  // reads nothing from before their arrival). Safe as a broadcast: every other member is entitled to
+  // a superset of what the invitee is. For a new device of a continuous member the span ends at that
+  // member's own arrival, so their restore is untouched; a 1:1 has no such span (the server's rule).
   const outcome = await sendBundleChunks(
     groupId,
     messages,
     { mlsService, log },
-    { chunkSize, to, state }
+    { chunkSize, to, state, invitee: userIdOfLeaf(to) }
   );
   if (outcome.kind === 'unreadable') {
     await sendStateOnly('exclusion windows unreadable - no message carried');
@@ -820,7 +825,18 @@ async function sendBundleChunks(
   groupId: string,
   selection: StoredMessage[],
   { mlsService, log }: HistorySendDeps,
-  { chunkSize, to, state }: { chunkSize: number; to: string; state?: ConversationHistoryState }
+  {
+    chunkSize,
+    to,
+    state,
+    invitee,
+  }: {
+    chunkSize: number;
+    to: string;
+    state?: ConversationHistoryState;
+    /** Set on the inviter's push only - see {@link entitledHistorySelection}. */
+    invitee?: string;
+  }
 ): Promise<BundleOutcome> {
   // THE WINDOWS ARE READ AGAIN FOR EVERY CHUNK. A long answer spans seconds of network, and a
   // member re-added in the meantime decrypts every chunk sealed after their add commit - so the
@@ -831,10 +847,12 @@ async function sendBundleChunks(
   let read = false;
   for (let i = 0; i < selection.length; i += chunkSize) {
     const chunkNo = Math.floor(i / chunkSize) + 1;
-    const kept = await entitledHistorySelection(groupId, selection.slice(i, i + chunkSize), {
-      mlsService,
-      log,
-    });
+    const kept = await entitledHistorySelection(
+      groupId,
+      selection.slice(i, i + chunkSize),
+      { mlsService, log },
+      invitee
+    );
     if (kept === null) {
       if (!read) return { kind: 'unreadable' };
       log(

@@ -5,6 +5,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   Inject,
   UseGuards,
   Headers,
@@ -39,6 +40,7 @@ import {
   exclusionWindows,
   openMissingIntervals,
   partingKey,
+  withheldWindows,
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
@@ -784,15 +786,41 @@ export class MembersController {
    *
    * No line per answer: the decision this route feeds is made, and logged, by the client
    * (`[HISTORY_ENTITLEMENT]`). Only a refusal and a repair are events here.
+   *
+   * **TWO FIELDS** (user, 2026-10-21: a new member of a group conversation reads nothing from before
+   * their arrival). `exclusions` is every counted person's gaps, the union a broadcast answer is
+   * filtered on. `withheld` adds the span before arrival to ONE person's gaps ({@link
+   * withheldWindows}), and it is read one person at a time: by the inviter for the invitee of a
+   * history push (`?for=`), and by a receiver for itself. The span cannot join the union - it would
+   * withhold everything older than the newest member, from everyone.
+   *
+   * **`withheld` names the caller and the `for` person only**, never the whole roster: nobody else's
+   * arrival is needed. Each of them gets an entry when counted, an EMPTY one included, so a missing
+   * key always means "not counted" and the client refuses to send on it rather than reading it as
+   * "nothing withheld".
+   *
+   * **`for` answers only for a person with a device ADDED SINCE THE CALLER ARRIVED** - a device row
+   * in this group created at or after the caller's own arrival (compared case-insensitively). That
+   * is who an inviter's push is for: a newcomer, or a new device of a member of any age. It is a
+   * DURABLE fact, never a status: the invitee's row turns `active` the moment its Welcome is
+   * processed, possibly while the push is still reading its windows chunk by chunk, and a status
+   * predicate then starved the push it was written for. The caller witnessed that add, so the
+   * arrival it reads is one the group showed it. Anybody else has no entry: a member cannot read the
+   * arrival of somebody whose devices all predate their own.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/exclusions')
   async getGroupExclusions(
     @Param('groupId') groupId: string,
-    @Headers('x-user-id') headerUserId?: string
-  ): Promise<{ exclusions: Record<string, ExclusionWindow[]> }> {
+    @Headers('x-user-id') headerUserId?: string,
+    @Query('for') forUserId?: string
+  ): Promise<{
+    exclusions: Record<string, ExclusionWindow[]>;
+    withheld: Record<string, ExclusionWindow[]>;
+  }> {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    const forUser = sanitizeOptionalQueryValue(forUserId, 'for');
     const members = await this.groupMemberRepo.find({
       where: { groupId: safeGroupId },
       select: { userId: true, joinedAt: true },
@@ -819,13 +847,25 @@ export class MembersController {
     // DISTINCT users, not device rows: the answerer re-reads this route once per bundle CHUNK, and
     // what it costs is three indexed reads on `groupId` - the same order as the chunk's own send,
     // which inserts one queued row per recipient device.
+    //
+    // The earliest row per person is also the evidence `withheldWindows` reads for their arrival, and
+    // the latest is what `for` is decided on.
     const admittedRows = await this.deviceGroupRepo
       .createQueryBuilder('d')
       .select('d.userId', 'userId')
-      .distinct(true)
+      .addSelect('MIN(d.createdAt)', 'firstDeviceAt')
+      .addSelect('MAX(d.createdAt)', 'lastDeviceAt')
       .where('d.groupId = :groupId', { groupId: safeGroupId })
-      .getRawMany<{ userId: string }>();
+      .groupBy('d.userId')
+      .getRawMany<{
+        userId: string;
+        firstDeviceAt: Date | string | null;
+        lastDeviceAt: Date | string | null;
+      }>();
     const counted = new Set([...memberIds, ...admittedRows.map((r) => r.userId)]);
+    const asDate = (v: Date | string | null): Date | null => (v ? new Date(v) : null);
+    const firstDeviceAt = new Map(admittedRows.map((r) => [r.userId, asDate(r.firstDeviceAt)]));
+    const lastDeviceAt = new Map(admittedRows.map((r) => [r.userId, asDate(r.lastDeviceAt)]));
 
     const readByUser = async () => {
       const rows = await this.dataSource.manager.find(GroupMembershipInterval, {
@@ -859,11 +899,49 @@ export class MembersController {
       byUser = await readByUser();
     }
 
+    // A group conversation withholds what precedes a person's arrival; a 1:1 does not (see
+    // `withheldWindows`). A key group never reaches this route's consumers, and is read as a 1:1.
+    const group = await this.groupRepo.findOne({
+      where: { id: safeGroupId },
+      select: { isGroup: true, distributionWorkspaceId: true, distributionChannelId: true },
+    });
+    if (!group) {
+      // A roster with no group row: answered as a 1:1 (gaps only), which withholds nothing before
+      // an arrival - so it is said, not swallowed.
+      this.logger.warn(
+        `[EXCLUSIONS] group=${safeGroupId} has members but NO group row - answered as a 1:1`
+      );
+    }
+    const beforeFirstArrival =
+      group?.isGroup === true && !group.distributionWorkspaceId && !group.distributionChannelId;
+
     const exclusions: Record<string, ExclusionWindow[]> = {};
     for (const userId of counted) {
       const windows = exclusionWindows(byUser.get(userId) ?? []);
       if (windows.length > 0) exclusions[userId] = windows;
     }
-    return { exclusions };
+    const withheld: Record<string, ExclusionWindow[]> = {};
+    // The caller's arrival: their earliest interval or device row, whichever the server recorded
+    // first. None recorded answers `for` for nobody.
+    const callerArrival = Math.min(
+      ...(byUser.get(caller) ?? []).map((r) => r.joinedAt.getTime()),
+      firstDeviceAt.get(caller)?.getTime() ?? Infinity
+    );
+    const forCounted = forUser
+      ? [...counted].find(
+          (u) =>
+            u.toLowerCase() === forUser.toLowerCase() &&
+            (lastDeviceAt.get(u)?.getTime() ?? -Infinity) >= callerArrival
+        )
+      : undefined;
+    for (const userId of new Set([caller, ...(forCounted ? [forCounted] : [])])) {
+      if (!counted.has(userId)) continue;
+      withheld[userId] = withheldWindows(
+        byUser.get(userId) ?? [],
+        beforeFirstArrival,
+        firstDeviceAt.get(userId) ?? null
+      );
+    }
+    return { exclusions, withheld };
   }
 }

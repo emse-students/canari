@@ -3053,8 +3053,12 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getGroupUserMembers(groupId);
   }
 
-  async getGroupExclusions(groupId: string): Promise<GroupExclusions> {
-    return this.delivery.getGroupExclusions(groupId);
+  async getGroupWithheld(groupId: string, forUserId?: string): Promise<GroupExclusions> {
+    return this.delivery.getGroupWithheld(groupId, forUserId);
+  }
+
+  async getGroupExclusions(groupId: string, forUserId?: string): Promise<GroupExclusions> {
+    return this.delivery.getGroupExclusions(groupId, forUserId);
   }
 
   async getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {

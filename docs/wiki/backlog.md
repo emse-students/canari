@@ -32,11 +32,31 @@ half, the shipped half is a pointer, never a retelling.
 The adding device pushes its whole local store to the invitee (`sendFullHistoryBundle`, up to 5
 years), which no decision ever chose. 6 of 15 live group conversations had admitted 24 later members by
 2026-10-21. Decided by the user: a newcomer reads nothing from before their arrival (WhatsApp, Signal),
-and the remove-then-re-add rule of 2026-10-14 stays. Owed, in order: history bundles addressed to the
-asking device; the filter on the recipient's own membership intervals, with a new chat-delivery field;
-receiver hygiene on the pre-arrival span; the same rule for quoting replies; then a `minClientVersion`
-that stops older clients pushing. Design and limits:
+and the remove-then-re-add rule of 2026-10-14 stays. **Step C is BUILT (draft PR):** the inviter's
+push withholds the invitee's span, the receiver drops its own, group conversations only (the 1:1
+arrivals are not arrivals). **Residual of C, verbatim: a newcomer can still read pre-arrival messages
+from broadcast answers meant for others' new devices until A lands.** Owed, in order: step A's design
+page and its review, then A; then a `minClientVersion` carrying C once both stores serve it. Design and
+limits:
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
+
+## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)
+
+`purgeDeviceFootprint` deletes a revoked device's rows in every group. For a member whose interval
+opened late, their first device row is the only record of when they really arrived. After the purge,
+`MIN(createdAt)` moves later and `withheldWindows` falls back to the late interval, so their next
+device is denied the span between the two. Nothing leaks to anyone: the member loses history.
+Production held 4 such late-interval members on 2026-10-22. Fix direction: keep the arrival as a fact
+outside the device rows (on the membership interval, for instance) so a purge cannot move it.
+
+## P3 - `for` is decided against the caller's EARLIEST arrival (review of #2226, 2026-10-22)
+
+The exclusions read honours `for` when the named person's latest device is no older than the
+caller's first arrival. A caller who left and came back can therefore read the arrival of a person
+added while they were away. A founder who adds a device also makes their own arrival readable to
+members who came later. Each answer is a time, never a message. The rule
+[history-reconciliation](protocols/history-reconciliation.md) states is the right one, and the
+predicate should follow it to the caller's current interval.
 
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 

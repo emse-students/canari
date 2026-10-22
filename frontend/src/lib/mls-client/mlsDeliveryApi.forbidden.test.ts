@@ -7,6 +7,7 @@ import {
   SenderNotActiveError,
   SendServerError,
   parseRetryAfterMs,
+  WithheldUnsupportedError,
 } from './mlsDeliveryApi';
 import { classifyOutgoingSendError } from './mlsSendError';
 import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -187,6 +188,60 @@ describe('getGroupExclusions on a refusal', () => {
 
     expect(refusalStatus(failure)).toBe(503);
     expect(classifyOutgoingSendError(failure)).toBe('unknown');
+  });
+});
+
+/**
+ * A SERVER THAT PREDATES `withheld` (2026-10-22) answers the route without it, for as long as a
+ * store build runs ahead of production. That must fail the withheld read alone, typed - the union
+ * every history answer and every received bundle depend on keeps working.
+ */
+describe('the windows read against a server that predates `withheld`', () => {
+  const old = () =>
+    new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(JSON.stringify({ exclusions: { bob: [{ from: 1, until: 2 }] } }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+      ) as unknown as typeof fetch,
+    });
+
+  it('still answers the exclusions', async () => {
+    expect(await old().getGroupExclusions('g1')).toEqual(
+      new Map([['bob', [{ from: 1, until: 2 }]]])
+    );
+  });
+
+  it('refuses the withheld read with its own type, never as a malformed answer', async () => {
+    const failure = await old()
+      .getGroupWithheld('g1', 'carol')
+      .catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(WithheldUnsupportedError);
+  });
+
+  it('asks `for` the one person, and shares the request with the exclusions asked for them', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ exclusions: {}, withheld: { me: [], carol: [] } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await Promise.all([api.getGroupExclusions('g1', 'carol'), api.getGroupWithheld('g1', 'carol')]);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(String((fetchImpl.mock.calls[0] as unknown[])[0])).toContain('/exclusions?for=carol');
   });
 });
 

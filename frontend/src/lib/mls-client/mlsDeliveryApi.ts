@@ -89,6 +89,19 @@ export class MalformedExclusionsError extends Error {
 }
 
 /**
+ * The delivery service answered the windows route WITHOUT a `withheld` field: it predates it
+ * (2026-10-22). Typed so the one caller that has an older rule to keep - the receiver - can tell it
+ * from a malformed answer, which fails closed everywhere. A store build runs ahead of production
+ * for as long as both stores take a version, so this is an ordinary state, not a defect.
+ */
+export class WithheldUnsupportedError extends Error {
+  constructor(readonly groupId: string) {
+    super(`the delivery service predates the withheld windows (group ${groupId.slice(0, 8)})`);
+    this.name = 'WithheldUnsupportedError';
+  }
+}
+
+/**
  * Parses the body of `GET /api/mls/groups/:groupId/exclusions`.
  *
  * Strict on purpose: a window that cannot be read is a window that would not be withheld, so a
@@ -1697,11 +1710,46 @@ export class MlsDeliveryApi {
    * network path), any other status an {@link ApiRefusalError} carrying it; a transport failure is
    * whatever `f` raised, untouched.
    */
-  getGroupExclusions(groupId: string): Promise<GroupExclusions> {
-    return this.joinInFlight(`exclusions:${groupId}`, async () => {
-      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/exclusions`, {
-        headers: await this.auth(),
-      });
+  async getGroupExclusions(groupId: string, forUserId?: string): Promise<GroupExclusions> {
+    return (await this.readGroupWindows(groupId, forUserId)).exclusions;
+  }
+
+  /**
+   * What this device's user, and `forUserId` when given, may never be handed in `groupId`: their gaps
+   * AND, in a group conversation, everything before their first arrival (user, 2026-10-21) - the
+   * route's `withheld` field, which names those two people only. A 1:1 answers the gaps only, decided
+   * by the server. A counted person always has an entry, so a missing key means "not counted".
+   *
+   * Read for ONE person at a time - the invitee of a history push, or this device's own user - never
+   * as a union: the span before the newest member's arrival would then withhold everything older
+   * from everyone. Asked with the same `forUserId` as {@link getGroupExclusions}, both cost one read.
+   */
+  async getGroupWithheld(groupId: string, forUserId?: string): Promise<GroupExclusions> {
+    // PARSED HERE AND NOWHERE ELSE: a server that predates the field answers no `withheld`, and that
+    // must fail this read alone. Parsed in the shared read, it failed `getGroupExclusions` too, so
+    // every history answer and every received bundle stopped for as long as a store build is ahead
+    // of production.
+    const { withheld } = await this.readGroupWindows(groupId, forUserId);
+    if (withheld === undefined) throw new WithheldUnsupportedError(groupId);
+    return parseGroupExclusions(withheld);
+  }
+
+  /**
+   * The one read behind {@link getGroupExclusions} and {@link getGroupWithheld}, failures classified
+   * at the throw. `withheld` is handed on UNPARSED - see {@link getGroupWithheld}.
+   */
+  private readGroupWindows(
+    groupId: string,
+    forUserId?: string
+  ): Promise<{ exclusions: GroupExclusions; withheld: unknown }> {
+    const forQuery = forUserId ? `?for=${encodeURIComponent(forUserId)}` : '';
+    return this.joinInFlight(`exclusions:${groupId}${forQuery}`, async () => {
+      const res = await this.f(
+        `${this.historyUrl}/api/mls/groups/${groupId}/exclusions${forQuery}`,
+        {
+          headers: await this.auth(),
+        }
+      );
       if (res.status === 403) {
         // ORIGIN FIRST, as for a send: an HTML 403 is the edge, and says nothing about the roster.
         if (responseOrigin(res) === 'edge') throw new SendEdgeRefusedError(groupId, res.status);
@@ -1714,8 +1762,8 @@ export class MlsDeliveryApi {
           `getGroupExclusions refused with ${res.status} for group ${groupId}`
         );
       }
-      const body = (await res.json()) as { exclusions?: unknown };
-      return parseGroupExclusions(body?.exclusions);
+      const body = (await res.json()) as { exclusions?: unknown; withheld?: unknown };
+      return { exclusions: parseGroupExclusions(body?.exclusions), withheld: body?.withheld };
     });
   }
 

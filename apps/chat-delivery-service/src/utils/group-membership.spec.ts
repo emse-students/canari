@@ -6,6 +6,7 @@ import {
   ensureGroupMember,
   exclusionWindows,
   openMissingIntervals,
+  withheldWindows,
   withholdExcludedHistoryRows,
 } from './group-membership';
 import { GroupMember } from '../entities/group-member.entity';
@@ -313,7 +314,7 @@ describe('exclusionWindows', () => {
     ).toEqual([{ from: at('2026-10-03T09:00:00Z').getTime(), until: null }]);
   });
 
-  it('the time before the FIRST arrival is never a window - a late joiner keeps the existing policy', () => {
+  it('the time before the FIRST arrival is never a GAP - that span is withheldWindows, not this', () => {
     const windows = exclusionWindows([{ joinedAt: at('2026-10-09T10:00:00Z'), leftAt: null }]);
     expect(windows).toEqual([]);
   });
@@ -329,6 +330,52 @@ describe('exclusionWindows', () => {
       from: at('2026-10-04T00:00:00Z').getTime(),
       until: at('2026-10-05T00:00:00Z').getTime(),
     });
+  });
+});
+
+describe('withheldWindows', () => {
+  const at = (iso: string) => new Date(iso);
+
+  it('a group conversation withholds everything before the first arrival, then the gaps', () => {
+    // Out of order on purpose, as above.
+    const windows = withheldWindows(
+      [
+        { joinedAt: at('2026-10-05T00:00:00Z'), leftAt: null },
+        { joinedAt: at('2026-10-01T00:00:00Z'), leftAt: at('2026-10-03T00:00:00Z') },
+      ],
+      true,
+      null
+    );
+    expect(windows).toEqual([
+      { from: 0, until: at('2026-10-01T00:00:00Z').getTime() },
+      { from: at('2026-10-03T00:00:00Z').getTime(), until: at('2026-10-05T00:00:00Z').getTime() },
+    ]);
+  });
+
+  it('a 1:1 withholds the gaps only - its recorded arrivals are not arrivals', () => {
+    expect(
+      withheldWindows([{ joinedAt: at('2026-10-09T10:00:00Z'), leftAt: null }], false, null)
+    ).toEqual([]);
+  });
+
+  it('an EARLIER device row is the arrival - the 4 production members whose interval was recorded late', () => {
+    expect(
+      withheldWindows(
+        [{ joinedAt: at('2026-10-12T00:00:00Z'), leftAt: null }],
+        true,
+        at('2026-10-01T04:00:00Z')
+      )
+    ).toEqual([{ from: 0, until: at('2026-10-01T04:00:00Z').getTime() }]);
+  });
+
+  it('a device row admitted before any interval opened is the arrival', () => {
+    expect(withheldWindows([], true, at('2026-10-20T00:00:00Z'))).toEqual([
+      { from: 0, until: at('2026-10-20T00:00:00Z').getTime() },
+    ]);
+  });
+
+  it('a person with neither an interval nor a device row is withheld everything, open-ended', () => {
+    expect(withheldWindows([], true, null)).toEqual([{ from: 0, until: null }]);
   });
 });
 

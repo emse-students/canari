@@ -1,5 +1,6 @@
 import { handleSystemEvent } from './systemMessageHandler';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
+import { WithheldUnsupportedError } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * A `history_bundle` is a GROUP BROADCAST, so every member sees an answer meant for one device.
@@ -23,7 +24,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
   return {
     mlsService: {
       getDeviceId: () => MY_DEVICE,
-      getGroupExclusions: vi.fn().mockResolvedValue(new Map()),
+      // As the server answers: the caller is counted, an empty entry included.
+      getGroupWithheld: vi.fn().mockResolvedValue(new Map([[ME, []]])),
     },
     storage: null,
     userId: ME,
@@ -146,7 +148,7 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
     return makeCtx({
       mlsService: {
         getDeviceId: () => MY_DEVICE,
-        getGroupExclusions: vi.fn().mockResolvedValue(windows),
+        getGroupWithheld: vi.fn().mockResolvedValue(windows),
       },
     });
   }
@@ -163,19 +165,66 @@ describe('history_bundle ingestion - our own exclusion windows', () => {
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Dropped during'));
   });
 
+  it('a newcomer drops what was sent before it arrived - a broadcast answer meant for another device', async () => {
+    // Our withheld span (user, 2026-10-21): everything before we were added to the group.
+    const ctx = ctxWithWindows(new Map([[ME, [{ from: 0, until: 10_000 }]]]));
+
+    await handleSystemEvent('history_bundle', { messages: [before, during, after] }, ctx as any);
+
+    const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
+      (m) => m.messageId
+    );
+    expect(added).toEqual(['during', 'after']);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('Dropped before'));
+  });
+
   it("another member's window is not ours to apply - the answering peer enforces that", async () => {
-    const ctx = ctxWithWindows(new Map([['someone-else', [{ from: OUT_FROM, until: BACK_AT }]]]));
+    const ctx = ctxWithWindows(
+      new Map([
+        [ME, []],
+        ['someone-else', [{ from: OUT_FROM, until: BACK_AT }]],
+      ])
+    );
 
     await handleSystemEvent('history_bundle', { messages: [before, during, after] }, ctx as any);
 
     expect(ctx.batchAddMessages.mock.calls[0][0]).toHaveLength(3);
   });
 
+  it('ingests no message when the server does not count us - a missing entry is no empty set', async () => {
+    const ctx = ctxWithWindows(new Map());
+
+    await handleSystemEvent('history_bundle', { messages: [before] }, ctx as any);
+
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('does not count me'));
+  });
+
+  it('keeps its old rule, our own gaps, against a server that predates `withheld`', async () => {
+    const ctx = makeCtx({
+      mlsService: {
+        getDeviceId: () => MY_DEVICE,
+        getGroupWithheld: vi.fn().mockRejectedValue(new WithheldUnsupportedError(GROUP)),
+        getGroupExclusions: vi
+          .fn()
+          .mockResolvedValue(new Map([[ME, [{ from: OUT_FROM, until: BACK_AT }]]])),
+      },
+    });
+
+    await handleSystemEvent('history_bundle', { messages: [before, during, after] }, ctx as any);
+
+    const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
+      (m) => m.messageId
+    );
+    expect(added).toEqual(['before', 'after']);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('predates the withheld windows'));
+  });
+
   it('ingests no message when our windows cannot be read, and says so', async () => {
     const ctx = makeCtx({
       mlsService: {
         getDeviceId: () => MY_DEVICE,
-        getGroupExclusions: vi.fn().mockRejectedValue(new Error('503')),
+        getGroupWithheld: vi.fn().mockRejectedValue(new Error('503')),
       },
     });
 
