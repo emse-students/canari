@@ -10,6 +10,7 @@ use std::collections::{BTreeSet, HashMap};
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::MlsError;
+use crate::graine_run::GraineRun;
 
 // --- 1. Persistence model (on disk) ---
 
@@ -52,6 +53,13 @@ pub struct PersistedState {
     /// server served, and is pinned only at the merge - across a restart too.
     #[serde(default)]
     pub pending_external_joins: Vec<String>,
+    /// Graine's departure tracker, one clean run per group (`graine_run.rs`). Kept in THIS blob so
+    /// it is written by the same checkpoint as the tree it describes. `#[serde(default)]`: a state
+    /// written before the field has no runs, so its first sends rotate exactly as before. A build
+    /// that predates the field ignores it on read and drops it on its next write - the fail-safe
+    /// direction, since no run means rotate.
+    #[serde(default)]
+    pub graine_runs: HashMap<String, GraineRun>,
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
@@ -72,6 +80,7 @@ pub(crate) struct PersistedStateSer<'a> {
     pub(crate) device_departures: &'a [crate::device_trust::Departure],
     pub(crate) device_pins_pruned: &'a [String],
     pub(crate) pending_external_joins: &'a [String],
+    pub(crate) graine_runs: &'a HashMap<String, GraineRun>,
 }
 
 // Struct request wrapper for serialization
@@ -196,6 +205,8 @@ pub struct MlsManager {
     /// so a checkpoint and a restart before the merge keep it, and the load-time seed skips the
     /// group. Clearing the join's commit forgets the group (`clear_pending_commit_for`).
     pub(crate) pending_external_joins: std::collections::HashSet<String>,
+    /// Graine's departure tracker, persisted with the state (`graine_run.rs`).
+    pub(crate) graine_runs: HashMap<String, GraineRun>,
 
     pub(crate) state_snapshot: RefCell<StateSnapshotCache>,
 
@@ -817,6 +828,7 @@ impl MlsManager {
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
                 device_trust,
                 pending_external_joins,
+                graine_runs: state.graine_runs,
                 // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
                 // read straight back to the first `save_state`. That is a sound optimisation while
                 // the encoding is fixed, and exactly wrong across a format change: a device
@@ -935,6 +947,7 @@ impl MlsManager {
                 forgotten_group_min_epochs: HashMap::new(),
                 device_trust,
                 pending_external_joins: Default::default(),
+                graine_runs: HashMap::new(),
                 state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
                 fork_findings: RefCell::default(),
             })
@@ -1001,6 +1014,7 @@ impl MlsManager {
             device_departures: &device_departures,
             device_pins_pruned: &device_pins_pruned,
             pending_external_joins: &pending_external_joins,
+            graine_runs: &self.graine_runs,
         };
 
         let mut final_bytes = Vec::new();

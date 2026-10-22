@@ -306,19 +306,24 @@ export interface StoredGraineSession {
    */
   sentCount?: number;
   /**
-   * Epoch of the community's MLS distribution group when this device MINTED the session.
-   *
-   * This is how "rotate when somebody leaves" is decided without anyone recording that somebody
-   * left. Every membership change commits to that group and advances its epoch, so a session whose
-   * stamp differs from the group's current epoch was minted under a roster that no longer holds -
-   * whoever left still has its seed, and it must not seal another message. Derived from state
-   * every device already has and reads identically, rather than from a "a departure happened"
-   * marker, which is durable state answering a question it was not written for.
+   * Epoch of the community's MLS distribution group when this device last DISTRIBUTED the session
+   * (its mint, or a re-distribution after an Add). Kept for the log lines and the clear column; the
+   * rotation decision reads {@link rotationAnchor}, because an epoch NUMBER does not identify an
+   * epoch of one group instance.
    *
    * Absent on a received session, for the same reason `sentCount` is: rotation is a decision the
    * SENDER makes, and another device's epoch view is not ours to judge.
    */
   distributionEpoch?: number;
+  /**
+   * Where the session stands against the key group's departure tracker
+   * (`docs/wiki/protocols/graine-removal-tracker.md`): the run it was minted in, and the epoch it was
+   * last distributed at. Present only on a session this device minted; a minted session without one
+   * predates the tracker and rotates once.
+   *
+   * Encrypted with the seed, never a clear column: the fingerprint is derived from an MLS secret.
+   */
+  rotationAnchor?: GraineRotationAnchor;
   /**
    * The MLS frame that distributed this session's seed, exactly as it was posted - carried by EVERY
    * message sealed under the session, so a phone opens the seed from the same push as the message
@@ -326,7 +331,7 @@ export interface StoredGraineSession {
    * the way can open it, which is why it may travel through social-service at all.
    *
    * Present only on a session this device MINTED, like `sentCount`. A minted session without one
-   * predates the field and is rotated ({@link shouldRotateGraineSession}).
+   * predates the field and is rotated (`graineOutboundVerdict`).
    */
   distributionFrame?: GraineDistributionFrame;
   /**
@@ -338,6 +343,16 @@ export interface StoredGraineSession {
    * it as it is.
    */
   v2?: StoredGraineV2;
+}
+
+/** A minted session's place in its key group's departure tracker ({@link StoredGraineSession}). */
+export interface GraineRotationAnchor {
+  /** The clean run the session was minted in. A different run means a removal or a new user since. */
+  runId: string;
+  /** The key group's epoch fingerprint when the session was last distributed. */
+  epochFingerprint: string;
+  /** True once the session has been re-distributed across an epoch move: the tighter caps apply. */
+  redistributed: boolean;
 }
 
 /** The Graine v2 half of a stored session, as the minter's endorsement states it. */

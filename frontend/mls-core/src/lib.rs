@@ -5,6 +5,7 @@ pub(crate) mod byte_compat;
 pub mod crypto;
 pub mod device_trust;
 pub mod fork_check;
+pub mod graine_run;
 pub mod graine_signature;
 pub mod group;
 pub mod keystore;
@@ -17,6 +18,7 @@ pub mod welcome;
 
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
 pub use device_trust::{DeviceEvent, LeafTrust};
+pub use graine_run::{CommitSummary, GraineRun, GraineRunReading};
 pub use messaging::IncomingApplication;
 pub use state::DatedKeyPackage;
 pub use state::MlsManager;

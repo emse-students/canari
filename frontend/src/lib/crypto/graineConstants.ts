@@ -47,6 +47,18 @@ export const GRAINE_ROTATE_AFTER_MESSAGES = 100;
 export const GRAINE_ROTATE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * The tighter caps of a session RE-DISTRIBUTED at least once, i.e. kept across an epoch move
+ * because nobody left (`docs/wiki/protocols/graine-removal-tracker.md`, the named residual).
+ *
+ * Rotating on every Add used to bound a stolen copy of a device's seeds by accident; reuse removes
+ * that, so these are the stated bound instead: a day, not a week. 50 is above the p99 of messages one
+ * sender writes in one salon in one day (38, production 2026-10-22), so the age cap is the one that
+ * normally fires. Counted from the MINT, never from the last re-distribution.
+ */
+export const GRAINE_REUSED_ROTATE_AFTER_MESSAGES = 50;
+export const GRAINE_REUSED_ROTATE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
  * How many sessions per channel the NATIVE mirror keeps, the durable store holding the rest.
  *
  * The mirror exists for exactly one job - decrypting an incoming push before any WebView runs - so

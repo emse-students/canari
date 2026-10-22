@@ -102,3 +102,36 @@ describe('incomingShare', () => {
     expect(incomingShare.target).toBeNull();
   });
 });
+
+/**
+ * THE FENCE A SIGN-OUT RAISES. Last in this file on purpose: the floor only rises, like the page's,
+ * so every case above it offers at epoch 0 before any fence exists.
+ */
+describe('incomingShare.fence', () => {
+  beforeEach(() => {
+    incomingShare.cancel();
+    discardSharedFiles.mockClear();
+  });
+
+  it('drops a held share from before the sign-out, and refuses one offered from before it', () => {
+    incomingShare.offer({ text: 'from A', files: [file('a.png')] }, 1);
+    incomingShare.fence(2, 'signed out');
+    expect(incomingShare.pending).toBeNull();
+    expect(discardSharedFiles).toHaveBeenCalledWith(
+      ['/cache/shared_inbox/x/0_a.png'],
+      'signed out'
+    );
+
+    expect(incomingShare.offer({ text: 'late A', files: [file('b.png')] }, 1)).toBe(false);
+    expect(incomingShare.pending).toBeNull();
+    expect(discardSharedFiles).toHaveBeenLastCalledWith(
+      ['/cache/shared_inbox/x/0_b.png'],
+      'offered after a sign-out'
+    );
+
+    expect(incomingShare.offer({ text: 'from B', files: [] }, 2)).toBe(true);
+    // A second fence at the same epoch keeps what was offered in it.
+    incomingShare.fence(2, 'signed out');
+    expect(incomingShare.pending?.text).toBe('from B');
+  });
+});

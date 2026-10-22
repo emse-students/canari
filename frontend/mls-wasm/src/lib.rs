@@ -270,6 +270,34 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// `{ runId, epoch, epochFingerprint }` for `group_id`'s CURRENT epoch - the clean run Graine's
+    /// outbound rotation reads before reusing a session across an epoch move (`graine_run.rs`).
+    /// `&mut`: a run that does not cover the current epoch is replaced by one that starts now.
+    #[wasm_bindgen]
+    pub fn graine_run(&mut self, group_id: String) -> Result<JsValue, JsValue> {
+        let reading = self
+            .manager
+            .graine_run(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("runId"),
+            &JsValue::from_str(&reading.run_id),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("epoch"),
+            &JsValue::from_f64(reading.epoch as f64),
+        );
+        let _ = js_sys::Reflect::set(
+            &obj,
+            &JsValue::from_str("epochFingerprint"),
+            &JsValue::from_str(&reading.epoch_fingerprint),
+        );
+        Ok(obj.into())
+    }
+
     // Create a group
     #[wasm_bindgen]
     pub fn create_group(&mut self, group_id: String) -> Result<(), JsValue> {
