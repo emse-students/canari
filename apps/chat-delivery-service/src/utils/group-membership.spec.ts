@@ -12,8 +12,7 @@ import {
 } from './group-membership';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
-import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
-import { QueuedMessage } from '../entities/queued-message.entity';
+import { recordingDataSource } from '../testing/recordingDataSource';
 
 /**
  * The statement this helper builds is the whole of what it does, so the statement is what is
@@ -473,62 +472,58 @@ describe('withholdExcludedHistoryRows', () => {
  * EVERY PATH THAT ENDS A DEVICE'S MEMBERSHIP TAKES ITS QUEUED WELCOMES WITH IT, through this one
  * helper. A device pulls its queue whatever the roster says, so a Welcome left behind lets a device
  * that is out enter the epoch the Welcome was built for.
+ *
+ * Asserted on the SQL the real TypeORM query builder produces (`recordingDataSource`): a delete
+ * whose filter lost a column is a delete of other people's rows, and only the real criteria
+ * handling can show which column survived.
  */
 describe('endDeviceMemberships', () => {
-  function recordingManager(): {
-    manager: EntityManager;
-    deletes: Array<{ entity: unknown; where: unknown }>;
-  } {
-    const deletes: Array<{ entity: unknown; where: unknown }> = [];
-    const manager = {
-      getRepository: (entity: unknown) => ({
-        delete: (where: unknown) => {
-          deletes.push({ entity, where });
-          return Promise.resolve({ affected: entity === QueuedMessage ? 3 : 2 });
-        },
-      }),
-    } as unknown as EntityManager;
-    return { manager, deletes };
-  }
-
   it('deletes the device rows and the queued Welcomes of exactly the scope it is given', async () => {
-    const { manager, deletes } = recordingManager();
+    const { manager, statements } = await recordingDataSource();
 
-    const ended = await endDeviceMemberships(
+    await endDeviceMemberships(
       manager,
       { userId: 'bob', deviceId: 'b1', groupId: 'g-1' },
       'welcomes'
     );
 
-    expect(deletes).toEqual([
-      { entity: DeviceGroupMembership, where: { userId: 'bob', deviceId: 'b1', groupId: 'g-1' } },
-      {
-        entity: QueuedMessage,
-        where: { recipientId: 'bob', deviceId: 'b1', groupId: 'g-1', isWelcome: true },
-      },
+    expect(statements.map((s) => [s.sql, s.params])).toEqual([
+      [
+        'DELETE FROM "dm_device_group_memberships" WHERE ("userId" = $1 AND "deviceId" = $2 AND "groupId" = $3)',
+        ['bob', 'b1', 'g-1'],
+      ],
+      [
+        'DELETE FROM "queued_message" WHERE ("recipientId" = $1 AND "deviceId" = $2 AND "groupId" = $3 AND "isWelcome" = $4)',
+        ['bob', 'b1', 'g-1', true],
+      ],
     ]);
-    expect(ended).toEqual({ memberships: 2, queued: 3 });
   });
 
   it('widens to the whole queue of that scope when the departure takes everything', async () => {
-    const { manager, deletes } = recordingManager();
+    const { manager, statements } = await recordingDataSource();
 
     await endDeviceMemberships(manager, { userId: 'bob', groupId: 'g-1' }, 'all');
 
-    expect(deletes[1]).toEqual({
-      entity: QueuedMessage,
-      where: { recipientId: 'bob', groupId: 'g-1' },
+    expect(statements[1]).toEqual({
+      sql: 'DELETE FROM "queued_message" WHERE ("recipientId" = $1 AND "groupId" = $2)',
+      params: ['bob', 'g-1'],
     });
   });
 
-  it('never widens an unscoped call past the person it names', async () => {
-    const { manager, deletes } = recordingManager();
+  it.each([
+    ['an empty userId', { userId: '' }],
+    ['an undefined userId', { userId: undefined as unknown as string }],
+    ['a blank userId', { userId: '  ' }],
+    ['an empty deviceId it names', { userId: 'bob', deviceId: '' }],
+    ['an undefined deviceId it names', { userId: 'bob', deviceId: undefined }],
+    ['an empty groupId it names', { userId: 'bob', groupId: '' }],
+    ['a null groupId it names', { userId: 'bob', groupId: null as unknown as string }],
+  ])('refuses %s, before any statement is built', async (_name, scope) => {
+    const { manager, statements } = await recordingDataSource();
 
-    await endDeviceMemberships(manager, { userId: 'bob' }, 'welcomes');
-
-    expect(deletes).toEqual([
-      { entity: DeviceGroupMembership, where: { userId: 'bob' } },
-      { entity: QueuedMessage, where: { recipientId: 'bob', isWelcome: true } },
-    ]);
+    await expect(endDeviceMemberships(manager, scope, 'all')).rejects.toThrow(
+      /endDeviceMemberships: /
+    );
+    expect(statements).toEqual([]);
   });
 });

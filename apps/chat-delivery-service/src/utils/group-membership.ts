@@ -73,6 +73,14 @@ export interface DepartureScope {
   groupId?: string;
 }
 
+/** `value` as an id, or a throw naming the field: never an empty, blank or absent one. */
+function requireId(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`endDeviceMemberships: ${field} must be a non-empty id`);
+  }
+  return value;
+}
+
 /**
  * Ends the device memberships a departure names and deletes, in the SAME transaction, what is
  * still queued for those devices: the Welcomes always (`'welcomes'`), or the whole queue of that
@@ -97,16 +105,23 @@ export async function endDeviceMemberships(
   scope: DepartureScope,
   queue: 'welcomes' | 'all'
 ): Promise<{ memberships: number; queued: number }> {
-  const where = {
-    userId: scope.userId,
-    ...(scope.deviceId !== undefined ? { deviceId: scope.deviceId } : {}),
-    ...(scope.groupId !== undefined ? { groupId: scope.groupId } : {}),
+  // A DELETE IS ONLY AS NARROW AS ITS FILTER, so every column the caller names must be a real id.
+  // An absent `userId`, or a named `deviceId`/`groupId` that is empty, undefined or null, is a
+  // caller's bug - refused here, before any statement exists, rather than handed to a builder that
+  // might drop the column and delete other people's rows.
+  const userId = requireId(scope.userId, 'userId');
+  const deviceId = 'deviceId' in scope ? requireId(scope.deviceId, 'deviceId') : undefined;
+  const groupId = 'groupId' in scope ? requireId(scope.groupId, 'groupId') : undefined;
+  const narrowing = {
+    ...(deviceId !== undefined ? { deviceId } : {}),
+    ...(groupId !== undefined ? { groupId } : {}),
   };
-  const memberships = await manager.getRepository(DeviceGroupMembership).delete(where);
+  const memberships = await manager
+    .getRepository(DeviceGroupMembership)
+    .delete({ userId, ...narrowing });
   const queued = await manager.getRepository(QueuedMessage).delete({
-    recipientId: scope.userId,
-    ...(scope.deviceId !== undefined ? { deviceId: scope.deviceId } : {}),
-    ...(scope.groupId !== undefined ? { groupId: scope.groupId } : {}),
+    recipientId: userId,
+    ...narrowing,
     ...(queue === 'welcomes' ? { isWelcome: true } : {}),
   });
   return { memberships: memberships.affected ?? 0, queued: queued.affected ?? 0 };
