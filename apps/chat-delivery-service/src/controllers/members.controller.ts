@@ -40,6 +40,7 @@ import {
   endGroupMembership,
   exclusionWindows,
   openMissingIntervals,
+  stretchStart,
   partingKey,
   withheldWindows,
   type ExclusionWindow,
@@ -807,7 +808,9 @@ export class MembersController {
    * "nothing withheld".
    *
    * **`for` answers only for a person with a device ADDED SINCE THE CALLER ARRIVED** - a device row
-   * in this group created at or after the caller's own arrival (compared case-insensitively). That
+   * in this group created at or after the start of the caller's CURRENT interval (its recorded
+   * admission when earlier; `for` compared case-insensitively). Not the caller's first arrival: a
+   * member who left and came back did not witness what was added while they were out. That
    * is who an inviter's push is for: a newcomer, or a new device of a member of any age. It is a
    * DURABLE fact, never a status: the invitee's row turns `active` the moment its Welcome is
    * processed, possibly while the push is still reading its windows chunk by chunk, and a status
@@ -883,7 +886,7 @@ export class MembersController {
     const readByUser = async () => {
       const rows = await this.dataSource.manager.find(GroupMembershipInterval, {
         where: { groupId: safeGroupId, userId: In([...counted]) },
-        select: { userId: true, joinedAt: true, leftAt: true },
+        select: { userId: true, joinedAt: true, leftAt: true, admittedAt: true },
       });
       const grouped = new Map<string, GroupMembershipInterval[]>();
       for (const row of rows) {
@@ -939,12 +942,12 @@ export class MembersController {
       if (windows.length > 0) exclusions[userId] = windows;
     }
     const withheld: Record<string, ExclusionWindow[]> = {};
-    // The caller's arrival: their earliest interval or device row, whichever the server recorded
-    // first. None recorded answers `for` for nobody.
-    const callerArrival = Math.min(
-      ...(byUser.get(caller) ?? []).map((r) => r.joinedAt.getTime()),
-      firstDeviceAt.get(caller)?.getTime() ?? Infinity
-    );
+    // The caller's arrival for `for` is the start of their CURRENT stretch - the open interval, from
+    // its recorded admission when one preceded the enrolment. Not their first arrival: a caller who
+    // left and came back did not witness what was added while they were out. No open interval
+    // answers `for` for nobody.
+    const current = (byUser.get(caller) ?? []).find((r) => r.leftAt === null);
+    const callerArrival = current ? stretchStart(current) : Infinity;
     const forCounted = forUser
       ? [...counted].find(
           (u) =>

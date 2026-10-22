@@ -13,6 +13,7 @@ import {
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { recordingDataSource } from '../testing/recordingDataSource';
+import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 
 /**
  * The statement this helper builds is the whole of what it does, so the statement is what is
@@ -27,8 +28,15 @@ import { recordingDataSource } from '../testing/recordingDataSource';
 describe('ensureGroupMember', () => {
   type Insert = { calls: string[]; values: Record<string, unknown> | undefined; target: unknown };
 
-  /** Records every INSERT the helper builds, one entry per `insert()`. */
-  function managerWithRecorder(): { manager: EntityManager; inserts: Insert[] } {
+  /**
+   * Records every INSERT the helper builds, one entry per `insert()`. `firstDeviceAt` is what the
+   * person's earliest device row in the group says, read before the interval is opened.
+   */
+  function managerWithRecorder(firstDeviceAt: Date | null = null): {
+    manager: EntityManager;
+    inserts: Insert[];
+    deviceReads: unknown[];
+  } {
     const inserts: Insert[] = [];
     const current = () => inserts[inserts.length - 1];
     const builder: Record<string, unknown> = {};
@@ -49,13 +57,24 @@ describe('ensureGroupMember', () => {
     });
     builder.orIgnore = step('orIgnore');
     builder.orUpdate = step('orUpdate');
+    builder.returning = step('returning');
     builder.execute = () => {
       current().calls.push('execute');
       return Promise.resolve({ affected: 1 });
     };
 
-    const manager = { createQueryBuilder: () => builder } as unknown as EntityManager;
-    return { manager, inserts };
+    const deviceReads: unknown[] = [];
+    const deviceQb: Record<string, unknown> = {};
+    for (const name of ['select', 'where', 'andWhere']) deviceQb[name] = () => deviceQb;
+    deviceQb.getRawOne = () => Promise.resolve({ firstDeviceAt });
+    const manager = {
+      createQueryBuilder: () => builder,
+      getRepository: (entity: unknown) => {
+        deviceReads.push(entity);
+        return { createQueryBuilder: () => deviceQb };
+      },
+    } as unknown as EntityManager;
+    return { manager, inserts, deviceReads };
   }
 
   it('inserts into dm_group_members and says nothing on conflict', async () => {
@@ -89,7 +108,8 @@ describe('ensureGroupMember', () => {
 
     const interval = inserts.find((i) => i.target === GroupMembershipInterval);
     const { joinedAt, ...rest } = interval?.values ?? {};
-    expect(rest).toEqual({ groupId: 'g-1', userId: 'alice', leftAt: null });
+    // No device row precedes the enrolment, so nothing earlier than `joinedAt` is recorded.
+    expect(rest).toEqual({ groupId: 'g-1', userId: 'alice', leftAt: null, admittedAt: null });
     // The same clock as the message's `createdAt` - this process's - so a window and the
     // messages it is compared with are placed by ONE clock.
     expect(joinedAt).toBeInstanceOf(Date);
@@ -98,6 +118,30 @@ describe('ensureGroupMember', () => {
     // exactly as the membership row ignores its own conflict.
     expect(interval?.calls).toContain('orIgnore');
     expect(interval?.calls).not.toContain('orUpdate');
+  });
+
+  // THE ARRIVAL SURVIVES A REVOKED DEVICE (review of #2226). An invitee's admitted device row can
+  // precede their enrolment by days, and it was the ONLY record of when they arrived: revoking that
+  // device deleted it, and their next device lost the span. The interval now keeps it.
+  it('records an EARLIER device row on the interval it opens, so a purge of that row cannot move the arrival', async () => {
+    const admitted = new Date('2026-10-01T04:00:00Z');
+    const { manager, inserts, deviceReads } = managerWithRecorder(admitted);
+
+    await ensureGroupMember(manager, 'g-1', 'alice');
+
+    expect(deviceReads).toEqual([DeviceGroupMembership]);
+    const interval = inserts.find((i) => i.target === GroupMembershipInterval);
+    expect(interval?.values?.admittedAt).toEqual(admitted);
+  });
+
+  it('records nothing when the earliest device row is not earlier than the enrolment', async () => {
+    const { manager, inserts } = managerWithRecorder(new Date(Date.now() + 60_000));
+
+    await ensureGroupMember(manager, 'g-1', 'alice');
+
+    expect(inserts.find((i) => i.target === GroupMembershipInterval)?.values?.admittedAt).toBe(
+      null
+    );
   });
 });
 
@@ -368,6 +412,43 @@ describe('withheldWindows', () => {
         at('2026-10-01T04:00:00Z')
       )
     ).toEqual([{ from: 0, until: at('2026-10-01T04:00:00Z').getTime() }]);
+  });
+
+  it("an interval's recorded admission is the arrival once the device row it came from is gone", () => {
+    // The device row was purged (its device revoked); the interval kept the instant it was admitted.
+    expect(
+      withheldWindows(
+        [
+          {
+            joinedAt: at('2026-10-12T00:00:00Z'),
+            leftAt: null,
+            admittedAt: at('2026-10-01T04:00:00Z'),
+          },
+        ],
+        true,
+        at('2026-10-15T00:00:00Z')
+      )
+    ).toEqual([{ from: 0, until: at('2026-10-01T04:00:00Z').getTime() }]);
+  });
+
+  it('a recorded admission moves no gap - the 2026-10-14 window still ends at the re-enrolment', () => {
+    expect(
+      withheldWindows(
+        [
+          { joinedAt: at('2026-10-01T00:00:00Z'), leftAt: at('2026-10-03T00:00:00Z') },
+          {
+            joinedAt: at('2026-10-05T00:00:00Z'),
+            leftAt: null,
+            admittedAt: at('2026-10-04T00:00:00Z'),
+          },
+        ],
+        true,
+        null
+      )
+    ).toEqual([
+      { from: 0, until: at('2026-10-01T00:00:00Z').getTime() },
+      { from: at('2026-10-03T00:00:00Z').getTime(), until: at('2026-10-05T00:00:00Z').getTime() },
+    ]);
   });
 
   it('a device row admitted before any interval opened is the arrival', () => {
