@@ -4,9 +4,9 @@
 //! **WHAT THESE FILES ARE.** Both exist so a phone can do something while the app is shut: the seed
 //! mirror lets the notification service derive a salon message key, and the push cache carries the
 //! messages it decrypted to the app's next start. Each therefore holds what the app's own stores
-//! seal - key material and message text - in a file a background process must read. Until
-//! 2026-10-22 they were app-private PLAINTEXT; they are sealed now, and an older build's plaintext
-//! copy is sealed the first time this build holds the key ([`seal_legacy_seed_mirror`]).
+//! seal - key material and message text - in a file a background process must read, so both are
+//! sealed at rest. A file in the older unsealed format is sealed the first time this build holds
+//! the key ([`seal_legacy_seed_mirror`]).
 //!
 //! **THE KEY IS ITS OWN, AND IT IS THE INSTALL'S, NOT THE ACCOUNT'S.** A random 32-byte key, created
 //! once per install by the native side the moment the app's process starts (Android

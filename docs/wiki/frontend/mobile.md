@@ -2588,7 +2588,7 @@ the way each store can answer it.
 Two files exist so a phone can act with the app shut, and each holds what the app's own stores
 seal: `graine_seeds.json` (salon seeds, for the push service to derive a message key) and
 `fcm_message_cache*.ndjson` (messages the push service decrypted, for the next start). Both are
-sealed since 2026-10-22 by `src-tauri/src/native_cache.rs`, the only copy of the design:
+sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design:
 
 - **The key is the INSTALL's, not the device key.** A random 32 bytes, created once by the native
   side at process start (Android `NativeCacheKey.ensure` from `CanariApplication`; iOS
@@ -2603,18 +2603,18 @@ sealed since 2026-10-22 by `src-tauri/src/native_cache.rs`, the only copy of the
 - **Two envelopes**: the mirror is `CNSEAL1\n || nonce || AES-256-GCM`; a cache LINE is
   `cs1:<base64>`, so the append, the take and the size-checked ack still work line by line. Each
   purpose has its own HKDF subkey.
-- **No key is never plaintext**: a writer with no key writes nothing (the message is still on the
+- **No key, nothing written**: a writer with no key writes nothing (the message is still on the
   server), a sealed file with no key is an error and never "empty", and a take with no key does not
   hand over (so never acks) a file holding sealed lines.
 - **Only Rust opens the mirror.** The Kotlin service, the NSE and `canari_push.mm` ask
   `graineSeedHeld` (1 / 0 / -1) and pass the key to `open_graine_push`; the seed never enters the
   JVM or Swift.
-- **The upgrade**: a mirror without the marker is the older build's plaintext, read as such and
+- **The upgrade**: a mirror without the marker is in the older unsealed format, read as such and
   sealed by the first write and by `migrate_legacy_files` (run once per process from
   `take_fcm_cache`, for the data dir and the iOS App Group copy; the file's marker is the durable
-  record, so it is idempotent). `channel_keys.json` has no reader and is deleted. Plaintext cache
-  lines are taken beside sealed ones and leave with the ack. The plaintext reader has a removal
-  condition, in [legacy-compatibility](../legacy-compatibility.md#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal).
+  record, so it is idempotent). `channel_keys.json` has no reader and is deleted. Unsealed cache
+  lines are taken beside sealed ones and leave with the ack. The reader for the older format has a
+  removal condition, in [legacy-compatibility](../legacy-compatibility.md#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal).
 - **Any question about the mirror's contents goes through `read_graine_mirror` with the key.** A
   second reader that parses the raw file still compiles, and against a sealed file it answers
   "holds nothing" for every salon. `nativeCacheSeal.test.ts` allows exactly one raw read.
@@ -2635,7 +2635,7 @@ sealed since 2026-10-22 by `src-tauri/src/native_cache.rs`, the only copy of the
   - the NSE's `writeFcmCache` (`excludeFromBackup`).
 
   A pass at bootstrap and on each activation covers a file an older build wrote.
-- **Desktop has no reader**, so it writes no mirror and deletes a plaintext one an older build left.
+- **Desktop has no reader**, so it writes no mirror and deletes one an older build left.
 
 `nativeCacheSeal.test.ts` pins the alias across the five files, that every cache writer seals,
 that no native reader opens the mirror, and the iOS exclusion. A rotation of the key, a key lost
@@ -2645,13 +2645,13 @@ are the truth.
 
 ### What a native log line may carry (2026-10-22)
 
-A release build prints no message text, name or key to logcat, os_log or the Rust log - ids
-(truncated where they already were) and counts only (`chars=${text.length}`, `named=true`).
+Native log lines - logcat, os_log and the Rust log - carry ids (truncated) and counts only
+(`chars=${text.length}`, `named=true`), never message text, a name or a key.
 `nativeLogContent.test.ts` scans every Kotlin, Swift, Objective-C++ and Rust log call for an
 interpolated content-bearing name (`text`, `body`, `senderName`, `seed`, `token` ...) and fails on
 one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content is allowlisted
-by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) were
-moved to the new shapes in the same change.
+by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) match
+these shapes.
 
 ### FCM message cache
 
