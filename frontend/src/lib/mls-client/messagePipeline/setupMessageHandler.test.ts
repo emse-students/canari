@@ -359,7 +359,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     });
   });
 
-  it('routes plaintext channel.message.created to addMessageToChat', async () => {
+  // The ROUTING is the subject: the frame reaches the salon handler. A frame without a ciphertext
+  // names an author nobody proved, so the handler it reaches refuses it rather than rendering it.
+  it('routes channel.message.created to the salon handler, which refuses one without a ciphertext', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const channelKey = 'channel_chan-99';
     const conversations = createTestConversations([
       [
@@ -380,12 +383,13 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
         messageId: 'ext-1',
       },
     });
-    expect(deps.addMessageToChat).toHaveBeenCalledWith(
-      'u-sender',
-      expect.any(String),
-      channelKey,
-      expect.objectContaining({ messageId: 'ext-1' })
-    );
+    expect(deps.addMessageToChat).not.toHaveBeenCalled();
+    expect(
+      error.mock.calls.some(
+        (c) => String(c[0]).includes('REFUSED') && String(c[0]).includes('ext-1')
+      )
+    ).toBe(true);
+    error.mockRestore();
   });
 
   it('propagates channel.member.kicked with the removed user', async () => {

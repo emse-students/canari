@@ -3,7 +3,6 @@ import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { openChannelMessage } from '$lib/utils/graine/channelSeal';
 import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
 import { decodeAppMessage } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
@@ -400,8 +399,14 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
               isSystemNotice = !!msg.system;
             }
           }
-        } else if (data.plaintext) {
-          content = serializeEnvelope(mkTextEnvelope(data.plaintext));
+        } else {
+          // A SALON MESSAGE IS SEALED, ALWAYS: its author is proven only by opening it, and neither
+          // the server nor the history path has anything else. A frame without a ciphertext names an
+          // author nobody proved, so it accuses the server and is rendered nowhere.
+          console.error(
+            `[CHANNEL] Message ${String(data.messageId || data.id)} of ${String(data.channelId).slice(0, 8)} is REFUSED and not rendered - a live frame without a ciphertext (sender named: ${String(sender || '')})`
+          );
+          return;
         }
       } catch (e) {
         // The SAME decision the history path takes, and for the same reason a live bubble is opened

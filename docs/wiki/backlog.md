@@ -1520,9 +1520,30 @@ Open findings about the instrument; the reasoning is on
 
 The local estate's schema comes from TypeORM `synchronize`, and nothing runs `apps/*/src/migrations/*.sql` there. A raw-SQL table therefore never exists locally. On 2026-10-22, every salon send failed with `relation "channel_message_client_tombstones" does not exist` (migration 090), and `post_audiences` (071) was missing too. GRAINE-AUTH-1 read this as `never appeared`. Both files were applied by hand that day. The fix is for the local bring-up to call `apply_migrations` from `infrastructure/lib/migrations.sh`, as the deploy and the dev reset already do.
 
-### P1 - a salon row the reader refused stayed on screen after a reload, once in five runs (GRAINE-AUTH-1, 2026-10-22)
+### P1 - one unexplained FAIL in 44: a salon row the reader refused stayed on screen after a reload (GRAINE-AUTH-1, 2026-10-22)
 
-The reader logged the refusal every time, yet once the refused message was still rendered. Unexplained. The candidate is in the salon history load (`useConversations.svelte.ts`): two overlapping loads could each leave the stored-page draw unwithdrawn. If that holds, a server-deleted message would also stay on screen. The next step is an instrumented repeat that keeps the failing run's load lines, so the mechanism is observed and not just read. If confirmed, the fix ties the draw to the load that is current, with a test that fails on the old code.
+The reader logged the refusal every time, yet once in 44 runs the refused message was still rendered. There are two candidates:
+
+- **A drawn row.** Two overlapping loads could each leave a stored-page row unwithdrawn. This is fixed by #2245, and its test fails on the old code. It was never seen in a trail: on 35 instrumented runs the tampered row was not in the drawn copy.
+- **A live row.** A row that reached memory live and was verified on arrival is kept by the merge's window rule when a later page refuses it while it is the newest (`messageMerge.ts`). This is by design, and it is written down in [community-open-budget](frontend/community-open-budget.md#f4-built-2026-10-15).
+
+GRAINE-AUTH's trail now keeps the load lines and every line naming the tampered row. A loop on the estate waits for a recurrence that carries this evidence.
+
+**Every way a salon message reaches memory, read 2026-10-22** (`frontend/src/lib/`):
+
+| Path | Checked before it is shown? |
+| --- | --- |
+| Live frame (`messagePipeline/channelEventHandler.ts`) | Yes: `openChannelMessage`, with the author bound by the session. A frame WITHOUT a ciphertext was rendered under the author the server named, with no check; it is refused since the fix that follows this table. |
+| History page (`composables/useConversations.svelte.ts`, `loadChannelHistory`) | Yes: `decodeChannelMessageRow`. |
+| Stored-page draw (`drawStoredSalonPage`) | Not re-verified. The rows were verified when stored, and any row the next merged page does not name is withdrawn (#2245). |
+| Whole-history search (`searchChannelHistory`) | Yes: `decodeChannelMessageRow`. |
+| Reconnect and catch-up | Yes, through the history page. Salons have no replay queue. |
+| Reactions and edits, live, history and search | Yes; an edit is also checked against its target's author. |
+| History bundle, boot restore, landing preview, scrollback | Not a path: salons are excluded from each. |
+| Own echo and unsent resend | Local text by this device's own user. |
+| Tab sync (`components/layout/ChatBackgroundService.svelte`) | Trusts the leader tab, whose row came through the paths above. |
+
+A row under a v1 session this device still holds carries no author proof. That is the documented legacy of [channel-encryption](protocols/channel-encryption.md), and it ends with the v1 reader.
 
 ### P3 - MULTI-9 cannot pass on a healthy estate: its precondition is a pending device, and none stays pending (2026-10-22)
 
