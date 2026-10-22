@@ -125,9 +125,11 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(invokeMock).not.toHaveBeenCalled();
     tauri = true;
     await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenCalledTimes(3);
     // The push side's plaintext files too - gated natively on the owner `push_context.json` names.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_push_files', { userId: 'user-a' });
+    // The data is gone, so the at-rest marker goes: the explicit reset that frees the keystore entry.
+    expect(invokeMock).toHaveBeenCalledWith('cle_au_repos_oublier', { userId: 'user-a' });
     expect(invokeMock).toHaveBeenCalledWith('delete_user_database', {
       userId: 'user-a',
       expectDatabase: false,
@@ -147,7 +149,9 @@ describe('wipeDeletedAccountLocalData', () => {
     invokeMock.mockRejectedValueOnce(new Error('disk'));
     await saveDeviceKey('user-a', KEY_A);
     const failures = await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(failures).toEqual(['the native message database']);
+    // A database that survived keeps its at-rest marker: the key sealing it stays guarded.
+    expect(failures).toEqual(['the native message database', 'the at-rest key marker']);
+    expect(invokeMock).not.toHaveBeenCalledWith('cle_au_repos_oublier', expect.anything());
     expect(await loadDeviceKey('user-a')).toBeNull();
   });
 

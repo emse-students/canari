@@ -18,13 +18,14 @@
  *  3. `mark`: marker `hardware`. From then on the PIN unlock reads the key from the keystore.
  *
  * A kill between 2 and 3 leaves the marker `migrating` with the MLS state under the new key; a kill
- * inside 2 leaves it under the old one. The next PIN unlock settles which BEFORE it opens anything
- * ({@link settleMigratingStateAtUnlock}): the marker says the state is under one of two known keys,
- * and the new key is tried first because the MLS state moves last.
+ * inside 2 leaves rows under both keys. The next PIN unlock FINISHES the re-key before any session
+ * opens a store ({@link finishMigrationAtUnlock}), so no session runs over a two-key store. A marker
+ * `migrating` whose key never reached the keystore is reverted natively (`settle_scheme`): nothing
+ * moved, because rows move only after the key was written and read back.
  */
 import { endIntoKeyRecovery } from '$lib/db/deviceKeyGate';
 import type { LocalStateOpenResult } from '$lib/mls-client';
-import type { HardwareKeyPort } from '$lib/crypto/hardwareHeldKey';
+import { HardwareKeyUnavailableError, type HardwareKeyPort } from '$lib/crypto/hardwareHeldKey';
 import { KeyChangeInterruptedError } from './pinChange';
 
 /** What {@link migrateToHardwareHeldKey} did. */
@@ -56,7 +57,7 @@ export interface HardwareKeyMigrationDeps {
  *
  * An interruption that moved data (stage `stores` or `mls`) ends the session into a reload, exactly
  * like an interrupted PIN change: the session must not run on with rows under two keys. The reload's
- * PIN unlock finds the marker `migrating` and settles it ({@link settleMigratingStateAtUnlock}).
+ * PIN unlock finds the marker `migrating` and finishes it ({@link finishMigrationAtUnlock}).
  *
  * @throws whatever `changeKey` threw, after the reload was asked for when data moved.
  */
@@ -96,56 +97,77 @@ export async function migrateToHardwareHeldKey(
   return 'migrated';
 }
 
-/** What {@link settleMigratingStateAtUnlock} needs. */
-export interface SettleMigratingDeps {
+/** What {@link finishMigrationAtUnlock} needs - the stores and the MLS state, passed in. */
+export interface FinishMigrationDeps {
   userId: string;
-  deviceId: string;
-  /** The key the PIN derives - what the stores were under before the re-key started. */
+  /** The key the PIN derives - what every store was under before the re-key started. */
   pinDerivedKeyB64: string;
   port: HardwareKeyPort;
+  /** The stored MLS state, or `null` when nothing is stored. */
+  loadStoredState: () => Promise<Uint8Array | null>;
+  /** Opens the stored state with a candidate key, destroying nothing on a refusal. */
+  openStoredStateWith: (keyB64: string, state: Uint8Array) => Promise<LocalStateOpenResult>;
   /**
-   * Opens the stored MLS state with a candidate key WITHOUT destroying anything on a refusal
-   * (`IMlsService.openLocalStateWithKey`), or answers `no-state` when nothing is stored.
+   * `performPinChange(old, new)` from the STORED state (the recovery's path): proves `old` opens it,
+   * moves every store (rows already under `new` count as done), then re-seals the state.
    */
-  openStoredStateWith: (keyB64: string) => Promise<LocalStateOpenResult | 'no-state'>;
+  completeReKey: (oldKeyB64: string, newKeyB64: string, state: Uint8Array) => Promise<void>;
+  /** Moves the sealed stores alone, for an install with no MLS state to carry. */
+  resealStoresOnly: (oldKeyB64: string, newKeyB64: string) => Promise<void>;
   log: (msg: string) => void;
 }
 
 /**
- * The key a PIN unlock must use on a phone whose marker says `migrating`, decided BEFORE anything is
- * opened for the session. Called only after the server accepted the PIN.
+ * Finishes an interrupted re-key at the PIN unlock, BEFORE any session opens a store, and returns
+ * the hardware-held key the session runs on. Called only after the server accepted the PIN, and only
+ * when the marker still says `migrating` once `cle_au_repos_schema` settled it - which proves the
+ * keystore holds the key the marker names (a migrating marker without it is reverted natively).
  *
- * - The keystore holds the key the marker names, and it OPENS the stored state: the MLS state moved
- *   (it moves last, so every store did too). The marker is completed and that key is the session's.
- * - Otherwise the state is still under the PIN-derived key: the session runs on it, and the
- *   migration started after the login resumes the re-key with the same new key.
+ * WHY HERE AND NOT AFTER THE LOGIN: a kill in the store pass leaves rows under two keys, and a
+ * session started on either one reads half of them as damaged. Finishing first means no session
+ * ever runs over a two-key store - the rule an interrupted PIN change already follows.
  *
- * A refusal of the new key is the expected half of a two-key state, not an error: the marker is the
- * fact that the state is under one of exactly these two keys.
+ * - The new key opens the stored state: it moved last, so every store did too - marker completed.
+ * - No stored state: the stores alone move.
+ * - Otherwise the state is still under the PIN-derived key: the re-key runs to the end now, from
+ *   the stored state, exactly as the PIN recovery does.
+ *
+ * @throws {HardwareKeyUnavailableError} when the keystore will not hand the key back now.
+ * @throws whatever the re-key threw; an interruption that moved data first asks for the reload, so
+ *         nothing keeps running on a client opened under the old key.
  */
-export async function settleMigratingStateAtUnlock(
-  deps: SettleMigratingDeps
-): Promise<{ keyB64: string; migrationComplete: boolean }> {
-  const { userId, deviceId, pinDerivedKeyB64, port, log } = deps;
-  const read = await port.read(userId, deviceId);
+export async function finishMigrationAtUnlock(deps: FinishMigrationDeps): Promise<string> {
+  const { userId, pinDerivedKeyB64, port, log } = deps;
+  const read = await port.read(userId);
   if (!('key' in read)) {
-    log(
-      `[AT_REST_KEY] migrating, the new key never reached the keystore (${read.refusal}) - the PIN-derived key`
-    );
-    return { keyB64: pinDerivedKeyB64, migrationComplete: false };
+    log(`[AT_REST_KEY] ERROR: migrating, and the keystore refused the new key (${read.refusal})`);
+    throw new HardwareKeyUnavailableError(read.refusal);
   }
-  const opened = await deps.openStoredStateWith(read.key);
-  if (opened !== 'no-state' && opened.opened) {
-    await port.mark(userId, read.key);
+  const newKeyB64 = read.key;
+  const state = await deps.loadStoredState();
+  if (!state) {
+    log('[AT_REST_KEY] migrating, no stored state - moving the stores alone before the session');
+    await deps.resealStoresOnly(pinDerivedKeyB64, newKeyB64);
+  } else if ((await deps.openStoredStateWith(newKeyB64, state)).opened) {
     log('[AT_REST_KEY] migrating, and the state is already under the new key - marker completed');
-    return { keyB64: read.key, migrationComplete: true };
+  } else {
+    log(
+      '[AT_REST_KEY] migrating, the state is under the PIN-derived key - finishing the re-key now'
+    );
+    try {
+      await deps.completeReKey(pinDerivedKeyB64, newKeyB64, state);
+    } catch (e) {
+      if (e instanceof KeyChangeInterruptedError && e.dataMoved) {
+        log(`[AT_REST_KEY] ERROR: the re-key stopped at the ${e.stage} step - the page restarts`);
+        endIntoKeyRecovery('finishing the move to a hardware-held key was interrupted');
+      } else {
+        log(`[AT_REST_KEY] ERROR: finishing the re-key failed: ${String(e)}`);
+      }
+      throw e;
+    }
   }
-  log(
-    `[AT_REST_KEY] migrating, the state is still under the PIN-derived key (${
-      opened === 'no-state' ? 'no state' : opened.cause
-    }) - the re-key resumes after the login`
-  );
-  return { keyB64: pinDerivedKeyB64, migrationComplete: false };
+  await port.mark(userId, newKeyB64);
+  return newKeyB64;
 }
 
 /** The one migration in flight in this page, so a PIN change can wait for it. */

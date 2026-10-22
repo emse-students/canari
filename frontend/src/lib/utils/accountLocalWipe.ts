@@ -304,6 +304,16 @@ export async function wipeDeletedAccountLocalData(
       const removed = await invoke<number>('delete_user_push_files', { userId });
       console.log(`${tag} native push files: ${removed} file(s) removed`);
     });
+    // THE EXPLICIT RESET OF THE AT-REST KEY, and only once the data it seals is gone: while the
+    // marker names the hardware-held key, the guard refuses the keystore delete below (`at_rest_key.rs`).
+    // A database that survived keeps its marker, so the entry is refused too and the resume retries both.
+    await step('the at-rest key marker', async () => {
+      if (failures.includes('the native message database')) {
+        throw new Error('the native message database survived - its key stays guarded');
+      }
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('cle_au_repos_oublier', { userId });
+    });
     // The device id is read BEFORE the keys below go: it is the other half of the alias.
     await step('the platform keystore entry', async () => {
       const deviceId = localStorage.getItem(ACCOUNT_KEY.deviceId(userId));

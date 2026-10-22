@@ -1,13 +1,14 @@
 import { setKeyRecoveryHandler } from '$lib/db/deviceKeyGate';
-import type {
-  AtRestKeyScheme,
-  HardwareKeyPort,
-  HardwareKeyRead,
+import {
+  HardwareKeyUnavailableError,
+  type AtRestKeyScheme,
+  type HardwareKeyPort,
+  type HardwareKeyRead,
 } from '$lib/crypto/hardwareHeldKey';
 import type { LocalStateOpenResult } from '$lib/mls-client';
 import {
+  finishMigrationAtUnlock,
   migrateToHardwareHeldKey,
-  settleMigratingStateAtUnlock,
   startHardwareKeyMigration,
   whenHardwareKeyMigrationSettled,
 } from './hardwareKeyMigration';
@@ -40,6 +41,9 @@ function fakePort(scheme: AtRestKeyScheme, read: HardwareKeyRead = { key: NEW })
     read: async () => {
       calls.push('read');
       return read;
+    },
+    forget: async () => {
+      calls.push('forget');
     },
   };
   return { port, calls };
@@ -138,45 +142,82 @@ describe('startHardwareKeyMigration', () => {
   });
 });
 
-describe('settleMigratingStateAtUnlock', () => {
+/**
+ * A KILL IN THE STORE PASS LEAVES ROWS UNDER TWO KEYS, and no session may run over that. These hold
+ * that the unlock FINISHES the re-key before handing back a key, whichever step it stopped at.
+ */
+describe('finishMigrationAtUnlock', () => {
   const opened: LocalStateOpenResult = { opened: true };
-  const refused = { opened: false, cause: 'decrypt' } as unknown as LocalStateOpenResult;
+  const refused = { opened: false, cause: 'undecryptable' } as unknown as LocalStateOpenResult;
+  const STATE = new Uint8Array([1, 2, 3]);
 
-  function settle(port: HardwareKeyPort, open: (key: string) => LocalStateOpenResult | 'no-state') {
-    return settleMigratingStateAtUnlock({
+  function finish(
+    port: HardwareKeyPort,
+    calls: string[],
+    opts: {
+      state?: Uint8Array | null;
+      open?: (key: string) => LocalStateOpenResult;
+      reKey?: () => Promise<void>;
+    } = {}
+  ) {
+    return finishMigrationAtUnlock({
       userId: 'u1',
-      deviceId: 'd1',
       pinDerivedKeyB64: OLD,
       port,
-      openStoredStateWith: async (key) => open(key),
+      loadStoredState: async () => (opts.state === undefined ? STATE : opts.state),
+      openStoredStateWith: async (key) => (opts.open ?? (() => refused))(key),
+      completeReKey: async (from, to, state) => {
+        calls.push(`reKey:${from}->${to}:${state.length}`);
+        await opts.reKey?.();
+      },
+      resealStoresOnly: async (from, to) => {
+        calls.push(`stores:${from}->${to}`);
+      },
       log: () => {},
     });
   }
 
-  it('completes the marker when the new key opens the state', async () => {
+  it('only completes the marker when the new key already opens the state', async () => {
     const { port, calls } = fakePort('migrating');
-    expect(await settle(port, (k) => (k === NEW ? opened : refused))).toEqual({
-      keyB64: NEW,
-      migrationComplete: true,
-    });
-    expect(calls).toContain(`mark:${NEW}`);
+    expect(await finish(port, calls, { open: (k) => (k === NEW ? opened : refused) })).toBe(NEW);
+    expect(calls).toEqual(['read', `mark:${NEW}`]);
   });
 
-  it('keeps the PIN-derived key while the state is still under it', async () => {
+  it('finishes the re-key from the stored state before answering, then marks', async () => {
     const { port, calls } = fakePort('migrating');
-    expect(await settle(port, () => refused)).toEqual({ keyB64: OLD, migrationComplete: false });
+    expect(await finish(port, calls)).toBe(NEW);
+    expect(calls).toEqual(['read', `reKey:${OLD}->${NEW}:3`, `mark:${NEW}`]);
+  });
+
+  it('moves the stores alone when no MLS state is stored', async () => {
+    const { port, calls } = fakePort('migrating');
+    expect(await finish(port, calls, { state: null })).toBe(NEW);
+    expect(calls).toEqual(['read', `stores:${OLD}->${NEW}`, `mark:${NEW}`]);
+  });
+
+  it('restarts the page when finishing stops after data moved, and never marks', async () => {
+    const { port, calls } = fakePort('migrating');
+    const reKey = async () => {
+      throw new KeyChangeInterruptedError('stores', true, new Error('disk'));
+    };
+    await expect(finish(port, calls, { reKey })).rejects.toBeInstanceOf(KeyChangeInterruptedError);
+    expect(recoveries).toHaveLength(1);
     expect(calls.some((c) => c.startsWith('mark'))).toBe(false);
   });
 
-  it('keeps the PIN-derived key when nothing is stored', async () => {
-    const { port } = fakePort('migrating');
-    expect(await settle(port, () => 'no-state')).toEqual({ keyB64: OLD, migrationComplete: false });
+  it('throws without a restart when finishing fails before anything moved', async () => {
+    const { port, calls } = fakePort('migrating');
+    const reKey = async () => {
+      throw new KeyChangeInterruptedError('keystore', false, new Error('keystore'));
+    };
+    await expect(finish(port, calls, { reKey })).rejects.toThrow();
+    expect(recoveries).toHaveLength(0);
+    expect(calls.some((c) => c.startsWith('mark'))).toBe(false);
   });
 
-  it('keeps the PIN-derived key when the new key never reached the keystore', async () => {
-    const { port } = fakePort('migrating', { refusal: 'mismatch' });
-    const open = vi.fn(() => opened);
-    expect(await settle(port, open)).toEqual({ keyB64: OLD, migrationComplete: false });
-    expect(open).not.toHaveBeenCalled();
+  it('never falls back to the PIN-derived key when the keystore refuses the new one', async () => {
+    const { port, calls } = fakePort('migrating', { refusal: 'unreadable' });
+    await expect(finish(port, calls)).rejects.toBeInstanceOf(HardwareKeyUnavailableError);
+    expect(calls).toEqual(['read']);
   });
 });

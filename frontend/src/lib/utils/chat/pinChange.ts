@@ -493,3 +493,44 @@ export async function performPinChange(
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });
   log('[DEVICEKEY_CHANGE] Done.');
 }
+
+/**
+ * {@link performPinChange} for an install with NO MLS state to carry: the old key leaves the vault,
+ * then every sealed store moves, under the other tabs' hold and the storage gate - the same steps
+ * in the same order, minus the MLS state. Used when an interrupted move to the hardware-held key is
+ * finished at the unlock and nothing was ever stored (`finishMigrationAtUnlock`); the keystore
+ * already holds the new key there, so it is not asked.
+ *
+ * @throws {KeyChangeInterruptedError} with its stage, as {@link performPinChange} does.
+ */
+export async function moveSealedStoresOnly(
+  userId: string,
+  oldDeviceKeyB64: string,
+  newDeviceKeyB64: string,
+  log: (msg: string) => void
+): Promise<void> {
+  log('[DEVICEKEY_CHANGE] Moving the sealed stores alone (no MLS state stored)...');
+  let stage: KeyChangeInterruptedError['stage'] = 'vault';
+  try {
+    await retireOldDeviceKeyFromVault(userId, oldDeviceKeyB64, log);
+    const storage = await getStorage(userId);
+    await holdOtherRealmsForKeyChange(userId, async () => {
+      stage = 'stores';
+      await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, async (store) => {
+        const report = await resealDeviceKeyStores(store, oldDeviceKeyB64, newDeviceKeyB64, {
+          log,
+        });
+        await dropStoredFeedPages(store, log);
+        return report;
+      });
+    });
+  } catch (e) {
+    if (e instanceof KeyChangeSupersededError) {
+      log('[DEVICEKEY_CHANGE] Another tab changed the device key first - the stores did not move.');
+      throw e;
+    }
+    log(`[DEVICEKEY_CHANGE] ERROR: the store move stopped at the ${stage} step: ${String(e)}`);
+    throw new KeyChangeInterruptedError(stage, true, e);
+  }
+  log('[DEVICEKEY_CHANGE] Sealed stores moved to the new device key.');
+}

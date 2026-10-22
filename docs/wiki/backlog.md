@@ -44,6 +44,12 @@ Owed before it ships:
   fingerprint enrolment does not invalidate it - binding it would, and would cut the locked-phone
   push); accepting that a lost keystore entry loses the local data (history comes back from peers
   and backups); accepting that a v2 backup made before a phone's migration no longer opens on it.
+- **P3 - an older build installed over a migrated phone is not guarded**: its `store_push_context`
+  writes the PIN-derived key into the keystore entry. Closes when `minClientVersion` reaches the
+  first release carrying the at-rest guard (the release this pull request ships in).
+- **Two keys stay on purpose**: #2271's push-cache key is not derived from the at-rest key, because it
+  must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
+  reset). Revisit only if #2271 lands with a design that tolerates a rotation.
 
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 

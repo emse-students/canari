@@ -45,7 +45,16 @@ export interface HardwareKeyPort {
   prepare(userId: string, deviceId: string): Promise<string>;
   /** `migrating` -> `hardware`, for this key only. */
   mark(userId: string, deviceKeyB64: string): Promise<void>;
-  read(userId: string, deviceId: string): Promise<HardwareKeyRead>;
+  /**
+   * The key at the entry the MARKER names (not one rebuilt from today's device id), checked against
+   * the marker's check value.
+   */
+  read(userId: string): Promise<HardwareKeyRead>;
+  /**
+   * The explicit reset: forgets the marker, which is what lets the keystore entry be deleted or
+   * rewritten again. Called only once this account's data on this install is gone.
+   */
+  forget(userId: string): Promise<void>;
 }
 
 /** True on the builds where the at-rest key is hardware-held: the phone apps. */
@@ -58,7 +67,7 @@ async function tauriInvoke<T>(cmd: string, args: Record<string, unknown>): Promi
   return invoke<T>(cmd, args);
 }
 
-/** The port over the four `cle_au_repos_*` commands. */
+/** The port over the five `cle_au_repos_*` commands. */
 export const tauriHardwareKeyPort: HardwareKeyPort = {
   async scheme(userId) {
     return tauriInvoke<AtRestKeyScheme>('cle_au_repos_schema', { userId });
@@ -71,16 +80,19 @@ export const tauriHardwareKeyPort: HardwareKeyPort = {
   async mark(userId, deviceKeyB64) {
     await tauriInvoke<void>('cle_au_repos_marquer', { userId, deviceKeyB64 });
   },
-  async read(userId, deviceId) {
+  async read(userId) {
     const answer = await tauriInvoke<{ status: string; keyB64: string | null }>(
       'cle_au_repos_lire',
-      { userId, deviceId }
+      { userId }
     );
     if (answer.status === 'key' && answer.keyB64) {
       noteHardwareHeldDeviceKey(answer.keyB64);
       return { key: answer.keyB64 };
     }
     return { refusal: asRefusal(answer.status) };
+  },
+  async forget(userId) {
+    await tauriInvoke<void>('cle_au_repos_oublier', { userId });
   },
 };
 
@@ -99,10 +111,9 @@ function asRefusal(status: string): HardwareKeyRefusal {
 export async function readHardwareHeldKey(
   port: HardwareKeyPort,
   userId: string,
-  deviceId: string,
   log: (msg: string) => void
 ): Promise<string> {
-  const read = await port.read(userId, deviceId);
+  const read = await port.read(userId);
   if ('key' in read) {
     log('[AT_REST_KEY] hardware-held key read from the keystore');
     return read.key;

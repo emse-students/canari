@@ -101,3 +101,25 @@ describe.each(ROWS)('$label plugin command contract', (row) => {
     }
   });
 });
+
+/**
+ * THE WEBVIEW CANNOT WRITE OR DELETE A KEYSTORE ENTRY (2026-10-22): on a phone the entry is the only
+ * copy of the hardware-held at-rest key, and every mutation must go through the at-rest guard in the
+ * app's Rust bridge. A grant here would be a path around that guard.
+ */
+describe('keystore mutations stay behind the at-rest guard', () => {
+  const pluginDir = '../../../src-tauri/patches/tauri-plugin-keystore/';
+
+  it('grants the plugin no store and no delete in its default set', () => {
+    const permissions = read(`${pluginDir}permissions/default.toml`)
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('#'))
+      .join('\n');
+    expect(permissions).not.toMatch(/allow-store|allow-delete/);
+  });
+
+  it('grants no store and no delete to the app windows either', () => {
+    const capabilities = read('../../../src-tauri/capabilities/default.json');
+    expect(capabilities).not.toMatch(/keystore:allow-(store|delete)/);
+  });
+});

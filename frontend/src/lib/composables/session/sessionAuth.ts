@@ -18,6 +18,7 @@ import {
   KeyChangeInterruptedError,
   KeyChangeSupersededError,
   LocalStateUnopenableError,
+  moveSealedStoresOnly,
   performPinChange,
   thisTabMayChangeDeviceKey,
   type PinProgressCallback,
@@ -33,7 +34,7 @@ import {
   type AtRestKeyScheme,
 } from '$lib/crypto/hardwareHeldKey';
 import {
-  settleMigratingStateAtUnlock,
+  finishMigrationAtUnlock,
   startHardwareKeyMigration,
   whenHardwareKeyMigrationSettled,
 } from '$lib/utils/chat/hardwareKeyMigration';
@@ -57,6 +58,7 @@ import {
   isKeystoreKeyUnavailable,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
+  type IMlsService,
   type VaultRefusal,
 } from '$lib/mls-client';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
@@ -478,6 +480,18 @@ export async function resetDeviceAsFreshImpl(
     console.warn('[SECURITY] could not clear the local database:', e);
   }
 
+  // THE EXPLICIT RESET, and the only path that frees a hardware-held key's keystore entry: the
+  // marker goes once this account's data is gone, so the next PIN unlock may store a new key there.
+  // Before this, the at-rest guard refuses every write and delete of that entry (`at_rest_key.rs`).
+  if (hardwareHeldKeyApplies()) {
+    try {
+      await tauriHardwareKeyPort.forget(userIdToReset);
+      cb.log('[SECURITY] At-rest key marker forgotten - the keystore entry is free again.');
+    } catch (e) {
+      cb.log(`[SECURITY] ERROR: the at-rest key marker could not be forgotten: ${String(e)}`);
+    }
+  }
+
   // The session's OWN handle. `getStorage` shares one open store per user, so when the wipe targets
   // the signed-in user this IS the handle closed just above and `close()` is idempotent - the call
   // stays because the two are not the same fact: a wipe can target another user's store, and
@@ -889,7 +903,7 @@ export async function loginImpl(
     }
     if (isBiometric && atRestScheme === 'migrating') {
       // Mid-migration the keystore may hold the new key while the state is still under the old one.
-      // Only the PIN path settles which (`settleMigratingStateAtUnlock`), so the keypad is asked for.
+      // Only the PIN path finishes the re-key (`finishMigrationAtUnlock`), so the keypad is asked for.
       cb.log('[AT_REST_KEY] keystore unlock skipped - a re-key is under way, the PIN settles it');
       throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
     }
@@ -1086,12 +1100,7 @@ export async function loginImpl(
           deriveDeviceKey: async (salt) => {
             if (atRestScheme !== 'hardware') return deriveDeviceKeyB64(userIdForPin, pin, salt);
             try {
-              return await readHardwareHeldKey(
-                tauriHardwareKeyPort,
-                userIdForPin,
-                await mlsService.resolveDeviceId(userIdForPin),
-                cb.log
-              );
+              return await readHardwareHeldKey(tauriHardwareKeyPort, userIdForPin, cb.log);
             } catch (e) {
               if (e instanceof HardwareKeyUnavailableError) {
                 throw new LoginFailure(
@@ -1138,23 +1147,17 @@ export async function loginImpl(
       );
       stopIfSignedOut('pin-check');
       if (atRestScheme === 'migrating') {
-        // The PIN is proven: decide which of the re-key's two keys seals the state, before the init.
-        const settled = await settleMigratingStateAtUnlock({
-          userId: userIdForPin,
-          deviceId: await mlsService.resolveDeviceId(userIdForPin),
-          pinDerivedKeyB64: deviceKeyB64,
-          port: tauriHardwareKeyPort,
-          openStoredStateWith: async (keyB64) => {
-            const { loadMlsState: loadStored } = await import('$lib/utils/hex');
-            const stored = await loadStored(userIdForPin);
-            if (!stored) return 'no-state';
-            return mlsService.openLocalStateWithKey(userIdForPin, keyB64, stored);
-          },
-          log: cb.log,
-        });
-        stopIfSignedOut('at-rest-migration-settled');
-        deviceKeyB64 = settled.keyB64;
-        migrationCompleteAtUnlock = settled.migrationComplete;
+        // The PIN is proven: the interrupted re-key is FINISHED here, before any store is opened for
+        // the session, so no session ever runs over rows under two keys (`finishMigrationAtUnlock`).
+        deviceKeyB64 = await finishMigrationAtUnlockForLogin(
+          mlsService,
+          userIdForPin,
+          deviceKeyB64,
+          cb
+        );
+        stopIfSignedOut('at-rest-migration-finished');
+        migrationCompleteAtUnlock = true;
+        noteHardwareHeldDeviceKey(deviceKeyB64);
         ctx.setDeviceKey(deviceKeyB64);
       }
       // Unlocked: any round trip a retry asked meanwhile belongs to a keypad that is gone.
@@ -2271,6 +2274,50 @@ export async function loginImpl(
 }
 
 /**
+ * The PIN login's half of {@link finishMigrationAtUnlock}: wires the stored state, the recovery's
+ * re-key and the stores-only move onto this login's client, and turns each failure into the login
+ * outcome that names it. Runs after the server accepted the PIN and before any store is opened.
+ *
+ * @returns the hardware-held key the session runs on
+ * @throws {LoginFailure} `hardware_key_unavailable` when the keystore will not hand the key back,
+ *   `local_state_unopenable` when the stored state opens under neither key; anything else as thrown
+ */
+async function finishMigrationAtUnlockForLogin(
+  mls: IMlsService,
+  userId: string,
+  pinDerivedKeyB64: string,
+  cb: ChatSessionCallbacks
+): Promise<string> {
+  const { loadMlsState: loadStored } = await import('$lib/utils/hex');
+  try {
+    return await finishMigrationAtUnlock({
+      userId,
+      pinDerivedKeyB64,
+      port: tauriHardwareKeyPort,
+      loadStoredState: async () => (await loadStored(userId)) ?? null,
+      openStoredStateWith: (keyB64, state) => mls.openLocalStateWithKey(userId, keyB64, state),
+      completeReKey: (oldKeyB64, newKeyB64, state) =>
+        performPinChange(
+          { userId, mls, storedMlsState: state, setDeviceKey: () => {}, log: cb.log },
+          oldKeyB64,
+          newKeyB64
+        ),
+      resealStoresOnly: (oldKeyB64, newKeyB64) =>
+        moveSealedStoresOnly(userId, oldKeyB64, newKeyB64, cb.log),
+      log: cb.log,
+    });
+  } catch (e) {
+    if (e instanceof HardwareKeyUnavailableError) {
+      throw new LoginFailure('hardware_key_unavailable', m.auth_hardware_key_unavailable());
+    }
+    if (e instanceof DeviceKeyMismatchError || e instanceof LocalStateUnopenableError) {
+      throw new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
+    }
+    throw e;
+  }
+}
+
+/**
  * The auto-login when this account has no vault slot. ON A HARDWARE-HELD PHONE "STAY SIGNED IN"
  * READS THE KEYSTORE, because the vault never holds that key (`saveDeviceKey`): the same unattended
  * read the biometric cadence and the background push make - the keystore is the factor, as the
@@ -2644,13 +2691,15 @@ export async function recoverPinImpl(
   if (atRestScheme === 'unreadable') throw new LocalizedError(m.auth_hardware_key_unavailable());
   let hardwareKeyB64: string | null = null;
   if (atRestScheme === 'hardware' || atRestScheme === 'migrating') {
-    const deviceId = await ctx.ensureMls().resolveDeviceId(userId);
-    const read = await tauriHardwareKeyPort.read(userId, deviceId);
-    if ('key' in read) hardwareKeyB64 = read.key;
-    else if (atRestScheme === 'hardware') {
+    // `migrating` here is SETTLED (`cle_au_repos_schema`): a marker whose key never reached the
+    // keystore was reverted to `pin-derived` before this read, so a refusal now is never "fall back
+    // to the new PIN's key" - that would aim the re-key at a key the guard refuses to store.
+    const read = await tauriHardwareKeyPort.read(userId);
+    if (!('key' in read)) {
       cb.log(`[PIN_RECOVER] The hardware-held key is unavailable (${read.refusal}).`);
       throw new LocalizedError(m.auth_hardware_key_unavailable());
     }
+    hardwareKeyB64 = read.key;
   }
   if (hardwareKeyB64) {
     const opened = await ctx.ensureMls().openLocalStateWithKey(userId, hardwareKeyB64, state);

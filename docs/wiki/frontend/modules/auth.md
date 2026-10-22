@@ -391,7 +391,7 @@ a browser has no hardware keystore a key can be bound to (`hardwareHeldKeyApplie
 |---|---|---|
 | PIN | the user's head | nothing locally; the server's `pin-check` accepts or refuses it |
 | At-rest key: 32 random bytes from the OS RNG (`at_rest_key.rs`, `generate_data_key`) | the existing keystore entry `mls_device_key_{userId}_{deviceId}` and its background copy ([above](#where-the-key-lives)) | `mls.bin`, messages, Graine seeds, outbox - every row of [the store table](#what-the-device-key-seals-and-what-a-pin-change-does-with-each) |
-| Marker `at_rest_key.json`, beside `mls.bin` | app data dir, written tmp + fsync + rename | nothing: says which scheme seals this install (`pin-derived` by absence, `migrating`, `hardware`), for which account, and a 128-bit HKDF check value of the key |
+| Marker `at_rest_keys/<hex(userId)>.json`, ONE PER ACCOUNT | app data dir, written tmp + fsync + rename | nothing: says which scheme seals this account's data (`pin-derived` by absence, `migrating`, `hardware`), the keystore entry the key was written to, and a 128-bit HKDF check value of the key |
 | Backup recovery code (128 bits) | shown once at export, kept by the user | one `.canari` file ([below](#backups-get-their-own-recovery-secret)) |
 
 **How the PIN gates the key.** The unlock still derives the verifier and asks the server, exactly as
@@ -421,24 +421,59 @@ tab leader runs, once, in the background:
    the MLS state re-sealed LAST.
 3. `cle_au_repos_marquer`: marker `hardware`, only for that user and that check value.
 
-Every kill leaves a state the next unlock finishes: before step 2 reached the keystore the check
-value does not match and a fresh key is generated (nothing was sealed under the lost one); inside
-step 2 the PIN-derived key still opens the MLS state and the migration resumes with the same key;
-between 2 and 3, `settleMigratingStateAtUnlock` finds that the keystore key opens the state and
-completes the marker. An interruption that moved data ends the session into the key recovery, as an
-interrupted PIN change does. A fresh install takes the same path (cheap: nothing is stored yet), so
-there is ONE code path for every install. While the marker says `migrating` a biometric unlock is
-sent to the PIN pad, and a PIN change waits for the migration and refuses
-(`auth_pin_change_key_migration_pending`) rather than racing it.
+**Rows move only after the key was written AND read back** - the invariant every recovery below rests
+on. `cle_au_repos_schema` settles the marker before anyone reads it (`settle_scheme`): a `migrating`
+marker whose keystore entry is empty or holds another key is REVERTED (nothing was sealed under a key
+that never reached the keystore), so a stuck PIN recovery or a restored marker resolves the same way
+every time; a read ERROR answers `unreadable`, never a guess.
 
-**The keystore guard.** Every login's `store_push_context`, and `actualiser_cle_keystore_avec_devicekey`,
-wrote the session key into the keystore. During a migration that session key is still the old one,
-and writing it would strand rows already under the new key. `keystore_write_allowed` refuses a write
-of any key other than the one the marker names once the marker exists; the push context itself is
-still written. The vault never copies a hardware-held key (`saveDeviceKey` returns on a key noted by
-`noteHardwareHeldDeviceKey`): a vault blob sits beside its wrap key in the app's files, and a copy
-there would undo the point. "Stay signed in" on a hardware-held phone is therefore the unattended
-keystore read (`nativeStorageLoginImpl` -> `loginImpl({ unattendedKeyRead: true })`).
+**A kill mid-migration is FINISHED AT THE NEXT PIN UNLOCK, before any store is opened**
+(`finishMigrationAtUnlock`). A kill in the store pass leaves rows under two keys, and a session run
+over that reads half of them as damaged - so no session ever starts on it. Once the PIN is proven:
+the keystore key opens the stored state (it moved last, so everything did) and the marker is
+completed; or no state is stored and the stores alone move (`moveSealedStoresOnly`); or the state is
+still under the PIN-derived key and the re-key runs to the end from the stored state, as the PIN
+recovery does. An interruption that moved data reloads the page, and the next unlock finishes it. A
+fresh install takes the same path (cheap: nothing is stored yet), so there is ONE code path for every
+install. While the marker says `migrating` a biometric unlock is sent to the PIN pad, and a PIN
+change waits for the migration and refuses (`auth_pin_change_key_migration_pending`).
+
+**ONE GUARD FOR THE ENTRY: once a marker names the hardware key, NOTHING deletes or overwrites that
+entry except the explicit reset.** It lives in the Rust bridge, not at the call sites
+(`at_rest_key.rs`: `guard_write`, `guard_delete`; `keystore_bridge.rs`: `store_guarded`,
+`delete_guarded`), and every mutation goes through it:
+
+- `store_push_context` at every login, `actualiser_cle_keystore_avec_devicekey`, and mls-core's
+  `DeviceKeyStore` (its stale-key probe included) - a write of another key is a typed `Refused`; a
+  write of the key already there is SKIPPED (`AlreadyHeld`), so a login rewrites nothing; any write
+  that does happen is read back and compared.
+- The WebView cannot reach the plugin's store or delete at all: the keystore plugin's default
+  permissions grant reads only, and a delete is the app command `supprimer_cle_appareil`, which asks
+  the same guard (`nativePluginCommands.test.ts` pins both).
+- The explicit reset is `cle_au_repos_oublier`, run only once that account's data is gone: the
+  "forgot PIN" reset after its database clear, the account deletion after its native database step
+  (and not when that step failed), the factory wipe by removing the whole marker directory first.
+- Turning biometrics off no longer touches the entry: it used to delete it and re-store it from the
+  session key with every failure swallowed, which on a migrated phone was the only copy of the key.
+- iOS rewrites the background copy IN PLACE (`SecItemUpdate`, an add only when absent) before the
+  `.userPresence` item, which cannot be updated without Face ID; Android `commit()`s and checks the
+  result instead of `apply()`.
+
+Markers are per account and the guard matches an entry by its account prefix, so a second account on
+the same install neither overwrites another's marker nor touches its entry. A marker that cannot be
+read guards its account (fail closed). The vault never copies a hardware-held key (`saveDeviceKey`
+returns on a key noted by `noteHardwareHeldDeviceKey`): a vault blob sits beside its wrap key in the
+app's files, and a copy there would undo the point. "Stay signed in" on a hardware-held phone is
+therefore the unattended keystore read (`nativeStorageLoginImpl` -> `loginImpl({ unattendedKeyRead:
+true })`).
+
+**An OLDER build installed over this one is not guarded**: its `store_push_context` writes the
+PIN-derived key into the entry. It closes when `minClientVersion` reaches the first release carrying
+the guard ([backlog](../../backlog.md)).
+
+**Why the push cache keeps its own key (#2271).** That key must exist before the first push and stay
+stable; the at-rest key does not exist before the first PIN unlock and rotates (the migration, a
+recovery, a reset). Deriving one from the other would tie the push cache to every rotation.
 
 **The notification processes need no change.** The Android `MlsDeviceKeyStore` and the iOS NSE read
 the same alias and the same background copy as before (`AfterFirstUnlockThisDeviceOnly`, no access
@@ -454,8 +489,10 @@ new PIN.
 
 **A lost keystore entry loses the local data.** A keystore wipe, or an iOS restore onto a new phone
 (`ThisDeviceOnly` items do not migrate), leaves rows nothing can open: `hardware_key_unavailable`,
-the reset, and history from peers and backups. The reset deletes the marker with `mls.bin`
-(`remove_mls_state_in`).
+the reset, and history from peers and backups. Markers stay IN the backup on purpose: a restored
+`hardware` marker without its key reads as that typed state (never a silent reset of good data), and
+a restored `migrating` marker without its key is reverted (nothing moved). The reset forgets the
+marker (`cle_au_repos_oublier`) once the data is gone, which is what frees the entry.
 
 #### Backups get their own recovery secret
 
