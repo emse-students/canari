@@ -171,7 +171,7 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 **Small ones that keep costing**
 
-- Never return a `Channel` entity to a client: it carries `masterSecret`. Project fields explicitly. [social-service](services/social-service.md)
+- Never return a `Channel` entity to a client: it carries the roster of a private salon (`allowedUsers`) and every column the contract does not name - `masterSecret`, the HKDF root of every epoch key, was one until migration 041 dropped it. Project fields explicitly. [social-service](services/social-service.md)
 - `/c/<groupId>` and `/chat/<groupId>` are NOT routes; a conversation opens by publishing to `notifNav`. [chat](frontend/modules/chat.md#deep-linking-into-a-channel)
 - **"A refresh ran" and "the list is current" are two different facts** - a loader that conflates them empties the sidebar on one dropped request. Fail loudly in state, never by returning stale truth. [chat](frontend/modules/chat.md)
 
@@ -1878,7 +1878,7 @@ Signing, the bump script, the secrets and every compile-check trick are on [cicd
 - **STORE THE REFERENCE, NEVER THE RESULT OF A DERIVATION SOMETHING ELSE OWNS.** A cotisation tag is derived from the slug, the mode and the DATE; a row that stored the derived string was a snapshot of one instant, could not be resynced because it no longer said what it meant, and bypassed the invariant the deriving call enforces. If a value has a function that computes it, persist that function's INPUTS. [forms](frontend/modules/forms.md), migration `050`
 - **THE FLAG THAT GUARDS AN EFFECT MUST GUARD SAVING THE SETTING THAT CAUSES IT** - otherwise the setting is a side door with the effect's own permission checked at a moment when the actor is no longer the caller. `grantsCotisation` runs at payment time, so it demands `MANAGE_MEMBERS` at CONFIGURATION time. Ask of every stored setting: whose rights does it spend, and when? [forms](frontend/modules/forms.md)
 - **AN OPTION A SCREEN OFFERS AND THE SAVE REFUSES IS A DEFECT, NOT A GUARD WORKING.** Ship the caller's own capability with the choices (`cotisation-options` returns `mayGrant`), so nothing is offered that cannot be saved.
-- **A product entity carries `webhookSecret` and `/products/all` answers every logged-in user** - same lesson as `Channel.masterSecret`. `toSafeProduct` is the one seam, and a guard is a decorator nothing type-checks, so assert the metadata.
+- **A product entity carries `webhookSecret` and `/products/all` answers every logged-in user** - same lesson as the former `Channel.masterSecret` (dropped by migration 041). `toSafeProduct` is the one seam, and a guard is a decorator nothing type-checks, so assert the metadata.
 
 ## Working in the Cercle repo -> `../le-cercle/AGENTS.md`
 
