@@ -46,6 +46,18 @@ const CASES = [
   // rule swallows both: they share a prefix, an id and the word "withdrawn", and they mean opposite
   // things about what the peers hold. Landed in `unexplained` on MUT-19's first green run.
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before it was ever sent', 'benign'],
+  ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before this tab sent it', 'benign'],
+  // A group exit withdrawing its queue (GRP-6): clean only when nothing was on the wire.
+  [
+    'log',
+    '[06:49:10] [OUTBOX] 1 queued entry of 4271a303… withdrawn (leave of the group, before the server step): 1 never sent, 0 already on the wire, 0 row(s) not deletable',
+    'benign',
+  ],
+  [
+    'log',
+    '[06:49:10] [OUTBOX] 1 queued entry of 4271a303… withdrawn (leave of the group, before the server step): 0 never sent, 1 already on the wire, 0 row(s) not deletable',
+    'unexplained',
+  ],
   [
     'log',
     '[11:11:10] [OUTBOX] a721e695… withdrawn while it was already being sent - the peers will have it, so the delete has to travel as an event',

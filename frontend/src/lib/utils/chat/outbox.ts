@@ -366,6 +366,18 @@ export interface OutboxController {
    */
   cancelPending: (messageId: string) => Promise<boolean>;
   /**
+   * Withdraw EVERY queued entry of one conversation, because this device is leaving or deleting it.
+   *
+   * An ALLOWLIST by construction: only rows whose `conversationId` is exactly `conversationId` are
+   * touched, never anything inferred. Once the server has ended the membership no such entry can be
+   * delivered - its POST is answered 403 and it would sit parked until the next sign-in, for a group
+   * this device no longer holds (GRP-6, 2026-10-22: a read watermark queued as the leaver closed the
+   * conversation, refused 54 ms after the leave). So the exit withdraws them BEFORE its server step.
+   *
+   * @returns how many rows of that conversation the queue held.
+   */
+  withdrawConversation: (conversationId: string, why: string) => Promise<number>;
+  /**
    * Whether the durable queue holds an entry for this message id: `true`/`false` from the light read
    * (no payload decode), `null` when the queue could not be read - which is NOT "absent".
    */
@@ -1748,6 +1760,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`);
       return 'gone';
     }
+    // WITHDRAWN WHILE IT WAS ON THE WIRE: its row is already deleted, so no disposition below can
+    // apply - there is nothing left to park, count or retry. Whatever the server answered, the entry
+    // is over. This is the one place an exit's withdrawal meets a send it could not stop (a group
+    // left while one of its frames was in flight), and the answer is not an accusation: the frame
+    // was refused because this device asked to be out, which is the state it is now in.
+    if (cancelled.has(entry.id)) {
+      clearUpload(entry.id);
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… withdrawn while on the wire, and the send failed (${refusalStatus(e) ?? (e as Error)?.name ?? 'unknown'}) - dropped, nothing left to retry`
+      );
+      return 'gone';
+    }
     // ANY OTHER ANSWER BREAKS A RUN OF 5xx, so the count is truly consecutive. A transport failure is
     // not an answer and leaves it as it is.
     if (!(e instanceof SendServerError) && isSendAnswer(e) && (entry.serverErrors ?? 0) > 0) {
@@ -2311,6 +2335,31 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return (await withdraw(messageId)).withdrawn;
     },
 
+    async withdrawConversation(conversationId: string, why: string): Promise<number> {
+      if (!storage) return 0;
+      // ONE READ, shared by every withdrawal below - the same reason the latest-wins supersede reads
+      // once - and the mirror rewritten once for the batch.
+      const snapshot = await readQueue('withdraw a conversation');
+      const ofIt = snapshot.filter((e) => e.conversationId === conversationId);
+      if (ofIt.length === 0) return 0;
+      let neverSent = 0;
+      let onWire = 0;
+      let kept = 0;
+      const gone = new Set<string>();
+      for (const entry of ofIt) {
+        const { withdrawn, rowDeleted } = await withdraw(entry.id, snapshot);
+        if (rowDeleted) gone.add(entry.id);
+        if (!rowDeleted) kept++;
+        else if (withdrawn) neverSent++;
+        else onWire++;
+      }
+      await syncOutboxMirror(snapshot.filter((e) => !gone.has(e.id)));
+      log(
+        `[OUTBOX] ${ofIt.length} queued entr${ofIt.length === 1 ? 'y' : 'ies'} of ${conversationId.slice(0, 8)}… withdrawn (${why}): ${neverSent} never sent, ${onWire} already on the wire, ${kept} row(s) not deletable`
+      );
+      return ofIt.length;
+    },
+
     flush(): Promise<void> {
       return runFlush();
     },
@@ -2503,6 +2552,19 @@ export function isOutboxEntryQueued(messageId: string): Promise<boolean | null> 
 export function cancelOutboxMessage(messageId: string): Promise<boolean> {
   if (!active) return Promise.resolve(false);
   return active.cancelPending(messageId).finally(bumpOutboxQueueVersion);
+}
+
+/**
+ * Withdraw every queued entry of a conversation this device is leaving or deleting, on the active
+ * controller - see {@link OutboxController.withdrawConversation}. Rejects with
+ * {@link OutboxEnqueueError} when no controller is registered: a group exit is only reachable from
+ * a signed-in session, so reaching here without one is a defect to report, never "nothing queued".
+ */
+export function withdrawOutboxConversation(conversationId: string, why: string): Promise<number> {
+  if (!active) {
+    return Promise.reject(new OutboxEnqueueError('no active outbox controller'));
+  }
+  return active.withdrawConversation(conversationId, why).finally(bumpOutboxQueueVersion);
 }
 
 /** Mark loaded messages still queued as `pending` (no-op when none). */

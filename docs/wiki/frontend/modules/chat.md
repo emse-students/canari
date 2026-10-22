@@ -2737,6 +2737,35 @@ function that cannot see the durable row. **A classifier is only installed where
 travelling** - enumerate the frames between the throw and the reader, because one `catch` anywhere
 between them makes the reader unreachable while every test of the reader still passes.
 
+### An exit takes the group's queue with it, before its server step (GRP-6, 2026-10-22)
+
+GRP-6 recorded `[OUTBOX] … REFUSED with 403 … parked, no retry until the next sign-in` on the
+leaver: an entry written at +0 ms, the local state dropped at +26 ms, the refusal at +54 ms. **It was
+not the `memberLeft` notice.** The notice is a direct `mlsService.sendMessage`, which resolves on the
+`POST /api/mls/send` answer (`BaseMlsService.emitFrame` awaits `postApplicationMessage`), so the
+server exit already waited for its DELIVERY. The refused entry was another frame of the same group in
+the durable outbox: dropping the selection ends the open conversation's read debounce, whose cleanup
+hands the owed read watermark to the outbox, and that flush lost the race to the membership's end.
+
+So `exitGroupAndCleanup`, for a leave and a delete alike:
+
+- revokes the group's owed read mark (`forgetDmReadMark`) synchronously, before any await, so the
+  debounce cleanup no longer names the group - the source is revoked, not only its output;
+- withdraws every queued outbox entry of THAT group (`withdrawOutboxConversation`, an allowlist on
+  `conversationId`) after recording the owed exit and BEFORE the server step, and the outbox logs
+  the count, split into never sent / already on the wire / rows it could not delete;
+- an entry already on the wire cannot be withdrawn; if the server then refuses it, the flusher drops
+  it (`withdrawn while on the wire, and the send failed`) instead of parking it as an accusation.
+
+**A notice that fails is LOST, not sent later, and the exit goes on.** It cannot be queued - a frame
+needs the MLS state and the membership the exit removes - and holding the exit for it would keep a
+user in a group they asked to leave for as long as the link is down. The failure is logged
+(`[GROUP] memberLeft notice … NOT delivered`, `[DELETE] groupDeleted notice … NOT delivered`), where
+it used to be a bare `catch`. What the others lose is the visible line only: the roster changes with
+the server half (replayed by the owed exit when it failed too), and `removeStrayLeaves` collects the
+leaver's leaf. An eviction is NOT this seam: the evicted device did not ask to be out, a re-add can
+reverse it, and its queued entries stay for that case.
+
 ## The render window is a pointer into an array the component does not own (WP-EMPTYVIEW-1)
 
 `ChatArea` never renders a whole conversation. It renders a WINDOW - `messageGroups.slice(start,

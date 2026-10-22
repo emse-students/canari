@@ -84,9 +84,11 @@ import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import {
   flushSalonReadMarks,
+  forgetDmReadMark,
   owedSalonReadMarks,
   salonMarksAfterLoad,
 } from '$lib/utils/chat/salonReadMarkQueue';
+import { withdrawOutboxConversation } from '$lib/utils/chat/outbox';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -1894,6 +1896,13 @@ export function useConversations() {
     ctx: ConversationContext
   ) {
     const mlsService = ctx.ensureMls();
+    // THE OWED READ MARK GOES FIRST, AND SYNCHRONOUSLY. Dropping the selection below ends the open
+    // conversation's read debounce, whose cleanup hands every OWED mark to the outbox - and a mark of
+    // this group, queued there, is a frame the server refuses with 403 once the membership ends
+    // (GRP-6, 2026-10-22). Revoked here, before any await, the ledger no longer names the group when
+    // that cleanup runs; the withdrawal below takes what was already queued.
+    forgetDmReadMark(ctx.userId, convo.id);
+    if (contactKey !== convo.id) forgetDmReadMark(ctx.userId, contactKey);
     await retireConversation({
       conversations,
       key: contactKey,
@@ -1913,6 +1922,20 @@ export function useConversations() {
     // standing, the MLS state destroyed, and `discoverMissingGroups` handing the group back.
     // See `pendingGroupExits` for the whole reasoning; the drain replays this on reconnect.
     await recordPendingGroupExit(ctx.storage, convo.id, exitKind, ctx.log);
+    // NOTHING OF THIS GROUP MAY STILL BE QUEUED WHEN THE SERVER ENDS THE MEMBERSHIP. Every entry left
+    // behind is refused 403 by then and parked until the next sign-in, for a group this device no
+    // longer holds. Withdrawn BEFORE the server step, so none can lose that race; the leave's own
+    // `memberLeft` notice is not one of them - it is a direct send whose acceptance
+    // `leaveGroupAndBroadcast` awaits. An allowlist: only this group's rows. The count is logged by the
+    // outbox itself, which alone knows how many of them were already on the wire.
+    await withdrawOutboxConversation(
+      convo.id,
+      `${exitKind} of the group, before the server step`
+    ).catch((e: unknown) =>
+      ctx.log(
+        `[${label}] outbox entries of ${convo.id.slice(0, 8)}… NOT withdrawn - any left will be refused once the membership ends: ${String(e)}`
+      )
+    );
     try {
       const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
       if (onServer !== false) {
@@ -2108,6 +2131,7 @@ export function useConversations() {
           groupId: convo.id,
           userId: ctx.userId,
           deviceKeyB64: ctx.deviceKeyB64,
+          log: ctx.log,
         }),
       'DELETE',
       'delete',
@@ -2152,6 +2176,7 @@ export function useConversations() {
           groupId: convo.id,
           userId: ctx.userId,
           deviceKeyB64: ctx.deviceKeyB64,
+          log: ctx.log,
         }),
       'LEAVE',
       'leave',

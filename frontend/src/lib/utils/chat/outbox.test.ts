@@ -1657,6 +1657,87 @@ describe('outbox cancellation', () => {
 });
 
 /**
+ * A GROUP THIS DEVICE LEAVES TAKES ITS QUEUED ENTRIES WITH IT (GRP-6, 2026-10-22).
+ *
+ * The leaver's read watermark was queued as the conversation closed, flushed 54 ms after the leave
+ * ended the membership, refused 403 and parked "until the next sign-in" - for a group the device no
+ * longer holds. The exit withdraws the group's rows before its server step; these cases pin the
+ * allowlist (that group, nothing else) and the one send it cannot stop (already on the wire).
+ */
+describe('outbox - withdrawing a conversation on a group exit', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(() => () => {});
+  });
+
+  it('withdraws every entry of that group and no other, and names the count', async () => {
+    const storage = makeStorage([
+      textEntry('m1', 'left', 100),
+      textEntry('m2', 'kept', 101),
+      textEntry('m3', 'left', 102),
+    ]);
+    const mlsService = makeMls();
+    const lines: string[] = [];
+    connectivity.notifyServerUnreachable();
+    const outbox = createOutbox(makeDeps({ mlsService, storage, log: (m) => lines.push(m) }));
+
+    expect(await outbox.withdrawConversation('left', 'leave of the group')).toBe(2);
+    expect([...storage._map.keys()]).toEqual(['m2']);
+    expect(lines).toContainEqual(
+      expect.stringMatching(
+        /2 queued entries of left… withdrawn \(leave of the group\): 2 never sent/
+      )
+    );
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendMessage.mock.calls[0][2]).toBe('m2');
+  });
+
+  it('answers 0 and says nothing when the group has nothing queued', async () => {
+    const storage = makeStorage([textEntry('m2', 'kept', 101)]);
+    const lines: string[] = [];
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage, log: (m) => lines.push(m) })
+    );
+
+    expect(await outbox.withdrawConversation('left', 'leave of the group')).toBe(0);
+    expect(storage._map.has('m2')).toBe(true);
+    expect(lines.some((l) => l.includes('withdrawn ('))).toBe(false);
+  });
+
+  it('drops an entry withdrawn on the wire that the server then refuses, instead of parking it', async () => {
+    let refuse!: () => void;
+    const onTheWire = new Promise<void>((_, reject) => {
+      refuse = () => reject(new SendForbiddenError('left'));
+    });
+    const storage = makeStorage([textEntry('m1', 'left', 100)]);
+    const mlsService = makeMls({ send: () => onTheWire });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const lines: string[] = [];
+    const outbox = createOutbox(makeDeps({ mlsService, storage, log: (m) => lines.push(m) }));
+
+    const flushing = outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+
+    // The leave withdraws it mid-send, then the server ends the membership and refuses the frame.
+    await outbox.withdrawConversation('left', 'leave of the group');
+    refuse();
+    await flushing;
+
+    expect(storage._map.size).toBe(0);
+    // Not the accusing park: the refusal is the state this device asked for.
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('REFUSED with 403'))).toBe(false);
+    expect(lines).toContainEqual(expect.stringContaining('withdrawn while on the wire'));
+    errorSpy.mockRestore();
+  });
+});
+
+/**
  * R-D8 - THE TRIGGER TABLE, PINNED, BECAUSE THE COUNT THAT RAISED IT IS ACCURATE.
  *
  * Eight sites raise a flush and there is ONE flusher. That was flagged as a duplicate path and
