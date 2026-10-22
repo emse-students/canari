@@ -49,18 +49,19 @@ device is denied the span between the two. Nothing leaks to anyone: the member l
 Production held 4 such late-interval members on 2026-10-22. Fix direction: keep the arrival as a fact
 outside the device rows (on the membership interval, for instance) so a purge cannot move it.
 
-## P2 - The undated margin also withholds a joiner's FIRST HOUR, after their arrival (review of #2251, 2026-10-22)
+## Decided by the user 2026-10-22: the undated margin stays symmetric, so a joiner may lose undated messages from their first hour (review of #2251)
 
 `withholdReason` places a copy with no `serverTimestamp` against every window widened by
 `UNDATED_SKEW_MARGIN_MS` (one hour) on BOTH sides. A joiner's before-arrival span `[0, arrival)` thus
 also withholds their undated history from the hour AFTER they arrived. A device that already holds a
 message is never filtered, so the loss is that member's NEXT device restoring history, unless a member
-holding the message dated serves it. **Is it intended? The symmetry is, and the cost is not.** Widening
-only the pre-arrival side would leak a message received before the arrival whose sender's clock ran
-ahead and stamped it after the edge. That is exactly the case the margin exists for. So the trade is
-between losing a joiner's first undated hour and showing them a pre-arrival message stamped late.
-**A decision is owed, not a fix.** Both directions are open: keep the symmetric margin, or narrow the
-post-arrival side to a measured skew bound. **The undated count cannot be read on the server.**
+holding the message dated serves it. Widening only the pre-arrival side would leak a message
+received before the arrival whose sender's clock ran ahead and stamped it after the edge. That is
+exactly the case the margin exists for. **Decided by the user 2026-10-22: symmetric.** The
+post-arrival side is not narrowed. The user's reason: a message received before arrival must not
+leak from a fast clock, and the cost is accepted, a few undated messages just after arrival possibly
+dropped. Nothing is owed. Do not reopen without a new measurement of that cost.
+**The undated count cannot be read on the server.**
 Undated copies live in client stores, and bundles reach the server as ciphertext. The only reading
 is the client's own `[HISTORY_ENTITLEMENT] ... N undated within 60 min` line, on a device that
 receives a filtered push. The creator's case of the same margin is fixed (#2251).
