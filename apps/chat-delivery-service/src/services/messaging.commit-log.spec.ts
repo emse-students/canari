@@ -34,6 +34,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   const groupUpdate = jest.fn().mockResolvedValue({ affected: 1 });
   // The group row read under lock before a carried Welcome is written: live unless a test says not.
   const txGroupFind = jest.fn();
+  const txSeatRepo = { findOne: jest.fn() };
   const txQueuedRepo = {
     create: jest.fn((row: Record<string, unknown>) => ({ ...row })),
     save: jest.fn(async (row: Record<string, unknown>) => ({ ...row, id: 'queued-welcome-1' })),
@@ -60,6 +61,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         if (entity === Group) return { update: groupUpdate, find: txGroupFind };
         // A Welcome carried by the commit is written in the same callback as the advance.
         if (entity === QueuedMessage) return txQueuedRepo;
+        // The carried Welcome's target seat, re-read under a lock in the advance's transaction.
+        if (entity === GroupMember) return txSeatRepo;
         // THE COMMIT-LOG ROW IS WRITTEN INSIDE THIS TRANSACTION NOW, not best-effort after it: the
         // epoch advance and the commit that lets everyone else replay it land together or neither
         // lands. Routing it here is what lets a test see the two writes in one callback.
@@ -169,6 +172,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     });
     revokedDeviceRepo.findOne.mockResolvedValue(null);
     txGroupFind.mockResolvedValue([{ id: 'group-1', deletedAt: null }]);
+    txSeatRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'user-2' });
     txQueuedRepo.save.mockImplementation(async (row: Record<string, unknown>) => ({
       ...row,
       id: 'queued-welcome-1',
@@ -1205,6 +1209,51 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         txGroupFind.mockResolvedValueOnce([{ id: 'group-1', deletedAt: new Date(0) }]);
 
         await expect(withWelcome()).rejects.toBeInstanceOf(GoneException);
+        expect(txQueuedRepo.save).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      /**
+       * A REMOVAL RACING THE STORE serialises with it on the target's roster seat: the advance's
+       * transaction re-reads it under a share lock, after the group row and before anything is
+       * written. A removal that committed first leaves no seat, and the commit is refused whole.
+       */
+      it("re-reads the target's seat under a lock, after the group and before any write", async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        fanOut();
+
+        await expect(withWelcome()).resolves.toEqual({ accepted: true, newEpoch: 6 });
+        expect(txSeatRepo.findOne).toHaveBeenCalledWith({
+          where: { groupId: 'group-1', userId: 'user-2' },
+          lock: { mode: 'pessimistic_read' },
+        });
+        expect(txGroupFind.mock.invocationCallOrder[0]).toBeLessThan(
+          txSeatRepo.findOne.mock.invocationCallOrder[0]
+        );
+        expect(txSeatRepo.findOne.mock.invocationCallOrder[0]).toBeLessThan(
+          groupUpdate.mock.invocationCallOrder[0]
+        );
+      });
+
+      it('refuses the whole commit when the seat is gone by the time the transaction reads it', async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        const sent = fanOut();
+        txSeatRepo.findOne.mockResolvedValue(null);
+
+        await expect(withWelcome()).resolves.toEqual({
+          accepted: false,
+          currentEpoch: 5,
+          reason: 'welcome_target_not_member',
+        });
+        expect(groupUpdate).not.toHaveBeenCalled();
         expect(txQueuedRepo.save).not.toHaveBeenCalled();
         expect(sent).not.toHaveBeenCalled();
       });

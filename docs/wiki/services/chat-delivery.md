@@ -714,7 +714,21 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   deleted, revoked or collected device (`purgeDeviceFootprint`, whole queue), and the three device
   routes `DELETE device-memberships/...` and `force_leave`. Deliberately NOT: a kick back to
   `pending` and the cron's purge of a stale pending seat, where the person stays on the roster and a
-  queued Welcome is the Add the device is owed.
+  queued Welcome is the Add the device is owed. The helper refuses an empty or missing `userId`, and
+  an empty `deviceId` or `groupId` when the scope names one, because a criterion left out of a delete
+  widens it to every row.
+- **A removal and a Welcome store serialise on the target's roster row.** `addGroupMember` and
+  `removeGroupMember` write `dm_group_members` first, then the membership interval, then the device
+  rows and (on a removal) the queued Welcomes. Two transactions that take the same rows in the same
+  order wait for each other instead of deadlocking (`members.controller.lock-order.spec.ts` reads
+  that order off the SQL the real TypeORM builder generates, via `testing/recordingDataSource.ts`;
+  it cannot run two live sessions, so it proves the order and not the wait). Both Welcome stores -
+  `validateCommit`'s transaction and `sendWelcome`'s `enqueueForLiveGroup` - re-read the target's
+  `dm_group_members` row `FOR SHARE` after the group row and before writing (`lockWelcomeSeat`).
+  If the removal committed first, the row is gone and the store is refused `welcome_target_not_member`
+  with nothing written. If the store got there first, the removal waits on that lock, then deletes
+  the Welcome it just stored. A key-distribution group has no roster row on this side (social-service
+  holds its roster), so its target is checked by the entitlement read instead.
 - **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
   to broadcast it a second time.
 - **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a
