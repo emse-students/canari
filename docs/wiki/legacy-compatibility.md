@@ -89,6 +89,7 @@ REST: those rows need a count, then a migration.
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
 | Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
+| Plaintext native cache reader (`native_cache::open_file`/`open_line`, the `Plaintext` arm, and the one-pass migration) | floor >= the release carrying the at-rest seal | NO (unreleased) | `graine_seeds.json`, `fcm_message_cache*.ndjson` on devices not yet updated | 2 match arms + 3 migration functions | waits for the floor ([diary](#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal)) |
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
@@ -186,6 +187,23 @@ the push's branch is a FALLBACK and accuses: one `console.error` per session. Th
 per bundle. Every other failure of the read still sends and ingests nothing.
 **Removal condition:** every estate's chat-delivery answers `withheld`; then both branches go and the
 error is an ordinary refusal. A server version, not a client floor.
+
+### No date yet - a plaintext native cache, written by a build older than the at-rest seal
+
+**Sites:** `open_file` and `open_line` in `frontend/src-tauri/src/native_cache.rs` (the `Plaintext`
+arm), `migrate_legacy_files` and `seal_legacy_seed_mirror` there, and `remove_legacy_channel_keys`.
+**Shim (2026-10-22):** the seed mirror (`graine_seeds.json`) and the push cache
+(`fcm_message_cache*.ndjson`) are sealed at rest since the release carrying this change
+([mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
+A file or line with no seal marker is what an older build wrote, and is read as such. The mirror is
+sealed on its first pass, and the legacy `channel_keys.json` is deleted. A plaintext cache line is
+taken once and never written back. **What keeps writing plaintext is an OLDER BUILD still
+installed:** its push service, or on iOS its notification extension writing into the App Group
+until the app updates.
+**Removal condition:** `minClientVersion` at or above the release carrying this change, on both
+estates, with both stores serving it. No floor client writes plaintext then, and every install
+that ran the new build once has had its files sealed. After that the `Plaintext` arms become a
+refusal (`SealError`), and the three migration functions go. A client floor, not a server version.
 
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 

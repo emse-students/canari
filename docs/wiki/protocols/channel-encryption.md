@@ -1707,6 +1707,53 @@ finds the same epoch returns before the roster read and writes no line; a pass a
 asks again. The measured case: a phone joining while the laptop holding the seeds is offline, then
 the laptop coming online and joining - which is itself the commit that moves the epoch.
 
+### An answer carries only the seeds of the salons its key group may read (2026-10-22)
+
+**Seeds are STORED per community, whichever key group brought them** (`IMlsService.DistributionFrame`),
+so a device's store does not say on its own which roster a seed was sealed to. Both answer paths -
+the HISTORY bundle (`gatherCommunityHistory`) and a SESSIONS repair (`gatherNamedSessions`) - read
+that store, and an answer goes back on the key group the request ARRIVED on. So both keep only
+the sessions whose salon rides that group (`seedOutsideScope` in `frameHandler.ts`):
+
+- on the community's group, the seeds of PUBLIC salons only;
+- on a private salon's own group, the seeds of that salon only.
+
+Which group a salon rides is `scopeForChannel`, learned from the community listing
+(`registerChannelWorkspace`) - the same fact the seal uses. A salon the answerer has NOT listed is
+withheld: its roster is not known, and guessing public is the expensive half of the asymmetry. A
+withheld seed is absent from both lists of the answer, for the reason a `joined` refusal is (every
+honest member filters the same way, so `missing` would walk the roster), and a HISTORY answer left
+with nothing to send stays silent rather than claiming "I hold nothing" (section 24).
+
+**The receiver checks the same fact, for a NEW seed** (a held session is judged as before):
+
+- another salon's seed on a private salon's own group is refused, at error level - no honest path
+  sends it;
+- a seed of a salon registered PRIVATE, on the community's group, is not stored, at warn level and
+  accusing nobody: a salon made private after it was public leaves, in the community group's log,
+  the seeds minted while it was public;
+- a seed of a salon the community's listing did NOT name, once that listing has answered
+  (`markCommunityListed`), is held in memory, unstored (`awaitSalonListing`). The listing names
+  every public salon to every member and a private one only to its members and administrators, so
+  such a salon is private and closed to this viewer - or public and created since the listing, its
+  seed having beaten the channel-created event. Its registration decides: public, the seed is
+  admitted and the salon re-read; private, or never, it is dropped;
+- before the community's listing has answered, a seed of an unknown salon is kept: a public
+  salon's seeds arrive with the key group, ahead of the listing.
+
+Pinned by `frameHandler.test.ts`, "the salon scope of an answer".
+
+**The native mirror cannot make that check** - it knows neither which salons are private nor which
+key group a frame came on. So a bundle's seeds are marked `relayed` by `proto_fields::graine_seeds`,
+and `store_graine_seeds_json` mirrors a relayed seed only for a salon the mirror already holds a
+session of; any other is left to the app, which reads the same answer from its durable queue. That
+check opens the SEALED mirror with the cache key, through the one reader `read_graine_mirror`: a
+plain-text read of it failed on every sealed file, so no relayed seed was mirrored at all
+(`a_relayed_seed_is_mirrored_only_for_a_salon_the_device_already_reads`). A sender's own distributed
+seed is mirrored as before. Bundles reach the native path only on Android
+(`handleMlsFrame`, a key-group push with its ciphertext inline); the iOS extension opens only the
+`seedFrame` a salon push carries, which is a single seed.
+
 ### Found while writing this: a discriminator dropped in transit
 
 `GroupMeta.distributionWorkspaceId` has been documented since WP-22 as "the discriminator a
