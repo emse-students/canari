@@ -158,7 +158,7 @@ Depuis la fiche de votre association (section Documents) :
 
 ## 8. Boutique et paiements en ligne (Lydia)
 
-Les paiements en ligne de Canari passent par **Lydia** (la page de paiement s'appelle
+Lorsque les paiements en ligne sont **actives** sur la plateforme, ils passent par **Lydia** (la page de paiement s'appelle
 "Paiement Canari" cote acheteur). Chaque association relie **son propre compte Lydia Pro** : l'argent
 arrive sur ce compte, jamais sur celui de Canari.
 
@@ -180,9 +180,11 @@ Dans l'onglet **Paiements** (droit *Gerer le compte bancaire*) :
    Canari ne controle pas la cle a l'enregistrement : une cle erronee ne se voit qu'a la premiere
    confirmation refusee.
 
-Sans cette cle, les confirmations envoyees par Lydia ne peuvent pas etre verifiees : un paiement
-n'est alors confirme que lorsque la personne qui paie revient dans l'application. Avec la cle,
-chaque paiement est confirme meme si elle ne revient pas.
+Cette cle permet a Canari de verifier les notifications envoyees par Lydia. Sans elle, ces
+notifications ne peuvent pas etre verifiees : le paiement est alors suivi surtout lorsque la
+personne qui paie revient dans l'application. Canari ne promet pas de confirmation automatique de
+chaque paiement : en cas de doute sur un paiement, verifiez son statut dans l'onglet **Achats**
+et dans le tableau de bord Lydia.
 
 Le bouton **"Ouvrir le tableau de bord Lydia"** ouvre l'espace Lydia de l'association ;
 **"Retirer Lydia"** detache le compte de Canari (le compte Lydia lui-meme n'est pas supprime, mais il
