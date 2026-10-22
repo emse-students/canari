@@ -2200,6 +2200,8 @@ export abstract class BaseMlsService implements IMlsService {
                     : undefined,
                 queuedMessageId: msgId,
                 queuedCreatedAt,
+                // The row's column (migration 033): the server routed it to this device alone.
+                addressed: msg.addressed === true,
               },
               'pull'
             );
@@ -3077,6 +3079,10 @@ export abstract class BaseMlsService implements IMlsService {
 
   async getGroupExclusions(groupId: string, forUserId?: string): Promise<GroupExclusions> {
     return this.delivery.getGroupExclusions(groupId, forUserId);
+  }
+
+  async getAddressedAnswersSupported(groupId: string, forUserId?: string): Promise<boolean> {
+    return this.delivery.getAddressedAnswersSupported(groupId, forUserId);
   }
 
   async getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {

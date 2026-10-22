@@ -172,6 +172,31 @@ per bundle. Every other failure of the read still sends and ingests nothing.
 **Removal condition:** every estate's chat-delivery answers `withheld`; then both branches go and the
 error is an ordinary refusal. A server version, not a client floor.
 
+### No date yet - the exclusions route answered without `addressedAnswers`, by a server older than step A
+
+**Site:** `readerHistorySelection` in `frontend/src/lib/utils/chat/historyEntitlement.ts`, on
+`addressedAnswers !== true` and on nothing else
+([history-answer-addressing](protocols/history-answer-addressing.md), rule 2).
+**Shim (2026-10-22):** a server that predates step A refuses an addressed conversation frame, so
+every history answer - the push, the diff, the scrollback - is sent as the broadcast it was before,
+filtered on the union of gaps (plus the invitee's span on a push).
+**What it costs:** against such a server the answer is a broadcast, filtered on the union of gaps
+and, on the receiving side, on that receiver's own windows. It is a FALLBACK and accuses: one
+`console.error` per session.
+**Removal condition:** every estate's chat-delivery answers `addressedAnswers: true`; then the branch
+and `entitledHistorySelection` go. A server version, not a client floor.
+
+### No date yet - history answers and asks from clients older than step A
+
+**Sites:** none to delete on the new client: an older client still asks without a `requestId` and
+answers by broadcast. A new answerer sends nothing addressed to an ask with no id
+(`sendBundleChunks`), and a new receiver drops from a broadcast bundle what falls in its own windows
+(`dropOwnExcludedMessages`).
+**What it costs:** a product choice: an older client is answered only by older peers, until
+`minClientVersion` carries step A.
+**Removal condition:** `minClientVersion` is a release carrying step A; then the broadcast branch of
+the `history_bundle` receiver and the no-id refusal line can go.
+
 ### No date yet - a plaintext native cache, written by a build older than the at-rest seal
 
 **Sites:** `open_file` and `open_line` in `frontend/src-tauri/src/native_cache.rs` (the `Plaintext`

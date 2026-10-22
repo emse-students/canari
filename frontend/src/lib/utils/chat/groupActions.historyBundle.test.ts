@@ -144,7 +144,7 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
         GROUP,
         allIds(msgs),
         { storage: storageWith(msgs), deviceKeyB64: 'k', mlsService, log: vi.fn() },
-        { to: REQUESTER, since }
+        { to: REQUESTER, since, requestId: 'req-0001' }
       ),
     };
   }

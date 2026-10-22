@@ -24,6 +24,7 @@ import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import type { OwedWelcome, PendingSubmissionRead } from '$lib/mls-client/commitSubmission';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -329,11 +330,12 @@ export class TauriMlsService extends BaseMlsService {
 
     // Use the same regex as WebMlsService to avoid http:// → wss:// mismatch.
     const wsBase = this.baseUrl.replace(/^https?:/, (m) => (m === 'https:' ? 'wss:' : 'ws:'));
-    const tokenParam = resolvedToken ? `&token=${encodeURIComponent(resolvedToken)}` : '';
-    const wsUrl = `${wsBase}/api/ws?device_id=${encodeURIComponent(this.deviceId)}${tokenParam}`;
-    console.log(
-      `[WS] Opening connection → ${wsBase}/api/ws?device_id=${this.deviceId}${resolvedToken ? '&token=***' : ' (no token)'}`
+    const { url: wsUrl, redacted } = gatewaySocketUrl(
+      wsBase,
+      this.deviceId,
+      resolvedToken || undefined
     );
+    console.log(`[WS] Opening connection → ${redacted}`);
 
     this.ws = await connectNativeSocket(NativeWebSocket.connect(wsUrl), NATIVE_CONNECT_TIMEOUT_MS);
     console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
@@ -484,6 +486,8 @@ export class TauriMlsService extends BaseMlsService {
             ratchetTreeBytes,
             queuedMessageId: (parsed.queuedMessageId as string) || undefined,
             queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
+            // Forwarded by the gateway since step A (history-answer-addressing, rule 4).
+            addressed: parsed.addressed === true,
           },
           'live'
         );
