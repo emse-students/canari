@@ -166,12 +166,6 @@ Making the answer unreadable to everyone but the asker is option B below, and it
    addressed frame only to the local sessions that declared the capability, and logs every one it
    withholds at **error** (`[PubSub] ADDRESSED frame NOT delivered`).
 
-   **What is left is one window on code that cannot filter, and it ends with the deploy**: a gateway
-   process that predates all of this registers a session in its own memory before it writes that
-   session's presence, so a frame published in that instant reaches the session through it. It is an
-   honest history answer to that device; the only exposure is a malicious sender winning that
-   instant against an older build while an older gateway process still runs.
-
    The answerer then does not answer that device (`[HISTORY_BUNDLE] ... cannot be addressed`), and
    sends no broadcast in its place. The older device is served by older peers exactly as before.
 
