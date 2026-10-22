@@ -332,9 +332,38 @@ describe('the inviter push withholds the span before the INVITEE arrived', () =>
     expect(log).toHaveBeenCalledWith(expect.stringContaining('does not count user-x'));
   });
 
-  it('a server that predates `withheld` gets the invitee nothing, and one line says why', async () => {
+  it('a server that predates `withheld` keeps the push as it was - the union - and accuses once per session', async () => {
     const mlsService = lateJoinerGroup();
+    vi.mocked(mlsService.getGroupExclusions).mockResolvedValue(
+      new Map([[BOB, [{ from: T_OUT, until: T_BACK }]]])
+    );
     vi.mocked(mlsService.getGroupWithheld).mockRejectedValue(new WithheldUnsupportedError(GROUP));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const push = (to: string) =>
+      sendFullHistoryBundle(GROUP, {
+        storage: storageWith(STORE),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+        to,
+      });
+
+    await push(ALICE_NEW_DEVICE);
+    await push(CAROL_DEVICE);
+
+    // Exactly what the union alone keeps, for a new device and for a newcomer alike.
+    expect(sentIds(mlsService)).toEqual([...EXPECTED_KEPT, ...EXPECTED_KEPT]);
+    const accusations = error.mock.calls.filter(([l]) =>
+      String(l).includes('predates the withheld')
+    );
+    // Two pushes, one line: the first accusation in this module's session.
+    expect(accusations).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  it('an unreadable withheld set carries no message to the invitee', async () => {
+    const mlsService = lateJoinerGroup();
+    vi.mocked(mlsService.getGroupWithheld).mockRejectedValue(new Error('503'));
     const log = vi.fn();
 
     await sendFullHistoryBundle(GROUP, {
@@ -346,23 +375,9 @@ describe('the inviter push withholds the span before the INVITEE arrived', () =>
     });
 
     expect(sentIds(mlsService)).toEqual([]);
+    // One line for the failed read, not one per field.
     const lines = log.mock.calls.map(([l]) => String(l)).filter((l) => l.includes('Cannot read'));
     expect(lines).toHaveLength(1);
-  });
-
-  it('an unreadable withheld set carries no message to the invitee', async () => {
-    const mlsService = lateJoinerGroup();
-    vi.mocked(mlsService.getGroupWithheld).mockRejectedValue(new Error('503'));
-
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith(STORE),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: CAROL_DEVICE,
-    });
-
-    expect(sentIds(mlsService)).toEqual([]);
   });
 });
 

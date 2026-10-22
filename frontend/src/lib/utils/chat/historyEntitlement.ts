@@ -104,6 +104,12 @@ type WithheldDeps = {
   log: (msg: string) => void;
 };
 
+/** What the push's withheld read answers when the server predates the field (see below). */
+const SERVER_PREDATES_WITHHELD = Symbol('server-predates-withheld');
+
+/** Whether this session has already accused a server that predates `withheld`. */
+let warnedServerPredatesWithheld = false;
+
 /** Logs, once, that the windows of `groupId` could not be established and what that costs. */
 function cannotRead(groupId: string, log: (msg: string) => void, consequence: string, why: string) {
   log(
@@ -155,13 +161,34 @@ export async function entitledHistorySelection<M extends PlaceableMessage>(
   // and one line when it fails.
   let exclusions: GroupExclusions;
   let inviteeWindows: readonly ExclusionWindow[] = [];
+  let unionOnly = false;
   try {
     const [union, withheld] = await Promise.all([
       deps.mlsService.getGroupExclusions(groupId, invitee),
-      invitee === undefined ? null : deps.mlsService.getGroupWithheld(groupId, invitee),
+      invitee === undefined
+        ? null
+        : deps.mlsService
+            .getGroupWithheld(groupId, invitee)
+            .catch((e: unknown): typeof SERVER_PREDATES_WITHHELD => {
+              if (e instanceof WithheldUnsupportedError) return SERVER_PREDATES_WITHHELD;
+              throw e;
+            }),
     ]);
     exclusions = union;
-    if (invitee !== undefined && withheld !== null) {
+    if (withheld === SERVER_PREDATES_WITHHELD) {
+      // A SERVER THAT PREDATES `withheld` - and ONLY that: every other failure above sends nothing.
+      // The push then does exactly what it did before the field existed, the union of gaps, so a
+      // continuous member's new device and a 1:1 keep their restore while a store build runs ahead
+      // of production. A fallback is a signal, never a path: it accuses, once per session, and is
+      // recorded in docs/wiki/legacy-compatibility.md until every chat-delivery serves the field.
+      unionOnly = true;
+      if (!warnedServerPredatesWithheld) {
+        warnedServerPredatesWithheld = true;
+        console.error(
+          `[HISTORY_ENTITLEMENT] the delivery service predates the withheld windows - history pushes filter on the union of gaps only, and a newcomer is handed what preceded their arrival`
+        );
+      }
+    } else if (invitee !== undefined && withheld !== null) {
       const own = personalWindows(groupId, withheld, invitee, deps.log, 'sending no message');
       if (own === null) return null;
       inviteeWindows = own;
@@ -184,7 +211,7 @@ export async function entitledHistorySelection<M extends PlaceableMessage>(
     return reason === null;
   });
   deps.log(
-    `[HISTORY_ENTITLEMENT] ${groupId.slice(0, 8)}… - ${exclusions.size} member(s) with an exclusion window${invitee === undefined ? '' : `, invitee ${invitee.slice(0, 8)} with ${inviteeWindows.length}`}: withheld ${held.window} sent while a member was out or before the invitee arrived, ${held['undated-near-window']} undated within ${UNDATED_SKEW_MARGIN_MS / 60_000} min of one, ${held.undatable} undatable; kept ${kept.length}`
+    `[HISTORY_ENTITLEMENT] ${groupId.slice(0, 8)}… - ${exclusions.size} member(s) with an exclusion window${invitee === undefined ? '' : unionOnly ? `, invitee ${invitee.slice(0, 8)} unfiltered (server predates withheld)` : `, invitee ${invitee.slice(0, 8)} with ${inviteeWindows.length}`}: withheld ${held.window} sent while a member was out or before the invitee arrived, ${held['undated-near-window']} undated within ${UNDATED_SKEW_MARGIN_MS / 60_000} min of one, ${held.undatable} undatable; kept ${kept.length}`
   );
   return kept;
 }

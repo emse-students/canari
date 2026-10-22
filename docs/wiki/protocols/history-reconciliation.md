@@ -739,9 +739,13 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   is therefore a refusal, never an empty set**: the push sends nothing and the receiver ingests
   nothing on it. `exclusions` keeps its old meaning, the union a broadcast answer is filtered on.
 - **A server that predates `withheld`** (a store build runs ahead of production) answers without the
-  field. That fails the `withheld` read alone, as `WithheldUnsupportedError`. The push then sends the
-  invitee nothing, and the receiver keeps its old rule, its own gaps from the union
+  field. That fails the `withheld` read alone, as `WithheldUnsupportedError`. The push and the
+  receiver then keep their old rule, the union of gaps and the device's own gaps: a newcomer is still
+  pushed the past in that window, and the push says so once per session at error
   ([legacy-compatibility](../legacy-compatibility.md)).
+- **`for` answers only for a person being admitted** (a device row still `pending`, compared
+  case-insensitively). For any other member it has no entry, so a member cannot read another
+  member's arrival through it.
 - **Group conversations only, never a 1:1.** Nobody is added to a 1:1, and its recorded arrivals are
   not arrivals: on production 2026-10-21, 51 of 472 1:1 members had a first interval starting more
   than 10 minutes after the conversation was created. Applying the span there would take a member's

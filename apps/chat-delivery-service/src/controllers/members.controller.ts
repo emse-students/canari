@@ -797,7 +797,12 @@ export class MembersController {
    * **`withheld` names the caller and the `for` person only**, never the whole roster: nobody else's
    * arrival is needed. Each of them gets an entry when counted, an EMPTY one included, so a missing
    * key always means "not counted" and the client refuses to send on it rather than reading it as
-   * "nothing withheld". A `for` that names nobody counted simply has no entry.
+   * "nothing withheld".
+   *
+   * **`for` answers only for a person being ADMITTED** - holding a device row still `pending` in this
+   * group, which is who an inviter's push is for (compared case-insensitively). For anyone else it
+   * has no entry, so a member cannot read another member's arrival. What its presence still tells a
+   * member is that a device of that person is being admitted, which the add itself shows them.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId/exclusions')
@@ -844,10 +849,20 @@ export class MembersController {
       .createQueryBuilder('d')
       .select('d.userId', 'userId')
       .addSelect('MIN(d.createdAt)', 'firstDeviceAt')
+      .addSelect(`BOOL_OR(d.status = 'pending')`, 'admitting')
       .where('d.groupId = :groupId', { groupId: safeGroupId })
       .groupBy('d.userId')
-      .getRawMany<{ userId: string; firstDeviceAt: Date | string | null }>();
+      .getRawMany<{
+        userId: string;
+        firstDeviceAt: Date | string | null;
+        admitting: boolean | null;
+      }>();
     const counted = new Set([...memberIds, ...admittedRows.map((r) => r.userId)]);
+    // `for` answers only for a person a commit is ADMITTING right now - a device row still pending -
+    // which is who an inviter's push is for. Anyone else's arrival is not the caller's to read.
+    const admitting = new Set(
+      admittedRows.filter((r) => r.admitting === true).map((r) => r.userId)
+    );
     const firstDeviceAt = new Map(
       admittedRows.map((r) => [r.userId, r.firstDeviceAt ? new Date(r.firstDeviceAt) : null])
     );
@@ -899,7 +914,10 @@ export class MembersController {
       if (windows.length > 0) exclusions[userId] = windows;
     }
     const withheld: Record<string, ExclusionWindow[]> = {};
-    for (const userId of new Set([caller, ...(forUser ? [forUser] : [])])) {
+    const forCounted = forUser
+      ? [...admitting].find((u) => u.toLowerCase() === forUser.toLowerCase())
+      : undefined;
+    for (const userId of new Set([caller, ...(forCounted ? [forCounted] : [])])) {
       if (!counted.has(userId)) continue;
       withheld[userId] = withheldWindows(
         byUser.get(userId) ?? [],
