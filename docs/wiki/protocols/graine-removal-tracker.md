@@ -224,9 +224,10 @@ seeing one ends the run:
 
 - **A path that merges without a summary.** This covers the native background paths, which persist
   `mls.bin` outside TS:
-  - the Add merge of the background Welcome (`mobile/background.rs:348-402`, the Kotlin
-    `processWelcomeRequestBackground`, the iOS `canari_native_create_welcome_background`);
-  - the background Welcome install (`background.rs:406-446`, `canari_native_process_welcome_background`).
+  - the Add merge of the background Welcome (`install_staged_welcome` in `mobile/background.rs`,
+    reached from the Kotlin `processWelcomeRequestBackground` only once the server accepted the
+    commit; iOS has no such path since 2026-10-22);
+  - the background Welcome install (`process_welcome_background_with_key` in `background.rs`, `canari_native_process_welcome_background`).
 
   The next summary's `authenticator_before` will not match, so the next send rotates. That is
   today's behaviour.

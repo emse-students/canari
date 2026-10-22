@@ -13,10 +13,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use crate::concurrency::mark_foreground_active;
 
 use super::background::{
-    background_group_epoch_with_key, cleanup_pending_db, create_welcome_background_with_key,
-    decode_commits_b64_json, decrypt_push_message_with_commits_with_key,
-    decrypt_push_message_with_key, open_graine_push, parse_outbox_entries_json,
-    process_welcome_background_with_key, send_messages_background_with_key, GrainePush, PushFrame,
+    background_group_epoch_with_key, cleanup_pending_db, decode_commits_b64_json,
+    decrypt_push_message_with_commits_with_key, decrypt_push_message_with_key, open_graine_push,
+    parse_outbox_entries_json, process_welcome_background_with_key,
+    send_messages_background_with_key, GrainePush, PushFrame,
 };
 use super::proto_fields::{build_read_watermark_app_message, build_text_app_message};
 use super::push_text::PushLanguage;
@@ -334,45 +334,6 @@ pub unsafe extern "C" fn canari_free_bytes(ptr: *mut u8, len: usize) {
         return;
     }
     drop(Vec::from_raw_parts(ptr, len, len));
-}
-
-/// Creates an MLS Welcome. Returns an allocated JSON (`welcome`, `commit`, `baseEpoch`, ...).
-#[no_mangle]
-pub unsafe extern "C" fn canari_native_create_welcome_background(
-    files_dir: *const c_char,
-    state_ptr: *const u8,
-    state_len: usize,
-    device_key_b64: *const c_char,
-    user_id: *const c_char,
-    device_id: *const c_char,
-    group_id: *const c_char,
-    key_package_b64: *const c_char,
-) -> *mut c_char {
-    if files_dir.is_null()
-        || state_ptr.is_null()
-        || device_key_b64.is_null()
-        || user_id.is_null()
-        || device_id.is_null()
-        || group_id.is_null()
-        || key_package_b64.is_null()
-    {
-        return json_to_c_string(serde_json::json!({ "ok": false }));
-    }
-
-    let files_dir = path_from_c_str(files_dir);
-    let state_bytes = slice::from_raw_parts(state_ptr, state_len);
-    match create_welcome_background_with_key(
-        &files_dir,
-        state_bytes,
-        &str_from_c_str(device_key_b64),
-        &str_from_c_str(user_id),
-        &str_from_c_str(device_id),
-        &str_from_c_str(group_id),
-        &str_from_c_str(key_package_b64),
-    ) {
-        Ok(v) => json_to_c_string(v),
-        Err(e) => err_json_to_c_string(e),
-    }
 }
 
 /// Applies a received Welcome. Returns 1 on success, 0 otherwise.

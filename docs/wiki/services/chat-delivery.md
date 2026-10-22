@@ -656,6 +656,39 @@ refusals by reason with a sample of group ids, and `fetchPendingMessages` report
 `waitForMessageQueueIdle`** - the rows are enqueued, not handled, so what was refused is only known
 once the queue has drained. Silent when there is nothing to say.
 
+### The background Welcome answers what happened, and the phone installs only an acceptance (2026-10-22)
+
+A killed Android phone answers a `welcome_request_pending` push from its `mls.bin`
+(`processWelcomeRequestBackground` in `CanariFirebaseMessagingService.kt`, Rust
+`prepare_welcome_background_with_key` / `install_staged_welcome` / `discard_staged_welcome` in
+`mobile/background.rs`). Read on the Mi 9T on 2026-10-22: the phone had been shut while its group moved
+from epoch 1 to 3, built its add on base 1, the gate refused it (`epoch_mismatch`), the route answered
+`201`, and the phone logged "Welcome sent". Worse, it had merged the add into `mls.bin` before the
+answer, so it held an epoch nobody else had and could not read the group's next message.
+
+- **The route's answer is typed.** `201 {status: 'accepted', newEpoch}` after the gate accepted and the
+  Welcome was queued; `409 {status: 'rejected', reason, currentEpoch?}` otherwise. The phone classifies
+  the body's `status` token (`push/BackgroundWelcomeAnswer.kt`), so it reads a pre-2026-10-22 server
+  (`201 {status: 'rejected'}`, `201 {status: 'done'}`) correctly too.
+- **The phone stages, and installs only an acceptance** - the foreground's order since C7. The post-add
+  state is sealed beside `mls.bin` with the digest of the bytes it was built from, installed by a
+  compare-and-swap on `accepted`, and deleted on anything else. A transport failure or a 5xx is
+  `unknown`: not installed, because installing a refusal is the fork this exists to prevent.
+- **No catch-up and no retry.** The background never applies the group's commits to `mls.bin` (the
+  foreground's replay owns that, and what it does around a commit); a stale phone is refused, and the
+  request is left to the foreground or another member. An `epoch_mismatch` is recorded in
+  `welcome_request_stale.json` against the digest of `mls.bin`, so the newcomer's re-ask every 60 s is
+  not answered again from the same bytes; any write to `mls.bin` lifts it.
+- **The newcomer heals on its own cadence**: `requestReAdd` re-asks every 60 s while its app is open
+  (external join first, then `welcome_request`), so it joins as soon as a base is published again or a
+  member with a current state answers. A shut, stale phone alone never serves it.
+- **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
+  to broadcast it a second time.
+- **What is left open:** an acceptance whose install is refused (the foreground started and wrote
+  `mls.bin` inside the round trip) leaves the server one commit ahead of this device, logged
+  `ACCEPTED AND NOT INSTALLED`; the device then recovers through the usual ladder. iOS has no
+  background re-add (its branch was unreachable and is deleted).
+
 ### A roster seat is not a key, and only a Welcome tells the two apart
 
 `addGroupMember` writes a `dm_device_group_memberships` row with `status: 'pending'` for **every**
@@ -1108,7 +1141,7 @@ those groups' first pages itself, which is the path every group took before the 
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package for background service |
 | POST | `/api/mls/push/commits` | PushSecret | Replayable commits since `sinceEpoch`, for the in-memory catch-up of a device whose app is killed |
-| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit` - a commit this route cannot validate is not broadcast |
+| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service. **`baseEpoch` and `commitPayload` are both REQUIRED**, and both reach `validateCommit`, which records the commit and fans it out (the route sends only the Welcome). **The answer is typed** ([background Welcome](#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)): `201 {status: 'accepted', newEpoch}`, or `409 {status: 'rejected', reason, currentEpoch?}` with `reason` one of `epoch_mismatch`, `concurrent_commit`, `not_a_member` |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices of caller |
 | POST | `/api/mls/push/unavailable` | JWT | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |

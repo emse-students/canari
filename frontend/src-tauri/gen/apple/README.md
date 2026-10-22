@@ -50,7 +50,6 @@ Copier `GoogleService-Info.plist` dans `canari_iOS/` (non committe, voir `.gitig
 
 `canari_push.mm` implemente en plus de la phase 2 :
 
-- `welcome_request_pending` : verrou Redis, key package, create welcome (FFI), send-welcome-and-commit
 - `isWelcome=true` : fetch-proto bundle, process welcome (FFI), membership-active
 - `process_queue` : nettoyage `mls_pending.db` via FFI (equivalent worker Android)
 - Drain `outbox_pending.ndjson` : chiffre (FFI), POST `/api/mls/push/send`, journal `outbox_sent.ndjson`
@@ -69,7 +68,6 @@ FFI exposes :
 - `canari_native_group_epoch`
 - `canari_native_decrypt_message_with_commits`
 - `canari_native_decrypt_channel_message` (AES-256-GCM channel/communaute, hors MLS)
-- `canari_native_create_welcome_background`
 - `canari_native_process_welcome_background`
 - `canari_native_send_messages_background` (batch : un seul chargement de `mls.bin` par vidage)
 - `canari_native_cleanup_pending_db`

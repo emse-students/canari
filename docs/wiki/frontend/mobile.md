@@ -1090,9 +1090,10 @@ Now (`canari_push.mm`):
   decrypting nothing; `call_ring_end` ends a CallKit ring. Every other kind - a Welcome, a
   `welcome_request_pending`, a peer's receipt, a commit - is logged `NOT acted on`: the two Welcome
   kinds would be the first background MLS write an iPhone has ever run, and wait for the
-  background-join row fix ([backlog](../backlog.md)). The `welcome_request_pending`, `isWelcome` and
-  `process_queue` branches of `CanariHandleFcmData`, which only a silent frame carries, are
-  therefore reached by nothing on iOS.
+  background-join row fix ([backlog](../backlog.md)). The `isWelcome` and `process_queue` branches
+  of `CanariHandleFcmData`, which only a silent frame carries, are therefore reached by nothing on
+  iOS; its `welcome_request_pending` branch was the same and was deleted on 2026-10-22 (it wrote the
+  add before the server answered - [chat-delivery](../services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)).
 - **The completion handler is called once**, after the removal has been issued and any chained
   implementation has answered: early lets iOS suspend the process with the removal queued, never
   makes iOS throttle later wakes.

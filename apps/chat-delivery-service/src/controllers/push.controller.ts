@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   UseGuards,
   Headers,
@@ -42,6 +43,28 @@ import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
  * text-only notification rather than being downloaded in a background handler.
  */
 const PUSH_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * What `POST mls/push/send-welcome-and-commit` answers, typed so a native caller branches on a
+ * TOKEN and never on prose.
+ *
+ * - `accepted` (HTTP 201): the commit passed the gate at `newEpoch - 1`, the members have it, and
+ *   the Welcome is queued. The caller installs the state it staged, and only on this answer.
+ * - `rejected` (HTTP 409): nothing was recorded, fanned out or sent. `reason` is the gate's token -
+ *   `epoch_mismatch` (the caller's base is not the group's epoch, `currentEpoch` says which is),
+ *   `concurrent_commit` (another commit held the lock), `not_a_member` (the target was removed) -
+ *   and the caller discards what it staged.
+ */
+export type BackgroundWelcomeAnswer =
+  | { status: 'accepted'; newEpoch?: number }
+  | { status: 'rejected'; reason: string; currentEpoch?: number };
+
+/** A refusal of the background Welcome route: HTTP 409 carrying the typed body. */
+function backgroundWelcomeRefusal(
+  answer: Extract<BackgroundWelcomeAnswer, { status: 'rejected' }>
+): ConflictException {
+  return new ConflictException(answer);
+}
 
 /**
  * What a blind salon banner may say it lacked - the four terms of the phone's own test
@@ -727,18 +750,23 @@ export class PushController {
   }
 
   /**
-   * Sends a Welcome to the target device and broadcasts the accompanying commit
-   * to all current group members. Called by the background service after creating
-   * the Welcome package via Rust JNI (nativeCreateWelcomeBackground).
+   * Sends a Welcome to the target device once the accompanying commit has passed the gate.
+   * Called by the Android background service after staging the Welcome via Rust JNI
+   * (`nativePrepareWelcomeBackground`).
    *
-   * The commit is validated (epoch-gated) before any Welcome or broadcast, exactly like the
-   * foreground `/api/mls/commit` path: this keeps the server's `activeEpoch` in phase with the real
-   * MLS epoch so subsequent foreground commits are not rejected as `epoch_mismatch` (C6). A
-   * rejected commit yields neither a Welcome nor a broadcast.
+   * The commit is validated (epoch-gated) before any Welcome, exactly like the foreground
+   * `/api/mls/commit` path: this keeps the server's `activeEpoch` in phase with the real MLS epoch
+   * so subsequent foreground commits are not rejected as `epoch_mismatch` (C6). `validateCommit`
+   * records the commit and fans it out to the members itself; this route sends only the Welcome.
    *
    * `baseEpoch` and `commitPayload` are BOTH required, and both are handed to `validateCommit` -
-   * the payload as `proto`, which is what makes the commit replayable. Passing one without the
-   * other is what broke this route: see the CHANGELOG entry for this fix.
+   * the payload as `proto`, which is what makes the commit replayable.
+   *
+   * THE ANSWER SAYS WHAT HAPPENED, IN ITS STATUS AND ITS BODY ({@link BackgroundWelcomeAnswer}).
+   * `201 {status: 'accepted'}` is the one answer after which the phone installs the state it
+   * staged; every refusal is a `409 {status: 'rejected', reason}`. A refusal used to be a 201
+   * too, and the phone - which reads the status code - logged "Welcome sent" for a Welcome the
+   * server had refused (2026-10-22, docs/wiki/backlog.md).
    *
    * Auth: PushSecret (no JWT).
    */
@@ -803,7 +831,7 @@ export class PushController {
       this.logger.warn(
         `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`
       );
-      return { status: 'rejected', reason: 'not_a_member' };
+      throw backgroundWelcomeRefusal({ status: 'rejected', reason: 'not_a_member' });
     }
 
     // The background commit advances the real epoch: validate it first (same as foreground path)
@@ -831,19 +859,21 @@ export class PushController {
     );
     if (!validation.accepted) {
       this.logger.warn(
-        `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - neither Welcome nor broadcast`
+        `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - no Welcome, answered 409`
       );
-      return {
+      throw backgroundWelcomeRefusal({
         status: 'rejected',
-        reason: validation.reason,
+        reason: validation.reason ?? 'unspecified',
         currentEpoch: validation.currentEpoch,
-      };
+      });
     }
     this.logger.log(
       `[BG_WELCOME][${traceId}] commit accepted -> activeEpoch=${validation.newEpoch}`
     );
 
-    // Send Welcome to target device (null authUserId skips membership check)
+    // Send Welcome to target device (null authUserId skips membership check). The commit itself
+    // was fanned out by `validateCommit`, which excludes the admitted target; broadcasting it here
+    // as well delivered it twice to every member.
     await this.messagingService.sendWelcome(undefined, {
       targetDeviceId,
       targetUserId,
@@ -853,18 +883,9 @@ export class PushController {
       groupId,
     });
 
-    // Broadcast commit to all existing group members (sender + target excluded)
-    await this.messagingService.sendMessage({
-      proto: body.commitPayload,
-      groupId,
-      senderId: userId,
-      senderDeviceId: deviceId,
-      isCommit: true,
-      excludeDeviceIds: [`${targetUserId}:${targetDeviceId}`],
-    });
-
     this.logger.log(`[BG_WELCOME][${traceId}] DONE`);
-    return { status: 'done' };
+    const answer: BackgroundWelcomeAnswer = { status: 'accepted', newEpoch: validation.newEpoch };
+    return answer;
   }
 
   /**

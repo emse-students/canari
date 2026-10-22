@@ -1396,92 +1396,6 @@ static NSData *_Nullable CanariHttpRequest(NSString *method, NSURL *url, NSStrin
   return responseData;
 }
 
-static BOOL CanariAcquireAddLock(CanariPushContext *ctx, NSString *secret, NSString *groupId) {
-  NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/acquire-add-lock",
-                                                               ctx.baseUrl]];
-  NSDictionary *payload =
-      @{@"userId" : ctx.userId, @"deviceId" : ctx.deviceId, @"groupId" : groupId};
-  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  int status = 0;
-  NSData *resp = CanariHttpRequest(@"POST", url, secret, body, &status);
-  NSLog(@"[CanariPush] acquireAddLock: HTTP %d group=%@", status, groupId);
-  if (status != 201 || resp == nil) {
-    return NO;
-  }
-  id json = [NSJSONSerialization JSONObjectWithData:resp options:0 error:nil];
-  return [json isKindOfClass:[NSDictionary class]] && [json[@"acquired"] boolValue];
-}
-
-static void CanariReleaseAddLock(CanariPushContext *ctx, NSString *secret, NSString *groupId) {
-  NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/release-add-lock",
-                                                               ctx.baseUrl]];
-  NSDictionary *payload =
-      @{@"userId" : ctx.userId, @"deviceId" : ctx.deviceId, @"groupId" : groupId};
-  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  int status = 0;
-  CanariHttpRequest(@"DELETE", url, secret, body, &status);
-  NSLog(@"[CanariPush] releaseAddLock: HTTP %d group=%@", status, groupId);
-}
-
-static NSString *_Nullable CanariFetchKeyPackage(CanariPushContext *ctx, NSString *secret,
-                                                 NSString *targetUserId, NSString *targetDeviceId) {
-  NSString *encodedReq =
-      [ctx.userId stringByAddingPercentEncodingWithAllowedCharacters:
-                       [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *encodedDev =
-      [ctx.deviceId stringByAddingPercentEncodingWithAllowedCharacters:
-                        [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *encodedTargetUser =
-      [targetUserId stringByAddingPercentEncodingWithAllowedCharacters:
-                          [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *encodedTargetDev =
-      [targetDeviceId stringByAddingPercentEncodingWithAllowedCharacters:
-                           [NSCharacterSet URLQueryAllowedCharacterSet]];
-  NSString *urlStr = [NSString
-      stringWithFormat:
-          @"%@/api/mls/push/key-package?requesterId=%@&deviceId=%@&targetUserId=%@&targetDeviceId=%@",
-          ctx.baseUrl, encodedReq, encodedDev, encodedTargetUser, encodedTargetDev];
-  int status = 0;
-  NSData *resp = CanariHttpRequest(@"GET", [NSURL URLWithString:urlStr], secret, nil, &status);
-  if (status != 200 || resp == nil) {
-    NSLog(@"[CanariPush] fetchKeyPackage: HTTP %d", status);
-    return nil;
-  }
-  id json = [NSJSONSerialization JSONObjectWithData:resp options:0 error:nil];
-  if (![json isKindOfClass:[NSDictionary class]]) {
-    return nil;
-  }
-  NSString *kp = [json[@"keyPackage"] isKindOfClass:[NSString class]] ? json[@"keyPackage"] : @"";
-  return kp.length > 0 ? kp : nil;
-}
-
-static BOOL CanariSendWelcomeAndCommit(CanariPushContext *ctx, NSString *secret, NSString *groupId,
-                                       NSString *targetUserId, NSString *targetDeviceId,
-                                       NSString *welcomePayload, NSString *_Nullable ratchetTree,
-                                       NSString *commitPayload, long long baseEpoch) {
-  NSURL *url =
-      [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/send-welcome-and-commit",
-                                                     ctx.baseUrl]];
-  NSMutableDictionary *payload = [@{
-    @"userId" : ctx.userId,
-    @"deviceId" : ctx.deviceId,
-    @"groupId" : groupId,
-    @"targetUserId" : targetUserId,
-    @"targetDeviceId" : targetDeviceId,
-    @"welcomePayload" : welcomePayload,
-    @"commitPayload" : commitPayload,
-  } mutableCopy];
-  payload[@"ratchetTreePayload"] = ratchetTree.length > 0 ? ratchetTree : [NSNull null];
-  if (baseEpoch >= 0) {
-    payload[@"baseEpoch"] = @(baseEpoch);
-  }
-  NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-  int status = 0;
-  CanariHttpRequest(@"POST", url, secret, body, &status);
-  NSLog(@"[CanariPush] sendWelcomeAndCommit: HTTP %d group=%@", status, groupId);
-  return status == 201;
-}
-
 static void CanariMarkMembershipActive(CanariPushContext *ctx, NSString *secret, NSString *groupId) {
   NSURL *url =
       [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/membership-active", ctx.baseUrl]];
@@ -2269,99 +2183,6 @@ static NSString *_Nullable CanariInitialsImagePath(NSString *_Nullable name) {
     return nil;
   }
   return path;
-}
-
-static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *requesterUserId,
-                                                  NSString *requesterDeviceId) {
-  CanariPushContext *ctx = CanariLoadPushContext();
-  if (ctx == nil) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: push_context absent");
-    return;
-  }
-  if (ctx.deviceKeyB64.length == 0) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: deviceKeyB64 empty");
-    return;
-  }
-  NSString *secret = CanariRetrievePushSecret();
-  if (secret == nil) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: pushSecret absent");
-    return;
-  }
-
-  BOOL lockAcquired = NO;
-  for (int attempt = 0; attempt < 3; attempt++) {
-    lockAcquired = CanariAcquireAddLock(ctx, secret, groupId);
-    if (lockAcquired) {
-      break;
-    }
-    usleep(2000000);
-  }
-  if (!lockAcquired) {
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: Redis lock not acquired");
-    return;
-  }
-
-  @try {
-    NSString *keyPackage = CanariFetchKeyPackage(ctx, secret, requesterUserId, requesterDeviceId);
-    if (keyPackage == nil) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: keyPackage absent");
-      return;
-    }
-
-    if (![g_mlsStateLock tryLock]) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: MlsStateLock busy");
-      return;
-    }
-    NSDictionary *result = nil;
-    @try {
-      NSString *dir = CanariTauriDataDir();
-      NSData *stateBytes = CanariLoadMlsState();
-      if (dir == nil || stateBytes == nil) {
-        NSLog(@"[CanariPush] processWelcomeRequestBackground: mls.bin absent");
-        return;
-      }
-      char *jsonPtr = canari_native_create_welcome_background(
-          dir.UTF8String, (const unsigned char *)stateBytes.bytes, stateBytes.length,
-          ctx.deviceKeyB64.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
-          keyPackage.UTF8String);
-      if (jsonPtr == nil) {
-        return;
-      }
-      NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
-      canari_free_string(jsonPtr);
-      id json = [NSJSONSerialization JSONObjectWithData:[jsonStr dataUsingEncoding:NSUTF8StringEncoding]
-                                                  options:0
-                                                    error:nil];
-      if ([json isKindOfClass:[NSDictionary class]]) {
-        result = json;
-      }
-    } @finally {
-      [g_mlsStateLock unlock];
-    }
-
-    if (result == nil || ![result[@"ok"] boolValue]) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: create welcome failed");
-      return;
-    }
-
-    NSString *welcomePayload = result[@"welcome"];
-    NSString *commitPayload = result[@"commit"];
-    NSString *ratchetTree = [result[@"ratchetTree"] isKindOfClass:[NSString class]] ? result[@"ratchetTree"] : nil;
-    if ([ratchetTree isEqualToString:@"null"]) {
-      ratchetTree = nil;
-    }
-    long long baseEpoch = [result[@"baseEpoch"] respondsToSelector:@selector(longLongValue)]
-                              ? [result[@"baseEpoch"] longLongValue]
-                              : -1;
-
-    BOOL sent = CanariSendWelcomeAndCommit(ctx, secret, groupId, requesterUserId, requesterDeviceId,
-                                           welcomePayload, ratchetTree, commitPayload, baseEpoch);
-    NSLog(@"[CanariPush] processWelcomeRequestBackground: send=%d group=%@", sent, groupId);
-  } @finally {
-    CanariReleaseAddLock(ctx, secret, groupId);
-    int remaining = CanariDrainOutboxBackground(ctx);
-    CanariMaybeNotifyPendingSync(remaining);
-  }
 }
 
 static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *_Nullable queuedMessageId,
@@ -3274,8 +3095,10 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
 /**
  * Handles an ALERT frame's data while the app process runs: `willPresentNotification` (foreground)
  * and a tap. A silent frame never comes here - `CanariHandleBackgroundFrame` owns those - so the
- * `welcome_request_pending`, `isWelcome` and `process_queue` branches below, which only a silent
- * frame carries, are reached by nothing on iOS today (docs/wiki/backlog.md).
+ * `isWelcome` and `process_queue` branches below, which only a silent frame carries, are reached by
+ * nothing on iOS today (docs/wiki/backlog.md). The `welcome_request_pending` branch was the same and
+ * was deleted on 2026-10-22: it merged its add into `mls.bin` before the server answered, which
+ * Android stopped doing that day; a background re-add on iOS waits for the background-join row fix.
  */
 static void CanariHandleFcmData(NSDictionary *data) {
   if (data.count == 0) {
@@ -3321,22 +3144,6 @@ static void CanariHandleFcmData(NSDictionary *data) {
       [msgType isEqualToString:@"form_reminder"] || ([msgType isEqualToString:@"social"] && !isReaction);
   if (canari_ios_is_in_foreground() && !showsWhileForeground) {
     NSLog(@"[CanariPush] foreground actif - skip background MLS");
-    return;
-  }
-
-  if ([msgType isEqualToString:@"welcome_request_pending"]) {
-    NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
-    NSString *requesterUser =
-        [data[@"requesterUserId"] isKindOfClass:[NSString class]] ? data[@"requesterUserId"] : @"";
-    NSString *requesterDev =
-        [data[@"requesterDeviceId"] isKindOfClass:[NSString class]] ? data[@"requesterDeviceId"] : @"";
-    if (groupId.length == 0 || requesterUser.length == 0 || requesterDev.length == 0) {
-      NSLog(@"[CanariPush] welcome_request_pending: missing fields");
-      return;
-    }
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      CanariProcessWelcomeRequestBackground(groupId, requesterUser, requesterDev);
-    });
     return;
   }
 
