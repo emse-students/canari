@@ -202,6 +202,32 @@ runs it or approves it explicitly); sending the DPO dossier; the DSI log-retenti
 - **Firefox disabled scroll anchoring on the `/posts` feed.** Ten consecutive sub-pixel adjustments of about 0.1667 px preceded it; rounding at a fractional device-pixel ratio is suspected. Reproduce with a `ResizeObserver` log on the feed container before changing anything.
 - **A seed asked by two phones was declined by a web device** (`holding 0 - missing ... declining`). Open observation: separate the causes by who should have held it, which needs a read of production state (private operations notes), not a client change.
 
+## Owed before the stable that carries the commit-caller checks: one background Welcome read on the Mi 9T, on the local estate (2026-10-22)
+
+The background Welcome route (`POST /mls/push/send-welcome-and-commit`) now validates its commit as the
+push-secret-authenticated committer, so a native path changed and no gate here runs native code. It is
+read on the LOCAL estate, with the server and a Mi 9T debug build made from ONE commit: the head that
+stacks this change with the seat-promotion and key-group join changes. Any stable carrying them is
+held until the reading is in; this replaces the reading on `dev` planned first.
+
+The reading has one setup and three checks:
+
+- **Setup.** The Mi 9T is killed, not force-stopped (swiped away), and is a member of a group
+  conversation. Another member adds a new device of a third person, which makes the phone answer a
+  `welcome_request` in the background.
+- **Phone (logcat).** Both of these lines appear:
+  - `processWelcomeRequestBackground: Welcome created ... baseEpoch=N`;
+  - `processWelcomeRequestBackground: ✓ Welcome sent for group=... target=...`.
+
+  No `sendWelcomeAndCommit failed` line appears.
+- **Server (chat-delivery on the local estate).** For the same group, these three lines appear:
+  - `[BG_WELCOME][bg-wlc-...] START ... baseEpoch=N`;
+  - `commit accepted -> activeEpoch=N+1`;
+  - `DONE`.
+
+  No `REJECT` appears, and in particular no commit-caller refusal.
+- **The newcomer.** It opens the group and reads the next message.
+
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join has no entitlement gate yet (2026-10-22)
 
 A key-group external join has no entitlement check yet; each one is logged `[COMMIT] key-group external join`. An accepted external commit also promotes its committing device to `active`, as every external join must, so the check belongs before both. A key group's Welcome target is not checked either: a conversation's Welcome target must be on its roster, and a key group has no roster here. The roster of a key group is held by social-service. Owed next, as its own pull request with an opus review: a social-service internal route answering "is this person entitled to this scope", called by chat-delivery for a key-group external commit only. A failed call refuses with a retryable 503 and never accepts, and its rate is measured against the ~77 joins/day before a stable.
