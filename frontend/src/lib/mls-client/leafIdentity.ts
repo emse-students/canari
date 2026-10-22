@@ -24,11 +24,53 @@ function isMalformed(identity: string): boolean {
   return true;
 }
 
-/** The user id half of a leaf identity, lower-cased; `''` for a refused identity. */
+/**
+ * A user id in its canonical form: ASCII letters lowercased, nothing else touched - exactly Rust's
+ * `to_ascii_lowercase`, so a non-ASCII id compares the same on both sides. Every comparison of a
+ * user id against a leaf's user half goes through it.
+ */
+export function canonicalUserId(userId: string): string {
+  return userId.replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
+/**
+ * THE ONE CANONICAL FORM OF A DEVICE IDENTITY, the TypeScript twin of Rust's
+ * `device_trust::canonical_identity` (which keys the pins and binds every KeyPackage): the user half
+ * through {@link canonicalUserId}, the device half exact. `null` for anything but one colon between
+ * two non-empty halves - such an identity names no device, so it equals nothing.
+ *
+ * Every TypeScript comparison of two device identities uses it (or {@link sameDeviceIdentity} /
+ * {@link treeHoldsDevice}): a spelling Rust takes for a pinned device must never read here as
+ * another device, or the caller falls through to an Add Rust then refuses.
+ */
+export function canonicalIdentity(identity: string): string | null {
+  if (isMalformed(identity)) return null;
+  const colon = identity.indexOf(':');
+  if (colon <= 0 || colon === identity.length - 1) return null;
+  return `${canonicalUserId(identity.slice(0, colon))}:${identity.slice(colon + 1)}`;
+}
+
+/** Whether two identities name the same device under {@link canonicalIdentity}. */
+export function sameDeviceIdentity(a: string, b: string): boolean {
+  const ca = canonicalIdentity(a);
+  return ca !== null && ca === canonicalIdentity(b);
+}
+
+/** Whether `leafIdentities` (a tree, `getGroupMemberIdentities`) holds the device `userId:deviceId`. */
+export function treeHoldsDevice(
+  leafIdentities: readonly string[],
+  userId: string,
+  deviceId: string
+): boolean {
+  const wanted = canonicalIdentity(`${userId}:${deviceId}`);
+  return wanted !== null && leafIdentities.some((leaf) => canonicalIdentity(leaf) === wanted);
+}
+
+/** The user id half of a leaf identity, canonical ({@link canonicalUserId}); `''` for a refused identity. */
 export function userIdOfLeaf(identity: string): string {
   if (isMalformed(identity)) return '';
   const colon = identity.indexOf(':');
-  return (colon === -1 ? identity : identity.slice(0, colon)).toLowerCase();
+  return canonicalUserId(colon === -1 ? identity : identity.slice(0, colon));
 }
 
 /** The device id half of a leaf identity, or `''` when it carries none or is refused. */

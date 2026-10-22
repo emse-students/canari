@@ -605,7 +605,10 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   an identity with more as naming nobody. Pin lookup and binding use ONE canonical identity
   (`canonical_identity`: user half lowercased, device half as is): the pin store is keyed by it,
   every lookup and comparison goes through it, and pins persisted under another spelling are
-  re-keyed at load.
+  re-keyed at load. Its TypeScript twin is `leafIdentity.ts` (`canonicalIdentity`,
+  `canonicalUserId`, `sameDeviceIdentity`, `treeHoldsDevice`), tested on the same cases. It is used
+  by every TypeScript tree check and every comparison against a leaf's user half, so a spelling Rust
+  takes for a device never reads as absent and falls through to an Add.
 - **Pins.** Each identity maps to the SET of signature keys this device has seen for it, kept in the
   sealed MLS state (`PersistedState.device_pins`, CBOR, `#[serde(default)]`). A state written before
   pins existed is seeded at load from every tree it holds, so nothing already trusted is refused. A

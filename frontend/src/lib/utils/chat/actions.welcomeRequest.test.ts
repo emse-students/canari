@@ -174,6 +174,19 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
     expect(mlsService.replaceMember).toHaveBeenCalledTimes(1);
   });
 
+  // THE TREE IS READ UNDER THE ONE CANONICAL IDENTITY RUST USES: a leaf spelling the user half
+  // differently is the same device, so it is replaced - an Add would only meet its key again.
+  it('replaces a leaf whose credential spells the user half in another case', async () => {
+    const mlsService = admissible({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'Legit-User:dev-1']),
+    });
+
+    await run('g-kick-case', mlsService);
+
+    expect(mlsService.replaceMember).toHaveBeenCalledTimes(1);
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+  });
+
   // A WELCOME SENT BY ANOTHER PATH IS STILL IN FLIGHT. A creation fan-out welcomed this device
   // seconds ago and it asked before the Welcome landed: its leaf is fresh, so the push and the pull
   // must not overlap into a replacement. Only the welcome_request path used to be remembered.

@@ -43,6 +43,7 @@ import {
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { treeHoldsDevice } from '$lib/mls-client/leafIdentity';
 import {
   DeviceTrustRefusedError,
   isDeviceTrustRefusal,
@@ -89,8 +90,10 @@ async function leafIsInLocalTree(deps: {
   try {
     const identities = await mlsService.getGroupMemberIdentities(groupId);
     // The WHOLE identity, never a bare device id: leaves are `userId:deviceId`, so a suffix or
-    // substring test would let one id answer for another's.
-    return identities.includes(`${userId}:${deviceId}`);
+    // substring test would let one id answer for another's. Compared under the ONE canonical
+    // identity Rust binds and pins by, so a leaf Rust takes for this device is never read as absent
+    // here - that would send an Add Rust then refuses.
+    return treeHoldsDevice(identities, userId, deviceId);
   } catch (e) {
     log(
       `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${deviceId.slice(0, 12)}... is a leaf: ${String(e).slice(0, 100)}`
