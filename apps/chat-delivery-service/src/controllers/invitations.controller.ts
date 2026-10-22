@@ -87,6 +87,45 @@ export class InvitationsController {
     }
   }
 
+  /**
+   * A REPORT OF `active` PROMOTES A SEAT; IT NEVER CREATES ONE.
+   *
+   * `activateDeviceMembership` upserts, and checks only that the device is addressable - so this
+   * route, which a device may call about itself with no other check, used to make a device of any
+   * group id it was handed. Every legitimate report follows a write that already made the row: the
+   * admitting commit or the Welcome (`pending`), or the external commit that activated its committer
+   * (`active`, so the report is idempotent). The row must therefore exist, for this user and this
+   * device, and in a conversation its owner must still be on the roster - a removal deletes both,
+   * and a row the cleanup left behind is not a seat. A key-distribution group has no user roster
+   * here; its row is what a member's admit or an accepted external commit wrote.
+   */
+  private async assertSeatToPromote(
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    isSelfReport: boolean
+  ): Promise<void> {
+    const seat = await this.deviceGroupRepo.findOne({
+      where: { userId, deviceId, groupId },
+      select: { status: true },
+    });
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+    });
+    const keyGroup = !!(group?.distributionWorkspaceId || group?.distributionChannelId);
+    const onRoster =
+      keyGroup || !!(await this.groupMemberRepo.findOne({ where: { groupId, userId } }));
+    if (seat && onRoster) return;
+    this.logger.warn(
+      `[INVITATION_STATUS] REFUSED active group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+        `reason=${!seat ? 'no_seat' : 'not_on_roster'} report=${isSelfReport ? 'self' : 'vouch'}`
+    );
+    throw new ForbiddenException(
+      refusalBody(RefusalCode.NOT_A_MEMBER, 'This device holds no seat in this group')
+    );
+  }
+
   // ── Shareable group invite links ───────────────────────────────────────────
 
   /** Creates a shareable invite link for an MLS group chat (caller must be a member). */
@@ -472,6 +511,7 @@ export class InvitationsController {
     // A refusal still throws HERE, because this caller has a user to tell - that is the whole
     // reason the shared method returns its reason instead of throwing it.
     if (body.status === 'active') {
+      await this.assertSeatToPromote(safeUserId, safeDeviceId, safeGroupId, isSelfReport);
       const outcome = await this.messagingService.activateDeviceMembership(
         safeUserId,
         safeDeviceId,

@@ -241,14 +241,22 @@ describe('the INVITATION_STATUS door', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     messaging.activateDeviceMembership.mockResolvedValue({ ok: true });
-    deviceGroupRepo.findOne.mockResolvedValue(null);
+    // The device holds a `pending` seat and its owner is on the roster: a report promotes a seat,
+    // it never creates one (`invitations.controller.vouch.spec.ts`).
+    deviceGroupRepo.findOne.mockResolvedValue({ status: 'pending' });
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InvitationsController],
       providers: [
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        {
+          provide: getRepositoryToken(GroupMember),
+          useValue: { ...emptyRepo(), findOne: jest.fn().mockResolvedValue({ userId: 'u1' }) },
+        },
+        {
+          provide: getRepositoryToken(Group),
+          useValue: { ...emptyRepo(), findOne: jest.fn().mockResolvedValue({ id: 'g1' }) },
+        },
         { provide: getRepositoryToken(GroupInvite), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },

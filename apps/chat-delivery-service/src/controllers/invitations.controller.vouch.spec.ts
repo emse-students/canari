@@ -28,20 +28,41 @@ describe('InvitationsController - who may report a device active', () => {
   let messaging: { activateDeviceMembership: jest.Mock; deactivateDeviceMembership: jest.Mock };
   let log: jest.SpyInstance;
 
-  const deviceGroupRepo = { findOne: jest.fn(), find: jest.fn(), save: jest.fn() };
-  const groupMemberRepo = { findOne: jest.fn() };
+  type Row = Record<string, unknown>;
+  /** Every key of `where` must match, so a lookup on the wrong columns finds nothing. */
+  const hit = (rows: Row[], where: Row): Row | null =>
+    rows.find((r) => Object.entries(where).every(([k, v]) => r[k] === v)) ?? null;
+  let seats: Row[];
+  let roster: Row[];
+  let group: Row | null;
+  const deviceGroupRepo = {
+    findOne: jest.fn(async ({ where }: { where: Row }) => hit(seats, where)),
+    find: jest.fn(),
+    save: jest.fn(),
+  };
+  const groupMemberRepo = {
+    findOne: jest.fn(async ({ where }: { where: Row }) => hit(roster, where)),
+  };
+  const groupRepo = {
+    ...emptyRepo(),
+    findOne: jest.fn(async ({ where }: { where: Row }) =>
+      group && group.id === where.id ? group : null
+    ),
+  };
   const redis = { srem: jest.fn(), mget: jest.fn() };
 
-  const emptyRepo = () => ({
-    find: jest.fn().mockResolvedValue([]),
-    findOne: jest.fn(),
-    save: jest.fn(),
-    delete: jest.fn(),
-    create: jest.fn(),
-    query: jest.fn(),
-    createQueryBuilder: jest.fn(),
-    metadata: { tableName: 'stub' },
-  });
+  function emptyRepo() {
+    return {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn(),
+      save: jest.fn(),
+      delete: jest.fn(),
+      create: jest.fn(),
+      query: jest.fn(),
+      createQueryBuilder: jest.fn(),
+      metadata: { tableName: 'stub' },
+    };
+  }
 
   const MEMBER = 'user-member';
   const TARGET = 'user-target';
@@ -54,14 +75,20 @@ describe('InvitationsController - who may report a device active', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    // The voucher is an active member of the group, which the non-self branch asserts first.
-    groupMemberRepo.findOne.mockResolvedValue({ userId: MEMBER, groupId: GROUP });
+    // The voucher and the target are on the conversation's roster, and the target's device holds a
+    // `pending` seat - the row its admitting commit wrote.
+    group = { id: GROUP };
+    roster = [
+      { userId: MEMBER, groupId: GROUP },
+      { userId: TARGET, groupId: GROUP },
+    ];
+    seats = [{ userId: TARGET, deviceId: DEVICE, groupId: GROUP, status: 'pending' }];
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InvitationsController],
       providers: [
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
         { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(GroupInvite), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
@@ -113,7 +140,7 @@ describe('InvitationsController - who may report a device active', () => {
   });
 
   it('a vouch from a NON-member is refused before anything is written', async () => {
-    groupMemberRepo.findOne.mockResolvedValue(null);
+    roster = roster.filter((r) => r.userId !== MEMBER);
 
     await expect(
       controller.updateInvitationStatus(
@@ -135,5 +162,71 @@ describe('InvitationsController - who may report a device active', () => {
     );
 
     expect(promotion()).toEqual({ tag: 'INVITATION_STATUS' });
+  });
+
+  /**
+   * A REPORT PROMOTES A SEAT AND NEVER CREATES ONE: the row must exist for this user's device, and a
+   * conversation must still name its owner. Each refusal happens before the one writer is reached.
+   */
+  describe('the seat a report promotes', () => {
+    const report = (caller = TARGET) =>
+      controller.updateInvitationStatus(
+        { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
+        caller,
+        'false'
+      );
+
+    it('refuses a self-report for a device that holds no seat, and asks by the triple', async () => {
+      seats = [];
+
+      await expect(report()).rejects.toMatchObject({ response: { code: 'NOT_A_MEMBER' } });
+      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
+        where: { userId: TARGET, deviceId: DEVICE, groupId: GROUP },
+        select: { status: true },
+      });
+      expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+    });
+
+    it("refuses a self-report resting on ANOTHER account's seat for the same device id", async () => {
+      seats = [{ userId: 'user-other', deviceId: DEVICE, groupId: GROUP, status: 'pending' }];
+
+      await expect(report()).rejects.toMatchObject({ response: { code: 'NOT_A_MEMBER' } });
+      expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+    });
+
+    it('refuses a conversation self-report once its owner is off the roster', async () => {
+      roster = roster.filter((r) => r.userId !== TARGET);
+
+      await expect(report()).rejects.toMatchObject({ response: { code: 'NOT_A_MEMBER' } });
+      expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: GROUP, userId: TARGET },
+      });
+      expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+    });
+
+    it('refuses a vouch for a device that holds no seat, member or not', async () => {
+      seats = [];
+
+      await expect(report(MEMBER)).rejects.toMatchObject({ response: { code: 'NOT_A_MEMBER' } });
+      expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+    });
+
+    it('accepts a report on an ACTIVE seat, which an external join already promoted', async () => {
+      seats = [{ userId: TARGET, deviceId: DEVICE, groupId: GROUP, status: 'active' }];
+
+      await report();
+
+      expect(messaging.activateDeviceMembership).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts a key group on its seat alone: it has no user roster here', async () => {
+      group = { id: GROUP, distributionWorkspaceId: 'ws-1' };
+      roster = [];
+
+      await report();
+
+      expect(groupMemberRepo.findOne).not.toHaveBeenCalled();
+      expect(messaging.activateDeviceMembership).toHaveBeenCalledTimes(1);
+    });
   });
 });
