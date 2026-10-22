@@ -2,13 +2,16 @@
  * Builds the CLEAR header RFC 9420 gives a framed MLS message -
  * `version || wire_format || group_id<V> || epoch || rest` - as base64, the shape the send path
  * receives in `proto`. Wire format 1 is a `PublicMessage` (a commit), 2 a `PrivateMessage` (an
- * application frame), 3 a Welcome. `prefixBytes` picks the variable-length prefix of `group_id`.
+ * application frame), 3 a Welcome. `prefixBytes` picks the variable-length prefix of `group_id`;
+ * `senderType` is the first byte after the epoch - a `PublicMessage`'s `sender_type` (member 1,
+ * new_member_commit 4) - and defaults to a byte no sender type uses.
  */
 export function mlsFrame(
   wireFormat: number,
   groupId: string,
   epoch: bigint,
-  prefixBytes: 1 | 2 | 4 = 1
+  prefixBytes: 1 | 2 | 4 = 1,
+  senderType = 0xde
 ): string {
   const id = Buffer.from(groupId, 'ascii');
   let len: Buffer;
@@ -24,5 +27,5 @@ export function mlsFrame(
   const e = Buffer.alloc(8);
   e.writeBigUInt64BE(epoch);
   const head = Buffer.from([0x00, 0x01, 0x00, wireFormat]);
-  return Buffer.concat([head, len, id, e, Buffer.from([0xde, 0xad])]).toString('base64');
+  return Buffer.concat([head, len, id, e, Buffer.from([senderType, 0xad])]).toString('base64');
 }

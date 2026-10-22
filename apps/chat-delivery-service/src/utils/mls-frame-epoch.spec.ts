@@ -1,4 +1,9 @@
-import { MLS_MAX_PAST_EPOCHS, isBeyondPastEpochWindow, mlsFrameEpoch } from './mls-frame-epoch';
+import {
+  MLS_MAX_PAST_EPOCHS,
+  isBeyondPastEpochWindow,
+  isExternalCommitFrame,
+  mlsFrameEpoch,
+} from './mls-frame-epoch';
 import { mlsFrame as frame } from '../testing/mlsFrameFixture';
 
 const GROUP = '68227a77-0515-43d7-b7ee-2943bfa78f1f';
@@ -25,6 +30,22 @@ describe('mlsFrameEpoch', () => {
     ).toBeNull();
     expect(mlsFrameEpoch(frame(2, GROUP, 5n).slice(0, 20))).toBeNull();
     expect(mlsFrameEpoch('')).toBeNull();
+  });
+});
+
+describe('isExternalCommitFrame', () => {
+  it('reads a PublicMessage whose sender is new_member_commit as an external commit', () => {
+    expect(isExternalCommitFrame(frame(1, GROUP, 9n, 1, 4))).toBe(true);
+    expect(isExternalCommitFrame(frame(1, GROUP, 9n, 2, 4))).toBe(true);
+  });
+
+  it('reads a member commit, a PrivateMessage and anything unparsable as NOT one', () => {
+    expect(isExternalCommitFrame(frame(1, GROUP, 9n, 1, 1))).toBe(false);
+    // A PrivateMessage encrypts its sender: the byte after the epoch is not a sender type.
+    expect(isExternalCommitFrame(frame(2, GROUP, 9n, 1, 4))).toBe(false);
+    expect(isExternalCommitFrame(frame(3, GROUP, 9n, 1, 4))).toBe(false);
+    expect(isExternalCommitFrame(frame(1, GROUP, 9n, 1, 4).slice(0, 20))).toBe(false);
+    expect(isExternalCommitFrame('cGF5bG9hZA==')).toBe(false);
   });
 });
 

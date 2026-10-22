@@ -24,6 +24,34 @@ import { readMlsOpaque } from './mls-tls';
  *   rule speaks about" - and the caller routes on it rather than guessing.
  */
 export function mlsFrameEpoch(protoBase64: string): number | null {
+  return readFramedHeader(protoBase64)?.epoch ?? null;
+}
+
+/**
+ * Whether a commit's clear header names a `new_member_commit` sender - an EXTERNAL commit, the one
+ * way a device that is not in the tree commits.
+ *
+ * RFC 9420 section 6: a `PublicMessage`'s `FramedContent` continues `group_id<V> || epoch` with the
+ * `Sender`, whose first byte is its `sender_type` (member 1, external 2, new_member_proposal 3,
+ * new_member_commit 4), unencrypted. A `PrivateMessage` encrypts its sender, and an external commit
+ * is always a `PublicMessage` (section 12.4.3.2), so any other frame answers false.
+ *
+ * WHAT IT PROVES AND WHAT IT DOES NOT: the bytes CLAIM an external commit; this server holds no key
+ * to check the signature. The commit gate therefore pairs the claim with who may join externally at
+ * all - the same predicate that serves the external-join base (`getGroupInfo`).
+ */
+export function isExternalCommitFrame(protoBase64: string): boolean {
+  const header = readFramedHeader(protoBase64);
+  return header?.wireFormat === 1 && header.senderType === 4;
+}
+
+/**
+ * The clear header of a framed MLS 1.0 message: wire format, epoch, and the `sender_type` byte when
+ * the frame is a `PublicMessage` that carries one. Null for anything else or anything truncated.
+ */
+function readFramedHeader(
+  protoBase64: string
+): { wireFormat: number; epoch: number; senderType: number | null } | null {
   const bytes = Buffer.from(protoBase64, 'base64');
   // version mls10 = 1; wire_format public_message = 1, private_message = 2.
   if (bytes.length < 5 || bytes.readUInt16BE(0) !== 1) return null;
@@ -35,7 +63,10 @@ export function mlsFrameEpoch(protoBase64: string): number | null {
   const offset = groupId.next;
   if (bytes.length < offset + 8) return null;
   const epoch = bytes.readBigUInt64BE(offset);
-  return epoch > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(epoch);
+  if (epoch > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  const senderType =
+    wireFormat === 1 && bytes.length > offset + 8 ? bytes.readUInt8(offset + 8) : null;
+  return { wireFormat, epoch: Number(epoch), senderType };
 }
 
 /**

@@ -13,9 +13,10 @@ import {
   UseGuards,
   Logger,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThanOrEqual, DataSource, In, IsNull } from 'typeorm';
+import { Repository, MoreThanOrEqual, DataSource, In, IsNull, Not } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import {
@@ -351,6 +352,23 @@ export class DevicesController {
       `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}` +
         ` notAfter=${notAfter ? notAfter.toISOString() : 'unknown'}`
     );
+    // ONE OWNER PER DEVICE ID. The table is unique on the pair, yet memberships, commits and the
+    // fan-out name a device by its id, so an id held by two accounts would let one stand in for the
+    // other's. A client mints its id per account (`resolveDeviceId`), so only a forged registration
+    // lands here - 0 shared ids on production, 2026-10-22.
+    const heldElsewhere = await this.keyPackageRepo.findOne({
+      where: { deviceId, userId: Not(userId) },
+      select: { id: true },
+    });
+    if (heldElsewhere) {
+      this.logger.warn(
+        `[REGISTER_DEVICE] REFUSED device_id_taken user=${userId} device=${deviceId}`
+      );
+      throw new ConflictException({
+        error: 'device_id_taken',
+        message: 'this device id is registered to another account',
+      });
+    }
     await this.deviceSignatureKeys.record(userId, deviceId, [keyPackagePayload], 'register-device');
     const existing = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },

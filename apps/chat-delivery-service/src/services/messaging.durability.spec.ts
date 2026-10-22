@@ -865,5 +865,31 @@ describe('MessagingService - visibility vs durability', () => {
       expect(queuedMessageRepo.save).not.toHaveBeenCalled();
       expect(redis.xadd).not.toHaveBeenCalled();
     });
+
+    it("refuses a caller naming another member's device - the row is read by person AND device", async () => {
+      // The group holds ONE row: the member u2's device d2. The mock answers by every key of the
+      // `where`, so a lookup by device id alone would find it and let u1 send as u2's device.
+      const rows = [{ groupId: 'g1', userId: 'u2', deviceId: 'd2', status: 'active' }];
+      deviceGroupRepo.findOne.mockImplementation(
+        async ({ where }: { where: Record<string, unknown> }) =>
+          rows.find((r) => Object.entries(where).every(([k, v]) => r[k as keyof typeof r] === v)) ??
+          null
+      );
+
+      await expect(
+        service.sendMessage(send({ senderId: 'u1', senderDeviceId: 'd2', durable: true }), 'u1')
+      ).rejects.toMatchObject({ response: { error: 'sender_not_member' } });
+      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: 'g1', userId: 'u1', deviceId: 'd2' },
+      });
+      expect(redis.xadd).not.toHaveBeenCalled();
+
+      // The member itself still sends from it.
+      await service.sendMessage(
+        send({ senderId: 'u2', senderDeviceId: 'd2', durable: true }),
+        'u2'
+      );
+      expect(redis.xadd).toHaveBeenCalledTimes(1);
+    });
   });
 });

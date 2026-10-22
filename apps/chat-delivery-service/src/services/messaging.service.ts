@@ -30,6 +30,7 @@ import { activeRevocationWhere } from '../utils/revocation';
 import {
   MLS_MAX_PAST_EPOCHS,
   isBeyondPastEpochWindow,
+  isExternalCommitFrame,
   mlsFrameEpoch,
 } from '../utils/mls-frame-epoch';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
@@ -1227,11 +1228,7 @@ export class MessagingService {
         // different members and keep each out of the shared history stream - an equivocation the
         // ordinary fan-out (one ciphertext, every member) makes impossible.
         if (addressed) {
-          const group = await this.groupRepo.findOne({
-            where: { id: groupId },
-            select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
-          });
-          if (!group?.distributionWorkspaceId && !group?.distributionChannelId) {
+          if (!(await this.isKeyDistributionGroup(groupId))) {
             this.logger.warn(
               `[SEND][${traceId}] REJECT addressed_not_key_group group=${groupId} - ` +
                 `recipientDevices is accepted on a key-distribution group only`
@@ -1244,8 +1241,13 @@ export class MessagingService {
 
         const isHandshake = !!body.isCommit || !!body.isWelcome;
         if (!isHandshake && body.senderId && body.senderDeviceId) {
+          // KEYED ON THE SENDER AS WELL AS ITS DEVICE: a row is a (person, device) pair, and a device
+          // id alone would let one person send as another member's device. The authenticated caller
+          // when there is one - the id its own rows were written under.
+          const senderUserId =
+            sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id') ?? body.senderId;
           const senderMembership = await this.deviceGroupRepo.findOne({
-            where: { groupId, deviceId: body.senderDeviceId },
+            where: { groupId, userId: senderUserId, deviceId: body.senderDeviceId },
           });
           if (!senderMembership) {
             // REFUSED (2026-10-22): a device with no row in this group is no member of it, and
@@ -1710,6 +1712,8 @@ export class MessagingService {
     // THE COMMITTER IS THE CALLER. `senderId` names the author of the fan-out and the member whose
     // device this commit activates, so a client route must name itself. Absent header = an internal
     // caller (the background Welcome), which authenticated the device on its own route.
+    /** The authenticated committer of a client commit; undefined for the internal caller. */
+    let committer: string | undefined;
     if (authUserIdRaw !== undefined) {
       if (typeof body.senderId !== 'string' || body.senderId.length === 0) {
         this.logger.warn(`[COMMIT][${traceId}] REJECT no_sender group=${groupId}`);
@@ -1719,16 +1723,18 @@ export class MessagingService {
         });
       }
       this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'COMMIT');
+      committer = sanitizeQueryValue(authUserIdRaw, 'x-user-id');
       // AND THE DEVICE IS THE CALLER'S: the commit activates `senderId:deviceId`, so a device
-      // registered to anyone else is refused. The static KeyPackage row is the registry.
+      // registered to anyone else is refused. The static KeyPackage row is the registry, and it is
+      // unique on the PAIR - read by the pair, never by the device id alone.
       const registered = await this.keyPackageRepo.findOne({
-        where: { deviceId },
-        select: { userId: true, deviceId: true },
+        where: { userId: committer, deviceId },
+        select: { id: true },
       });
-      if (!registered || registered.userId.toLowerCase() !== body.senderId.toLowerCase()) {
+      if (!registered) {
         this.logger.warn(
           `[COMMIT][${traceId}] REJECT device_not_owned group=${groupId} device=${deviceId} ` +
-            `sender=${sanitizeLogValue(body.senderId)} registered=${registered ? 'other' : 'none'}`
+            `sender=${sanitizeLogValue(committer)}`
         );
         throw new ForbiddenException({
           error: 'device_not_owned',
@@ -1774,6 +1780,9 @@ export class MessagingService {
       throw new BadRequestException(
         'proto is required: a commit that cannot be replayed may not advance the epoch'
       );
+    }
+    if (committer !== undefined) {
+      await this.assertCommitterMayCommit(groupId, committer, deviceId, commitProto, traceId);
     }
 
     this.logger.log(
@@ -2210,10 +2219,7 @@ export class MessagingService {
     groupInfo: string,
     baseEpoch: number
   ): Promise<{ stored: boolean }> {
-    const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId: requesterUserId },
-    });
-    if (!membership) {
+    if (!(await this.isOnRoster(groupId, requesterUserId))) {
       throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
     return this.putGroupInfo(groupId, groupInfo, baseEpoch);
@@ -2318,10 +2324,7 @@ export class MessagingService {
     groupId: string,
     requesterUserId: string
   ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
-    const membership = await this.groupMemberRepo.findOne({
-      where: { groupId, userId: requesterUserId },
-    });
-    if (!membership) {
+    if (!(await this.isOnRoster(groupId, requesterUserId))) {
       throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
     return this.readGroupInfo(groupId);
@@ -2417,21 +2420,99 @@ export class MessagingService {
       candidates.push({ userId, deviceId });
     }
     if (candidates.length === 0) return [];
+    const pairs = candidates.map((c) => ({ userId: c.userId, deviceId: c.deviceId }));
     const known = new Set(
       (
         await this.keyPackageRepo.find({
-          where: candidates.map((c) => ({ userId: c.userId, deviceId: c.deviceId })),
+          where: pairs,
           select: { userId: true, deviceId: true },
         })
       ).map((kp) => `${kp.userId}:${kp.deviceId}`)
     );
+    // A DEVICE ALREADY ROUTED IS NOT ADMITTED. An admit is what lets the commit's fan-out skip a
+    // device, and an `active` row is one that receives every frame of the group - admitting it would
+    // let a committer take a member's device out of the fan-out of a commit it must process.
+    const routed = new Set(
+      (
+        await this.deviceGroupRepo.find({
+          where: pairs.map((p) => ({ ...p, groupId, status: 'active' as const })),
+          select: { userId: true, deviceId: true },
+        })
+      ).map((m) => `${m.userId}:${m.deviceId}`)
+    );
     return candidates.filter((c) => {
-      if (known.has(`${c.userId}:${c.deviceId}`)) return true;
+      const key = `${c.userId}:${c.deviceId}`;
+      const reason = !known.has(key) ? 'no_key_package' : routed.has(key) ? 'already_active' : null;
+      if (reason === null) return true;
       this.logger.warn(
-        `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${c.userId}:${c.deviceId} reason=no_key_package`
+        `[COMMIT][${traceId}] ADMIT_REFUSED group=${groupId} device=${key} reason=${reason}`
       );
       return false;
     });
+  }
+
+  /**
+   * Whether the caller may commit to `groupId` at all, decided before the epoch gate.
+   *
+   * - A MEMBER COMMIT comes from a device the group routes to: an `active` row of the caller's own.
+   *   A removed member's device was demoted when it was removed, so it is refused here.
+   * - AN EXTERNAL COMMIT is the one commit made from outside the tree (an external join or rejoin),
+   *   recognised by its own clear header ({@link isExternalCommitFrame}), never by a client flag. It
+   *   is accepted from whoever may read the base it is built on - the roster predicate of
+   *   {@link getGroupInfo} - so the gate and the door it guards answer the same question.
+   *
+   * A KEY-DISTRIBUTION GROUP'S EXTERNAL COMMIT IS NOT GATED YET: its roster is community or salon
+   * membership, held by social-service, and it carries no `dm_group_members` row by construction.
+   * Each one is accepted and SAID, until that service answers the question
+   * (`docs/wiki/backlog.md`, WP-KEYGROUP-JOIN-GATE).
+   *
+   * Client commits only: the internal background Welcome authenticates the device on its own route.
+   */
+  private async assertCommitterMayCommit(
+    groupId: string,
+    userId: string,
+    deviceId: string,
+    proto: string,
+    traceId: string
+  ): Promise<void> {
+    const external = isExternalCommitFrame(proto);
+    if (external && (await this.isKeyDistributionGroup(groupId))) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] UNGATED key-group external commit group=${groupId} ` +
+          `device=${sanitizeLogValue(userId)}:${deviceId} - no entitlement check until ` +
+          `social-service answers it (WP-KEYGROUP-JOIN-GATE)`
+      );
+      return;
+    }
+    const allowed = external
+      ? await this.isOnRoster(groupId, userId)
+      : !!(await this.deviceGroupRepo.findOne({
+          where: { groupId, userId, deviceId, status: 'active' as const },
+          select: { deviceId: true },
+        }));
+    if (allowed) return;
+    this.logger.warn(
+      `[COMMIT][${traceId}] REJECT committer_not_member group=${groupId} ` +
+        `device=${sanitizeLogValue(userId)}:${deviceId} kind=${external ? 'external' : 'member'}`
+    );
+    throw new ForbiddenException({
+      error: 'committer_not_member',
+      message: 'this commit is not accepted',
+    });
+  }
+
+  /** Whether `groupId` is a Graine key-distribution group (a community's or a private salon's). */
+  private async isKeyDistributionGroup(groupId: string): Promise<boolean> {
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+    });
+    return !!(group?.distributionWorkspaceId || group?.distributionChannelId);
+  }
+
+  /** Whether `userId` is on the user roster of `groupId` - who may read its external-join base. */
+  private async isOnRoster(groupId: string, userId: string): Promise<boolean> {
+    return !!(await this.groupMemberRepo.findOne({ where: { groupId, userId } }));
   }
 
   /**

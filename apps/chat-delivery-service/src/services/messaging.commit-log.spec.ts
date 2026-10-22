@@ -2,7 +2,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -14,6 +14,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { mlsFrame } from '../testing/mlsFrameFixture';
 
 describe('MessagingService - commit-log (rung-1 backbone)', () => {
   let service: MessagingService;
@@ -143,6 +144,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     // Default: the committer is already an active member, so the promotion path stays inert
     // unless a test explicitly makes the row absent.
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+    deviceGroupRepo.find.mockResolvedValue([]);
+    groupMemberRepo.findOne.mockResolvedValue(null);
     keyPackageRepo.findOne.mockResolvedValue({
       id: 'kp-1',
       userId: 'user-1',
@@ -607,26 +610,63 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
    * the committing device.
    */
   describe('who a client commit may name', () => {
+    type Row = Record<string, unknown>;
+    /** Every key of `where` must match: a lookup on the wrong columns finds nothing. */
+    const hits = (rows: Row[], where: Row | Row[]): Row[] =>
+      (Array.isArray(where) ? where : [where]).flatMap((w) =>
+        rows.filter((r) => Object.entries(w).every(([k, v]) => r[k] === v))
+      );
+    /**
+     * The three tables the gate reads, as rows the mocks answer from by their `where` - so a test
+     * fails when the service asks the wrong question, not only when it gets a wrong answer.
+     */
+    const tables = (t: { keyPackages?: Row[]; devices?: Row[]; roster?: Row[]; group?: Row }) => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5, ...t.group });
+      keyPackageRepo.findOne.mockImplementation(
+        async ({ where }: { where: Row }) => hits(t.keyPackages ?? [], where)[0] ?? null
+      );
+      keyPackageRepo.find.mockImplementation(async ({ where }: { where: Row[] }) =>
+        hits(t.keyPackages ?? [], where)
+      );
+      deviceGroupRepo.findOne.mockImplementation(
+        async ({ where }: { where: Row }) => hits(t.devices ?? [], where)[0] ?? null
+      );
+      deviceGroupRepo.find.mockImplementation(async ({ where }: { where: Row[] }) =>
+        hits(t.devices ?? [], where)
+      );
+      groupMemberRepo.findOne.mockImplementation(
+        async ({ where }: { where: Row }) => hits(t.roster ?? [], where)[0] ?? null
+      );
+    };
+    const ownKey = { userId: 'user-1', deviceId: 'device-1' };
+    const ownDevice = {
+      groupId: 'group-1',
+      userId: 'user-1',
+      deviceId: 'device-1',
+      status: 'active',
+    };
+    /** A member commit and an external commit, as their clear headers say (RFC 9420 section 6). */
+    const MEMBER_COMMIT = mlsFrame(1, 'group-1', 5n, 1, 1);
+    const EXTERNAL_COMMIT = mlsFrame(1, 'group-1', 5n, 1, 4);
     const fanOut = () =>
       jest
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
-    const commit = (extra: Record<string, unknown> = {}, caller?: string) => {
-      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
-      return service.validateCommit(
+    const commit = (extra: Record<string, unknown> = {}, caller?: string) =>
+      service.validateCommit(
         {
           groupId: 'group-1',
           deviceId: 'device-1',
           baseEpoch: 5,
-          proto: 'Y29tbWl0',
+          proto: MEMBER_COMMIT,
           senderId: 'user-1',
           ...extra,
         },
         caller
       );
-    };
 
     it('refuses a commit whose sender is not the caller, before the epoch moves', async () => {
+      tables({ keyPackages: [ownKey], devices: [ownDevice] });
       const sent = fanOut();
 
       await expect(commit({}, 'user-2')).rejects.toBeInstanceOf(ForbiddenException);
@@ -635,18 +675,33 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     });
 
     it("refuses a commit naming someone else's device, before the epoch moves", async () => {
-      keyPackageRepo.findOne.mockResolvedValue({ userId: 'user-2', deviceId: 'device-1' });
+      tables({ keyPackages: [{ userId: 'user-2', deviceId: 'device-1' }], devices: [ownDevice] });
       const sent = fanOut();
 
       await expect(commit({}, 'user-1')).rejects.toMatchObject({
         response: { error: 'device_not_owned' },
       });
+      expect(keyPackageRepo.findOne).toHaveBeenCalledWith({
+        where: { userId: 'user-1', deviceId: 'device-1' },
+        select: { id: true },
+      });
       expect(transaction).not.toHaveBeenCalled();
       expect(sent).not.toHaveBeenCalled();
     });
 
+    it("reads the owner by the PAIR: another account's row under the same id does not shadow the caller's", async () => {
+      // A lookup by device id alone answers whichever row comes first - here the other account's.
+      tables({
+        keyPackages: [{ userId: 'user-2', deviceId: 'device-1' }, ownKey],
+        devices: [ownDevice],
+      });
+      fanOut();
+
+      await expect(commit({}, 'user-1')).resolves.toMatchObject({ accepted: true });
+    });
+
     it('refuses a commit from a device registered to nobody', async () => {
-      keyPackageRepo.findOne.mockResolvedValue(null);
+      tables({ devices: [ownDevice] });
 
       await expect(commit({}, 'user-1')).rejects.toMatchObject({
         response: { error: 'device_not_owned' },
@@ -655,14 +710,77 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     });
 
     it('refuses a client commit that names no sender', async () => {
+      tables({ keyPackages: [ownKey], devices: [ownDevice] });
       await expect(commit({ senderId: undefined }, 'user-1')).rejects.toBeInstanceOf(
         BadRequestException
       );
       expect(transaction).not.toHaveBeenCalled();
     });
 
+    it('refuses a member commit from a REMOVED member - its row was demoted', async () => {
+      tables({ keyPackages: [ownKey], devices: [{ ...ownDevice, status: 'pending' }] });
+      const sent = fanOut();
+
+      await expect(commit({}, 'user-1')).rejects.toMatchObject({
+        response: { error: 'committer_not_member' },
+      });
+      expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: 'group-1', userId: 'user-1', deviceId: 'device-1', status: 'active' },
+        select: { deviceId: true },
+      });
+      expect(transaction).not.toHaveBeenCalled();
+      expect(sent).not.toHaveBeenCalled();
+    });
+
+    it('refuses a member commit from a device that was never in the group', async () => {
+      tables({ keyPackages: [ownKey] });
+
+      await expect(commit({}, 'user-1')).rejects.toMatchObject({
+        response: { error: 'committer_not_member' },
+      });
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it('accepts an EXTERNAL commit from a person on the roster, with no device row yet', async () => {
+      tables({ keyPackages: [ownKey], roster: [{ groupId: 'group-1', userId: 'user-1' }] });
+      fanOut();
+
+      await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).resolves.toMatchObject({
+        accepted: true,
+      });
+      expect(groupMemberRepo.findOne).toHaveBeenCalledWith({
+        where: { groupId: 'group-1', userId: 'user-1' },
+      });
+    });
+
+    it('refuses an external commit from a person who is not on the roster', async () => {
+      tables({ keyPackages: [ownKey], roster: [{ groupId: 'group-1', userId: 'user-2' }] });
+
+      await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).rejects.toMatchObject({
+        response: { error: 'committer_not_member' },
+      });
+      expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it("accepts a key group's external commit UNGATED, and says so", async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      tables({ keyPackages: [ownKey], group: { distributionWorkspaceId: 'ws-1' } });
+      fanOut();
+
+      await expect(commit({ proto: EXTERNAL_COMMIT }, 'user-1')).resolves.toMatchObject({
+        accepted: true,
+      });
+      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+        'UNGATED key-group external commit'
+      );
+      warn.mockRestore();
+    });
+
     it('lets the fan-out skip only the devices it admits and the committer', async () => {
-      keyPackageRepo.find.mockResolvedValue([{ userId: 'user-2', deviceId: 'phone-2' }]);
+      tables({
+        keyPackages: [ownKey, { userId: 'user-2', deviceId: 'phone-2' }],
+        devices: [ownDevice],
+      });
       const sent = fanOut();
 
       await commit(
@@ -681,7 +799,41 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       );
     });
 
+    it('does not admit - so cannot exclude - a device the group already routes to', async () => {
+      const routed = {
+        groupId: 'group-1',
+        userId: 'user-2',
+        deviceId: 'phone-2',
+        status: 'active',
+      };
+      tables({
+        keyPackages: [ownKey, { userId: 'user-2', deviceId: 'phone-2' }],
+        devices: [ownDevice, routed],
+      });
+      const sent = fanOut();
+
+      await commit(
+        {
+          admits: [{ userId: 'user-2', deviceId: 'phone-2' }],
+          excludeDeviceIds: ['user-2:phone-2'],
+        },
+        'user-1'
+      );
+
+      expect(deviceGroupRepo.find).toHaveBeenCalledWith({
+        where: [{ userId: 'user-2', deviceId: 'phone-2', groupId: 'group-1', status: 'active' }],
+        select: { userId: true, deviceId: true },
+      });
+      expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
+      expect(sent).toHaveBeenCalledWith(
+        expect.objectContaining({ excludeDeviceIds: [] }),
+        undefined,
+        []
+      );
+    });
+
     it('still serves an internal caller, which names no header', async () => {
+      tables({});
       const sent = fanOut();
 
       const res = await commit({ excludeDeviceIds: ['user-1:device-1'] });
