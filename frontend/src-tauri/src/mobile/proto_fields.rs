@@ -285,7 +285,7 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
     }
 
     let mut out: Vec<serde_json::Value> = Vec::new();
-    let mut absorb = |graine: &[u8]| {
+    let mut absorb = |graine: &[u8], relayed: bool| {
         let channel_id = find_length_delimited_field(graine, 1)
             .and_then(|b| String::from_utf8(b).ok())
             .unwrap_or_default();
@@ -331,15 +331,21 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
             entry["signingPublicKeyB64"] = bytes(9).into();
             entry["endorsementB64"] = bytes(10).into();
         }
+        if relayed {
+            entry["relayed"] = true.into();
+        }
         out.push(entry);
     };
 
     if let Some(graine) = &single {
-        absorb(graine);
+        absorb(graine, false);
     }
     if let Some(bundle) = &bundle {
+        // A BUNDLE'S SEEDS ARE RELAYED, and the writer treats them apart: an answerer gathers them
+        // from a store keyed by community, so only the app - which knows which salons ride which key
+        // group - may admit one for a salon this device has never read (`store_graine_seeds_json`).
         for graine in find_repeated_length_delimited_field(bundle, 3) {
-            absorb(&graine);
+            absorb(&graine, true);
         }
     }
     Some(out)
@@ -1259,6 +1265,14 @@ mod tests {
             .map(|s| s["sessionId"].as_str().unwrap())
             .collect();
         assert_eq!(ids, ["s-1", "s-2", "s-3"]);
+        // Each marked RELAYED, which the mirror writer treats apart (`store_graine_seeds_json`).
+        assert!(seeds.iter().all(|s| s["relayed"] == true));
+        // A sender's own distribution is not relayed.
+        let single = extract_full_message_info(
+            &build_graine_app_message("ch-1", "sess-1", &[7u8; 32], 1),
+            PushLanguage::French,
+        );
+        assert!(single["seeds"][0].get("relayed").is_none());
     }
 
     /// A seed that could not be used is dropped HERE rather than written and failing later: the

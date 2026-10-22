@@ -65,6 +65,13 @@ class CanariApplication : Application() {
         processPendingPushSecret()
         checkKeystoreHealth()
         recordInstallerPackage()
+        // Before any push can be handled by this process: the key that seals the native caches,
+        // created here and nowhere else ([NativeCacheKey]).
+        try {
+            NativeCacheKey.ensure(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "NativeCacheKey.ensure: exception: ${e.message}", e)
+        }
     }
 
     /**

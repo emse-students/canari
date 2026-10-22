@@ -4,6 +4,7 @@ use tauri::Manager;
 
 use crate::commands::at_rest_key::GuardRefusal;
 use crate::keystore_bridge::{KeyEntryError, PluginDeviceKeyStore};
+use crate::native_cache::{open_file, open_line, seal_file, CacheKey, Opened, Purpose};
 
 /// Checks that the Android Keystore can read the push secret (flag written by CanariApplication).
 /// Returns `{"ok":true}` or `{"ok":false,"reason":"no_context"|"no_secret"}`.
@@ -275,7 +276,14 @@ fn taken_files(dir: &std::path::Path) -> Vec<(u64, String)> {
 /// before the frontend persisted it: it is handed over again, first. Replaying one is harmless:
 /// `consumeFcmCache` never downgrades a row and its writes are puts by id. The frontend runs one take
 /// at a time, so that is the only way such a file exists.
-pub(crate) fn take_fcm_cache_in(dir: &std::path::Path) -> FcmCacheTake {
+///
+/// SEALED LINES (`native_cache`, since 2026-10-22). Each line the native writers append is sealed
+/// under the install's cache key; a line an older build wrote is plain JSON, read as such, and the
+/// take-then-ack above is its migration: it is consumed into the frontend's sealed store and the
+/// file deleted. A sealed line the key does not open is dropped and counted - the key never rotates,
+/// so no later take would open it. With no key, a file holding a sealed line is NOT handed over, so
+/// not acknowledged: it waits for a take that can read it.
+pub(crate) fn take_fcm_cache_in(dir: &std::path::Path, key: Option<&CacheKey>) -> FcmCacheTake {
     let existing = taken_files(dir);
     let next = existing.last().map_or(0, |(g, _)| g + 1);
     let own = format!("{FCM_CACHE_TAKEN_PREFIX}{next}.ndjson");
@@ -302,12 +310,44 @@ pub(crate) fn take_fcm_cache_in(dir: &std::path::Path) -> FcmCacheTake {
                 continue;
             }
         };
-        entries.extend(
-            String::from_utf8_lossy(&bytes)
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()),
-        );
+        let text = String::from_utf8_lossy(&bytes);
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        let Some(key) = key else {
+            if lines
+                .iter()
+                .any(|l| l.starts_with(crate::native_cache::LINE_PREFIX))
+            {
+                log::error!("[FCM_CACHE] taken file {name} holds sealed lines and no cache key was read - kept");
+                continue;
+            }
+            entries.extend(
+                lines
+                    .iter()
+                    .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()),
+            );
+            files.push(FcmTakenFile {
+                name,
+                bytes: bytes.len() as u64,
+            });
+            continue;
+        };
+        let mut unopenable = 0usize;
+        for line in lines {
+            match open_line(key, Purpose::PushCache, line) {
+                Ok(opened) => {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&opened.into_inner()) {
+                        entries.push(v);
+                    }
+                }
+                Err(_) => unopenable += 1,
+            }
+        }
+        if unopenable > 0 {
+            log::error!(
+                "[FCM_CACHE] taken file {name}: {unopenable} sealed line(s) this install's key does \
+                 not open, dropped"
+            );
+        }
         files.push(FcmTakenFile {
             name,
             bytes: bytes.len() as u64,
@@ -363,16 +403,44 @@ pub(crate) fn ack_fcm_cache_in(dir: &std::path::Path, files: &[FcmTakenFile]) ->
 /// [`take_fcm_cache_in`] on the app's data directory. Called at boot right after login to
 /// pre-inject messages already decrypted when the FCM push arrived - avoids waiting for the full
 /// MLS sync (~10s).
+///
+/// Async because the cache key is a keystore plugin read, which must not run on the main thread.
+/// It is also where the plaintext files an older build left are sealed, once per process
+/// (`native_cache::migrate_legacy_files`): the first thing the app does after login.
 #[tauri::command]
-pub(crate) fn take_fcm_cache(app: tauri::AppHandle) -> FcmCacheTake {
-    match app.path().app_data_dir() {
-        Ok(dir) => take_fcm_cache_in(&dir),
-        Err(e) => {
-            log::warn!("[FCM_CACHE] app_data_dir() failed: {e}");
-            FcmCacheTake {
-                entries: vec![],
-                files: vec![],
+pub(crate) async fn take_fcm_cache(app: tauri::AppHandle) -> FcmCacheTake {
+    let empty = || FcmCacheTake {
+        entries: vec![],
+        files: vec![],
+    };
+    let taken = tauri::async_runtime::spawn_blocking(move || {
+        let dir = match app.path().app_data_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                log::warn!("[FCM_CACHE] app_data_dir() failed: {e}");
+                return None;
             }
+        };
+        #[cfg(mobile)]
+        let key = match crate::native_cache::app_cache_key(&app) {
+            Ok(key) => {
+                crate::native_cache::migrate_legacy_files(&dir, &key);
+                Some(key)
+            }
+            // Logged by `app_cache_key`; plaintext lines are still taken, sealed ones wait.
+            Err(_) => None,
+        };
+        #[cfg(not(mobile))]
+        let key: Option<CacheKey> = None;
+        Some(take_fcm_cache_in(&dir, key.as_ref()))
+    })
+    .await;
+    match taken {
+        Ok(Some(t)) => t,
+        Ok(None) => empty(),
+        Err(e) => {
+            log::error!("[FCM_CACHE] take task failed: {e}");
+            empty()
         }
     }
 }
@@ -497,7 +565,8 @@ pub(crate) fn lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
     file.lock()
 }
 
-/// Reads the seed mirror, hands its map to `edit`, and writes it back when `edit` says it changed.
+/// Reads the seed mirror, hands its map to `edit`, and writes it back SEALED when `edit` says it
+/// changed.
 ///
 /// **THE ONE WAY THIS FILE IS WRITTEN, AND IT IS SERIALISED ACROSS PROCESSES.** Several writers
 /// share the file and nothing ordered them: the foreground command, the MLS push lane absorbing a
@@ -510,14 +579,32 @@ pub(crate) fn lock_exclusive(file: &std::fs::File) -> std::io::Result<()> {
 /// So every edit holds an exclusive lock on `graine_seeds.lock` (`lock_exclusive`, an OS file lock:
 /// it orders threads and processes alike, and the OS releases it if the holder dies), and writes
 /// through a temporary file renamed over the old one: `fs::write` truncates in place, and a
-/// reader - `lookupGraineSeed` on either platform - could open a half-written file and read a
-/// present seed as absent. An absent or unparsable file reads as an empty map, as it always has.
+/// reader could open a half-written file and read a present seed as absent.
+///
+/// **SEALED AT REST since 2026-10-22** (`native_cache`): the file is read with the install's cache
+/// key and always written sealed. A mirror an older build wrote in the clear is read as such and
+/// sealed by the first write - and by [`reseal_graine_mirror`] when nothing writes. An absent or
+/// unparsable map reads as an empty one, as it always has; so does a sealed file the key does not
+/// open, and that is not a guess: the key never rotates, so no reader on this install will ever
+/// open it either, and the mirror is a bounded cache of seeds the durable store holds.
 ///
 /// `edit` returns its result and whether the map changed; nothing is written when it did not.
 fn with_graine_mirror<R>(
     data_dir: &std::path::Path,
+    key: &CacheKey,
     edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<(R, bool), String>,
 ) -> Result<R, String> {
+    with_graine_mirror_inner(data_dir, key, false, edit).map(|(r, _)| r)
+}
+
+/// [`with_graine_mirror`], optionally writing back a plaintext mirror even when `edit` changed
+/// nothing - which is how [`reseal_graine_mirror`] seals one. Also returns whether it wrote.
+fn with_graine_mirror_inner<R>(
+    data_dir: &std::path::Path,
+    key: &CacheKey,
+    seal_plaintext: bool,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<(R, bool), String>,
+) -> Result<(R, bool), String> {
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -528,24 +615,81 @@ fn with_graine_mirror<R>(
     // Released when `lock` is dropped at the end of this function, on every return path.
     lock_exclusive(&lock).map_err(|e| format!("lock graine_seeds.lock: {e}"))?;
     let path = data_dir.join("graine_seeds.json");
-    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
-        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|e| {
-            log::warn!("[GRAINE_MIRROR] mirror unparsable, rebuilt from empty: {e}");
-            serde_json::json!({})
-        }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+    let (mut root, was_plaintext) = match std::fs::read(&path) {
+        Ok(bytes) => match open_file(key, Purpose::SeedMirror, &bytes) {
+            Ok(opened) => {
+                let was_plaintext = matches!(opened, Opened::Plaintext(_));
+                let parsed = serde_json::from_slice(&opened.into_inner()).unwrap_or_else(|e| {
+                    log::warn!("[GRAINE_MIRROR] mirror unparsable, rebuilt from empty: {e}");
+                    serde_json::json!({})
+                });
+                (parsed, was_plaintext)
+            }
+            Err(e) => {
+                log::error!(
+                    "[GRAINE_MIRROR] mirror rebuilt from empty: {e} - this install's key will never \
+                     open it, so its sessions show the generic banner until they are mirrored again"
+                );
+                (serde_json::json!({}), false)
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (serde_json::json!({}), false),
         Err(e) => return Err(format!("read graine_seeds.json: {e}")),
     };
     let map = root
         .as_object_mut()
         .ok_or("graine_seeds.json is not an object")?;
     let (result, changed) = edit(map)?;
-    if changed {
+    let write = changed || (seal_plaintext && was_plaintext);
+    if write {
         let tmp = data_dir.join("graine_seeds.json.tmp");
-        std::fs::write(&tmp, root.to_string()).map_err(|e| e.to_string())?;
+        std::fs::write(
+            &tmp,
+            seal_file(key, Purpose::SeedMirror, root.to_string().as_bytes()),
+        )
+        .map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+        // After the rename: the new inode does not carry the old one's flag.
+        crate::native_cache::exclude_from_backup(&path);
     }
-    Ok(result)
+    Ok((result, write))
+}
+
+/// Seals a mirror an older build left in the clear, changing nothing in it. Returns whether it
+/// wrote. See `native_cache::seal_legacy_seed_mirror`, its one caller.
+#[cfg(any(mobile, test))]
+pub(crate) fn reseal_graine_mirror(
+    data_dir: &std::path::Path,
+    key: &CacheKey,
+) -> Result<bool, String> {
+    with_graine_mirror_inner(data_dir, key, true, |_| Ok(((), false))).map(|(_, wrote)| wrote)
+}
+
+/// Reads the whole mirror, or `None` when there is none. `key` may be absent only while the file is
+/// still the older build's plaintext: a sealed mirror with no key to open it is an error, never an
+/// empty map, because "I could not look" is not "there is nothing".
+#[cfg(any(mobile, test, feature = "bench-observables"))]
+pub(crate) fn read_graine_mirror(
+    data_dir: &std::path::Path,
+    key: Option<&CacheKey>,
+) -> Result<Option<serde_json::Value>, String> {
+    let bytes = match std::fs::read(data_dir.join("graine_seeds.json")) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
+    };
+    let plain = match key {
+        Some(key) => open_file(key, Purpose::SeedMirror, &bytes)
+            .map_err(|e| format!("graine_seeds.json: {e}"))?
+            .into_inner(),
+        None if crate::native_cache::is_sealed_file(&bytes) => {
+            return Err("graine_seeds.json is sealed and no cache key was handed over".into())
+        }
+        None => bytes,
+    };
+    serde_json::from_slice(&plain)
+        .map(Some)
+        .map_err(|e| format!("graine_seeds.json unparsable: {e}"))
 }
 
 /// Writes the seeds a background decrypt found in a key-material frame - the `seeds` array of a
@@ -555,23 +699,48 @@ fn with_graine_mirror<R>(
 /// extension (`canari_native_store_graine_seeds`) hand it the same JSON, so the per-seed skip and
 /// the count cannot drift between the platforms.
 ///
-/// Returns -1 when the payload is not a JSON array at all, which is a different fact from "zero
-/// seeds were usable" and must not read as the same one.
+/// Returns -1 when the payload is not a JSON array at all, or when no cache key was handed over:
+/// different facts from "zero seeds were usable", which must not read as the same one.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
-pub(crate) fn store_graine_seeds_json(data_dir: &std::path::Path, json: &str) -> i32 {
+pub(crate) fn store_graine_seeds_json(
+    data_dir: &std::path::Path,
+    key: Option<&CacheKey>,
+    json: &str,
+) -> i32 {
     let Ok(seeds) = serde_json::from_str::<Vec<serde_json::Value>>(json) else {
         log::error!("[GRAINE_PUSH] seeds payload is not a JSON array");
         return -1;
     };
+    // NEVER IN THE CLEAR: with no key the mirror is not written at all. The app writes the same
+    // seeds from its durable store when it next runs.
+    let Some(key) = key else {
+        log::error!(
+            "[GRAINE_PUSH] no native cache key - {} seed(s) not mirrored",
+            seeds.len()
+        );
+        return -1;
+    };
 
     let mut stored = 0i32;
+    let mut left_to_the_app = 0usize;
     for seed in &seeds {
         let Some(entry) = MirrorSeed::from_extracted(seed) else {
             log::warn!("[GRAINE_PUSH] incomplete seed entry skipped");
             continue;
         };
+        // A RELAYED SEED (a bundle's) ONLY FOR A SALON THIS DEVICE ALREADY READS. Native code does
+        // not know which salons are private, nor which key group carried the frame, so it cannot make
+        // the app's scope check (`storeIncomingSeed`); a salon the mirror already holds a session of
+        // is one the app admitted seeds for. Any other is left to the app, which reads the same
+        // answer from its durable queue at its next start and checks it fully.
+        if seed["relayed"].as_bool() == Some(true)
+            && !mirror_holds_channel(data_dir, key, entry.channel_id)
+        {
+            left_to_the_app += 1;
+            continue;
+        }
         // PER SEED, so a bundle does not lose its tail to its first bad entry.
-        match merge_graine_seed(data_dir, &entry) {
+        match merge_graine_seed(data_dir, key, &entry) {
             Ok(_) => stored += 1,
             Err(e) => log::error!(
                 "[GRAINE_PUSH] merge failed for session {}: {e}",
@@ -579,8 +748,33 @@ pub(crate) fn store_graine_seeds_json(data_dir: &std::path::Path, json: &str) ->
             ),
         }
     }
+    if left_to_the_app > 0 {
+        log::info!(
+            "[GRAINE_PUSH] {left_to_the_app} relayed seed(s) for salon(s) this device has never read - not mirrored, left to the app"
+        );
+    }
     log::debug!("[GRAINE_PUSH] stored {stored}/{} seed(s)", seeds.len());
     stored
+}
+
+/// Whether the mirror holds at least one session of `channel_id` - a salon whose seeds the app has
+/// admitted. Read without the lock, as [`read_graine_seed`] reads: every writer renames a whole
+/// file over the old one. Opened with the cache key through [`read_graine_mirror`], the one reader:
+/// the mirror is SEALED since `native_cache`, and a plaintext read here saw every salon as unknown,
+/// so no relayed seed was ever mirrored. An absent file holds nothing; an unreadable one is logged
+/// and holds nothing - the seed is then left to the app, which checks it fully.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+fn mirror_holds_channel(data_dir: &std::path::Path, key: &CacheKey, channel_id: &str) -> bool {
+    match read_graine_mirror(data_dir, Some(key)) {
+        Ok(Some(root)) => root[channel_id]
+            .as_object()
+            .is_some_and(|sessions| !sessions.is_empty()),
+        Ok(None) => false,
+        Err(e) => {
+            log::error!("[GRAINE_PUSH] mirror unreadable while checking salon {channel_id}: {e}");
+            false
+        }
+    }
 }
 
 /// One session as the mirror HOLDS it, read back for a push to be opened against.
@@ -597,23 +791,19 @@ pub(crate) struct HeldGraineSeed {
 /// old one ([`with_graine_mirror`]), so a reader sees one version or the other, never half of one.
 ///
 /// `Ok(None)` is a session the mirror does not hold - expected for an old one, since the mirror is
-/// bounded. `Err` is a file that exists and cannot be read, which is a different fact. A v2 entry
-/// missing its minter or key is refused as unreadable rather than opened as v1: that would be the
-/// downgrade a session's version exists to make impossible.
+/// bounded. `Err` is a file that exists and cannot be read (or is sealed and `key` is absent), which
+/// is a different fact. A v2 entry missing its minter or key is refused as unreadable rather than
+/// opened as v1: that would be the downgrade a session's version exists to make impossible.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn read_graine_seed(
     data_dir: &std::path::Path,
+    key: Option<&CacheKey>,
     channel_id: &str,
     session_id: &str,
 ) -> Result<Option<HeldGraineSeed>, String> {
-    let path = data_dir.join("graine_seeds.json");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
+    let Some(root) = read_graine_mirror(data_dir, key)? else {
+        return Ok(None);
     };
-    let root: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("graine_seeds.json unparsable: {e}"))?;
     let entry = &root[channel_id][session_id];
     let Some(seed_b64) = entry["seed"].as_str().filter(|s| !s.is_empty()) else {
         return Ok(None);
@@ -636,6 +826,29 @@ pub(crate) fn read_graine_seed(
     }))
 }
 
+/// Whether the mirror holds a session: `1` yes, `0` no, `-1` the mirror cannot be read. What the
+/// native push paths ask before choosing between the mirror and the seed frame - the seed itself
+/// never has to leave Rust for that.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn graine_seed_held(
+    data_dir: &std::path::Path,
+    key: Option<&CacheKey>,
+    channel_id: &str,
+    session_id: &str,
+) -> i32 {
+    if session_id.is_empty() {
+        return 0;
+    }
+    match read_graine_seed(data_dir, key, channel_id, session_id) {
+        Ok(Some(_)) => 1,
+        Ok(None) => 0,
+        Err(e) => {
+            log::error!("[GRAINE_MIRROR] mirror unreadable: {e}");
+            -1
+        }
+    }
+}
+
 /// How many Graine sessions per channel the mirror keeps. Mirrors
 /// `GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL` in `graineConstants.ts`.
 const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
@@ -652,15 +865,53 @@ const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
 /// be mirrored is not a failure: the notification degrades to a generic "new message", which is the
 /// existing behaviour and the correct one.
 ///
-/// App-private plaintext storage, consistent with push_context.json / mls.bin.
+/// Sealed at rest under the install's cache key (`native_cache`). Async because reading that key is
+/// a keystore plugin call, which must not run on the main thread a synchronous command runs on.
 #[tauri::command]
-pub(crate) fn store_graine_seed(
+pub(crate) async fn store_graine_seed(
     app: tauri::AppHandle,
     seed: MirrorSeedInput,
 ) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    merge_graine_seed(&data_dir, &seed.as_mirror_seed())?;
-    Ok(())
+    with_app_mirror(app, move |dir, key| {
+        merge_graine_seed(dir, key, &seed.as_mirror_seed()).map(|_| ())
+    })
+    .await
+}
+
+/// Runs a mirror edit for a foreground command: the app data directory, the install's cache key, off
+/// the main thread.
+///
+/// ON A DESKTOP THERE IS NOTHING TO MIRROR, and saying so is the whole branch: the mirror exists for
+/// a notification service that decrypts a push with the app shut, and a desktop build has none - no
+/// reader of this file was ever compiled there. So nothing is written, and a plaintext copy an older
+/// desktop build left is deleted rather than sealed for a reader that does not exist.
+async fn with_app_mirror<T: Send + Default + 'static>(
+    app: tauri::AppHandle,
+    edit: impl FnOnce(&std::path::Path, &CacheKey) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        #[cfg(mobile)]
+        {
+            let key = crate::native_cache::app_cache_key(&app)?;
+            edit(&data_dir, &key)
+        }
+        #[cfg(not(mobile))]
+        {
+            let _ = edit;
+            match std::fs::remove_file(data_dir.join("graine_seeds.json")) {
+                Ok(()) => {
+                    log::info!("[GRAINE_MIRROR] desktop: removed a plaintext mirror no reader uses")
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => log::error!("[GRAINE_MIRROR] desktop: plaintext mirror not removed: {e}"),
+            }
+            log::debug!("[GRAINE_MIRROR] desktop: no background reader - nothing mirrored");
+            Ok(T::default())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// What the foreground hands [`store_graine_seed`]: `graineMirror.ts` builds it from a stored
@@ -792,11 +1043,12 @@ fn held_v2(entry: &serde_json::Value) -> Option<(&str, &str)> {
 /// Returns how many older sessions the bound dropped.
 pub(crate) fn merge_graine_seed(
     data_dir: &std::path::Path,
+    key: &CacheKey,
     seed: &MirrorSeed<'_>,
 ) -> Result<usize, String> {
     let session_id = seed.session_id;
     let channel_id = seed.channel_id;
-    let dropped = with_graine_mirror(data_dir, |map| {
+    let dropped = with_graine_mirror(data_dir, key, |map| {
         // A SESSION ID NAMES ONE SEED IN ONE SALON, FOR EVER - the rule `storeIncomingSeed` holds for
         // the durable store, held here for the file the push path decrypts from. Searched across
         // EVERY channel, since the map is keyed by salon and a replacement may name another one.
@@ -895,15 +1147,17 @@ fn prune_graine_sessions(sessions: &mut serde_json::Map<String, serde_json::Valu
 /// Absent file or absent channel is success, not an error: there is nothing to forget, which is the
 /// state the caller asked for.
 #[tauri::command]
-pub(crate) fn forget_graine_channel(
+pub(crate) async fn forget_graine_channel(
     app: tauri::AppHandle,
     channel_id: String,
 ) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let forgot = with_graine_mirror(&data_dir, |map| {
-        let forgot = map.remove(&channel_id).is_some();
-        Ok((forgot, forgot))
-    })?;
+    let forgot = with_app_mirror(app, move |dir, key| {
+        with_graine_mirror(dir, key, |map| {
+            let forgot = map.remove(&channel_id).is_some();
+            Ok((forgot, forgot))
+        })
+    })
+    .await?;
     if forgot {
         log::debug!("[GRAINE_MIRROR] forgot every seed of one channel");
     }
@@ -923,18 +1177,20 @@ pub(crate) fn forget_graine_channel(
 ///
 /// Absent file, absent session: success. The caller asked for an end state and that is the state.
 #[tauri::command]
-pub(crate) fn forget_graine_sessions(
+pub(crate) async fn forget_graine_sessions(
     app: tauri::AppHandle,
     session_ids: Vec<String>,
 ) -> Result<usize, String> {
     if session_ids.is_empty() {
         return Ok(0);
     }
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let (removed, emptied) = with_graine_mirror(&data_dir, |map| {
-        let (removed, emptied) = remove_graine_sessions(map, &session_ids);
-        Ok(((removed, emptied), removed > 0 || emptied > 0))
-    })?;
+    let (removed, emptied) = with_app_mirror(app, move |dir, key| {
+        with_graine_mirror(dir, key, |map| {
+            let (removed, emptied) = remove_graine_sessions(map, &session_ids);
+            Ok(((removed, emptied), removed > 0 || emptied > 0))
+        })
+    })
+    .await?;
     if removed > 0 || emptied > 0 {
         log::debug!(
             "[GRAINE_MIRROR] forgot {removed} expired session(s), {emptied} channel(s) dropped"
@@ -1546,9 +1802,14 @@ pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result
 #[cfg(test)]
 mod graine_mirror_tests {
     use super::{
-        merge_graine_seed, prune_graine_sessions, remove_graine_sessions, store_graine_seeds_json,
+        graine_seed_held, merge_graine_seed, prune_graine_sessions, read_graine_mirror,
+        read_graine_seed, remove_graine_sessions, reseal_graine_mirror, store_graine_seeds_json,
         MirrorSeed, MirrorSeedV2, GRAINE_MIRROR_SESSIONS_PER_CHANNEL,
     };
+    use crate::native_cache::{is_sealed_file, CacheKey};
+
+    /// The install key every test seals under.
+    const KEY: CacheKey = [3u8; 32];
 
     /// A v1 seed at floor 0 - what every test below wrote before the entry carried more.
     fn merge(
@@ -1560,6 +1821,7 @@ mod graine_mirror_tests {
     ) -> Result<usize, String> {
         merge_graine_seed(
             dir,
+            &KEY,
             &MirrorSeed {
                 channel_id,
                 session_id,
@@ -1579,12 +1841,102 @@ mod graine_mirror_tests {
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
 
-        assert_eq!(store_graine_seeds_json(&dir, "{}"), -1);
+        assert_eq!(store_graine_seeds_json(&dir, Some(&KEY), "{}"), -1);
         let bundle = serde_json::json!([
             { "channelId": "chan", "sessionId": "s-1", "seedB64": "c2VlZA==", "createdAt": 1 },
             { "channelId": "chan", "sessionId": "", "seedB64": "c2VlZA==", "createdAt": 2 },
         ]);
-        assert_eq!(store_graine_seeds_json(&dir, &bundle.to_string()), 1);
+        assert_eq!(
+            store_graine_seeds_json(&dir, Some(&KEY), &bundle.to_string()),
+            1
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// AT REST THE MIRROR IS SEALED: no seed, channel or session id is readable in the file, and
+    /// only the install key reads it back.
+    #[test]
+    fn the_mirror_is_sealed_on_disk() {
+        let dir = mirror_dir("sealed");
+        merge(&dir, "chan-visible", "sess-visible", "c2VlZHNlZWQ=", 1).unwrap();
+        let bytes = std::fs::read(dir.join("graine_seeds.json")).unwrap();
+        assert!(is_sealed_file(&bytes));
+        for needle in [&b"chan-visible"[..], b"sess-visible", b"c2VlZHNlZWQ="] {
+            assert!(!bytes.windows(needle.len()).any(|w| w == needle));
+        }
+        assert_eq!(
+            graine_seed_held(&dir, Some(&KEY), "chan-visible", "sess-visible"),
+            1
+        );
+        assert_eq!(
+            graine_seed_held(&dir, Some(&KEY), "chan-visible", "other"),
+            0
+        );
+        // No key, or another key: unreadable, never "absent".
+        assert_eq!(
+            graine_seed_held(&dir, None, "chan-visible", "sess-visible"),
+            -1
+        );
+        assert_eq!(
+            graine_seed_held(&dir, Some(&[4u8; 32]), "chan-visible", "sess-visible"),
+            -1
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// NEVER IN THE CLEAR: a writer with no key writes nothing at all.
+    #[test]
+    fn a_writer_with_no_key_writes_nothing() {
+        let dir = mirror_dir("nokey");
+        let bundle = serde_json::json!([
+            { "channelId": "chan", "sessionId": "s-1", "seedB64": "c2VlZA==", "createdAt": 1 },
+        ]);
+        assert_eq!(store_graine_seeds_json(&dir, None, &bundle.to_string()), -1);
+        assert!(!dir.join("graine_seeds.json").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE UPGRADE: an older build's plaintext mirror is still read, is sealed by the migration
+    /// with every session kept, and a second pass changes nothing (idempotent on the file's marker).
+    #[test]
+    fn a_plaintext_mirror_is_read_then_sealed_once() {
+        let dir = mirror_dir("legacy");
+        let legacy =
+            serde_json::json!({ "chan": { "s-1": { "seed": "c2VlZA==", "createdAt": 1 } } });
+        std::fs::write(dir.join("graine_seeds.json"), legacy.to_string()).unwrap();
+        // Before the migration both a keyed and an unkeyed reader find the session.
+        assert!(read_graine_seed(&dir, None, "chan", "s-1")
+            .unwrap()
+            .is_some());
+        assert!(read_graine_seed(&dir, Some(&KEY), "chan", "s-1")
+            .unwrap()
+            .is_some());
+
+        assert!(crate::native_cache::seal_legacy_seed_mirror(&dir, &KEY).unwrap());
+        let bytes = std::fs::read(dir.join("graine_seeds.json")).unwrap();
+        assert!(is_sealed_file(&bytes));
+        assert_eq!(read_graine_mirror(&dir, Some(&KEY)).unwrap(), Some(legacy));
+        assert!(!crate::native_cache::seal_legacy_seed_mirror(&dir, &KEY).unwrap());
+        assert!(!reseal_graine_mirror(&dir, &KEY).unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A sealed mirror this install's key does not open is rebuilt by the next write - the key
+    /// never rotates, so nothing would ever read it - and the new session is kept.
+    #[test]
+    fn an_unopenable_mirror_is_rebuilt_by_the_next_write() {
+        let dir = mirror_dir("foreign");
+        std::fs::write(
+            dir.join("graine_seeds.json"),
+            crate::native_cache::seal_file(
+                &[8u8; 32],
+                crate::native_cache::Purpose::SeedMirror,
+                b"{}",
+            ),
+        )
+        .unwrap();
+        merge(&dir, "chan", "s-1", "c2VlZA==", 1).unwrap();
+        assert_eq!(graine_seed_held(&dir, Some(&KEY), "chan", "s-1"), 1);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1609,9 +1961,7 @@ mod graine_mirror_tests {
             w.join().unwrap();
         }
 
-        let root: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(dir.join("graine_seeds.json")).unwrap())
-                .unwrap();
+        let root = mirror(&dir);
         assert_eq!(root["chan"].as_object().unwrap().len(), 16);
         // Nothing half-written was left beside it.
         assert!(!dir.join("graine_seeds.json.tmp").exists());
@@ -1630,8 +1980,7 @@ mod graine_mirror_tests {
     }
 
     fn mirror(dir: &std::path::Path) -> serde_json::Value {
-        serde_json::from_str(&std::fs::read_to_string(dir.join("graine_seeds.json")).unwrap())
-            .unwrap()
+        read_graine_mirror(dir, Some(&KEY)).unwrap().unwrap()
     }
 
     /// Channel-encryption section 21: a frame naming a held session with other bytes is somebody
@@ -1692,14 +2041,14 @@ mod graine_mirror_tests {
     #[test]
     fn a_v2_session_is_mirrored_whole_and_never_downgraded() {
         let dir = mirror_dir("v2");
-        merge_graine_seed(&dir, &v2_seed("alice", 0)).unwrap();
+        merge_graine_seed(&dir, &KEY, &v2_seed("alice", 0)).unwrap();
         let entry = &mirror(&dir)["chan"]["s-2"];
         assert_eq!(entry["version"], 2);
         assert_eq!(entry["minterUserId"], "alice");
         assert_eq!(entry["signingPk"], "cGs=");
 
         assert!(merge(&dir, "chan", "s-2", "c2VlZA==", 1).is_err());
-        assert!(merge_graine_seed(&dir, &v2_seed("mallory", 0)).is_err());
+        assert!(merge_graine_seed(&dir, &KEY, &v2_seed("mallory", 0)).is_err());
         assert_eq!(mirror(&dir)["chan"]["s-2"]["minterUserId"], "alice");
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1708,10 +2057,10 @@ mod graine_mirror_tests {
     #[test]
     fn a_second_copy_may_lower_the_floor_and_never_raise_it() {
         let dir = mirror_dir("floor");
-        merge_graine_seed(&dir, &v2_seed("alice", 10)).unwrap();
-        merge_graine_seed(&dir, &v2_seed("alice", 20)).unwrap();
+        merge_graine_seed(&dir, &KEY, &v2_seed("alice", 10)).unwrap();
+        merge_graine_seed(&dir, &KEY, &v2_seed("alice", 20)).unwrap();
         assert_eq!(mirror(&dir)["chan"]["s-2"]["firstIndex"], 10);
-        merge_graine_seed(&dir, &v2_seed("alice", 4)).unwrap();
+        merge_graine_seed(&dir, &KEY, &v2_seed("alice", 4)).unwrap();
         assert_eq!(mirror(&dir)["chan"]["s-2"]["firstIndex"], 4);
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1726,9 +2075,35 @@ mod graine_mirror_tests {
             { "channelId": "chan", "sessionId": "s-4", "seedB64": "c2VlZA==", "createdAt": 1,
               "firstIndex": 3, "version": 2, "minterUserId": "alice", "signingPublicKeyB64": "cGs=" },
         ]);
-        assert_eq!(store_graine_seeds_json(&dir, &bundle.to_string()), 1);
+        assert_eq!(
+            store_graine_seeds_json(&dir, Some(&KEY), &bundle.to_string()),
+            1
+        );
         assert!(mirror(&dir)["chan"].get("s-3").is_none());
         assert_eq!(mirror(&dir)["chan"]["s-4"]["firstIndex"], 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A bundle's seeds (`relayed`) reach the mirror only for a salon it already holds a session
+    /// of: native code cannot tell a private salon this viewer may not read from a public one, so
+    /// every other relayed seed is left to the app, which reads the same answer from its queue.
+    /// A seed distributed by its own sender (not relayed) is mirrored as before.
+    #[test]
+    fn a_relayed_seed_is_mirrored_only_for_a_salon_the_device_already_reads() {
+        let dir = mirror_dir("relayed");
+        merge(&dir, "read-salon", "s-held", "c2VlZA==", 1).unwrap();
+        let seeds = serde_json::json!([
+            { "channelId": "read-salon", "sessionId": "s-a", "seedB64": "c2VlZA==", "createdAt": 2, "relayed": true },
+            { "channelId": "other-salon", "sessionId": "s-b", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true },
+            { "channelId": "new-salon", "sessionId": "s-c", "seedB64": "c2VlZA==", "createdAt": 4 },
+        ]);
+        assert_eq!(
+            store_graine_seeds_json(&dir, Some(&KEY), &seeds.to_string()),
+            2
+        );
+        assert!(mirror(&dir)["read-salon"].get("s-a").is_some());
+        assert!(mirror(&dir).get("other-salon").is_none());
+        assert!(mirror(&dir)["new-salon"].get("s-c").is_some());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -2033,6 +2408,9 @@ mod delete_user_push_files_tests {
 #[cfg(test)]
 mod fcm_cache_take_tests {
     use super::{ack_fcm_cache_in, take_fcm_cache_in, FcmCacheTake, FCM_CACHE_FILE};
+    use crate::native_cache::{seal_line, CacheKey, Purpose};
+
+    const KEY: CacheKey = [5u8; 32];
 
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("fcm-take-{name}-{}", std::process::id()));
@@ -2048,12 +2426,75 @@ mod fcm_cache_take_tests {
             .collect()
     }
 
+    /// A line as this build's native writers append it: sealed.
     fn push(d: &std::path::Path, id: &str) {
+        let line = seal_line(
+            &KEY,
+            Purpose::PushCache,
+            &format!("{{\"messageId\":\"{id}\"}}"),
+        );
+        std::fs::write(d.join(FCM_CACHE_FILE), format!("{line}\n")).unwrap();
+    }
+
+    /// THE UPGRADE: lines an older build wrote in the clear are still taken beside sealed ones,
+    /// and the ack deletes the file - which is their migration.
+    #[test]
+    fn plaintext_lines_of_an_older_build_are_taken_beside_sealed_ones() {
+        let d = dir("mixed");
+        let sealed = seal_line(&KEY, Purpose::PushCache, "{\"messageId\":\"new\"}");
         std::fs::write(
             d.join(FCM_CACHE_FILE),
-            format!("{{\"messageId\":\"{id}\"}}\n"),
+            format!("{{\"messageId\":\"old\"}}\n{sealed}\n"),
         )
         .unwrap();
+        let take = take_fcm_cache_in(&d, Some(&KEY));
+        assert_eq!(ids(&take), vec!["old", "new"]);
+        assert_eq!(ack_fcm_cache_in(&d, &take.files), 1);
+        assert_eq!(files_in(&d), 0);
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// At rest a cached message's text is not in the file.
+    #[test]
+    fn a_sealed_line_carries_no_text() {
+        let d = dir("text");
+        let line = seal_line(
+            &KEY,
+            Purpose::PushCache,
+            "{\"messageId\":\"a\",\"content\":\"bonjour\"}",
+        );
+        std::fs::write(d.join(FCM_CACHE_FILE), format!("{line}\n")).unwrap();
+        let raw = std::fs::read_to_string(d.join(FCM_CACHE_FILE)).unwrap();
+        assert!(!raw.contains("bonjour") && !raw.contains("messageId"));
+        let take = take_fcm_cache_in(&d, Some(&KEY));
+        assert_eq!(take.entries[0]["content"], "bonjour");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// With no key, a file holding a sealed line is NOT handed over - so never acknowledged and
+    /// deleted unread - and a later take with the key gets it.
+    #[test]
+    fn a_take_with_no_key_keeps_a_sealed_file_for_a_take_that_can_read_it() {
+        let d = dir("nokey");
+        push(&d, "a");
+        let blind = take_fcm_cache_in(&d, None);
+        assert!(blind.entries.is_empty() && blind.files.is_empty());
+        assert_eq!(ids(&take_fcm_cache_in(&d, Some(&KEY))), vec!["a"]);
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A sealed line another key wrote is dropped - this install will never open it - and costs
+    /// only itself.
+    #[test]
+    fn a_line_this_key_does_not_open_costs_only_itself() {
+        let d = dir("foreign");
+        let foreign = seal_line(&[6u8; 32], Purpose::PushCache, "{\"messageId\":\"x\"}");
+        let mine = seal_line(&KEY, Purpose::PushCache, "{\"messageId\":\"a\"}");
+        std::fs::write(d.join(FCM_CACHE_FILE), format!("{foreign}\n{mine}\n")).unwrap();
+        let take = take_fcm_cache_in(&d, Some(&KEY));
+        assert_eq!(ids(&take), vec!["a"]);
+        assert_eq!(take.files.len(), 1);
+        std::fs::remove_dir_all(&d).ok();
     }
 
     fn files_in(d: &std::path::Path) -> usize {
@@ -2066,15 +2507,15 @@ mod fcm_cache_take_tests {
     fn an_unacknowledged_take_is_handed_over_again() {
         let d = dir("replay");
         push(&d, "a");
-        assert_eq!(ids(&take_fcm_cache_in(&d)), vec!["a"]);
+        assert_eq!(ids(&take_fcm_cache_in(&d, Some(&KEY))), vec!["a"]);
         // The process dies here, with no ack. A push arrives before the next boot.
         push(&d, "b");
-        let second = take_fcm_cache_in(&d);
+        let second = take_fcm_cache_in(&d, Some(&KEY));
         assert_eq!(ids(&second), vec!["a", "b"]);
         assert!(!d.join(FCM_CACHE_FILE).exists());
         assert_eq!(ack_fcm_cache_in(&d, &second.files), 2);
         assert_eq!(files_in(&d), 0);
-        assert!(take_fcm_cache_in(&d).entries.is_empty());
+        assert!(take_fcm_cache_in(&d, Some(&KEY)).entries.is_empty());
         std::fs::remove_dir_all(&d).ok();
     }
 
@@ -2084,13 +2525,13 @@ mod fcm_cache_take_tests {
     fn a_line_written_after_the_read_is_never_deleted_unread() {
         let d = dir("late");
         push(&d, "a");
-        let take = take_fcm_cache_in(&d);
+        let take = take_fcm_cache_in(&d, Some(&KEY));
         let taken = d.join(&take.files[0].name);
         let mut body = std::fs::read_to_string(&taken).unwrap();
         body.push_str("{\"messageId\":\"late\"}\n");
         std::fs::write(&taken, body).unwrap();
         assert_eq!(ack_fcm_cache_in(&d, &take.files), 0);
-        assert_eq!(ids(&take_fcm_cache_in(&d)), vec!["a", "late"]);
+        assert_eq!(ids(&take_fcm_cache_in(&d, Some(&KEY))), vec!["a", "late"]);
         std::fs::remove_dir_all(&d).ok();
     }
 
@@ -2099,7 +2540,7 @@ mod fcm_cache_take_tests {
     fn an_ack_deletes_only_the_taken_files_it_names() {
         let d = dir("names");
         push(&d, "a");
-        let first = take_fcm_cache_in(&d);
+        let first = take_fcm_cache_in(&d, Some(&KEY));
         push(&d, "b");
         // The live file was taken by a second take nobody has acknowledged yet.
         std::fs::rename(
@@ -2122,7 +2563,7 @@ mod fcm_cache_take_tests {
     #[test]
     fn nothing_to_take_is_empty() {
         let d = dir("empty");
-        let t = take_fcm_cache_in(&d);
+        let t = take_fcm_cache_in(&d, Some(&KEY));
         assert!(t.entries.is_empty());
         assert!(t.files.is_empty());
         std::fs::remove_dir_all(&d).ok();
@@ -2137,7 +2578,7 @@ mod fcm_cache_take_tests {
             "not json\n\n{\"messageId\":\"a\"}\n",
         )
         .unwrap();
-        assert_eq!(ids(&take_fcm_cache_in(&d)), vec!["a"]);
+        assert_eq!(ids(&take_fcm_cache_in(&d, Some(&KEY))), vec!["a"]);
         std::fs::remove_dir_all(&d).ok();
     }
 }

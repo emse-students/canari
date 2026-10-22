@@ -134,14 +134,17 @@ forgetting.
 
 | Trigger | What it buys |
 |---|---|
-| **A member leaves** | The only structural one. The leaver keeps what they could already read and gets **nothing said after they left**. Without it, leaving a community would change nothing |
-| **100 messages** | Slices a talkative sender, so one recovered seed does not yield years |
-| **7 days** | The same for a rare sender, whom a message counter would never slice |
+| **A leaf is removed** (any Remove merged since the mint, read from the key group's clean run since 2026-10-22: [graine-removal-tracker](graine-removal-tracker.md)) | The structural one. The leaver keeps what they could already read and gets **nothing said after they left**. Without it, leaving a community would change nothing |
+| **A new user joins** (`ROTATE_ON_NEW_USER`, decided by the user 2026-10-22) | A newcomer is never handed a seed minted before it arrived, whose earlier indices it could derive. A new DEVICE of a user already present (by an Add or an external commit; user half of the leaf's credential, lower-cased) does not rotate: the session is re-distributed at the new epoch. The server checks that an external commit's leaf names the caller |
+| **100 messages** (50 once re-distributed) | Slices a talkative sender, so one recovered seed does not yield years |
+| **7 days** (24 hours once re-distributed) | The same for a rare sender, whom a message counter would never slice |
 
 The last two cost only their bytes in the bundle. Values are Matrix's, which are field-proven.
 
-**This table is where the three triggers are distinguished, and the only place.** The client's
-`shouldRotateGraineSession` answers yes or no. It carried WHICH of the three fired as a typed value
+**This table is where the triggers are distinguished, and the only place.** The client's
+`graineOutboundVerdict` answers reuse, re-distribute or rotate, and the MLS layer logs WHY a run
+reset (`[GRAINE] run reset reason=departure|new-user|gap|none`); before 2026-10-22,
+`shouldRotateGraineSession` answered yes or no. It carried WHICH of the three fired as a typed value
 until 2026-09-14 - `'no-session' | 'message-count' | 'age' | 'roster'` - and the sweep that removed it
 found the value had no runtime consumer at all: nothing branched on it, the one string interpolating
 it went to `console.info`, and nothing in this product captures a browser console into a durable log,
@@ -523,6 +526,11 @@ external commit, `POST /internal/distribution-groups/entitlement` (`kind`, `scop
 Social-service answers with the SAME predicates as the routes that serve the GroupInfo
 (`isDistributionGroupEntitled`: a community's members; a private salon's readers). A conversation's
 external commit keeps its own roster check, and a member commit never reaches social-service.
+
+**Before either check, an external commit must join AS the caller's device** (2026-10-22): its path
+leaf, read in the clear by `readCommitFrame`, must name `<authenticated caller>:<deviceId>`, the same
+binding every KeyPackage upload is held to; otherwise `403 commit_identity_mismatch`. Graine's rotation
+reads the user from that leaf's own credential ([graine-removal-tracker](graine-removal-tracker.md)).
 
 | Outcome | What the commit gate does |
 | --- | --- |
@@ -1699,6 +1707,50 @@ finds the same epoch returns before the roster read and writes no line; a pass a
 asks again. The measured case: a phone joining while the laptop holding the seeds is offline, then
 the laptop coming online and joining - which is itself the commit that moves the epoch.
 
+### An answer carries only the seeds of the salons its key group may read (2026-10-22)
+
+**Seeds are STORED per community, whichever key group brought them** (`IMlsService.DistributionFrame`),
+so a device's store does not say on its own which roster a seed was sealed to. Both answer paths -
+the HISTORY bundle (`gatherCommunityHistory`) and a SESSIONS repair (`gatherNamedSessions`) - read
+that store, and an answer goes back on the key group the request ARRIVED on. So both keep only
+the sessions whose salon rides that group (`seedOutsideScope` in `frameHandler.ts`):
+
+- on the community's group, the seeds of PUBLIC salons only;
+- on a private salon's own group, the seeds of that salon only.
+
+Which group a salon rides is `scopeForChannel`, learned from the community listing
+(`registerChannelWorkspace`) - the same fact the seal uses. A salon the answerer has NOT listed is
+withheld: its roster is not known, and guessing public is the expensive half of the asymmetry. A
+withheld seed is absent from both lists of the answer, for the reason a `joined` refusal is (every
+honest member filters the same way, so `missing` would walk the roster), and a HISTORY answer left
+with nothing to send stays silent rather than claiming "I hold nothing" (section 24).
+
+**The receiver checks the same fact, for a NEW seed** (a held session is judged as before):
+
+- another salon's seed on a private salon's own group is refused, at error level - no honest path
+  sends it;
+- a seed of a salon registered PRIVATE, on the community's group, is not stored, at warn level and
+  accusing nobody: a salon made private after it was public leaves, in the community group's log,
+  the seeds minted while it was public;
+- a seed of a salon the community's listing did NOT name, once that listing has answered
+  (`markCommunityListed`), is held in memory, unstored (`awaitSalonListing`). The listing names
+  every public salon to every member and a private one only to its members and administrators, so
+  such a salon is private and closed to this viewer - or public and created since the listing, its
+  seed having beaten the channel-created event. Its registration decides: public, the seed is
+  admitted and the salon re-read; private, or never, it is dropped;
+- before the community's listing has answered, a seed of an unknown salon is kept: a public
+  salon's seeds arrive with the key group, ahead of the listing.
+
+Pinned by `frameHandler.test.ts`, "the salon scope of an answer".
+
+**The native mirror cannot make that check** - it knows neither which salons are private nor which
+key group a frame came on. So a bundle's seeds are marked `relayed` by `proto_fields::graine_seeds`,
+and `store_graine_seeds_json` mirrors a relayed seed only for a salon the mirror already holds a
+session of; any other is left to the app, which reads the same answer from its durable queue. A
+sender's own distributed seed is mirrored as before. Bundles reach the native path only on Android
+(`handleMlsFrame`, a key-group push with its ciphertext inline); the iOS extension opens only the
+`seedFrame` a salon push carries, which is a single seed.
+
 ### Found while writing this: a discriminator dropped in transit
 
 `GroupMeta.distributionWorkspaceId` has been documented since WP-22 as "the discriminator a
@@ -2597,7 +2649,7 @@ logcat, NO `frame HELD` and no redraw, the plaintext on the first and only post.
 
 | Where | What it does |
 | --- | --- |
-| `sessionManager.ts`, `seedDistribution.ts` | `distributeGraineSeed` returns the sealed frame `{groupId, protoB64}`; the session keeps it in the SEALED half of its row (`graineCodec`); `shouldRotateGraineSession` rotates a session without one |
+| `sessionManager.ts`, `seedDistribution.ts` | `distributeGraineSeed` returns the sealed frame `{groupId, protoB64}`; the session keeps it in the SEALED half of its row (`graineCodec`); `graineOutboundVerdict` rotates a session without one |
 | `channelSeal.ts`, `channelCrypto.ts` | every non-silent send carries `seedFrame` + `seedGroupId`; a silent one (a reaction) carries neither, since it pushes nobody |
 | social-service `assertSeedFrame` | both or neither, base64, at most `MAX_SEED_FRAME_CHARS` (2048); `seedGroupId` must be the private salon's own group, the community's otherwise - `CHANNEL_SEED_FRAME_INVALID` / `CHANNEL_SEED_FRAME_GROUP_MISMATCH`. Never stored, never in `channel.message.created`. The controller used to REBUILD every refusal from its status and message, dropping `code`; a typed refusal now leaves as thrown |
 | social-service `notifyChannelRecipients` | hands `{ciphertext, seedFrame, seedGroupId}` to `internal/push/notify` as `inline`, apart from the fields every push carries; the fixed `ciphertext <= 3000` is gone |
@@ -3046,7 +3098,7 @@ then persisted:
   refused by every reader, so the order is load-bearing;
 - a failed endorsement distributes and persists NOTHING, exactly like a failed distribution.
 
-**Rotation** (`shouldRotateGraineSession`) adds one cause: a session with no signing secret. That
+**Rotation** (`graineOutboundVerdict`, `shouldRotateGraineSession` until 2026-10-22) adds one cause: a session with no signing secret. That
 covers every v1 session (one rotation per salon and sender, at the first send after the upgrade) and
 a v2 session restored somewhere its secret is not.
 
@@ -3165,7 +3217,7 @@ still gets its 403), then the session and index, then the seed frame, then the s
 **Why nothing legitimate is refused.** This route has exactly ONE caller in the repository,
 `ChannelService.sendMessage` (frontend), reached only from `sendEncryptedChannelMessage`, which seals
 through `sealChannelMessage`. That function throws before the POST when the session holds no signing
-secret, and `shouldRotateGraineSession` mints a new session for any that lacks one. Text, polls,
+secret, and `graineOutboundVerdict` mints a new session for any that lacks one. Text, polls,
 mentions, reactions, edits and a community's system notice all go through it, and the `v1.0.3` tag
 already posted `signature: sealed.signature` on every one (read from the tag, 2026-10-13). What does
 NOT use this route, and is therefore untouched:
