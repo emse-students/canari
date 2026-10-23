@@ -234,6 +234,83 @@ describe('a restored edit', () => {
   });
 });
 
+describe('a row its relayer holds only as unverified (`authorUnproven`)', () => {
+  // The relayer is the claimed author, yet its device marked the row: another member relayed it
+  // there with no proof. Relaying it on must not turn that member's word into the author's.
+  it('reads a message as unverified, never as the relayer own', async () => {
+    const { keys } = await cast();
+    const verdict = await vetRestoredMessage(
+      keys,
+      GROUP,
+      {
+        id: 'm-1',
+        senderId: 'alice',
+        content: helloContent,
+        timestamp: SENT_AT,
+        authorUnproven: true,
+      },
+      'alice',
+      silent
+    );
+    expect(verdict.kind).toBe('unverified');
+  });
+
+  it('reads a signed message with an unproven edit as unverified, never as the relayer own', async () => {
+    const { alice, keys } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const verdict = await vetRestoredMessage(
+      keys,
+      GROUP,
+      {
+        id: 'm-1',
+        senderId: 'alice',
+        content: serializeEnvelope(mkTextEnvelope('hello, corrected')),
+        timestamp: SENT_AT,
+        authorship,
+        isEdited: true,
+        authorUnproven: true,
+      },
+      'alice',
+      silent
+    );
+    expect(verdict.kind).toBe('unverified');
+  });
+
+  it('never applies an unsigned edit of a held message on the relayer word', async () => {
+    const { keys } = await cast();
+    const target = { id: 'm-1', senderId: 'alice', content: helloContent };
+    const verdict = await vetRestoredEdit(
+      keys,
+      GROUP,
+      target,
+      { authorUnproven: true },
+      'alice',
+      silent
+    );
+    expect(verdict.kind).toBe('none');
+  });
+
+  it('still verifies a message whose own proof holds', async () => {
+    const { alice, keys } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const verdict = await vetRestoredMessage(
+      keys,
+      GROUP,
+      {
+        id: 'm-1',
+        senderId: 'alice',
+        content: helloContent,
+        timestamp: SENT_AT,
+        authorship,
+        authorUnproven: true,
+      },
+      'alice',
+      silent
+    );
+    expect(verdict.kind).toBe('verified');
+  });
+});
+
 describe('a restored deletion', () => {
   const target = { id: 'm-1', senderId: 'alice' };
 

@@ -1160,6 +1160,18 @@ crypto, with a shared vector against the Rust side):
 | edit, deletion | the author's signed event names this message; or the relayer is the author | dropped, never applied on a third party's word |
 | reaction | the reactor's signed frame proves exactly this state; or the relayer is the reactor | dropped |
 
+**"The relayer is the author" holds only for a row the relayer vouches for.** A row a device holds
+MARKED is relayed with `authorUnproven: true` (`serializeForBundle`), and the reader then gives the
+relayer's own word no weight for that row's message or edit (`relayerVouches` in
+`restoredAuthorship.ts`): the device holds a third party's word, not its own, even when the row names
+its own user. Only the row's own proof can then verify it.
+
+**A marked row is upgraded by proof, and only a marked row.** A held row marked `restoredUnverified`
+takes a later copy whose proof verifies here - body and time from the signed bytes, the mark cleared,
+the row rewritten at rest; a held row that is not marked is never replaced. Within one bundle that
+carries an id twice, a proven copy wins over a marked one in either order
+(`systemMessageHandler.ts`, `upgradeUnverifiedRows`).
+
 **Mutations need a signature, and that has a cost (lead decision, 2026-10-22).** An unsigned edit,
 deletion or reaction is dropped, so one made by an author on a client older than signed authorship
 is missing from restored history until that author updates. The unsigned MESSAGE is the only shim,

@@ -523,6 +523,11 @@ function serializeForBundle(m: StoredMessage) {
     ...(m.authorship && !m.isDeleted ? { authorship: m.authorship } : {}),
     ...(m.editProof && !m.isDeleted ? { editProof: m.editProof } : {}),
     ...(m.deleteProof ? { deleteProof: m.deleteProof } : {}),
+    // A row this device holds only as unverified is relayed as such. Without it the reader would
+    // take the row on THIS device's word - as its author's own, when it names this device's user -
+    // and one relay hop would erase the mark (`relayerVouches` in restoredAuthorship.ts). Not the
+    // bundle-level `vouched` flag retired below: this one is per row and says less, not more.
+    ...(m.restoredUnverified ? { authorUnproven: true } : {}),
   };
 }
 

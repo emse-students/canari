@@ -270,6 +270,131 @@ describe('history_bundle - restored history carries its author signature', () =>
     expect(row.editedAt).toEqual(new Date(9000));
   });
 
+  it('keeps the mark on a row its relayer holds only as unverified, even when the row names the relayer', async () => {
+    const { alice, mallory } = await cast();
+    const ctx = { ...makeCtx(alice, mallory), senderNorm: 'alice' };
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [
+          {
+            id: 'm1',
+            senderId: 'alice',
+            content: helloContent,
+            timestamp: SENT_AT,
+            authorUnproven: true,
+          },
+        ],
+      },
+      ctx as any
+    );
+
+    expect(added(ctx)).toEqual([
+      expect.objectContaining({ messageId: 'm1', restoredUnverified: true }),
+    ]);
+  });
+
+  it('never takes an edited body its relayer holds only as unverified, even from the named author', async () => {
+    const { alice, mallory } = await cast();
+    const held = {
+      id: 'm1',
+      senderId: 'alice',
+      content: helloContent,
+      timestamp: new Date(SENT_AT),
+    };
+    const ctx = { ...makeCtx(alice, mallory, [held]), senderNorm: 'alice' };
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [
+          {
+            id: 'm1',
+            senderId: 'alice',
+            content: serializeEnvelope(mkTextEnvelope('words alice never wrote')),
+            timestamp: SENT_AT,
+            isEdited: true,
+            editedAt: 9000,
+            authorUnproven: true,
+          },
+        ],
+      },
+      ctx as any
+    );
+
+    expect(ctx.conversations.get(GROUP).messages[0].content).toBe(helloContent);
+  });
+
+  it('upgrades a held UNVERIFIED row when a copy whose proof verifies arrives, and clears the mark', async () => {
+    const { alice, mallory } = await cast();
+    const held = {
+      id: 'm1',
+      senderId: 'alice',
+      content: 'words alice never wrote',
+      timestamp: new Date(1),
+      restoredUnverified: true,
+    };
+    const ctx = makeCtx(alice, mallory, [held]);
+    const authorship = await signedBy(alice, GROUP, HELLO);
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [{ id: 'm1', senderId: 'alice', content: 'anything', timestamp: 1, authorship }],
+      },
+      ctx as any
+    );
+
+    const row = ctx.conversations.get(GROUP).messages[0];
+    expect(row.content).toBe(helloContent);
+    expect(row.timestamp).toEqual(new Date(SENT_AT));
+    expect(row.restoredUnverified).toBeFalsy();
+    expect(ctx.storage.updateMessage).toHaveBeenCalledWith(
+      'm1',
+      expect.objectContaining({ content: helloContent, authorship, restoredUnverified: false }),
+      'device-key'
+    );
+    expect(added(ctx)).toEqual([]);
+  });
+
+  it('never replaces a held row that is not marked, whatever proof a copy carries', async () => {
+    const { alice, mallory } = await cast();
+    const held = { id: 'm1', senderId: 'alice', content: 'held text', timestamp: new Date(1) };
+    const ctx = makeCtx(alice, mallory, [held]);
+    const authorship = await signedBy(alice, GROUP, HELLO);
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [{ id: 'm1', senderId: 'alice', content: 'x', timestamp: 1, authorship }],
+      },
+      ctx as any
+    );
+
+    expect(ctx.conversations.get(GROUP).messages[0].content).toBe('held text');
+    expect(ctx.storage.updateMessage).not.toHaveBeenCalled();
+  });
+
+  it('takes the copy whose proof verifies when one bundle carries an id twice, in either order', async () => {
+    const { alice, mallory } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const unsigned = { id: 'm1', senderId: 'alice', content: 'unsigned', timestamp: 1 };
+    const signed = { id: 'm1', senderId: 'alice', content: 'x', timestamp: 1, authorship };
+
+    for (const messages of [
+      [unsigned, signed],
+      [signed, unsigned],
+    ]) {
+      const ctx = makeCtx(alice, mallory);
+      await handleSystemEvent('history_bundle', { messages }, ctx as any);
+      expect(added(ctx)).toEqual([
+        expect.objectContaining({ messageId: 'm1', content: helloContent, authorship }),
+      ]);
+      expect(added(ctx)[0].restoredUnverified).toBeUndefined();
+    }
+  });
+
   it('drops reactions placed in another member name without that member signature', async () => {
     const { alice, mallory } = await cast();
     const held = {

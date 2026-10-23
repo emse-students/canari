@@ -663,7 +663,7 @@ export async function handleSystemEvent(
     // sender is the identity MLS itself authenticated, so this is the one cross-check available -
     // and without it any member could announce any other member's departure to the whole group.
     // The send site never disagrees: `notifyMembershipChange` is handed the caller's own id.
-    if (leaver.toLowerCase() !== senderNorm.toLowerCase()) {
+    if (canonicalUserId(leaver) !== canonicalUserId(senderNorm)) {
       log(
         `[MLS] Refused a memberLeft from ${senderNorm.slice(0, 8)} announcing ${leaver.slice(0, 8)} - only the leaver may announce its own departure`
       );
@@ -675,7 +675,7 @@ export async function handleSystemEvent(
     // group" into a conversation it is about to lose: leaving de-registers the USER, so the server
     // refuses that group's membership check on every device, and `verifyMembership` retires the row
     // from there. Logged rather than silent, because that retire happens on a different loop.
-    if (leaver.toLowerCase() === userId.toLowerCase()) {
+    if (canonicalUserId(leaver) === canonicalUserId(userId)) {
       log(
         `[INFO] We left "${convoKey}" from another device - no notice here, the membership check retires it`
       );
@@ -940,6 +940,7 @@ export async function handleSystemEvent(
       authorship?: RecordedAuthorship;
       editProof?: RecordedAuthorship;
       deleteProof?: RecordedAuthorship;
+      authorUnproven?: boolean;
     };
     let incoming: BundleMsg[] = Array.isArray(data?.messages) ? data.messages : [];
     let addOnly = false;
@@ -996,6 +997,75 @@ export async function handleSystemEvent(
           { kind: 'forged-history', groupId: convoKey, peer: senderNorm, detail: what },
           log
         );
+      };
+
+      // A HELD ROW IS UPGRADED BY PROOF, AND BY NOTHING ELSE. Every held id used to be skipped, so
+      // the first copy of a message this device saw - unsigned, from a third party, hence MARKED -
+      // stood for ever against a later copy carrying its author's signature. A marked row now takes
+      // a copy whose proof verifies here (body and time from the signed bytes, the mark cleared); a
+      // row that is not marked is never replaced, whatever a copy carries. Returns the upgraded ids.
+      const upgradeUnverifiedRows = async (
+        bundle: BundleMsg[],
+        heldIds: Set<string>
+      ): Promise<Set<string>> => {
+        const upgraded = new Map<
+          string,
+          { content: string; timestamp: number; authorship: RecordedAuthorship }
+        >();
+        const rows = new Map(
+          (conversations.get(convoKey)?.messages ?? []).map((row) => [row.id, row])
+        );
+        for (const b of bundle) {
+          const row = rows.get(b.id);
+          if (!heldIds.has(b.id) || !b.authorship || upgraded.has(b.id)) continue;
+          if (!row?.restoredUnverified || row.isDeleted) continue;
+          const verdict = await vetRestoredMessage(mlsService, convoKey, b, senderNorm, log);
+          if (verdict.kind === 'forged') refuseForged('message', b.id, verdict.why);
+          if (verdict.kind !== 'verified') continue;
+          upgraded.set(b.id, {
+            content: verdict.content,
+            timestamp: verdict.timestamp,
+            authorship: verdict.authorship,
+          });
+        }
+        const c = conversations.get(convoKey);
+        if (upgraded.size === 0 || !c) return new Set();
+        conversations.set(convoKey, {
+          ...c,
+          messages: c.messages.map((row) => {
+            const up = upgraded.get(row.id);
+            if (!up) return row;
+            // The edit state goes with the unproven body: a verified EDITED message carries its
+            // signed edit, which step 2 applies to this original as to any held row.
+            const {
+              restoredUnverified: _mark,
+              isEdited: _edited,
+              editedAt: _editedAt,
+              ...rest
+            } = row;
+            return { ...rest, content: up.content, timestamp: new Date(up.timestamp) };
+          }),
+        });
+        log(
+          `[AUTHORSHIP] ${upgraded.size} held unverified message(s) in ${convoKey.slice(0, 8)}… proven by a copy relayed by ${senderNorm.slice(0, 8)} - upgraded`
+        );
+        for (const [id, up] of upgraded) {
+          try {
+            await storage?.updateMessage(
+              id,
+              {
+                content: up.content,
+                timestamp: up.timestamp,
+                authorship: up.authorship,
+                restoredUnverified: false,
+              },
+              deviceKey()
+            );
+          } catch (e) {
+            log(`[AUTHORSHIP] upgrade of ${id.slice(0, 8)} not persisted: ${String(e)}`);
+          }
+        }
+        return new Set(upgraded.keys());
       };
 
       // 0) The conversation's own state - read watermarks and the shared history floor - which
@@ -1066,15 +1136,27 @@ export async function handleSystemEvent(
           restoredUnverified?: boolean;
         }> = [];
         let unverified = 0;
+        // ONE ROW PER ID, AND THE PROVEN COPY WINS. A bundle may carry an id twice; whichever copy
+        // came first used to be the one added, so an unsigned copy could stand for a signed one.
+        const toAddIndex = new Map<string, number>();
         for (const m of fresh ?? []) {
           const verdict = await vetRestoredMessage(mlsService, convoKey, m, senderNorm, log);
           if (verdict.kind === 'forged') {
             refuseForged('message', m.id, verdict.why);
             continue;
           }
+          const earlier = toAddIndex.get(m.id);
+          // A later copy replaces an earlier one only when it is proven and the earlier is marked.
+          if (
+            earlier !== undefined &&
+            (verdict.kind !== 'verified' || !toAdd[earlier].restoredUnverified)
+          ) {
+            continue;
+          }
+          if (earlier !== undefined) unverified -= 1;
           if (verdict.kind === 'unverified') unverified += 1;
-          toAdd.push({
-            senderId: m.senderId.toLowerCase(),
+          const entry = {
+            senderId: canonicalUserId(m.senderId),
             content: verdict.kind === 'verified' ? verdict.content : m.content,
             messageId: m.id,
             timestamp: new Date(verdict.kind === 'verified' ? verdict.timestamp : m.timestamp),
@@ -1087,13 +1169,20 @@ export async function handleSystemEvent(
             // device relays it on and a later reader can still prove it.
             ...(m.authorship ? { authorship: m.authorship } : {}),
             ...(verdict.kind === 'unverified' ? { restoredUnverified: true } : {}),
-          });
+          };
+          if (earlier !== undefined) {
+            toAdd[earlier] = entry;
+          } else {
+            toAddIndex.set(m.id, toAdd.length);
+            toAdd.push(entry);
+          }
         }
         if (unverified > 0) {
           log(
             `[AUTHORSHIP] ${unverified} restored message(s) in ${convoKey.slice(0, 8)}… relayed by ${senderNorm.slice(0, 8)} carry no author proof - kept, marked unverified`
           );
         }
+        const upgradedIds = await upgradeUnverifiedRows(msgs, existingIds);
         if (toAdd.length > 0) {
           // NAMES ITS CONVERSATION AND ITS SENDER, like the pin line above it. This said
           // "from the inviting peer" and nothing else - wrong twice on a device rejoining forty
@@ -1122,7 +1211,7 @@ export async function handleSystemEvent(
         // 2) Merge transport-carried state (reactions, delete/edit) onto the conversation
         //    messages - both the ones just added and any that already existed. An addressed answer
         //    to an ask (`addOnly`) touches only the messages it just added.
-        const addedIds = new Set(toAdd.map((t) => t.messageId));
+        const addedIds = new Set([...toAdd.map((t) => t.messageId), ...upgradedIds]);
         const bundleById = new Map(
           (addOnly ? msgs.filter((m) => addedIds.has(m.id)) : msgs).map((m) => [m.id, m])
         );
@@ -1252,7 +1341,7 @@ export async function handleSystemEvent(
               b.content !== next.content &&
               typeof b.editedAt === 'number' &&
               b.editedAt > 0 &&
-              (existing.senderId ?? '').toLowerCase() === senderNorm.toLowerCase() &&
+              canonicalUserId(existing.senderId ?? '') === canonicalUserId(senderNorm) &&
               editSupersedes({ editedAt: b.editedAt, content: b.content }, next)
             ) {
               next = {

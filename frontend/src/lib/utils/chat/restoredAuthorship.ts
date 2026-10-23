@@ -8,7 +8,8 @@
  *
  * - the AUTHOR'S OWN SIGNATURE, relayed beside it (`$lib/crypto/messageAuthorship`) - the content,
  *   timestamp and target are then read from the signed bytes, never from the relayer's fields;
- * - or the RELAYER IS THE AUTHOR, which MLS already proved for the bundle frame itself.
+ * - or the RELAYER IS THE AUTHOR, which MLS already proved for the bundle frame itself - unless the
+ *   relayer says it holds the row only as unverified (`authorUnproven`).
  *
  * A message with neither - every message an older build stored - is kept and MARKED, never refused:
  * refusing would lose real history the day this ships. A deletion, an edit or a reaction with
@@ -41,6 +42,26 @@ export interface RestoredMessageEntry {
   /** The relayer says the message was edited since; `content` is then the edited body. */
   isEdited?: boolean;
   editProof?: RecordedAuthorship;
+  /**
+   * The relayer holds this row only as unverified (see {@link relayerVouches}): its own word then
+   * proves nothing about the row, whoever the row names.
+   */
+  authorUnproven?: boolean;
+}
+
+/**
+ * Whether the relayer's own word may stand for this row: it IS the claimed author, AND it does not
+ * say it holds the row only as unverified. A device that restored a row from a third party with no
+ * proof holds that party's word, not its own - even when the row names its own user - so relaying
+ * it on (`authorUnproven`, written by `serializeForBundle`) leaves the next reader marking it too.
+ * Without the second condition one relay hop through the named author's device erased the mark.
+ */
+function relayerVouches(
+  entry: { authorUnproven?: boolean },
+  claimedUserId: string,
+  relayerUserId: string
+): boolean {
+  return entry.authorUnproven !== true && claimedUserId === relayerUserId;
 }
 
 /** What may be done with a restored message. */
@@ -77,23 +98,28 @@ export async function vetRestoredMessage(
 ): Promise<RestoredMessageVerdict> {
   const relayer = canonicalUserId(relayerUserId);
   const claimed = canonicalUserId(entry.senderId);
+  const vouched = relayerVouches(entry, claimed, relayer);
   if (!entry.authorship) {
-    if (claimed === relayer) return { kind: 'relayer-is-author' };
-    return { kind: 'unverified', why: 'no author proof, relayed by another member' };
+    if (vouched) return { kind: 'relayer-is-author' };
+    return {
+      kind: 'unverified',
+      why:
+        claimed === relayer
+          ? 'no author proof, and its relayer holds it only as unverified'
+          : 'no author proof, relayed by another member',
+    };
   }
   const check = await checkRecordedAuthorship(mls, groupId, entry.authorship);
   if (check.kind === 'unproven') {
     log(`[AUTHORSHIP] restored ${entry.id.slice(0, 8)} not provable here: ${check.why}`);
-    return claimed === relayer
-      ? { kind: 'relayer-is-author' }
-      : { kind: 'unverified', why: check.why };
+    return vouched ? { kind: 'relayer-is-author' } : { kind: 'unverified', why: check.why };
   }
   if (check.kind === 'forged') return { kind: 'forged', why: check.why };
   if (check.group !== groupId) {
     // A real signature, but for another conversation: a row that moved here (a merged DM, a re-key)
     // or a replay. Either way it proves nothing about THIS conversation - as if it had no proof.
     log(`[AUTHORSHIP] restored ${entry.id.slice(0, 8)} carries a proof signed in another group`);
-    return claimed === relayer
+    return vouched
       ? { kind: 'relayer-is-author' }
       : { kind: 'unverified', why: 'the proof was signed in another conversation' };
   }
@@ -189,12 +215,12 @@ export async function vetRestoredEdit(
   mls: AuthorKeySource,
   groupId: string,
   target: { id: string; senderId: string; content: string },
-  entry: { editProof?: RecordedAuthorship },
+  entry: { editProof?: RecordedAuthorship; authorUnproven?: boolean },
   relayerUserId: string,
   log: Log
 ): Promise<RestoredEditVerdict> {
   if (!entry.editProof) {
-    return canonicalUserId(relayerUserId) === canonicalUserId(target.senderId)
+    return relayerVouches(entry, canonicalUserId(target.senderId), canonicalUserId(relayerUserId))
       ? { kind: 'relayer' }
       : { kind: 'none' };
   }

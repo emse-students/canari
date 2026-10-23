@@ -464,7 +464,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         const admitted = (await ctx.dropOwnExcluded(fresh)) ?? [];
         for (const m of admitted) {
           pushPendingMessage({
-            senderId: String(m.senderId).toLowerCase(),
+            senderId: canonicalUserId(String(m.senderId)),
             content: String(m.content),
             messageId: String(m.id),
             timestamp: typeof m.timestamp === 'number' ? new Date(m.timestamp) : undefined,
