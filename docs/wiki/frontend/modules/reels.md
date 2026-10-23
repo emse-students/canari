@@ -500,9 +500,9 @@ text instead of turning the reel. The fold is
 measured (`watchClampOverflow`, shared with the card), so a short caption has no button. Unfolding
 neither pauses nor turns the reel: the tap-outside layer is a button, and the unfolded text carries
 `data-reel-caption-open`, both in the viewer's `NOT_A_GESTURE`, so a drag there scrolls the text
-(`touch-pan-y`) instead of turning the reel. Anchored to the bottom, above the player's bar, so 2x
+(`touch-pan-y`) instead of turning the reel. Anchored to the bottom, above the player's line, so 2x
 type grows UPWARD. The viewer has nothing else at the bottom-right at 390 px (its step buttons are
-`md:` and mid-height; the save is in the player's bar), so nothing collides.
+`md:` and mid-height; the save and the sound are in the rail), so nothing collides.
 
 ### A double tap on a reel likes it (2026-10-19)
 
@@ -638,6 +638,38 @@ be about seven times FASTER. These numbers are the reference for tuning it; this
 none of them. **Follow-up, after the phone reading of RR:** decide whether the reel pager moves
 towards these thresholds (lead's decision: not in the rail's pull request).
 
+### The minimal player and the rail tools (user, 2026-10-23)
+
+*"Les Reels d'instagram sont beaucoup plus epures, la barre de lecture est discrete et collee en bas,
+sans timecode."* The viewer's player is `VideoPlayer` with `minimal` (through `PostMedia`'s
+`minimalPlayer`); every other player (lightbox, conversations) keeps its bar.
+
+- **No control row, no timecode, no play button.** One progress line on the bottom edge of the frame,
+  **2 px drawn in a 32 px touch target**, `z-40` over the caption's vignette (`z-20`) so the scrim never
+  dims it. Touched or dragged it thickens (4 px) and shows a 12 px handle; a keyboard focus does the
+  same. It stays a `role="slider"` (arrows, Home/End through `videoKeyAction`) and is
+  `data-video-controls`, so a drag on it is a seek and never a swipe. It pads for the home indicator
+  (`--safe-area-inset-bottom`) only when the frame reaches the screen bottom (`playerSafeBottom`).
+  The caption's bottom pad is now `inset + 1rem`; the 4.5 rem it left for the bar is gone.
+- **A tap on the picture plays or pauses** (it toggled the controls before; a paused reel kept a big
+  play button). **The glyph is the feedback of a tap, never a state** (user, same day): nothing at load,
+  autoplay, an engine pause or the end; the icon of what the tap just did pops and fades in 600 ms
+  (`.reel-glyph`) and is not drawn under `prefers-reduced-motion`. A double tap that likes still
+  pauses then resumes (the first tap is the player's, as it always was).
+- **The rail, top to bottom: heart, comments, share, DOWNLOAD under share, SOUND under that** (the user
+  asked for this order; Instagram puts the sound top-right). The tools show on a reel page even
+  when the rail has no social action (a conversation's reel), and not on a photo page. The sound
+  button is `videoSound`'s one answer; `VideoPlayer` now also carries a store change to its element
+  (`app` scope), so the rail needs no handle on the player. The download is the same
+  `ReelSaveButton`, same logic, drawn plain (`rail`).
+- **The top**: a scrim under the status bar and the X, the X without a disc (it overlapped a
+  letterboxed frame's rounded corner), safe-area aware; the native status bar icons are held light
+  while the viewer is up (`themeStore.holdNativeBar('dark')`, the camera's mechanism).
+- **The bands around a short frame are intended**: the frame is the camera's 9:16 shown whole
+  (`ReelFrame`), the rest of the screen is `ReelBackdrop`'s blurred copy, never black. A reel whose
+  frame fills the stage has none. No screenshot is attached: the wasm bundle could not be built
+  where this was written, so the render is **owed on a phone**.
+
 ### The CanaReels entry - an icon beside the tabs that opens the viewer (user, 2026-10-16)
 
 **SUPERSEDES the 2026-10-15 "CanaReels filter"** (#1920: a "Tous les posts" / "CanaReels" bar above
@@ -709,10 +741,9 @@ author's name. `expiresAt`, `expiringSoon` and `serverNow` stay on the server's 
 ([reels (server)](../../services/reels.md)), which no client reads any more.
 The publish step's own note ("visible 30 days...") is unchanged and is the user's to rule on.
 
-**The save** (`ReelSaveButton`) is **for EVERY reel, public or not, in the player's bar right after the
-volume button** (user, 2026-10-09: *"un bouton pour sauvegarder tous les reels, public ou non"*). It is a
-`barActions` snippet that `ReelSlide` hands to `PostMedia` (gallery mode), which hands it to `VideoPlayer`;
-it reads the video out of the media cache with the key the viewer's own ref carries, and gives it to:
+**The save** (`ReelSaveButton`) is **for EVERY reel, public or not** (user, 2026-10-09: *"un bouton pour
+sauvegarder tous les reels, public ou non"*). Since 2026-10-23 it is in the RAIL under the send, not in
+the player's bar ([the minimal player](#the-minimal-player-and-the-rail-tools-user-2026-10-23)); it reads the video out of the media cache with the key the viewer's own ref carries, and gives it to:
 
 | Where | Path | Permission |
 | --- | --- | --- |

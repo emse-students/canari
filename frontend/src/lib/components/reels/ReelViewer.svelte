@@ -19,6 +19,7 @@
    * picker) is drawn above the viewer (`markViewerLayer`).
    */
   import { onMount } from 'svelte';
+  import { themeStore } from '$lib/stores/themeStore.svelte';
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
   import ReelSlide from './ReelSlide.svelte';
   import ReelCommentsSheet from './ReelCommentsSheet.svelte';
@@ -106,9 +107,12 @@
   );
 
   onMount(() => {
+    // The viewer paints black under the status bar: light icons while it is up, handed back after.
+    const releaseBar = themeStore.holdNativeBar('dark');
     reels = [startPost];
     overlay.syncOpen();
     console.debug(`[reel-viewer] opened on ${startPost.id}`);
+    return releaseBar;
   });
 
   const mounted = $derived(mountedReelIndices(index, reels.length));
@@ -533,17 +537,22 @@
       </div>
     </div>
 
+    <!-- THE TOP SCRIM (user, 2026-10-23: the status bar icons vanished on black) lies under the
+         close button and the phone's status bar, so white icons read on a bright reel too; the
+         native icons themselves are held light (`holdNativeBar`). The X has no disc: a disc
+         against a letterboxed frame's rounded corner read as overlapping it. Safe-area aware. -->
     <div
-      class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+      class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+      data-reel-top-scrim
     >
       <button
         type="button"
-        class="ui-icon-button pointer-events-auto rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button pointer-events-auto rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
         aria-label={m.reels_viewer_close()}
         title={m.reels_viewer_close()}
         onclick={() => overlay.dismissFromUi()}
       >
-        <X size={24} strokeWidth={2.5} />
+        <X size={26} strokeWidth={2.5} class="drop-shadow-md" />
       </button>
     </div>
 
