@@ -123,7 +123,10 @@ describe('a queued frame - one delivery, two routes', () => {
               ? { find: jest.fn().mockResolvedValue([{ id: GROUP, deletedAt: null }]) }
               : entity === DeviceGroupMembership
                 ? deviceGroupRepo
-                : { save: queuedSave },
+                : entity === GroupMember
+                  ? // The Welcome's target still holds its seat when the store re-reads it.
+                    { findOne: jest.fn().mockResolvedValue({ id: 'seat' }) }
+                  : { save: queuedSave },
         })
       ),
     },

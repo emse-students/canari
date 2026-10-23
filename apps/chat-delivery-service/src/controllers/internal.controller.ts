@@ -38,6 +38,7 @@ import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { MessagingService, type ActivationOutcome } from '../services/messaging.service';
 import { SeatEviction } from '../entities/seat-eviction.entity';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
+import { endDeviceMemberships } from '../utils/group-membership';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
 
@@ -771,6 +772,9 @@ export class InternalController {
 
     // ── User's own records ────────────────────────────────────────────────
     const manager = this.groupRepo.manager;
+    // Every device row of the account and everything queued FOR it - Welcomes included - in ONE
+    // transaction ({@link endDeviceMemberships}).
+    const departed = await manager.transaction((tx) => endDeviceMemberships(tx, { userId }, 'all'));
     const [, sentQueued] = (await manager.query(
       `DELETE FROM queued_message
         WHERE "senderId" = $1 AND "isCommit" IS NOT TRUE AND "isWelcome" IS NOT TRUE`,
@@ -783,8 +787,6 @@ export class InternalController {
       this.groupMemberRepo.delete({ userId }),
       // The account's membership history goes with it: nothing will ever answer for this person.
       this.membershipIntervalRepo.delete({ userId }),
-      this.deviceGroupRepo.delete({ userId }),
-      this.queuedMessageRepo.delete({ recipientId: userId }),
       this.pushTokenRepo.delete({ userId }),
       this.pinVerifierRepo.delete({ userId }),
       this.revokedDeviceRepo.delete({ userId }),
@@ -797,7 +799,10 @@ export class InternalController {
       this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);
 
-    this.logger.log(`[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued}`);
+    this.logger.log(
+      `[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued} ` +
+        `deviceMemberships=${departed.memberships} queuedFor=${departed.queued}`
+    );
     return { ok: true };
   }
 }

@@ -124,6 +124,8 @@ describe('a group ends - one policy, three routes', () => {
   let repos: Repos;
   /** Every entity the sweep asked to delete inside the transaction, `Group` excluded. */
   let swept: unknown[];
+  /** How many transactions tombstoned the group. */
+  let sweeps: number;
   /** What happened, in order, so "Redis after the commit" is a fact rather than a hope. */
   let order: string[];
   let redis: { del: jest.Mock; srem: jest.Mock; smembers: jest.Mock };
@@ -140,17 +142,31 @@ describe('a group ends - one policy, three routes', () => {
     // The transaction fake hands `Group` back to the real mock - so the tombstone assertions measure
     // the actual write - and every other entity to a counting fake, so a table dropped from the
     // sweep shows up as a missing name rather than as silence.
-    const transactional = {
-      getRepository: jest.fn((entity: unknown) => {
-        if (entity === Group) return repos.group;
-        swept.push(entity);
-        return { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
-      }),
-    };
+    //
+    // ONLY THE TRANSACTION THAT TOMBSTONES THE GROUP IS THE SWEEP. An account deletion also ends the
+    // account's device memberships in a transaction of its own (`endDeviceMemberships`), which never
+    // touches `Group` - that is how the two are told apart here.
+    sweeps = 0;
     repos.group.manager.transaction.mockImplementation(
       async (cb: (m: unknown) => Promise<unknown>) => {
+        let tombstones = false;
+        const entities: unknown[] = [];
+        const transactional = {
+          getRepository: jest.fn((entity: unknown) => {
+            if (entity === Group) {
+              tombstones = true;
+              return repos.group;
+            }
+            entities.push(entity);
+            return { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
+          }),
+        };
         const out = await cb(transactional);
-        order.push('commit');
+        if (tombstones) {
+          sweeps += 1;
+          swept.push(...entities);
+          order.push('commit');
+        }
         return out;
       }
     );
@@ -228,7 +244,7 @@ describe('a group ends - one policy, three routes', () => {
 
       await end(doors);
 
-      expect(repos.group.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(sweeps).toBe(1);
       expect(swept).toEqual(SWEPT);
     });
 

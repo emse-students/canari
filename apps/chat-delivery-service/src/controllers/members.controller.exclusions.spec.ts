@@ -80,12 +80,12 @@ describe('MembersController - membership intervals and the exclusions read', () 
     const txManager = {
       getRepository: (entity: unknown) => ({
         delete: (where: { userId: string }) => {
+          txDeletes.push({ entity, where });
           if (entity === DeviceGroupMembership) {
             order.push('devices-deleted');
             deviceRows = deviceRows.filter((d) => d.userId !== where.userId);
             return Promise.resolve({ affected: 2 });
           }
-          txDeletes.push({ entity, where });
           return Promise.resolve({ affected: 1 });
         },
         update: (where: Record<string, unknown>) => {
@@ -174,7 +174,16 @@ describe('MembersController - membership intervals and the exclusions read', () 
           }
         },
       },
-      transaction: (fn: (m: unknown) => Promise<unknown>) => fn(txManager),
+      // A failed transaction rolls back: the device rows it deleted are there again.
+      transaction: async (fn: (m: unknown) => Promise<unknown>) => {
+        const before = [...deviceRows];
+        try {
+          return await fn(txManager);
+        } catch (e) {
+          deviceRows = before;
+          throw e;
+        }
+      },
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -426,7 +435,10 @@ describe('MembersController - membership intervals and the exclusions read', () 
   it('a removal deletes the live row AND closes the interval in one transaction', async () => {
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
 
-    expect(txDeletes).toEqual([{ entity: GroupMember, where: { groupId: 'g-1', userId: 'bob' } }]);
+    expect(txDeletes).toContainEqual({
+      entity: GroupMember,
+      where: { groupId: 'g-1', userId: 'bob' },
+    });
     expect(txUpdates).toHaveLength(1);
     expect(txUpdates[0].entity).toBe(GroupMembershipInterval);
     expect(txUpdates[0].where).toMatchObject({ groupId: 'g-1', userId: 'bob' });
@@ -435,15 +447,31 @@ describe('MembersController - membership intervals and the exclusions read', () 
   it('a removal takes the seat lock first and records the eviction with the roster write', async () => {
     // An external commit whose roster check ran before this removal holds a claim this record
     // overtakes, so its committer's seat is never written after the removal (`seat-eviction.ts`).
+    // The roster row before the device rows: the order an add takes them in.
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
 
     expect(order).toEqual([
       'parting-recorded',
       'seat-lock:seat:g-1',
-      'devices-deleted',
       'interval-closed',
+      'devices-deleted',
       'eviction-recorded',
     ]);
+  });
+
+  it('a removal takes the Welcomes still queued for the removed person, in the same transaction', async () => {
+    // A queued Welcome is pulled by its device whatever the roster says: left behind, it would let
+    // the removed person enter the epoch it was built for and read what members seal there.
+    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+
+    expect(txDeletes).toContainEqual({
+      entity: QueuedMessage,
+      where: { recipientId: 'bob', groupId: 'g-1', isWelcome: true },
+    });
+    expect(txDeletes).toContainEqual({
+      entity: DeviceGroupMembership,
+      where: { userId: 'bob', groupId: 'g-1' },
+    });
   });
 
   it("a removal by ANOTHER member names the removed person's devices as parting, before their rows go", async () => {

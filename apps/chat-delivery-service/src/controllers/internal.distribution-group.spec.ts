@@ -735,6 +735,7 @@ describe('InternalController - the community distribution group', () => {
         controller.evictFromDistributionGroup('workspace', WORKSPACE, USER, SECRET)
       ).resolves.toEqual({ evicted: false, memberships: 0, queued: 0, routes: 0 });
       expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+      expect(queuedMessageRepo.delete).not.toHaveBeenCalled();
     });
 
     it('refuses a call carrying the wrong internal secret', async () => {
@@ -744,6 +745,7 @@ describe('InternalController - the community distribution group', () => {
         controller.evictFromDistributionGroup('workspace', WORKSPACE, USER, 'not-the-secret')
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+      expect(queuedMessageRepo.delete).not.toHaveBeenCalled();
     });
   });
 

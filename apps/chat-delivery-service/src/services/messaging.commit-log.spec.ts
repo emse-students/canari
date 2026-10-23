@@ -5,6 +5,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import {
   BadRequestException,
   ForbiddenException,
+  GoneException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { FindOperator, IsNull } from 'typeorm';
@@ -31,6 +32,13 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
    * see that they happened inside the one callback.
    */
   const groupUpdate = jest.fn().mockResolvedValue({ affected: 1 });
+  // The group row read under lock before a carried Welcome is written: live unless a test says not.
+  const txGroupFind = jest.fn();
+  const txSeatRepo = { findOne: jest.fn() };
+  const txQueuedRepo = {
+    create: jest.fn((row: Record<string, unknown>) => ({ ...row })),
+    save: jest.fn(async (row: Record<string, unknown>) => ({ ...row, id: 'queued-welcome-1' })),
+  };
   const txGroupInfoRepo = {
     findOne: jest.fn().mockResolvedValue(null),
     createQueryBuilder: jest.fn(),
@@ -53,7 +61,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       // and a real table in the interleaving cases below.
       query: jest.fn().mockResolvedValue([]),
       getRepository: (entity: unknown) => {
-        if (entity === Group) return { update: groupUpdate };
+        if (entity === Group) return { update: groupUpdate, find: txGroupFind };
+        // A Welcome carried by the commit is written in the same callback as the advance.
+        if (entity === QueuedMessage) return txQueuedRepo;
+        // The carried Welcome's target seat, re-read under a lock in the advance's transaction.
+        if (entity === GroupMember) return txSeatRepo;
         // THE COMMIT-LOG ROW IS WRITTEN INSIDE THIS TRANSACTION NOW, not best-effort after it: the
         // epoch advance and the commit that lets everyone else replay it land together or neither
         // lands. Routing it here is what lets a test see the two writes in one callback.
@@ -138,6 +150,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     // device back in the tree.
     hgetall: jest.fn(() => Promise.resolve({} as Record<string, string>)),
     hdel: jest.fn(() => Promise.resolve(0)),
+    // Presence of a Welcome's target, asked once before its delivery.
+    exists: jest.fn(() => Promise.resolve(0)),
   };
 
   /**
@@ -170,6 +184,12 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       deviceId: 'device-1',
     });
     revokedDeviceRepo.findOne.mockResolvedValue(null);
+    txGroupFind.mockResolvedValue([{ id: 'group-1', deletedAt: null }]);
+    txSeatRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'user-2' });
+    txQueuedRepo.save.mockImplementation(async (row: Record<string, unknown>) => ({
+      ...row,
+      id: 'queued-welcome-1',
+    }));
     txGroupInfoRepo.findOne.mockResolvedValue(null);
     txGroupInfoRepo.createQueryBuilder.mockImplementation((): unknown => ({
       ...txInsertBuilder,
@@ -1536,6 +1556,275 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         commit({ proto: externalCommitFrame('group-2', 5n) }, 'user-1')
       ).rejects.toMatchObject({ response: { error: 'commit_malformed' } });
       expect(transaction).not.toHaveBeenCalled();
+    });
+
+    /**
+     * AN ACCEPTED COMMIT THAT ADDS A DEVICE ALWAYS HAS ITS WELCOME. The background re-add queued its
+     * Welcome in a second call after the advance; when that call failed, the newcomer sat in the
+     * tree with no Welcome, every holder then answered it `already-member`, and nothing durable
+     * recovered it. The Welcome row is now written in the advance's own transaction.
+     */
+    describe('a commit carrying the Welcome of the device it adds', () => {
+      const newcomer = { userId: 'user-2', deviceId: 'phone-2' };
+      const welcome = {
+        userId: 'user-2',
+        deviceId: 'phone-2',
+        payload: 'd2VsY29tZQ==',
+        ratchetTree: 'dHJlZQ==',
+      };
+      const withWelcome = () =>
+        commit({ admits: [newcomer], welcome }, 'user-1') as ReturnType<
+          typeof service.validateCommit
+        >;
+      let deliver: jest.SpyInstance;
+
+      beforeEach(() => {
+        deliver = jest
+          .spyOn(
+            service as unknown as { deliverQueuedFrame: () => Promise<boolean> },
+            'deliverQueuedFrame'
+          )
+          .mockResolvedValue(false);
+      });
+
+      it('writes the Welcome row in the transaction that advances the epoch, then delivers that row', async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        const sent = fanOut();
+        // The order the writes happen in: the Welcome row must be written while the transaction
+        // that moves the epoch is open, never after it closed.
+        let insideTransaction = false;
+        let writtenInside: boolean | null = null;
+        transaction.mockImplementationOnce(async (cb: (m: unknown) => Promise<void>) => {
+          insideTransaction = true;
+          try {
+            return await (
+              transaction.getMockImplementation() as (
+                c: (m: unknown) => Promise<void>
+              ) => Promise<void>
+            )(cb);
+          } finally {
+            insideTransaction = false;
+          }
+        });
+        txQueuedRepo.save.mockImplementationOnce(async (row: Record<string, unknown>) => {
+          writtenInside = insideTransaction;
+          return { ...row, id: 'queued-welcome-1' };
+        });
+
+        await expect(withWelcome()).resolves.toEqual({ accepted: true, newEpoch: 6 });
+
+        expect(writtenInside).toBe(true);
+        expect(txQueuedRepo.save).toHaveBeenCalledWith(
+          expect.objectContaining({
+            recipientId: 'user-2',
+            deviceId: 'phone-2',
+            senderId: 'user-1',
+            groupId: 'group-1',
+            proto: 'd2VsY29tZQ==',
+            ratchetTree: 'dHJlZQ==',
+            isWelcome: true,
+          })
+        );
+        expect(groupUpdate).toHaveBeenCalledWith({ id: 'group-1' }, { activeEpoch: 6 });
+        // Delivered FROM the stored row - its id is what lets the device ACK it - as a silent,
+        // pushable Welcome, after the members have the commit.
+        expect(deliver).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 'queued-welcome-1', isWelcome: true }),
+          expect.objectContaining({ tag: 'WELCOME', silent: true, pushable: true })
+        );
+        expect(sent.mock.invocationCallOrder[0]).toBeLessThan(deliver.mock.invocationCallOrder[0]);
+      });
+
+      it('fails the whole commit when the Welcome row cannot be written - nothing is fanned out', async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        const sent = fanOut();
+        txQueuedRepo.save.mockRejectedValueOnce(new Error('connection lost'));
+
+        await expect(withWelcome()).rejects.toThrow('connection lost');
+        expect(sent).not.toHaveBeenCalled();
+        expect(deliver).not.toHaveBeenCalled();
+      });
+
+      it('stays accepted when the realtime delivery fails: the stored row is the delivery', async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        fanOut();
+        deliver.mockRejectedValueOnce(new Error('redis down'));
+
+        await expect(withWelcome()).resolves.toEqual({ accepted: true, newEpoch: 6 });
+        expect(txQueuedRepo.save).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses, before the epoch moves, a Welcome to a person the group does not name', async () => {
+        tables({ keyPackages: [ownKey, newcomer], devices: [ownDevice], roster: [] });
+        const sent = fanOut();
+
+        await expect(withWelcome()).resolves.toEqual({
+          accepted: false,
+          currentEpoch: 5,
+          reason: 'welcome_target_not_member',
+        });
+        expect(transaction).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      it('refuses, before the epoch moves, a Welcome to a device registered to nobody', async () => {
+        tables({
+          keyPackages: [ownKey],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        const sent = fanOut();
+
+        await expect(withWelcome()).resolves.toEqual({
+          accepted: false,
+          currentEpoch: 5,
+          reason: 'welcome_target_unknown',
+        });
+        expect(transaction).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      it('refuses a Welcome for a group that ended while the commit was in flight', async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        const sent = fanOut();
+        txGroupFind.mockResolvedValueOnce([{ id: 'group-1', deletedAt: new Date(0) }]);
+
+        await expect(withWelcome()).rejects.toBeInstanceOf(GoneException);
+        expect(txQueuedRepo.save).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      /**
+       * A REMOVAL RACING THE STORE serialises with it on the target's roster seat: the advance's
+       * transaction re-reads it under a share lock, after the group row and before anything is
+       * written. A removal that committed first leaves no seat, and the commit is refused whole.
+       */
+      it("re-reads the target's seat under a lock, after the group and before any write", async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        fanOut();
+
+        await expect(withWelcome()).resolves.toEqual({ accepted: true, newEpoch: 6 });
+        expect(txSeatRepo.findOne).toHaveBeenCalledWith({
+          where: { groupId: 'group-1', userId: 'user-2' },
+          lock: { mode: 'pessimistic_read' },
+        });
+        expect(txGroupFind.mock.invocationCallOrder[0]).toBeLessThan(
+          txSeatRepo.findOne.mock.invocationCallOrder[0]
+        );
+        expect(txSeatRepo.findOne.mock.invocationCallOrder[0]).toBeLessThan(
+          groupUpdate.mock.invocationCallOrder[0]
+        );
+      });
+
+      it('refuses the whole commit when the seat is gone by the time the transaction reads it', async () => {
+        tables({
+          keyPackages: [ownKey, newcomer],
+          devices: [ownDevice],
+          roster: [{ groupId: 'group-1', userId: 'user-2' }],
+        });
+        const sent = fanOut();
+        txSeatRepo.findOne.mockResolvedValue(null);
+
+        await expect(withWelcome()).resolves.toEqual({
+          accepted: false,
+          currentEpoch: 5,
+          reason: 'welcome_target_not_member',
+        });
+        expect(groupUpdate).not.toHaveBeenCalled();
+        expect(txQueuedRepo.save).not.toHaveBeenCalled();
+        expect(sent).not.toHaveBeenCalled();
+      });
+
+      /**
+       * A KEY GROUP HAS NO USER ROSTER HERE, so its Welcome's target is asked of social-service
+       * (WP-KEYGROUP-JOIN-GATE) - about the TARGET, never the committer - before the epoch moves.
+       */
+      describe("in a key group, the target's entitlement", () => {
+        let previous: string | undefined;
+        let fetchSpy: jest.SpyInstance;
+        // A fresh body per call: the admit and the Welcome's target are each asked.
+        const social = (status: number, answer: unknown) =>
+          fetchSpy.mockImplementation(async () => new Response(JSON.stringify(answer), { status }));
+        const askedBodies = () =>
+          fetchSpy.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+        const keyGroup = () =>
+          tables({
+            keyPackages: [ownKey, newcomer],
+            devices: [ownDevice],
+            roster: [],
+            group: { distributionWorkspaceId: 'ws-1' },
+          });
+
+        beforeEach(() => {
+          previous = process.env.INTERNAL_SECRET;
+          process.env.INTERNAL_SECRET = 'sekret';
+          fetchSpy = jest.spyOn(globalThis, 'fetch');
+        });
+
+        afterEach(() => {
+          fetchSpy.mockRestore();
+          if (previous === undefined) delete process.env.INTERNAL_SECRET;
+          else process.env.INTERNAL_SECRET = previous;
+        });
+
+        it('stores the Welcome when social-service entitles the target', async () => {
+          keyGroup();
+          social(200, { entitled: true });
+          fanOut();
+
+          await expect(withWelcome()).resolves.toEqual({ accepted: true, newEpoch: 6 });
+          expect(askedBodies()).toContainEqual({
+            kind: 'workspace',
+            scopeId: 'ws-1',
+            userId: 'user-2',
+          });
+          expect(txQueuedRepo.save).toHaveBeenCalledTimes(1);
+        });
+
+        it('refuses before the epoch moves when social-service does not entitle the target', async () => {
+          keyGroup();
+          social(200, { entitled: false });
+          const sent = fanOut();
+
+          await expect(withWelcome()).resolves.toEqual({
+            accepted: false,
+            currentEpoch: 5,
+            reason: 'welcome_target_not_member',
+          });
+          expect(transaction).not.toHaveBeenCalled();
+          expect(sent).not.toHaveBeenCalled();
+        });
+
+        it('is a retryable 503, recording nothing, when social-service cannot answer', async () => {
+          keyGroup();
+          fetchSpy.mockRejectedValue(new TypeError('fetch failed'));
+          const sent = fanOut();
+
+          await expect(withWelcome()).rejects.toBeInstanceOf(ServiceUnavailableException);
+          expect(transaction).not.toHaveBeenCalled();
+          expect(sent).not.toHaveBeenCalled();
+        });
+      });
     });
   });
 

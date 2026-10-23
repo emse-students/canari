@@ -57,7 +57,7 @@ interface Seams {
     tag: string,
     traceId: string,
     sealed: undefined,
-    seats: { exempt: ReadonlySet<string> }
+    opts: { seats?: { exempt: ReadonlySet<string> }; welcome?: unknown }
   ): Promise<QueuedMessage[]>;
   restoreRoutes(
     groupId: string,
@@ -254,7 +254,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         'SEND',
         'it',
         undefined,
-        { exempt: new Set() }
+        { seats: { exempt: new Set() } }
       );
       await parked(1);
       await evicting.query('COMMIT');
@@ -290,7 +290,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       // Resolves while the other send still holds the lock shared: a wait would time this test out.
       await expect(
         seams().enqueueForLiveGroup([frameFor(PEER)], GROUP, 'SEND', 'it', undefined, {
-          exempt: new Set(),
+          seats: { exempt: new Set() },
         })
       ).resolves.toHaveLength(1);
       expect(await queuedFor(PEER)).toBe(1);
@@ -304,7 +304,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
 
     await expect(
       seams().enqueueForLiveGroup([frameFor(PEER)], GROUP, 'SEND', 'it', undefined, {
-        exempt: new Set([`${PEER.userId}:${PEER.deviceId}`]),
+        seats: { exempt: new Set([`${PEER.userId}:${PEER.deviceId}`]) },
       })
     ).resolves.toHaveLength(1);
   });

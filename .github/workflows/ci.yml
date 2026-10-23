@@ -371,6 +371,21 @@ jobs:
       fail-fast: false
       matrix:
         component: ${{ fromJSON(needs.changes.outputs.rust-matrix) }}
+    # THE GATEWAY'S PRESENCE SCRIPTS (`apps/chat-gateway/src/addressing.rs`, `redis_it`): a session's
+    # field and its expiry in one command, a refresh that cannot resurrect a retired session, the
+    # presence going with the last session on any process - Lua a fake cannot judge. Gated on
+    # `GATEWAY_IT_REDIS_URL`, and the tests FAIL rather than skip when it is unset under CI. The same
+    # digest as production (`ci-passed-gate.test.mjs` compares them).
+    services:
+      redis:
+        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v7
@@ -470,6 +485,8 @@ jobs:
 
       - name: Run Component Task
         working-directory: ${{ matrix.component.path }}
+        env:
+          GATEWAY_IT_REDIS_URL: redis://127.0.0.1:6379
         run: ${{ matrix.component.cmd }}
 
   # =================================================================================================
@@ -641,6 +658,25 @@ jobs:
       # MIGRATION 015 (the lives kill switch) AGAINST POSTGRESQL: lands `off` on an existing row,
       # replays as a no-op, and its CHECK refuses a value no service reads. The spec builds its own
       # `platform_config` in a throwaway schema, so the boot's database is all it needs.
+      # THE CHECK-AND-PUBLISH SCRIPT OF AN ADDRESSED HISTORY ANSWER (history-answer-addressing, rule
+      # 6) against the production Redis this job already runs: its point is that the check and the
+      # PUBLISH are one atomic step. Gated on `CHAT_DELIVERY_IT_REDIS_URL`, so jest's own report is
+      # read and a skipped or absent test fails the step.
+      - name: Addressed publish script against Redis
+        if: ${{ matrix.service == 'apps/chat-delivery-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CHAT_DELIVERY_IT_REDIS_URL: redis://localhost:6379
+        run: |
+          node --run test -- addressing.redis --json --outputFile "$RUNNER_TEMP/addressing-it.json"
+          node -e '
+            const r = require(process.argv[1]);
+            if (r.numPendingTests > 0 || r.numPassedTests < 5) {
+              console.error(`addressing.redis: ${r.numPassedTests} passed, ${r.numPendingTests} skipped - the script ran nowhere`);
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/addressing-it.json"
+
       - name: Lives kill switch migration against PostgreSQL
         if: ${{ matrix.service == 'apps/core-service' }}
         working-directory: ${{ matrix.service }}

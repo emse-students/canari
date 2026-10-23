@@ -213,7 +213,11 @@ describe('an orphan group - one repair, three paths', () => {
         MessagingService,
         {
           provide: getRepositoryToken(QueuedMessage),
-          useValue: { ...emptyRepo(), createQueryBuilder: jest.fn(() => queryBuilder()) },
+          useValue: {
+            ...emptyRepo(),
+            createQueryBuilder: jest.fn(() => queryBuilder()),
+            count: jest.fn().mockResolvedValue(0),
+          },
         },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
