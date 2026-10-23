@@ -9,6 +9,7 @@ import {
   type AdmissionVoucher,
 } from '$lib/crypto/graineAdmission';
 import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 import { toBase64 } from '$lib/utils/hex';
 import { ACCOUNT_KEY } from '../accountLocalKeys';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
@@ -114,6 +115,21 @@ function serialized<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * `workspaceId`'s COMMUNITY key group on this device - the one group whose tree, pins and removals
+ * say who the community admitted, and the one every admission is placed in.
+ *
+ * @throws When this device holds no key group for the community: no admission can be placed or
+ *   checked, and the caller says so (an issuer signs nothing, the gate answers `joined`).
+ */
+export function communityKeyGroupOf(mlsService: IMlsService, workspaceId: string): string {
+  const keyGroupId = mlsService.distributionGroupFor(workspaceScope(workspaceId));
+  if (!keyGroupId) {
+    throw new Error(`this device holds no key group for community ${workspaceId.slice(0, 8)}`);
+  }
+  return keyGroupId;
+}
+
+/**
  * THE GATE, and the only one: what an answer to `frame`'s sender may carry. Both answer paths - the
  * HISTORY bundle and the SESSIONS repair - call it, so the two cannot disagree about a member.
  *
@@ -124,7 +140,11 @@ export async function pastPolicyFor(frame: DistributionFrame): Promise<PastPolic
   if (historyVisibilityFor(frame.workspaceId) === 'joined') return 'joined';
   let proven: boolean;
   try {
-    proven = await admissionProven(frame.workspaceId, frame.groupId, frame.sender);
+    // The COMMUNITY's key group, whichever group the ask arrived on: a private salon's own group
+    // holds that salon's members and its own removals, and neither says who the community admitted.
+    const { mlsService } = requireGraineRuntime('cannot check an admission');
+    const keyGroupId = communityKeyGroupOf(mlsService, frame.workspaceId);
+    proven = await admissionProven(frame.workspaceId, keyGroupId, frame.sender);
   } catch (e) {
     console.warn(
       `[GRAINE] cannot verify ${frame.sender}'s admission to community ${frame.workspaceId.slice(0, 8)} - ` +

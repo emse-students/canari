@@ -176,14 +176,31 @@ const tree = new Map<string, Uint8Array>();
  * member of the default roster has a device in it, so each is rooted the first time it is read.
  */
 let leaves: string[] = [];
+/**
+ * The trees are KEYED BY GROUP, as the MLS layer's are: `leaves` and `tree` are the COMMUNITY's key
+ * group (`communityGroup`), a private salon's own group (`g-private`) holds `salonLeaves` alone.
+ * A gate that read a salon's tree as the community's would see different members here.
+ */
+let communityGroup = 'g-1';
+let salonLeaves: string[] = [];
+/** Departures per group then user (`removalEpochs`), as #2268 records them. */
+const departuresByGroup = new Map<string, Map<string, number[]>>();
 let published: DeviceSignatureKeys = { kind: 'keys', keys: [] };
 function graineMls(extra: Record<string, unknown> = {}) {
+  const leavesOf = (groupId: string) =>
+    groupId === communityGroup ? leaves : groupId === 'g-private' ? salonLeaves : [];
   return {
-    memberSignatureKey: async (_groupId: string, identity: string) => tree.get(identity) ?? null,
-    getGroupMemberIdentities: async () => [...leaves],
+    distributionGroupFor: (scope: DistributionScope) =>
+      scope.kind === 'workspace' ? communityGroup : 'g-private',
+    memberSignatureKey: async (groupId: string, identity: string) =>
+      leavesOf(groupId).includes(identity) || groupId === communityGroup
+        ? (tree.get(identity) ?? null)
+        : null,
+    getGroupMemberIdentities: async (groupId: string) => [...leavesOf(groupId)],
     getEpoch: () => 5,
     pinnedSignatureKeys: async () => null,
-    removalEpochs: async () => [],
+    removalEpochs: async (groupId: string, userId: string) =>
+      departuresByGroup.get(groupId)?.get(userId) ?? [],
     fetchDeviceSignatureKeys: async () => published,
     graineSignatureEngine: () => webCryptoEngine,
     getDeviceId: () => 'alice-laptop',
@@ -194,6 +211,9 @@ beforeEach(() => {
   tree.clear();
   tree.set('carol:dev-c', CAROL_DEVICE_PK);
   leaves = ['alice:alice-laptop', 'bob:dev-b', 'carol:dev-c', 'newcomer:newcomer-web'];
+  communityGroup = 'g-1';
+  salonLeaves = [];
+  departuresByGroup.clear();
   published = { kind: 'keys', keys: [] };
 });
 function fakeStorage(seed: StoredGraineSession[] = []) {
@@ -2082,10 +2102,57 @@ describe('the salon scope of an answer', () => {
   beforeEach(() => {
     // The asker is a member admitted before the proof (a root, section 25): what these rows test
     // is the salon scope of the answer, never the admission.
+    communityGroup = 'g-community';
     leaves.push('mallory:mallory-web');
+    // The private salon's own key group: alice and mallory only.
+    salonLeaves = ['alice:alice-laptop', 'mallory:mallory-web'];
     listWorkspaceMembers.mockResolvedValue(
       ['alice', 'bob', 'carol', 'mallory'].map((id) => member(id))
     );
+  });
+
+  it("judges admission on the COMMUNITY's key group, even when the first ask arrives on a salon's", async () => {
+    // The first ledger write on this device comes from a SESSIONS ask on the private salon's own
+    // group. The roots are the community's members, never that salon's: bob, in the community and
+    // not in the salon, still gets the past when he asks on the community's group.
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    await handleDistributionFrame(
+      askOn(channelScope('ws-1', PRIVATE), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['s-priv'],
+      })
+    );
+    sendMessage.mockClear();
+
+    await handleDistributionFrame({
+      ...askOn(workspaceScope('ws-1'), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+      }),
+      sender: 'bob',
+      senderDeviceId: 'dev-b',
+    });
+
+    expect(answered(sendMessage)).toEqual(['s-pub']);
+    info.mockRestore();
+  });
+
+  it("a removal from a salon's own key group is no removal from the community", async () => {
+    // mallory once left the salon's own group (epoch 3) and is back in it; the community never
+    // removed her. Her ask on the salon's group is judged by the community's removals.
+    departuresByGroup.set('g-private', new Map([['mallory', [3]]]));
+    const sendMessage = wireAnswerer(BOTH_LISTED);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      askOn(channelScope('ws-1', PRIVATE), {
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+      })
+    );
+
+    expect(answered(sendMessage)).toEqual(['s-priv']);
+    expect(info.mock.calls.flat().join(' ')).not.toContain('not proven');
+    info.mockRestore();
   });
 
   /** alice holds a seed of each salon; `listed` is what her community listing registered. */

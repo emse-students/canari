@@ -3832,7 +3832,9 @@ disagree about a member. It returns `joined` when the community is set to it, wh
 not proven (`info`: a decision, not a loss), or when the roster or the tree cannot be read (`warn`:
 fail closed). **Not proven is never refused whole**: the answer is the one a `joined` community
 gives - nothing from before the asker's arrival, everything from it on, under the same
-server-computed floor.
+server-computed floor. It judges on the COMMUNITY's key group (`communityKeyGroupOf`), whichever
+group the ask arrived on: a private salon's own group holds that salon's members and its own
+removals, and neither says who the community admitted.
 
 ### The wire
 

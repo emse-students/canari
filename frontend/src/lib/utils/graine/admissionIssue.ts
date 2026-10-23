@@ -8,8 +8,8 @@ import {
 } from '$lib/crypto/graineAdmission';
 import type { AdmissionPlace } from '$lib/crypto/graineAdmission';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
-import { workspaceScope } from '$lib/mls-client/distributionScope';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { communityKeyGroupOf } from './admissionGate';
 import { platformGraineSignatureEngine } from '$lib/mls-client/platformGraineSignatureEngine';
 import { requireGraineRuntime } from './runtime';
 
@@ -30,12 +30,7 @@ import { requireGraineRuntime } from './runtime';
  *   it signs none - the caller says so, and the newcomer reads from their arrival on.
  */
 export function admissionPlaceNow(mlsService: IMlsService, workspaceId: string): AdmissionPlace {
-  const keyGroupId = mlsService.distributionGroupFor(workspaceScope(workspaceId));
-  if (!keyGroupId) {
-    throw new Error(
-      `this device holds no key group for community ${workspaceId.slice(0, 8)} - no admission can be placed`
-    );
-  }
+  const keyGroupId = communityKeyGroupOf(mlsService, workspaceId);
   return { keyGroupId, epoch: mlsService.getEpoch(keyGroupId) };
 }
 

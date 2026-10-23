@@ -171,8 +171,9 @@ export async function reconcileDistributionGroupRoster(
 }
 
 /**
- * The community sync is where the admission ledger is fed (channel-encryption section 25): the
- * roots are fixed at the first one after the proof existed, and a member whose leaves are all gone is recorded as removed. Never fails the reconciliation -
+ * The community sync is where the admission ledger's ROOTS are fixed (channel-encryption section
+ * 25), at the first one after the proof existed. Removals are not recorded here: the MLS layer
+ * records them at merge time (`removalEpochs`). Never fails the reconciliation -
  * a ledger left unfed only means the next sync or the next check records it - but says so.
  */
 async function recordAdmissionState(
