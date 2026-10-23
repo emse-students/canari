@@ -353,11 +353,16 @@ The reading has one setup and three checks:
   for the chat group FAILS for a reason other than `NotAGroupMember`** (no GroupInfo published, a stale
   base, an unreachable server; `requestReAdd` step 9 and `sendWelcomeRequest` in `recovery.ts`). A new
   login on a healthy estate does not send it: see the attempt below.
-- **Phone (logcat).** Both of these lines appear:
-  - `processWelcomeRequestBackground: Welcome created ... baseEpoch=N`;
-  - `processWelcomeRequestBackground: ✓ Welcome sent for group=... target=...`.
+- **Phone (logcat).** Both of these lines appear (their wording since the typed answer, see
+  [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)):
+  - `processWelcomeRequestBackground: Welcome staged ... baseEpoch=N`;
+  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - state installed`.
 
-  No `sendWelcomeAndCommit failed` line appears.
+  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT INSTALLED` line appears.
+- **The same reading with the phone STALE** (its group moved while it was shut, as on 2026-10-22):
+  the phone logs `REFUSED epoch_mismatch: built on base N, the group is at M`, the server answers 409,
+  the phone then reads the group's next message once opened, and the newcomer's next ask logs
+  `already refused as stale from this mls.bin -> not answered`.
 - **Server (chat-delivery on the local estate).** For the same group, these three lines appear:
   - `[BG_WELCOME][bg-wlc-...] START ... baseEpoch=N`;
   - `commit accepted -> activeEpoch=N+1`;

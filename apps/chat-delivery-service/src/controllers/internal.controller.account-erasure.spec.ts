@@ -4,6 +4,8 @@ import { InternalController } from './internal.controller';
 import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
+import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { QueuedMessage } from '../entities/queued-message.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 
 /**
@@ -27,10 +29,20 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       delete: jest.fn().mockResolvedValue({ affected: 0 }),
       update: jest.fn().mockResolvedValue({ affected: 0 }),
     });
+    // The account's device rows and its queue go in a transaction; its deletes are recorded here.
+    const txDeletes: Array<{ entity: unknown; where: unknown }> = [];
+    const txManager = {
+      getRepository: (entity: unknown) => ({
+        delete: (where: unknown) => {
+          txDeletes.push({ entity, where });
+          return Promise.resolve({ affected: 1 });
+        },
+      }),
+    };
     const manager = {
       query: jest.fn().mockResolvedValue([[], 2]),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
-      transaction: jest.fn(),
+      transaction: jest.fn((cb: (m: unknown) => Promise<unknown>) => cb(txManager)),
     };
     const repos = {
       pushToken: repo(),
@@ -72,7 +84,7 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       redis as never,
       {} as never
     );
-    return { controller, repos, manager, redis };
+    return { controller, repos, manager, redis, txDeletes };
   }
 
   it('deletes the signature keys, the notification preferences and the dismissal markers', async () => {
@@ -85,7 +97,7 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
   });
 
   it('deletes the application messages the account SENT, and spares queued handshake frames', async () => {
-    const { controller, manager, repos } = make();
+    const { controller, manager, txDeletes } = make();
     await controller.deleteUserData(USER, SECRET);
 
     const [sql, params] = manager.query.mock.calls[0] as [string, unknown[]];
@@ -95,8 +107,12 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     expect(sql).toMatch(/"isCommit" IS NOT TRUE/);
     expect(sql).toMatch(/"isWelcome" IS NOT TRUE/);
     expect(params).toEqual([USER]);
-    // ...and what was queued FOR the account still goes, as before.
-    expect(repos.queued.delete).toHaveBeenCalledWith({ recipientId: USER });
+    // ...and what was queued FOR the account still goes - Welcomes included - with its device
+    // rows, in one transaction (`endDeviceMemberships`).
+    expect(txDeletes).toEqual([
+      { entity: DeviceGroupMembership, where: { userId: USER } },
+      { entity: QueuedMessage, where: { recipientId: USER } },
+    ]);
   });
 
   it('anonymises the invite links the account minted instead of breaking them', async () => {

@@ -645,9 +645,12 @@ pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroun
     }
 }
 
+/// Prepares a background Welcome: builds it and STAGES the post-add state, writing nothing to
+/// `mls.bin` (see `mobile::background::prepare_welcome_background_with_key` for the answer's shape).
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreateWelcomeBackground<
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepareWelcomeBackground<
     'a,
 >(
     mut env: jni::JNIEnv<'a>,
@@ -680,7 +683,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
             .map_err(|e| e.to_string())?
             .into();
 
-        mobile::background::create_welcome_background_with_key(
+        Ok(mobile::background::prepare_welcome_background_with_key(
             std::path::Path::new(&files_dir_str),
             &state_vec,
             &key_b64_str,
@@ -688,19 +691,131 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
             &device_id_str,
             &group_id_str,
             &kp_b64,
-        )
+        ))
     })();
 
-    let json_str = match result {
-        Ok(v) => v.to_string(),
+    let json = match result {
+        Ok(v) => v,
         Err(e) => {
-            log::error!("[BG_WELCOME] nativeCreateWelcomeBackground failed: {e}");
-            format!("{{\"ok\":false,\"error\":{:?}}}", e)
+            log::error!(
+                "[BG_WELCOME] nativePrepareWelcomeBackground: JNI argument unreadable: {e}"
+            );
+            serde_json::json!({ "ok": false, "reason": "jni-argument" })
         }
     };
-
-    env.new_string(&json_str)
+    env.new_string(json.to_string())
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
+/// Installs the state a prepared Welcome staged - called only after the server answered `accepted`.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeInstallStagedWelcome<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    files_dir: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let json = match (env.get_string(&files_dir), env.get_string(&group_id)) {
+        (Ok(dir), Ok(gid)) => {
+            let dir: String = dir.into();
+            let gid: String = gid.into();
+            mobile::background::install_staged_welcome(std::path::Path::new(&dir), &gid)
+        }
+        _ => {
+            log::error!("[BG_WELCOME] nativeInstallStagedWelcome: JNI argument unreadable");
+            serde_json::json!({ "ok": false, "reason": "jni-argument" })
+        }
+    };
+    env.new_string(json.to_string())
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
+/// Discards the state a prepared Welcome staged. `stale_base` / `server_epoch` are both `>= 0` for
+/// an `epoch_mismatch` refusal (recorded for the group), and `-1` otherwise; `refused_target`
+/// (`userId:deviceId`) is non-null for a refused target (recorded for that target alone).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDiscardStagedWelcome(
+    mut env: jni::JNIEnv,
+    _service: jni::objects::JObject,
+    files_dir: jni::objects::JString,
+    group_id: jni::objects::JString,
+    stale_base: jni::sys::jlong,
+    server_epoch: jni::sys::jlong,
+    refused_target: jni::objects::JString,
+) {
+    let (Ok(dir), Ok(gid)) = (env.get_string(&files_dir), env.get_string(&group_id)) else {
+        log::error!("[BG_WELCOME] nativeDiscardStagedWelcome: JNI argument unreadable");
+        return;
+    };
+    let dir: String = dir.into();
+    let gid: String = gid.into();
+    let target: Option<String> = if refused_target.is_null() {
+        None
+    } else {
+        match env.get_string(&refused_target) {
+            Ok(t) => Some(t.into()),
+            Err(e) => {
+                log::error!(
+                    "[BG_WELCOME] nativeDiscardStagedWelcome: refused target unreadable: {e}"
+                );
+                None
+            }
+        }
+    };
+    let memo = match (&target, stale_base >= 0 && server_epoch >= 0) {
+        (Some(t), _) => mobile::background::RefusalMemo::TargetRefused { target: t },
+        (None, true) => mobile::background::RefusalMemo::Stale {
+            base_epoch: stale_base as u64,
+            server_epoch: server_epoch as u64,
+        },
+        (None, false) => mobile::background::RefusalMemo::Nothing,
+    };
+    mobile::background::discard_staged_welcome(std::path::Path::new(&dir), &gid, memo);
+}
+
+/// Why a Welcome for `target` in `group_id`, built from these `mls.bin` bytes, would be refused
+/// again - `stale-epoch-known` or `target-refused-known` - or an empty string when it is not known.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeWelcomeRequestKnownRefused<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    files_dir: jni::objects::JString<'a>,
+    state_bytes: jni::objects::JByteArray<'a>,
+    group_id: jni::objects::JString<'a>,
+    target: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let token = match (
+        env.get_string(&files_dir),
+        env.get_string(&group_id),
+        env.get_string(&target),
+        env.convert_byte_array(&state_bytes),
+    ) {
+        (Ok(dir), Ok(gid), Ok(target), Ok(state)) => {
+            let dir: String = dir.into();
+            let gid: String = gid.into();
+            let target: String = target.into();
+            mobile::background::welcome_request_known_refused(
+                std::path::Path::new(&dir),
+                &state,
+                &gid,
+                &target,
+            )
+            .unwrap_or("")
+        }
+        _ => {
+            log::error!("[BG_WELCOME] nativeWelcomeRequestKnownRefused: JNI argument unreadable");
+            ""
+        }
+    };
+    env.new_string(token)
+        .unwrap_or_else(|_| env.new_string("").unwrap())
 }
 
 #[cfg(target_os = "android")]
