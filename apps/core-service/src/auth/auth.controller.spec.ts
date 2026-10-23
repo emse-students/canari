@@ -242,9 +242,14 @@ describe('AuthController sessions', () => {
       const cookie = jwt.verify(out.cookies['canari_refresh'], JWT_SECRET) as {
         sid: string;
         jti: string;
+        type?: string;
       };
       expect(cookie.sid).toBe('sid-1');
       expect(cookie.jti).toBe('jti-2');
+      // The refresh credential is typed as such and never carries the admin claim: only the
+      // short-lived access token may assert a role.
+      expect(cookie.type).toBe('refresh');
+      expect(cookie).not.toHaveProperty('admin');
     });
 
     it('mints an access token naming the session it was refreshed from', async () => {
@@ -267,7 +272,10 @@ describe('AuthController sessions', () => {
       const body = await controller.refreshToken(req, makeRes().res);
 
       const access = jwt.verify(body.access_token, JWT_SECRET) as { sub: string; sid?: string };
-      expect(access).toEqual(expect.objectContaining({ sub: 'user-1', sid: 'sid-1' }));
+      // `type: 'access'` is what every websocket handshake checks: losing it breaks them silently.
+      expect(access).toEqual(
+        expect.objectContaining({ sub: 'user-1', sid: 'sid-1', type: 'access' })
+      );
     });
 
     it('refuses a replayed token and clears the cookie', async () => {
@@ -582,13 +590,18 @@ describe('AuthController sessions', () => {
 
     it('mints an access token naming the session the sign-in opened', async () => {
       authentikAnswers();
+      const out = makeRes();
       const body = await callbackController().oidcCallback(
         { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
         makeReq({ origin: 'https://canari.example' }),
-        makeRes().res
+        out.res
       );
       const access = jwt.verify(body.access_token, JWT_SECRET) as { sid?: string };
-      expect(access.sid).toBe('sid-new');
+      // `type: 'access'` is what every websocket handshake checks: losing it breaks them silently.
+      expect(access).toEqual(expect.objectContaining({ sid: 'sid-new', type: 'access' }));
+      const cookie = jwt.verify(out.cookies['canari_refresh'], JWT_SECRET) as { type?: string };
+      expect(cookie.type).toBe('refresh');
+      expect(cookie).not.toHaveProperty('admin');
     });
 
     /**
