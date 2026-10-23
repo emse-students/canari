@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
@@ -2337,12 +2338,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     ): ByteArray
 
     /**
-     * Creates an MLS Welcome package for [keyPackageB64] in group [groupId].
-     * Saves the updated MLS state to {filesDir}/mls.bin.
-     * Returns JSON: {"ok":true,"welcome":"<b64>","ratchetTree":"<b64>|null","commit":"<b64>"}
-     * or {"ok":false,"error":"..."}.
+     * Builds an MLS Welcome for [keyPackageB64] in group [groupId] and STAGES the post-add state
+     * beside mls.bin - mls.bin itself is untouched until [nativeInstallStagedWelcome].
+     * Returns JSON: {"ok":true,"welcome","ratchetTree","commit","baseEpoch"} or
+     * {"ok":false,"reason":"<token>"} (`mobile/background.rs`, `prepare_welcome_background_with_key`).
      */
-    external fun nativeCreateWelcomeBackground(
+    external fun nativePrepareWelcomeBackground(
         filesDir: String,
         stateBytes: ByteArray,
         keyB64: String,
@@ -2350,6 +2351,37 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         groupId: String,
         keyPackageB64: String,
+    ): String
+
+    /**
+     * Installs the state staged for [groupId] - ONLY after the server answered `accepted` - over the
+     * very mls.bin it was built from. Returns {"ok":true} or {"ok":false,"reason","error"?}.
+     */
+    external fun nativeInstallStagedWelcome(filesDir: String, groupId: String): String
+
+    /**
+     * Discards the state staged for [groupId]. [staleBase] and [serverEpoch] are both >= 0 for an
+     * `epoch_mismatch` refusal, recorded for the group; -1 otherwise. [refusedTarget]
+     * (`userId:deviceId`) is non-null for a refused target, recorded for that target alone. Both
+     * are recorded against the bytes the commit was built from, so they are not offered again.
+     */
+    external fun nativeDiscardStagedWelcome(
+        filesDir: String,
+        groupId: String,
+        staleBase: Long,
+        serverEpoch: Long,
+        refusedTarget: String?,
+    )
+
+    /**
+     * Why a Welcome for [target] (`userId:deviceId`) in [groupId], built from [stateBytes], would be
+     * refused again - `stale-epoch-known` or `target-refused-known` - or "" when not known.
+     */
+    external fun nativeWelcomeRequestKnownRefused(
+        filesDir: String,
+        stateBytes: ByteArray,
+        groupId: String,
+        target: String,
     ): String
 
     /**
@@ -3089,13 +3121,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Handles a `welcome_request_pending` received via FCM when the app is killed.
-     * Sequence: acquire the Redis lock -> fetch the key package -> create the Welcome
-     * via JNI -> send Welcome+commit to the backend -> release the lock.
+     * Sequence: known-stale check -> acquire the Redis lock -> fetch the key package -> STAGE the
+     * Welcome via JNI -> send Welcome+commit to the backend -> install or discard the staged state
+     * by the answer's TYPE ([BackgroundWelcomeAnswer]) -> release the lock.
      *
-     * [MlsStateLock] is held ONLY during the JNI (mls.bin read + mls.bin write) so as not to
-     * block the FCM decrypt threads during the HTTP calls and the Redis retries (which can sleep
-     * 2s x 2 = 4s). Before this refactoring, MlsStateLock was held for the whole duration (~30s),
-     * making tryDecrypt time out systematically.
+     * **mls.bin IS WRITTEN ONLY AFTER THE SERVER ACCEPTS.** It used to be written before the answer:
+     * a phone killed while its group moved on answered from its old epoch, the gate refused the
+     * commit (`epoch_mismatch`), the phone logged "Welcome sent" off the 201, and its mls.bin kept an
+     * add nobody else applied - an epoch of its own (Mi 9T, 2026-10-22, docs/wiki/backlog.md).
+     *
+     * Nothing here retries. A refusal leaves the request to the foreground (which replays the group's
+     * commits at its next start) or to another member; an `epoch_mismatch` is recorded so the same
+     * mls.bin bytes are not offered again on the newcomer's next ask.
+     *
+     * [MlsStateLock] is held ONLY during the JNI calls, never across HTTP, so as not to block the FCM
+     * decrypt threads; the install is a compare-and-swap against the bytes the stage was built from.
      */
     private fun processWelcomeRequestBackground(
         groupId: String,
@@ -3111,6 +3151,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val secret = retrievePushSecret(this)
         if (secret == null) {
             Log.e(TAG, "processWelcomeRequestBackground: pushSecret absent -> abort")
+            return
+        }
+        val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
+
+        // 0. A Welcome built from these very bytes was already refused - as stale, or for this
+        //    target: answering again could only be refused again. mls.bin is replaced by rename, so
+        //    this read is whole.
+        val current = MlsContextLoader.loadMlsState(this)
+        val known = current?.let {
+            nativeWelcomeRequestKnownRefused(filesDir, it, groupId, "$requesterUserId:$requesterDeviceId")
+        }.orEmpty()
+        if (known.isNotEmpty()) {
+            Log.i(TAG, "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId already refused ($known) from this mls.bin -> not answered, left to the foreground")
             return
         }
 
@@ -3137,66 +3190,77 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             Log.d(TAG, "processWelcomeRequestBackground: keyPackage fetched (${keyPackage.length} chars)")
 
-            // 3. Create the Welcome via Rust JNI - MlsStateLock only here
-            //    (mls.bin read + Argon2 decryption + add_member + mls.bin write ~5-8s).
+            // 3. Stage the Welcome via Rust JNI - MlsStateLock only here. mls.bin is NOT written.
             // tryLock may throw InterruptedException if the FCM thread is interrupted by Android.
-            val jniLockAcquired = try {
-                MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                Log.e(TAG, "processWelcomeRequestBackground: thread interrupted during tryLock: ${e.message}")
-                return
-            }
-            if (!jniLockAcquired) {
-                Log.w(TAG, "processWelcomeRequestBackground: MlsStateLock not acquired -> abort")
-                return
-            }
-            val result: JSONObject
-            try {
+            val result = withMlsStateLock(10) {
                 val stateBytes = MlsContextLoader.loadMlsState(this)
                 if (stateBytes == null) {
                     Log.e(TAG, "processWelcomeRequestBackground: mls.bin absent -> abort")
-                    return
+                    return@withMlsStateLock null
                 }
-                val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
-                val jsonStr = nativeCreateWelcomeBackground(
+                JSONObject(nativePrepareWelcomeBackground(
                     filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId,
                     groupId, keyPackage,
-                )
-                result = JSONObject(jsonStr)
-            } finally {
-                MlsStateLock.LOCK.unlock()
+                ))
             }
-
+            if (result == null) {
+                Log.w(TAG, "processWelcomeRequestBackground: not staged (MlsStateLock or mls.bin) -> abort")
+                return
+            }
             if (!result.optBoolean("ok", false)) {
-                Log.e(TAG, "processWelcomeRequestBackground: nativeCreateWelcomeBackground failed: ${result.optString("error")}")
+                // A TOKEN, never prose: `stale-epoch-known`, `already-member`, `foreground-active`, ...
+                Log.w(TAG, "processWelcomeRequestBackground: not prepared reason=${result.optString("reason", "unspecified")} group=$groupId -> nothing sent")
                 return
             }
             val welcomePayload  = result.getString("welcome")
             val ratchetTree     = result.optString("ratchetTree").takeIf { it.isNotEmpty() && it != "null" }
             val commitPayload   = result.getString("commit")
-            // Base epoch before the add: the backend validates it (validateCommit) to keep its
-            // activeEpoch counter in sync with the real epoch, otherwise foreground commits are
-            // wrongly rejected (C6). -1 if absent (old JNI) -> the backend skips validation.
-            val baseEpoch       = result.optLong("baseEpoch", -1L)
-            Log.d(TAG, "processWelcomeRequestBackground: Welcome created, commit=${commitPayload.take(16)}… baseEpoch=$baseEpoch")
+            val baseEpoch       = result.getLong("baseEpoch")
+            // The external-join base of the epoch this commit creates: published by the server in
+            // the advance's own transaction, as the foreground's commit carries it (COMM-22).
+            val groupInfo       = result.optString("groupInfo").takeIf { it.isNotEmpty() }
+            Log.d(TAG, "processWelcomeRequestBackground: Welcome staged, commit=${commitPayload.take(16)}… baseEpoch=$baseEpoch")
 
             // 4. Send Welcome + commit to the backend (HTTP) - outside MlsStateLock
-            val sent = sendWelcomeAndCommit(
+            val outcome = sendWelcomeAndCommit(
                 ctx, secret, groupId,
                 requesterUserId, requesterDeviceId,
-                welcomePayload, ratchetTree, commitPayload, baseEpoch,
+                welcomePayload, ratchetTree, commitPayload, baseEpoch, groupInfo,
             )
-            if (sent) {
-                Log.d(TAG, "processWelcomeRequestBackground: ✓ Welcome sent for group=$groupId target=$requesterUserId:$requesterDeviceId")
-            } else {
-                Log.e(TAG, "processWelcomeRequestBackground: sendWelcomeAndCommit failed for group=$groupId")
+            val line = "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId " +
+                BackgroundWelcomeAnswer.describe(outcome, baseEpoch)
+
+            // 5. Install or discard the staged state, by the answer's TYPE. The decision - including
+            //    deleting the staged file when the install finds the lock busy - is
+            //    [BackgroundWelcomeAnswer.apply], tested on the JVM; this only wires the JNI to it.
+            val staged = object : BackgroundWelcomeAnswer.StagedWelcome {
+                override fun install(): BackgroundWelcomeAnswer.InstallReport? =
+                    withMlsStateLock(10) { JSONObject(nativeInstallStagedWelcome(filesDir, groupId)) }?.let {
+                        BackgroundWelcomeAnswer.InstallReport(
+                            ok = it.optBoolean("ok", false),
+                            reason = it.optString("reason").takeIf { r -> r.isNotEmpty() },
+                            error = it.optString("error").takeIf { e -> e.isNotEmpty() },
+                        )
+                    }
+
+                override fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) =
+                    nativeDiscardStagedWelcome(
+                        filesDir, groupId, staleBase ?: -1L, serverEpoch ?: -1L,
+                        if (targetRefused) "$requesterUserId:$requesterDeviceId" else null,
+                    )
+            }
+            val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(outcome, baseEpoch), staged)
+            val (level, suffix) = BackgroundWelcomeAnswer.report(applied, outcome)
+            when (level) {
+                BackgroundWelcomeAnswer.Level.DEBUG -> Log.d(TAG, "$line - $suffix")
+                BackgroundWelcomeAnswer.Level.WARN -> Log.w(TAG, "$line - $suffix")
+                BackgroundWelcomeAnswer.Level.ERROR -> Log.e(TAG, "$line - $suffix")
             }
         } finally {
-            // 5. Release the Redis lock in all cases
+            // 6. Release the Redis lock in all cases
             releaseAddLock(ctx, secret, groupId)
             Log.d(TAG, "processWelcomeRequestBackground: Redis lock released for group=$groupId")
-            // 6. Opportunistic: this device may also have pending messages - try to send them
+            // 7. Opportunistic: this device may also have pending messages - try to send them
             //    now that the app is awake, and notify if any remain.
             val remaining = drainOutboxBackground(this, this, ctx)
             maybeNotifyPendingSync(remaining)
@@ -3307,8 +3371,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     /**
-     * Sends the Welcome to the target device and broadcasts the commit to all group members.
-     * Returns true if the HTTP call succeeded (HTTP 201).
+     * Sends the Welcome and its commit to the backend, and answers WHAT HAPPENED, classified by the
+     * body's `status` token ([BackgroundWelcomeAnswer.classify]) - never by the status code alone,
+     * which said 201 for a refusal on the server of 2026-10-22.
      */
     private fun sendWelcomeAndCommit(
         ctx: PushContext,
@@ -3320,7 +3385,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ratchetTree: String?,
         commitPayload: String,
         baseEpoch: Long,
-    ): Boolean {
+        groupInfo: String?,
+    ): BackgroundWelcomeAnswer.Outcome {
         return try {
             val url = URL("${ctx.baseUrl}/api/mls/push/send-welcome-and-commit")
             val body = JSONObject().apply {
@@ -3332,7 +3398,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("welcomePayload", welcomePayload)
                 put("ratchetTreePayload", if (ratchetTree != null) ratchetTree else JSONObject.NULL)
                 put("commitPayload", commitPayload)
-                if (baseEpoch >= 0) put("baseEpoch", baseEpoch)
+                put("baseEpoch", baseEpoch)
+                if (groupInfo != null) put("groupInfo", groupInfo)
             }.toString()
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
@@ -3345,14 +3412,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 conn.outputStream.use { it.write(body.toByteArray()) }
                 val code = conn.responseCode
-                Log.d(TAG, "sendWelcomeAndCommit: HTTP $code group=$groupId target=$targetUserId:$targetDeviceId")
-                code == 201
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val text = stream?.bufferedReader()?.use { it.readText() }
+                val json = try { text?.let { JSONObject(it) } } catch (e: Exception) { null }
+                Log.d(TAG, "sendWelcomeAndCommit: HTTP $code status=${json?.optString("status")} group=$groupId target=$targetUserId:$targetDeviceId")
+                BackgroundWelcomeAnswer.classify(
+                    code,
+                    json?.optString("status")?.takeIf { it.isNotEmpty() },
+                    json?.optString("reason")?.takeIf { it.isNotEmpty() },
+                    json?.takeIf { it.has("currentEpoch") && !it.isNull("currentEpoch") }?.optLong("currentEpoch"),
+                )
             } finally {
                 conn.disconnect()
             }
         } catch (e: Exception) {
             Log.e(TAG, "sendWelcomeAndCommit: exception: ${e.message}")
-            false
+            BackgroundWelcomeAnswer.classify(null, null, null, null)
         }
     }
 
