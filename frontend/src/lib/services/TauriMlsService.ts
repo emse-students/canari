@@ -21,6 +21,7 @@ import {
 import { assertVerifiedSender, type EnvelopeSender } from '$lib/mls-client/verifiedSender';
 import type { GraineRunReading, MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
@@ -668,13 +669,25 @@ export class TauriMlsService extends BaseMlsService {
     // is idempotent: a no-op when login already resolved it before the pin-check.
     await this.resolveDeviceId(userId);
 
+    // A KEPT ID WITH A LOST STATE RE-ENROLS AS A NEW DEVICE (`reenrolLostState`). The rotation loads
+    // and persists the fresh client itself; the post-init steps below (push context, groups cache)
+    // still run, under the new id.
+    const reenrolled = !savedStateExists && (await this.reenrolLostState(deviceKeyB64, opts));
+
     // THE NAME IS THE SAME ON BOTH PLATFORMS ON PURPOSE. `WebMlsService` brackets its own decrypt
     // with `mls-load-state` too, so an Android report and a browser report answer the same question
     // with the same word - which is the only way the two can be compared at all, and the phone is
     // where this block was measured at 1621.9 ms with nothing inside it named.
     beginBootSpan('mls-load-state');
     try {
-      await this.loadStateWithKey(deviceKeyB64, state, opts?.stateOnDisk, opts?.unattendedKeyRead);
+      if (!reenrolled) {
+        await this.loadStateWithKey(
+          deviceKeyB64,
+          state,
+          opts?.stateOnDisk,
+          opts?.unattendedKeyRead
+        );
+      }
       endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
       // CLOSED HERE RATHER THAN IN A `finally`, because the two exits are not the same measurement:
@@ -1259,7 +1272,7 @@ export class TauriMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1267,10 +1280,11 @@ export class TauriMlsService extends BaseMlsService {
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }> {
-    const keyPackagesBytes = keyPackages.map((kp) => Array.from(kp));
+    const keyPackagesBytes = devices.map((d) => Array.from(d.keyPackage));
+    const expectedIdentities = devices.map((d) => d.identity);
     const result = await invoke<
       [number[], number[] | null, number[], SkippedKeyPackage[], number[]]
-    >('ajouter_membres_bulk', { groupId, keyPackagesBytes });
+    >('ajouter_membres_bulk', { groupId, keyPackagesBytes, expectedIdentities });
     return {
       commit: Uint8Array.from(result[0]),
       welcome: result[1] ? Uint8Array.from(result[1]) : undefined,
@@ -1278,6 +1292,66 @@ export class TauriMlsService extends BaseMlsService {
       skipped: result[3] ?? [],
       groupInfo: Uint8Array.from(result[4]),
     };
+  }
+
+  /** Tauri-native `invoke` wrapper - `remplacer_appareil`, staged not merged. */
+  protected async stageReplaceDevice(
+    groupId: string,
+    identity: string,
+    keyPackage: Uint8Array
+  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }> {
+    const [commit, welcome, groupInfo] = await invoke<[number[], number[], number[]]>(
+      'remplacer_appareil',
+      { groupId, identity, keyPackage: Array.from(keyPackage) }
+    );
+    return {
+      commit: Uint8Array.from(commit),
+      welcome: Uint8Array.from(welcome),
+      groupInfo: Uint8Array.from(groupInfo),
+    };
+  }
+
+  /**
+   * `mls_state_absent`: `true` only when `mls.bin` does not exist or is empty. An unreadable data
+   * directory is an `Err`, which `reenrolLostState` reads as "not proven" - unlike `mls_state_size`,
+   * which answers 0 for it.
+   */
+  protected async savedStateProvenAbsent(): Promise<boolean> {
+    return invoke<boolean>('mls_state_absent');
+  }
+
+  /** Tauri-native `invoke` wrapper - `verifier_key_package`, the Rust verdict on binding and pin. */
+  protected async vetKeyPackageNative(
+    keyPackage: Uint8Array,
+    identity: string
+  ): Promise<KeyPackageVerdict> {
+    return invoke<KeyPackageVerdict>('verifier_key_package', {
+      keyPackage: Array.from(keyPackage),
+      expectedIdentity: identity,
+    });
+  }
+
+  /** Tauri-native `invoke` wrapper - `cles_signature_epinglees`, the keys as byte arrays. */
+  protected async pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<DevicePin | null> {
+    const pin = await invoke<{
+      keys: number[][];
+      anchored: boolean;
+      reaffirmations: number;
+    } | null>('cles_signature_epinglees', { userId, deviceId });
+    return pin === null ? null : { ...pin, keys: pin.keys.map((k) => Uint8Array.from(k)) };
+  }
+
+  /** Tauri-native `invoke` wrapper - `epoques_departs`, the epochs as JSON numbers. */
+  protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
+    return invoke<number[]>('epoques_departs', { groupId, userId });
+  }
+
+  /** Tauri-native `invoke` wrapper - `prendre_evenements_appareils` (`DeviceEvent`, camelCase). */
+  protected async takeDeviceEventsNative(): Promise<DeviceEvent[]> {
+    return invoke<DeviceEvent[]>('prendre_evenements_appareils');
   }
 
   /** Tauri-native `invoke` wrapper - stages a Remove commit for all devices of the given users (no merge). */
@@ -1480,6 +1554,14 @@ export class TauriMlsService extends BaseMlsService {
   async memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null> {
     const key = await invoke<number[] | null>('graine_member_signature_key', { groupId, identity });
     return key ? new Uint8Array(key) : null;
+  }
+
+  /** The leaf carrying a package's signature key, or null (`feuille_portant_cle`). */
+  async leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null> {
+    return invoke<string | null>('feuille_portant_cle', {
+      groupId,
+      keyPackage: Array.from(keyPackage),
+    });
   }
 
   /** The key group's clean run at its current epoch (`graine_run`), read live under the manager lock. */

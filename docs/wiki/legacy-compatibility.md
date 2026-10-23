@@ -142,6 +142,22 @@ knows the type), on BOTH estates, once BOTH Play AND the App Store serve that ve
 ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
 pins it, run by someone else.
 
+### No date yet - a bare `userId` MLS credential, written by builds before 2026-07-24
+
+**Site:** `canonical_user_of` / `is_legacy_bare_identity` in `frontend/mls-core/src/device_trust.rs`,
+and its twin `canonicalUserOf` in `frontend/src/lib/mls-client/leafIdentity.ts`.
+**Shim (2026-10-22):** builds before device identities (61ac71d7c9, 2026-07-24) minted a credential
+naming the user alone, with no `:` and no device, and a tree a device still holds may carry such a leaf.
+The one canonical reader treats it as naming its user (ASCII-lowercased) and NO device. So
+`remove_members_for_users` removes it with its user, and the native push sender check accepts it as
+that user. `canonical_identity` still refuses it, so it is never pinned and never matches
+`user:device`. Tests: `tests/legacy_bare_leaf.rs`, `a_push_from_a_bare_legacy_leaf_is_its_users`
+(`background.rs`) and the bare cases of `leafIdentity.test.ts`.
+**Removal condition:** no held tree carries a bare leaf. This is measured on the device: every load's
+state-composition line ends `N legacy bare leaves` (`MlsManager::legacy_bare_leaves`). Remove the shim
+when that reads 0 on the bench phones and on the rig's clients, and no build older than 61ac71d7c9 can
+still commit into a group. Then the bare arm goes from both readers, and a bare identity names nobody.
+
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 
 **Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).
