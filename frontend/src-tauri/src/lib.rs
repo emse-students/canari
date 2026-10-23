@@ -731,6 +731,34 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeInsta
         .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
 }
 
+/// Hands the ACCEPTED state a prepared Welcome staged over to the next `mls.bin` writer or
+/// foreground load, without installing it - called when the state lock could not be taken for the
+/// install, where the state used to be deleted.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeHandOverStagedWelcome<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    files_dir: jni::objects::JString<'a>,
+    group_id: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let json = match (env.get_string(&files_dir), env.get_string(&group_id)) {
+        (Ok(dir), Ok(gid)) => {
+            let dir: String = dir.into();
+            let gid: String = gid.into();
+            mobile::background::hand_over_staged_welcome(std::path::Path::new(&dir), &gid)
+        }
+        _ => {
+            log::error!("[BG_WELCOME] nativeHandOverStagedWelcome: JNI argument unreadable");
+            serde_json::json!({ "ok": false, "reason": "jni-argument" })
+        }
+    };
+    env.new_string(json.to_string())
+        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+}
+
 /// Discards the state a prepared Welcome staged. `stale_base` / `server_epoch` are both `>= 0` for
 /// an `epoch_mismatch` refusal (recorded for the group), and `-1` otherwise; `refused_target`
 /// (`userId:deviceId`) is non-null for a refused target (recorded for that target alone).

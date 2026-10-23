@@ -672,7 +672,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   (`201 {status: 'rejected'}`, `201 {status: 'done'}`) correctly too.
 - **The phone stages, and installs only an acceptance** - the foreground's order since C7. The post-add
   state is sealed beside `mls.bin` with the digest of the bytes it was built from, installed by a
-  compare-and-swap on `accepted`, and deleted on anything else. A transport failure or a 5xx is
+  compare-and-swap on `accepted` (or handed over, below), and deleted on anything else. A transport failure or a 5xx is
   `unknown`: not installed, because installing a refusal is the fork this exists to prevent.
 - **No catch-up and no retry.** The background never applies the group's commits to `mls.bin` (the
   foreground's replay owns that, and what it does around a commit); a stale phone is refused, and the
@@ -732,12 +732,33 @@ answer, so it held an epoch nobody else had and could not read the group's next 
 - **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
   to broadcast it a second time.
 - **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a
-  `StagedWelcome` seam the JVM tests drive: an install that finds the MLS state lock busy never ran, so
-  the staged file is deleted there and the line says `lock busy`.
-- **What is left open:** an acceptance whose install is refused (the foreground started and wrote
-  `mls.bin` inside the round trip) leaves the server one commit ahead of this device, logged
-  `ACCEPTED AND NOT INSTALLED`; the device then recovers through the usual ladder. iOS has no
-  background re-add (its branch was unreachable and is deleted).
+  `StagedWelcome` seam the JVM tests drive. The service settles every staged Welcome exactly once
+  (install, hand-over or discard), an exception before the answer is applied included.
+- **An accepted state is never deleted before it is installed or handed over (2026-10-23).** When
+  the acceptance finds the foreground active, or the MLS state lock busy, nothing is written to
+  `mls.bin`: the foreground guard is unchanged. The staged file is renamed `mls.bin.welcome-*.accepted`
+  instead (`HANDED_OVER_SUFFIX` in `concurrency.rs`). `install_handed_over_welcomes_locked` installs
+  it, by compare-and-swap against the base it was built from, under the `mls.bin` write lock. It runs
+  before every background `mls.bin` write, whose own write is then refused because it was built on
+  the replaced file. It also runs before every foreground load: the resume reload (`reload_into`) and
+  the cold read behind `initialiser_mls` (`read_mls_state_blob_at`). A prepare is refused
+  (`handed-over-pending`) while one is pending.
+- **A foreground load waits for a background Welcome awaiting its answer.** From a successful
+  prepare to its settlement the Welcome is in flight (`register_background_welcome` /
+  `settle_background_welcome`). Every foreground load marks the foreground active, then waits
+  (`await_background_welcomes`), then installs what was handed over, then reads. The registration
+  re-checks "foreground active" under the same mutex the wait takes, so a foreground that marked
+  itself active either waits for a prepare or makes it refuse. Without the wait, opening the app
+  inside the round trip loaded the base, the acceptance then found the foreground active, and the
+  device ended one epoch behind its own accepted commit. The wait is bounded by the HTTP client's
+  timeouts, not by a clock of its own. The proof is
+  `an_add_accepted_while_the_app_opens_reaches_the_reloaded_manager`, with the foreground marked
+  active as `recharger_mls_au_resume` does.
+- **What is left open:** an accepted add whose base moved before anyone installed it is not
+  installable. That happens when a live foreground that never reloaded wrote `mls.bin`, or when the
+  reload kept a live manager ahead of the file. The add is logged `ACCEPTED AND NOT INSTALLED` and
+  deleted, and the device recovers through the usual ladder. iOS has no background re-add (its
+  branch was unreachable and is deleted).
 
 ### A roster seat is not a key, and only a Welcome tells the two apart
 

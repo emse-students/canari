@@ -495,8 +495,12 @@ fn welcome_refused(reason: &str) -> serde_json::Value {
 /// `groupInfo` is the external-join base of the epoch the commit creates, published by the route
 /// in the advance's own transaction - COMM-22), or
 /// `{"ok": false, "reason"}` with one of: `foreground-active`, `stale-epoch-known`,
-/// `key-package-unreadable`, `state-unreadable`, `group-not-held`, `already-member`, `add-failed`,
-/// `stage-failed`.
+/// `handed-over-pending`, `key-package-unreadable`, `state-unreadable`, `group-not-held`,
+/// `already-member`, `add-failed`, `stage-failed`.
+///
+/// A successful prepare is IN FLIGHT until its settlement, and every foreground load of `mls.bin`
+/// waits for it ([`crate::concurrency::await_background_welcomes`]). The caller owes exactly one
+/// of [`install_staged_welcome`], [`hand_over_staged_welcome`] or [`discard_staged_welcome`].
 ///
 /// **THE ADD IS INSTALLED ONLY ONCE THE SERVER ACCEPTS IT** ([`install_staged_welcome`]), the order
 /// the foreground has followed since C7 (stage, submit, merge on accept). This path used to merge and
@@ -527,6 +531,16 @@ pub fn prepare_welcome_background_with_key(
     }
     if welcome_request_known_stale(files_dir, state_bytes, group_id) {
         return welcome_refused("stale-epoch-known");
+    }
+    // An accepted add is waiting to be installed over these very bytes: a commit built on them now
+    // would be accepted by the server and then refused by that install, so none is built.
+    match crate::concurrency::handed_over_welcomes(files_dir) {
+        Ok(handed) if !handed.is_empty() => return welcome_refused("handed-over-pending"),
+        Ok(_) => {}
+        Err(e) => {
+            log::error!("[BG_WELCOME] handed-over Welcomes not listed: {e}");
+            return welcome_refused("state-unreadable");
+        }
     }
     let Ok(kp_bytes) = STANDARD.decode(key_package_b64.trim()) else {
         return welcome_refused("key-package-unreadable");
@@ -596,9 +610,19 @@ pub fn prepare_welcome_background_with_key(
     let mut file = Vec::with_capacity(32 + sealed.len());
     file.extend_from_slice(&crate::concurrency::mls_bin_digest(state_bytes));
     file.extend_from_slice(&sealed);
-    if let Err(e) = write_staged(&staged_welcome_path(files_dir, group_id), &file) {
+    let path = staged_welcome_path(files_dir, group_id);
+    if let Err(e) = write_staged(&path, &file) {
         log::error!("[BG_WELCOME] post-add state not staged group={short}: {e}");
         return welcome_refused("stage-failed");
+    }
+    // In flight from here until its settlement, so a foreground load waits for the answer instead
+    // of loading the base inside the round trip - unless the foreground became active meanwhile,
+    // which this re-checks under the registry's own mutex.
+    if !crate::concurrency::register_background_welcome(group_id) {
+        if let Err(e) = std::fs::remove_file(&path) {
+            log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}");
+        }
+        return welcome_refused("foreground-active");
     }
     log::info!(
         "[BG_WELCOME] staged group={short} base_epoch={base_epoch} ({} bytes) - mls.bin untouched until the server accepts",
@@ -614,16 +638,52 @@ pub fn prepare_welcome_background_with_key(
     })
 }
 
+/// Ends the round trip of a group's background Welcome when dropped, on every path out of a
+/// settlement - see [`crate::concurrency::await_background_welcomes`], which a foreground load
+/// blocks on until it does.
+struct Settles<'a>(&'a str);
+
+impl Drop for Settles<'_> {
+    fn drop(&mut self) {
+        crate::concurrency::settle_background_welcome(self.0);
+    }
+}
+
+/// The name the staged state of `path` takes once handed over.
+fn handed_over_path(path: &Path) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(crate::concurrency::HANDED_OVER_SUFFIX);
+    std::path::PathBuf::from(name)
+}
+
+/// Keeps the ACCEPTED staged state of `path` for the next `mls.bin` writer or foreground load to
+/// install ([`crate::concurrency::install_handed_over_welcomes_locked`]), by renaming it. `Err`
+/// when even that failed - the state is then lost and the caller says so.
+fn hand_over(path: &Path, short: &str, why: &str) -> Result<(), String> {
+    std::fs::rename(path, handed_over_path(path)).map_err(|e| format!("hand-over rename: {e}"))?;
+    log::warn!(
+        "[BG_WELCOME] accepted add HANDED OVER group={short} ({why}) - installed by the next mls.bin writer or foreground load, over the base it was built from"
+    );
+    Ok(())
+}
+
 /// Installs the state [`prepare_welcome_background_with_key`] staged for `group_id` - called ONLY
-/// after the server answered `accepted` - and deletes the staged file whatever happens.
+/// after the server answered `accepted`.
 ///
 /// Installed only over the very `mls.bin` it was built from
-/// ([`crate::concurrency::background_write_mls_bin_if_unchanged`]). Answers `{"ok": true}`, or
-/// `{"ok": false, "reason": "not-staged" | "install-refused"}`. The second means the server holds a
-/// commit this device does not, and the caller must say so loudly: the foreground's replay will meet
-/// this device's own commit, and the device recovers through the usual ladder.
+/// ([`crate::concurrency::background_write_mls_bin_if_unchanged`]), and the staged file is deleted
+/// only once that install succeeded or can never succeed. Answers `{"ok": true}`, or
+/// `{"ok": false, "reason"}` with one of:
+/// - `handed-over`: the foreground is active (or the file could not be written), so nothing is
+///   written now - the guard is unchanged - and the state is kept for the foreground's load, which
+///   waits for this answer and installs it before it reads ([`hand_over`]);
+/// - `not-staged`;
+/// - `install-refused`: `mls.bin` moved since the stage. The server holds a commit this device does
+///   not, and the caller must say so loudly: the foreground's replay meets this device's own commit,
+///   and the device recovers through the usual ladder.
 pub fn install_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::Value {
     let short: String = group_id.chars().take(8).collect();
+    let _settles = Settles(group_id);
     let path = staged_welcome_path(files_dir, group_id);
     let file = match std::fs::read(&path) {
         Ok(f) if f.len() > 32 => f,
@@ -637,12 +697,10 @@ pub fn install_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::V
             return refused("not-staged");
         }
     };
-    if let Err(e) = std::fs::remove_file(&path) {
-        log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}");
-    }
     let mut digest = [0u8; 32];
     digest.copy_from_slice(&file[..32]);
-    match crate::concurrency::background_write_mls_bin_if_unchanged(
+    use crate::concurrency::BackgroundWriteRefused;
+    let refusal = match crate::concurrency::background_write_mls_bin_if_unchanged(
         &files_dir.join("mls.bin"),
         &digest,
         &file[32..],
@@ -652,13 +710,50 @@ pub fn install_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::V
                 "[BG_WELCOME] installed group={short} ({} bytes)",
                 file.len() - 32
             );
-            serde_json::json!({ "ok": true })
+            if let Err(e) = std::fs::remove_file(&path) {
+                log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}");
+            }
+            return serde_json::json!({ "ok": true });
         }
+        Err(refusal) => refusal,
+    };
+    let kept = match &refusal {
+        BackgroundWriteRefused::ForegroundActive | BackgroundWriteRefused::Io(_) => {
+            hand_over(&path, &short, &refusal.to_string())
+        }
+        BackgroundWriteRefused::Moved => Err("no state can be built on that base again".into()),
+    };
+    match kept {
+        Ok(()) => refused("handed-over"),
+        Err(why) => {
+            log::error!("[BG_WELCOME] ACCEPTED AND NOT INSTALLED group={short}: {refusal} ({why})");
+            if let Err(e) = std::fs::remove_file(&path) {
+                log::warn!("[BG_WELCOME] staged state of group={short} not deleted: {e}");
+            }
+            let mut out = refused("install-refused");
+            out["error"] = serde_json::Value::String(refusal.to_string());
+            out
+        }
+    }
+}
+
+/// Hands the ACCEPTED staged state of `group_id` over without trying to install it - the native
+/// caller could not take its state lock, and an accepted add is never deleted for that. Answers
+/// `{"ok": true}`, or `{"ok": false, "reason": "not-staged" | "hand-over-failed"}`; the second loses
+/// the add and is said loudly.
+pub fn hand_over_staged_welcome(files_dir: &Path, group_id: &str) -> serde_json::Value {
+    let short: String = group_id.chars().take(8).collect();
+    let _settles = Settles(group_id);
+    let path = staged_welcome_path(files_dir, group_id);
+    if !path.exists() {
+        log::error!("[BG_WELCOME] hand-over group={short}: no staged state");
+        return refused("not-staged");
+    }
+    match hand_over(&path, &short, "the state lock was busy") {
+        Ok(()) => serde_json::json!({ "ok": true }),
         Err(e) => {
             log::error!("[BG_WELCOME] ACCEPTED AND NOT INSTALLED group={short}: {e}");
-            let mut out = refused("install-refused");
-            out["error"] = serde_json::Value::String(e);
-            out
+            refused("hand-over-failed")
         }
     }
 }
@@ -682,6 +777,7 @@ pub enum RefusalMemo<'a> {
 /// are not offered again ([`welcome_request_known_refused`]).
 pub fn discard_staged_welcome(files_dir: &Path, group_id: &str, memo: RefusalMemo<'_>) {
     let short: String = group_id.chars().take(8).collect();
+    let _settles = Settles(group_id);
     let path = staged_welcome_path(files_dir, group_id);
     let digest = std::fs::read(&path)
         .ok()
@@ -1888,6 +1984,7 @@ mod tests {
             &kp,
         );
         assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let _settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
         assert_eq!(prepared["baseEpoch"], 1, "built on the stale base");
         assert_eq!(
             std::fs::read(dir.join("mls.bin")).unwrap(),
@@ -1941,6 +2038,7 @@ mod tests {
             &kp,
         );
         assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let _settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
         let installed = install_staged_welcome(&dir, &gid);
         assert_eq!(installed["ok"], true, "installed: {installed}");
 
@@ -1997,6 +2095,7 @@ mod tests {
             &kp,
         );
         assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let _settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
         let base = STANDARD
             .decode(
                 prepared["groupInfo"]
@@ -2015,6 +2114,122 @@ mod tests {
             3,
             "the base is the epoch the add creates (2), and the join moves it to 3"
         );
+        discard_staged_welcome(&dir, &gid, RefusalMemo::Nothing);
+    }
+
+    /// An accepted sender-side Welcome, staged while the app was shut, with `alice`'s base on disk.
+    fn accepted_fixture(
+        tag: &str,
+        seed: u8,
+    ) -> (
+        std::path::PathBuf,
+        Vec<u8>,
+        String,
+        crate::concurrency::test_support::SettleOnDrop,
+    ) {
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair(tag);
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(seed)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding(tag, &state);
+        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        let prepared = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(seed),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &gid,
+            &kp,
+        );
+        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
+        (dir, state, gid, settle)
+    }
+
+    /// The epoch of `gid` in the `mls.bin` of `dir`.
+    fn epoch_on_disk(dir: &Path, user: &str, seed: u8, gid: &str) -> u64 {
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(seed)).unwrap();
+        let bytes = std::fs::read(dir.join("mls.bin")).unwrap();
+        MlsManager::load_with_key(user, "dev-a", Some(bytes), &key)
+            .unwrap()
+            .get_epoch(gid)
+            .unwrap()
+    }
+
+    /// The handed-over Welcome files of `dir`.
+    fn handed_over(dir: &Path) -> usize {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.starts_with(STAGED_WELCOME_PREFIX)
+                    && name.ends_with(crate::concurrency::HANDED_OVER_SUFFIX)
+            })
+            .count()
+    }
+
+    /// AN ACCEPTANCE THAT FINDS THE FOREGROUND ACTIVE KEEPS THE STAGED STATE. Nothing is written
+    /// under the active foreground - the guard is unchanged - but the state the server accepted is
+    /// handed over rather than deleted: it is the only copy of this device's own commit.
+    #[test]
+    fn an_acceptance_under_an_active_foreground_hands_the_state_over() {
+        let _s = crate::concurrency::test_support::serialise();
+        let (dir, state, gid, _settle) = accepted_fixture("handover-bg", 60);
+        crate::concurrency::mark_foreground_active();
+        let installed = install_staged_welcome(&dir, &gid);
+        crate::concurrency::mark_foreground_inactive();
+
+        assert_eq!(installed["reason"], "handed-over", "{installed}");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+        assert_eq!(handed_over(&dir), 1, "the accepted state is kept");
+        assert_eq!(crate::concurrency::background_welcomes_in_flight(), 0);
+    }
+
+    /// AN INSTALL THAT FINDS THE KOTLIN STATE LOCK BUSY HANDS OVER TOO, and the next `mls.bin`
+    /// writer - here a background send that loaded the base - installs it before its own write, and
+    /// is refused: its state, built on the base, no longer describes the file.
+    #[test]
+    fn a_handed_over_add_is_installed_before_the_next_background_write() {
+        let _s = crate::concurrency::test_support::serialise();
+        let (dir, state, gid, _settle) = accepted_fixture("handover-busy", 61);
+        assert_eq!(hand_over_staged_welcome(&dir, &gid)["ok"], true);
+        assert_eq!(handed_over(&dir), 1);
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+
+        let written = crate::concurrency::background_write_mls_bin(
+            &dir.join("mls.bin"),
+            b"built on the base",
+        );
+
+        assert!(written.is_err(), "the write built on the base is refused");
+        assert_eq!(
+            epoch_on_disk(&dir, "handover-busy-alice", 61, &gid),
+            2,
+            "the accepted add is installed first"
+        );
+        assert_eq!(handed_over(&dir), 0);
+    }
+
+    /// Every settlement ends the round trip a foreground load waits on: an install, a hand-over and
+    /// a discard each release what the prepare registered.
+    #[test]
+    fn every_settlement_releases_the_round_trip() {
+        let _s = crate::concurrency::test_support::serialise();
+        let (dir, _state, gid, _settle) = accepted_fixture("settle-install", 62);
+        assert_eq!(crate::concurrency::background_welcomes_in_flight(), 1);
+        assert_eq!(install_staged_welcome(&dir, &gid)["ok"], true);
+        assert_eq!(crate::concurrency::background_welcomes_in_flight(), 0);
+
+        let (dir, _state, gid, _settle) = accepted_fixture("settle-handover", 63);
+        hand_over_staged_welcome(&dir, &gid);
+        assert_eq!(crate::concurrency::background_welcomes_in_flight(), 0);
+
+        let (dir, _state, gid, _settle) = accepted_fixture("settle-discard", 64);
+        discard_staged_welcome(&dir, &gid, RefusalMemo::Nothing);
+        assert_eq!(crate::concurrency::background_welcomes_in_flight(), 0);
     }
 
     /// An acceptance that arrives after `mls.bin` moved installs nothing over the newer file.
@@ -2038,6 +2253,7 @@ mod tests {
             &kp,
         );
         assert_eq!(prepared["ok"], true);
+        let _settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
 
         std::fs::write(dir.join("mls.bin"), b"a newer state").unwrap();
         let installed = install_staged_welcome(&dir, &gid);
@@ -2068,6 +2284,7 @@ mod tests {
             &kp,
         );
         assert_eq!(first["ok"], true);
+        let _settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
         assert!(!welcome_request_known_stale(&dir, &stale, &gid));
         discard_staged_welcome(
             &dir,
@@ -2117,6 +2334,7 @@ mod tests {
             &kp,
         );
         assert_eq!(first["ok"], true);
+        let _settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
         discard_staged_welcome(
             &dir,
             &gid,
@@ -2157,6 +2375,7 @@ mod tests {
             &kp,
         );
         assert_eq!(first["ok"], true);
+        let _settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
         discard_staged_welcome(&dir, &gid, RefusalMemo::Nothing);
         assert!(!welcome_request_known_stale(&dir, &stale, &gid));
         assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), stale);
@@ -2182,6 +2401,7 @@ mod tests {
             &kp,
         );
         assert_eq!(first["ok"], true);
+        let _settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
         assert_eq!(
             welcome_request_known_refused(&dir, &stale, &gid, "carol:phone-c"),
             None

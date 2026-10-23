@@ -343,6 +343,11 @@ The reading has one setup and three checks:
   - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - state installed`.
 
   No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT INSTALLED` line appears.
+- **The same reading with the app OPENED inside the round trip** (after `Welcome staged`, before the
+  answer). The phone logs `foreground load waits for 1 background Welcome(s)`, then
+  `accepted - state handed over (foreground active)`, then
+  `background Welcome(s) settled - foreground load proceeds`, then `handed-over add installed`. The
+  app then reads the group's next message, and no `ACCEPTED AND NOT INSTALLED` line appears.
 - **The same reading with the phone STALE** (its group moved while it was shut, as on 2026-10-22):
   the phone logs `REFUSED epoch_mismatch: built on base N, the group is at M`, the server answers 409,
   the phone then reads the group's next message once opened, and the newcomer's next ask logs

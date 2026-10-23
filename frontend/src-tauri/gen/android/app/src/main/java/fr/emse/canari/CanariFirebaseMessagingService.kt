@@ -2363,6 +2363,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeInstallStagedWelcome(filesDir: String, groupId: String): String
 
     /**
+     * Keeps the ACCEPTED state staged for [groupId] for the next mls.bin writer or foreground load to
+     * install, without the MLS state lock - the install could not take it. Returns {"ok":true} or
+     * {"ok":false,"reason"}.
+     */
+    external fun nativeHandOverStagedWelcome(filesDir: String, groupId: String): String
+
+    /**
      * Discards the state staged for [groupId]. [staleBase] and [serverEpoch] are both >= 0 for an
      * `epoch_mismatch` refusal, recorded for the group; -1 otherwise. [refusedTarget]
      * (`userId:deviceId`) is non-null for a refused target, recorded for that target alone. Both
@@ -3224,40 +3231,56 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val groupInfo       = result.optString("groupInfo").takeIf { it.isNotEmpty() }
             Log.d(TAG, "processWelcomeRequestBackground: Welcome staged, commit=${commitPayload.take(16)}… baseEpoch=$baseEpoch")
 
-            // 4. Send Welcome + commit to the backend (HTTP) - outside MlsStateLock
-            val outcome = sendWelcomeAndCommit(
-                ctx, secret, groupId,
-                requesterUserId, requesterDeviceId,
-                welcomePayload, ratchetTree, commitPayload, baseEpoch, groupInfo,
-            )
-            val line = "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId " +
-                BackgroundWelcomeAnswer.describe(outcome, baseEpoch)
+            // THE STAGED WELCOME IS NOW IN FLIGHT, AND EVERY FOREGROUND LOAD OF mls.bin WAITS FOR ITS
+            // SETTLEMENT (install, hand-over or discard). So it is settled on EVERY path out of here:
+            // an exception before the answer is applied discards it, as an unread answer is.
+            var settled = false
+            try {
+                // 4. Send Welcome + commit to the backend (HTTP) - outside MlsStateLock
+                val outcome = sendWelcomeAndCommit(
+                    ctx, secret, groupId,
+                    requesterUserId, requesterDeviceId,
+                    welcomePayload, ratchetTree, commitPayload, baseEpoch, groupInfo,
+                )
+                val line = "processWelcomeRequestBackground: group=$groupId target=$requesterUserId:$requesterDeviceId " +
+                    BackgroundWelcomeAnswer.describe(outcome, baseEpoch)
 
-            // 5. Install or discard the staged state, by the answer's TYPE. The decision - including
-            //    deleting the staged file when the install finds the lock busy - is
-            //    [BackgroundWelcomeAnswer.apply], tested on the JVM; this only wires the JNI to it.
-            val staged = object : BackgroundWelcomeAnswer.StagedWelcome {
-                override fun install(): BackgroundWelcomeAnswer.InstallReport? =
-                    withMlsStateLock(10) { JSONObject(nativeInstallStagedWelcome(filesDir, groupId)) }?.let {
-                        BackgroundWelcomeAnswer.InstallReport(
-                            ok = it.optBoolean("ok", false),
-                            reason = it.optString("reason").takeIf { r -> r.isNotEmpty() },
-                            error = it.optString("error").takeIf { e -> e.isNotEmpty() },
+                // 5. Install, hand over or discard the staged state, by the answer's TYPE. The
+                //    decision - including handing the state over when the install finds the lock
+                //    busy - is [BackgroundWelcomeAnswer.apply], tested on the JVM; this only wires
+                //    the JNI to it.
+                val staged = object : BackgroundWelcomeAnswer.StagedWelcome {
+                    override fun install(): BackgroundWelcomeAnswer.InstallReport? =
+                        withMlsStateLock(10) { JSONObject(nativeInstallStagedWelcome(filesDir, groupId)) }?.let {
+                            BackgroundWelcomeAnswer.InstallReport(
+                                ok = it.optBoolean("ok", false),
+                                reason = it.optString("reason").takeIf { r -> r.isNotEmpty() },
+                                error = it.optString("error").takeIf { e -> e.isNotEmpty() },
+                            )
+                        }
+
+                    override fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) =
+                        nativeDiscardStagedWelcome(
+                            filesDir, groupId, staleBase ?: -1L, serverEpoch ?: -1L,
+                            if (targetRefused) "$requesterUserId:$requesterDeviceId" else null,
                         )
-                    }
 
-                override fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) =
-                    nativeDiscardStagedWelcome(
-                        filesDir, groupId, staleBase ?: -1L, serverEpoch ?: -1L,
-                        if (targetRefused) "$requesterUserId:$requesterDeviceId" else null,
-                    )
-            }
-            val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(outcome, baseEpoch), staged)
-            val (level, suffix) = BackgroundWelcomeAnswer.report(applied, outcome)
-            when (level) {
-                BackgroundWelcomeAnswer.Level.DEBUG -> Log.d(TAG, "$line - $suffix")
-                BackgroundWelcomeAnswer.Level.WARN -> Log.w(TAG, "$line - $suffix")
-                BackgroundWelcomeAnswer.Level.ERROR -> Log.e(TAG, "$line - $suffix")
+                    override fun handOver(): Boolean =
+                        JSONObject(nativeHandOverStagedWelcome(filesDir, groupId)).optBoolean("ok", false)
+                }
+                val applied = BackgroundWelcomeAnswer.apply(BackgroundWelcomeAnswer.settle(outcome, baseEpoch), staged)
+                settled = true
+                val (level, suffix) = BackgroundWelcomeAnswer.report(applied, outcome)
+                when (level) {
+                    BackgroundWelcomeAnswer.Level.DEBUG -> Log.d(TAG, "$line - $suffix")
+                    BackgroundWelcomeAnswer.Level.WARN -> Log.w(TAG, "$line - $suffix")
+                    BackgroundWelcomeAnswer.Level.ERROR -> Log.e(TAG, "$line - $suffix")
+                }
+            } finally {
+                if (!settled) {
+                    Log.e(TAG, "processWelcomeRequestBackground: group=$groupId left before its answer was applied - staged state discarded, as an unread answer is")
+                    nativeDiscardStagedWelcome(filesDir, groupId, -1L, -1L, null)
+                }
             }
         } finally {
             // 6. Release the Redis lock in all cases

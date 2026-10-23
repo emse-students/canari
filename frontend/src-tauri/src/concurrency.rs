@@ -239,6 +239,10 @@ pub(crate) fn foreground_is_active() -> bool {
 /// which case it gives up: the foreground holds the up-to-date state in memory and would overwrite
 /// it - C1/FCM3). The "foreground active" error leaves the work pending, picked up on the next
 /// foreground pass.
+///
+/// A Welcome the server accepted and that was handed over ([`HANDED_OVER_SUFFIX`]) is installed
+/// FIRST, and then this write is refused: the caller's state was built on the file the add
+/// replaced, and writing it would erase a commit the server holds.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn background_write_mls_bin(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
     let _guard = mls_bin_write_lock()
@@ -247,15 +251,48 @@ pub(crate) fn background_write_mls_bin(path: &std::path::Path, data: &[u8]) -> R
     if foreground_is_active() {
         return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
     }
+    if install_handed_over_welcomes_locked(path) > 0 {
+        return Err(
+            "an accepted Welcome handed over earlier was installed first - this write, built on the file it replaced, is refused"
+                .to_string(),
+        );
+    }
     write_mls_bin_atomically(path, data)
 }
 
-/// The digest a background engine takes of the `mls.bin` bytes it LOADED, so that
-/// [`background_write_mls_bin_if_unchanged`] can refuse to write over a file that moved since.
-#[cfg(any(target_os = "android", target_os = "ios", test))]
+/// The digest of `mls.bin` bytes, so a writer can refuse to write over a file that moved since it
+/// was loaded ([`background_write_mls_bin_if_unchanged`], [`install_handed_over_welcomes_locked`]).
 pub(crate) fn mls_bin_digest(bytes: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes).into()
+}
+
+/// Why [`background_write_mls_bin_if_unchanged`] did not write - a TYPE, because the background
+/// Welcome keeps its staged state on two of these and drops it on the third.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BackgroundWriteRefused {
+    /// The foreground holds the state; nothing was written (C1/FCM3).
+    ForegroundActive,
+    /// `mls.bin` is not the file the caller loaded: the write would erase what replaced it.
+    Moved,
+    /// The file could not be read or written.
+    Io(String),
+}
+
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+impl std::fmt::Display for BackgroundWriteRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ForegroundActive => {
+                f.write_str("foreground active - background mls.bin write abandoned (C1/FCM3)")
+            }
+            Self::Moved => f.write_str(
+                "mls.bin changed since it was loaded - background write abandoned (lost update refused)",
+            ),
+            Self::Io(e) => write!(f, "mls.bin I/O: {e}"),
+        }
+    }
 }
 
 /// [`background_write_mls_bin`], AND ONLY OVER THE FILE THE CALLER LOADED - a compare-and-swap.
@@ -265,7 +302,8 @@ pub(crate) fn mls_bin_digest(bytes: &[u8]) -> [u8; 32] {
 /// foreground guard alone: the foreground can start, checkpoint and stop again inside that span,
 /// after which the guard reads "inactive" and a plain write would erase what the foreground did.
 /// So this write compares the file's CURRENT bytes with the digest of the bytes the caller loaded,
-/// under the same write lock every `mls.bin` writer takes, and refuses on any difference.
+/// under the same write lock every `mls.bin` writer takes, and refuses on any difference. A
+/// handed-over Welcome is installed before the comparison, so it counts as a difference.
 ///
 /// A refusal is an error the caller must say out loud: the work it wanted to persist is lost.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
@@ -273,21 +311,220 @@ pub(crate) fn background_write_mls_bin_if_unchanged(
     path: &std::path::Path,
     loaded_digest: &[u8; 32],
     data: &[u8],
-) -> Result<(), String> {
+) -> Result<(), BackgroundWriteRefused> {
     let _guard = mls_bin_write_lock()
         .lock()
-        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+        .map_err(|_| BackgroundWriteRefused::Io("mls_bin write lock poisoned".to_string()))?;
     if foreground_is_active() {
-        return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
+        return Err(BackgroundWriteRefused::ForegroundActive);
     }
-    let current = std::fs::read(path).map_err(|e| format!("re-read mls.bin: {e}"))?;
+    install_handed_over_welcomes_locked(path);
+    let current = std::fs::read(path)
+        .map_err(|e| BackgroundWriteRefused::Io(format!("re-read mls.bin: {e}")))?;
     if &mls_bin_digest(&current) != loaded_digest {
-        return Err(
-            "mls.bin changed since it was loaded - background write abandoned (lost update refused)"
-                .to_string(),
-        );
+        return Err(BackgroundWriteRefused::Moved);
     }
-    write_mls_bin_atomically(path, data)
+    write_mls_bin_atomically(path, data).map_err(BackgroundWriteRefused::Io)
+}
+
+/// The suffix a staged background Welcome takes when the server ACCEPTED it and it could not be
+/// installed at once - the foreground was active, or the Kotlin state lock was busy - so the state
+/// is HANDED OVER rather than deleted: it holds the only copy of this device's own accepted commit.
+/// The file keeps the staged layout, `digest of the base mls.bin (32) || sealed post-add state`,
+/// and the staged prefix, so deleting `mls.bin` sweeps it.
+pub(crate) const HANDED_OVER_SUFFIX: &str = ".accepted";
+
+/// The handed-over Welcome files of `dir`, sorted.
+pub(crate) fn handed_over_welcomes(
+    dir: &std::path::Path,
+) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let prefix = crate::commands::storage::STAGED_WELCOME_PREFIX;
+    let mut handed: Vec<std::path::PathBuf> = std::fs::read_dir(dir)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy())
+                .is_some_and(|n| n.starts_with(prefix) && n.ends_with(HANDED_OVER_SUFFIX))
+        })
+        .collect();
+    handed.sort();
+    Ok(handed)
+}
+
+/// Installs every handed-over Welcome beside `mls_path` whose base is still the file on disk, and
+/// returns how many it installed. THE CALLER HOLDS [`mls_bin_write_lock`] - every `mls.bin` writer
+/// and every foreground load runs this before it writes or reads, so an accepted add is never
+/// written over or read past.
+///
+/// A handed-over state whose base MOVED can never be installed - no later state is built from that
+/// base - so it is deleted and said loudly: the server holds a commit this device does not, and the
+/// foreground's replay meets it and recovers through the usual ladder. A failed write keeps the file
+/// for the next writer or load.
+pub(crate) fn install_handed_over_welcomes_locked(mls_path: &std::path::Path) -> usize {
+    let Some(dir) = mls_path.parent() else {
+        log::error!(
+            "[BG_WELCOME] mls.bin path has no directory: {}",
+            mls_path.display()
+        );
+        return 0;
+    };
+    let handed = match handed_over_welcomes(dir) {
+        Ok(handed) => handed,
+        Err(e) => {
+            log::error!("[BG_WELCOME] handed-over Welcomes not listed: {e}");
+            return 0;
+        }
+    };
+    let mut installed = 0;
+    for path in handed {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let file = match std::fs::read(&path) {
+            Ok(f) if f.len() > 32 => f,
+            Ok(_) => {
+                log::error!(
+                    "[BG_WELCOME] ACCEPTED AND NOT INSTALLED {name}: handed-over state truncated"
+                );
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+            Err(e) => {
+                log::error!("[BG_WELCOME] handed-over state {name} unreadable, kept: {e}");
+                continue;
+            }
+        };
+        let base_on_disk = match std::fs::read(mls_path) {
+            Ok(current) => mls_bin_digest(&current)[..] == file[..32],
+            Err(e) => {
+                log::error!("[BG_WELCOME] mls.bin unreadable while installing {name}: {e}");
+                false
+            }
+        };
+        if !base_on_disk {
+            log::error!(
+                "[BG_WELCOME] ACCEPTED AND NOT INSTALLED {name}: mls.bin moved since the stage - the server holds this device's commit, the replay recovers it"
+            );
+            if let Err(e) = std::fs::remove_file(&path) {
+                log::warn!("[BG_WELCOME] handed-over state {name} not deleted: {e}");
+            }
+            continue;
+        }
+        match write_mls_bin_atomically(mls_path, &file[32..]) {
+            Ok(()) => {
+                installed += 1;
+                log::info!(
+                    "[BG_WELCOME] handed-over add installed {name} ({} bytes)",
+                    file.len() - 32
+                );
+                if let Err(e) = std::fs::remove_file(&path) {
+                    log::warn!("[BG_WELCOME] handed-over state {name} not deleted: {e}");
+                }
+            }
+            Err(e) => log::error!("[BG_WELCOME] handed-over add {name} not written, kept: {e}"),
+        }
+    }
+    installed
+}
+
+/// The background Welcomes staged and not yet settled, by group: from a successful prepare until
+/// its install, hand-over or discard.
+///
+/// **A FOREGROUND LOAD WAITS FOR THEM, AND THAT IS THE WHOLE FIX.** A background Welcome is staged
+/// from `mls.bin`, submitted, and installed only once the server accepts it. A foreground that loads
+/// `mls.bin` inside that round trip loads the base - and its manager then moves on from there, so no
+/// later compare-and-swap can install the add under it: the device ends one epoch behind its own
+/// accepted commit. So every foreground load ([`await_background_welcomes`]) waits for the round
+/// trip to settle, then installs what was handed over, then reads. Registration and the
+/// "foreground active" check share one mutex ([`register_background_welcome`]), so a foreground
+/// that marked itself active before waiting either waits for a prepare or makes it refuse.
+///
+/// Not a clock: every prepared Welcome is settled exactly once, by the answer's type, and the
+/// round trip is bounded by the HTTP client's own timeouts. A process that dies takes this with it.
+struct InFlightWelcomes {
+    groups: Mutex<std::collections::BTreeSet<String>>,
+    settled: std::sync::Condvar,
+    /// Foreground loads blocked in [`await_background_welcomes`] right now.
+    waiting: AtomicUsize,
+}
+
+fn in_flight_welcomes() -> &'static InFlightWelcomes {
+    static IN_FLIGHT: InFlightWelcomes = InFlightWelcomes {
+        groups: Mutex::new(std::collections::BTreeSet::new()),
+        settled: std::sync::Condvar::new(),
+        waiting: AtomicUsize::new(0),
+    };
+    &IN_FLIGHT
+}
+
+/// How many foreground loads are blocked waiting for a background Welcome - for a test to order a
+/// settlement AFTER a load reached its wait, which is the interleaving that loses the add without it.
+#[cfg(test)]
+pub(crate) fn foreground_loads_waiting() -> usize {
+    in_flight_welcomes().waiting.load(Ordering::SeqCst)
+}
+
+/// The registry's set, taken even if poisoned: it holds group ids and nothing a panic can leave
+/// half-written.
+fn in_flight_groups() -> std::sync::MutexGuard<'static, std::collections::BTreeSet<String>> {
+    in_flight_welcomes()
+        .groups
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Records a staged background Welcome for `group_id` as in flight - unless the foreground is
+/// active, checked under the same mutex a foreground load waits on. `false` means refused: the
+/// foreground owns the state.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn register_background_welcome(group_id: &str) -> bool {
+    let mut groups = in_flight_groups();
+    if foreground_is_active() {
+        return false;
+    }
+    groups.insert(group_id.to_owned());
+    true
+}
+
+/// Ends the round trip of `group_id`'s background Welcome - installed, handed over or discarded - and
+/// wakes the foreground loads waiting on it.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) fn settle_background_welcome(group_id: &str) {
+    let removed = in_flight_groups().remove(group_id);
+    if removed {
+        in_flight_welcomes().settled.notify_all();
+    }
+}
+
+/// How many background Welcomes are in flight.
+#[cfg(test)]
+pub(crate) fn background_welcomes_in_flight() -> usize {
+    in_flight_groups().len()
+}
+
+/// Waits until no background Welcome is in flight. Every foreground load of `mls.bin` calls it
+/// AFTER marking the foreground active and BEFORE it reads - see [`InFlightWelcomes`].
+pub(crate) fn await_background_welcomes() {
+    let mut groups = in_flight_groups();
+    if groups.is_empty() {
+        return;
+    }
+    log::info!(
+        "[MLS] foreground load waits for {} background Welcome(s) awaiting the server's answer",
+        groups.len()
+    );
+    let registry = in_flight_welcomes();
+    registry.waiting.fetch_add(1, Ordering::SeqCst);
+    while !groups.is_empty() {
+        groups = registry
+            .settled
+            .wait(groups)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    }
+    registry.waiting.fetch_sub(1, Ordering::SeqCst);
+    log::info!("[MLS] background Welcome(s) settled - foreground load proceeds");
 }
 
 /// Writes `data` to `path` atomically: write to a temporary file followed by a `rename(2)`, which
@@ -324,6 +561,17 @@ pub(crate) mod test_support {
     pub(crate) fn serialise() -> std::sync::MutexGuard<'static, ()> {
         static M: Mutex<()> = Mutex::new(());
         M.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Settles a background Welcome's round trip when dropped: a test that fails between its prepare
+    /// and its settlement must not leave every later foreground load in the process waiting.
+    /// Settling twice is a no-op, so the normal path is unaffected.
+    pub(crate) struct SettleOnDrop(pub(crate) String);
+
+    impl Drop for SettleOnDrop {
+        fn drop(&mut self) {
+            super::settle_background_welcome(&self.0);
+        }
     }
 
     /// Alice and Bob in one group, Bob joined by Welcome - so Alice's frames move Bob's ratchet.

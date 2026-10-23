@@ -169,17 +169,25 @@ fn reload_into(
         );
         return Ok(ReloadOutcome::LiveAhead);
     }
+    // A BACKGROUND WELCOME AWAITING THE SERVER'S ANSWER IS WAITED FOR, NOT READ PAST. Its state was
+    // staged from this file; reading the file now would load the base, and nothing could install
+    // the add under the manager that then moves on from it. The caller marked the foreground active
+    // first, so no new one starts; an acceptance that finds it active hands its state over, and the
+    // install below puts it in place before the read.
+    crate::concurrency::await_background_welcomes();
     // Read the file UNDER the write lock too (never read while a JNI engine writes). Released
     // before the decrypt; the manager lock above is what now spans the whole operation.
-    let bytes = {
+    let (bytes, handed_over) = {
         let _guard = mls_bin_write_lock()
             .lock()
             .map_err(|_| "mls_bin write lock poisoned".to_string())?;
-        match std::fs::read(path) {
+        let handed_over = crate::concurrency::install_handed_over_welcomes_locked(path);
+        let bytes = match std::fs::read(path) {
             Ok(b) => Some(b),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(format!("read mls.bin: {e}")),
-        }
+        };
+        (bytes, handed_over)
     };
     let Some(bytes) = bytes else {
         log::debug!("[RESUME] mls.bin absent - nothing to reload (C2)");
@@ -197,6 +205,11 @@ fn reload_into(
             log::warn!(
                 "[RESUME] reload refused - mls.bin would regress a live group epoch, keeping live state (C2)"
             );
+            if handed_over > 0 {
+                log::error!(
+                    "[RESUME] {handed_over} accepted background add(s) were installed into mls.bin, and the live manager kept instead - its next checkpoint writes over them; the replay recovers this device's own commit"
+                );
+            }
             return Ok(ReloadOutcome::EpochRegression);
         }
         // THE GUARD ABOVE GRADES ON GROUP EPOCHS, AND KEY MATERIAL IS NOT A GROUP EPOCH.
@@ -410,7 +423,25 @@ pub(crate) fn read_mls_state_blob(app: &tauri::AppHandle) -> Option<Vec<u8>> {
             return None;
         }
     };
+    read_mls_state_blob_at(&data_dir)
+}
+
+/// [`read_mls_state_blob`] for a data directory: a FOREGROUND load, so it does what the resume reload
+/// does before it reads - marks the foreground active (no background Welcome starts after this),
+/// waits for any background Welcome awaiting the server's answer, and installs an accepted one handed
+/// over to it. Reading inside that round trip would load the base the Welcome was staged from.
+pub(crate) fn read_mls_state_blob_at(data_dir: &std::path::Path) -> Option<Vec<u8>> {
+    mark_foreground_active();
+    crate::concurrency::await_background_welcomes();
     let path = data_dir.join("mls.bin");
+    let _guard = match mls_bin_write_lock().lock() {
+        Ok(g) => g,
+        Err(_) => {
+            log::error!("[MLS] mls_bin write lock poisoned - mls.bin not read");
+            return None;
+        }
+    };
+    crate::concurrency::install_handed_over_welcomes_locked(&path);
     match std::fs::read(&path) {
         Ok(b) => Some(b),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -427,9 +458,14 @@ pub(crate) fn read_mls_state_blob(app: &tauri::AppHandle) -> Option<Vec<u8>> {
 /// which re-seals it in the frontend. The LOGIN path no longer calls it - see
 /// [`read_mls_state_blob`] for what that cost - and neither does anything that only wants to know
 /// whether a state exists, which is what [`mls_state_size`] answers.
+///
+/// Off the calling thread: the read may wait for a background Welcome's answer
+/// ([`read_mls_state_blob_at`]).
 #[tauri::command]
-pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
-    read_mls_state_blob(&app)
+pub(crate) async fn load_mls_state(app: tauri::AppHandle) -> Result<Option<Vec<u8>>, String> {
+    tauri::async_runtime::spawn_blocking(move || read_mls_state_blob(&app))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// The SIZE of {app_data_dir}/mls.bin, 0 when there is none.
@@ -1092,6 +1128,163 @@ mod tests {
                 .is_err(),
             "the installed state must hold the generation the frame spent"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A sender holding `gid` sealed into `dir/mls.bin`, and a background Welcome for a newcomer
+    /// staged from it while the app was shut. Returns the base bytes, the prepare's answer, and the
+    /// newcomer.
+    fn staged_background_welcome(
+        tag: &str,
+        dir: &Path,
+    ) -> (
+        Vec<u8>,
+        serde_json::Value,
+        MlsManager,
+        String,
+        crate::concurrency::test_support::SettleOnDrop,
+    ) {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = crate::concurrency::test_support::joined_pair(tag);
+        persist(&alice, &dir.join("mls.bin"));
+        let base = std::fs::read(dir.join("mls.bin")).unwrap();
+        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        let prepared = crate::mobile::background::prepare_welcome_background_with_key(
+            dir,
+            &base,
+            DEV_KEY_B64,
+            &format!("{tag}-alice"),
+            "d1",
+            &gid,
+            &kp,
+        );
+        assert_eq!(prepared["ok"], true, "prepared: {prepared}");
+        let settle = crate::concurrency::test_support::SettleOnDrop(gid.clone());
+        (base, prepared, carol, gid, settle)
+    }
+
+    /// The staged and handed-over Welcome files left in `dir`.
+    fn welcome_files_left(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(STAGED_WELCOME_PREFIX))
+            .collect()
+    }
+
+    /// AN ADD ACCEPTED WHILE THE APP OPENS. A background Welcome was staged and submitted while the
+    /// app was shut; the user opens the app before the server answers, so the resume reload runs -
+    /// with the foreground marked active first, as `recharger_mls_au_resume` does - and the
+    /// acceptance then finds the foreground active.
+    ///
+    /// The reload must end holding the add. The background still writes nothing under an active
+    /// foreground: it hands the accepted state over, and the reload - which waits for the answer
+    /// rather than reading the base inside the round trip - installs it before it reads.
+    ///
+    /// The answer is delivered only once the reload has either blocked in its wait or finished: the
+    /// order in which a reload that does not wait reads the base first, every time.
+    #[test]
+    fn an_add_accepted_while_the_app_opens_reaches_the_reloaded_manager() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let _s = crate::concurrency::test_support::serialise();
+        let dir = temp_dir("handover-resume");
+        let path = dir.join("mls.bin");
+        let (base, prepared, mut carol, gid, _settle) = staged_background_welcome("handover", &dir);
+        let key = mls_core::crypto::decode_base64_to_32_bytes(DEV_KEY_B64).unwrap();
+        // The process the push woke still holds the manager it loaded from the base.
+        let live = MlsManager::load_with_key("handover-alice", "d1", Some(base), &key).unwrap();
+
+        // The app opens: the foreground is marked active, then the resume reload runs.
+        crate::concurrency::mark_foreground_active();
+        let reload = std::thread::spawn({
+            let path = path.clone();
+            move || {
+                let mut live = Some(live);
+                let out = reload_into(&mut live, &path, "handover-alice", "d1", DEV_KEY_B64);
+                (live, out)
+            }
+        });
+        while crate::concurrency::foreground_loads_waiting() == 0 && !reload.is_finished() {
+            std::thread::yield_now();
+        }
+        // The server's answer arrives: accepted.
+        let installed = crate::mobile::background::install_staged_welcome(&dir, &gid);
+        let (live, out) = reload.join().unwrap();
+        crate::concurrency::mark_foreground_inactive();
+
+        assert_eq!(
+            installed["reason"], "handed-over",
+            "nothing is written under an active foreground: {installed}"
+        );
+        assert_eq!(out.unwrap(), ReloadOutcome::Reloaded);
+        let mut live = live.unwrap();
+        assert_eq!(
+            live.get_epoch(&gid).unwrap(),
+            2,
+            "the reloaded manager holds the add this device committed and the server accepted"
+        );
+        let welcome = STANDARD
+            .decode(prepared["welcome"].as_str().unwrap())
+            .unwrap();
+        let tree = STANDARD
+            .decode(prepared["ratchetTree"].as_str().unwrap())
+            .unwrap();
+        carol.process_welcome(&welcome, Some(&tree)).unwrap();
+        let hello = live.send_message(&gid, b"welcome carol").unwrap();
+        assert_eq!(
+            carol.process_incoming_message(&gid, &hello).unwrap(),
+            Some(b"welcome carol".to_vec()),
+            "the foreground and the newcomer share the epoch the add created"
+        );
+        assert!(
+            welcome_files_left(&dir).is_empty(),
+            "consumed by its install: {:?}",
+            welcome_files_left(&dir)
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A COLD START installs a handed-over add before it reads: `initialiser_mls` loads through
+    /// [`read_mls_state_blob_at`], which must hand back the state holding the add.
+    #[test]
+    fn a_cold_load_installs_a_handed_over_add_before_it_reads() {
+        let _s = crate::concurrency::test_support::serialise();
+        let dir = temp_dir("handover-cold");
+        let (_base, _prepared, _carol, gid, _settle) = staged_background_welcome("handcold", &dir);
+        crate::concurrency::mark_foreground_active();
+        let installed = crate::mobile::background::install_staged_welcome(&dir, &gid);
+        assert_eq!(installed["reason"], "handed-over", "{installed}");
+
+        let bytes = read_mls_state_blob_at(&dir).expect("a state is on disk");
+        crate::concurrency::mark_foreground_inactive();
+
+        let key = mls_core::crypto::decode_base64_to_32_bytes(DEV_KEY_B64).unwrap();
+        let loaded = MlsManager::load_with_key("handcold-alice", "d1", Some(bytes), &key).unwrap();
+        assert_eq!(loaded.get_epoch(&gid).unwrap(), 2, "the add is installed");
+        assert!(welcome_files_left(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A handed-over add whose base moved is never installed over the newer file - and is then
+    /// gone, since no later state can be built from that base.
+    #[test]
+    fn a_handed_over_add_is_not_installed_over_a_file_that_moved() {
+        let _s = crate::concurrency::test_support::serialise();
+        let dir = temp_dir("handover-moved");
+        let (_base, _prepared, _carol, gid, _settle) = staged_background_welcome("handmoved", &dir);
+        crate::concurrency::mark_foreground_active();
+        let installed = crate::mobile::background::install_staged_welcome(&dir, &gid);
+        assert_eq!(installed["reason"], "handed-over", "{installed}");
+        std::fs::write(dir.join("mls.bin"), b"a newer state").unwrap();
+
+        let bytes = read_mls_state_blob_at(&dir);
+        crate::concurrency::mark_foreground_inactive();
+
+        assert_eq!(bytes.as_deref(), Some(&b"a newer state"[..]));
+        assert!(welcome_files_left(&dir).is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
 

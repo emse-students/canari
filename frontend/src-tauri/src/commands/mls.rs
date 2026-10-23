@@ -57,10 +57,8 @@ pub(crate) async fn initialiser_mls(
     // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when it
     // did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller that
     // does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
-    let encrypted_state = match (encrypted_state, opts.state_on_disk) {
-        (None, Some(true)) => crate::commands::storage::read_mls_state_blob(&app),
-        (supplied, _) => supplied,
-    };
+    // Read inside the blocking task below: the read may wait for a background Welcome's answer.
+    let read_from_disk = encrypted_state.is_none() && opts.state_on_disk == Some(true);
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
     let keystore = PluginDeviceKeyStore::new(app.clone())
@@ -76,6 +74,11 @@ pub(crate) async fn initialiser_mls(
         Some(device_key_b64)
     };
     tauri::async_runtime::spawn_blocking(move || {
+        let encrypted_state = if read_from_disk {
+            crate::commands::storage::read_mls_state_blob(&app)
+        } else {
+            encrypted_state
+        };
         // Resolve the key explicitly instead of letting the loader do it internally: the
         // resolved key is cached below so later saves in this session (which arrive with an
         // empty device_key_b64 in biometric mode) never have to prompt again.

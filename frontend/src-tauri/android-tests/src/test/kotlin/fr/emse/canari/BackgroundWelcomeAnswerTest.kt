@@ -109,21 +109,53 @@ class BackgroundWelcomeAnswerTest {
         override fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean) {
             calls += if (targetRefused) "discard(target)" else "discard($staleBase,$serverEpoch)"
         }
+        override fun handOver(): Boolean {
+            calls += "handOver"
+            return handOverWorks
+        }
+        var handOverWorks = true
     }
 
     @Test
-    fun anAcceptanceWhoseInstallFindsTheLockBusyDeletesTheStagedFileAndSaysSo() {
-        // The MLS state lock was not acquired, so the install never ran and the staged file - which
-        // holds the group's old epoch secret - is still there: it must not outlive this attempt.
+    fun anAcceptanceWhoseInstallFindsTheLockBusyHandsTheStateOverAndNeverDeletesIt() {
+        // The MLS state lock was not acquired, so the install never ran. The staged state is this
+        // device's own accepted commit: it is handed over to the next mls.bin writer or foreground
+        // load, never deleted.
         val staged = FakeStaged(install = null)
 
         val applied = BackgroundWelcomeAnswer.apply(Settlement.Install, staged)
 
-        assertEquals(Applied.LockBusy, applied)
-        assertEquals(listOf("install", "discard(null,null)"), staged.calls)
+        assertEquals(Applied.HandedOver("lock busy"), applied)
+        assertEquals(listOf("install", "handOver"), staged.calls)
+        val (level, line) = BackgroundWelcomeAnswer.report(applied, Outcome.Accepted)
+        assertEquals(Level.WARN, level)
+        assertTrue(line, line.contains("handed over") && line.contains("lock busy"))
+    }
+
+    @Test
+    fun aHandOverThatFailsIsAnAcceptanceNotInstalled() {
+        val staged = FakeStaged(install = null).apply { handOverWorks = false }
+
+        val applied = BackgroundWelcomeAnswer.apply(Settlement.Install, staged)
+
+        assertEquals(Applied.NotInstalled("hand-over-failed", "lock busy"), applied)
+        assertEquals(listOf("install", "handOver"), staged.calls)
         val (level, line) = BackgroundWelcomeAnswer.report(applied, Outcome.Accepted)
         assertEquals(Level.ERROR, level)
-        assertTrue(line, line.contains("ACCEPTED AND NOT INSTALLED") && line.contains("lock busy"))
+        assertTrue(line, line.contains("ACCEPTED AND NOT INSTALLED"))
+    }
+
+    @Test
+    fun anAcceptanceTheNativeSideHandedOverIsAWarningNotALoss() {
+        // The foreground was active: the native install wrote nothing and kept the state for the
+        // foreground's load, which installs it before it reads.
+        val staged = FakeStaged(install = InstallReport(ok = false, reason = "handed-over", error = null))
+
+        val applied = BackgroundWelcomeAnswer.apply(Settlement.Install, staged)
+
+        assertEquals(Applied.HandedOver("foreground active"), applied)
+        assertEquals(listOf("install"), staged.calls)
+        assertEquals(Level.WARN, BackgroundWelcomeAnswer.report(applied, Outcome.Accepted).first)
     }
 
     @Test

@@ -131,17 +131,26 @@ object BackgroundWelcomeAnswer {
          * target when [targetRefused].
          */
         fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean)
+
+        /**
+         * Keeps the ACCEPTED staged state for the next mls.bin writer or foreground load to install,
+         * without the MLS state lock. `false` when even that failed.
+         */
+        fun handOver(): Boolean
     }
 
     /** What became of the staged state once its settlement was applied. */
     sealed class Applied {
         object Installed : Applied()
 
-        /** The native install ran and refused; it removed its own staged file. */
+        /** The accepted add is not installed and will not be: the server holds a commit this device does not. */
         data class NotInstalled(val reason: String?, val error: String?) : Applied()
 
-        /** The MLS state lock was busy: the install never ran, and the staged file was deleted here. */
-        object LockBusy : Applied()
+        /**
+         * The accepted state was kept for the next mls.bin writer or foreground load, which installs
+         * it over the base it was built from - the foreground was active, or the state lock busy.
+         */
+        data class HandedOver(val why: String) : Applied()
 
         object Discarded : Applied()
     }
@@ -149,20 +158,26 @@ object BackgroundWelcomeAnswer {
     /** The level a line is logged at, so the decision is tested here and only printed by the service. */
     enum class Level { DEBUG, WARN, ERROR }
 
+    /** The native install's token for a state it kept for the foreground (`install_staged_welcome`). */
+    private const val HANDED_OVER = "handed-over"
+    private const val HAND_OVER_FAILED = "hand-over-failed"
+    private const val LOCK_BUSY = "lock busy"
+    private const val FOREGROUND_ACTIVE = "foreground active"
+
     /**
-     * Applies a settlement to the staged state. A busy lock on an install is the one case the
-     * staged file would outlive the attempt - it holds the group's old epoch secret - so it is
-     * deleted here, never left for a later attempt to find.
+     * Applies a settlement to the staged state. An ACCEPTED state is never deleted before it is
+     * installed or handed over: a busy lock hands it over to the next mls.bin writer or foreground
+     * load, which installs it only over the base it was built from.
      */
     fun apply(settlement: Settlement, staged: StagedWelcome): Applied = when (settlement) {
         Settlement.Install -> {
             val report = staged.install()
             when {
-                report == null -> {
-                    staged.discard(null, null, targetRefused = false)
-                    Applied.LockBusy
-                }
+                report == null ->
+                    if (staged.handOver()) Applied.HandedOver(LOCK_BUSY)
+                    else Applied.NotInstalled(HAND_OVER_FAILED, LOCK_BUSY)
                 report.ok -> Applied.Installed
+                report.reason == HANDED_OVER -> Applied.HandedOver(FOREGROUND_ACTIVE)
                 else -> Applied.NotInstalled(report.reason, report.error)
             }
         }
@@ -179,8 +194,8 @@ object BackgroundWelcomeAnswer {
      */
     fun report(applied: Applied, outcome: Outcome): Pair<Level, String> = when (applied) {
         Applied.Installed -> Level.DEBUG to "state installed"
-        Applied.LockBusy -> Level.ERROR to
-            "ACCEPTED AND NOT INSTALLED reason=lock busy - the staged file was deleted"
+        is Applied.HandedOver -> Level.WARN to
+            "accepted - state handed over (${applied.why}), installed by the next mls.bin writer or foreground load"
         is Applied.NotInstalled -> Level.ERROR to
             "ACCEPTED AND NOT INSTALLED reason=${applied.reason} ${applied.error ?: ""}".trimEnd()
         Applied.Discarded ->
