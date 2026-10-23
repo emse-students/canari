@@ -58,6 +58,7 @@ import { resetUnackedFrames } from './unackedFrames';
 import { activeMlsStatePersister } from '../mlsStatePersisterRegistry';
 import { m } from '$lib/paraglide/messages';
 import * as codec from '$lib/proto/codec';
+import * as messageUtils from '$lib/utils/chat/messageUtils';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
 import {
   createTestConversations,
@@ -977,6 +978,72 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(ok).toBe(true);
     expect(mls.forgetGroup).not.toHaveBeenCalled();
     expect(mls.processWelcome).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A FRAME HELD FOR ITS WELCOME KEEPS ITS DELIVERY. The inviter's addressed history answer can
+   * reach a joining device before the Welcome it rides behind; replayed without its delivery it
+   * read as a broadcast, skipping the ask check of an addressed answer, and its sending device was
+   * not compared with the credential.
+   */
+  describe('a frame buffered before its Welcome is replayed with the delivery it arrived with', () => {
+    const addressed = { addressed: true, senderDeviceId: 'peer-phone', channel: 'live' };
+
+    async function bufferThenWelcome(appMsg: unknown) {
+      const deps = baseDeps({ batchAddMessages: vi.fn().mockResolvedValue(undefined) });
+      const mls = deps.mlsService as any;
+      mls.getLocalGroups = vi.fn().mockReturnValue([]);
+      mls.processWelcome = vi.fn().mockResolvedValue(undefined);
+      mls.getDeviceId = vi.fn().mockReturnValue('dev-x');
+      mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([7]));
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0];
+      const frame = new Uint8Array([5, 5]);
+      expect(await onMsg('peer', frame, groupId, false, undefined, false, addressed)).toBe(false);
+      vi.mocked(codec.decodeAppMessage).mockReturnValue(appMsg as any);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      restores.push(() => {
+        error.mockRestore();
+        vi.mocked(codec.decodeAppMessage).mockImplementation(
+          () => ({ text: { body: 'hello-from-proto' }, messageId: 'mid-1' }) as any
+        );
+      });
+      await onMsg('peer', new Uint8Array([1]), groupId, true, undefined, false);
+      return { deps, mls, frame, error };
+    }
+
+    it('checks an addressed history answer against the asks this device holds, from the device it came from', async () => {
+      // A system frame renders no envelope; the suite's mock renders one for every frame.
+      vi.mocked(messageUtils.appMsgToEnvelope).mockReturnValueOnce(null);
+      const { mls, frame, error } = await bufferThenWelcome({
+        system: {
+          event: 'history_bundle',
+          data: JSON.stringify({ to: 'someone:else', messages: [] }),
+        },
+        messageId: 'mid-b',
+      });
+
+      expect(mls.processIncomingMessage).toHaveBeenCalledWith(groupId, frame, {
+        userId: 'peer',
+        deviceId: 'peer-phone',
+        path: 'welcome-replay',
+      });
+      expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+        '[HISTORY_ADDRESSED] REFUSED an addressed history_bundle'
+      );
+    });
+
+    it('refuses an addressed frame that is not a history answer, as the live path does', async () => {
+      const { deps, error } = await bufferThenWelcome({
+        text: { body: 'only you see this' },
+        messageId: 'mid-t',
+      });
+
+      expect((deps as any).batchAddMessages).not.toHaveBeenCalled();
+      expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+        '[HISTORY_ADDRESSED] REFUSED an addressed'
+      );
+    });
   });
 
   it('commit for unknown group → buffered + recovery seam fired immediately', async () => {

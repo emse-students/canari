@@ -4,7 +4,7 @@ import {
   parseDirectPeerFromName,
   resolveDirectPeerId,
 } from '$lib/utils/chat/conversations';
-import { decodeAppMessage } from '$lib/proto/codec';
+import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
 import { recordAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { drainForkFindings } from '$lib/mls-client/integrityFindings';
@@ -63,8 +63,40 @@ import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
 export type { MessageHandlerDeps } from './deps';
 
-/** Short-lived message buffered while waiting for a Welcome. */
-type PendingMsg = { sender: string; content: Uint8Array };
+/**
+ * Short-lived message buffered while waiting for a Welcome. `deliveryMeta` is the delivery it
+ * arrived with, replayed with it: an addressed history answer can reach a joining device before its
+ * Welcome, and without it the replay read the answer as a broadcast.
+ */
+type PendingMsg = {
+  sender: string;
+  content: Uint8Array;
+  deliveryMeta: IncomingDeliveryMeta | undefined;
+};
+
+/**
+ * AN ADDRESSED CONVERSATION FRAME IS A HISTORY ANSWER OR NOTHING (step A, rule 5 of
+ * docs/wiki/protocols/history-answer-addressing.md). The server routed it to this device alone, so
+ * nobody else in the group sees it: a message, an edit or a reaction sent that way would show this
+ * device a conversation the rest of the group never saw. No honest build sends one - every other
+ * frame of a conversation reaches the whole group - so it is refused before any of it is applied,
+ * and ACKed: redelivery would not change the answer. What a `history_bundle` may carry is decided
+ * by its own handler (`systemMessageHandler`). Shared by the live path and the Welcome replay.
+ *
+ * @returns `true` when the frame was refused (logged at ERROR).
+ */
+function refusesAddressedNonAnswer(
+  msg: IAppMessage,
+  deliveryMeta: IncomingDeliveryMeta | undefined,
+  convoKey: string,
+  sender: string
+): boolean {
+  if (deliveryMeta?.addressed !== true || msg.system?.event === 'history_bundle') return false;
+  console.error(
+    `[HISTORY_ADDRESSED] REFUSED an addressed ${msg.system?.event ?? (msg.text || msg.reply || msg.media ? 'message' : 'frame')} in ${convoKey.slice(0, 8)}… from ${sender.slice(0, 8)} - only a history answer may be addressed in a conversation`
+  );
+  return true;
+}
 
 /**
  * Recovery action a failing Welcome defers to AFTER releasing the MLS lock (the recovery seams
@@ -238,6 +270,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           deps,
           pendingBuffer,
           startRecovery,
+          deliveryMeta,
         });
       }
 
@@ -607,6 +640,7 @@ async function handleWelcome({
           try {
             const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content, {
               userId: msg.sender,
+              deviceId: msg.deliveryMeta?.senderDeviceId,
               path: 'welcome-replay',
             });
             // THE BUFFER SPENDS A GENERATION LIKE EVERY OTHER PATH, and recorded nothing until
@@ -619,7 +653,10 @@ async function handleWelcome({
               const appMsg = decodeAppMessage(decBytes);
               // Verified by mls-core like any live frame - see the live path below.
               const authorship = recordAuthorship(decBytes, joinedGroupId);
-              if (appMsg) {
+              if (
+                appMsg &&
+                !refusesAddressedNonAnswer(appMsg, msg.deliveryMeta, joinedGroupId, msg.sender)
+              ) {
                 const envelope = appMsgToEnvelope(appMsg);
                 if (envelope) {
                   if (batchAddMessages) {
@@ -661,7 +698,7 @@ async function handleWelcome({
                       convoKey: joinedGroupId,
                       senderNorm: msg.sender,
                       messageId: normalizeMessageId(appMsg.messageId),
-                      deliveryMeta: undefined,
+                      deliveryMeta: msg.deliveryMeta,
                       ...(authorship ? { authorship } : {}),
                     });
                   }
@@ -789,6 +826,8 @@ interface UnknownGroupArgs {
   pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
   /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
   startRecovery: (groupId: string) => void;
+  /** The frame's delivery, buffered with it for the replay (see `PendingMsg`). */
+  deliveryMeta: IncomingDeliveryMeta | undefined;
 }
 
 /**
@@ -806,6 +845,7 @@ async function handleUnknownGroup({
   deps,
   pendingBuffer,
   startRecovery,
+  deliveryMeta,
 }: UnknownGroupArgs): Promise<boolean> {
   const { log } = deps;
 
@@ -849,7 +889,7 @@ async function handleUnknownGroup({
     log(`[BUFFER] recovery started for unknown group ${groupId.slice(0, 8)}…`);
   }
 
-  if (buf.msgs.length < 20) buf.msgs.push({ sender, content });
+  if (buf.msgs.length < 20) buf.msgs.push({ sender, content, deliveryMeta });
 
   noteUnackedFrame(groupId, 'unknown-group');
   return false; // Keep in queue for replay when the Welcome arrives
@@ -1079,19 +1119,7 @@ async function handleKnownGroup({
       return true;
     }
 
-    // AN ADDRESSED CONVERSATION FRAME IS A HISTORY ANSWER OR NOTHING (step A, rule 5 of
-    // docs/wiki/protocols/history-answer-addressing.md). The server routed it to this device alone,
-    // so nobody else in the group sees it: a message, an edit or a reaction sent that way would show
-    // this device a conversation the rest of the group never saw. No honest build sends one - every
-    // other frame of a conversation reaches the whole group - so it is refused here, before any of it
-    // is applied, and ACKed: redelivery would not change the answer. What a `history_bundle` may
-    // carry is decided by its own handler (`systemMessageHandler`).
-    if (deliveryMeta?.addressed === true && msg.system?.event !== 'history_bundle') {
-      console.error(
-        `[HISTORY_ADDRESSED] REFUSED an addressed ${msg.system?.event ?? (msg.text || msg.reply || msg.media ? 'message' : 'frame')} in ${convoKey.slice(0, 8)}… from ${sender.slice(0, 8)} - only a history answer may be addressed in a conversation`
-      );
-      return true;
-    }
+    if (refusesAddressedNonAnswer(msg, deliveryMeta, convoKey, sender)) return true;
 
     // A LIVE frame from a device we owe a retry is the proof it is online NOW, and its device is the
     // one `verifiedSender` just checked against the credential. A pulled copy proves nothing about
