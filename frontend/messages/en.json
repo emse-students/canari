@@ -541,7 +541,7 @@
   "call_speaker_label": "Speaker",
   "call_earpiece_label": "Earpiece",
   "call_route_unavailable_label": "Audio output unavailable for now",
-  "call_ringing_label": "Ringing…",
+  "call_ringing_label": "Calling…",
   "call_ended_with_duration": "Call ended · {duration}",
   "call_accept_short_label": "Accept",
   "call_banner_region_label": "Call in progress",

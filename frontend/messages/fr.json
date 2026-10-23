@@ -573,7 +573,7 @@
   "call_speaker_label": "Haut-parleur",
   "call_earpiece_label": "Écouteur",
   "call_route_unavailable_label": "Sortie audio indisponible pour le moment",
-  "call_ringing_label": "Sonnerie…",
+  "call_ringing_label": "Appel…",
   "call_ended_with_duration": "Appel terminé · {duration}",
   "call_accept_short_label": "Accepter",
   "call_banner_region_label": "Appel en cours",
