@@ -36,7 +36,7 @@ snapshot="$TMP/prod.env"
 assignments="$(awk '/^(KEEP|BLANK|REGENERATE|LOCAL|OIDC)=/ { on = 1 } on { print } on && /"$/ { on = 0 }' "$SCRIPT")"
 names="$(
   eval "$assignments"
-  printf '%s\n' $KEEP $BLANK $REGENERATE $LOCAL $OIDC | sort -u
+  printf '%s\n' "$KEEP $BLANK $REGENERATE $LOCAL $OIDC" | tr ' ' '\n' | grep -v '^$' | sort -u
 )"
 : >"$snapshot"
 for n in $names; do
