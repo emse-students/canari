@@ -521,7 +521,7 @@
          set at once, not animated, and is drawn at the card's scale, so it reads about 12 px. -->
     <div
       bind:this={frame}
-      class="absolute inset-0 touch-none {commentsCard ? 'overflow-hidden rounded-[2.25rem]' : ''}"
+      class="absolute inset-0 touch-none {commentsCard ? 'overflow-hidden rounded-3xl' : ''}"
       style:transform-origin="50% 0"
       style:transform={commentsCard
         ? 'translate3d(0, calc(var(--safe-area-inset-top, 0px) + 0.75rem), 0) scale(0.34)'
