@@ -67,7 +67,12 @@ fn the_merge_of_a_settled_add_writes_the_owed_welcome_and_a_delivery_clears_it()
     let kp_b = bob.generate_key_package().expect("kp b");
     let kp_c = carol.generate_key_package().expect("kp c");
     let (staged, _skipped) = alice
-        .add_members_recorded(gid, &[&kp_b, &kp_c], b"intent".to_vec())
+        .add_members_recorded(
+            gid,
+            &[&kp_b, &kp_c],
+            &["bob:dev1", "carol:dev1"],
+            b"intent".to_vec(),
+        )
         .expect("stage");
 
     alice
@@ -127,7 +132,7 @@ fn a_forgotten_group_owes_no_welcome() {
     alice.create_group(gid.to_string()).expect("create");
     let kp = bob.generate_key_package().expect("kp");
     alice
-        .add_members_recorded(gid, &[&kp], Vec::new())
+        .add_members_recorded(gid, &[&kp], &["bob:dev1"], Vec::new())
         .expect("stage");
     alice
         .merge_pending_commit_owing_welcome(gid, vec!["bob:dev1".to_string()])

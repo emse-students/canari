@@ -2,6 +2,7 @@ pub mod security;
 
 pub(crate) mod byte_compat;
 pub mod crypto;
+pub mod device_trust;
 pub mod graine_run;
 pub mod graine_signature;
 pub mod group;
@@ -17,6 +18,7 @@ pub mod state_blob;
 pub mod welcome;
 
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
+pub use device_trust::{DeviceEvent, LeafTrust};
 pub use graine_run::{CommitSummary, GraineRun, GraineRunReading};
 pub use messaging::IncomingApplication;
 pub use self_update::StagedSelfUpdateResult;
@@ -311,6 +313,13 @@ pub enum SkippedKeyPackageReason {
     /// openmls failed internally (`LibraryError`), or the local clock is before the UNIX epoch -
     /// a fault of THIS device, not of the package.
     Internal,
+    /// The package is valid, but its credential does not name the device it was fetched for (or
+    /// names it with more than one ':'). The bytes came from the delivery service, which chose them;
+    /// a package for somebody else, or a malformed identity, is never added under the requested name.
+    IdentityMismatch,
+    /// The package names the right device, under a signature key this device has NOT pinned for it
+    /// (`crate::device_trust`). Nothing today can prove such a change legitimate, so it is refused.
+    SignatureKeyChanged,
 }
 
 impl SkippedKeyPackageReason {
@@ -325,6 +334,8 @@ impl SkippedKeyPackageReason {
             Self::UnsupportedProtocolVersion => "unsupported-protocol-version",
             Self::Malformed => "malformed",
             Self::Internal => "internal",
+            Self::IdentityMismatch => "identity-mismatch",
+            Self::SignatureKeyChanged => "signature-key-changed",
         }
     }
 
@@ -383,6 +394,12 @@ pub type AddMembersWithBaseResult = (AddMembersBulkResult, Vec<u8>);
 /// the staged commit and the external-join base for the epoch it creates, under the same rule as
 /// [`AddMembersWithBaseResult`].
 pub type StagedRemovalResult = (Vec<u8>, Vec<u8>);
+
+/// Result of `replace_device_with_base`: `(commit, welcome, group_info)` - ONE staged commit that
+/// removes a device's leaf and adds it back from a fresh KeyPackage, the Welcome for that device, and
+/// the external-join base for the epoch the commit creates (same rule as
+/// [`AddMembersWithBaseResult`]).
+pub type ReplaceDeviceResult = (Vec<u8>, Vec<u8>, Vec<u8>);
 
 #[cfg(test)]
 mod skipped_key_package_tests {

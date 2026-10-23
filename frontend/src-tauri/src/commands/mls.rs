@@ -560,10 +560,14 @@ type StagedBulkAdd = (
     Vec<u8>,
 );
 
+/// `expected_identities[i]` is the `userId:deviceId` `key_packages_bytes[i]` was fetched for: a
+/// package naming another device, or the right one under a key this device never pinned for it, is
+/// skipped (`identity-mismatch`, `signature-key-changed` - see `mls_core::device_trust`).
 #[tauri::command]
 pub(crate) fn ajouter_membres_bulk(
     group_id: String,
     key_packages_bytes: Vec<Vec<u8>>,
+    expected_identities: Vec<String>,
     intent: Vec<u8>,
     state: tauri::State<AppState>,
 ) -> Result<StagedBulkAdd, String> {
@@ -580,8 +584,9 @@ pub(crate) fn ajouter_membres_bulk(
     // The fifth element is the external-join base for the epoch the commit creates: submitted WITH
     // the commit by the caller, never published on its own (COMM-22). Recorded with `intent` in
     // this same call, under this same lock: no checkpoint holds the staged commit without it.
+    let expected: Vec<&str> = expected_identities.iter().map(String::as_str).collect();
     let (record, skipped) = manager
-        .add_members_recorded(&group_id, &refs, intent)
+        .add_members_recorded(&group_id, &refs, &expected, intent)
         .map_err(|e| e.to_string())?;
     let welcome = (!record.welcome.is_empty()).then_some(record.welcome);
     Ok((
@@ -591,6 +596,113 @@ pub(crate) fn ajouter_membres_bulk(
         skipped,
         record.group_info,
     ))
+}
+
+/// Stages ONE commit that removes the device `identity`'s leaf and adds it back from `key_package`
+/// (the repair of a device whose leaf is still in the tree), without merging (C7-A). Returns
+/// `(commit, welcome, group_info)` - see `MlsManager::replace_device_with_base`. Recorded with
+/// `intent` in this same call, under this same lock (`MlsManager::replace_device_recorded`).
+#[tauri::command]
+pub(crate) fn remplacer_appareil(
+    group_id: String,
+    identity: String,
+    key_package: Vec<u8>,
+    intent: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<mls_core::ReplaceDeviceResult, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let record = manager
+        .replace_device_recorded(&group_id, &identity, &key_package, intent)
+        .map_err(|e| e.to_string())?;
+    Ok((record.commit, record.welcome, record.group_info))
+}
+
+/// Whether `key_package` may be added as `expected_identity` (`userId:deviceId`), without staging
+/// anything: `"first-sight"` / `"pinned"` when it may, otherwise the skip reason's wire name. Asked
+/// BEFORE a re-add removes the device's stale leaf - see `MlsManager::vet_key_package`.
+#[tauri::command]
+pub(crate) fn verifier_key_package(
+    key_package: Vec<u8>,
+    expected_identity: String,
+    state: tauri::State<AppState>,
+) -> Result<String, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager
+        .vet_key_package(&key_package, &expected_identity)
+        .to_string())
+}
+
+/// The identity of the leaf of `group_id` carrying `key_package`'s signature key, or `None` - who
+/// holds the key an Add was refused as a duplicate of. See `MlsManager::leaf_holding_key_of`.
+#[tauri::command]
+pub(crate) fn feuille_portant_cle(
+    group_id: String,
+    key_package: Vec<u8>,
+    state: tauri::State<AppState>,
+) -> Result<Option<String>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .leaf_holding_key_of(&group_id, &key_package)
+        .map_err(|e| e.to_string())
+}
+
+/// The pin of `user_id:device_id` (`{ keys, anchored, reaffirmations }`, keys as byte arrays), or
+/// `None` for a device never seen (unverified, never forged) - see
+/// `MlsManager::pinned_signature_keys`.
+#[tauri::command]
+pub(crate) fn cles_signature_epinglees(
+    user_id: String,
+    device_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Option<mls_core::device_trust::PinView>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.pinned_signature_keys(&user_id, &device_id))
+}
+
+/// The epochs at which this device saw `user_id` leave `group_id`'s tree, oldest first - see
+/// `MlsManager::removal_epochs`.
+#[tauri::command]
+pub(crate) fn epoques_departs(
+    group_id: String,
+    user_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Vec<u64>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    Ok(manager.removal_epochs(&group_id, &user_id))
+}
+
+/// Every device event recorded since the last call, and forgets them - see
+/// `mls_core::device_trust::DeviceEvent`. Serialised with the field names the WASM binding uses.
+#[tauri::command]
+pub(crate) fn prendre_evenements_appareils(
+    state: tauri::State<AppState>,
+) -> Result<Vec<mls_core::DeviceEvent>, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    Ok(manager.take_device_events())
 }
 
 #[tauri::command]

@@ -53,6 +53,7 @@ use serde::{Deserialize, Serialize};
 use tls_codec::Serialize as TlsSerialize;
 
 use crate::MlsError;
+use crate::device_trust::{canonical_user_of, leaf_keys};
 use crate::members::credential_identity;
 use crate::state::MlsManager;
 
@@ -62,7 +63,7 @@ const FINGERPRINT_DOMAIN: &[u8] = b"canari/graine-run/epoch-fingerprint/v1";
 
 /// **THE ONE RULE FOR A JOIN: a new USER ends the run, a new DEVICE of a user already in the tree
 /// does not.** Decided by the user (D5, 2026-10-22), for an Add and an external commit alike. The
-/// user is read from the leaf's own credential ([`user_of`]), never from server input.
+/// user is read from the leaf's own credential ([`canonical_user_of`]), never from server input.
 ///
 /// Why a new user rotates: a newcomer handed a seed minted before it arrived can derive every index
 /// of that session (each message key is derived from the seed, not ratcheted), and the floor that
@@ -106,7 +107,7 @@ pub struct CommitSummary {
     pub remove_proposals: usize,
     /// Identities whose pair the commit put in and that were not there before.
     pub added: Vec<String>,
-    /// Canonical users ([`user_of`]) with a leaf after the commit and none before it, judged the same
+    /// Canonical users ([`canonical_user_of`]) with a leaf after the commit and none before it, judged the same
     /// way for an Add and an external commit. A credential that names no user counts as new.
     pub new_users: Vec<String>,
     /// The commit was an EXTERNAL commit (sender `new_member_commit`), named in the reset log.
@@ -120,22 +121,13 @@ impl CommitSummary {
     }
 }
 
-/// The CANONICAL user an identity belongs to: the user half, ASCII-lowercased (user ids are UUIDs;
-/// a case difference names the same account). One reader shared with device trust is owed
-/// (`docs/wiki/backlog.md`, "P3 - one identity reader for rotation and device trust"). `None` for anything that is not exactly `user:device` with both halves non-empty, so a
-/// malformed credential names no user and counts as new.
-fn user_of(identity: &str) -> Option<String> {
-    let (user, device) = identity.split_once(':')?;
-    if user.is_empty() || device.is_empty() || device.contains(':') {
-        return None;
-    }
-    Some(user.to_ascii_lowercase())
-}
-
+/// The users of a tree, read by THE ONE canonical reader device trust uses
+/// ([`canonical_user_of`]): a well-formed `user:device` and a legacy bare `user` credential both
+/// name their user (ASCII-lowercased); anything else names nobody (`None`).
 fn users(pairs: &LeafPairs) -> std::collections::HashSet<Option<String>> {
     pairs
         .values()
-        .map(|(_, identity)| user_of(identity))
+        .map(|(_, identity)| canonical_user_of(identity))
         .collect()
 }
 
@@ -269,11 +261,11 @@ impl BeforeMerge {
         let users_before = users(&self.pairs);
         // The same rule for an Add and an external commit (D5), judged on each ADDED leaf's own
         // credential: a canonical user with no leaf before the commit is new, and a credential that
-        // is not a well-formed `user:device` names no user and counts as new. Only added leaves
+        // names no user (neither `user:device` nor a legacy bare `user`) counts as new. Only added leaves
         // are judged, so a malformed leaf already in the tree does not reset every later commit.
         let mut new_users: Vec<String> = added
             .iter()
-            .filter_map(|identity| match user_of(identity) {
+            .filter_map(|identity| match canonical_user_of(identity) {
                 Some(user) if users_before.contains(&Some(user.clone())) => None,
                 Some(user) => Some(user),
                 None => Some("<no user>".to_string()),
@@ -421,6 +413,8 @@ impl MlsManager {
         &mut self,
         group_id: &str,
     ) -> Result<Option<CommitSummary>, MlsError> {
+        let own_identity = String::from_utf8_lossy(self.credential.identity()).to_string();
+        let own_key = self.keypair.public().to_vec();
         let group = self
             .groups
             .get_mut(group_id)
@@ -431,10 +425,34 @@ impl MlsManager {
         let before = group
             .pending_commit()
             .map(|commit| BeforeMerge::read(&self.provider, group, commit, false));
+        let leaves_before = leaf_keys(group);
         group
             .merge_pending_commit(&self.provider)
             .map_err(|e| MlsError::OpenMls(format!("Merge pending commit error: {:?}", e)))?;
         self.state_snapshot.borrow_mut().invalidate();
+        // Every NEW device the commit put in the tree is recorded ([`crate::device_trust`]) - our own
+        // Adds were vetted against the pins when they were staged, so this only pins first sights
+        // and records them. An external join of ours pins the tree it joined HERE, once the server
+        // took it (`pending_external_joins`), never at the join.
+        let leaves_after = leaf_keys(group);
+        let epoch = group.epoch().as_u64();
+        if self.pending_external_joins.remove(group_id) {
+            // OUR EXTERNAL JOIN, ACCEPTED: its tree is pinned now, as a Welcome's is - joining a
+            // tree is first sight of its members, never "a device was added".
+            self.device_trust
+                .observe_joined_tree(group_id, epoch, &leaves_after, &own_identity);
+        } else if before.is_some() {
+            // Only a commit that WAS pending is one we signed: a merge with nothing pending
+            // proves nothing, so it reaffirms no pin, ours included.
+            self.device_trust.observe_merged_commit(
+                group_id,
+                epoch,
+                &leaves_before,
+                &leaves_after,
+                Some(&own_identity),
+                (&own_identity, &own_key),
+            );
+        }
         let summary = match before {
             Some(before) => observe_merge(
                 &mut self.graine_runs,
@@ -453,6 +471,7 @@ impl MlsManager {
         };
         // The merged commit's submission record ends with it (`pending_submission.rs`).
         self.drop_pending_submission(group_id);
+        self.mark_state_dirty();
         Ok(summary)
     }
 

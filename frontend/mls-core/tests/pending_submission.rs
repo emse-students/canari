@@ -120,12 +120,17 @@ fn a_plain_stage_has_no_record_and_reads_as_never_submitted() {
 #[test]
 fn every_recorded_stage_records_what_it_staged() {
     let gid = "g-kinds";
-    let (_alice, mut bob) = alice_and_bob(gid);
+    let (alice, mut bob) = alice_and_bob(gid);
     let carol = make_device("carol", "dev1");
     let kp = carol.generate_key_package().expect("kp carol");
 
     let (add, skipped) = bob
-        .add_members_recorded(gid, &[b"garbage", &kp], b"add".to_vec())
+        .add_members_recorded(
+            gid,
+            &[b"garbage", &kp],
+            &["carol:dev0", "carol:dev1"],
+            b"add".to_vec(),
+        )
         .expect("add");
     assert_eq!(add.added_indices, vec![1]);
     assert_eq!(skipped.len(), 1);
@@ -147,6 +152,21 @@ fn every_recorded_stage_records_what_it_staged() {
         .remove_members_for_devices_recorded(gid, &["alice:dev1"], b"rd".to_vec())
         .expect("remove device");
     assert_eq!(recorded(&bob, gid), by_device);
+    bob.clear_pending_commit_for(gid).expect("clear");
+
+    // A replacement goes through the gate like any commit, so it is recorded like one - with its
+    // Welcome, which a settled replacement owes the device it re-admits - and survives a restart.
+    let kp_alice = alice.generate_key_package().expect("kp alice");
+    let replace = bob
+        .replace_device_recorded(gid, "alice:dev1", &kp_alice, b"rp".to_vec())
+        .expect("replace");
+    assert!(
+        !replace.welcome.is_empty(),
+        "a replacement's record carries its Welcome"
+    );
+    assert!(replace.added_indices.is_empty());
+    assert_eq!(recorded(&bob, gid), replace);
+    assert_eq!(recorded(&restart(checkpoint(&bob), "bob"), gid), replace);
 }
 
 #[test]

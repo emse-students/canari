@@ -167,6 +167,11 @@ impl MlsManager {
         self.groups.remove(group_id);
         self.drop_pending_submission(group_id);
         self.drop_owed_welcome(group_id);
+        self.pending_external_joins.remove(group_id);
+        self.device_trust.forget_unseeded(group_id);
+        // NO PRUNING HERE: a forget is also the first half of a forget-and-re-Welcome HEAL, and a pin
+        // dropped now would be re-written from whatever tree the re-Welcome brings. The pins and the
+        // departures are bounded at load, past their cap only (`load_or_create`).
         self.drop_graine_run(group_id);
         if min_epoch > 0 {
             self.forgotten_group_min_epochs

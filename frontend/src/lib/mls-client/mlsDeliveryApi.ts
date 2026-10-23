@@ -876,6 +876,8 @@ export class MlsDeliveryApi {
     Array<{
       keyPackage: Uint8Array;
       deviceId: string;
+      /** The `userId` asked for, carried so an Add can check each package names this device. */
+      userId: string;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
@@ -903,6 +905,7 @@ export class MlsDeliveryApi {
       return devices.map((d) => ({
         keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
         deviceId: d.deviceId,
+        userId,
         deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
         deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
         deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,

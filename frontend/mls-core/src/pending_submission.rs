@@ -22,7 +22,8 @@
 //! its own output inside the same `&mut self` call, and an exported state holds a staged commit
 //! together with its submission, or neither.
 //!
-//! The plain stages (`stage_self_update`, `remove_members_for_*`, `add_members_bulk*`) stay for the
+//! The plain stages (`stage_self_update`, `remove_members_for_*`, `add_members_bulk*`,
+//! `replace_device_with_base`) stay for the
 //! callers that merge at once and never submit through the gate; a commit staged by one of them has
 //! no submission and, if it is found pending after a restart, was never sent.
 //!
@@ -149,10 +150,13 @@ impl MlsManager {
 
     /// Stages an Add of `key_packages_bytes` ([`Self::add_members_bulk_with_base`]) and records its
     /// submission in the same call. The skipped key packages come back beside the record.
+    /// `expected_identities[i]` is the device `key_packages_bytes[i]` was fetched for, checked as
+    /// [`Self::add_members_bulk_with_base`] checks it.
     pub fn add_members_recorded(
         &mut self,
         group_id: &str,
         key_packages_bytes: &[&[u8]],
+        expected_identities: &[&str],
         intent: Vec<u8>,
     ) -> Result<(PendingSubmission, Vec<SkippedKeyPackage>), MlsError> {
         log::debug!(
@@ -161,7 +165,7 @@ impl MlsManager {
         );
         let base_epoch = self.get_epoch(group_id)?;
         let ((commit, welcome, added_indices, skipped), group_info) =
-            self.add_members_bulk_with_base(group_id, key_packages_bytes)?;
+            self.add_members_bulk_with_base(group_id, key_packages_bytes, expected_identities)?;
         let record = self.record_staged(
             group_id,
             intent,
@@ -172,6 +176,31 @@ impl MlsManager {
             added_indices,
         )?;
         Ok((record, skipped))
+    }
+
+    /// Stages the replacement of the device `identity` ([`Self::replace_device_with_base`]) and
+    /// records its submission in the same call. Its Welcome is recorded like an Add's, so a settled
+    /// replacement owes it to the device it re-admits; it adds no position of a key-package list.
+    pub fn replace_device_recorded(
+        &mut self,
+        group_id: &str,
+        identity: &str,
+        key_package_bytes: &[u8],
+        intent: Vec<u8>,
+    ) -> Result<PendingSubmission, MlsError> {
+        log::debug!("replace_device_recorded: {group_id}");
+        let base_epoch = self.get_epoch(group_id)?;
+        let (commit, welcome, group_info) =
+            self.replace_device_with_base(group_id, identity, key_package_bytes)?;
+        self.record_staged(
+            group_id,
+            intent,
+            base_epoch,
+            commit,
+            group_info,
+            Some(welcome),
+            Vec::new(),
+        )
     }
 
     /// Writes the record of the commit `group_id` just staged. Encoding cannot fail on these plain

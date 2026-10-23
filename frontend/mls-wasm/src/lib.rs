@@ -434,6 +434,29 @@ impl WasmMlsClient {
         Ok(outcome.forgotten)
     }
 
+    /// Stages ONE commit that removes the device `identity`'s leaf and adds it back from
+    /// `key_package`, without merging (C7-A). Returns `[commit, welcome, group_info]` - see
+    /// `MlsManager::replace_device_with_base`. `intent` is recorded with the staged commit in the
+    /// SAME call (`MlsManager::replace_device_recorded`), as every gated stage's is.
+    #[wasm_bindgen]
+    pub fn replace_device(
+        &mut self,
+        group_id: String,
+        identity: String,
+        key_package: Vec<u8>,
+        intent: Vec<u8>,
+    ) -> Result<js_sys::Array, JsValue> {
+        let record = self
+            .manager
+            .replace_device_recorded(&group_id, &identity, &key_package, intent)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let array = js_sys::Array::new();
+        array.push(&js_sys::Uint8Array::from(&record.commit[..]));
+        array.push(&js_sys::Uint8Array::from(&record.welcome[..]));
+        array.push(&js_sys::Uint8Array::from(&record.group_info[..]));
+        Ok(array)
+    }
+
     /// Add multiple members in a single commit (single epoch increment). Stage-only (C7-A): the
     /// commit is NOT merged - the caller validates it server-side then merge/clear, and reads the
     /// post-merge ratchet tree via `export_ratchet_tree`.
@@ -454,11 +477,17 @@ impl WasmMlsClient {
     /// `intent` is the client's description of the commit, recorded with it in the SAME call
     /// (`MlsManager::add_members_recorded`): no checkpoint can hold this staged commit without the
     /// bytes it is submitted with.
+    /// `expected_identities[i]` is the `userId:deviceId` `key_packages[i]` was fetched for: a package
+    /// naming another device, or the right one under a key this device never pinned for it, is
+    /// skipped (`identity-mismatch`, `signature-key-changed` - see `mls_core::device_trust`). An
+    /// EMPTY package is kept at its position and skipped as `undecodable`, so every index the caller
+    /// reads back still names the device it passed there.
     #[wasm_bindgen]
     pub fn add_members_bulk(
         &mut self,
         group_id: String,
         key_packages: js_sys::Array,
+        expected_identities: js_sys::Array,
         intent: Vec<u8>,
     ) -> Result<js_sys::Array, JsValue> {
         log::info!(
@@ -467,24 +496,22 @@ impl WasmMlsClient {
             key_packages.length()
         );
 
-        // Convert JS Array<Uint8Array> -> Vec<Vec<u8>>
+        // Convert JS Array<Uint8Array> -> Vec<Vec<u8>>, position for position.
         let kp_vecs: Vec<Vec<u8>> = key_packages
             .iter()
-            .filter_map(|v| {
-                let arr = js_sys::Uint8Array::from(v);
-                if arr.length() == 0 {
-                    None
-                } else {
-                    Some(arr.to_vec())
-                }
-            })
+            .map(|v| js_sys::Uint8Array::from(v).to_vec())
             .collect();
-
         let kp_slices: Vec<&[u8]> = kp_vecs.iter().map(|v| v.as_slice()).collect();
+        // A non-string expectation is an empty one, which names no device and so refuses its package.
+        let expected: Vec<String> = expected_identities
+            .iter()
+            .map(|v| v.as_string().unwrap_or_default())
+            .collect();
+        let expected_refs: Vec<&str> = expected.iter().map(String::as_str).collect();
 
         let (record, skipped) = self
             .manager
-            .add_members_recorded(&group_id, &kp_slices, intent)
+            .add_members_recorded(&group_id, &kp_slices, &expected_refs, intent)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let array = js_sys::Array::new();
@@ -519,6 +546,83 @@ impl WasmMlsClient {
         array.push(&skipped_array);
         array.push(&js_sys::Uint8Array::from(&record.group_info[..]));
         Ok(array)
+    }
+
+    /// Whether `key_package` may be added as `expected_identity` (`userId:deviceId`), without
+    /// staging anything: `"first-sight"` / `"pinned"` when it may, otherwise the skip reason's wire
+    /// name an Add would refuse it with. See `MlsManager::vet_key_package`.
+    #[wasm_bindgen]
+    pub fn vet_key_package(&self, key_package: Vec<u8>, expected_identity: String) -> String {
+        self.manager
+            .vet_key_package(&key_package, &expected_identity)
+            .to_string()
+    }
+
+    /// The identity of the leaf of `group_id` carrying `key_package`'s signature key, or
+    /// `undefined` - who holds the key an Add was refused as a duplicate of. See
+    /// `MlsManager::leaf_holding_key_of`.
+    #[wasm_bindgen]
+    pub fn leaf_holding_key_of(
+        &self,
+        group_id: String,
+        key_package: Vec<u8>,
+    ) -> Result<Option<String>, JsValue> {
+        self.manager
+            .leaf_holding_key_of(&group_id, &key_package)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// The pin of `user_id:device_id` as `{ keys: Uint8Array[], anchored, reaffirmations }`, or
+    /// `undefined` for a device never seen - "unverified", never "forged". See
+    /// `MlsManager::pinned_signature_keys`.
+    #[wasm_bindgen]
+    pub fn pinned_signature_keys(
+        &self,
+        user_id: String,
+        device_id: String,
+    ) -> Option<js_sys::Object> {
+        self.manager
+            .pinned_signature_keys(&user_id, &device_id)
+            .map(|pin| {
+                let keys: js_sys::Array = pin
+                    .keys
+                    .iter()
+                    .map(|k| JsValue::from(js_sys::Uint8Array::from(k.as_slice())))
+                    .collect();
+                let obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("keys"), &keys);
+                let _ = js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("anchored"),
+                    &JsValue::from_bool(pin.anchored),
+                );
+                let _ = js_sys::Reflect::set(
+                    &obj,
+                    &JsValue::from_str("reaffirmations"),
+                    &JsValue::from_f64(pin.reaffirmations as f64),
+                );
+                obj
+            })
+    }
+
+    /// The epochs at which this device saw `user_id` leave `group_id`'s tree, oldest first, as
+    /// numbers (exact below 2^53, as `get_epoch`). See `MlsManager::removal_epochs`.
+    #[wasm_bindgen]
+    pub fn removal_epochs(&self, group_id: String, user_id: String) -> Vec<f64> {
+        self.manager
+            .removal_epochs(&group_id, &user_id)
+            .into_iter()
+            .map(|e| e as f64)
+            .collect()
+    }
+
+    /// Every device event recorded since the last call, as a JSON array of
+    /// `{ groupId, epoch, identity, keyFingerprint, trust, addedBy }`, and forgets them. See
+    /// `mls_core::device_trust::DeviceEvent`.
+    #[wasm_bindgen]
+    pub fn take_device_events(&mut self) -> Result<String, JsValue> {
+        let events = self.manager.take_device_events();
+        mls_core::device_trust::events_json(&events).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     #[wasm_bindgen]

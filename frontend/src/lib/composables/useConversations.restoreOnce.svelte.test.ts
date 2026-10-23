@@ -166,6 +166,20 @@ describe('loadAndRestoreConversations - one restore at a time, at most one queue
     expect(convs.conversationsRestored).toBe(false);
   });
 
+  it('a sign-out un-marks the map restored, so the next session is not read as loaded', async () => {
+    const releases = holdEachRestore();
+    const convs = useConversations();
+    const first = convs.loadAndRestoreConversations(makeCtx('alice'));
+    await settle();
+    releases[0].resolve();
+    await first;
+    expect(convs.conversationsRestored).toBe(true);
+
+    convs.invalidateRestores();
+    expect(convs.conversationsRestored).toBe(false);
+    expect(convs.conversationSourcesSettled).toBe(false);
+  });
+
   it('a restore still running from a signed-out session never blocks the next one', async () => {
     const releases = holdEachRestore();
     const convs = useConversations();
