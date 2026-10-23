@@ -4,7 +4,11 @@ import { join } from 'node:path';
 vi.mock('$lib/wasm/mls_wasm_bg.wasm?url', () => ({ default: 'https://cdn.test/mls_wasm_bg.wasm' }));
 
 import { loadAndInitWasm, resetMlsWasmModuleCacheForTests } from './mlsWasmLoader';
-import { resetMlsStateSealForTests, sealMlsStateBlobV2 } from './mlsStateSeal';
+import {
+  MlsStateVerdictError,
+  resetMlsStateSealForTests,
+  sealMlsStateBlobV2,
+} from './mlsStateSeal';
 
 /**
  * A v2 blob through the REAL WASM, not a mock: the build CI ships (`build-mls-wasm` runs before
@@ -15,8 +19,8 @@ import { resetMlsStateSealForTests, sealMlsStateBlobV2 } from './mlsStateSeal';
  *     state the TypeScript writer sealed, groups included;
  *  2. `mls-core`'s own v2 reader (the sealed blob handed to `WasmMlsClient` with its key - what a
  *     phone does with a restored web state) opens the same bytes;
- *  3. that reader answers `STATE_ALTERED` for a flipped byte - the deterministic verdict
- *     `loadAndInitWasm` asks of it when WebCrypto refuses.
+ *  3. that reader answers `STATE_ALTERED` for a flipped byte - the deterministic verdict, as the
+ *     CODE `state_blob_verdict` hands `loadAndInitWasm` when WebCrypto refuses.
  */
 const WASM = readFileSync(join(import.meta.dirname, '../wasm/mls_wasm_bg.wasm'));
 const KEY_B64 = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
@@ -64,5 +68,35 @@ describe('a v2 state blob through the real WASM client', () => {
     expect(() => new bindings.WasmMlsClient('alice', 'web-alice', altered, KEY_B64, true)).toThrow(
       /STATE_ALTERED/
     );
+  });
+
+  it('state_blob_verdict answers a CODE, decided on the Rust variant', () => {
+    const altered = sealed.slice();
+    altered[altered.length - 1] ^= 1;
+    expect(bindings.state_blob_verdict('alice', 'web-alice', sealed, KEY_B64)).toBe('OPENED');
+    expect(bindings.state_blob_verdict('alice', 'web-alice', altered, KEY_B64)).toBe(
+      'STATE_ALTERED'
+    );
+    // A blob that opens under this key but names another identity: what stops a SWAPPED blob,
+    // since the v2 AAD binds only the 16 header bytes.
+    expect(bindings.state_blob_verdict('bob', 'web-bob', sealed, KEY_B64)).toBe(
+      'IDENTITY_MISMATCH'
+    );
+    const other = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
+    expect(bindings.state_blob_verdict('alice', 'web-alice', sealed, other)).toBe(
+      'STATE_KEY_MISMATCH'
+    );
+  });
+
+  it('the web load path turns an altered blob into the TYPED verdict, end to end', async () => {
+    resetMlsWasmModuleCacheForTests();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmResponse());
+    const altered = sealed.slice();
+    altered[altered.length - 1] ^= 1;
+    const error = await loadAndInitWasm('alice', 'web-alice', altered, KEY_B64, true).catch(
+      (e: unknown) => e
+    );
+    expect(error).toBeInstanceOf(MlsStateVerdictError);
+    expect((error as MlsStateVerdictError).code).toBe('STATE_ALTERED');
   });
 });

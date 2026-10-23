@@ -8,7 +8,7 @@ vi.mock('$lib/mls-client', async (importOriginal) => ({
 }));
 
 import { SavedStateUnopenedError } from '$lib/mls-client';
-import { MlsStateUnreadableNowError } from '$lib/mls-client/mlsStateSeal';
+import { MlsStateUnreadableNowError, MlsStateVerdictError } from '$lib/mls-client/mlsStateSeal';
 import { MLS_STATE_UNREADABLE_NOW_READS, WebMlsService } from './WebMlsService';
 
 /**
@@ -87,12 +87,25 @@ describe('WebMlsService - a state unreadable right now', () => {
 
   it('CONTROL: an alteration mls-core PROVED still rotates, read once', async () => {
     // What separates the two classes is the deterministic reader's verdict, not the engine's.
-    loadAndInitWasm.mockRejectedValue(new Error('STATE_ALTERED: v2 AES-GCM tag did not verify'));
+    loadAndInitWasm.mockRejectedValue(new MlsStateVerdictError('STATE_ALTERED', unreadable()));
     const ctx = makeCtx();
 
     await initImpl(ctx, new Uint8Array([1, 2, 3]), { noFreshStart: true });
 
     expect(loadAndInitWasm).toHaveBeenCalledTimes(1);
     expect(ctx.rotateDeviceIdentity).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['STATE_KEY_MISMATCH', 'rotated'],
+    ['STATE_UNDECRYPTABLE', 'undecryptable'],
+    ['IDENTITY_MISMATCH', 'mismatch'],
+    ['STATE_ALTERED', 'altered'],
+  ] as const)('classifies the verdict %s by its TYPE as %s', (code, failure) => {
+    const ctx = makeCtx();
+    // The message is overwritten so only the type can carry the verdict.
+    const error = new MlsStateVerdictError(code, unreadable());
+    error.message = 'no code in this text';
+    expect(ctx.classifyStateLoadFailure(error)).toBe(failure);
   });
 });

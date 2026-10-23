@@ -1,16 +1,28 @@
 /**
  * What a web checkpoint actually puts at rest. `MLS_STATE_SEAL_V2_WRITER_ENABLED` is asserted in
- * `mlsStateSeal.test.ts`; this pins that the CHECKPOINT reaches the v2 writer through it - the
- * service's `encryptState`, which `saveState` (every checkpoint) and `changeDeviceKeyImpl` (the PIN
- * change re-seal) both call - and that the bytes it returns open with the web's v2 opener under the
- * same key, and NOT under another (the PIN-change case: the re-sealed blob names the NEW key).
+ * `mlsStateSeal.test.ts` (OFF in this release: the hardened reader ships first); this pins that the
+ * CHECKPOINT follows it - the service's `encryptState`, which `saveState` (every checkpoint) and
+ * `changeDeviceKeyImpl` (the PIN change re-seal) both call. With the shipped value the checkpoint
+ * stays on the legacy WASM seal; with the flag forced on (what the later flip PR ships) the bytes
+ * open with the web's v2 opener under the same key, and NOT under another (the PIN-change case: the
+ * re-sealed blob names the NEW key).
  */
+const writer = vi.hoisted(() => ({ forcedOn: false }));
 const encryptMlsStateOnMainThread = vi.hoisted(() =>
   vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]))
 );
 
 vi.mock('../workers/mlsKeyPackage.worker?worker', () => ({ default: class {} }));
 vi.mock('../workers/mlsEncrypt.worker?worker', () => ({ default: class {} }));
+vi.mock('$lib/mls-client/mlsStateSeal', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/mls-client/mlsStateSeal')>();
+  return {
+    ...actual,
+    get MLS_STATE_SEAL_V2_WRITER_ENABLED() {
+      return writer.forcedOn || actual.MLS_STATE_SEAL_V2_WRITER_ENABLED;
+    },
+  };
+});
 vi.mock('$lib/mls-client/mlsWasmLoader', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   encryptMlsStateOnMainThread,
@@ -35,7 +47,21 @@ function encryptState(plain: Uint8Array, deviceKeyB64: string): Promise<Uint8Arr
 }
 
 describe('WebMlsService.encryptState - the web at-rest format', () => {
-  it('seals a checkpoint as framed v2, never through the legacy WASM seal', async () => {
+  afterEach(() => {
+    writer.forcedOn = false;
+    encryptMlsStateOnMainThread.mockClear();
+  });
+
+  it('with the shipped writer flag (OFF), a checkpoint stays on the legacy WASM seal', async () => {
+    const plain = new TextEncoder().encode('plain CBOR snapshot');
+    const sealed = await encryptState(plain, keyB64(7));
+
+    expect(isMlsStateBlobV2(sealed)).toBe(false);
+    expect(encryptMlsStateOnMainThread).toHaveBeenCalledTimes(1);
+  });
+
+  it('with the writer on, seals a checkpoint as framed v2, never through the legacy WASM seal', async () => {
+    writer.forcedOn = true;
     const plain = new TextEncoder().encode('plain CBOR snapshot');
     const sealed = await encryptState(plain, keyB64(7));
 
@@ -44,7 +70,8 @@ describe('WebMlsService.encryptState - the web at-rest format', () => {
     expect(await openMlsStateBlobV2(sealed, keyB64(7))).toEqual(plain);
   });
 
-  it('a re-seal under a new device key opens with that key and names the old one a mismatch', async () => {
+  it('with the writer on, a re-seal under a new key opens with it and names the old one a mismatch', async () => {
+    writer.forcedOn = true;
     const plain = new TextEncoder().encode('state after a PIN change');
     const resealed = await encryptState(plain, keyB64(9));
 

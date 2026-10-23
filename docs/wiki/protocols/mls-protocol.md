@@ -1201,7 +1201,11 @@ has the before/after table).
   question nobody has to answer if it never happens. Derived once per device key on the web, as a
   non-extractable `CryptoKey`.
 - **The 16 header bytes are the AAD**, so a rewritten version or fingerprint fails the tag instead of
-  steering the reader somewhere plausible.
+  steering the reader somewhere plausible. **They are ALL the AAD binds**: nothing about whose state
+  it is, or how recent. A blob swapped for another sealed under the same device key therefore OPENS;
+  what refuses to install it is the identity check after the open (`IDENTITY_MISMATCH`, the
+  credential must name this `user:device`). An older checkpoint of the SAME identity put back is not
+  detected by the seal at all - the same as v1 and legacy.
 - **The writer is TypeScript only** (`mlsStateSeal.ts`, routed by `sealWebMlsState` in
   `mlsEncryptWorkerSession.ts`, which THROWS inside Tauri). `mls-core` has no v2 writer, so a native
   build cannot produce one by construction.
@@ -1218,19 +1222,34 @@ has the before/after table).
   engine fault (memory pressure on a ~19 MB state) and a failed tag with the same `OperationError`, and
   `altered` makes `init` rotate the device identity even under `noFreshStart` - irreversibly. So the
   web opener throws `MlsStateUnreadableNowError` (blob size, error name, whether the key derivation
-  succeeded), and `loadAndInitWasm` asks `mls-core`'s deterministic reader for the verdict: any code
-  it answers about the bytes (`STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`,
-  `IDENTITY_MISMATCH`) travels on as itself, so `altered` is only ever its proof and the old-PIN
-  recovery stays reachable; if it OPENS the bytes the engine fault is proven, its client is freed,
-  never installed (a witness, not a second load path), and a re-read of the same bytes does not
-  rebuild it; an untyped witness failure (a trap) drops the memoised WASM instance. Anything else stays `unreadable_now`: `WebMlsService.loadStateWithKey` reads the state up to
-  `MLS_STATE_UNREADABLE_NOW_READS` (3) times, then `init` throws `SavedStateUnopenedError('unreadable_now')`
-  with or without `noFreshStart` - nothing rotated or written, the login says "could not be read
-  right now" (`local_state_unreadable_now`, in no recovery predicate), the next start reads again.
-  The PIN recovery says the same (`LocalStateUnreadableNowError` in `pinChange.ts`), never the
-  "damaged, reset" sentence of `LocalStateUnopenableError`.
-  Pinned by `WebMlsService.unreadableNow.test.ts`, `mlsWasmLoader.test.ts` and, on the REAL WASM,
-  `mlsStateSeal.realWasm.test.ts`.
+  succeeded), and `loadAndInitWasm` asks `mls-core`'s deterministic reader for the verdict through
+  `state_blob_verdict` (`mls-wasm`). **The verdict crosses the boundary as a CODE, classified on the
+  Rust variant** (`MlsError::state_verdict_code`), never by matching the text of a thrown message:
+  `OPENED`, or one of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`,
+  `IDENTITY_MISMATCH`, which returns as the typed `MlsStateVerdictError` that
+  `classifyStateLoadFailure` reads by type - so `altered` is only ever its proof and the old-PIN
+  recovery stays reachable. Each code is also the `Display` prefix the Tauri commands surface, so
+  both boundaries use the same word (pinned in `state_load_failure_is_typed.rs`). A REJECTION from
+  `state_blob_verdict` is by contract no verdict, whatever its text. If the reader OPENS the bytes,
+  the engine fault is proven; what it loaded is dropped inside the call, never installed (a witness,
+  not a second load path), and a re-read of the same bytes does not ask again; a rejection (a trap)
+  drops the memoised WASM instance. Anything but a verdict stays `unreadable_now`:
+  `WebMlsService.loadStateWithKey` reads the state up to `MLS_STATE_UNREADABLE_NOW_READS` (3) times,
+  then `init` throws `SavedStateUnopenedError('unreadable_now')` with or without `noFreshStart` -
+  nothing rotated or written, the login shows `auth_local_state_unreadable_now`
+  (`local_state_unreadable_now`, in no recovery predicate), the next start reads again. The PIN
+  recovery says the same (`LocalStateUnreadableNowError` in `pinChange.ts`), never the "damaged,
+  reset" sentence of `LocalStateUnopenableError`. Pinned by `WebMlsService.unreadableNow.test.ts`,
+  `mlsWasmLoader.test.ts` and, on the REAL WASM, `mlsStateSeal.realWasm.test.ts`.
+- **`unreadable_now` HAS NO EXIT IN CODE, AND THAT IS DECIDED, NOT FORGOTTEN.** A browser that
+  refuses the same bytes on every start lands on the same message on every start. Nothing repairs it
+  silently: installing the state `mls-core` opened would be a second load path behind a failed
+  primary one, and rotating is the irreversible loss this branch exists to refuse. **The remedy is
+  the user's, and the message names it**: free memory (Canari's other tabs, heavy tabs and apps),
+  restart the browser and sign in again; meanwhile use the app or another browser, which are other
+  devices and leave this one's state intact; ask support before any reset, which would erase it. The
+  persistent case - what, if anything, the product offers after N starts - is an owed item
+  ([backlog](../backlog.md#p2---unreadable-right-now-on-every-start-has-no-exit-but-the-user)).
 - **The seal runs on the calling thread, not the encrypt worker**: WebCrypto already runs the cipher
   off the JavaScript thread; what remains on it is the input copy, measured as the main thread's
   longest stall.
@@ -1240,32 +1259,39 @@ has the before/after table).
 **Downgrade story.** A build with the v1 reader (`>= v0.18.18`) refuses version 2 by name
 ("written by a newer client, so this is a downgrade"); an older one reads `CANARIS\x02` as a nonce
 and fails the ChaCha tag. Both are `STATE_UNDECRYPTABLE`: loud, nothing destroyed, the user asked for
-the PIN - and holding a state that build cannot open. That is why **the writer shipped OFF**,
-read-first like v1. Three paths would hand a v2 blob to an old build: a web deploy rolled back; a tab
-still running the previous bundle that re-reads IndexedDB; and a web `.canari` backup restored on a
-phone whose store build predates the reader.
+the PIN - and holding a state that build cannot open. That is why **the writer ships OFF**,
+read-first like v1. Two paths hand a v2 blob to an older web bundle: a tab still running the previous
+bundle that re-reads IndexedDB (an unlock after a deploy), and a web deploy rolled back.
 
-**The flip (2026-10-18, `MLS_STATE_SEAL_V2_WRITER_ENABLED = true`, rides a `1.3.0` pre-release
-first, user's decision).** Both conditions were checked, not assumed: the reader (#1793) is first in
-the stable `v1.2.7`, which served the web, and production's `/api/version` answers
-`minClientVersion: 1.2.7`. Every reader was enumerated on `main` before the flip: the web load
+**A v2 reader is not enough: the HARDENED one is, so the writer is still OFF.** A v2 reader is in
+every build since `v1.2.7` (#1793), but the builds before the hardening above turn a v2 blob that
+WebCrypto refuses into a wrong answer: `v1.2.7` into `STATE_UNDECRYPTABLE` (the PIN-recovery prompt,
+for a state no PIN opens there), and `v1.4.0` into `STATE_ALTERED`, after which
+`noPinOpensState('altered')` ROTATES the identity, irreversibly - for bytes that may have been
+healthy and only met an engine fault. A v2 blob reaching such a build (an old tab re-initialising, or
+a web rollback down to one) is the backlog's "a damaged MLS state is called a PIN rotation" again. So
+the release carrying the hardened reader ships with `MLS_STATE_SEAL_V2_WRITER_ENABLED = false`, and
+**the flip is its own later pull request, owed once BOTH floors are at or past the release tag that
+carries this reader**: production's `minClientVersion`, AND the lowest tag a web rollback is still
+allowed to reach. A tag, never a date ([durable-rules](../durable-rules.md)). Owed in
+[backlog](../backlog.md#p2---the-web-checkpoint-is-82--wasm-chacha20-seal---built-writer-off-draft-pr-2026-10-12).
+
+**Every reader, enumerated on `main` (2026-10-18), for the flip to rely on:** the web load
 (`loadAndInitWasm` -> `openMlsStateBlobV2`) is the ONE entry of the init, the PIN-recovery open
 (`openLocalStateWithKey` -> `loadStateWithKey`) and the reload after a key-package round; every
 native load (Tauri commands, `concurrency.rs`, the Android background JNI, the iOS NSE, the
 `.canari` restore probe in `storage.rs`, the other-account check) goes through
 `MlsManager::load_with_key` / `state_blob::parse`, which reads v2. Nothing else in the frontend reads
-the blob's bytes. Native builds still never WRITE v2 (`sealWebMlsState` throws inside Tauri), so on a
-phone the flip changes only the phone's BROWSER.
+the blob's bytes. Native builds never WRITE v2 (`sealWebMlsState` throws inside Tauri), so on a phone
+the flip changes only the phone's BROWSER.
 
-**It is a one-way door for the DATA, never for the code - and a test enforces it**
-(`mlsStateSeal.test.ts`, "THE ONE-WAY DOOR": the writer stays on, and it fails if the web dispatch or
-`mls-core`'s `open_v2` leaves the tree). Setting the constant back to `false` stops
-new v2 writes and nothing else: a v2 blob stays v2 until its next checkpoint rewrites it legacy. So
-**both v2 readers are permanent**, and **a web rollback below `v1.2.7` is forbidden from now on** - it
-would hand every browser a state it cannot open (`STATE_UNDECRYPTABLE`, nothing destroyed, PIN asked
-for nothing). The encrypt worker and `encryptMlsStateOnMainThread` keep their legacy caller until the
-flip has shipped in a stable, so the revert stays one line while the alpha is read; they are deleted
-after.
+**Once flipped, it is a one-way door for the DATA, never for the code.** Setting the constant back to
+`false` stops new v2 writes and nothing else: a v2 blob stays v2 until its next checkpoint rewrites
+it legacy. So from the flip on **both v2 readers are permanent**, and the web rollback floor can
+never again go below the tag carrying the hardened reader. `mlsStateSeal.test.ts` already fails if
+the web dispatch or `mls-core`'s `open_v2` leaves the tree, and asserts the writer OFF - the flip PR
+moves that assertion. The encrypt worker and `encryptMlsStateOnMainThread` keep their legacy caller
+until the flip has shipped in a stable, so a revert stays one line; they are deleted after.
 
 **Pinned by** `mls-core/tests/state_blob_v2.rs` (the TypeScript writer's own bytes, frozen in
 `tests/fixtures/webcrypto-v2-peer-state.bin` by `frontend/scripts/freeze-v2-state-blob-fixture.ts`,

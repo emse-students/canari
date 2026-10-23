@@ -875,6 +875,14 @@ export class WebMlsService extends BaseMlsService {
       // refused it and nothing proved the bytes wrong (`MlsStateUnreadableNowError`), so the blob is
       // kept as it is and the next start reads it again. A rotation here was IRREVERSIBLE for a
       // state that was only ever in a browser short of memory.
+      //
+      // AND IT HAS NO EXIT IN CODE, DELIBERATELY: a browser that refuses the same bytes on every
+      // start stays here on every start. The remedy is the user's and the message names it
+      // (`auth_local_state_unreadable_now`: free memory and restart the browser; meanwhile use the
+      // app or another browser, which are other devices; support before any reset). A silent repair
+      // - installing the state `mls-core` opened, or rotating - is exactly what this branch refuses.
+      // The persistent case is an OWED item, not a decided one (`docs/wiki/backlog.md`, "unreadable
+      // right now on every start").
       if (cause === 'unreadable_now') {
         console.error(
           `[MLS] The saved state stayed unreadable after ${MLS_STATE_UNREADABLE_NOW_READS} reads - NOTHING rotated or written, the next start reads it again: ${String(e).slice(0, 240)}`

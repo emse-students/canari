@@ -241,12 +241,13 @@ describe('sealMlsStateBlobV2', () => {
     expect(isMlsStateBlobV2(blob.slice(0, 15))).toBe(false);
   });
 
-  it('THE ONE-WAY DOOR: the writer stays on and NEITHER v2 reader may be removed', () => {
-    // Read-first, write-later - see MLS_STATE_SEAL_V2_WRITER_ENABLED. Once a browser has written v2,
-    // only a v2 reader opens that state: turning the writer off leaves every v2 blob in place, and
-    // deleting a reader strands it. This fails if either reader leaves the tree; the Rust reader
-    // is also pinned by `mls-core/tests/state_blob_v2.rs`.
-    expect(MLS_STATE_SEAL_V2_WRITER_ENABLED).toBe(true);
+  it('ships the HARDENED reader with the writer OFF, and NEITHER v2 reader may be removed', () => {
+    // Reader first, writer later - see MLS_STATE_SEAL_V2_WRITER_ENABLED. The writer turns on in its
+    // OWN later pull request, once production's minClientVersion AND the web rollback floor are at
+    // or past the tag carrying this reader; that PR moves this assertion, deliberately. Once a
+    // browser has written v2, only a v2 reader opens that state, so this also fails if either
+    // reader leaves the tree; the Rust reader is pinned by `mls-core/tests/state_blob_v2.rs`.
+    expect(MLS_STATE_SEAL_V2_WRITER_ENABLED).toBe(false);
     const loader = readFileSync(join(import.meta.dirname, 'mlsWasmLoader.ts'), 'utf-8');
     expect(loader).toMatch(/isMlsStateBlobV2\(state\)/);
     expect(loader).toMatch(/openMlsStateBlobV2\(state, deviceKeyB64\)/);

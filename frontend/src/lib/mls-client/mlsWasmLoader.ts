@@ -9,7 +9,14 @@
  * WASM assets live under `$lib/wasm/` (built output).
  */
 import { beginBootSpan, endBootSpan, timeBootSpan } from './bootBenchmark';
-import { MlsStateUnreadableNowError, isMlsStateBlobV2, openMlsStateBlobV2 } from './mlsStateSeal';
+import {
+  MLS_STATE_VERDICT_CODES,
+  MlsStateUnreadableNowError,
+  MlsStateVerdictError,
+  isMlsStateBlobV2,
+  openMlsStateBlobV2,
+  type MlsStateVerdictCode,
+} from './mlsStateSeal';
 import type { GraineSignatureEngine, GraineSignatureVerdict } from '$lib/crypto/graineV2';
 
 export type MlsWasmBindings = typeof import('$lib/wasm/mls_wasm.js');
@@ -148,36 +155,33 @@ export async function migrateLegacyMlsStateBlob(
 }
 
 /**
- * The codes `mls-core` answers ABOUT THE BYTES. Any of them from the deterministic reader is a verdict
- * and travels on as itself, so the classifier gives it the same recovery a native load would:
- * `STATE_ALTERED` (a failed tag, proven), `STATE_KEY_MISMATCH` (the old PIN opens it),
- * `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH` (it opened and is another device's).
- */
-const DETERMINISTIC_VERDICT =
-  /STATE_ALTERED|STATE_KEY_MISMATCH|STATE_UNDECRYPTABLE|IDENTITY_MISMATCH/;
-
-/**
  * The bytes the deterministic reader already OPENED this page: their verdict is known, so a re-read
- * that WebCrypto refuses again does not rebuild a witness client for an answer already given. Keyed
- * by the blob itself, which `WebMlsService.loadStateWithKey` hands to every read of one load.
+ * that WebCrypto refuses again does not load the state a second time for an answer already given.
+ * Keyed by the blob itself, which `WebMlsService.loadStateWithKey` hands to every read of one load.
  */
 const openedByDeterministicReader = new WeakSet<Uint8Array>();
+
+function isVerdictCode(answer: string): answer is MlsStateVerdictCode {
+  return MLS_STATE_VERDICT_CODES.has(answer);
+}
 
 /**
  * WebCrypto refused a v2 blob; returns the error that refusal really amounts to, asked of the ONE
  * reader whose answer is a fact about the bytes.
  *
  * `mls-core`'s v2 reader is pure, deterministic software AES-GCM: it has no engine to fault, so a
- * code from it ({@link DETERMINISTIC_VERDICT}) is a fact and is returned AS IS - `STATE_ALTERED` is
- * the only way the alteration is ever proven on the web. If it OPENS the same bytes, the WebCrypto
- * refusal was an engine fault, proven; if it fails some other way (out of memory too), nothing is
- * known. Both leave the refusal as {@link MlsStateUnreadableNowError}: unreadable right now, nothing
- * destroyed.
+ * verdict from it is a fact. It crosses the WASM boundary as a CODE (`state_blob_verdict`, which
+ * classifies on the Rust variant), and returns here as {@link MlsStateVerdictError} - typed, so no
+ * caller reads a recovery out of a message; `STATE_ALTERED` is the only way the alteration is ever
+ * proven on the web. If the reader OPENS the same bytes, the WebCrypto refusal was an engine fault,
+ * proven; if it REJECTS (not a verdict: out of memory, a trap), nothing is known. Both leave the
+ * refusal as {@link MlsStateUnreadableNowError}: unreadable right now, nothing destroyed.
  *
- * A client the deterministic reader builds is FREED, never installed: it is the witness of a
- * verdict, not a second load path - the primary path (WebCrypto) is what failed, and the accusing
- * line below is what sends the fix there. A witness that failed untyped (a trap, a memory grow
- * refused) may have left the memoised WASM instance unusable, so the next load instantiates afresh.
+ * What the reader loads is dropped inside `state_blob_verdict`, never installed: it is the witness
+ * of a verdict, not a second load path - the primary path (WebCrypto) is what failed, and the
+ * accusing line below is what sends the fix there. A reader that failed untyped (a trap, a memory
+ * grow refused) may have left the memoised WASM instance unusable, so the next load instantiates
+ * afresh.
  */
 function verdictOfDeterministicReader(
   initWasm: MlsWasmBindings,
@@ -194,30 +198,39 @@ function verdictOfDeterministicReader(
     );
     return refusal;
   }
+  let answer: string;
   try {
-    const witness = new initWasm.WasmMlsClient(userId, deviceId, state, deviceKeyB64, true);
-    witness.free();
+    answer = initWasm.state_blob_verdict(userId, deviceId, state, deviceKeyB64);
+  } catch (e) {
+    const failure = String(e).slice(0, 160);
+    refusal.deterministicReader = `failed: ${failure}`;
+    wasmModulePromise = null;
+    console.error(
+      `[MLS] state open v2: WebCrypto refused (${refusal.errorName}, ${refusal.blobBytes} B, key ${refusal.keyPrepared ? 'derived' : 'NOT derived'}) and mls-core gave no verdict (${failure}) - unreadable right now, nothing destroyed; the WASM module is instantiated afresh next load`
+    );
+    return refusal;
+  }
+  if (answer === 'OPENED') {
     openedByDeterministicReader.add(state);
     refusal.deterministicReader = 'opened';
     console.error(
       `[MLS] state open v2: WebCrypto refused (${refusal.errorName}, ${refusal.blobBytes} B) bytes that mls-core OPENS - an engine fault, proven; nothing destroyed, the state is re-read`
     );
     return refusal;
-  } catch (e) {
-    const answer = String(e);
-    if (DETERMINISTIC_VERDICT.test(answer)) {
-      console.error(
-        `[MLS] state open v2: WebCrypto refused (${refusal.errorName}, ${refusal.blobBytes} B) and mls-core's deterministic reader gives the verdict: ${answer.slice(0, 160)}`
-      );
-      return e instanceof Error ? e : new Error(answer);
-    }
-    refusal.deterministicReader = `failed: ${answer.slice(0, 160)}`;
-    wasmModulePromise = null;
-    console.error(
-      `[MLS] state open v2: WebCrypto refused (${refusal.errorName}, ${refusal.blobBytes} B, key ${refusal.keyPrepared ? 'derived' : 'NOT derived'}) and mls-core gave no verdict (${answer.slice(0, 160)}) - unreadable right now, nothing destroyed; the WASM module is instantiated afresh next load`
-    );
-    return refusal;
   }
+  if (isVerdictCode(answer)) {
+    console.error(
+      `[MLS] state open v2: WebCrypto refused (${refusal.errorName}, ${refusal.blobBytes} B) and mls-core's deterministic reader gives the verdict ${answer}`
+    );
+    return new MlsStateVerdictError(answer, refusal);
+  }
+  // An answer outside the contract means these bindings and `state_blob_verdict` disagree - a build
+  // defect, never a verdict, so it destroys nothing and says so.
+  refusal.deterministicReader = `unrecognised answer: ${answer.slice(0, 60)}`;
+  console.error(
+    `[MLS] state open v2: mls-core's state_blob_verdict answered '${answer.slice(0, 60)}', outside its contract - a bindings mismatch; unreadable right now, nothing destroyed`
+  );
+  return refusal;
 }
 
 /**

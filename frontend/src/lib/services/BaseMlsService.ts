@@ -48,7 +48,11 @@ import {
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
-import { MlsStateUnreadableNowError } from '$lib/mls-client/mlsStateSeal';
+import {
+  MlsStateUnreadableNowError,
+  MlsStateVerdictError,
+  type MlsStateVerdictCode,
+} from '$lib/mls-client/mlsStateSeal';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -246,6 +250,17 @@ function assertResolvedIdentity(seam: string, userId: string, deviceId: string):
     throw new UnresolvedIdentityError(seam, 'deviceId');
   }
 }
+
+/**
+ * The recovery each verdict of `mls-core`'s deterministic reader maps to - the same one the prefix
+ * of the identical native error reaches through the string arms of `classifyStateLoadFailure`.
+ */
+const STATE_LOAD_FAILURE_OF_VERDICT: Record<MlsStateVerdictCode, StateLoadFailure> = {
+  STATE_ALTERED: 'altered',
+  STATE_KEY_MISMATCH: 'rotated',
+  STATE_UNDECRYPTABLE: 'undecryptable',
+  IDENTITY_MISMATCH: 'mismatch',
+};
 
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
@@ -651,6 +666,9 @@ export abstract class BaseMlsService implements IMlsService {
     // A TYPE, read before any code: the web's WebCrypto refusal is not a verdict on the bytes, and
     // its message must never be able to reach a needle below.
     if (error instanceof MlsStateUnreadableNowError) return 'unreadable_now';
+    // A TYPE too: `mls-core`'s deterministic reader judged bytes WebCrypto refused, and its verdict
+    // crossed the WASM boundary as a code (`state_blob_verdict`), never as prose.
+    if (error instanceof MlsStateVerdictError) return STATE_LOAD_FAILURE_OF_VERDICT[error.code];
     const errStr = String(error);
     if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
     if (errStr.includes('STATE_KEY_MISMATCH')) return 'rotated';
