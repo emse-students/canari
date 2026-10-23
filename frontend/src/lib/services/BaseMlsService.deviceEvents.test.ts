@@ -71,11 +71,16 @@ describe('BaseMlsService device events - handed to the notices', () => {
     error.mockRestore();
   });
 
-  it('calls no consumer for an empty take', async () => {
+  // A notice the server's evidence did not answer for is PARKED by the consumer; on a quiet account
+  // no new event would ever come to retry it. Every hand-over - registration, each drain end (so
+  // each reconnect and resume), each own Add - is the durable moment it is retried.
+  it('hands an empty take over too, so the consumer retries what it parked', async () => {
     const ctx = makeCtx([]);
     const consumer = vi.fn(async () => {});
     ctx.setDeviceEventConsumer(consumer);
     await ctx.deviceEventHandOver;
-    expect(consumer).not.toHaveBeenCalled();
+    expect(consumer).toHaveBeenCalledWith([]);
+    await ctx.handOverDeviceEvents('drain end');
+    expect(consumer).toHaveBeenCalledTimes(2);
   });
 });

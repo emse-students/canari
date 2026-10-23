@@ -4914,9 +4914,10 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Takes the pending device events and hands them to the consumer. Called when a drain ends (the
-   * commits it merged are the usual source) and after this device's own Adds. With no consumer the
-   * events stay in the sealed state, untaken, for the next one.
+   * Takes the pending device events and hands them to the consumer - an empty take included, so the
+   * consumer retries what it parked. Called when a drain ends (the commits it merged are the usual
+   * source), after this device's own Adds and at registration. With no consumer the events stay in
+   * the sealed state, untaken, for the next one.
    *
    * A consumer that throws loses the events it was handed - logged at error, since that is a notice
    * the user will never see; the consumer isolates each event itself so one cannot cost the others.
@@ -4932,8 +4933,12 @@ export abstract class BaseMlsService implements IMlsService {
         console.error(`[TRUST] device events not taken (${why}) - they stay in the state:`, e);
         return;
       }
-      if (events.length === 0) return;
-      console.debug(`[TRUST] ${events.length} device event(s) handed to the notices (${why})`);
+      // AN EMPTY TAKE IS HANDED OVER TOO: the consumer parks an event whose evidence the server did
+      // not answer, and each hand-over - registration, every drain end, every own Add - is the
+      // durable moment it retries it. Skipping the call would leave it parked on a quiet account.
+      if (events.length > 0) {
+        console.debug(`[TRUST] ${events.length} device event(s) handed to the notices (${why})`);
+      }
       try {
         await consumer(events);
       } catch (e) {
@@ -5004,6 +5009,8 @@ export abstract class BaseMlsService implements IMlsService {
         this.stageReplaceDevice(groupId, `${device.userId}:${device.deviceId}`, device.keyPackage),
       { excludeDeviceIds, exportTree: true }
     );
+    // As `addMember`: a replaced device under a new key is a device event this commit recorded.
+    void this.handOverDeviceEvents('own add');
     return { welcome: result.welcome, ratchetTree: result.ratchetTree };
   }
 

@@ -2,6 +2,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions } from '$lib/types';
 import {
+  CONTACT_NEW_DEVICE_WINDOW_MS,
   deviceEventAudience,
   deviceEventKey,
   isNewToItsOwner,
@@ -69,6 +70,11 @@ export interface DeviceNoticeContext {
     { conversationType?: string; messages: ReadonlyArray<{ id: string }> }
   >;
   /**
+   * The groups this device holds MLS state for (`IMlsService.getLocalGroups`) - the authority on
+   * where a contact line is owed, whether or not its conversation row is loaded yet.
+   */
+  localGroups: () => string[];
+  /**
    * Every leaf identity of a group's tree, read locally (`IMlsService.getGroupMemberIdentities`);
    * throws when this device does not hold the group.
    */
@@ -104,11 +110,34 @@ interface Stored {
   lined: string[];
   /** Events whose key age the server did not answer, decided at the next delivery. */
   undecided: DeviceEvent[];
+  /** Contact devices decided NEW whose lines could not all be written yet (`writeContactLines`). */
+  owedLines: OwedLine[];
   /** Refused own devices whose notice was dismissed (`dismissRefusedDeviceNotice`). */
   refusedSeen: string[];
 }
 
-const EMPTY: Stored = { pending: [], announced: [], lined: [], undecided: [], refusedSeen: [] };
+/** A contact line decided owed but not yet written everywhere, retried at each delivery. */
+interface OwedLine {
+  event: DeviceEvent;
+  key: string;
+  /** When the device was decided new (ms) - past the contact window the line is dropped. */
+  since: number;
+}
+
+const EMPTY: Stored = {
+  pending: [],
+  announced: [],
+  lined: [],
+  undecided: [],
+  owedLines: [],
+  refusedSeen: [],
+};
+
+function isOwedLine(v: unknown): v is OwedLine {
+  if (!v || typeof v !== 'object') return false;
+  const o = v as Record<string, unknown>;
+  return isEvent(o.event) && typeof o.key === 'string' && typeof o.since === 'number';
+}
 
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string') : [];
@@ -130,6 +159,7 @@ const pending = new SvelteMap<string, OwnDeviceNotice>();
 let announced: string[] = [];
 let lined: string[] = [];
 let undecided: DeviceEvent[] = [];
+let owedLines: OwedLine[] = [];
 const refusedNotices = new SvelteMap<string, RefusedDeviceNotice>();
 let refusedSeen: string[] = [];
 let boundAccount: string | null = null;
@@ -160,6 +190,7 @@ function readStored(userId: string): Stored {
       announced: strings(parsed.announced),
       lined: strings(parsed.lined),
       undecided: Array.isArray(parsed.undecided) ? parsed.undecided.filter(isEvent) : [],
+      owedLines: Array.isArray(parsed.owedLines) ? parsed.owedLines.filter(isOwedLine) : [],
       refusedSeen: strings(parsed.refusedSeen),
     };
   } catch (e) {
@@ -174,6 +205,7 @@ function writeStored(userId: string): void {
     announced,
     lined,
     undecided,
+    owedLines,
     refusedSeen,
   };
   try {
@@ -194,6 +226,7 @@ export function loadDeviceNotices(userId: string): void {
   announced = stored.announced;
   lined = stored.lined;
   undecided = stored.undecided;
+  owedLines = stored.owedLines;
   refusedSeen = stored.refusedSeen;
   for (const n of stored.pending) pending.set(n.key, n);
   if (stored.pending.length > 0) {
@@ -208,6 +241,7 @@ export function forgetDeviceNotices(): void {
   announced = [];
   lined = [];
   undecided = [];
+  owedLines = [];
   refusedSeen = [];
   boundAccount = null;
 }
@@ -263,6 +297,11 @@ export async function deliverDeviceEvents(
     console.error(`[DEVICE_NOTICE] no account bound - ${events.length} device event(s) dropped`);
     return;
   }
+  // An empty hand-over with nothing parked is every drain's: nothing to do, nothing to say.
+  if (events.length === 0 && undecided.length === 0 && owedLines.length === 0) return;
+  // One tree read per conversation per delivery, whatever the number of events (not reactive).
+  const trees: Record<string, Promise<string[]>> = {};
+  await retryOwedLines(ctx, trees);
   // The events a previous delivery could not decide come first, oldest first.
   const retried = undecided;
   undecided = [];
@@ -271,8 +310,6 @@ export async function deliverDeviceEvents(
     `[DEVICE_NOTICE] ${events.length} device event(s) to sort (+${retried.length} undecided)`
   );
   const claimed: string[] = [];
-  // One tree read per conversation per delivery, whatever the number of events (not reactive).
-  const trees: Record<string, Promise<string[]>> = {};
   let ownEnrolled: Promise<number | null | 'unanswered'> | null = null;
   let silent = 0;
   let old = 0;
@@ -291,6 +328,7 @@ export async function deliverDeviceEvents(
         continue;
       }
       if ((audience === 'owner-alert' ? announced : lined).includes(key)) continue;
+      if (audience === 'contact-line' && owedLines.some((o) => o.key === key)) continue;
       // THE EVIDENCE THAT THE DEVICE IS NEW TO ITS OWNER, not merely new to this device.
       ownEnrolled ??= ctx.ownEnrolledAt();
       const [age, enrolledAt] = await Promise.all([
@@ -322,8 +360,10 @@ export async function deliverDeviceEvents(
           claimed.push(key);
         }
       } else {
-        await writeContactLines(event, key, ctx, trees);
-        lined = [...lined, key].slice(-MAX_ANNOUNCED_DEVICE_KEYS);
+        settleContactLine(
+          { event, key, since: ctx.now() },
+          await writeContactLines(event, key, ctx, trees)
+        );
         writeStored(boundAccount);
       }
     } catch (e) {
@@ -334,7 +374,7 @@ export async function deliverDeviceEvents(
   if (old > 0) {
     console.log(`[DEVICE_NOTICE] ${old} device(s) seen for the first time here are not new`);
   }
-  if (retried.length > 0 || undecided.length > 0) writeStored(boundAccount);
+  if (retried.length > 0 || undecided.length > 0 || owedLines.length > 0) writeStored(boundAccount);
   if (claimed.length > 0 && ctx.claimNative) {
     try {
       await ctx.claimNative(claimed);
@@ -357,10 +397,23 @@ async function writeContactLines(
   key: string,
   ctx: DeviceNoticeContext,
   trees: Record<string, Promise<string[]>>
-): Promise<void> {
+): Promise<boolean> {
   const userId = userIdOfLeaf(event.identity);
+  const held = new Set(ctx.localGroups());
   let getName: ((id: string) => string) | null = null;
   let written = 0;
+  let owed = false;
+  const holdsContact = async (groupId: string): Promise<boolean | 'unreadable'> => {
+    if (!Object.hasOwn(trees, groupId)) trees[groupId] = ctx.memberIdentities(groupId);
+    try {
+      return (await trees[groupId]).some((leaf) => userIdOfLeaf(leaf) === userId);
+    } catch (e) {
+      console.warn(
+        `[DEVICE_NOTICE] tree of ${groupId.slice(0, 8)}... unreadable, its line stays owed: ${String(e)}`
+      );
+      return 'unreadable';
+    }
+  };
   for (const [groupId, convo] of ctx.conversations.entries()) {
     // A channel row is a salon, never a place for the line.
     if ((convo.conversationType ?? 'group') === 'channel') continue;
@@ -372,18 +425,14 @@ async function writeContactLines(
     if (audience !== 'contact-line') continue;
     const messageId = contactLineId(groupId, key);
     if (convo.messages.some((msg) => msg.id === messageId)) continue;
-    if (!Object.hasOwn(trees, groupId)) trees[groupId] = ctx.memberIdentities(groupId);
-    let leaves: string[];
-    try {
-      leaves = await trees[groupId];
-    } catch (e) {
-      // A row whose group this device does not hold (yet) cannot say who is in it.
-      console.debug(
-        `[DEVICE_NOTICE] tree of ${groupId.slice(0, 8)}... unreadable, no line there: ${String(e)}`
-      );
+    // A row whose group this device does not hold has no tree to say who is in it, and no line.
+    if (!held.has(groupId)) continue;
+    const holds = await holdsContact(groupId);
+    if (holds === 'unreadable') {
+      owed = true;
       continue;
     }
-    if (!leaves.some((leaf) => userIdOfLeaf(leaf) === userId)) continue;
+    if (!holds) continue;
     getName ??= await ctx.resolveDisplayNames([userId]);
     await ctx.addMessageToChat(
       'system',
@@ -394,8 +443,57 @@ async function writeContactLines(
     written++;
     console.log(`[DEVICE_NOTICE] contact line written in ${groupId.slice(0, 8)}...`);
   }
-  if (written === 0) {
+  // A HELD group with no row yet (the start-up drain may run before the rows load) is a line still
+  // owed if the contact sits in its tree - the MLS state, not the row list, says where they are.
+  for (const groupId of held) {
+    if (ctx.conversations.has(groupId) || ctx.isDistributionGroup(groupId)) continue;
+    if ((await holdsContact(groupId)) === false) continue;
+    owed = true;
+    console.debug(`[DEVICE_NOTICE] ${groupId.slice(0, 8)}... has no row yet - its line stays owed`);
+  }
+  if (written === 0 && !owed) {
     console.debug('[DEVICE_NOTICE] no 1:1 or group conversation shared with that contact');
+  }
+  return owed;
+}
+
+/**
+ * Settles one contact device after a pass of {@link writeContactLines}: LINED for good when no line
+ * is owed any more, otherwise kept (durably, bounded) for the next delivery - which every hand-over
+ * of the MLS layer is, an empty one included. A line is never marked written before it was.
+ */
+function settleContactLine(line: OwedLine, owed: boolean): void {
+  owedLines = owedLines.filter((o) => o.key !== line.key);
+  if (owed) {
+    owedLines = [...owedLines, line].slice(-MAX_UNDECIDED_DEVICE_EVENTS);
+    return;
+  }
+  lined = [...lined, line.key].slice(-MAX_ANNOUNCED_DEVICE_KEYS);
+}
+
+/**
+ * Retries the contact lines still owed - no new evidence is asked, the device was decided new
+ * already. One owed past the contact window ({@link CONTACT_NEW_DEVICE_WINDOW_MS}) is dropped: the
+ * device is no longer new to anyone reading the conversation.
+ */
+async function retryOwedLines(
+  ctx: DeviceNoticeContext,
+  trees: Record<string, Promise<string[]>>
+): Promise<void> {
+  if (owedLines.length === 0) return;
+  for (const line of owedLines) {
+    try {
+      if (ctx.now() - line.since > CONTACT_NEW_DEVICE_WINDOW_MS) {
+        owedLines = owedLines.filter((o) => o.key !== line.key);
+        console.log(
+          '[DEVICE_NOTICE] an owed contact line expired unwritten - the device is not new now'
+        );
+        continue;
+      }
+      settleContactLine(line, await writeContactLines(line.event, line.key, ctx, trees));
+    } catch (e) {
+      console.error('[DEVICE_NOTICE] one owed contact line not retried:', e);
+    }
   }
 }
 

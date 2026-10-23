@@ -200,6 +200,7 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
       ownDeviceId: session.getMyDeviceId(),
       isDistributionGroup: (groupId) => mls.isDistributionGroup(groupId),
       conversations: session.conversations,
+      localGroups: () => mls.getLocalGroups(),
       memberIdentities: (groupId) => mls.getGroupMemberIdentities(groupId),
       addMessageToChat: session.addMessageToChat,
       resolveDisplayNames,

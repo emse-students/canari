@@ -179,6 +179,7 @@ describe('BaseMlsService.replaceMember - one commit, vetted first', () => {
       vetKeyPackage: proto.vetKeyPackage,
       vetKeyPackageNative: vi.fn(async () => verdict),
       stageReplaceDevice: vi.fn(async () => staged),
+      handOverDeviceEvents: vi.fn(async () => {}),
       runCommitTransaction: vi.fn(
         async (
           _g: string,
@@ -210,6 +211,8 @@ describe('BaseMlsService.replaceMember - one commit, vetted first', () => {
       exportTree: true,
     });
     expect(out.welcome).toEqual(new Uint8Array([2]));
+    // As every own Add: the device events this commit recorded go to the notices.
+    expect(ctx.handOverDeviceEvents).toHaveBeenCalledWith('own add');
     info.mockRestore();
   });
 });

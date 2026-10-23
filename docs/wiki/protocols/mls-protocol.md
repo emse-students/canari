@@ -776,8 +776,11 @@ app finds the key by fingerprint (`keyFingerprintOf()`, Rust's `key_fingerprint`
 
 **Who consumes the events.** `BaseMlsService.setDeviceEventConsumer` hands the taken events to
 `deliverDeviceEvents` (`utils/chat/deviceNotices.svelte.ts`, registered by `registerDeviceNotices`
-at session start): after every drain, after this device's own Adds, and once at registration for
-what the sealed state already holds - so the 512-event store drains. With no consumer they stay:
+at session start): after every drain, after this device's own Adds (`addMember`,
+`addMembersBulk`, `replaceMember`), and once at registration for what the sealed state already
+holds - so the 512-event store drains. An EMPTY take is handed over too: it is the durable moment
+the notices retry what they parked (an `undecided` event, an owed line), so a quiet account does not
+leave an alert parked until some unrelated device event arrives. With no consumer they stay:
 sign-out removes it (`unregisterDeviceNotices`), so the events wait in the state for the account
 that consumes them next.
 
@@ -788,6 +791,15 @@ that consumes them next.
   contact's new device is often first seen in a community they share, and the line still reaches
   the private conversations. Never in a channel row or a key group. Written once per device and
   key, durably (`lined`, the last 256), not only against the messages a conversation has loaded.
+  A device is LINED only once no line is still owed: a group this device holds
+  (`getLocalGroups`) with the contact in its tree but no row yet - the start-up drain may run
+  before the rows load - or whose tree is unreadable keeps the line OWED (`owedLines`, durable,
+  64 at most), retried at each hand-over without asking the evidence again, and dropped past the
+  7-day contact window.
+- **A reset device re-added in one commit** (`replaceMember`) under a key a member never saw for it
+  reads to that member as "added a device": it is a device under a key they never saw, which is
+  what the line says. Defensible, and deliberate - the line never claims the device id is new. A
+  repair under the PINNED key announces nothing (`pinned`).
 - **The owner alert in the app** is `NewDeviceBanner.svelte` in the layout's banner column: the
   device's name when the device list has one, when this device learned of it, and a link to
   `/settings/security`. Durable per account (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the

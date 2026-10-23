@@ -68,6 +68,7 @@ function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
     ownDeviceId: 'phone-a',
     isDistributionGroup: (g) => g === 'community-key',
     conversations,
+    localGroups: () => Object.keys(TREES),
     memberIdentities: vi.fn(async (g: string) => {
       const tree = TREES[g];
       if (!tree) throw new Error(`group ${g} not held`);
@@ -129,6 +130,54 @@ describe('deliverDeviceEvents - the contact line', () => {
     conversations.set('dm-gone', { conversationType: 'direct', messages: [] });
     await deliverDeviceEvents([event()], ctx);
     expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['dm-1', 'group-1']);
+  });
+
+  // THE START-UP DRAIN MAY RUN BEFORE THE CONVERSATION ROWS ARE LOADED: a group this device holds
+  // with the contact in it but no row yet is a line still OWED, never a device already lined.
+  it('owes the line of a held group whose row is not loaded yet, and writes it once it is', async () => {
+    const { ctx, addMessageToChat, conversations } = makeCtx();
+    const rows = new Map(conversations);
+    conversations.clear();
+    await deliverDeviceEvents([event()], ctx);
+    expect(addMessageToChat).not.toHaveBeenCalled();
+
+    for (const [id, row] of rows) conversations.set(id, row);
+    await deliverDeviceEvents([], ctx);
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['dm-1', 'group-1']);
+    expect(ctx.keyAge, 'the evidence is asked once, the line retried alone').toHaveBeenCalledTimes(
+      1
+    );
+
+    await deliverDeviceEvents([], ctx);
+    expect(addMessageToChat).toHaveBeenCalledTimes(2);
+  });
+
+  it('owes the line while a held tree is unreadable, and survives a reload', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    let broken = true;
+    ctx.memberIdentities = vi.fn(async (g: string) => {
+      if (broken && g === 'dm-1') throw new Error('state busy');
+      return TREES[g];
+    });
+    await deliverDeviceEvents([event()], ctx);
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['group-1']);
+
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    broken = false;
+    await deliverDeviceEvents([], ctx);
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['group-1', 'dm-1']);
+  });
+
+  it('drops an owed line once the device is no longer new to the contact window', async () => {
+    let now = NOW;
+    const { ctx, addMessageToChat, conversations } = makeCtx({ now: () => now });
+    conversations.clear();
+    await deliverDeviceEvents([event()], ctx);
+    now += 8 * DAY;
+    conversations.set('dm-1', { conversationType: 'direct', messages: [] });
+    await deliverDeviceEvents([], ctx);
+    expect(addMessageToChat).not.toHaveBeenCalled();
   });
 
   it('writes nothing for a pinned re-add, a member joining, or a joined-tree key change', async () => {

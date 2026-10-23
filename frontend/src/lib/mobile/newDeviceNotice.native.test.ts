@@ -43,8 +43,8 @@ describe('new-device notice - the native seams', () => {
       'char *canari_native_claim_device_notices(const char *data_dir, const char *keys_json);'
     );
     expect(swift).toContain('canari_native_claim_device_notices(dir.path, keysJson)');
-    expect(swift).toContain('announceOwnDevicesAdded(json, ctx: ctx, where: "decrypt")');
-    expect(swift).toContain('announceOwnDevicesAdded(json, ctx: ctx, where: "catchup")');
+    expect(swift).toContain('announceOwnDevicesAdded(json, ctx: ctx, source: "decrypt")');
+    expect(swift).toContain('announceOwnDevicesAdded(json, ctx: ctx, source: "catchup")');
   });
 
   it('Android: a background Add notifies only once the server ACCEPTED it', () => {
