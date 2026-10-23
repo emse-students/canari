@@ -12,8 +12,7 @@
  * sixth writer.
  */
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { sourceFiles } from '../../../test/sourceTree';
 
 import { withoutAnyComments } from '$lib/styles/markupSources';
 import { SvelteMap } from 'svelte/reactivity';
@@ -152,33 +151,24 @@ describe('purgeConversation', () => {
 });
 
 describe('the single-writer invariant', () => {
-  /** Every `.ts`/`.svelte` file under `src`, minus this file. */
-  function sourceFiles(dir: string, acc: string[] = []): string[] {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name !== 'paraglide' && entry.name !== 'node_modules') sourceFiles(full, acc);
-      } else if (/\.(ts|svelte)$/.test(entry.name)) {
-        acc.push(full);
-      }
-    }
-    return acc;
-  }
-
   it('only conversations.ts writes lifecycle: removed', () => {
     // A grep, deliberately: no unit test can observe a path that has not been wired up yet, and
     // the defect this guards against is precisely a NEW path written inline by someone who never
     // saw `retireConversation`. Test files are exempt - they build fixtures in that state.
     const offenders: string[] = [];
-    for (const file of sourceFiles(join(process.cwd(), 'src'))) {
-      if (file.endsWith('.test.ts')) continue;
-      if (file.endsWith(join('utils', 'chat', 'conversations.ts'))) continue;
+    // Test files are exempt (`tests: 'exclude'`): they build fixtures in that state.
+    for (const { path: file, text: source } of sourceFiles({
+      under: 'src',
+      extensions: ['ts', 'svelte'],
+      tests: 'exclude',
+    })) {
+      if (file.endsWith('utils/chat/conversations.ts')) continue;
       // The SHARED stripper, because the check has to read CODE: docblocks quote `lifecycle:
       // 'removed'` to say why per-conversation state outlived its conversation, and a guard
       // that punishes the documentation of the rule it enforces is a guard people delete.
-      const text = withoutAnyComments(readFileSync(file, 'utf8'));
+      const text = withoutAnyComments(source);
       if (/lifecycle:\s*'removed'|lifecycle\s*=\s*'removed'/.test(text)) {
-        offenders.push(file.replace(process.cwd(), ''));
+        offenders.push(file);
       }
     }
     expect(

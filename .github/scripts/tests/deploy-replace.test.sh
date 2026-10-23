@@ -43,6 +43,16 @@ done
   exit 1
 }
 
+# edge_healthcheck - reads a `compose config` JSON on stdin, prints its edge's healthcheck test.
+edge_healthcheck() {
+  "$PYTHON" -c 'import json, sys; print(json.dumps((json.load(sys.stdin)["services"]["edge"].get("healthcheck") or {}).get("test") or ""))' |
+    grep -v '^""$'
+}
+# The fixture's variables are GIVEN, not left uninterpolated: on the runners, compose printed NOTHING for
+# this file under `--no-interpolate` (its `${X:?}`s, 2026-10-18), and its stderr is left visible.
+fixture_edge_health="$(TAG=v0 EDGE_DIR=/edge ROLLTEST_PORT=1 docker compose \
+  -f "$REPO/.github/scripts/tests/rolling-fixture/compose.yml" config --format json | edge_healthcheck)"
+
 # ── 1. Both deployed estates declare a mode the deploy can honour ─────────────
 for file in docker-compose.prod.yml docker-compose.dev.yml; do
   config="$(docker compose -f "$REPO/infrastructure/$file" config --no-interpolate --format json 2>/dev/null)"
@@ -105,6 +115,16 @@ for v in json.load(sys.stdin)["services"]["edge"].get("volumes") or []:
   */edge' /etc/nginx/edge') ok "$file: the edge mounts the edge/ directory" ;;
   *) fail "$file: the edge mounts '$edge_mount', not the edge/ directory" ;;
   esac
+
+  # The edge is HEALTHY only once it LISTENS, and by the same test the rolling fixture proves: a
+  # pinned service with no healthcheck is believed at `running`, before nginx has opened its port
+  # (cicd.md#the-edge-is-ready-when-it-listens-not-when-it-runs).
+  edge_health="$(printf '%s' "$config" | edge_healthcheck)"
+  if [ -n "$edge_health" ] && [ "$edge_health" = "$fixture_edge_health" ]; then
+    ok "$file: the edge's healthcheck is the rolling fixture's (it waits for the listener)"
+  else
+    fail "$file: the edge's healthcheck '${edge_health:-none}' is not the fixture's '${fixture_edge_health:-none}'"
+  fi
 done
 
 # ── 2. The validator refuses what two replicas cannot honour ──────────────────

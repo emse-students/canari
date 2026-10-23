@@ -38,6 +38,7 @@ import {
  * reads), and the round is only what makes it true.
  */
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
+import { flushMacrotask } from '../../test/flush';
 
 const PUBLISHED = { kind: 'package', device: { keyPackage: new Uint8Array(), deviceId: 'd' } };
 const ABSENT = { kind: 'none', reason: 'unregistered' };
@@ -68,6 +69,9 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     distributionScopeByGroup: new Map<string, string>(),
     knownDistributionGroups: new Set<string>(),
+    // `destroy` settles the drain waiters too, and `Object.create` skips the field initialisers.
+    groupDrainedWaiters: new Map(),
+    groupDrainedArmed: new Set<string>(),
     distributionGroupInfo: null,
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
     getEpoch: vi.fn(() => 6),
@@ -85,7 +89,7 @@ const externalJoin = (ctx: { externalJoin(g: string): Promise<ExternalJoinOutcom
 const KP = { bytes: new Uint8Array(), notAfterSecs: 1 };
 
 /** Lets every already-resolved promise chain run, so "has not happened yet" is a real reading. */
-const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const settle = () => flushMacrotask();
 
 /** A round implementation that publishes (flips the server's answer) when released. */
 function controlledRound(ctx: { server: Server }) {

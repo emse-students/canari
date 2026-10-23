@@ -3,12 +3,14 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { IsNull, Repository, type EntityManager } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
@@ -17,13 +19,19 @@ import {
   PENDING_HOLD_CUTOFF_SQL,
   PAYMENT_REQUEST_LIFETIME_SECONDS,
   PREVIOUS_PAYMENT_OPEN,
+  ALREADY_ANSWERED,
+  answerHoldingWhere,
+  pickShownAnswer,
   SETTLED_PAYMENT_STATUSES,
   CONFIRMABLE_PAYMENT_STATUSES,
   LYDIA_REQUEST_UUID_RE,
+  SETTLED_REFUSED_REQUEST_STATES,
   livePendingWhere,
   lockFormSeats,
   overCapacityFirst,
   seatHoldingWhere,
+  toRequestState,
+  type RequestState,
 } from './seat-hold';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
@@ -43,6 +51,16 @@ import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
 import { withSubmissionReturnKey } from './return-url-key';
+import {
+  GUEST_RECEIPT_NOT_FOUND,
+  guestReference,
+  hashGuestReceipt,
+  isGuestReceiptShape,
+  newGuestReceipt,
+  toGuestReceiptView,
+  type GuestReceiptView,
+} from './guest-receipt';
+import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
@@ -65,15 +83,29 @@ import {
 } from '../pricing/price-matrix';
 import { criteriaContextFor, parseAudienceCondition, parsePriceMatrix } from '../pricing/validate';
 import {
+  answerSelections,
   normaliseCondition,
   profileHiddenItemIds,
   visibleItemIds,
   type ConditionalItem,
 } from './visibility';
+import {
+  assertDeclaredOptionAnswers,
+  assertUniqueItemIds,
+  decidesPrice,
+  freeFallbackCells,
+  type PricedItem,
+} from './answer-options';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
-import { mapCorePaymentError } from '../common/core-payment-error';
+import {
+  amountOutOfRange,
+  mapCorePaymentError,
+  PROVIDER_MAX_AMOUNT_CENTS,
+  PROVIDER_MIN_AMOUNT_CENTS,
+} from '../common/core-payment-error';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
+import { FormOrganiserAlertService } from './organiser-alert.service';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -96,8 +128,19 @@ function formRequiresStripeReadyAssociation(input: {
 }
 
 /**
- * Whether a form takes money or grants something - the two things that need to know WHO answered.
- * Both an anonymous and a public form refuse them, for that one reason.
+ * Whether a form can charge a submitter: payment switched on, a base price, a grid cell above 0, or
+ * a choice option with a supplement - each of which `submit` turns into a total above 0.
+ */
+function chargesMoney(input: CreateFormDto): boolean {
+  if (input.requiresPayment === true || (input.basePrice ?? 0) > 0) return true;
+  const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
+  if (cells && Object.values(cells).some((c) => (c ?? 0) > 0)) return true;
+  return ((input.items ?? []) as PricedItem[]).some((item) => decidesPrice(item, new Set()));
+}
+
+/**
+ * Whether a form takes money or grants something. An anonymous form refuses both: a payment names
+ * its payer to the processor and to the submission, the identity it promised not to keep.
  */
 function takesMoneyOrGrants(input: CreateFormDto): boolean {
   return (
@@ -124,6 +167,9 @@ export type SubmitOrigin = 'member' | 'guest';
 /** The part of a form item the XLSX export needs: a column header, its key, and how to read an answer. */
 type FormItemLike = AnswerQuestion & { id: string; label: string };
 
+/** The durable flags a landed payment's effects are claimed through (migrations 084 and 102). */
+type FulfilmentFlag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
+
 @Injectable()
 export class FormsService {
   private readonly logger = new Logger(FormsService.name);
@@ -138,7 +184,8 @@ export class FormsService {
     private readonly purchaseRecordService: PurchaseRecordService,
     private readonly pricingFacts: PricingFactsService,
     @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>,
-    private readonly formFiles: FormFilesService
+    private readonly formFiles: FormFilesService,
+    private readonly organiserAlert: FormOrganiserAlertService
   ) {}
 
   /**
@@ -199,15 +246,56 @@ export class FormsService {
 
   /**
    * Refuses a public form that would need to know who a guest is. A guest has no account, so there
-   * is nobody to charge, to grant a cotisation to, to match a profile criterion against, or to count
-   * once - each is refused where it is chosen, rather than being a setting that quietly does
-   * nothing for the people the link reaches. Paying guests are parked behind Lydia (backlog).
+   * is nobody to grant a cotisation to, to match a profile criterion against, or to count once -
+   * each is refused where it is chosen, rather than being a setting that quietly does nothing for
+   * the people the link reaches.
+   *
+   * A guest CAN pay (decision PP1, `public-paid-forms-chantier.md`): a base price, option
+   * supplements, cash, and a price grid whose every criterion is an ANSWER (a menu, a formula).
+   * Lydia needs only the e-mail the guest types. A grid criterion on promo, formation or cotisation
+   * is WHO the person is, which a guest has not got, so it stays refused.
    */
   private assertPublicConfigValid(input: CreateFormDto): void {
     if (input.isPublic !== true) return;
-    if (takesMoneyOrGrants(input)) {
+    if (input.grantsCotisation === true) {
       throw new BadRequestException(
-        'A public form must be free: a guest has no account to charge or to grant a cotisation to.'
+        'A public form cannot grant a cotisation: a guest has no account to grant it to.'
+      );
+    }
+    const dimensions = (input.priceMatrix as PriceMatrix | null | undefined)?.dimensions ?? [];
+    if (dimensions.some((d) => d.kind !== 'answer')) {
+      throw new BadRequestException(
+        'A public form can price only on answers: a guest has no profile to match a promo, a ' +
+          'formation or a cotisation against.'
+      );
+    }
+    // A charging grid whose "everyone else" cell is FREE and reachable - a priced question left
+    // empty, hidden, or answered with an ungrouped option - would hand a guest a free seat by
+    // default, with none of the paid path's limits. The manager prices it or marks it unavailable.
+    const freeCells = freeFallbackCells(
+      input.priceMatrix as PriceMatrix | null | undefined,
+      (input.items ?? []) as PricedItem[]
+    );
+    if (freeCells.length > 0) {
+      throw new BadRequestException(
+        'A public form that charges cannot leave its "everyone else" price at 0: a guest who skips ' +
+          `or hides a priced question would answer for free (cell "${freeCells[0]}"). Price it or ` +
+          'mark it unavailable.'
+      );
+    }
+    // A guest's cash answer holds its seat - and its place under the visitor's ceiling of waiting
+    // answers (WP-P3) - until it is validated or its deadline passes. With no deadline it would
+    // hold both for ever, and three of them from one shared network would shut that network out.
+    // A free form never reaches cash (`submit` offers it only on a total above 0), so a cash flag
+    // left over from when it charged - the editor stops sending it once payment is off - is not read.
+    if (
+      input.allowCashPayment === true &&
+      input.cashPaymentExpiryDays == null &&
+      chargesMoney(input)
+    ) {
+      throw new BadRequestException(
+        'A public form that accepts cash needs a cash deadline: an unpaid cash answer holds its ' +
+          'seat until then.'
       );
     }
     if (input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion)) {
@@ -401,6 +489,7 @@ export class FormsService {
         throw new ForbiddenException('You are not a member of this association.');
       }
     }
+    assertUniqueItemIds(input.items);
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
     this.assertFileQuestionConfigValid(input);
@@ -523,6 +612,15 @@ export class FormsService {
     }
     const formFull =
       !!form.maxSubmissions && (await this.countActiveSubmissions(id)) >= form.maxSubmissions;
+    // The guest's slice of the grid, exactly as a member's is built (`hasSubmission`), from facts
+    // that know nobody: a public form's grid prices on answers only (`assertPublicConfigValid`),
+    // so the slice is the whole grid. The page totals from it; `submit` recomputes what is charged.
+    const pricing = form.priceMatrix
+      ? pricingViewFor(form.priceMatrix, await this.factsFor(form, undefined))
+      : null;
+    // AN ALLOWLIST, like `submission.projection.ts`: a column added to the form later is not served
+    // to anybody holding the link until someone adds it here. The price fields are what the page
+    // needs to show a total; nothing names the owner, the association or its payment account.
     return {
       id: form.id,
       title: form.title,
@@ -533,6 +631,10 @@ export class FormsService {
       closedAt: form.closedAt,
       anonymous: form.anonymous,
       formFull,
+      basePrice: form.basePrice,
+      currency: form.currency,
+      allowCashPayment: form.allowCashPayment,
+      pricing,
     };
   }
 
@@ -595,10 +697,33 @@ export class FormsService {
     }
     // The questions the form WILL have: an absent list keeps the stored one, file questions included.
     const items = input.items ?? form.items;
+    // Only the questions this edit SENDS are judged, against the stored ones: a duplicate already
+    // stored never blocks an edit that leaves the questions' ids as they are.
+    if (input.items !== undefined) assertUniqueItemIds(input.items, form.items);
     this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
-    // the answers already stored. An absent value means "leave it", so the stored one is checked.
-    this.assertPublicConfigValid({ ...input, items, isPublic: input.isPublic ?? form.isPublic });
+    // the answers already stored. An absent value means "leave it", so the stored one is checked -
+    // for every field the check reads, or an edit sending only `isPublic: true` would publish a
+    // stored cotisation grant or a promo-priced grid nobody re-checked.
+    this.assertPublicConfigValid({
+      ...input,
+      items,
+      isPublic: input.isPublic ?? form.isPublic,
+      grantsCotisation: input.grantsCotisation ?? form.grantsCotisation,
+      priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : form.priceMatrix,
+      submitCondition:
+        input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+      allowMultipleSubmissions: input.allowMultipleSubmissions ?? form.allowMultipleSubmissions,
+      allowCashPayment: input.allowCashPayment ?? form.allowCashPayment,
+      // `!== undefined`, not `??`: an explicit null CLEARS the deadline when the form is saved, so
+      // the check must see the null, not the stored value it is about to replace.
+      cashPaymentExpiryDays:
+        input.cashPaymentExpiryDays !== undefined
+          ? input.cashPaymentExpiryDays
+          : (form.cashPaymentExpiryDays ?? undefined),
+      requiresPayment: input.requiresPayment ?? form.requiresPayment,
+      basePrice: input.basePrice ?? form.basePrice,
+    });
     // An absent condition keeps the stored one, which still meets the questions sent now.
     this.assertFileQuestionConfigValid({
       items,
@@ -720,7 +845,9 @@ export class FormsService {
 
   /**
    * Runs what a landed payment buys - the cotisation (only when a seat was given) and the purchase
-   * record - each AT MOST ONCE, decided by a durable flag on the row (migration 084).
+   * record - each AT MOST ONCE, decided by a durable flag on the row (migration 084). A payment that
+   * landed `paid_over_capacity` also tells the form's managers, once, on the same rule (migration
+   * 102, `FormOrganiserAlertService`), while that alert is switched on.
    *
    * Both effects run after the payment's own transaction committed, so a crash between the two, or
    * a failed grant, used to be lost for good, and a replay used to run both again. Now each effect
@@ -728,7 +855,7 @@ export class FormsService {
    * if it failed, so the next replay of the same payment retries exactly what is missing. No clock.
    */
   private async fulfilPayment(
-    submission: Pick<Submission, 'id' | 'formId' | 'userId' | 'totalPaid'>,
+    submission: Pick<Submission, 'id' | 'formId' | 'userId' | 'totalPaid' | 'paymentStatus'>,
     seatGiven: boolean,
     how: {
       grantedBy: string;
@@ -741,6 +868,7 @@ export class FormsService {
       select: {
         id: true,
         title: true,
+        ownerId: true,
         grantsCotisation: true,
         cotisationVariantKey: true,
         associationId: true,
@@ -753,14 +881,27 @@ export class FormsService {
       );
       return;
     }
+    // A guest's payment (a public form, `userId` null) has nobody to grant a cotisation to. A public
+    // form cannot be saved with a grant (`assertPublicConfigValid`), so a granting form holding a
+    // guest row was made private after the guest answered: the money is real, the grant cannot be.
+    // ERROR, once: the flag is claimed and kept, so a replay of the payment does not say it again.
     if (seatGiven && (await this.claimFulfilment(submission.id, 'cotisationGrantedAt'))) {
-      const granted = await this.grantCotisationIfConfigured(
-        form,
-        submission.userId,
-        how.grantedBy,
-        how.metadata
-      );
-      if (!granted) await this.releaseFulfilment(submission.id, 'cotisationGrantedAt');
+      if (!submission.userId) {
+        if (form.grantsCotisation) {
+          this.logger.error(
+            `[Forms] submission ${submission.id} was paid by a guest on form ${form.id}, which ` +
+              'grants a cotisation: there is no account to grant it to - nothing granted'
+          );
+        }
+      } else {
+        const granted = await this.grantCotisationIfConfigured(
+          form,
+          submission.userId,
+          how.grantedBy,
+          how.metadata
+        );
+        if (!granted) await this.releaseFulfilment(submission.id, 'cotisationGrantedAt');
+      }
     }
     if (
       form.associationId &&
@@ -787,13 +928,42 @@ export class FormsService {
         await this.releaseFulfilment(submission.id, 'purchaseRecordedAt');
       }
     }
+    if (submission.paymentStatus === 'paid_over_capacity') {
+      await this.alertOrganisersOnce(submission.id, form);
+    }
+  }
+
+  /**
+   * Tells the form's managers, AT MOST ONCE, that this payment landed on a full form: the flag is
+   * claimed before the notice is written and released if writing it failed, so the next replay of
+   * the same payment retries it. Nothing is claimed while the alert is switched off
+   * (`FORM_ORGANISER_ALERT_ENABLED`), so a row settled then is not marked as told.
+   */
+  private async alertOrganisersOnce(
+    submissionId: string,
+    form: Pick<Form, 'id' | 'title' | 'ownerId' | 'associationId'>
+  ): Promise<void> {
+    if (!this.organiserAlert.enabled()) {
+      this.logger.debug(
+        `[Forms] submission ${submissionId} over capacity: organiser alert switched off - not told`
+      );
+      return;
+    }
+    if (!(await this.claimFulfilment(submissionId, 'organiserNotifiedAt'))) return;
+    try {
+      await this.organiserAlert.tell(form);
+    } catch (e) {
+      this.logger.error(
+        `[Forms] organiser alert for submission ${submissionId} (form ${form.id}) not written - ` +
+          'released for the next replay',
+        e
+      );
+      await this.releaseFulfilment(submissionId, 'organiserNotifiedAt');
+    }
   }
 
   /** Takes a fulfilment flag if nobody has: true for exactly one caller, ever (until released). */
-  private async claimFulfilment(
-    submissionId: string,
-    flag: 'cotisationGrantedAt' | 'purchaseRecordedAt'
-  ): Promise<boolean> {
+  private async claimFulfilment(submissionId: string, flag: FulfilmentFlag): Promise<boolean> {
     const result = await this.submissionRepo
       .createQueryBuilder()
       .update()
@@ -807,10 +977,7 @@ export class FormsService {
   }
 
   /** Gives a claimed flag back after its effect failed, so a replay retries it. */
-  private async releaseFulfilment(
-    submissionId: string,
-    flag: 'cotisationGrantedAt' | 'purchaseRecordedAt'
-  ): Promise<void> {
+  private async releaseFulfilment(submissionId: string, flag: FulfilmentFlag): Promise<void> {
     await this.submissionRepo.update(submissionId, { [flag]: null });
   }
 
@@ -828,6 +995,8 @@ export class FormsService {
   ): Promise<{
     hasSubmitted: boolean;
     paymentStatus?: string;
+    /** The id of the caller's own seat-holding row, when there is one. */
+    submissionId?: string;
     formFull: boolean;
     pricing: PricingView | null;
     /** Questions this submitter cannot see because of a PROFILE criterion, answers aside. */
@@ -881,15 +1050,25 @@ export class FormsService {
       };
     }
 
-    // The same predicate as the seat count: a checkout abandoned past the hold is no longer "an
-    // answer waiting for its payment", so the person may answer again.
-    const submission = await this.submissionRepo.findOne({
-      where: seatHoldingWhere(formId, { userId }),
-      order: { createdAt: 'DESC' },
-    });
+    // The same predicate as `submit`'s one-answer guard (`answerHoldingWhere`): what the page calls
+    // "answered" is exactly what the server refuses a second answer for - `paid_over_capacity`
+    // included, which used to show an active pay button the server then answered 409. A checkout
+    // abandoned past the hold is no longer an answer, so the person may answer again.
+    // EVERY such row is read, as the guard reads them, and the one shown is the most decided
+    // (`pickShownAnswer`): a legacy older `paid` behind a newer live `pending` showed "pending",
+    // and the page offered a retry the server then refused with ALREADY_ANSWERED.
+    const submission = pickShownAnswer(
+      await this.submissionRepo.find({
+        where: answerHoldingWhere(formId, { userId }),
+        order: { createdAt: 'DESC' },
+      })
+    );
     return {
       hasSubmitted: !!submission,
       paymentStatus: submission?.paymentStatus,
+      // The caller's OWN row: a `pending` one is what the page asks `confirm-payment` about, so a
+      // payment the payer declined on Lydia's page (no callback, no way back) releases it there.
+      submissionId: submission?.id,
       formFull,
       pricing,
       hiddenItemIds,
@@ -897,9 +1076,23 @@ export class FormsService {
     };
   }
 
-  /** Validates answers, calculates the total price (base + option modifiers), enforces capacity limits, creates a Submission, and - if totalCents > 0 - returns a checkout URL. */
-  async submit(id: string, input: SubmitFormDto, origin: SubmitOrigin = 'member') {
+  /**
+   * Validates answers, calculates the total price (base + option modifiers), enforces capacity
+   * limits, creates a Submission, and - if totalCents > 0 - returns a checkout URL.
+   *
+   * `visitorAddress` (a guest only, `clientAddress`): who a guest's PAID answer is counted against
+   * in the per-visitor ceiling (PP5). Required for a guest who pays; ignored otherwise.
+   */
+  async submit(
+    id: string,
+    input: SubmitFormDto,
+    origin: SubmitOrigin = 'member',
+    visitorAddress?: string
+  ) {
     const guest = origin === 'guest';
+    // A guest names nobody, whatever reached this call: the row and the payment are written with
+    // no account and no stored address, by construction rather than by each caller's care.
+    if (guest) input = { ...input, userId: undefined, email: undefined };
     const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
     if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
@@ -933,29 +1126,9 @@ export class FormsService {
       throw new BadRequestException('This form cannot receive a file without an account.');
     }
 
-    // Answers as option-id lists, which is what every criterion reads. A free-text answer is not a
-    // criterion input, so it contributes nothing here and keeps its place in `input.answers`.
-    // THE KEYS ARE THE FORM'S OWN QUESTION IDS, AND NOTHING ELSE GETS IN. Every key here comes
-    // straight off the request body, so `__proto__` - or `constructor`, or an id this form never
-    // declared - is a key a submitter can choose. `Object.create(null)` answers half of that: a
-    // prototype-less map has nothing to walk into, so a hostile key cannot reach
-    // `Object.prototype` the way it would on an ordinary literal. It does NOT stop the map
-    // carrying keys nothing will ever read, which is the other half and the one the analyser kept
-    // reporting.
-    //
-    // THE ALLOWLIST ALREADY EXISTED TWELVE LINES DOWN. `visibleAnswers` is built with
-    // `if (visible.has(questionId))`, over a set derived from `form.items` - the same query does
-    // not flag it, in this same file. Filtering here changes NOTHING observable: `audience.ts`
-    // reads answers BY declared id (`facts.answers[questionId]`) rather than iterating them, the
-    // size checks above run over `input.answers` untouched, the per-item loop below reads
-    // `input.answers[item.id]` directly, and `visible` is a subset of what is declared - so no
-    // key this drops could have reached anything.
-    const declaredQuestionIds = new Set((form.items ?? []).map((item: { id: string }) => item.id));
-    const selections: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
-    for (const [key, value] of Object.entries(input.answers ?? {})) {
-      if (!declaredQuestionIds.has(key)) continue;
-      selections[key] = Array.isArray(value) ? (value as string[]) : [String(value)];
-    }
+    // Answers keyed by the form's own question ids and nothing else (`answerSelections`); the size
+    // checks above run over `input.answers` untouched, and so does the per-item loop below.
+    const selections = answerSelections(form.items ?? [], input.answers ?? {});
 
     const facts = await this.factsFor(form, input.userId, selections);
     this.assertMaySubmit(form, facts);
@@ -969,6 +1142,20 @@ export class FormsService {
     for (const [questionId, value] of Object.entries(selections)) {
       if (visible.has(questionId)) visibleAnswers[questionId] = value;
     }
+    // An answer that decides a price names the question's own options and nothing else: an unknown
+    // id would select no group and no supplement - the "everyone else" price - while reading as the
+    // choice it names. Member and guest alike (`answer-options.ts`).
+    assertDeclaredOptionAnswers(form.items ?? [], input.answers ?? {}, visible, form.priceMatrix);
+    // What is STORED is what was priced: the answer to a question this submitter did not see was
+    // neither charged nor required, so it is not kept either - it would read as a choice nobody
+    // paid for. A question the form does not declare is kept as it always was.
+    const declaredIds = new Set((form.items ?? []).map((item) => item.id));
+    const storedAnswers = Object.fromEntries(
+      Object.entries(input.answers ?? {}).filter(
+        ([key]) => !declaredIds.has(key) || visible.has(key)
+      )
+    );
+    const storedFileAnswers = fileAnswers.filter((file) => visible.has(file.itemId));
     const pricedQuestions = pricedQuestionIds(form.priceMatrix);
     const { baseCents } = this.priceFor(form, { ...facts, answers: visibleAnswers });
     // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
@@ -1035,9 +1222,32 @@ export class FormsService {
     // transaction below, after the answer, never before. A request that cannot be settled refuses
     // the retry (`PREVIOUS_PAYMENT_OPEN`) rather than leave two payable requests for one answer.
     const previous = reuses ? await this.submissionRepo.findOne(liveRow()) : null;
+    // ONE ANSWER PER PERSON, checked FIRST, before any side effect: an answer that already counts
+    // refuses here, before the settle below cancels anything at Lydia. Repeated under the lock.
+    const oneAnswer = !form.anonymous && !guest && !form.allowMultipleSubmissions && !!input.userId;
+    if (oneAnswer) {
+      await this.assertNoOtherAnswer(this.submissionRepo.manager, id, input.userId!, previous?.id);
+    }
     if (previous) {
       const settled = await this.settleOpenRequest(previous, form);
       if (settled === 'paid') return { submissionId: previous.id, alreadyPaid: true };
+    }
+
+    // A guest who pays ONLINE leaves for Lydia and comes back with no session: the receipt, minted
+    // here and stored hashed on the row, is what its return page shows instead (`guest-receipt.ts`).
+    // Cash needs none - the guest reads the reference at once, on the page that sent the answer.
+    const receipt =
+      guest && totalCents > 0 && !(form.allowCashPayment && input.paymentMethod === 'cash')
+        ? newGuestReceipt()
+        : null;
+    // A guest's PAID answer waits for its money while holding a seat, online or in cash: it names
+    // who is waiting, so one visitor cannot hold more than the ceiling (PP5, `guest-visitor.ts`).
+    let visitorKey: string | null = null;
+    if (guest && totalCents > 0) {
+      if (!visitorAddress) {
+        throw new Error(`guest paid answer on form ${id} reached submit without a visitor address`);
+      }
+      visitorKey = guestVisitorKey(id, visitorAddress);
     }
 
     let savedSubmission!: Submission;
@@ -1080,6 +1290,11 @@ export class FormsService {
           );
         }
       }
+      // The AUTHORITATIVE one-answer check, under the form lock (the one before the settle above
+      // only spares a provider call): the row this retry reuses is excluded by id.
+      if (oneAnswer)
+        await this.assertNoOtherAnswer(manager, id, input.userId!, existingPending?.id);
+
       const holdsSeat =
         !!existingPending &&
         (await manager.count(Submission, {
@@ -1090,18 +1305,41 @@ export class FormsService {
         const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
       }
-
-      if (form.anonymous || guest) {
-        if (!guest && !input.userId) throw new BadRequestException('Sign in to answer this form.');
-        // An option supplement could still charge on a form saved free; a charge would need the
-        // payer, which is the one thing this branch has none of - by promise, or because a guest
-        // has no account at all.
-        if (totalCents > 0) {
-          throw new BadRequestException(
-            guest
-              ? 'A public form cannot charge for an option.'
-              : 'An anonymous form cannot charge for an option.'
+      // PP5, under the form lock like the capacity count: two submits from one visitor queue here,
+      // so the fourth sees the three before it. Counted from the rows that still WAIT - an online
+      // answer within its hold, a cash one not yet validated - so a paid, cancelled or expired one
+      // frees its place in the ceiling with no job having run.
+      if (visitorKey) {
+        const waiting = await manager.count(Submission, {
+          where: [
+            livePendingWhere(id, { guestVisitorKey: visitorKey }),
+            { formId: id, guestVisitorKey: visitorKey, paymentStatus: 'pending_cash' },
+          ],
+        });
+        if (waiting >= GUEST_PENDING_CEILING) {
+          this.logger.warn(
+            `[Forms] guest answer refused on form ${id.slice(0, 8)}: this visitor already has ` +
+              `${waiting} answers waiting for payment (ceiling ${GUEST_PENDING_CEILING})`
           );
+          throw new HttpException(
+            {
+              code: GUEST_PENDING_LIMIT,
+              message: `This visitor already has ${GUEST_PENDING_CEILING} answers waiting for payment on this form. Pay or let one expire first.`,
+            },
+            HttpStatus.TOO_MANY_REQUESTS
+          );
+        }
+      }
+
+      // A guest's FREE answer, and every anonymous answer. A guest who owes money takes the paid
+      // path below with no account (`userId` null), like a member's: the payer is the e-mail they
+      // typed for Lydia, never stored (decision PP2).
+      if (form.anonymous || (guest && totalCents === 0)) {
+        if (!guest && !input.userId) throw new BadRequestException('Sign in to answer this form.');
+        // An option supplement could still charge on an anonymous form saved free; a charge would
+        // need the payer, which is the one thing an anonymous answer promised not to keep.
+        if (totalCents > 0) {
+          throw new BadRequestException('An anonymous form cannot charge for an option.');
         }
         // The registry insert and the answer are ONE transaction, and the answer carries nothing
         // that names the respondent: no account, no address, and a time cut to the day, because a
@@ -1126,7 +1364,7 @@ export class FormsService {
             formId: id,
             userId: null,
             email: undefined,
-            answers: input.answers,
+            answers: storedAnswers,
             totalPaid: 0,
             paymentStatus: 'free',
             paymentMethod: null,
@@ -1138,7 +1376,7 @@ export class FormsService {
       }
 
       if (existingPending) {
-        existingPending.answers = input.answers;
+        existingPending.answers = storedAnswers;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
         // Its old request is settled (above), so the row stops naming it: a late report about it
@@ -1160,18 +1398,20 @@ export class FormsService {
       } else {
         const submission = manager.create(Submission, {
           formId: id,
-          userId: input.userId,
+          userId: input.userId ?? null,
           email: input.email,
-          answers: input.answers,
+          answers: storedAnswers,
           totalPaid: totalCents,
           paymentStatus: totalCents > 0 ? 'pending' : 'free',
           paymentMethod: null,
           cashExpiresAt: null,
+          guestReceiptHash: receipt?.hash ?? null,
+          guestVisitorKey: visitorKey,
         });
         savedSubmission = await manager.save(submission);
       }
-      if (fileAnswers.length > 0) {
-        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, fileAnswers);
+      if (storedFileAnswers.length > 0) {
+        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, storedFileAnswers);
       }
     });
 
@@ -1192,15 +1432,11 @@ export class FormsService {
         cashExpiresAt,
       });
       this.logger.log(`[Forms] Cash payment pending for submission ${savedSubmission.id}`);
-      return { submissionId: savedSubmission.id, cashPayment: true };
-    }
-
-    // 50-cent floor, inherited from the card processor Canari used before Lydia; Lydia's own minimum is unmeasured
-    const MIN_PAYMENT_CENTS = 50;
-    if (totalCents > 0 && totalCents < MIN_PAYMENT_CENTS) {
-      throw new BadRequestException(
-        `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is below the minimum of 0.50 ${currency.toUpperCase()}. Adjust the form price.`
-      );
+      return {
+        submissionId: savedSubmission.id,
+        cashPayment: true,
+        ...(guest ? { reference: guestReference(savedSubmission.id) } : {}),
+      };
     }
 
     if (totalCents > 0) {
@@ -1235,19 +1471,48 @@ export class FormsService {
           );
           throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
         }
+        // The provider's payable range, refused here rather than by core: the SAME typed answer
+        // (code + bounds) the payer's page words in their language, one call sooner. AFTER the
+        // disabled check, so a form on an estate with payments off says that, not a range. The
+        // catch below releases the row and passes this exception through untouched.
+        if (totalCents < PROVIDER_MIN_AMOUNT_CENTS || totalCents > PROVIDER_MAX_AMOUNT_CENTS) {
+          this.logger.warn(
+            `[Forms] Paid submission ${savedSubmission.id} refused: total=${totalCents} cents outside ` +
+              `${PROVIDER_MIN_AMOUNT_CENTS}-${PROVIDER_MAX_AMOUNT_CENTS} form=${id.slice(0, 8)}`
+          );
+          throw amountOutOfRange(
+            PROVIDER_MIN_AMOUNT_CENTS,
+            PROVIDER_MAX_AMOUNT_CENTS,
+            `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is outside the ` +
+              `payable range ${(PROVIDER_MIN_AMOUNT_CENTS / 100).toFixed(2)}-` +
+              `${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}. Adjust the form price.`
+          );
+        }
         const idempotencyKey = `form:${savedSubmission.id}`;
 
         const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
-        const successUrl = resolveCheckoutCallbackUrl(
-          input.successUrl,
-          `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
-          frontendUrl
-        );
-        const cancelUrl = resolveCheckoutCallbackUrl(
-          input.cancelUrl,
-          `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
-          frontendUrl
-        );
+        // A guest is sent back to the public form's RECEIPT page, never to `/forms/success`: that
+        // page reads the answer through a session the guest has not got. The URL carries the
+        // receipt and nothing that decides anything: the page only asks the server, which asks
+        // Lydia. The server chooses it; a guest names no return URL (`GuestSubmitFormDto`).
+        // `receipt` is minted for exactly this case (a guest paying online), above the transaction.
+        const guestReturn = guest
+          ? `${frontendUrl}/f/${encodeURIComponent(id)}/receipt?receipt=${receipt!.token}`
+          : null;
+        const successUrl = guestReturn
+          ? guestReturn
+          : resolveCheckoutCallbackUrl(
+              input.successUrl,
+              `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
+              frontendUrl
+            );
+        const cancelUrl = guestReturn
+          ? guestReturn
+          : resolveCheckoutCallbackUrl(
+              input.cancelUrl,
+              `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
+              frontendUrl
+            );
         const res = await axios.post(
           checkoutUrl,
           {
@@ -1307,7 +1572,8 @@ export class FormsService {
    *
    * - Lydia's cancel answers error 2 (`already-settled`) for a request already processed - measured
    *   on cancelled and expired ones, and very probably the same for a PAID one. So error 2 is never
-   *   read as "nobody paid": `request/state` (by the uuid) tells paid (1) from closed (6).
+   *   read as "nobody paid": `request/state` (by the uuid) tells `paid` from `declined` and
+   *   `cancelled-or-expired`, both of which free the row; `open` and `unknown` refuse.
    * - A row naming NO request is one whose request is being issued right now (`submit` clears the
    *   ids in its transaction and writes the new ones once the provider answers; a failed issue
    *   releases the row, `releaseUnissuedRow`). Issuing another would leave two payable requests.
@@ -1343,16 +1609,13 @@ export class FormsService {
         }
       }
       if (!sessionId) throw new Error('no request_uuid to read the state by');
-      const { data } = await axios.post(
-        coreUrl('payments/request-state'),
-        { sessionId, connectAccountId },
-        internalCoreRequestConfig()
-      );
-      if (data?.state === 'closed') {
-        this.logger.log(`[Forms] submission ${row.id}: request ${sessionId} already closed`);
+      const { state, raw } = await this.readRequestState(sessionId, connectAccountId);
+      if (SETTLED_REFUSED_REQUEST_STATES.has(state)) {
+        // Declined by the payer, or cancelled / expired: nothing is payable, a new request may go.
+        this.logger.log(`[Forms] submission ${row.id}: request ${sessionId} already ${state}`);
         return 'free';
       }
-      if (data?.state === 'paid') {
+      if (state === 'paid') {
         // The person paid the request they are now retrying: the answer is paid, and a second
         // request would charge them twice. Recorded as the callback would record it.
         this.logger.log(
@@ -1361,10 +1624,67 @@ export class FormsService {
         await this.markPaid(row.id, requestId ?? sessionId);
         return 'paid';
       }
-      throw new Error(`request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`);
+      throw new Error(`request ${sessionId} is ${state} (code ${raw})`);
     } catch (err: unknown) {
       throw this.previousPaymentOpen(row.id, err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * Reads a request's state through core-service `payments/request-state` (uuid + the Business's
+   * vendor token), typed at the boundary (`toRequestState`): the callers decide on the type and
+   * never on core's raw code, which is only carried for their log. A failed call throws.
+   */
+  private async readRequestState(
+    sessionId: string,
+    connectAccountId: string
+  ): Promise<{ state: RequestState; raw: string }> {
+    const { data } = await axios.post(
+      coreUrl('payments/request-state'),
+      { sessionId, connectAccountId },
+      internalCoreRequestConfig()
+    );
+    const state = toRequestState(data?.state);
+    const raw = typeof data?.raw === 'string' ? data.raw : '';
+    // core already WARNs an unknown provider code; this one is a WIRE mismatch (an older core
+    // answering `closed` mid-deploy, a missing field), which nothing else would report.
+    if (state === 'unknown' && data?.state !== 'unknown') {
+      this.logger.warn(
+        `[Forms] request ${sessionId}: core answered a state this service does not know (${JSON.stringify(data?.state ?? null)}, code ${raw}) - treated as neither paid nor settled`
+      );
+    }
+    return { state, raw };
+  }
+
+  /**
+   * ONE ANSWER PER PERSON on a single-answer form, read from the submissions table (never a client
+   * flag). A submit after a PAID answer used to insert a new row and issue a new request/do - a
+   * second charge for one answer. EVERY row that counts as an answer (`answerHoldingWhere`) is
+   * read, not the newest one: an older paid row hidden behind a newer live pending one must still
+   * refuse. `excludeId` is the live pending row a retry reuses, which is not "another answer"; a
+   * cancelled or expired row (declined, cancelled or expired request) is no answer at all.
+   *
+   * Refused at INFO: a second tab, a back button or a double tap past the page's own guard is
+   * expected, and nothing has been issued yet. A real double charge is accused by `markPaid`.
+   */
+  private async assertNoOtherAnswer(
+    manager: EntityManager,
+    formId: string,
+    userId: string,
+    excludeId: string | undefined
+  ): Promise<void> {
+    const answers = await manager.find(Submission, {
+      where: answerHoldingWhere(formId, { userId }),
+    });
+    const other = answers.find((answer) => answer.id !== excludeId);
+    if (!other) return;
+    this.logger.log(
+      `[Forms] submit refused on form ${formId}: submission ${other.id} (${other.paymentStatus}) already answers for this person - no request issued`
+    );
+    throw new ConflictException({
+      code: ALREADY_ANSWERED,
+      message: 'You have already answered this form.',
+    });
   }
 
   /** The typed refusal of `settleOpenRequest`, logged at WARN with its reason. */
@@ -1415,6 +1735,11 @@ export class FormsService {
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
+    return this.submitterAnswer(submission);
+  }
+
+  /** What a submitter is answered about a row already read (`toSubmitterView`, plus the currency). */
+  private async submitterAnswer(submission: Submission) {
     const form = await this.formRepo.findOne({ where: { id: submission.formId } });
     const { id, formId, totalPaid, paymentStatus } = toSubmitterView(submission);
     return { id, formId, totalPaid, currency: form?.currency ?? 'eur', paymentStatus };
@@ -1423,10 +1748,11 @@ export class FormsService {
   /**
    * Records that a submission has been paid, and grants everything that payment buys.
    *
-   * THE CALLER IS THE AUTHORISATION, WHICH IS WHY THIS TAKES NO CALLER. Its only route is the
-   * internal `X-Internal-Secret` controller, reached from core-service after the payment provider's callback
-   * signature has been verified - so by the time this runs, the payment is a fact established
-   * somewhere that cannot be spoofed by a client. It used to accept `callerId`/`isGlobalAdmin` and
+   * THE CALLER IS THE AUTHORISATION, WHICH IS WHY THIS TAKES NO CALLER. No route reaches it: it
+   * runs only once Lydia itself, asked server to server about the row's OWN request, answered paid
+   * (`settleFromProvider`, from the payer's return or a verified callback; `settleOpenRequest`, from
+   * a retry) - so by the time this runs, the payment is a fact established somewhere that cannot be
+   * spoofed by a client. It used to accept `callerId`/`isGlobalAdmin` and
    * run `assertSubmissionAccess` only `if (callerId)`: a check that quietly did not happen when the
    * argument was absent, behind a public route the SUBMITTER could reach. Both are gone.
    *
@@ -1630,25 +1956,21 @@ export class FormsService {
    * Here nothing comes from the client but the submission id the caller is allowed to read: the
    * request is the row's own uuid and the answer is Lydia's, read server to server.
    *
-   * Anything short of `paid` leaves the row as it is (the callback, the next read or the expiry
-   * job decides), and a failed read is logged at WARN and answered with the row unchanged: this
-   * is a read the payer repeats, never the path that releases or charges anything.
+   * `declined` (the payer refused: Lydia sends no callback for it) and `cancelled-or-expired`
+   * RELEASE a `pending` row (`releaseSettledRefusedRow`): nothing is payable any more, and the
+   * payer would otherwise read "pending" with no way to retry until the hold ends. `open` and
+   * `unknown` leave the row as it is (the callback, the next read or the expiry job decides), and
+   * a failed read is logged at WARN and answered with the row unchanged. Nothing here charges.
+   *
+   * Answers the submission plus `requestState`, the typed state read on this call (absent when
+   * none was), so the page can say "declined, you can try again" from a fact.
    */
   async confirmPayment(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
-    const sessionId = submission.stripeSessionId;
-    if (
-      CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) &&
-      sessionId &&
-      !LYDIA_REQUEST_UUID_RE.test(sessionId)
-    ) {
-      // A Stripe-era row (`cs_...`): Lydia never issued it, so there is nothing to ask - and core
-      // would refuse it with a 400 on every poll.
-      this.logger.log(
-        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus} row holds a non-Lydia request id, nothing to ask the provider`
-      );
-    } else if (CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) && sessionId) {
+    const sessionId = this.lydiaRequestToRead(submission, 'confirmPayment');
+    let requestState: RequestState | undefined;
+    if (sessionId) {
       const form = await this.formRepo.findOne({ where: { id: submission.formId } });
       const connectAccountId = form?.associationId
         ? await this.associationsService.getPaymentAccountId(form.associationId)
@@ -1658,64 +1980,306 @@ export class FormsService {
           `[Forms] confirmPayment ${submissionId}: the form has no payment account to read request ${sessionId} with`
         );
       } else {
-        try {
-          const { data } = await axios.post(
-            coreUrl('payments/request-state'),
-            { sessionId, connectAccountId },
-            internalCoreRequestConfig()
-          );
-          if (data?.state === 'paid') {
-            this.logger.log(
-              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is PAID at the provider - recorded`
-            );
-            await this.markPaid(submissionId, sessionId, true);
-          } else {
-            this.logger.debug(
-              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`
-            );
+        const outcome = await this.settleFromProvider(
+          submissionId,
+          sessionId,
+          connectAccountId,
+          'confirmPayment'
+        );
+        if (outcome !== 'stale' && outcome !== 'unreadable') {
+          requestState = outcome;
+          if (SETTLED_REFUSED_REQUEST_STATES.has(outcome)) {
+            // Declined by the payer (Lydia sends NO callback for it) or cancelled / expired: the
+            // request can never be paid, so the answer stops waiting on it NOW and the payer may
+            // retry, instead of reading "pending" until the hold ends. Only while the row still
+            // names THIS request: a retry that replaced it is waiting on another one.
+            await this.releaseSettledRefusedRow(submissionId, sessionId, outcome);
           }
-        } catch (err: unknown) {
-          this.logger.warn(
-            `[Forms] confirmPayment ${submissionId}: could not read request ${sessionId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          );
         }
       }
-    } else {
-      this.logger.debug(
-        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus}, nothing to ask the provider`
-      );
     }
-    return this.getSubmissionById(submissionId);
+    // `requestState` only when it was read on THIS call AND is still about the row's request: the
+    // page decides "declined, try again" from it. A retry that replaced the request between the
+    // read and now (another tab, the success page polling while the payer retries) makes the state
+    // read a stale one - answering it would offer a retry that cancels the request being paid.
+    // The row is read ONCE here, and both the check and the answer come from that read.
+    const current = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!current) throw new NotFoundException('Submission not found');
+    if (requestState !== undefined && current.stripeSessionId !== sessionId) {
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: request ${sessionId} read ${requestState}, but the row now names another request - state not answered`
+      );
+      requestState = undefined;
+    }
+    return { ...(await this.submitterAnswer(current)), requestState };
   }
 
   /**
-   * Marks a pending online-payment submission as cancelled without auth checks, when the provider
-   * reports ITS request cancelled or expired (core-service: Lydia's cancel/expire callback, or the
-   * payer returning from the fail URL).
+   * THE GUEST RETURN PAGE'S ONE CALL (WP-P2): the answer a receipt proves, confirmed exactly as a
+   * member's return confirms it (`confirmPayment`: Lydia read server to server about the row's OWN
+   * request), and answered as a `GuestReceiptView` - an allowlist that carries no id.
+   *
+   * THE RECEIPT IS THE ONLY KEY. The row is found by the receipt's HASH and by nothing else. A
+   * malformed receipt, an unknown one, a submission id, or a stored hash handed back as a receipt
+   * all answer the same 404 (`GUEST_RECEIPT_NOT_FOUND`): nothing tells a guess that reached a row
+   * from one that did not. A receipt replayed after settlement only reads - `confirmPayment` asks
+   * the provider nothing about a settled row, and `markPaid` repeats nothing - and nothing the
+   * return URL carries besides the receipt is read at all: only Lydia's answer marks a row paid.
+   */
+  async confirmGuestReceipt(token: unknown): Promise<GuestReceiptView> {
+    const row = isGuestReceiptShape(token)
+      ? await this.submissionRepo.findOne({
+          where: { guestReceiptHash: hashGuestReceipt(token) },
+          select: { id: true },
+        })
+      : null;
+    if (!row) {
+      // A real guest's receipt never expires, so this is a mistyped link, a deleted answer or a
+      // guess. Nothing of the receipt is logged: it is the credential.
+      this.logger.warn('[Forms] guest receipt refused: it matches no answer');
+      throw new NotFoundException(GUEST_RECEIPT_NOT_FOUND);
+    }
+    const view = toGuestReceiptView(await this.confirmPayment(row.id));
+    this.logger.log(
+      `[Forms] guest receipt read: submission ${row.id} is ${view.paymentStatus}` +
+        (view.requestState ? ` (provider ${view.requestState})` : '')
+    );
+    return view;
+  }
+
+  /**
+   * Moves a `pending` row whose request the provider reports declined or cancelled / expired to
+   * `cancelled`, under the row lock and only while the row still names that request (`sessionId`).
+   * A row that already left `pending` (expired by the job, cancelled by a callback) is left as is.
+   */
+  private async releaseSettledRefusedRow(
+    submissionId: string,
+    sessionId: string,
+    state: RequestState
+  ): Promise<void> {
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
+      named: (s) => s.stripeSessionId === sessionId,
+    });
+    if (typeof outcome === 'object') {
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${state} at the provider - answer released, the payer may retry`
+      );
+    } else {
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${state}, row left as is (${outcome})`
+      );
+    }
+  }
+
+  /**
+   * A Lydia confirm callback, VERIFIED by core-service with the Business key of `vendorToken`, used
+   * as a TRIGGER and nothing more: the row settles from its OWN stored request uuid, read at Lydia
+   * with that Business (`settleFromProvider`, the very read the payer's return makes). Nothing the
+   * callback carries - amount, request id - decides the status.
+   *
+   * CROSS-ASSOCIATION CHECK FIRST: the row's payee account (its form's association, or that
+   * association's approved parent) must be `vendorToken`. Without it, an authentic callback of
+   * association A's request naming a submission of association B in its `order_ref` would settle
+   * B's row - A's key is genuine, the row is not A's. Refused rows are logged at ERROR: they are
+   * either a forged `order_ref` signed by a real Business, or a delegation that moved mid-payment.
+   *
+   * Answers `{ outcome }` for core-service's log: the state read, or why nothing was read.
+   */
+  async confirmPaymentFromCallback(
+    submissionId: string,
+    callback: { vendorToken: string; requestId?: string }
+  ): Promise<{ outcome: string }> {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) throw new NotFoundException('Submission not found');
+    if (!(await this.isCallbackPayee(submission, callback.vendorToken, 'confirm'))) {
+      return { outcome: 'other-account' };
+    }
+    if (
+      callback.requestId &&
+      submission.paymentRequestId &&
+      submission.paymentRequestId !== callback.requestId
+    ) {
+      // Expected never: a retry cancels the old request before issuing the next, and settles it
+      // first if it was paid (`settleOpenRequest`). A confirm for a request the row no longer names
+      // is a payment nothing will record - ERROR, so the refund is not owed in silence.
+      this.logger.error(
+        `[Forms] confirm callback for submission ${submissionId} names request ${callback.requestId}, ` +
+          `the row's is ${submission.paymentRequestId}: if Lydia took that payment, a refund is owed - reading the row's own request`
+      );
+    }
+    const sessionId = this.lydiaRequestToRead(submission, 'confirm callback');
+    if (!sessionId) return { outcome: `nothing-to-read (${submission.paymentStatus})` };
+    return {
+      outcome: await this.settleFromProvider(
+        submissionId,
+        sessionId,
+        callback.vendorToken,
+        'confirm callback'
+      ),
+    };
+  }
+
+  /**
+   * Whether `vendorToken` - the Business whose key verified a callback - is the account this row's
+   * money is paid into. Logs the refusal at ERROR (see `confirmPaymentFromCallback`).
+   */
+  private async isCallbackPayee(
+    submission: Submission,
+    vendorToken: string,
+    what: string
+  ): Promise<boolean> {
+    const form = await this.formRepo.findOne({
+      where: { id: submission.formId },
+      select: { id: true, associationId: true },
+    });
+    const payee = form?.associationId
+      ? await this.associationsService.getLydiaPayeeAccountId(form.associationId)
+      : null;
+    if (payee && payee === vendorToken) return true;
+    this.logger.error(
+      `[Forms] ${what} callback for submission ${submission.id} REFUSED: verified for a Business ` +
+        `that is not the row's payee (${payee ? 'the form pays into another account' : 'the form has no Lydia payee'}) - nothing written`
+    );
+    return false;
+  }
+
+  /**
+   * The Lydia `request_uuid` a row's payment can be read with, or null (logged) when there is
+   * nothing to ask the provider: a status that cannot become paid, no stored request, or a
+   * Stripe-era `cs_...` id that core would refuse with a 400 on every poll.
+   */
+  private lydiaRequestToRead(submission: Submission, by: string): string | null {
+    const sessionId = submission.stripeSessionId;
+    if (!CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) || !sessionId) {
+      this.logger.debug(
+        `[Forms] ${by} ${submission.id}: ${submission.paymentStatus}, nothing to ask the provider`
+      );
+      return null;
+    }
+    if (!LYDIA_REQUEST_UUID_RE.test(sessionId)) {
+      this.logger.log(
+        `[Forms] ${by} ${submission.id}: ${submission.paymentStatus} row holds a non-Lydia request id, nothing to ask the provider`
+      );
+      return null;
+    }
+    return sessionId;
+  }
+
+  /**
+   * Reads the row's own request at the provider and records it if paid (`markPaid` under the row
+   * lock, re-checking the row still names `sessionId`). The ONE settle both confirmations share -
+   * the payer's return and the verified callback. Answers the typed state read (`toRequestState`,
+   * via `readRequestState`), `stale` when a retry replaced the request meanwhile, or `unreadable`
+   * when the read failed (WARN: the payer repeats it, the callback is retried by Lydia or the expiry
+   * job decides). What a `declined` or `cancelled-or-expired` state releases is the caller's call.
+   */
+  private async settleFromProvider(
+    submissionId: string,
+    sessionId: string,
+    connectAccountId: string,
+    by: string
+  ): Promise<RequestState | 'stale' | 'unreadable'> {
+    try {
+      const { state, raw } = await this.readRequestState(sessionId, connectAccountId);
+      if (state === 'paid') {
+        this.logger.log(
+          `[Forms] ${by} ${submissionId}: request ${sessionId} is PAID at the provider - recorded`
+        );
+        const { ok } = await this.markPaid(submissionId, sessionId, true);
+        return ok ? 'paid' : 'stale';
+      }
+      this.logger.debug(
+        `[Forms] ${by} ${submissionId}: request ${sessionId} is ${state} (code ${raw})`
+      );
+      return state;
+    } catch (err: unknown) {
+      this.logger.warn(
+        `[Forms] ${by} ${submissionId}: could not read request ${sessionId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return 'unreadable';
+    }
+  }
+
+  /**
+   * A Lydia cancel/expire callback, VERIFIED by core-service with the Business key of `vendorToken`,
+   * used as a TRIGGER and nothing more - the same rule as `confirmPaymentFromCallback`: the row's
+   * OWN request is read at Lydia with that Business (`settleFromProvider`), and only a request Lydia
+   * says is `cancelled-or-expired` (state 6, which a cancel and an expiry both leave) or `declined`
+   * (state 5) releases the seat (`SETTLED_REFUSED_REQUEST_STATES`). A request
+   * Lydia reads `paid` is recorded paid instead; `open`, an unmeasured state or a failed read leaves
+   * the row as it is (the expiry job, or Lydia's retry of the callback, decides). So a callback
+   * signed by a Business key its payout manager typed cannot cancel a seat Lydia still holds.
    *
    * The report must NAME the request - `requestId` (Lydia's numeric `request_id`, what a callback
-   * carries) or `sessionId` (the `request_uuid`, what the fail URL carries) - and is applied only
-   * when that is the row's CURRENT request. `submit` reuses a pending row for a new request and
-   * cancels the old one first, which makes Lydia call back about the OLD one: applying that would
-   * cancel the answer the payer is paying for right now. A row that has no stored id names no
-   * request, so no report can match it - it leaves `pending` through the expiry job instead.
+   * carries) or `sessionId` (the `request_uuid`) - and is applied only when that is the row's
+   * CURRENT request. `submit` reuses a pending row for a new request and cancels the old one first,
+   * which makes Lydia call back about the OLD one: applying that would cancel the answer the payer
+   * is paying for right now. A row that has no stored id names no request, so no report can match
+   * it - it leaves `pending` through the expiry job instead.
+   *
+   * `vendorToken` is the Business whose key verified the callback: a report about a row whose
+   * money goes to another account changes nothing (`isCallbackPayee`).
+   *
+   * Answers `outcome` for core-service's log; `unreadable` is what core turns into a retryable 503.
    */
   async cancelPendingSubmission(
     submissionId: string,
-    request: { requestId?: string; sessionId?: string }
-  ): Promise<{ ok: boolean }> {
+    request: { requestId?: string; sessionId?: string },
+    vendorToken: string
+  ): Promise<{ ok: boolean; outcome: string }> {
     if (!request.requestId && !request.sessionId) {
       this.logger.warn(
         `[Forms] cancelPendingSubmission ${submissionId} refused: the report names no request`
       );
       throw new BadRequestException('A cancel report must name its request');
     }
-    const named = (submission: Submission) =>
-      (!!request.requestId && submission.paymentRequestId === request.requestId) ||
-      (!!request.sessionId && submission.stripeSessionId === request.sessionId);
-    return this.applyPendingCancel(submissionId, 'the provider', named);
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) {
+      this.logger.warn(`[Forms] cancel: submission ${submissionId} not found`);
+      return { ok: false, outcome: 'missing' };
+    }
+    if (!(await this.isCallbackPayee(submission, vendorToken, 'cancel'))) {
+      return { ok: false, outcome: 'other-account' };
+    }
+    const named = (row: Submission) =>
+      (!!request.requestId && row.paymentRequestId === request.requestId) ||
+      (!!request.sessionId && row.stripeSessionId === request.sessionId);
+    if (!named(submission)) {
+      // Expected after every reuse: the old request was cancelled on purpose, and Lydia reports it.
+      this.logger.log(
+        `[Forms] cancel callback for submission ${submissionId} left as is: the reported request ` +
+          `is not its current one (${submission.paymentRequestId ?? 'none'})`
+      );
+      return { ok: true, outcome: 'other-request' };
+    }
+    const sessionId = this.lydiaRequestToRead(submission, 'cancel callback');
+    if (!sessionId) return { ok: true, outcome: `nothing-to-read (${submission.paymentStatus})` };
+    const state = await this.settleFromProvider(
+      submissionId,
+      sessionId,
+      vendorToken,
+      'cancel callback'
+    );
+    const settledRefused =
+      state !== 'stale' && state !== 'unreadable' && SETTLED_REFUSED_REQUEST_STATES.has(state);
+    if (!settledRefused) {
+      if (state !== 'paid' && state !== 'stale') {
+        this.logger.warn(
+          `[Forms] cancel callback for submission ${submissionId}: request ${sessionId} reads ` +
+            `${state} at Lydia, neither declined nor cancelled / expired - the seat is kept`
+        );
+      }
+      return { ok: state !== 'unreadable', outcome: state };
+    }
+    // Under the row lock, the row must still name the very request that was read settled-refused.
+    const { ok } = await this.applyPendingCancel(
+      submissionId,
+      'the provider',
+      (row) => named(row) && row.stripeSessionId === sessionId
+    );
+    return { ok, outcome: state };
   }
 
   /** Moves a `pending` row to `cancelled` (see `moveLockedSubmission`) and logs the outcome. */
@@ -1867,6 +2431,28 @@ export class FormsService {
     const count = result.affected ?? 0;
     if (count > 0) {
       this.logger.log(`[Forms] Expired ${count} online payment(s) left pending past the hold`);
+    }
+    return count;
+  }
+
+  /**
+   * Clears the visitor key of every guest answer that no longer WAITS for its payment (PP5,
+   * `guest-visitor.ts`). The key exists to be counted against the ceiling, and only a waiting
+   * answer is counted, so it is personal data with nothing left to do: it goes. Run by the expiry
+   * job after it has moved stale `pending` rows to `expired`, so those go in the same tick.
+   * Idempotent from the rows - the `WHERE` names only keys still set on rows that stopped waiting.
+   */
+  async forgetSettledGuestVisitors(): Promise<number> {
+    const result = await this.submissionRepo
+      .createQueryBuilder()
+      .update()
+      .set({ guestVisitorKey: null })
+      .where('"guestVisitorKey" IS NOT NULL')
+      .andWhere('"paymentStatus" NOT IN (:...waiting)', { waiting: ['pending', 'pending_cash'] })
+      .execute();
+    const count = result.affected ?? 0;
+    if (count > 0) {
+      this.logger.log(`[Forms] Forgot the visitor of ${count} guest answer(s) no longer waiting`);
     }
     return count;
   }

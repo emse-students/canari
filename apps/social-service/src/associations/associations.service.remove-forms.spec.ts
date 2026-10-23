@@ -78,6 +78,22 @@ describe('AssociationsService.remove - the forms go with the association', () =>
     // deleted otherwise - never a bare `manager.delete(Form, ...)`, which the key would refuse.
     expect(retireForms).toHaveBeenCalledWith(manager, { associationId: 'asso-1' });
   });
+
+  it('locks the association FOR UPDATE before it deletes anything (the proposals lock order)', async () => {
+    const { service, manager } = makeService();
+
+    await service.remove('asso-1', 'admin-1');
+
+    const lock = manager.query.mock.calls.findIndex(([sql]) =>
+      sql.endsWith('FROM associations WHERE id = $1 FOR UPDATE')
+    );
+    expect(lock).toBeGreaterThan(-1);
+    expect(manager.query.mock.calls[lock][1]).toEqual(['asso-1']);
+    // Before the event delete, whose 074 trigger takes co-organisation proposals.
+    expect(manager.query.mock.invocationCallOrder[lock]).toBeLessThan(
+      manager.delete.mock.invocationCallOrder[0]
+    );
+  });
 });
 
 describe('AssociationsService.remove - its booking spaces go, and their posters are released', () => {

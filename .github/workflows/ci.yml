@@ -235,14 +235,15 @@ jobs:
 
           # ── TypeScript backend matrix ──
           #
-          # `libs/contracts/` IS IN TWO OF THESE ENTRIES BECAUSE THEIR SUITES READ IT. A contract
+          # `libs/contracts/` IS IN THREE OF THESE ENTRIES BECAUSE THEIR SUITES READ IT (core-service
+          # since 2026-10-21: `payment-amount-range.json`, the range social mirrors). A contract
           # there is a rule several estates must agree on, shared as DATA because no TypeScript
           # package crosses this repository (see `docs/wiki/libs.md`), and it is honoured by one
           # test per implementation reading the JSON from disk. A case added to that file with no
           # job running is the same silent hole the frontend filter below already paid for once:
           # ASK WHAT THE GATE READS.
           ts=()
-          if has '^apps/core-service/'; then
+          if has '^apps/core-service/' || has '^libs/contracts/'; then
             ts+=('"apps/core-service"')
           fi
           if has '^apps/social-service/' || has '^libs/contracts/'; then
@@ -370,6 +371,21 @@ jobs:
       fail-fast: false
       matrix:
         component: ${{ fromJSON(needs.changes.outputs.rust-matrix) }}
+    # THE GATEWAY'S PRESENCE SCRIPTS (`apps/chat-gateway/src/addressing.rs`, `redis_it`): a session's
+    # field and its expiry in one command, a refresh that cannot resurrect a retired session, the
+    # presence going with the last session on any process - Lua a fake cannot judge. Gated on
+    # `GATEWAY_IT_REDIS_URL`, and the tests FAIL rather than skip when it is unset under CI. The same
+    # digest as production (`ci-passed-gate.test.mjs` compares them).
+    services:
+      redis:
+        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v7
@@ -469,6 +485,8 @@ jobs:
 
       - name: Run Component Task
         working-directory: ${{ matrix.component.path }}
+        env:
+          GATEWAY_IT_REDIS_URL: redis://127.0.0.1:6379
         run: ${{ matrix.component.cmd }}
 
   # =================================================================================================
@@ -533,7 +551,7 @@ jobs:
         # run - it mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default.
         # Both halves are pinned since #306, and this line carries the digest rather than `8-alpine`
         # so the two cannot drift by a minor either. Bump it WITH the compose files, never alone.
-        image: redis:8.10-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
         ports:
           - 6379:6379
         options: >-
@@ -637,6 +655,35 @@ jobs:
           SOCIAL_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- account-erasure.integration
 
+      # MIGRATION 015 (the lives kill switch) AGAINST POSTGRESQL: lands `off` on an existing row,
+      # replays as a no-op, and its CHECK refuses a value no service reads. The spec builds its own
+      # `platform_config` in a throwaway schema, so the boot's database is all it needs.
+      # THE CHECK-AND-PUBLISH SCRIPT OF AN ADDRESSED HISTORY ANSWER (history-answer-addressing, rule
+      # 6) against the production Redis this job already runs: its point is that the check and the
+      # PUBLISH are one atomic step. Gated on `CHAT_DELIVERY_IT_REDIS_URL`, so jest's own report is
+      # read and a skipped or absent test fails the step.
+      - name: Addressed publish script against Redis
+        if: ${{ matrix.service == 'apps/chat-delivery-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CHAT_DELIVERY_IT_REDIS_URL: redis://localhost:6379
+        run: |
+          node --run test -- addressing.redis --json --outputFile "$RUNNER_TEMP/addressing-it.json"
+          node -e '
+            const r = require(process.argv[1]);
+            if (r.numPendingTests > 0 || r.numPassedTests < 5) {
+              console.error(`addressing.redis: ${r.numPassedTests} passed, ${r.numPendingTests} skipped - the script ran nowhere`);
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/addressing-it.json"
+
+      - name: Lives kill switch migration against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- lives-mode-migration.integration
+
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
   # =================================================================================================
@@ -674,6 +721,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # THE LIVE SEAT SCRIPTS (`lives/live-seats.spec.ts`): the viewer cap's atomicity, a live's viewer
+      # count and a seat's expiry are Lua a fake Redis cannot judge, gated on `SOCIAL_IT_REDIS_URL`
+      # and skipped everywhere until this service existed. The same digest as production, as the
+      # Postgres above (`ci-passed-gate.test.mjs` compares them).
+      redis:
+        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -701,12 +761,16 @@ jobs:
       # empty database has not got. It runs in `boot-nest-apps`, right after the boot built that
       # schema ("Account erasure SQL against PostgreSQL"), on the same digest. Both steps below name
       # it, so the count still refuses any OTHER spec the pattern stops selecting.
+      # `live-seats.spec.ts` rides along: its Redis half is the same kind of test (a real store, gated
+      # on an env var, SKIPPED without it), so it is selected by name and counted by the same check.
       - name: Run every integration spec
         working-directory: apps/social-service
         env:
           SOCIAL_IT_DATABASE_URL: postgres://canari:it-probe@localhost:5432/social_it
+          SOCIAL_IT_REDIS_URL: redis://localhost:6379
         run: >-
-          node --run test -- --runInBand --testPathPatterns '\.integration\.spec\.ts$'
+          node --run test -- --runInBand
+          --testPathPatterns '(\.integration\.spec\.ts|/lives/live-seats\.spec\.ts)$'
           --testPathIgnorePatterns '/node_modules/' 'account-erasure\.integration\.spec\.ts$'
           --json --outputFile "$RUNNER_TEMP/social-it.json"
 
@@ -715,7 +779,13 @@ jobs:
         run: |
           set -euo pipefail
           report="$RUNNER_TEMP/social-it.json"
-          on_disk="$(find src -name '*.integration.spec.ts' ! -path 'src/internal/account-erasure.integration.spec.ts' | wc -l)"
+          # The live seat spec is counted as an integration spec: missing from disk, it fails here.
+          redis_specs="$(find src -path 'src/lives/live-seats.spec.ts' | wc -l)"
+          if [ "$redis_specs" -ne 1 ]; then
+            echo "::error::src/lives/live-seats.spec.ts is gone - the Redis seat scripts are tested nowhere; update this job"
+            exit 1
+          fi
+          on_disk="$(( $(find src -name '*.integration.spec.ts' ! -path 'src/internal/account-erasure.integration.spec.ts' | wc -l) + redis_specs ))"
           suites="$(jq '.numTotalTestSuites' "$report")"
           tests="$(jq '.numTotalTests' "$report")"
           skipped="$(jq '.numPendingTests + .numTodoTests' "$report")"
@@ -725,7 +795,7 @@ jobs:
             exit 1
           fi
           if [ "$tests" -eq 0 ] || [ "$skipped" -ne 0 ]; then
-            echo "::error::$skipped integration test(s) skipped - with the database set, a skip means a spec did not run"
+            echo "::error::$skipped integration test(s) skipped - with the database and Redis set, a skip means a spec did not run"
             jq -r '.testResults[] | select(any(.assertionResults[]; .status != "passed")) | .name' "$report"
             exit 1
           fi
@@ -1164,9 +1234,18 @@ jobs:
   # is the only machine-readable description of an update this repository gets. A human's pull
   # request carries no such block, so there is nothing to decide and the job skips - `ci-passed`
   # treats `skipped` as passing, which is exactly right here.
+  #
+  # AND THE LOCKFILE REFRESH (WP-RUST-LOCK-AUTOMERGE, 2026-10-18): `cargo-lock-refresh.sh` carries
+  # Dependabot's commits, trailers included, onto a `deps/lock-refresh/` branch the App opens, and
+  # `arm-auto-merge.yml` arms it. Reading only Dependabot's own pull requests would let exactly that
+  # one past the ceiling. The prefix, not the author, is the condition, because the prefix is what
+  # the arming requires: every pull request that CAN be armed that way is gated here.
   dependency-ceiling:
     name: Dependency ceiling
-    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    if: >
+      github.event_name == 'pull_request' &&
+      (github.event.pull_request.user.login == 'dependabot[bot]' ||
+      startsWith(github.event.pull_request.head.ref, 'deps/lock-refresh/'))
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -1178,10 +1257,13 @@ jobs:
           # `infrastructure/dev/version-gap.yml` is here because the datastore refusal NAMES it as
           # the way to retire itself. Without it `dev_proven_major` read an absent file in CI and
           # answered empty, so a rehearsal recorded there would have lifted nothing.
+          # `infrastructure/authentik/compose.yml` for the same reason as production's: the identity
+          # provider runs its OWN PostgreSQL major, and an update to that file is compared with it.
           sparse-checkout: |
             .github/scripts
             infrastructure/docker-compose.prod.yml
             infrastructure/dev/version-gap.yml
+            infrastructure/authentik/compose.yml
 
       # THE TABLE IS TESTED IN THE RUN THAT USES IT, and it had no test at all until it cost an
       # outage: `postgres` was simply absent from the ceiling. `ceiling.test.sh` derives the

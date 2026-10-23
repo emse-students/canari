@@ -136,7 +136,7 @@ the payload at all — the cheapest way not to leak a field is not to select it.
 | Route | What it serves |
 |---|---|
 | `GET /api/public/posts/:id/preview` | text, association, image dimensions — `Cache-Control: max-age=300` |
-| `GET /api/public/posts/:id/preview-image` | the decrypted first image — `max-age=3600`, **ThrottlerGuard** |
+| `GET /api/public/posts/:id/preview-image` | the post's CARD, always 1200x630 JPEG (see below) — `max-age=3600`, **ThrottlerGuard** |
 | `GET /api/public/posts?limit=` | ids + `updatedAt` for the sitemap, capped at 500 |
 
 **The card's text is cut to what the unfurler shows, between words (2026-10-18).** The title was
@@ -156,6 +156,46 @@ the built server behind the production gzip settings: 16 768 bytes identity on e
 6 292 gzipped. The `@app_shell` fallback is the other shape - a constant size both ways (23 364 /
 7 145 locally), and LARGER than the SSR page uncompressed, because the prerendered shell inlines the
 `modulepreload` list the SSR answer sends as a header.
+
+**One card per post, and a failed enrichment is never remembered (2026-10-18).** Three changes for
+the intermittent Messenger preview failure, whose cause the access log could not name:
+
+- **The `og:image` is always a 1200x630 JPEG** (`post-card-image.ts`, sharp, in social-service): the
+  post's own photo cropped to cover, else the association's logo centred on the brand ink
+  (`#151b2c`), else the plain background. The URL did not change (`/preview-image`, no query), so a
+  link already shared picks the new shape up. `og:image:width`, `height` and `type` are declared for
+  it on EVERY post (`POST_CARD_IMAGE` in `serverSeo.ts` repeats the service's constants - another
+  deployable, so they move together). Before, a logo post offered a raw 512x512 crest with no
+  dimensions, the shape Messenger most often drops. The JPEG carries no metadata (EXIF stripped). A
+  photo or logo that cannot be read answers 404 and logs a warning; it never silently becomes a
+  different card. **The route is anonymous and nothing shared sits in front of it** (canari.emse.fr has
+  no CDN; the earlier claim that an edge cache absorbs it was false), so it is bounded in the service:
+  sharp decodes at most 40 MP (`POST_CARD_MAX_INPUT_PIXELS`; the default 268 MP let a 16000x16000
+  PNG cost ~680 ms on every thread, per request) with `sharp.concurrency(2)`; a body is read as a
+  stream and aborted at 5 MB (a declared `Content-Length` over it is refused unread - a logo URL is a
+  free admin string); and `PostCardCache` keeps rendered cards in a 32 MB LRU keyed by post id,
+  `updatedAt` and logo URL, with one render per burst and failures never remembered.
+- **A transport failure of the 1.5 s enrichment is not a refusal.** `fetchJsonOrThrow`
+  (`internalApi.ts`) returns `null` for a 4xx (the service answered: cached like any answer) and
+  throws `UpstreamUnavailableError` for a timeout, a connection failure, a 5xx, a 408 or a 429 (the last two
+  are 4xx by number and transient by meaning). It lives in `upstream.ts` so `upstream.test.ts` can test the split
+  with a fake fetch. The agenda feed goes through it too, and a non-transport throw in the hook is
+  also served `no-store`.
+  `resolveServerSeo` answers `{ meta, degraded }`; a degraded head is NEVER put in the 60 s cache
+  (that cache kept one timeout alive for a minute of every unfurler's retries), logs
+  `[SEO] DEGRADED head for <path>` at warn, and `hooks.server.ts` sends `Cache-Control: no-store`
+  and `X-Canari-Degraded: 1`.
+- **nginx honours it.** `@ssr` used to add `public, max-age=0, s-maxage=60` to everything, which
+  would have cached the degraded page at the edge. `$ssr_cache_control` (a map on
+  `$upstream_http_x_canari_degraded`) makes it `no-store` for a degraded page (and lets the sitemap keep its own `public, max-age=3600` through `$ssr_cache_control_declared`); `static-headers.test.mjs`
+  reads the map and refuses any other arm. The access log gained five fields to say which case a hit
+  was: [logging](../infrastructure/logging.md#the-access-log-diagnostic-fields-2026-10-18).
+
+**DECIDED BY THE USER (2026-10-23, with the share sheet of [sharing S6](sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)):
+the preview stays as it is.** Every published association post unfurls its text and picture to
+whoever holds its link, a post the feed shows to one campus only included - an association post is a
+communication its authors want carried. A personal post keeps the generic card. Not to be reopened
+as a defect: it was asked (it was an open question from 2026-10-18) and answered.
 
 ### The image an unfurler can actually fetch
 
@@ -223,7 +263,7 @@ produces; it exists for rows that predate that preset.
 **`og:image:width`/`height` are declared only where both are known, and both or neither.** An
 unfurler reserves that box before the bytes arrive, so a guessed pair renders a gap the image never
 fills, and a lone width describes nothing. The site image's dimensions are constants and a post's
-photo carries its own; an association logo declares none. `renderHead.ts` and `SeoHead.svelte`
+photo carries its own; an association logo declares none. (A post's card is now a rendered 1200x630 image, so a post declares `1200x630` and `og:image:type` whichever source it was built from.) `renderHead.ts` and `SeoHead.svelte`
 compute the identical pair — they are meant to be comparable line by line, so a tag added to one is
 owed to the other.
 

@@ -1,4 +1,5 @@
 import { BackupError, type BackupErrorCode } from '$lib/backup';
+import type { RecoveryCodeOrigin } from '$lib/crypto/deviceRecoveryCode';
 import { m } from '$lib/paraglide/messages';
 
 /**
@@ -11,8 +12,17 @@ import { m } from '$lib/paraglide/messages';
  * file is a sentence the next surface writes again, differently.
  */
 
-/** What happened, and what to say about it. `ok` decides which way the banner is coloured. */
-export type BackupOutcome = { ok: boolean; text: string };
+/**
+ * What happened, and what to say about it. `ok` decides which way the banner is coloured.
+ * `recoveryCode` is set on a successful export only: the device's code that opens the file, with
+ * `codeNote` saying whether the user already holds it.
+ */
+export type BackupOutcome = {
+  ok: boolean;
+  text: string;
+  recoveryCode?: string;
+  codeNote?: string;
+};
 
 /**
  * The sentence for one refusal.
@@ -40,6 +50,10 @@ function sentenceFor(code: BackupErrorCode): string {
       return m.profile_backup_error_too_old();
     case 'wrong_key':
       return m.profile_backup_error_wrong_key();
+    case 'code_required':
+      return m.profile_backup_error_code_required();
+    case 'wrong_code':
+      return m.profile_backup_error_wrong_code();
     case 'corrupted':
       return m.profile_backup_error_corrupted();
     case 'too_large':
@@ -70,9 +84,35 @@ export function backupImportOutcome(result: {
   };
 }
 
-/** The sentence for an export that produced a file. */
-export function backupExportOutcome(): BackupOutcome {
-  return { ok: true, text: m.profile_backup_export_ok() };
+/**
+ * The sentence for an export that produced a file, with the code that opens it and what that code
+ * is to the user: the one every earlier backup of this device uses, its first, or a replacement
+ * (the earlier files keep their old code).
+ */
+export function backupExportOutcome(
+  recoveryCode: string,
+  origin: RecoveryCodeOrigin
+): BackupOutcome {
+  return {
+    ok: true,
+    text: m.profile_backup_export_ok(),
+    recoveryCode,
+    codeNote: codeNoteFor(origin),
+  };
+}
+
+/** One origin, one sentence. Exhaustive, as {@link sentenceFor} is. */
+function codeNoteFor(origin: RecoveryCodeOrigin): string {
+  switch (origin) {
+    case 'new':
+      return m.profile_backup_code_desc();
+    case 'kept':
+      return m.profile_backup_code_kept();
+    case 'replaced':
+      return m.profile_backup_code_replaced();
+  }
+  const unreachable: never = origin;
+  return unreachable;
 }
 
 /** The sentence for an export that did not. Exports have one failure mode: it did not happen. */

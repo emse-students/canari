@@ -8,6 +8,7 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
+import { flushMacrotask } from '../../test/flush';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
@@ -242,7 +243,7 @@ describe('a page is decoded only once no listing can still enter its salon', () 
 
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx());
     await vi.waitFor(() => expect(listMessages).toHaveBeenCalledTimes(1));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
     // Fetched, not decoded: a missing seed asked now would go to an unregistered key group.
     expect(decodeChannelMessageRow).not.toHaveBeenCalled();
 

@@ -185,20 +185,32 @@ export function formatTakeTime(ms: number): string {
  * path - no native camera app, no `<input capture>`).
  *
  * - `feed`: the CanaReels tab; the take goes on to the publish step ({@link ReelCapture}).
- * - `post`: the new-post composer; a photo OR a video comes back as a FILE for the composer's ordinary
- *   attachment path, so it keeps the post retention class, never the `reel` one.
+ * - `post`: the NEW-post composer. ONE CAMERA, ONE BEHAVIOUR (user, 2026-10-19, replacing D-camera's
+ *   retention by destination for this case): a FILMED video goes to the same reel publish step as the
+ *   tab - a CanaReel, deleted after 30 days, which that step says - with the composer's text as its
+ *   caption and a way back ("keep as a post") that hands the file to the composer as before. A photo
+ *   comes back to the composer as a FILE, as it always did.
+ * - `post-edit`: the post EDITOR. An existing post is never turned into a reel, so a photo OR a video
+ *   comes back as a FILE for its ordinary attachment path.
  * - `chat`: a conversation composer; PHOTOS ONLY for now. A video filmed in a chat is the reel
  *   message (RC-3..RC-5, not built - docs/wiki/frontend/modules/reels-in-chat.md), so until then the
  *   shutter takes no video there and the photo goes out as an ordinary image message.
  */
-export type CaptureDestination = 'feed' | 'post' | 'chat';
+export type CaptureDestination = 'feed' | 'post' | 'post-edit' | 'chat';
 
 /** What a destination changes about the capture screen - one table, so no call site re-decides it. */
 export interface DestinationRules {
   /** A hold on the shutter does NOT start a video. */
   photoOnly: boolean;
-  /** The take is handed back as a file instead of opening the reel publish step. */
-  handsBackFile: boolean;
+  /** A PHOTO is handed back as a file instead of opening the publish step. */
+  photoHandsBack: boolean;
+  /** A VIDEO is handed back as a file instead of opening the reel publish step. */
+  videoHandsBack: boolean;
+  /**
+   * The reel publish step was reached from a composer: it says the reel is deleted after its days,
+   * starts from the composer's text, and offers to hand the video back as an ordinary post instead.
+   */
+  fromComposer: boolean;
   /** The gallery shortcut (reel clips only) is drawn. */
   gallery: boolean;
   /**
@@ -216,11 +228,22 @@ export function destinationRules(destination: CaptureDestination): DestinationRu
   return {
     photoOnly: destination === 'chat',
     microphone:
-      destination === 'feed' ? 'with-lens' : destination === 'post' ? 'separate' : 'never',
-    handsBackFile: destination !== 'feed',
+      destination === 'feed'
+        ? 'with-lens'
+        : destination === 'post' || destination === 'post-edit'
+          ? 'separate'
+          : 'never',
+    photoHandsBack: destination !== 'feed',
+    videoHandsBack: destination === 'post-edit' || destination === 'chat',
+    fromComposer: destination === 'post',
     gallery: destination === 'feed',
     soundRemoval: destination === 'feed',
   };
+}
+
+/** Whether `media` (the take, or its edit) leaves as a file under `rules`, rather than being published here. */
+export function handsBackTake(rules: DestinationRules, media: Blob): boolean {
+  return media.type.startsWith('image/') ? rules.photoHandsBack : rules.videoHandsBack;
 }
 
 /**

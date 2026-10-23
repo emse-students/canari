@@ -358,6 +358,8 @@ describe('the reveal of a focused field (iPhone 12, v1.2.9-alpha.4)', () => {
     expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }));
   });
 
+  // WHY A SOURCE TEST (WP-T5: keep). `scroll-margin` is a CSS rule and happy-dom computes no style,
+  // so the scroll above is driven and the margin it relies on is read from `app.css`.
   it('a modal field carries the scroll margin that keeps the NEXT field above the footer', () => {
     const css = readFileSync('src/app.css', 'utf8');
     const rule = css.match(/\[data-keyboard-aware-overlay\]\s*:is\(([^{]+)\)\s*\{([^}]*)\}/);

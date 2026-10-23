@@ -72,7 +72,25 @@ export function publicAppUrl(path: string): string {
   return `${publicAppOrigin()}${normalized}`;
 }
 
-/** True when `url` points at the public Canari web app (not API-only hosts). */
+/**
+ * True when `hostname` is a name the Canari WEB APP is served under: the public hosts, plus the
+ * origin this build advertises ({@link publicAppOrigin}), which is how `dev.canari-emse.fr` stays
+ * the app inside the dev estate without being the app in production.
+ *
+ * It is an EXACT match and never a suffix test: `archives.canari-emse.fr` (an Omeka archive),
+ * `cercle.canari-emse.fr` and every other sibling subdomain are separate sites, and a wildcard
+ * here rewrote their links to the current origin (a broken `canari.emse.fr/s/...` page).
+ */
+function isAppHostname(hostname: string): boolean {
+  if ((PUBLIC_APP_HOSTS as readonly string[]).includes(hostname)) return true;
+  try {
+    return new URL(publicAppOrigin()).hostname === hostname;
+  } catch {
+    return false;
+  }
+}
+
+/** True when `url` points at the public Canari web app (not API-only hosts or sibling sites). */
 export function isPublicAppUrl(url: string, base?: string): boolean {
   const trimmed = url.trim();
   if (!trimmed) return false;
@@ -82,11 +100,7 @@ export function isPublicAppUrl(url: string, base?: string): boolean {
       (typeof window !== 'undefined' ? window.location.href : `${DEFAULT_PUBLIC_APP_ORIGIN}/`);
     const u = new URL(trimmed, resolvedBase);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
-    return (
-      (PUBLIC_APP_HOSTS as readonly string[]).includes(u.hostname) ||
-      u.hostname.endsWith('.canari-emse.fr') ||
-      u.hostname.endsWith('.canari.emse.fr')
-    );
+    return isAppHostname(u.hostname);
   } catch {
     return false;
   }

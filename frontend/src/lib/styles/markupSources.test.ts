@@ -11,11 +11,8 @@
  * rather than three - it found two the sweep had left, and a seventh that landed while this very
  * branch was open.
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
-
 import { describe, it, expect } from 'vitest';
-
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 import { withoutAnyComments, withoutComments } from './markupSources';
 
 describe('withoutComments', () => {
@@ -82,25 +79,17 @@ describe('withoutAnyComments', () => {
  * block-comment opener in a regex is stripping comments itself and must use this module instead.
  */
 describe('the comment stripper has exactly one implementation', () => {
-  const SRC = join(process.cwd(), 'src');
   const OWNER = 'lib/styles/markupSources.ts';
   const STRIPPER = /<!--|\\\*/;
 
   /** Every tracked `.ts` under `src`, which is where a private copy would be written. */
-  function typescriptFiles(dir: string, out: string[] = []): string[] {
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry);
-      if (statSync(full).isDirectory()) typescriptFiles(full, out);
-      else if (entry.endsWith('.ts')) out.push(full);
-    }
-    return out;
-  }
+  const typescriptFiles = sourceFiles({ under: 'src', extensions: ['ts'], tests: 'include' });
 
   // Read through the module's own stripper, which is the honest way to write this rule: a file
   // may EXPLAIN the idiom in prose - this one does, at length - and only the code counts.
-  const files = typescriptFiles(SRC).map((f) => ({
-    path: relative(SRC, f).split(sep).join('/'),
-    body: withoutAnyComments(readFileSync(f, 'utf8')),
+  const files = typescriptFiles.map(({ path, text }) => ({
+    path: relativeTo(path, 'src'),
+    body: withoutAnyComments(text),
   }));
 
   it('is reading the tree it thinks it is', () => {

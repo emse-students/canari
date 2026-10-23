@@ -1153,6 +1153,9 @@ describe('a peer coming back online discharges the proof that nobody could repai
   });
 
   it('sessionAuth discharges BOTH records of "nobody was online" on the one edge', async () => {
+    // WHY A SOURCE TEST (WP-T5: keep). Both discharges are driven above; that the session's one
+    // peers-online edge calls BOTH is a wiring statement in `sessionAuth`, which runs only over a
+    // live MLS client, store and gateway - a harness for it would assert its own mocks.
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
     const src = readFileSync(

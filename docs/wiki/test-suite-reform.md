@@ -1,6 +1,11 @@
 # Test suite reform - the measured estate and the plan (2026-10-18)
 
-> **Status: PLAN, nothing changed yet.** Asked by the user on 2026-10-18 (*"la refonte de tout
+> **Status 2026-10-21: WP-T1, T2, T3, T5 (first pass), T6 and T9 are MERGED** (#2033, #2034, #2030, #2042,
+> #2043, #2139); **WP-T4 is draft #2041**; the inventory (#2129, section 7) and the deletion of the
+> declared spec copies (section 7.2) are the WP's first steps; WP-T7 and WP-T8 are not started. The measured sections below are
+> the baseline those packages were written against, not today's counts.
+>
+> Asked by the user on 2026-10-18 (*"la refonte de tout
 > l'outillage me semble necessaire et peut-etre faite maintenant. On est a un nombre de test aberrant
 > je crois."*). Every number below was MEASURED on that date - from `gh run view` job data, the CI
 > logs' own summaries, or a same-machine A/B run - and says where it comes from. Re-measure before
@@ -79,7 +84,7 @@ one runtime, not time, and that is why it is last in section 5.
 | Kind | Count | How measured |
 | --- | --- | --- |
 | Test files reading a source file (`readFileSync` / `readdirSync` / `?raw`) | **136** | grep |
-| - of which read app TypeScript / Svelte / CSS ("source-text tests") | 89 files, 2,355 cases, 10.7 s | classified by the extension they open |
+| - of which read app TypeScript / Svelte / CSS ("source-text tests") | 89 files, 2,355 cases, 10.7 s (re-listed after WP-T3: **86 files, 942 cases** - WP-T5) | classified by the extension they open |
 | - of which read Kotlin / Swift / manifests / Rust ("native contract tests") | 35 | same |
 | - of which read docs / CI files | 12 | same |
 | Files that mount a component or touch the DOM | ~209 of 875 | grep `mount(` / `document.` / `querySelector` |
@@ -227,11 +232,11 @@ change failing.
   case count, same pass set, and the list of moved files in the PR.
 
 **Built 2026-10-18 (draft PR `chore/tests-t4-node-env`).** `vitest.config.ts` says
-`environment: 'node'`, and the **302** files that need a DOM say so on their own first line:
+`environment: 'node'`, and the **379** files (2026-10-23) that need a DOM say so on their own first line:
 `// @vitest-environment happy-dom`. The population was SEEDED from `--environment=node` runs, never
 guessed: 149 plain test files (the first whole-suite run) and 150 of the 179 `*.svelte.test.ts` (a
 second run of those alone; the other 29 pass under node and now run there), plus 3 that `main` added
-before the merge and that the node default turned red at once, as designed. Of the 150, 142 failed
+before the merge and that the node default turned red at once, as designed. The merge of 2026-10-23 seeded 70 more the same way, from one whole-suite run under node: every one failed on a missing DOM global or on an assertion over a `typeof window` arm, none on a timeout. Of the 150, 142 failed
 on a missing global and 8 on an ASSERTION - code that branches on `typeof window` took its other arm
 (`useChannelWorkspaces`, `.offlineWrites`, `useConversations.currentConvoScope`,
 `feedPaintIdentity`, `signedFeedUrl`, `displayName.reactive`, `displayNames`, `memberOrder`). Both
@@ -272,7 +277,7 @@ re-walks `src/` on its own, and `accent`'s scan alone takes 3.9 s here. Re-run a
 files were green and `accent` was not - a wall clock measuring the machine, which is WP-T6's class,
 and one shared, memoised file list is the fix it points at.
 
-### WP-T5 (M) - Triage the 89 source-text tests
+### WP-T5 (M) - Triage the source-text tests
 
 - **Change**: each file gets one disposition, written in its header: (a) rewrite as a behavioural
   test through a real seam; (b) turn into a lint rule (`oxlint`/`oxvelte`) if it is a pattern ban;
@@ -283,6 +288,75 @@ and one shared, memoised file list is the fix it points at.
   Swift, manifests) are OUT of scope: no other layer catches them short of a device build.
 - **Risk**: medium (each deletion needs its covering test named). Revalidate per file; for (a), show
   the new test failing on the bug the old one was written for.
+
+**State 2026-10-18 (draft PR `chore/tests-t5-source-text`): ALL 86 FILES READ, TRIAGE DONE.**
+Re-listed on `main` the same day: 90 test files read a file of the tree as text and are not native
+contracts; 4 of them read no frontend source at all (`csp` reads the nginx Dockerfile,
+`categories.contract` the server, `oidcSignOutRegistration` the blueprints, `docsMergeArtefacts` the
+docs - WP-T2's), so **86 files and 942 cases** read app source, after WP-T3 had collapsed the two
+per-file scans (the 2,355 above predates it). Those 942 are the files' cases, not the source reads:
+most of these files are behavioural and read a source for one or two cases.
+
+**The finding: almost every one of them is a KEEP, for one of four reasons none of them hid.** Each
+was read against "could a behavioural test through a real seam prove the same thing", and the answer
+was no wherever the subject is one of these:
+
+- **A whole-tree inventory or pattern ban** (a cross-file question no single module answers and oxlint
+  has no rule for): `backendChoice`, `toastLocalization`, `versionProbeOnUnlockPath`, `accent`,
+  `apiUrl.absolute`, `accountLocalKeys.guard`, `globalChatSingleton.importCycle`,
+  `historyFrameConsumptionSeam`, `historyStateKeyInvalidation`, `conversations.retire`,
+  `buildConversationRow.onePolicy`, `groupSweep`, `fixedPopover`, `GifPickerModal.overlay`,
+  `cardGrid`, `postMarkdownBlocks`, `ModalOverlay`, `sidePanelInset`, `sidePanelWidth`,
+  `serverProse`, `markupSources`, `feedAudience`, `AssociationTile` (the walls half),
+  `associationsHeader`, and the one inventory case inside `outbox` (exactly three sites raise a
+  flush) and `distributionGroup` (three entrances, one per moment). An inventory of CALLERS cannot be
+  replaced by calling the callee.
+- **A wiring statement in `sessionAuth.ts` (2,475 lines) or `ChatBackgroundService.svelte` (2,187)**,
+  whose subject runs only over a live MLS client, store and gateway: `startupOrder`, `offlineUnlock`
+  (all 32 cases), `landingPreviewOrder`, `accountSwitchVault` (its shell half), `signOutEndsLiveSession`,
+  `logoutResetsAccountState`, `historyProbeSender`, `tabLeadership`, `sessionExpiredRelease`,
+  `communityListingTrigger`, `reconnectListingWiring`, `landingArrivalMark`, `pinFirstSetupRefuted`,
+  `PinModal.resetWithheld` (its shell half), `pinSaltAhead`, `salonPageKeptAtBoot`,
+  `useNotifications.webClick/.tapListener/.androidBody`, and the one such case in
+  `savedStateFailure`, `recovery`, `staleBase`, `welcomeRequestQueue`, `pinChange`,
+  `distributionGroup` (the shell passes the real log), `afterNextPaint` (`MainChatPage`'s order),
+  `permissions` (a `$derived` label list inside a component) and `postFeed`. Each says so; the seven
+  mixed files that did not (`savedStateFailure`, `recovery`, `staleBase`, `welcomeRequestQueue`,
+  `afterNextPaint`, `viewport`, `keyboardViewport`) gained the sentence here, as `salonPageKeptAtBoot`
+  and `LoginForm.flat` did in the first pass.
+- **A CSS or token rule happy-dom cannot compute**: `styles/*`, `chatChromeBarsGlass`,
+  `stickyDatePillGlass`, `appContentTop`, `postsPanelOffset`, `messageReplyStack`, `tabTapPath`,
+  `chatTypingBubble`, `LoginForm.flat`, and the `app.css` case of `viewport` and `keyboardViewport`.
+- **A contract across a boundary nothing compiles across**: `wireShapes`, `readAccess` (the server's
+  page size), `oidcRedirectScheme`, `renderHead` (the `app.html` markers `hooks.server.ts` replaces),
+  `partnershipEditorFields` (every API field has a control), `socialApiError` and `apiRefusal` (the
+  helper may grow no slot for server prose), `emojiData` (no CDN). `themeStore` and `textZoom` read
+  `app.html` to EXECUTE its pre-paint script, which is a behavioural test already.
+
+**What was replaced, each shown failing on its defect re-planted:**
+
+| Was | Cases | Now | Cases |
+| --- | --- | --- | --- |
+| `associationTileList.test.ts` (8 spellings of the tile's markup, `$derived(!isList)` among them) | 8 | deleted | 0 |
+| `AssociationTile.test.ts`, "the one tile keeps" (4: an `indexOf` chain over `{:else}`, class regexes) | 10 | the walls half and `CardTile`'s header stay | 6 |
+| - | - | `AssociationTile.render.svelte.test.ts`: MOUNTS the tile; the second logo's URL and the accent are proven to come from their one derivation by a mark only that derivation returns | 11 |
+| `auth.miconnectSignOut`: a slice of `auth.ts` looking for `await leaveSignedOut()` | 1 | the chosen sign-out RUN: logout POST, end-session with the kept id_token, `/login` | 1 |
+
+Planted to prove them: the count drawn on lists, the second theme gated on BOTH halves, the second
+name shown off a list, the second avatar at `lg`, the label falling back to the main name, the second
+logo spelled by hand, the name `truncate`d, the description clamp removed, the count made the role's
+sibling, the accent replaced, and `signOutByChoice` skipping MiConnect - each turned exactly one case
+red. **Totals**: the source-reading population goes from 86 files / 942 cases to **85 / 930**; the
+frontend suite from 8,449 to 8,448 cases (13 source cases out, 12 behavioural in). Nothing was
+deleted without its replacement: no file read here proved something a type or another test already
+did.
+
+**Rejected, and why, so they are not proposed again.** `outbox`, `distributionGroup`, `offlineUnlock`,
+`pinChange` and `savedStateFailure` were the first pass's split candidates; read in full, each source
+case is a caller inventory or a `sessionAuth` wiring statement (above), and a behavioural rewrite
+would need either an app-code refactor (out of scope: WP-T1 to WP-T6 ship no app byte) or a session
+harness that asserts its own mocks. Turning a scan into an `oxlint` rule (disposition b) fits none:
+every scan here is cross-file or reads `app.css`, which oxlint's per-file rules cannot see.
 
 ### WP-T6 (S) - Wall clocks out of the suite
 
@@ -315,6 +389,64 @@ and one shared, memoised file list is the fix it points at.
   that silently stopped asserting is the failure mode. Revalidate: case counts per service identical
   (1,985 / 875 / 436 / 241), and a planted bug in each MLS-storage path still fails its spec.
 
+### WP-T9 (S) - One walk of the source tree for every scan (2026-10-19)
+
+**Problem.** 19 test files read the source tree as text (the lint-style scans of
+[WP-T5](#wp-t5-m---triage-the-source-text-tests)); nine of them each carried their own copy of
+`sourceFiles()`. Vitest isolates modules per file, so no memo inside a helper is shared: every file
+re-walked and re-read ~2,000 files, and under full-suite load (other files saturating the disk and
+the CPU) the first test of such a file passed the 5 s timeout. Measured on 20 runs of the 19 scan
+files plus `ChatArea.entryWindow`, at default parallelism on a loaded 16-core Windows box: **89
+timeouts**, medians of 8 s (`apiUrl.absolute`), 6 s (`tooltipOneKey`), 5 s (`accent`,
+`serverProse`, `outbox`).
+
+**Change.** A vitest `globalSetup` (`frontend/src/test/sourceTreeSetup.ts`) walks `src` and `static`
+ONCE per run and writes the hand-written `ts js svelte css html` files (1,995 files, ~15 MB; the
+generated `paraglide`, `wasm` and `proto/canari.*` are not in it) to one file under
+`node_modules/.cache/canari-source-tree`, deleted at teardown. Only the PATH goes through `provide`:
+`provide` is serialised to every worker for every one of the ~940 files, so the text must not ride on
+it. `frontend/src/test/sourceTree.ts` is the ONE reader: `sourceFiles({ under, extensions, tests,
+skipDirs })`, `readSource(path)`, `relativeTo(path, base)`; the first call in a file parses the
+snapshot (tens of ms) and every later call is a filter over strings. The 19 scans use it and their
+walkers are deleted.
+
+**It fails loud.** The walk (`sourceTreeWalk.ts`) throws when `src/lib` or `static` is missing or when fewer than 1,500 files are found (75 % of the 1,995 measured), because six of the scans have no "is reading the tree" assertion of their own and an empty list passes them all. Setup also deletes `snapshot-<pid>.json` files older than a day (a killed run); a younger one belongs to a concurrent run. `src/test/sourceTree.test.ts` pins the reader (`under`, `tests`, `skipDirs`, `extensions`), the snapshot's content, and a planted offender over a fixture tree.
+
+**Same cases, same pass set.** 315 cases before and after on the 19 files. Each scan was shown a
+planted offender (one file with one violation per rule) and each failure names it; the planted files
+were removed. Three deliberate differences, none a loss: `accent` and `markupSources` no longer walk
+the generated Paraglide files (a getter cannot derive an accent or strip a comment);
+`postMarkdownBlocks` names its cases by a root-relative path instead of an absolute one; and a file
+edited while `vitest` WATCH is running is not re-read by a scan until the process restarts (the scans
+are CI guards).
+
+**After**, same 20-run protocol: **0 timeouts on the 19 scan files**, medians 0.0-0.8 s (`outbox`,
+171 cases, 2.7 s is its own cases). `ChatArea.entryWindow` was a second, independent cause: its two
+tests took 2.0 s and 1.8 s ALONE, because ChatArea's mount cost grows with the WHOLE thread, not with
+the 60-row window (300 rows 2.0 s, 70 rows 0.5 s); the test now mounts 80 rows, which shows the same
+60-row cap, median 0.6 s. One run in 20 still crossed 5 s there while the box was running other
+sessions' suites (that run's wall was 59 s against a 15 s median); `testTimeout` was NOT raised.
+
+**The cause of that cost was the component (2026-10-22).** A CPU profile of a 300-row mount put
+~700 ms of ~850 ms in `ChatMessageGroups` creating rows. The first render mounted the WHOLE thread
+(301 groups) before the entry effect cut it to 20 in the same flush
+([chat](frontend/modules/chat.md)). Fixed in `ChatArea`: until the entry effect has run, the window
+is the entry frame. The test mounts 61 rows (the least above 60) and pins that no more than 20
+rows ever exist during the mount. The parallel-run readings are in #2286.
+
+**Two more load failures, and neither is a timeout to raise (2026-10-22).**
+- `graine/frameHandler.test.ts`: the hold on repair announcements is module state, kept on purpose
+  across `setGraineRuntime(null)`. A test interrupted between its hold and its release left the depth
+  at 1, and every later test expecting an announcement failed. One timeout became six failures,
+  shown by throwing inside the drain test. `afterEach` now closes leftover holds through the public
+  path, announcing a probe and releasing until it is delivered. The drain test also signs its 26
+  endorsements before it opens the hold.
+- `PostCard.doubleTap`: a REAL wall-clock dependence. The gesture compares `performance.now()`
+  against a 250 ms window, and the first click's work ran between the two dispatches. Under load
+  that gap passed 250 ms and the double tap read as two single taps (assertion failures, not
+  timeouts). The helper holds the clock still for the pair. With a clock that advances 300 ms per
+  read, 5 of 10 tests fail on the old helper and none on the new one.
+
 ## 6. Expected end state
 
 | Measure | Today | After WP-T1..T4 (estimate from the A/B) |
@@ -328,3 +460,216 @@ and one shared, memoised file list is the fix it points at.
 
 The estimates for WP-T1 and WP-T4 rest on one same-machine A/B over 125 files; the first WP's PR
 must re-measure on CI and correct this table.
+
+## 7. Inventory, 2026-10-19
+
+The first step of WP-TEST-TOOLING-REFORM, by `tools/test-inventory` ([README](../../tools/test-inventory/README.md)):
+every test suite of the repository with its cases, a derived one-line purpose, its cost, its red history
+and its deletion candidates. **Reproduce the section below with:**
+
+```sh
+cd frontend && bunx vitest run --maxWorkers=4 --reporter=json --outputFile=/tmp/vitest.json && cd ..
+bun tools/test-inventory/inventory.mjs --write-wiki --timings /tmp/vitest.json --ci-red 60
+```
+
+The tool deletes nothing and this PR deletes no test. The generated block carries its own commit and
+date; the paragraph after it is the reading, written by hand against that block.
+
+<!-- test-inventory:begin -->
+
+Generated by `bun tools/test-inventory/inventory.mjs --write-wiki --timings <vitest --reporter=json report> --ci-red 60` on 2026-10-19, commit `42366cdca`, git window since 2026-07-21 (90 days). Do not edit by hand: re-run the command.
+
+**Totals.** 1,443 test files; 12,847 cases and assertions counted statically (261 `it.each` / `test.each` declarations, each counted once, expand to more at run time). The vitest report of the same tree ran **8,770** frontend cases, 73 of them red on the machine that produced it (a local run; CI is the verdict). 94 frontend files read app source as text (777 cases); 61 files have neither a docblock nor describe names, so their purpose is `unknown`; 715 files were first added by a commit whose subject says fix or revert (written for a defect that really happened).
+
+| Suite | Runner | Files | Cases (static) | Cases (run) | Skipped / ignored | Time (s) | Born in a fix | Fix-touched in window |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Frontend vitest | vitest | 938 | 7,975 | 8,770 | 0 | 246.4 | 480 | 644 |
+| social-service jest | jest | 172 | 1,918 | - | 0 | - | 64 | 98 |
+| chat-delivery-service jest | jest | 89 | 848 | - | 0 | - | 49 | 67 |
+| core-service jest | jest | 41 | 415 | - | 0 | - | 15 | 28 |
+| media-service jest | jest | 23 | 246 | - | 0 | - | 8 | 12 |
+| Rust frontend/mls-core | cargo | 37 | 168 | - | 6 | - | 24 | 26 |
+| Rust frontend/src-tauri | cargo | 14 | 142 | - | 2 | - | 2 | 8 |
+| Rust apps/chat-gateway | cargo | 5 | 35 | - | 0 | - | 0 | 4 |
+| Rust apps/call-service | cargo | 4 | 30 | - | 0 | - | 0 | 3 |
+| Android unit (Kotlin) | gradle | 10 | 65 | - | 0 | - | 7 | 8 |
+| GitHub-script tests | bun/bash | 62 | 371 assertions | - | 0 | - | 30 | 38 |
+| Harness self-tests | bun | 42 | 599 assertions | - | 0 | - | 35 | 31 |
+| tools/* tests | bun | 5 | 29 mixed | - | 0 | - | 1 | 3 |
+| tools/ecosystem-shape gate | bun | 1 | 6 claims | - | 0 | - | 0 | 0 |
+
+"Time" is the sum of per-file times as the runner reports them, which run in parallel: it is a cost ranking, not the wall clock of the job. "Fix-touched" counts files touched in the window by a commit whose subject says fix, revert, regression or flake, ignoring any commit that touches more than 25 test files: **evidence that something was wrong near the test, not proof it was red**. "Born in a fix" is the stronger signal and the one a deletion review should respect first. `tools/test-inventory/README.md` says what each column can and cannot know.
+
+**Red in CI.** The last 60 failed `ci.yml` runs were read (`gh run view --log-failed`): 19 of them name at least one test file as failing, 0 had no retrievable log, the rest name no test file (a build, an audit, a lint or type check, or a runner whose log shape the scan does not read). 43 test files were named; they carry their run and date in the JSON (`ciRed`). One run, 39166304999, names 30 of them at once: a shared cause, not 30 independent reds. Every other test is `never red in the window` as far as CI shows.
+
+**The top 20 costly suites** (by the runner report. It is one local run on a loaded machine, so it ranks cost but disagrees with the CI numbers of section 2.4 - re-run on a quiet one before acting on a row).
+
+| # | File | ms | Cases | Guards (derived, one line) |
+| --- | --- | --- | --- | --- |
+| 1 | `frontend/src/lib/utils/chat/composerHeight.test.ts` | 11,403 | 6 | THE TYPING BUBBLE WENT UNDER THE COMPOSER WITH THE KEYBOARD CLOSED (user report, phone app, 2026-10-13). |
+| 2 | `frontend/src/lib/styles/layerLadder.test.ts` | 9,244 | 10 | THE LAYER LADDER IS ONLY A LADDER FOR AS LONG AS NOTHING STEPS OFF IT. |
+| 3 | `frontend/src/lib/stores/notificationPreferences.test.ts` | 7,994 | 16 | notificationPreferences / private conversation levels |
+| 4 | `frontend/src/lib/bookings/redrawClock.test.ts` | 6,686 | 3 | redrawEveryMinuteAndAt |
+| 5 | `frontend/src/lib/utils/chat/salonUnread.test.ts` | 5,952 | 24 | The unread count of a salon after a reload (2026-10-08). |
+| 6 | `frontend/src/lib/db/pendingGroupExitsStore.test.ts` | 5,849 | 6 | THE PENDING-EXIT TABLE, AGAINST A REAL STORE. |
+| 7 | `frontend/src/lib/mls-client/messagePipeline/systemMessageHandler.readState.test.ts` | 5,717 | 11 | Read state on the LIVE path: the read_watermark frame, the legacy read_receipt shape it replaces, and the read state a history_bundle carries. |
+| 8 | `frontend/src/lib/posts/postCardSync.test.ts` | 5,353 | 10 | PostCardLedger: a served row replaces a card's copy, except a field a write of the card still carries or answered AFTER the row's read was issued (reviews of #1896). |
+| 9 | `frontend/src/lib/utils/Log.test.ts` | 5,278 | 8 | What a debug line must carry for a reader that is not DevTools. |
+| 10 | `frontend/src/lib/utils/apiUrl.absolute.test.ts` | 4,949 | 3 | API calls are addressed absolutely |
+| 11 | `frontend/src/lib/mobile/edgeGestureExclusion.test.ts` | 4,911 | 2 | excludeRightEdgeOver |
+| 12 | `frontend/src/lib/stores/globalChatSingleton.importCycle.test.ts` | 4,672 | 5 | NOTHING THE SINGLETON BUILDS MAY IMPORT THE SINGLETON BACK - except through the one door that cannot be entered first. |
+| 13 | `frontend/src/lib/bookings/availability.test.ts` | 4,588 | 20 | toStoredLines / fromStoredLines |
+| 14 | `frontend/src/lib/actions/coversScreen.test.ts` | 4,585 | 4 | coversScreen - what the iOS native tab bar hides under |
+| 15 | `frontend/src/lib/utils/users/memberOrder.svelte.test.ts` | 4,239 | 7 | A MEMBER LIST IN FAMILY-NAME ORDER THAT NEVER MOVES A ROW BECAUSE A NAME ARRIVED. |
+| 16 | `frontend/src/lib/posts/pollDraft.test.ts` | 4,113 | 12 | THE RULES A POLL IS COMPOSED BY, PINNED WHERE THEY ARE WRITTEN. |
+| 17 | `frontend/src/lib/utils/notificationSoundsDrift.test.ts` | 4,042 | 1 | THE ANDROID NOTIFICATION SOUNDS ARE RENDERED FROM soundPalette.ts, AND NOTHING USED TO SAY SO WHEN THE TWO PARTED (2026-10-10). |
+| 18 | `frontend/src/lib/utils/logTruncate.test.ts` | 3,411 | 10 | A SECOND-RESOLUTION CLOCK CANNOT MEASURE A ONE-SECOND BUDGET. |
+| 19 | `frontend/src/lib/utils/chat/outbox.test.ts` | 3,317 | 171 | outboxCodec / outbox native mirror |
+| 20 | `frontend/src/lib/admin/adminerSession.test.ts` | 3,314 | 6 | OPENING ADMINER FROM THE APP (user, 2026-10-02: *"add an adminer route to canari, in a safe way"*). |
+
+**Deletion candidates.** 27 flags: 6 `source-text`, 11 `declared-copy`, 5 `per-service-copy`, 2 `duplicate-body`, 1 `same-titles`, 2 `no-assertion`. 54 source-text files are on the WP-T5 keep list or in a family it keeps whole and are not flagged. A flag is a pointer for a reviewer, never a verdict, and **nothing was deleted**. The full set, with examples, is in the JSON.
+
+| Class | Test | Cases | Covering test | Confidence | Why flagged |
+| --- | --- | --- | --- | --- | --- |
+| declared-copy | `apps/core-service/src/cors-origins.spec.ts` | 9 | `apps/chat-delivery-service/src/cors-origins.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the CORS allowlist test that guards it); its subject is pinned identical by the gate |
+| declared-copy | `apps/media-service/src/cors-origins.spec.ts` | 9 | `apps/chat-delivery-service/src/cors-origins.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the CORS allowlist test that guards it); its subject is pinned identical by the gate |
+| declared-copy | `apps/social-service/src/cors-origins.spec.ts` | 9 | `apps/chat-delivery-service/src/cors-origins.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the CORS allowlist test that guards it); its subject is pinned identical by the gate |
+| declared-copy | `apps/core-service/src/common/guards/internal-token.spec.ts` | 6 | `apps/chat-delivery-service/src/guards/internal-token.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the test that guards it); its subject is pinned identical by the gate |
+| declared-copy | `apps/social-service/src/common/guards/internal-token.spec.ts` | 6 | `apps/chat-delivery-service/src/guards/internal-token.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the test that guards it); its subject is pinned identical by the gate |
+| declared-copy | `apps/social-service/src/common/http-error-log.spec.ts` | 5 | `apps/core-service/src/common/http-error-log.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/core-service's test (the spec of the failed-call log renderer); its subject is pinned identical by the gate |
+| declared-copy | `apps/social-service/src/utils/presence-audience.spec.ts` | 5 | `apps/chat-delivery-service/src/utils/presence-audience.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the contract spec that guards the presence-audience question); its subject is pinned identical by the gate |
+| declared-copy | `apps/core-service/src/drain-on-sigterm.spec.ts` | 4 | `apps/chat-delivery-service/src/drain-on-sigterm.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the drain test that guards it); its subject is pinned identical by the gate |
+| declared-copy | `apps/media-service/src/drain-on-sigterm.spec.ts` | 4 | `apps/chat-delivery-service/src/drain-on-sigterm.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the drain test that guards it); its subject is pinned identical by the gate |
+| declared-copy | `apps/social-service/src/drain-on-sigterm.spec.ts` | 4 | `apps/chat-delivery-service/src/drain-on-sigterm.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the drain test that guards it); its subject is pinned identical by the gate |
+| declared-copy | `apps/social-service/src/utils/user-display-name.spec.ts` | 4 | `apps/chat-delivery-service/src/utils/user-display-name.spec.ts`, `.github/scripts/tests/declared-duplicates.test.mjs` | high | byte-identical copy of apps/chat-delivery-service's test (the contract spec that guards it); its subject is pinned identical by the gate |
+| duplicate-body | `frontend/src/lib/services/customTabsCommands.test.ts` | 6 | `frontend/src/lib/services/keystoreCommands.test.ts` | low | 1/6 cases have a body identical (whitespace and comments aside) to a case in another file |
+| duplicate-body | `frontend/src/lib/services/keystoreCommands.test.ts` | 6 | `frontend/src/lib/services/customTabsCommands.test.ts` | low | 1/6 cases have a body identical (whitespace and comments aside) to a case in another file |
+| same-titles | `frontend/src/lib/services/customTabsCommands.test.ts` | 6 | `frontend/src/lib/services/keystoreCommands.test.ts` | low | 6 of its 6 case titles are also titles in the sibling file (same directory) - compare the bodies before deleting |
+
+**Not deletions, but a finding: tests that repeat a counterpart in another package.** 5 test files are word for word a counterpart's and are not declared copies (bookingWindow.contract.test.ts, booking-window.spec.ts, service-urls.spec.ts). Each guards ITS OWN copy of the code, so deleting one leaves a copy unguarded; the duplication is the code's, not the test's.
+
+**Cases with no assertion.** 3 cases in 2 files contain no `expect`, `assert` or `should` call (`no-assertion` above, listed in the JSON). Most are helper-driven or assert by not throwing; each is worth one look, because a case that cannot fail guards nothing.
+
+
+<!-- test-inventory:end -->
+
+### 7.1 The reading
+
+Written by hand against the block above; the numbers it quotes are that block's.
+
+- **The count is not duplication.** 27 flags out of 1,443 files, and only the 11 `declared-copy` rows
+  (65 cases, half a percent of the static count) are redundant by the repository's own admission. The
+  "aberrant number" is carried by `it.each` expansion (7,975 static cases against 8,770 run) and by
+  how many suites there are, which is what WP-T1/T3/T4 already address; deleting tests would not move
+  it, which is principle 7 above, measured.
+- **The 11 `declared-copy` rows are the only deletions the repository could defend today.** The four
+  NestJS services each keep a byte-identical copy of `drain-on-sigterm`, `cors-origins` and the
+  `internal-token` guard, and `.github/scripts/tests/declared-duplicates.test.mjs` already pins those
+  sources identical, so one service's spec covers the others' copies. Cost of removing the other
+  copies: a few seconds of jest and an edit to `DECLARED_GROUPS`; gain: 65 cases. `framework-boot.spec.ts`
+  is NOT among them: each copy asserts what is installed in its own service.
+- **WP-T5 held up.** The 6 `source-text` rows that its keep list does not name were each read: they are
+  repo-wide guards with a defect behind them (`paraglideMessages`, `paraglideTestAlias`, `noRealSleeps`,
+  `appThemeTransition`, `tooltipOneKey`) or a dependency-bump guard that was RED in CI on 2026-10-16
+  (`patchedDependencies`). None is a candidate. `customTabsCommands` and `keystoreCommands` are native
+  contract tests: merge their shared case with an `it.each`, do not delete.
+- **Red history is thin evidence.** 43 files were named in the last 60 failed CI runs and one run
+  accounts for 30 of them; 715 files were born in a fix commit. Both say "this guarded something once",
+  neither says "this is safe to remove", so a deletion review starts from `bornInFix` and `ciRed`.
+- **Next measurement owed**: the same command with a vitest report from a quiet CI-shaped run, since the
+  local timings above ranked a loaded machine, and jest `--json` reports for the four services so their
+  rows carry a time.
+
+### 7.2 The declared copies, deleted (2026-10-21)
+
+The first deletion step of WP-TEST-TOOLING-REFORM, the one 7.1 called defensible. **Ten of the eleven
+`declared-copy` rows were deleted; one was kept, with its reason written into the group.**
+
+**The rule, now in the header of `.github/scripts/lib/declared-duplicates.mjs`: a copied module needs
+ONE spec, not one per copy.** An `exact` group pins every copy of the module to the same bytes, so the
+spec beside the group's FIRST file proves all of them; a byte-identical spec beside each other copy ran
+the same assertions on the same text. The old reason for the copies ("or three services assert the
+behaviour and the fourth only inherits the file") was true of the spec and false of the behaviour: the
+fourth file IS the first file, and `declared-duplicates.test.mjs` fails on one changed byte (shown on
+2026-10-21 by changing `once` to `on` in social-service's `drain-on-sigterm.ts`: `FAIL ... 1 of 3
+cop(y|ies) drifted`, naming the file). That gate runs in `make test-ci-scripts`, on every pull request.
+
+Principle 1 of section 4, applied to each one - the class the copy caught, and the layer that still does:
+
+| Deleted | Cases (run) | What the copy imported beyond node | Still caught by |
+| --- | --- | --- | --- |
+| `cors-origins.spec.ts` in core, media, social | 3 x 9 = 27 | `@nestjs/common` `Logger` (log only) | chat-delivery's spec + the `exact` module group |
+| `drain-on-sigterm.spec.ts` in core, media, social | 3 x 4 = 12 | `@nestjs/common` `Logger` (log only) | same |
+| `internal-token.spec.ts` in core, social | 2 x 6 = 12 | `UnauthorizedException`, node `crypto` | same; each service's `framework-boot.spec.ts` asserts its own `@nestjs/*` tree |
+| `presence-audience.spec.ts` in social | 10 (5 static; an `it.each` over the `libs/contracts` cases) | `BadRequestException`, `Logger` | chat-delivery's spec (it reads the same `libs/contracts` file) + the group |
+| `user-display-name.spec.ts` in social | 20 (4 static; an `it.each` over the `libs/contracts` cases) | nothing | chat-delivery's spec (same contract file) + the group |
+| **Total** | **81** = core 19 + media 13 + social 49 | | |
+
+**Kept: `http-error-log.spec.ts` in BOTH core and social.** The module is duck-typed (no `axios`
+import), but its spec builds an `AxiosError` from the `axios` THAT service resolved, and each service
+has its own `bun.lock`: an `axios` bump in one service only could change the error's shape under that
+service's copy, and the other service's spec would not see it. The property is a secret not reaching a
+log, so the copy earns its place. Its group carries `keepEachCopy: true`, which `tools/test-inventory`
+reads so the row stops being proposed.
+
+**Why `@nestjs/common` did not keep the others, said honestly.** Version skew is NOT what separates
+them: Dependabot's `nestjs` group also moves per service directory, so one service's Nest can differ
+from another's exactly as its `axios` can. What differs is what the spec feeds the module. The
+`http-error-log` spec hands the duck-typed renderer an OBJECT BUILT BY THE DEPENDENCY (`config`,
+`headers`, `response`), whose shape is the very thing the renderer reads, and it guards a secret leak.
+The deleted specs use `@nestjs/common` only for a `Logger` and the CLASS an exception is thrown as -
+the module and its spec import that class from the same package, so the assertion cannot diverge
+between services unless Nest changes what `new UnauthorizedException()` / `new BadRequestException()`
+is. **That is the residual risk, named:** a Nest major landing in one service that changed those
+exception classes or `Logger` would no longer be seen by a spec in THAT service. What still stands in
+front of it is that service's `framework-boot.spec.ts` (the `@nestjs/*` tree coheres and boots), its
+other specs that throw the same classes, and the human review the auto-merge ceiling forces on every
+major. Judged implausible enough not to keep nine copies for it.
+
+**Counts.** Jest, same machine, before then after (`bun run test` in each service):
+
+| Service | Suites | Cases |
+| --- | --- | --- |
+| chat-delivery-service | 90 -> 90 | 978 -> 978 |
+| core-service | 42 -> 39 | 457 -> 438 |
+| media-service | 23 -> 21 | 263 -> 250 |
+| social-service | 179 -> 174 | 2,515 -> 2,466 |
+| **Total** | **334 -> 324** | **4,213 -> 4,132 (-81)** |
+
+The inventory (`bun tools/test-inventory/inventory.mjs --json`, no timings) reads 1,499 files and
+13,767 static cases after the change, and **0 `declared-copy` flags** (was 11). `declared-duplicates`
+went from 20 groups to 15 (the five spec groups emptied to one member and were deleted).
+`bun rows.mjs` is unchanged by construction - no runner was touched: 261 rows named, 192 answered.
+
+**What the inventory still flags, and what is left of the WP:** `customTabsCommands` /
+`keystoreCommands` (merge their shared cases with a `describe.each`, 7.1); `features.test.ts`, a new
+`source-text` flag no reading has covered yet; the two `no-assertion` files (`liveCrypto`,
+`mlsPerGroupScheduler`); then WP-T7, the rig change in one campaign session (helpers, IndexedDB,
+named SQL, `archive/` renamed), which owes harness re-runs under rule 33 and is not a desk task.
+
+### 7.3 The frontend desk items (2026-10-21)
+
+**Merged: `customTabsCommands.test.ts` + `keystoreCommands.test.ts` -> `nativePluginCommands.test.ts`.**
+One `describe.each` over a two-row table (plugin dir, plugin name, Android class id, command map,
+builder, sample). **Cases before: 6 + 6 = 12; after: 6 x 2 rows = 12**, the same six rules per
+plugin, same regexes, same Rust files read, so coverage is identical and only the copied scaffolding
+went (the inventory's `duplicate-body` and `same-titles` flags on both files clear). A third plugin is
+a row. `galleryCommands.test.ts` is a different shape (no shared six rules) and was left alone.
+
+**`features.test.ts` stays, and why.** Six of its seven cases already test behaviour (the exported
+constants under stubbed `VITE_DEPLOY_ENVIRONMENT`). The seventh, "video does not follow
+`CALLS_COMPILED`", reads `features.ts` as text because it guards a future EDIT: `CALLS_COMPILED` is a
+literal `false` that the revival commit flips, no runtime value can stand in for it, so no behaviour
+test can exhibit the flip before it happens. It is one case, scoped to one named expression, and it
+fails loudly if the export is renamed. The inventory flag is correct and is the disposition: a
+guard on source text, kept deliberately.
+
+**The two `no-assertion` flags were a counting artefact for three cases, now strengthened.**
+`liveCrypto` cases "another live id" and "another format version" asserted through the `refusal()`
+helper (`expect(...).toBeInstanceOf`), which the inventory's `expect(` scan cannot see; they now also
+assert `reason === 'unauthentic'`, pinning WHY they are refused (tag bound to the live id and the AAD
+label, not a malformed layout). `mlsPerGroupScheduler` "release is idempotent" really had none: it
+now holds the lock with A, queues B and C, releases A twice, and asserts B is granted while C stays
+blocked, which is the harm a double release could do.
+
+**Left of the WP:** WP-T7, the rig change in one campaign session (not a desk task).

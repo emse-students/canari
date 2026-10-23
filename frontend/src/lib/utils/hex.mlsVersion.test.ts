@@ -132,15 +132,90 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     expect(store.get(MLS_STATE_VERSION_KEY)).toBe(mlsSnapshotVersion(fresh));
   });
 
-  it('skips a stale write whose version is not newer than the stored one', async () => {
+  it("skips an older write behind THIS document's own newer one, as superseded and silently", async () => {
     const older = tagMlsSnapshot(new Uint8Array([1]));
     const newer = tagMlsSnapshot(new Uint8Array([2]));
     // The newer snapshot reaches disk first; the older (slower) flush must then be skipped.
     await saveMlsStateEncrypted('user-1', newer);
-    // The refusal is ANSWERED, so a caller whose write must land (a device key change) can fail.
-    expect(await saveMlsStateEncrypted('user-1', older)).toBe('stale');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // ANSWERED, so a write that must land itself (a device key change) can still fail on it, while
+    // a checkpoint reads it as covered: the stored blob is a later capture of this same document.
+    expect(await saveMlsStateEncrypted('user-1', older)).toBe('superseded');
+    expect(warn).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    warn.mockRestore();
+    log.mockRestore();
     expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([2]));
     expect(store.get(MLS_STATE_VERSION_KEY)).toBe(mlsSnapshotVersion(newer));
+  });
+
+  it("refuses an older write behind ANOTHER document's blob as stale", async () => {
+    await saveMlsStateEncrypted('user-1', tagMlsSnapshot(new Uint8Array([1])));
+    // Another tab, whose counter ran further, writes after us.
+    store.set(MLS_STATE_ENCRYPTED_KEY, new Uint8Array([9]));
+    store.set(MLS_STATE_VERSION_KEY, 3_000_000);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(await saveMlsStateEncrypted('user-1', tagMlsSnapshot(new Uint8Array([2])))).toBe(
+      'stale'
+    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+    expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([9]));
+  });
+
+  /**
+   * THE LATCH IS DECIDED AT THE PUT, AND SET BY THE REFUSAL ITSELF. A refused rotation's checkpoint
+   * (`endOnRefusal`) and a flight of the same document captured just after it - one version above
+   * the other document's - are both in the database's queue. Checked only before the write started,
+   * the flight is `written`: the fresh, groupless client over the other document's good state.
+   */
+  it.each([
+    ['collision', 1],
+    ['stale', 2],
+  ] as const)(
+    "a refusal as %s that ends the document makes its next queued write 'ended', nothing stored",
+    async (refusal, ahead) => {
+      // The other document reached the version this one tags next (collision) or the one after
+      // (stale by one). Read off the counter rather than seeded, which only ever raises it.
+      const theirs = (mlsSnapshotVersion(tagMlsSnapshot(new Uint8Array([0]))) ?? 0) + ahead;
+      store.set(MLS_STATE_ENCRYPTED_KEY, new Uint8Array([9]));
+      store.set(MLS_STATE_VERSION_KEY, theirs);
+      let ended = false;
+      const latch = {
+        isEnded: () => ended,
+        endOnRefusal: () => {
+          ended = true;
+        },
+      };
+      const rotation = tagMlsSnapshot(new Uint8Array([1]));
+      const flight = tagMlsSnapshot(new Uint8Array([2]));
+      // Unlatched, the flight would land (collision case) or collide (stale case) - never 'ended'.
+      expect(mlsSnapshotVersion(flight)).toBe(theirs + 2 - ahead);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // Both started before either answers: the flight passed any start check long ago.
+      const outcomes = await Promise.all([
+        saveMlsStateEncrypted('user-1', rotation, latch),
+        saveMlsStateEncrypted('user-1', flight, { isEnded: latch.isEnded }),
+      ]);
+      warn.mockRestore();
+
+      expect(outcomes).toEqual([refusal, 'ended']);
+      expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([9]));
+      expect(store.get(MLS_STATE_VERSION_KEY)).toBe(theirs);
+    }
+  );
+
+  it('forgets its own version after an untagged write, whose bytes it cannot vouch for', async () => {
+    const older = tagMlsSnapshot(new Uint8Array([1]));
+    const newer = tagMlsSnapshot(new Uint8Array([2]));
+    await saveMlsStateEncrypted('user-1', newer);
+    await saveMlsStateEncrypted('user-1', new Uint8Array([5])); // a restore: the version stays
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await saveMlsStateEncrypted('user-1', older)).toBe('stale');
+    warn.mockRestore();
   });
 
   /**
@@ -161,7 +236,8 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     await saveMlsStateEncrypted('user-1', mine);
 
     const said: string[] = [];
-    const spy = vi.spyOn(console, 'log').mockImplementation((...a) => void said.push(a.join(' ')));
+    // On `warn` since 2026-10-21: the refusal now fails the checkpoint, so it is a real one.
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...a) => void said.push(a.join(' ')));
     const outcome = await saveMlsStateEncrypted('user-1', theirs);
     spy.mockRestore();
     expect(outcome).toBe('collision');
@@ -182,10 +258,11 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
    * out of order, which is a race and not a fact of life. A line at `log` level is one a reader
    * skips; this one has to accuse, because the fix is upstream of it.
    */
-  it('and a genuinely OLDER write reads as stale, accuses, and names both writers', async () => {
+  it("and an OLDER write behind another document's blob reads as stale, accuses, and names both versions", async () => {
+    const mine = tagMlsSnapshot(new Uint8Array([2]), 'the-new-path');
+    await saveMlsStateEncrypted('user-1', mine);
+    store.set(MLS_STATE_VERSION_KEY, 3_000_000); // another tab ran further
     const older = tagMlsSnapshot(new Uint8Array([1]), 'the-old-path');
-    const newer = tagMlsSnapshot(new Uint8Array([2]), 'the-new-path');
-    await saveMlsStateEncrypted('user-1', newer);
 
     const said: string[] = [];
     const spy = vi.spyOn(console, 'warn').mockImplementation((...a) => void said.push(a.join(' ')));
@@ -195,10 +272,11 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     expect(said.join('\n')).toContain('stale');
     expect(said.join('\n')).toContain('<');
     expect(said.join('\n')).not.toContain('collides');
-    // WHICH TWO PATHS OVERLAPPED IS THE FINDING. Without both names the line states an outcome and
-    // hides the question, which is how it sat in the campaign's dirt for two days unattributed.
+    // WHICH WRITES OVERLAPPED IS THE FINDING: the refused one, the stored one, and what this
+    // document last wrote, which is what tells the stored blob is not its own.
     expect(said.join('\n')).toContain('the-old-path');
-    expect(said.join('\n')).toContain('the-new-path');
+    expect(said.join('\n')).toContain('v3000000');
+    expect(said.join('\n')).toContain(`v${mlsSnapshotVersion(mine)}`);
   });
 
   /**

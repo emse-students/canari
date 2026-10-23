@@ -28,6 +28,7 @@
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageReactions from './MessageReactions.svelte';
   import type { MessageReaction, MessageSendStatus } from '$lib/types';
+  import ControlRefusedNotice from './ControlRefusedNotice.svelte';
   import { isOrphanMediaCandidate } from '$lib/utils/chat/orphanMedia';
   import { isOutboxEntryQueued } from '$lib/utils/chat/outbox';
   import {
@@ -43,6 +44,8 @@
   import MessageBubbleToolbar from './MessageBubbleToolbar.svelte';
   import { phoneViewport } from '$lib/stores/phoneViewport.svelte';
   import MessageMobileActions from './MessageMobileActions.svelte';
+  import { canShareOut, shareMediaOut, shareTextOut } from '$lib/sharing/shareOut';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { onDestroy, untrack } from 'svelte';
@@ -270,6 +273,29 @@
   const isReelMessageRow = $derived(isReelMessage(mediaRef));
   const forwardAction = $derived(onForward && !isReelMessageRow ? onForward : undefined);
   // Image/video with no caption and no reply quote - render naked (no bubble background)
+  /**
+   * "Partager" in the long-press sheet: the system share sheet on the attachment, decrypted, or on
+   * the text (`sharing/shareOut.ts`). Phone apps only. Not a CanaReel - it is not forwarded either
+   * - and not an attachment still uploading, which has no blob to decrypt yet.
+   */
+  const shareAction = $derived.by(() => {
+    if (!canShareOut() || isDeleted || isReelMessageRow) return undefined;
+    const ref = mediaRef;
+    if (ref) return ref.mediaId ? () => void shareOut(() => shareMediaOut(ref)) : undefined;
+    const text = textContent;
+    return text ? () => void shareOut(() => shareTextOut(text)) : undefined;
+  });
+
+  async function shareOut(open: () => Promise<void>) {
+    Log.d('MessageBubble', `share out ${messageId.slice(0, 8)}`);
+    try {
+      await open();
+    } catch (err) {
+      console.error('[share-out] message share failed', err);
+      showToast(m.share_out_failed(), 'error');
+    }
+  }
+
   const isMediaOnly = $derived(!!mediaRef && !textContent && !effectiveReplyTo && !isDeleted);
   // A photo or a video WITH text: the media fills the top of the bubble and the caption sits under
   // it in the same bubble, instead of a framed thumbnail inside the bubble's padding (user,
@@ -439,7 +465,8 @@
       return;
     }
     e.stopPropagation();
-    bubbleTaps.tap({ x: e.clientX, y: e.clientY, t: Date.now() });
+    // When the tap happened, not when it was handled: see `doubleTapLike`'s click handler.
+    bubbleTaps.tap({ x: e.clientX, y: e.clientY, t: e.timeStamp });
   }
 
   function confirmDelete() {
@@ -1045,6 +1072,11 @@
       outsideBubble
     />
 
+    <!-- A tombstone has nothing left to retry: its refusals are cleared where the delete lands. -->
+    {#if !isDeleted}
+      <ControlRefusedNotice {messageId} {isOwn} excerpt={textContent} />
+    {/if}
+
     <MessageEmojiPicker
       origin={emojiPickerOrigin}
       {isOwn}
@@ -1113,6 +1145,7 @@
             }
           }
         : undefined}
+      onShare={shareAction}
       onEdit={canEdit ? startEdit : undefined}
       {canModerate}
       onDelete={!isDeleted && (isOwn || canModerate) && onDelete

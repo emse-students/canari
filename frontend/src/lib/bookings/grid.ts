@@ -246,6 +246,42 @@ export function freeRunFrom(
   return run;
 }
 
+/**
+ * What a DRAG over one resource's column selects. `cells` is that column, one entry per grid row
+ * (`null` where the resource has no unit); the drag was pressed on row `anchor` and the pointer is
+ * now over row `current`, above or below it.
+ *
+ * The range grows from the anchor toward the pointer one row at a time and stops at the first row
+ * that is not a free unit TOUCHING the previous one (a booked or blocked unit, the gap between two
+ * windows, a row where this resource has no unit) or when `limit` units are covered - so the
+ * selection can never be longer than one booking may be, and never covers anything taken. It is
+ * the same rule as `freeRunFrom`, read in both directions. `count` is 0 when the anchor is not a
+ * free unit.
+ */
+export function dragRange(
+  cells: readonly (SlotUnit | null)[],
+  anchor: number,
+  current: number,
+  limit: number
+): { first: number; count: number } {
+  const start = cells[anchor];
+  if (!start || start.state !== 'free' || limit < 1) return { first: anchor, count: 0 };
+  const direction = current >= anchor ? 1 : -1;
+  let last = anchor;
+  for (let i = anchor + direction; i >= 0 && i < cells.length; i += direction) {
+    if (direction === 1 ? i > current : i < current) break;
+    if (Math.abs(i - anchor) + 1 > limit) break;
+    const unit = cells[i];
+    const previous = cells[last];
+    if (!unit || !previous || unit.state !== 'free') break;
+    const touching =
+      direction === 1 ? unit.startMs === previous.endMs : unit.endMs === previous.startMs;
+    if (!touching) break;
+    last = i;
+  }
+  return { first: Math.min(anchor, last), count: Math.abs(last - anchor) + 1 };
+}
+
 /** How many units one booking may cover in this space: a whole slot, or 1..`maxSteps` steps. */
 export function bookingUnitLimit(space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>): number {
   return space.slotMode === 'slots' ? 1 : Math.max(1, space.maxSteps ?? 1);

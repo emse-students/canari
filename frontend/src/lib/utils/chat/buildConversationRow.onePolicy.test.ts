@@ -435,30 +435,21 @@ describe('the builder is the only place a conversation row is constructed', () =
    * is not a second implementation of anything.
    */
   it('no source file outside conversations.ts builds one by hand', async () => {
-    const { readdirSync, readFileSync } = await import('node:fs');
-    const { join, relative, sep } = await import('node:path');
+    const { relativeTo, sourceFiles } = await import('../../../test/sourceTree');
 
-    const root = join(process.cwd(), 'src', 'lib');
     const offenders: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name !== 'test' && entry.name !== 'paraglide' && entry.name !== 'wasm') {
-            walk(full);
-          }
-          continue;
-        }
-        if (!/\.(ts|svelte)$/.test(entry.name)) continue;
-        if (/\.(test|spec)\.ts$/.test(entry.name)) continue;
-        const rel = relative(root, full).split(sep).join('/');
-        if (rel === 'utils/chat/conversations.ts') continue;
-        // `mlsStateHex: null` and not `mlsStateHex:` - the latter also matches the field's own
-        // declaration in `types/index.ts`, which declares the row rather than building one.
-        if (/mlsStateHex:\s*null/.test(readFileSync(full, 'utf8'))) offenders.push(rel);
-      }
-    };
-    walk(root);
+    for (const { path, text } of sourceFiles({
+      under: 'src/lib',
+      extensions: ['ts', 'svelte'],
+      tests: 'exclude',
+      skipDirs: ['test'],
+    })) {
+      const rel = relativeTo(path, 'src/lib');
+      if (rel === 'utils/chat/conversations.ts') continue;
+      // `mlsStateHex: null` and not `mlsStateHex:` - the latter also matches the field's own
+      // declaration in `types/index.ts`, which declares the row rather than building one.
+      if (/mlsStateHex:\s*null/.test(text)) offenders.push(rel);
+    }
 
     expect(offenders, 'these files build a conversation row instead of asking for one').toEqual([]);
   });

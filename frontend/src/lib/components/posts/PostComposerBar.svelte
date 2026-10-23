@@ -8,6 +8,7 @@
     Clock,
     Images,
     Paperclip,
+    Radio,
     ALargeSmall,
     X,
   } from '@lucide/svelte';
@@ -40,9 +41,15 @@
    * and videos have their own input and documents theirs.
    *
    * THERE IS NO CAPTURE INPUT (user, 2026-10-11, D-camera: *"je ne veux pas d'acces a la camera
-   * native"*). The ONE camera chip opens Canari's own camera as an overlay (`CameraOverlay`) and a photo
-   * OR a video taken there comes back as a file through `onFiles`, so it is attached - and retained -
-   * as any picked post media, never as a reel. A mouse has no camera chip: `pointer-fine:hidden`.
+   * native"*). The ONE camera chip opens Canari's own camera as an overlay (`CameraOverlay`). A photo
+   * taken there comes back as a file through `onFiles`, attached - and retained - as any picked post
+   * media. A VIDEO filmed there from a NEW post (`reel` set) is a CanaReel, as from the tab (user,
+   * 2026-10-19: one camera, one behaviour): the reel publish step takes it, says it is deleted after
+   * 30 days, and can hand it back here as an ordinary post. The post EDITOR passes no `reel`, so its
+   * camera attaches videos too: an existing post is never turned into a reel - and neither is a new
+   * post asking for what a reel cannot carry (a schedule, a poll, a form, a linked event: the
+   * composer then passes no `reel` either). A mouse has no camera
+   * chip: `pointer-fine:hidden`.
    *
    * IN THE iOS APP "Photo/video" OPENS THE NATIVE PHOTO LIBRARY, as the chat's "Phototheque" does
    * (`opensNatively`): an input accepting images or videos is answered by WebKit's sheet, whose
@@ -65,6 +72,23 @@
     status?: string;
     /** The primary action(s), drawn at the right of the last row. */
     action: Snippet;
+    /**
+     * Opens the broadcaster's screen (WP-L5). Absent, no "Live" chip is drawn: the composer passes
+     * it only when `LIVE_ENABLED` is on and the chosen identity may broadcast (never anonymous).
+     */
+    onLive?: () => void;
+    /**
+     * Set by the NEW-post composer only: a video filmed with the camera becomes a CanaReel starting
+     * from this text and identity, and `onpublished` closes the composer behind it. Absent (the post
+     * editor), every take is attached.
+     */
+    reel?: {
+      caption: string;
+      identity: string;
+      onpublished: (identity: string) => void;
+      /** "Garder comme post": the publish step's caption and identity, as the member left them. */
+      onkept: (caption: string, identity: string) => void;
+    };
   }
 
   let {
@@ -77,6 +101,8 @@
     scheduledAt = $bindable(''),
     status = '',
     action,
+    onLive,
+    reel,
   }: Props = $props();
 
   let formatting = $state(false);
@@ -145,12 +171,16 @@
 
 {#if cameraOpen}
   <CameraOverlay
-    destination="post"
+    destination={reel ? 'post' : 'post-edit'}
     oncapture={(file) => {
       Log.d('POST_COMPOSER', `camera take handed over (${file.type}, ${file.size} bytes)`);
       onFiles([file]);
     }}
     onclose={() => (cameraOpen = false)}
+    composerCaption={reel?.caption}
+    composerIdentity={reel?.identity}
+    onpublished={reel?.onpublished}
+    onkept={reel?.onkept}
   />
 {/if}
 
@@ -198,6 +228,20 @@
           <Camera size={16} strokeWidth={2.25} class="text-sky-600 dark:text-sky-400" />
           {m.post_composer_camera()}
         </button>
+        {#if onLive}
+          <button
+            type="button"
+            class="{chipClass} {idleChip}"
+            data-post-live
+            onclick={() => {
+              Log.d('POST_COMPOSER', 'live screen opened');
+              onLive();
+            }}
+          >
+            <Radio size={16} strokeWidth={2.25} class="text-red-600 dark:text-red-400" />
+            {m.live_composer_chip()}
+          </button>
+        {/if}
         <button
           type="button"
           class="{chipClass} {pollActive ? activeChip : idleChip}"

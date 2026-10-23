@@ -45,6 +45,8 @@ describe('FormsService - the file question', () => {
       }),
       count: jest.fn(() => Promise.resolve(0)),
       findOne: jest.fn(() => Promise.resolve(null)),
+      // The one-answer guard reads the person's answers: none yet.
+      find: jest.fn(() => Promise.resolve([])),
     };
     const formRepo: any = {
       findOne: jest.fn(() => Promise.resolve(form)),
@@ -53,7 +55,7 @@ describe('FormsService - the file question', () => {
     };
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
-      manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
+      manager: { find: manager.find, transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
     };
     const pricingFacts: any = { build: jest.fn(() => Promise.resolve({ answers: {} })) };
     const formFiles: any = { attach: jest.fn(() => Promise.resolve()) };
@@ -67,7 +69,9 @@ describe('FormsService - the file question', () => {
       {} as any,
       pricingFacts,
       { count: jest.fn(() => Promise.resolve(0)) } as any,
-      formFiles
+      formFiles,
+      // FormOrganiserAlertService: switched off, as it ships.
+      { enabled: () => false } as any
     );
     return { service, saved, formFiles, manager };
   }
@@ -196,6 +200,30 @@ describe('FormsService - the file question', () => {
         service.submit('f1', { userId: 'u1', answers: { q_cv: FILE_ID } })
       ).rejects.toThrow('cannot receive a file');
       expect(saved).toHaveLength(0);
+    });
+
+    // A file question the submitter does not see is neither stored nor attached: only the VISIBLE
+    // file answers reach `attach`. Control (2026-10-22): `attach` handed every file answer -> fails.
+    it('attaches no file for a file question the submitter did not see', async () => {
+      const menu = {
+        id: 'q_menu',
+        label: 'Menu',
+        required: true,
+        type: 'single_choice',
+        options: [
+          { id: 'a', label: 'A', priceModifier: 0 },
+          { id: 'b', label: 'B', priceModifier: 0 },
+        ],
+      };
+      const hiddenCv = {
+        ...CV,
+        required: false,
+        showIf: { answer: { questionId: 'q_menu', optionIds: ['a'] } },
+      };
+      const { service, saved, formFiles } = makeService(baseForm({ items: [menu, hiddenCv] }));
+      await service.submit('f1', { userId: 'u1', answers: { q_menu: 'b', q_cv: FILE_ID } });
+      expect(saved[0].answers).toEqual({ q_menu: 'b' });
+      expect(formFiles.attach).not.toHaveBeenCalled();
     });
 
     it('enforces a required file question', async () => {

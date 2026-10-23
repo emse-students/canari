@@ -26,7 +26,7 @@
     formations = [],
     imageUploadFn = undefined,
     fileHint = undefined,
-  } = $props<{
+  }: {
     item: any;
     onRemove: () => void;
     showPriceModifier?: boolean;
@@ -51,7 +51,7 @@
     imageUploadFn?: (file: File) => Promise<string>;
     /** What the editor says a FILE question does - who reads the file, when it goes. Defaults to a form's. */
     fileHint?: string;
-  }>();
+  } = $props();
 
   let showTypePicker = $state(false);
 

@@ -148,6 +148,17 @@ describe('submitterName', () => {
     );
   });
 
+  it('files a paying guest under the reference the guest was given', () => {
+    const name = submitterName({
+      firstName: null,
+      lastName: null,
+      userId: null,
+      reference: '1A2B-3C4D',
+    });
+    expect(name).toBe(m.form_submitter_guest_reference({ reference: '1A2B-3C4D' }));
+    expect(name).toContain('1A2B-3C4D');
+  });
+
   it('prefers the stored name', () => {
     expect(submitterName({ firstName: 'Ada', lastName: 'Lovelace', userId: 'u1' })).toBe(
       'Ada Lovelace'

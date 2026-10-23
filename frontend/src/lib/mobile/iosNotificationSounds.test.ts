@@ -63,6 +63,7 @@ describe('iOS notification sounds (palette A)', () => {
     expect(pushMm).toContain(`kCanariSoundMention = @"${sounds.mention}"`);
     expect(pushMm).toContain(`kCanariSoundReaction = @"${sounds.reaction}"`);
     expect(nse).toContain(`mentionSoundFile = "${sounds.mention}"`);
+    expect(nse).toContain(`messageSoundFile = "${sounds.message}"`);
   });
 
   it('the project bundles each file in BOTH the app and the extension', () => {

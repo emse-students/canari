@@ -164,7 +164,7 @@ wrong, and each one has already shipped a bug.
   the command is the snake_case Rust fn, not the Kotlin/Swift method; and it must appear in the
   plugin's `build.rs` `COMMANDS` **and** in `permissions/default.toml`, or the IPC boundary refuses
   it even though the Rust fn exists. Build identifiers with `keystoreCommand()`;
-  `keystoreCommands.test.ts` reads the Rust sources and fails on drift.
+  `nativePluginCommands.test.ts` reads the Rust sources and fails on drift.
 - **`push_context.json` is a JSON contract across four languages** — Rust writes it; ObjC, Swift and
   Kotlin read it. Nothing checks it: the v0.11.0 `pin` → `deviceKeyB64` rename killed iOS background
   decrypt for three releases. `src/lib/mobile/pushContextFields.test.ts` is the only guard; change

@@ -65,10 +65,6 @@ const EXEMPT: Record<string, { reason: string; registeredBy?: string[] }> = {
       'lib/components/shared/PdfViewerModal.svelte',
     ],
   },
-  'lib/components/chat/CallOverlay.svelte': {
-    reason:
-      'calling is held off (CALLS_ENABLED = false, calls.md); at revival the expanded in-call view registers with Back = minimise',
-  },
   'routes/admin/carte/[id]/+page.svelte': {
     reason: 'the full-window card editor exists only for a fine pointer (canEdit = !coarsePointer)',
   },

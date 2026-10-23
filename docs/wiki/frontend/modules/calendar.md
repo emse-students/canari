@@ -236,6 +236,7 @@ names joined with " + " in one truncating span. Those rows now draw `OrganiserFa
 circular `AssociationAvatar` faces ringed in the surface colour, then a `+N` pill, carrying the full
 list as its `aria-label` and title. The label is `eventOwnersLabel`: `A`, `A + B`, then `A + N others`
 from three on (`organisersLabel`); the full list is `organisersFullList` and the detail modal.
+The grid cell's tooltip lists every organiser (`eventTooltip`), and a calendar entry's SUMMARY and the share title read `title - A + B`, `A + N others` from three on (`eventSummary` client side, `organisersSummary` in `calendar-ics.util.ts` for the feed, French "autres").
 **Nothing was rendered on a phone**: the stack's ring and overlap, and its look on the row's hover
 background, are owed one reading.
 
@@ -575,7 +576,8 @@ Two defects reproduced by rendering October with two half-day events on the 13th
 - **The outline was cut left and right.** A title is `overflow:hidden` for its line clamp, which clips
   at the padding box, while `paint-order:stroke fill` paints the stroke's outer half beyond the glyph.
   `outlineRoomCss(fontSize)` pads the title by `ceil(strokeWidth / 2)` and cancels it with the same
-  negative margin, so the wrapping width is unchanged. The room is derived from `outlineWidth`, the
+  negative margin, so the wrapping width is unchanged. Left and right only since 2026-10-18: a room below the last
+  line let the top of the clamped next line show through it. The room is derived from `outlineWidth`, the
   same number `textOutlineCss` strokes with.
 - **A grey sliver under the cell.** `floor(CELL_H / nSlots)` per slot left up to `nSlots - 1` px of the
   cell unpainted. `slotHeights(cellH, n)` returns integers that sum exactly to the cell (the remainder
@@ -654,7 +656,10 @@ logged, and the export's own pre-fetch read the shell's HTML as a **200** and in
 URL - so a `resp.ok` check could never have caught it. Both sites go through `associationLogoSrc`
 now, and `calendarExport.test.ts` pins the preview's `src`. The scanner in `apiUrl.absolute.test.ts`
 was blind to it twice over: the URL is a variable, so there is no literal `/api/` to match, and the
-element is built inside an HTML string rather than bound as `src={x.logoUrl}`.
+element is built inside an HTML string rather than bound as `src={x.logoUrl}`. Because it is built
+as a string, every value it interpolates - each logo `src` included - goes through
+`escapeHtmlAttribute`, and `associationLogoSrc` draws only a path or an http(s) URL
+([associations](associations.md), "What `logoUrl` may hold").
 
 **The button.** `exportSearchablePdf` finished with `pdf.save()`, which is jsPDF's own object URL
 plus an `<a download>` click - the exact gesture `utils/fileDownload.ts` exists to replace, and the
@@ -667,6 +672,43 @@ fails there rather than on a device.
 **Still owed: one press on real hardware.** A green suite says the blob reaches the right function;
 it says nothing about the picker, and the two `capabilities/default.json` grants this depends on
 (`fs:allow-write-file`, `dialog:allow-save`) are the kind that ship and install before rejecting.
+
+### THE NOVEMBER 2026 SHEET: OUTLINES AND A PNG, NOTHING MOVED (2026-10-18)
+
+The user sent the November 2026 PDF (autumn photograph) asking for better outlines and a PNG button
+beside the PDF. **PLACEMENT IS NOT TO CHANGE (user, 2026-10-18):** a first pass moved the day number
+into a row above the tiles and the logo into a slot left of the title, and was reverted - the
+number stays pinned over the tile and the logo stays the centred watermark (2026-10-06). What
+changed is paint only:
+
+| seen on the sheet | change |
+| --- | --- |
+| days faded into the photograph | every in-month day has a rounded (8px) 2px `SHEET_INK` frame drawn OVER its content (`dayFrameHtml`); default cell opacity 58 -> 82 |
+| stacked events of one day merged into one band | the 1px 10 % rule between them is a 2px 75 % one (`sheetRuleCss`) |
+| the title had an outline, the empty days' numbers and "+N" none | all are white with the dark outline, in the same place and size |
+| a sliver of a clamped title's next line under its last one | `outlineRoomCss` pads left and right only |
+
+**THE FRAME IS A SETTING (user, 2026-10-18: *"les bords noirs des cases sont reglables ?"*).** Under
+the cell-opacity slider: "Bordure des cases" (none / thin 1px / medium 2px / thick 3px, default 2px)
+and, unless it is none, "Couleur de la bordure" (dark / light). One setting drives both the frame
+and the rule between stacked events (`cellBorderWidth`, `cellBorderColor`); at none the frame goes
+and the rule falls back to the sheet's old faint 1px. Page state like every control here: Reset
+restores it, nothing is stored. The PDF and the PNG read the same options.
+
+Open: the number can still sit on a long title in a busy cell, which the placement decision accepts;
+the real November photograph has not been re-exported - the user's look is owed.
+
+**THE PNG IS THE PDF'S SHEET.** `withRenderedSheet` is the one render path: it pre-fetches the logos,
+builds the offscreen page and hands it to the PDF writer or to the PNG rasteriser, so the two files
+cannot differ on layout. The PNG keeps its text in the raster, at `pngRasterScale(devicePixelRatio)` =
+2 x the screen density capped at `PNG_MAX_RASTER_SCALE` 3 - the scale the PDF already rasterises at on
+every device, so a PNG never costs more canvas than the PDF does. Measured on a full six-row November
+with a busy photograph (desktop Chrome): scale 2 = 2160 x 1528, 4.1 MB, ~0.9 s; scale 3 = 3240 x 2292
+(30 MB of canvas, under half of iOS's ~16.7 Mpx limit), 7.6 MB, ~0.5 s warm; the PDF of the same
+month is 1.0 MB in ~1.2 s. Compare the carte's D8, whose A0 cost is still owed. Both files go through
+`downloadDecryptedFile`, so a phone app gets the OS save dialog for either - the hardware press owed
+for the PDF above is owed for the PNG too. Same gate as the PDF (`mayExport`), filename
+`canari-agenda-YYYY-MM`.
 
 ## ICS export
 

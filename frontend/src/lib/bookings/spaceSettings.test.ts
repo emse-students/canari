@@ -6,7 +6,7 @@ import {
   draftProblems,
   settingsFromDraft,
   timeZoneChoices,
-} from './spaceSettings';
+} from './spaceSettings.svelte';
 
 const SPACE: ManagedSpace = {
   id: 's1',

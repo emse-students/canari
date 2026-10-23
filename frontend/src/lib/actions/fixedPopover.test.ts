@@ -1,7 +1,5 @@
 // @vitest-environment happy-dom
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 import { bindFixedPopover, computeFixedPopoverPosition } from './fixedPopover';
 
 describe('computeFixedPopoverPosition', () => {
@@ -392,22 +390,11 @@ describe('computeFixedPopoverPosition', () => {
  * until a specific ancestor exists above a specific component, and by then it is a bug report.
  */
 describe('every panel bound to this action', () => {
-  const dir = join(dirname(fileURLToPath(import.meta.url)), '..');
-
-  function svelteFiles(from: string, out: string[] = []): string[] {
-    for (const entry of readdirSync(from)) {
-      const full = join(from, entry);
-      if (statSync(full).isDirectory()) svelteFiles(full, out);
-      else if (entry.endsWith('.svelte')) out.push(full);
-    }
-    return out;
-  }
-
   it('is portalled out of the tree, so its viewport coordinates mean the viewport', () => {
-    const offenders = svelteFiles(dir)
-      .map((file) => ({ file, body: readFileSync(file, 'utf8') }))
-      .filter(({ body }) => body.includes('bindFixedPopover') && !body.includes('use:portal'))
-      .map(({ file }) => relative(dir, file));
+    // Everything under `src/lib`, the directory above this action.
+    const offenders = sourceFiles({ under: 'src/lib', extensions: ['svelte'], tests: 'include' })
+      .filter(({ text }) => text.includes('bindFixedPopover') && !text.includes('use:portal'))
+      .map(({ path }) => relativeTo(path, 'src/lib'));
 
     expect(
       offenders,

@@ -6,6 +6,9 @@
    * - `republish` - one the reader publishes in the name of. The republication is immediate.
    * - `propose` - any other association. It lands in that association's queue, where its
    *   publishers accept or refuse it (`$lib/proposals/api`).
+   * - `request` (D38b) - a PERSONAL post: one association the reader publishes in the name of asks
+   *   its AUTHOR, who accepts or refuses from `/notifications/requests`. Nothing shows before that.
+   *   A refusal is read by its typed `code` (`personalRequestRefusalMessage`).
    *
    * The lists are what is OFFERED (`$lib/posts/republication`); the server checks every choice again,
    * and its 409 (already carried, already proposed) is read by STATUS, never by message.
@@ -13,22 +16,34 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { listAssociations, listMyAssociations, type Association } from '$lib/associations/api';
-  import { proposeRepublication, republishPost, type PostEntity } from '$lib/posts/api';
-  import { proposalCandidates, republishCandidates } from '$lib/posts/republication';
-  import { refusalStatus } from '$lib/utils/apiRefusal';
+  import {
+    proposeRepublication,
+    republishPost,
+    requestPersonalRepublication,
+    type PostEntity,
+  } from '$lib/posts/api';
+  import {
+    personalRequestCandidates,
+    personalRequestRefusalMessage,
+    proposalCandidates,
+    republishCandidates,
+  } from '$lib/posts/republication';
+  import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
+  type RepublishMode = 'republish' | 'propose' | 'request';
+
   interface Props {
     /** Which dialog is open, or `null` for closed. */
-    mode: 'republish' | 'propose' | null;
-    /** The post being republished or proposed. */
+    mode: RepublishMode | null;
+    /** The post being republished, proposed, or asked about. */
     post: PostEntity;
     onClose: () => void;
     /** Called after the server accepted the write, with the association chosen. */
-    onDone: (mode: 'republish' | 'propose', association: Association) => void;
+    onDone: (mode: RepublishMode, association: Association) => void;
   }
 
   let { mode, post, onClose, onDone }: Props = $props();
@@ -62,7 +77,10 @@
         ? (isGlobalAdmin() ? listAssociations() : listMyAssociations()).then((mine) =>
             republishCandidates(mine, post, isGlobalAdmin())
           )
-        : listAssociations().then((all) => proposalCandidates(all, post));
+        : opened === 'request'
+          ? // The memberships, for an administrator too: asking an author needs a HELD flag.
+            listMyAssociations().then((mine) => personalRequestCandidates(mine, post))
+          : listAssociations().then((all) => proposalCandidates(all, post));
     load
       .then((list) => {
         if (!cancelled) candidates = list;
@@ -88,13 +106,23 @@
     Log.d('RepublishDialog', `${acting} post=${post.id.slice(0, 8)} as=${chosen.id.slice(0, 8)}`);
     try {
       if (acting === 'republish') await republishPost(post.id, chosen.id);
+      else if (acting === 'request') await requestPersonalRepublication(post.id, chosen.id);
       else await proposeRepublication(post.id, chosen.id);
-      showToast(acting === 'republish' ? m.post_republish_done() : m.post_propose_done(), 'info');
+      showToast(
+        acting === 'republish'
+          ? m.post_republish_done()
+          : acting === 'request'
+            ? m.post_request_done()
+            : m.post_propose_done(),
+        'info'
+      );
       onDone(acting, chosen);
     } catch (e: unknown) {
       const status = refusalStatus(e);
-      Log.d('RepublishDialog', `${acting} refused: status=${status} ${String(e)}`);
-      errorMessage = status === 409 ? m.post_republish_conflict() : m.post_republish_error();
+      const code = refusalCode(e);
+      Log.d('RepublishDialog', `${acting} refused: status=${status} code=${code} ${String(e)}`);
+      if (acting === 'request') errorMessage = personalRequestRefusalMessage(code, status);
+      else errorMessage = status === 409 ? m.post_republish_conflict() : m.post_republish_error();
     } finally {
       submitting = false;
     }
@@ -104,13 +132,21 @@
 <Modal
   open={mode !== null}
   {onClose}
-  title={mode === 'propose' ? m.post_propose_dialog_title() : m.post_republish_dialog_title()}
+  title={mode === 'propose'
+    ? m.post_propose_dialog_title()
+    : mode === 'request'
+      ? m.post_request_dialog_title()
+      : m.post_republish_dialog_title()}
   maxWidth="max-w-sm"
   dismissible={!submitting}
 >
   <div class="space-y-4 px-1 pb-2">
     <p class="text-text-muted text-sm">
-      {mode === 'propose' ? m.post_propose_dialog_hint() : m.post_republish_dialog_hint()}
+      {mode === 'propose'
+        ? m.post_propose_dialog_hint()
+        : mode === 'request'
+          ? m.post_request_dialog_hint()
+          : m.post_republish_dialog_hint()}
     </p>
 
     {#if candidates.length > 6}
@@ -171,7 +207,11 @@
         onclick={submit}
         disabled={submitting || !selected}
       >
-        {mode === 'propose' ? m.post_propose_submit() : m.post_republish_submit()}
+        {mode === 'propose'
+          ? m.post_propose_submit()
+          : mode === 'request'
+            ? m.post_request_submit()
+            : m.post_republish_submit()}
       </button>
     </div>
   </div>

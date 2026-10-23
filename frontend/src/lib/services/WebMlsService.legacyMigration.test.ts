@@ -15,6 +15,7 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 
 import { WebMlsService } from './WebMlsService';
 import { SavedStateUnopenedError } from '$lib/mls-client';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 
 // THE CODES `mls-core` THROWS, not the sentences it used to. Both are this crate's own throws and
 // both are typed since 2026-09-08, because the classifier that routes on them had a default arm
@@ -55,6 +56,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     generateDeviceId: vi.fn().mockReturnValue('web-u-fresh'),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([7])),
     deleteDevice: vi.fn().mockResolvedValue(undefined),
+    endDocumentAfterRefusedRotation: vi.fn(),
     // Real implementations, not mocks: the fresh-start assertions below (new id persisted, old
     // device deleted) are assertions ABOUT the rotation, so stubbing it would test nothing.
     rotateDeviceIdentity: WebMlsService.prototype['rotateDeviceIdentity'],
@@ -125,6 +127,39 @@ describe('WebMlsService._initImpl legacy migration', () => {
     expect(ctx.generateDeviceId).toHaveBeenCalled();
     expect(localStorage.getItem('mls_device_id_u')).toBe('web-u-fresh');
     expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'web-u-new');
+  });
+
+  /**
+   * THE ROTATION'S WRITE REFUSED (2026-10-21): another document wrote this account's state after this
+   * one loaded, so the fresh identity is on no disk. Moving the shared id, or deleting the old device
+   * the other document may be serving, would make a refused write permanent damage - init fails
+   * instead, with every durable side effect untouched.
+   */
+  it('FAILS init, typed, with the old id kept everywhere, when the rotation checkpoint is refused', async () => {
+    const ctx = makeCtx({
+      loadStateWithKey: vi
+        .fn()
+        .mockRejectedValueOnce(UNOPENABLE)
+        .mockRejectedValueOnce(MISMATCH)
+        .mockResolvedValueOnce(undefined),
+    });
+    migrateLegacyMlsStateBlob.mockResolvedValue(resealed);
+    localStorage.setItem('mls_device_id_u', 'web-u-new');
+    saveMlsState.mockResolvedValueOnce('stale');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const failure = await initImpl(ctx, stored, { noFreshStart: true, legacyPin: '1234' }).catch(
+      (e: unknown) => e
+    );
+    const said = error.mock.calls.map((c) => String(c[0]));
+    error.mockRestore();
+
+    expect(failure).toBeInstanceOf(MlsStateWriteRefusedError);
+    expect(said.some((s) => s.includes('rotation ABORTED'))).toBe(true);
+    expect(localStorage.getItem('mls_device_id_u')).toBe('web-u-new');
+    // Init fails, so the login releases this client; the reload is the revocation path's alone.
+    expect(ctx.endDocumentAfterRefusedRotation).not.toHaveBeenCalled();
+    expect(ctx.deleteDevice).not.toHaveBeenCalled();
   });
 
   it('still offers old-PIN recovery when the blob is not a legacy envelope', async () => {

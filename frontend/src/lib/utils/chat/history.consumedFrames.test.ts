@@ -221,10 +221,10 @@ describe('a frame the archive replay consumed', () => {
   });
 
   it('survives the reload, because the durable set is what live delivery reads', async () => {
-    const commit = await replayOnePage({ ok: true, plaintext: null });
-    // The replay does not persist its own progress: the caller commits it once the encrypted MLS
-    // checkpoint has flushed, so durable progress can never run ahead of the durable ratchet.
-    commit?.();
+    await replayOnePage({ ok: true, plaintext: null });
+    // The replay does not persist its own marks: the checkpoint holding their ratchet advance
+    // does, so durable progress can never run ahead of the durable ratchet.
+    checkpoint();
     await flush();
 
     expect(persisted()).toContain(frameFingerprint(wire));

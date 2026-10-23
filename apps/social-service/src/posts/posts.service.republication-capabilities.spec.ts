@@ -27,8 +27,22 @@ describe('PostsService republication fields', () => {
     publisherOf?: string[];
     /** The reader sees the post ONLY through a nominative read grant. */
     grantOnly?: boolean;
+    /** D38b: among `republishAs`, the associations of the kind that may ask an author. */
+    personalAs?: string[];
+    /** D38b: the server's requestable predicate holds for the post. */
+    requestable?: boolean;
+    /** D38b: the standing requests of the reader's associations for the post. */
+    standing?: { fromAssociationId: string; associationName: string; id: string; status: string }[];
   }) {
     const query = jest.fn((sql: string) => {
+      if (sql.startsWith('SELECT posts.id AS "requestableId"')) {
+        return Promise.resolve(opts.requestable ? [{ requestableId: opts.post.id }] : []);
+      }
+      if (sql.includes('FROM proposals')) {
+        return Promise.resolve(
+          (opts.standing ?? []).map((s) => ({ ...s, subjectId: opts.post.id }))
+        );
+      }
       if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
       if (sql.startsWith('SELECT posts.id FROM posts')) {
         // The grant-free predicate: a grant-only post is absent from the answer.
@@ -47,7 +61,13 @@ describe('PostsService republication fields', () => {
       }
       if (sql.includes('JOIN associations a ON a.id = am."associationId"')) {
         return Promise.resolve(
-          (opts.republishAs ?? []).map((associationId) => ({ associationId }))
+          [...new Set([...(opts.republishAs ?? []), ...(opts.personalAs ?? [])])].map(
+            (associationId) => ({
+              associationId,
+              type: (opts.personalAs ?? []).includes(associationId) ? 'association' : 'institution',
+              archived: false,
+            })
+          )
         );
       }
       return Promise.resolve([]);
@@ -140,12 +160,76 @@ describe('PostsService republication fields', () => {
     expect((await service.getById('p1', {})).canVote).toBe(false);
   });
 
-  it('offers neither on a personal post, which is never republished', async () => {
+  it('offers neither on a personal post, which is never republished at once (D38b asks)', async () => {
     const personal = { ...assoPost, associationId: null } as unknown as Partial<Post>;
     const service = makeService({ post: personal, republishAs: [A2], publisherOf: [A1] });
     const shaped = await service.getById('p1', { viewerId: 'officer' });
     expect(shaped).toMatchObject({ canRepublish: false, canProposeRepublication: false });
-    expect(shaped.republishedBy).toBeUndefined();
+    // Stamped like any post: an author may have let associations carry it.
+    expect(shaped.republishedBy).toEqual([]);
+  });
+
+  describe('D38b: asking the author of a personal post', () => {
+    const personalPost = {
+      ...assoPost,
+      authorId: 'author',
+      associationId: null,
+    } as unknown as Partial<Post>;
+
+    it('offers the request when the server predicate holds and an association may still ask', async () => {
+      const service = makeService({ post: personalPost, personalAs: [A2], requestable: true });
+      expect(await service.getById('p1', { viewerId: 'reader' })).toMatchObject({
+        canRequestRepublication: true,
+        republicationRequests: [],
+      });
+    });
+
+    it('does not offer it when the predicate fails (anonymous, blocked, unseen, own post)', async () => {
+      const service = makeService({ post: personalPost, personalAs: [A2], requestable: false });
+      expect((await service.getById('p1', { viewerId: 'reader' })).canRequestRepublication).toBe(
+        false
+      );
+    });
+
+    it('never offers it in the name of an association of a kind that may not ask', async () => {
+      // A2 is an institution here: it republishes association posts, never a person's.
+      const service = makeService({ post: personalPost, republishAs: [A2], requestable: true });
+      expect((await service.getById('p1', { viewerId: 'reader' })).canRequestRepublication).toBe(
+        false
+      );
+    });
+
+    it('serves the pending and refused requests, and stops offering once every association asked', async () => {
+      const service = makeService({
+        post: personalPost,
+        personalAs: [A2, 'asso-3'],
+        requestable: true,
+        standing: [
+          { fromAssociationId: A2, associationName: 'ASSO-2', id: 'prop-1', status: 'pending' },
+          {
+            fromAssociationId: 'asso-3',
+            associationName: 'ASSO-3',
+            id: 'prop-2',
+            status: 'refused',
+          },
+        ],
+      });
+      expect(await service.getById('p1', { viewerId: 'reader' })).toMatchObject({
+        canRequestRepublication: false,
+        republicationRequests: [
+          { associationId: A2, associationName: 'ASSO-2', proposalId: 'prop-1', status: 'pending' },
+          { associationId: 'asso-3', proposalId: 'prop-2', status: 'refused' },
+        ],
+      });
+    });
+
+    it('lets the AUTHOR withdraw every republication of their personal post', async () => {
+      const service = makeService({ post: personalPost, republishers: [A2, 'asso-3'] });
+      expect((await service.getById('p1', { viewerId: 'author' })).canUnrepublishAs).toEqual([
+        A2,
+        'asso-3',
+      ]);
+    });
   });
 
   it('offers neither to an anonymous reader', async () => {

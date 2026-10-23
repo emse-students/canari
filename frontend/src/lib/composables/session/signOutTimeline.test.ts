@@ -73,6 +73,8 @@ function liveSession() {
   const cb = {
     log,
     conversations,
+    invalidateRestores: vi.fn(),
+    forgetUnconfirmedSalonDraws: vi.fn(),
     setSelectedContact: vi.fn(),
   } as unknown as ChatSessionCallbacks;
   return { ctx, cb, mls, ensureMls, clearConversations, log, clients };
@@ -109,6 +111,9 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
       expect(s.ctx.isLoggedIn()).toBe(false);
       expect(s.mls.pauseSocket).toHaveBeenCalledTimes(1);
       expect(s.clearConversations).toHaveBeenCalledTimes(1);
+      // The restore chain ends with the session, or a queued restore would run as this account.
+      expect(s.cb.invalidateRestores).toHaveBeenCalledTimes(1);
+      expect(s.cb.forgetUnconfirmedSalonDraws).toHaveBeenCalledTimes(1);
 
       // 2. The app comes back from the sign-in browser before the callback has its token.
       s.ensureMls.mockClear();

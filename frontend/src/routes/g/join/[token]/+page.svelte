@@ -5,7 +5,8 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { getGroupInvitePreview, acceptGroupInvite } from '$lib/mls/groupInvites';
-  import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+  import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
+  import { describeRefusalCode } from '$lib/utils/refusalCodes';
   import { currentUserId } from '$lib/stores/user';
   import { Users, LoaderCircle, CircleAlert, Check } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -50,9 +51,10 @@
       // invite is not a refused one, and a full retry limit is neither.
       const status = refusalStatus(e);
       error =
-        status === 404
+        describeRefusalCode(refusalCode(e)) ??
+        (status === 404
           ? m.invite_not_found()
-          : (describeApiRefusal(status, m.group_join_action()) ?? m.group_join_error_fallback());
+          : (describeApiRefusal(status, m.group_join_action()) ?? m.group_join_error_fallback()));
       joining = false;
     }
   }

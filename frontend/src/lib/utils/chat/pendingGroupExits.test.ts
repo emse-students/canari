@@ -48,7 +48,7 @@ function makeMls(over: Partial<IMlsService> = {}) {
 
 const G1 = '11111111-1111-4111-8111-111111111111';
 const G2 = '22222222-2222-4222-8222-222222222222';
-const NET = new TypeError('Failed to fetch');
+const NET = new TransportFailureError(new TypeError('Failed to fetch'));
 const DAY = 24 * 60 * 60 * 1000;
 
 beforeEach(() => {

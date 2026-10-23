@@ -78,6 +78,13 @@ function fakeMls(epoch: number | null) {
       // window of `ensureDistributionGroup`, and every seal below happens long after one.
       isDistributionBaseSettled: () => true,
       getEpoch: () => epoch ?? 0,
+      // One clean run per group, never moving: the rotation rule itself is pinned in
+      // `sessionManager.test.ts` and in `mls-core/tests/graine_run.rs`.
+      graineRun: async (groupId: string) => ({
+        runId: `run-${groupId}`,
+        epoch: epoch ?? 0,
+        epochFingerprint: `fp-${groupId}-${epoch ?? 0}`,
+      }),
       graineSignatureEngine: () => webCryptoEngine,
       // The endorsement of a minted session (WP-G2-5): a fixed device key stands in for the MLS
       // credential, whose own signing is `mls-core`'s and tested there.

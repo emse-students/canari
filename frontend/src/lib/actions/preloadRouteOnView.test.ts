@@ -10,6 +10,7 @@ vi.mock('$app/navigation', () => ({ preloadCode: (path: string) => preloadCode(p
 
 import { preloadRouteOnView } from './preloadRouteOnView';
 import { resetRouteCodePreloadsForTests } from '$lib/navigation/routeCodePreload';
+import { flushMacrotask } from '../../test/flush';
 
 class FakeObserver {
   static all: FakeObserver[] = [];
@@ -67,15 +68,15 @@ describe('preloadRouteOnView', () => {
     preloadCode.mockRejectedValueOnce(new Error('offline'));
     const first = preloadRouteOnView(document.createElement('a'), '/chat');
     FakeObserver.all[0].enter();
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     // One-shot: the observer let go, so a visible link cannot loop on a failure.
     FakeObserver.all[0].enter();
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     expect(preloadCode).toHaveBeenCalledTimes(1);
     first.destroy();
     preloadRouteOnView(document.createElement('a'), '/chat');
     FakeObserver.all[1].enter();
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     expect(preloadCode).toHaveBeenCalledTimes(2);
     warn.mockRestore();
   });

@@ -2,11 +2,11 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import type { PostEntity } from '$lib/posts/api';
   import PostAuthorAvatar from './PostAuthorAvatar.svelte';
-  import { Clock, Repeat2, VenetianMask } from '@lucide/svelte';
+  import { Clock, Repeat2, Send, VenetianMask } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
   import { postAuthorHref, postAuthorLinkLabel, postAuthorName } from '$lib/posts/postAuthorName';
-  import { republishedByLine } from '$lib/posts/republication';
+  import { pendingRequests, republishedByLine } from '$lib/posts/republication';
 
   /** Props for the PostHeader component. */
   interface Props {
@@ -26,6 +26,12 @@
 
   /** "Republie par X, Y +N" (D38): one card per post, however many associations carry it. */
   const republished = $derived(republishedByLine(post.republishedBy));
+
+  /**
+   * "Demande envoyee au nom de X" (D38b): what the reader's associations asked the author of this
+   * personal post, still unanswered - shown to the asker only, the server serves it to nobody else.
+   */
+  const requested = $derived(pendingRequests(post).map((r) => r.name));
 
   /** Where the publisher links - `postAuthorHref`, shared with the reel viewer; none when hidden. */
   const authorHref = $derived(postAuthorHref(post));
@@ -89,6 +95,14 @@
                 })
               : m.post_republished_by({ names: republished.names.join(', ') })}
           />
+        </span>
+      </div>
+    {/if}
+    {#if requested.length > 0}
+      <div class="text-text-muted text-2xs mt-0.5 flex min-w-0 items-center gap-1.5 font-medium">
+        <Send size={12} strokeWidth={2.5} class="shrink-0" />
+        <span class="truncate">
+          <EmojiText text={m.post_request_pending({ names: requested.join(', ') })} />
         </span>
       </div>
     {/if}

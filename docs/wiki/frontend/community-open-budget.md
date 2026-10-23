@@ -364,6 +364,23 @@ Same protocol and instrument as sections 1 and 5.
     version missed: it withdrew only rows OLDER than the page, while the merge keeps rows newer
     than a page as live arrivals. A deleted newest message, or an emptied salon, therefore
     reappeared from the copy for the life of the process.
+  - **The drawn rows belong to the SALON, not to the load that drew them** (2026-10-22,
+    `salonRowsDrawnUnconfirmed`). Whichever load merges withdraws every drawn row its page does not
+    name, then clears the set. Before this, the load that drew kept its own list. If a newer load
+    superseded it, that load returned without merging. The newer load then found the drawn rows
+    already in memory, drew nothing, and so had nothing to withdraw. A row the server no longer
+    served stayed on screen. GRAINE-AUTH-1 saw it once in five runs: a row the reader had refused
+    was still shown. Every early return of the draw now says why it drew nothing. The early
+    returns log at debug level, one line per load, because the rig's GRAINE-AUTH trail reads them.
+    A whole-history search confirms every row it decodes, so a later page cannot withdraw a row
+    the server still holds. Sign-out forgets the set with the conversations
+    (`forgetUnconfirmedSalonDraws`).
+  - **A residual, by design.** Suppose a row reached memory live, or from an earlier load, and was
+    never drawn from the store. If a later page refuses it while it is the newest row, it stays on
+    screen: it was verified when it arrived, and the merge keeps rows newer than a page. GRAINE-AUTH-1
+    cannot tell this case from the drawn-row one, so the instrumented repeat on the estate decides
+    which of the two the 2026-10-22 FAIL was.
+  - The two-tab race below predates this change and is unchanged.
   - Only then is the copy replaced in the store (`storeSalonPage`: delete, then save).
 - Nothing is deleted BEFORE the server answers any more. That includes the boot restore, which used
   to erase every salon's rows (`conversations.ts`).
@@ -448,7 +465,7 @@ What the measurements say is already within reach, and what stands between it an
 checkpoint per bulk ingest, read watermarks included, is the parked decision of
 [open-questions](../open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)
 (94-238 ms each, off the JavaScript thread since #1826); the 45 identical `[HISTORY_RECONCILE] ...
-asked 30s ago` lines in 250 ms are a noise defect (P3) - one line per sweep, not one per group.
+asked 30s ago` lines in 250 ms were a noise defect (P3), FIXED 2026-10-17: `reconcileAllGroups` counts the groups already asked inside the window and reports them once in its pass line.
 
 ### The first mount: profiled and cut, 2026-10-15
 

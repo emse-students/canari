@@ -14,6 +14,987 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-22
+
+### Documented - `v1.4.0-alpha.1`: the gestures read on the Mi 9T, the iPhone updated but blocked at its PIN
+
+Seven swipe variants behave as designed; the iPhone holds the 1.4.0 TestFlight build behind a PIN gate no bench account PIN has opened, and the dev DM reading waits on that mapping. See [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+
+### Documented - `v1.4.0-alpha.1` read on the Mi 9T (sideloaded)
+
+Sign-in on dev, the main pages and the comments sheet read with no console error and no native crash; a DM and a community open were not readable on that account. See [backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else).
+
+### Changed - docs: the deleted-account mention left the backlog
+
+WP-MENTION-DELETED shipped in #2022, so the backlog no longer lists it.
+
+### Documented - the background Welcome reading on the Mi 9T was attempted and not exercised
+
+A new device asks for a Welcome only when its own external join fails, so a plain new login never reaches the native path. The trigger and what is owed are in [backlog](docs/wiki/backlog.md#hardware-reading-owed-user-one-background-welcome-on-the-mi-9t-2026-10-22).
+
+### Changed - calls: video stays dev-only when calls reach production, and the call log no longer prints key bytes
+
+The first production calls are audio 1:1 only (owner, 2026-10-21), so the video switch no longer follows `CALLS_COMPILED` and the call service itself never opens a camera or shows a peer's video on a build without it; the `fp=` log line is now a SHA-256 fingerprint of the call key. The blockers and the order for turning calls on are on [calls](docs/wiki/frontend/modules/calls.md#turning-calls-on-in-production---audio-11-only-owner-2026-10-21).
+
+### Added - calls: one `[CALL_REPORT]` line every 10 s and at the end of a call
+
+Port of #2011 onto `main`, dev builds only ([calls-revival-plan](docs/wiki/frontend/modules/calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence)).
+
+### Security - calls: one media key per direction, every frame bound to its kind, a visible key mismatch
+
+Port of #2013 onto `main` (dev builds only; its register rows are owed the owner's review, and its
+`/legal/privacy` paragraphs are held in a separate draft) ([calls](docs/wiki/frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+
+### Changed - calls: the native ring is its own build switch, apart from in-app calls
+
+`CALLS_NATIVE_RING_COMPILED` now carries `voip`, `USE_FULL_SCREEN_INTENT` and the two native ring constants, so `CALLS_COMPILED` can ship audio calls without the ring (owner, 2026-10-21); nothing flipped ([calls](docs/wiki/frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
+
+### Documentation - the read-only production preflight and the store drafts for turning calls on
+
+B13 is now a checklist of ten read-only lines, each with its command, and B14 drafts the App Review notes, the microphone string and the privacy-form candidates; the review build needs `calls_mode` open on production ([calls](docs/wiki/frontend/modules/calls.md#the-production-server-preflight-b13---what-must-be-checked-read-only)).
+
+### Added - calls: a server kill switch, `off` by default in production
+
+`platform_config.calls_mode` (`off` / `audio` / `audio_video`, migration 014) is set at `/admin/platform`, refused by chat-delivery-service on every call request and published by `/api/version` so the app hides what it would refuse ([calls](docs/wiki/frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
+
+### Fixed - calls: the TURN budget counts what Cloudflare relayed, not every call at 3000 kbps
+
+`ice-servers` now compares the month's egress metered by Cloudflare (GraphQL analytics, two new secrets) to the budget, and a spent budget or an unreadable meter withholds TURN (STUN only, typed) instead of refusing the call; the duration estimate is deleted ([calls](docs/wiki/frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
+
+### Changed - calls: a TURN budget of 0 means STUN only
+
+`CLOUDFLARE_TURN_MONTHLY_BUDGET_GB=0` now keeps calls open without ever relaying them (`TURN_DISABLED`; it used to read as 950); unset stays 950, and an unreadable value is refused by the deploy, or read as 0 and logged at error ([calls](docs/wiki/frontend/modules/calls.md#the-turn-budget-reads-cloudflares-meter-b7)).
+
+### Fixed - the dependency audit is green again (rustls-webpki 0.103.16, webpki-roots 1.0.10)
+
+RUSTSEC-2026-0381/0382/0383 landed after the last green run; three lockfiles move to the patched versions, and the one `webpki-roots` 0.26 copy that sqlx and tokio-tungstenite pin is a dated, reasoned ignore ([cicd](docs/wiki/cicd.md)).
+
+### Added - an inert switch to measure skipping the checkpoint after a receive-only drain
+
+Off by default and unreachable on production; it only lets a development build be used for the Mi 9T crash measurement ([open-questions](docs/wiki/open-questions.md)).
+
+### Documented - the Mi 9T crash measurement of the checkpoint-skip switch is read
+
+No frame was lost over six switch-ON kill-and-resume trials of up to 60 skipped frames; what it does not cover is named in [open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13).
+
+### Fixed - ci: the compose-wiring self-test no longer reports a present key as missing
+
+Under `pipefail`, `grep -q` closed its pipe on the first match and the writer's SIGPIPE failed the pipeline; its pipes now let grep read to the end.
+
+### Changed - chat-delivery: client sends and commits are checked against their caller
+
+`POST /mls/send` accepts the fields a client sends, a `proto`, and the caller as its sender, from a
+device of its own that is a member of the group. The pre-MLS content path is removed
+([legacy-compatibility](docs/wiki/legacy-compatibility.md#removed-2026-10-22---the-pre-mls-send-path-the-content-column-and-its-read-arm-wait-for-a-migration)).
+A commit, foreground or background, is bound to its authenticated committer and that committer's
+device, must come from a member (or, for an external commit, a person on the roster), and must name
+its own group and base epoch; its fan-out skips only devices new to the group. A conversation's
+Welcome reaches only a device of someone on its roster, and never ends a kick. A device id belongs
+to one account ([backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)).
+
+### Changed - chat-delivery: a key group's external join is asked of social-service
+
+An external commit into a community's key group, and a Welcome addressed to a key group, are
+accepted only for a person social-service entitles to that workspace or channel; when social-service
+does not answer, the commit is refused with `503` and retried, never accepted
+([channel-encryption](docs/wiki/protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live),
+[backlog](docs/wiki/backlog.md#p1---wp-keygroup-join-gate-a-key-group-external-join-is-asked-of-social-service---built-owed-its-503-rate-2026-10-22)).
+
+### Changed - chat-delivery: reporting a device `active` promotes an existing seat only
+
+The one writer of an `active` membership now takes the authority each caller acts on. A REPORT
+(`POST /mls/invitations/status`, `POST /mls/push/membership-active`) needs the device's own row in
+that group, free of an unanswered kick, and in a conversation its owner on the roster; otherwise it
+is refused as `NOT_A_MEMBER` and logged
+([backlog](docs/wiki/backlog.md#p3---a-refused-membership-report-is-silent-on-the-client-2026-10-22)).
+
+### Documentation - DMs and communities compared, re-measured on production
+
+The two encryption systems side by side, with the 2026-08-17 sizing premises re-measured: adds rotate Graine sessions (one seed per two messages), a v2 seed is ~330 bytes, and the key groups hold most of the server queue ([dm-vs-community-encryption](docs/wiki/protocols/dm-vs-community-encryption.md)).
+
+### Changed - docs: the user's decisions of 2026-10-22 (48-hour autonomy window)
+
+Recorded in [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-22---a-48-hour-autonomy-window-and-what-it-covers).
+
+### Changed - the double tap that likes now logs what reached the card
+
+Each press, each click and each ended sequence of `doubleTapLike` logs one line, so a re-reading on a
+WebView nobody can inspect tells a swallowed click from a lost touch ([device-verification](docs/wiki/device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones)).
+
+### Fixed - the swipe from the feed to the camera is no longer taken as Back on Android
+
+A swipe started in the feed's left 30 CSS px went Back instead of opening the camera; the feed now excludes that edge band, as conversations exclude the right one ([mobile](docs/wiki/frontend/mobile.md#the-left-edge-back-gesture-is-excluded-over-the-feed-and-only-there-2026-10-21)).
+
+### Fixed - chat: a link to `archives.canari-emse.fr` (or any sibling subdomain) is no longer rewritten to the Canari app
+
+Only the exact app hosts count as the app, not every `*.canari-emse.fr` ([chat-delivery](docs/wiki/services/chat-delivery.md#what-counts-as-the-app-an-exact-host-never-a-suffix)).
+
+### Fixed - a form already holding two questions with one id stays editable
+
+The duplicate-id refusal applies at create and to an edit that changes the questions' ids, names both questions, and never blocks a title, deadline or closing edit of a form stored that way ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Changed - the organiser alert's decisions recorded, one system actor name
+
+The user's two decisions on the switched-off organiser alert (no BDE super-admin, the exact flip precondition) and its residual P3 are written down, `SYSTEM_ACTOR_NAME` is one shared constant, and the responses link logs through the project logger ([forms](docs/wiki/frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
+
+### Added - the organiser alert for a payment on a full form, built and switched off
+
+A payment that lands `paid_over_capacity` tells the form's owner and `MANAGE_FORMS` holders once (migration 102, `organiserNotifiedAt`), and the tap opens that form's responses. It stays off until `minClientVersion` reaches the release carrying it on both estates and both stores ([forms](docs/wiki/frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
+
+### Fixed - a priced form answer names one of its question's options
+
+A form answer that decides a price is refused unless it names the question's declared options (only choice questions charge for an option), two questions cannot share an id, a hidden question's answer is no longer stored, and a public form that charges cannot leave its reachable "everyone else" price at 0 ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Fixed - a single-answer form no longer takes a second paid answer
+
+A submit after a paid (or still pending, free or cash) answer is refused server-side with 409
+`ALREADY_ANSWERED` before any payment request is issued ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Fixed - a group's creator no longer drops undated history from the group's first hour
+
+The span before a member's arrival is no longer given to the person who arrived with the group, so the creator keeps every message of the first hour ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
+
+### Security - a new member of a group conversation is no longer pushed the history from before their arrival
+
+The inviter's history push now withholds everything before the invitee arrived, and a device drops what precedes its own arrival from any bundle. This applies to group conversations only. Answers to requests are addressed in a later step ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)).
+
+### Fixed - role grants and removals are bounded by the actor's own permissions, and invite use counting is atomic
+
+An invitation, a role assignment, a permission edit, a new role and a removal each reach only as far as their author's own permissions (administrators keep everything); accepting a link claims a use in one conditional statement, so `maxUses` holds under concurrency ([social-service](docs/wiki/services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).
+
+### Added - docs: the App Review checklist, video shot list and notes for lives
+
+A draft page mapping guideline 1.2 to the screens that show it ([store-review-live-checklist](docs/wiki/store-review-live-checklist.md)).
+
+### Added - lives: a push when moderators cut a live, suspend or withdraw the right to broadcast
+
+The three notices of the strike ladder are pushed, worded on the device in French or English, and their tap opens the notifications list, where the suspension and withdrawal now have their own rows ([lives](docs/wiki/services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)).
+
+### Added - lives: a strike ladder for broadcasters and a reportable chat line (server, dev only)
+
+A cut is a warning, a second within 90 days suspends broadcasting for 30 days, staff may withdraw it from the third; a reported live chat line is checked against its ciphertext and kept signed until handled, 90 days at most ([lives](docs/wiki/services/lives.md#the-strike-ladder-wp-l8b)).
+
+### Changed - lives (dev builds): five new reactions, the posts' rules, and a flag on a chat line
+
+The live reactions are heart, laugh, bravo, fire and the canary chick; the first-live rules sheet shows the posts' rules; a viewer can report one chat line ([live](docs/wiki/frontend/modules/live.md#decisions-of-2026-10-21-reactions-rules-and-the-chat-line-report-client-half)).
+
+### Added - lives: an hourly alarm on the age of the oldest pending live report (server)
+
+`[LIVE_REPORT_AGE]` logs at error once a pending live or live-chat report is past 24 working hours, the response commitment to the stores ([lives](docs/wiki/services/lives.md#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e)).
+
+### Added - lives: staff see a broadcaster's strikes and can withdraw the right to broadcast
+
+The admin moderation queue shows a reported live's broadcaster standing (cuts on record, suspension end, withdrawal due) and a withdraw button once the server says it is due; dev builds only ([live](docs/wiki/frontend/modules/live.md)).
+
+### Added - a live shows how many watch it, to its viewers and its broadcaster (dev only)
+
+An eye and the exact number (confirmed by the owner 2026-10-21), read from the seats the viewer cap already counts and carried by the manifest poll both sides already make; a count only, never a name ([lives](docs/wiki/services/lives.md#the-viewer-count-2026-10-21)).
+
+### Added - the plan for turning lives on in production
+
+The gate list, the order of the switch, a read-only production preflight, the steps from a 24-viewer cap to none, and the privacy-policy wording for lives, HELD for the owner: [live-production](docs/wiki/frontend/modules/live-production.md). Nothing flips.
+
+### Added - lives: a runtime server kill switch, `off` by default on every estate
+
+`platform_config.lives_mode` (`off` / `on`, core migration 015) is set at `/admin/platform`, ANDed with `LIVE_ENABLED` on every live route and both media segment routes, and published by `/api/version` so the app hides the live card and chip ([lives](docs/wiki/services/lives.md#the-two-switches-live_enabled-and-lives_mode)).
+
+### Added - the Lydia API reference
+
+One page for every Lydia call, state and callback, each fact with its source ([lydia-api](docs/wiki/lydia-api.md)).
+
+### Changed - Lydia callbacks are verified with the association's own Business key, and only trigger a read of the row's request - a cancel or an expiry included
+
+The key is entered write-only by the payout manager and encrypted at rest (migration 100, new REQUIRED secret `LYDIA_KEY_ENCRYPTION_SECRET`); an association without one has its callbacks refused and its form payments confirmed on the payer's return. A boutique purchase is no longer fulfilled from a callback until its checkout is a stored row. A cancel or expiry releases a seat only once Lydia reads the request closed, and the public callback route is rate-limited at nginx. The dev-only observation of #1928 is removed ([payments](docs/wiki/frontend/modules/payments.md#what-confirms-a-payment-2026-10-16)).
+
+### Fixed - a declined Lydia payment no longer leaves the form answer pending with no retry
+
+Lydia's state `5` (the payer declined) is now a typed `declined`, like `cancelled-or-expired`: the
+answer is released and the form page and the return page offer the retry, where it used to read
+"pending" and refuse a retry for up to 30 minutes ([forms](docs/wiki/frontend/modules/forms.md#a-declined-payment-releases-the-answer-2026-10-21)).
+
+### Changed - docs: migrations 100 and 101 may ride the next stable, payments stay off in production
+
+The user cleared them on 2026-10-22 ([payments](docs/wiki/frontend/modules/payments.md)).
+
+### Fixed - an out-of-range checkout amount is logged and says its bounds
+
+The refusal (provider range 0.50-1000 EUR, or a product's own bounds) is now a typed `AMOUNT_OUT_OF_RANGE` carrying `minCents` / `maxCents`, logged where it is decided, and the shop and form payment pages word the range in the reader's language instead of "Erreur lors du paiement" or the server's English. See [payments](docs/wiki/frontend/modules/payments.md).
+
+### Fixed - Lydia's `signature` is no longer logged, and an unbounded free amount reads "Libre"
+
+core-service redacts `signature` in the Lydia call log like the two token fields; the shop card no longer prints "Libre (0-inf EUR)" for a product with no bounds. See [cotisations](docs/wiki/cotisations.md).
+
+### Fixed - turning payments on platform-wide puts the withheld boutique products on sale
+
+Switching `payment_provider` away from `disabled` now tells social-service to release every product withheld by the payment gate (never one an admin deactivated, never an orphan of a deleted association), for each association whose payment target is ready; a partial release is answered by a typed code, and a global admin can retry it from the platform page. The canonical cotisation is now withheld like any other product. See [cotisations](docs/wiki/cotisations.md#a-product-withheld-for-want-of-a-payment-account-releases-itself).
+
+### Changed - commenting: a bigger box, identity choice, folded replies, errors beside the box
+
+The comment box grows to several lines, takes the caret when you tap Reply, keeps a draft per post and lets you write as yourself, anonymously or as an association you speak for; replies fold from two, a delete asks first, and a failed send is said under the box ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Added - comments can be written anonymously or as an association (server)
+
+Anonymous comments hide the account from every reader but the writer, moderators and platform admins; association comments belong to the association (any holder of `POST_AS_ASSO` may edit or delete them). Per-reader `canEdit`/`canDelete`, masked notices, block-exempt, report writer read server-side. The client offers it in a later pull request ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Changed - comments: a softer bubble and one heart under it
+
+The comment bubble loses its border and shadow, the like becomes a single heart with its count at the right end of the row under the bubble, and the box's text, GIF label and buttons are centred on its line ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Added - comments: a 2000-character limit, "edited" on an edited comment, and a paged `GET /posts/:id/comments`
+
+The server refuses a longer comment, stamps `editedAt` on an edit, and serves comments as whole threads by cursor; the client gets `fetchComments` and a per-post draft store. First of the comment-sheet rework ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Changed - comments open in a full-screen sheet, read page by page
+
+The card shows its newest comment and a line to write one; every tap opens the thread in a sheet with the box pinned above the keyboard, older comments come page by page, and a notification opens the sheet at its comment ([posts](docs/wiki/frontend/modules/posts.md#comment-sheet-rework-2026-10-21)).
+
+### Fixed - editing a post shows the form it carries even when you do not manage that form
+
+The edit picker listed only the forms its reader owns or manages, so a post carrying someone else's form read "Aucun formulaire pour l'instant"; the attached form is now read by id and added. See [posts](docs/wiki/frontend/modules/posts.md#the-edit-picker-always-lists-the-attached-form-2026-10-21).
+
+### Fixed - a boutique product can be bought again after a declined or expired payment
+
+Every checkout reused one Lydia order_ref, which Lydia refuses the second time; each attempt is now a stored row (migration 101) with its own order_ref, the purchase is settled from that row on the payer's return or Lydia's verified callback, and "already purchased" is decided by Canari before any payment request ([payments](docs/wiki/frontend/modules/payments.md#a-product-checkout-is-a-row-one-per-attempt-2026-10-21)).
+
+### Added - one visitor can leave at most three paid answers waiting on a public form
+
+Counted from the rows under the form's seat lock, keyed on an HMAC of the visitor's address that is cleared once the answer stops waiting (migration 105) ([forms](docs/wiki/frontend/modules/forms.md#at-most-three-answers-waiting-per-visitor-wp-p3-decision-pp5)).
+
+### Documentation - a French guide to paid public forms
+
+How an organiser charges guests without an account, what a guest sees, and the limits ([guide](docs/user-guide/formulaires-publics.md)).
+
+### Added - a public form can charge a guest
+
+A guest on a shared link pays a base price, an answer grid, supplements or cash, without an account; the purchase is recorded with no user (migration 103) ([forms](docs/wiki/frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)).
+
+### Added - a guest who paid comes back to a receipt page with a reference
+
+The Lydia return of a paid public form shows the payment's state and a reference, authorised by a random receipt stored hashed (migration 104), never by an id ([forms](docs/wiki/frontend/modules/forms.md#the-guests-return-from-lydia-a-receipt-not-an-id-wp-p2---a-security-surface)).
+
+### Fixed - a public form's visitor is an IPv6 network, and its cash answers have a deadline
+
+The per-visitor throttle and ceiling count an IPv6 address as its /64, and a public form that accepts cash needs a cash deadline ([forms](docs/wiki/frontend/modules/forms.md#at-most-three-answers-waiting-per-visitor-wp-p3-decision-pp5)).
+
+### Changed - the alpha.5 stable-gate reading on both bench phones
+
+Double tap to like, the camera theme and form and association delete pass. DT-IOS is not reproduced with a real
+double tap. The smoke is partial: the Mi 9T was driven by another session at the same time, and the iPhone push
+banner was not observed. A stable shows neither calls nor lives
+([readings](docs/wiki/device-readings-2026-10.md#2026-10-21---v131-alpha5---the-stable-gate)).
+
+### Changed - the call reading across networks: relayed calls are clean, CALL-GATHER-0 is a false alarm, a P1 found
+
+Forced relay (UDP, TCP, TLS 443) carries clean E2E audio on desktops and both phones; the callee's "no TURN relay candidate" warning fires whenever the direct pair wins first; and on a Wi-Fi with broken IPv6 the Android chat socket never connects, so no call rings (CALL-WS-V6) ([readings](docs/wiki/device-readings-2026-10.md#2026-10-20-afternoon---v131-alpha4-across-networks-forced-relay-tcp-and-tls-turn-a-nated-hotspot)).
+
+### Changed - one reading runbook for the next calls alpha, grouped by phone
+
+Every calls reading owed on the Mi 9T and the iPhone 12, in the order one driver per phone can run it, with the gaps the repo could not fill ([runbook](docs/wiki/device-readings-2026-10.md#reading-runbook-for-the-next-calls-alpha---one-driver-per-phone-in-this-order-written-2026-10-21-not-a-reading)).
+
+### Fixed - a history replay's progress markers no longer land before the checkpoint they claim to follow
+
+A replay's stream cursor now waits for a checkpoint that started after the replay and holds its state, and the seen-ciphertext set is written by the checkpoint alone, so a live commit marked mid-seal can no longer become durable ahead of its epoch ([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md#a-history-replays-markers-wait-for-the-checkpoint-that-holds-it-2026-10-21)).
+
+### Changed - the rig forgives a reloaded page's own startup decisions, and nothing wider
+
+Nine startup lines join `PAGE_BOOT_NARRATION`, two composer and overlay lines join `BENIGN`, each pinned with a control. The 2026-10-22 GRAINE and GRP passes also left a P1, a P2 and five P3s in the [backlog](docs/wiki/backlog.md#the-harness-itself).
+
+### Fixed - a blind salon notification no longer shows an author or a mention
+
+A salon banner that could not open its message shows the salon's initials and the generic line, never the face or the "mentioned you" line of an author nobody proved ([channel-encryption](docs/wiki/protocols/channel-encryption.md#215-the-native-readers-wp-g2-4b)).
+
+### Fixed - a salon row the server no longer serves no longer stays on screen after two overlapping loads
+
+The rows a salon draws from its stored copy now belong to the salon, so the load that merges withdraws them even when an older load drew them ([community-open-budget](docs/wiki/frontend/community-open-budget.md#f4-built-2026-10-15)).
+
+### Fixed - a live salon frame without a ciphertext is refused, never rendered
+
+A salon message's author is proven only by opening it, so a frame with no ciphertext is refused at error level rather than shown under the author it names ([backlog](docs/wiki/backlog.md#the-harness-itself)).
+
+### Added - Canari in the Android share sheet
+
+Another app's "Partager" offers Canari: pick a conversation or a salon, and the text and files wait in its composer ([sharing](docs/wiki/frontend/sharing.md)).
+
+### Added - share out of Canari from the phone apps
+
+"Partager" on a message (its text or its decrypted attachment), a post or a reel opens the system
+share sheet; the post menu keeps "Copier le lien". See [share-out](docs/wiki/frontend/share-out.md).
+
+### Fixed - a shop free amount must be whole cents
+
+The checkout's `customAmountCents` was never validated: `5000.5` passed the bounds and was charged rounded while recorded as sent, and a string compared as NaN and passed both. It is now refused at the controller with a typed, logged `AMOUNT_INVALID`, and the manual cash grant's bounds check answers the typed `AMOUNT_OUT_OF_RANGE` its screen words. See [payments](docs/wiki/frontend/modules/payments.md).
+
+### Removed - an unused channels-MVP route in social-service
+
+A route left from the channels MVP that no client called is removed, with its frontend wrapper,
+DTOs and wiki rows ([social-service](docs/wiki/services/social-service.md#channels-and-workspaces-apichannels)).
+
+### Fixed - a slow swipe between tabs (and to the camera) no longer does nothing
+
+The tab swipe locked its direction at 12 px, past Chrome's 8 dp touch slop, so a slow thumb's first move went unclaimed and Chrome took the touch. It now locks at 8 px ([design-reference](docs/wiki/frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)).
+
+### Changed - tests: the keystore and customtabs contract tests are one `describe.each`, two hollow-looking tests assert their reason
+
+Same 12 cases in one file ([test-suite-reform](docs/wiki/test-suite-reform.md#73-the-frontend-desk-items-2026-10-21)); `features.test.ts` stays as it is, with its reason.
+
+### Changed - ten byte-identical spec copies deleted from the NestJS services (WP-TEST-TOOLING-REFORM)
+
+A module pinned byte-identical across services now has ONE spec; the copies beside the other services asserted nothing more (-10 files, -81 jest cases, no class lost). `http-error-log.spec.ts` keeps both copies because each builds its input with its own service's `axios` ([test-suite-reform](docs/wiki/test-suite-reform.md#72-the-declared-copies-deleted-2026-10-21)).
+
+### Documentation - the legacy-name upload limit, re-measured
+
+Dev's relay now takes a 7 MB upload; the production relay of the legacy name still answers 413 ([backlog](docs/wiki/backlog.md)).
+
+### Documented - the French user guides describe Lydia, not Stripe
+
+The manager guide shop and payments section, the member guide, the permissions guide and the index now match the Lydia panel and its labels. See [payments](docs/wiki/frontend/modules/payments.md).
+
+### Added - CI: a weekly watch for an upstream release past the vendored `tauri-plugin-websocket` fork
+
+Job `vendored-upstream` of `scheduled.yml` turns red, naming the rebase, when crates.io's latest stable release passes the fork; an unreachable crates.io exits 75 ([cicd](docs/wiki/cicd.md#a-vendored-fork-is-watched-for-upstream-releases-2026-10-21)).
+
+### Fixed - a web checkpoint the version guard dropped is no longer reported as durable
+
+A checkpoint refused behind another tab's state now fails, typed and in one log line, while one superseded by this tab's own later write still counts. A device rotation whose checkpoint is refused moves nothing shared and deletes no device another tab may serve; the login says to close the other tabs, and a revoked tab writes no state again and reloads, at most twice before it tells the member to close the other tabs ([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md#a-web-checkpoint-resolves-only-when-its-state-is-on-disk-2026-10-21)).
+
+### Changed - the store text of 1.4.0
+
+The one text for the App Store, Play and the GitHub release body, written from the changelog fragments; checked with `--check-notes` ([workflow](docs/user-guide/workflow-developpement.md)).
+
+## [1.3.1] - 2026-10-21
+
+### Changed - "Mes institutions" and "Mes listes" sit in their own tab
+
+The Associations tab keeps only "Mes associations"; each of the Institutions and Listes tabs now opens on the reader's own memberships of that kind ([associations](docs/wiki/frontend/modules/associations.md#one-header-and-one-creation-flow-for-the-three-directories-2026-10-07)).
+
+### Added - drag across the booking grid to pick several slots at once
+
+Press a free slot and drag along a resource's column (hold first, on a phone): the range follows the pointer, stops before anything taken or past the booking maximum, and opens the booking sheet with its length already chosen ([bookings](docs/wiki/bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)).
+
+### Changed - the booking grid is about a third shorter
+
+Rows are 32 px, touching free slots and the slots of one booking read as one block with its label said once, and the time column bolds only the full hours ([bookings](docs/wiki/bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)).
+
+### Fixed - bookings: the same "Indisponible" is no longer written twice
+
+The server refuses a block that overlaps a block of the same resource (`block-overlap`), so a retry after a lost answer is idempotent; the sheet says the range is already unavailable ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-b3-as-built-2026-10-17)).
+
+### Added - an Android call keeps going when the app leaves the screen (dev builds)
+
+A `microphone` foreground service with an ongoing `CallStyle` notification (name, timer, hang-up) holds the network, the microphone and the audio route while a call is up; it is merged only into builds that place calls, and `CALLS_COMPILED` stays false ([calls](docs/wiki/frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)).
+
+### Added - a call-audio fidelity rig, and a call log that names the side handing the decoder non-Opus bytes
+
+`tools/call-audio-fidelity` measures what a call does to a known sound between two Chromes; it puts the phones' "formless noise" on bytes that are not Opus reaching the decoder, never on the app's Chromium path. The E2E worker now logs which side first holds such a payload, and proves a double encryption ([calls](docs/wiki/frontend/modules/calls.md#audio-quality-measured-2026-10-19)).
+
+### Fixed
+
+- A minimised call's bar stays above the new-post composer, its camera and every other covering layer, and an in-app ring no longer also posts an OS notification while the app is on screen ([calls](docs/wiki/frontend/modules/calls.md#the-bar-is-never-under-a-layer-call-bar-covered-2026-10-19)).
+
+### Fixed - a call's E2E path check could pass trivially on a camera still negotiating, or end a healthy call on a peer camera's first frame (dev builds only)
+
+A bypass is now judged against the previous check's packets, never a frame still in flight; media the check cannot judge is re-checked, then the claim is withdrawn until media starts; a pending check keeps its earliest deadline; a worker that stops answering withdraws the "encrypted end to end" claim until an answered check returns it ([calls](docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).
+
+### Fixed - calls on Chromium were not end-to-end encrypted, and the screen said they were (dev builds only)
+
+The E2E transforms were assigned one task after `addTrack`, which Chromium short-circuits: clear audio left every Chromium client and the iPhone's ciphertext reached its decoder (the "noise"). They are now assigned in the same task, the screen claims encryption only from frames the worker encrypted and decrypted, and a call whose media flows around the worker ends ([calls](docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).
+
+### Added - a call asks its E2E worker how many frames each side saw, and logs it twice
+
+A Mi 9T logged no worker line in five calls; the worker is now asked 5 s after `connected` and at the end, through the path its key handshake already proves, and the answer names a transform that is off, unfed or unheard. A desktop Chrome counterpart for phone calls is one command (`callpeer.mjs`). [calls](docs/wiki/frontend/modules/calls.md#the-mi-9t-logged-no-worker-line-at-all-131-alpha2---the-worker-is-now-asked)
+
+### Changed - the call noise is isolated to the iPhone's sender
+
+A desktop Chrome called each bench phone: the Mi 9T is clean both ways, the iPhone's audio is 58-68 % concealed at a Chromium receiver ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Fixed - a call test left on the real clock could fail an unrelated neighbour
+
+`CallService.p2p.test.ts` now runs every test on a fake clock, so the 5 s path check of a call a test leaves up can no longer fire seconds later inside another test and write a stray "call end" report into its log (about 1 run in 15 failed 'owes no report for a call that never connected'). Test-only, no app change ([test-suite-reform](docs/wiki/test-suite-reform.md)).
+
+### Fixed - a resumed call gets its audio back, and the partner of a phone that never returns is told
+
+On the `1.3.1-alpha.2` bench a 14 s Wi-Fi outage resumed but left both phones silent on "Reconnexion...", and after 90 s the partner never ended. The relay now holds a socket dead when it stops answering keepalive pings, the restart is an explicit, numbered offer made on the same queue as the negotiation frames (`Joined` and `Refused` are handled outside it), rolling back one lost in a dead socket,, and the resume ladder is capped at 4 s. A phone app the OS suspends mid-call now leaves the call within about 90 s ([calls](docs/wiki/frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix)).
+
+### Changed - a call is the whole screen or a bar at the top, and its hang-up is always reachable
+
+The docked call card (under the iPhone's native tab bar, its hang-up unreachable) is replaced by
+Messenger's two shapes: a full-screen call, and a bar in the layout's banner column that pushes the
+page down; Back minimises, the timer is derived from timestamps, and the native background work is
+in the backlog ([calls](docs/wiki/frontend/modules/calls.md#the-call-ui-the-whole-screen-or-a-bar-at-the-top-2026-10-19)).
+
+### Added - call diagnostics for the iPhone's noisy sender (cause unknown)
+
+The iPhone's call audio reaches every receiver as noise and the cause is not known; the call log now names each E2E transformer, the shape of what the sender transform is handed (not-Opus, repeated timestamps, its own output handed back) and the audio codec each direction uses, so the next phone call separates the hypotheses ([calls](docs/wiki/frontend/modules/calls.md#the-iphones-sender-read-from-the-code-2026-10-19)).
+
+### Fixed - a network blip no longer ends a 1:1 call (CALL-WIFI)
+
+A dropped signalling socket now resumes its seat and the initiator restarts ICE; only a hangup, a refused resume or a spent attempt budget ends the call ([calls](docs/wiki/frontend/modules/calls.md#a-network-blip-does-not-end-the-call-call-wifi-2026-10-19)).
+
+### Changed - a pre-release iPhone should keep its microphone in a call when locked or backgrounded (unproven until its hardware reading), and the other side is told when a phone takes its microphone
+
+Pre-release iPhone builds declare the `audio` background mode WKWebView needs to keep a hidden page's microphone, and a new `MicSuspended` relay frame shows the partner why the voice stopped ([calls](docs/wiki/frontend/modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)).
+
+### Added - video in 1:1 calls, dev builds only
+
+A call can carry both cameras: VP8 only, its payload header left in clear and bound to the encrypted rest, camera on/off and front/back switch, end-to-end proven per kind in the desktop rig; phone readings are owed ([calls](docs/wiki/frontend/modules/calls.md#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)).
+
+### Fixed - opening the camera no longer turns the iOS app dark
+
+The camera's light status-bar icons set the iOS window's style, and the theme store took the echo for the phone switching to dark, then kept it after the camera closed; it now ignores its own echo ([reels](docs/wiki/frontend/modules/reels.md#the-tab-c5)).
+
+### Fixed - a repeated `u`/`sig` on a booking's `.ics` link is a 400, and a booking's answers keep only declared questions
+
+The calendar route took a repeated query key as an array (a 500 on `sig`); a `__proto__` answer key became the prototype of the map a booking judged. Both are refused where they enter, the forms' rule now shared by both ([bookings](docs/wiki/bookings-chantier.md#wp-b5-as-built---the-bookers-api-2026-10-18)).
+
+### Changed - a video filmed with the new-post composer's camera is a CanaReel, as from the camera tab
+
+One camera, one behaviour: the reel publish step takes it, says before "Publier" that it is deleted after 30 days, starts from the composer's text, and "Garder comme post" keeps the old outcome; photos, gallery videos and the post editor are unchanged ([reels](docs/wiki/frontend/modules/reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)).
+
+### Changed - the live console no longer prints message text
+
+The devtools console redacts prose fields (`text=`, `contact=`) like the stored log, and the send log lines carry a length instead of the first 40 characters ([mobile](docs/wiki/frontend/mobile.md#the-in-app-log)).
+
+### Changed - dependency lockfiles refreshed on every service
+
+The four NestJS services, the frontend and the Rust crates moved to the newest versions their ranges allow (no majors); `svelte-check` 4.7.7 refuses `$props<T>()`, so its two uses became `}: T = $props()` ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them)).
+
+### Fixed - dev's call-service and media-service are proven healthy at deploy, like production's
+
+The dev deploy read both as `none` (started, never proven to answer) on the estate where calls and lives are tested; they now carry production's healthcheck. The phone procedure for a dev call is [check CALL-L1](docs/wiki/device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both).
+
+### Added - a double tap likes a post or a CanaReel
+
+A double tap (or a mouse double click) on any post card, and on a reel in the full-screen viewer, gives the heart through the reaction button's own path; it never unlikes and never replaces a chosen reaction. A picture, a video or a reel card in the feed now opens its viewer once the 250 ms double-tap window has passed ([posts](docs/wiki/frontend/modules/posts.md#a-double-tap-likes-the-post-and-never-unlikes-it-2026-10-19)).
+
+### Added - lives: the broadcaster, on dev builds only
+
+The post composer's "En direct" chip opens a pre-live screen with the rules, then broadcasts from the in-app camera: 2 s self-contained segments sealed and uploaded in order, a quiet reconnecting badge, the camera given back in the background and re-acquired on the same live, End behind a confirmation. Behind `LIVE_ENABLED` (dev builds only) until moderation (WP-L8) and the phone readings ([live](docs/wiki/frontend/modules/live.md#the-broadcaster-as-built)).
+
+### Added - live chat and floating reactions, client half (WP-L6, dev builds only)
+
+The viewer's chat panel and reaction bar ride its manifest poll (one loop, no second timer), messages sealed with the live key; the broadcaster's screen shows it on air with a hide button, staff hide from the viewer, and a chat `410` shows the player's own end screen ([live](docs/wiki/frontend/modules/live.md#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft)).
+
+### Added - live chat and floating reactions, server half (WP-L6, off on production)
+
+Messages sealed with the live key and reaction taps summed per 2 s window, carried by the manifest poll, ordered under the live's row lock, erased with the live; the broadcaster or staff can hide a message ([lives](docs/wiki/services/lives.md#live-chat-and-floating-reactions-wp-l6)).
+
+### Added - lives: the client foundation (wire types, typed API client, v1 parameters)
+
+`frontend/src/lib/live/` types every `/api/lives` answer, calls every route with each refusal classified at the throw (`LIVE_FULL`, `LIVE_SEATS_UNAVAILABLE` and `429` never confusable), and sends segments in index order through ONE index counter (`enqueue(index, sealed)` refuses any index but `nextIndex`); no UI yet ([live](docs/wiki/frontend/modules/live.md#the-client-foundation-2026-10-19)).
+
+### Documented - the live moderation decisions of 2026-10-20 and the plan for an uncapped audience
+
+Strike ladder, 90-day cut retention, 24 h answers, a reported chat line kept until handled (reverses C2), the five reactions, and the plan for lifting the viewer cap: [lives](docs/wiki/services/lives.md#decisions-of-2026-10-20-moderation-reactions-the-audience), [live](docs/wiki/frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20). Documentation only, nothing is built.
+
+### Added - live moderation, client half (dev builds)
+
+A cut live has its own screen for the viewer and the broadcaster, the bell shows a `live_cut` row, and a moderator can cut a reported live from the admin queue ([live](docs/wiki/frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
+
+### Added - live moderation, server half (WP-L8): report a live, staff cut, first-live rules
+
+A live is reported through `content_reports` like a post, staff cut it for everyone (`POST /api/lives/:id/cut`, a `410` with `endReason: 'cut'`), and a member must accept the live rules before a first broadcast; dev-only behind `LIVE_ENABLED` ([lives](docs/wiki/services/lives.md#moderation-wp-l8-server-half), [store answers](docs/wiki/store-ugc-answers.md)).
+The broadcaster's pre-live screen shows the first-live rules until the member accepts them, and the start then records the acceptance ([lives](docs/wiki/services/lives.md#the-first-live-rules-l11)).
+
+### Added - lives: the segment seal, format v1
+
+`frontend/src/lib/live/liveCrypto.ts` seals each live segment with AES-256-GCM under the live key, a fresh IV per segment, and the live id, index and format version bound in the AAD; a segment that does not open is a typed `LiveSegmentOpenError`. It protects against the media store, the cache and a leaked URL, not against social-service, which serves the key ([live](docs/wiki/frontend/modules/live.md#the-segment-seal-format-v1)).
+
+### Added - live segments served from Canari's nginx cache, and a 24-viewer cap for the host (off on production)
+
+A sealed live segment is now fetched without a token and answered by nginx from the second viewer on; only the canonical lower-case path is served (nginx owns the whole prefix), one address is bounded in bytes as well as requests, and a viewer past the host's uplink cap gets a typed `LIVE_FULL` ([lives](docs/wiki/services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4)).
+
+### Added - "X est en live": a live's start is pushed to its broadcaster's followers (server half, off on production)
+
+One push per live, at its first stored segment, to the member's or the association's followers who can see it (spaces respected as for a post, on the watch routes too), in the reader's app language; a tap opens the feed, and the client's LIVE card and viewer route are still owed ([lives](docs/wiki/services/lives.md#the-push-to-the-followers-wp-l7-server-half)).
+
+### Added - a viewer can report a live and block its broadcaster (dev builds)
+
+A Flag button in the live viewer's top bar opens the posts' report dialog; a filed report offers to block the broadcaster and leaves the live if so ([live](docs/wiki/frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
+
+### Added - lives: the viewer (LIVE card on the feed, full-screen player), dev builds only
+
+A LIVE card at the top of the feed and a full-screen viewer playing the growing fMP4 source through MSE, with a screen for every refusal ("live complet", the end, "indisponible", reconnecting); behind `LIVE_ENABLED`, on for dev builds only; segments open with the v1 seal of #2111 ([live](docs/wiki/frontend/modules/live.md#the-viewer-as-built-2026-10-19)).
+
+### Added - the mechanism audit re-read, and two specs for what it found unwatched
+
+What gained a watcher since 2026-08-21 is named in [mechanism-audit](docs/wiki/mechanism-audit.md); new specs hold the deleted public `mark-paid` route deleted and moderation's 403 for a non-moderator.
+
+### Changed - a salon mention banner names its author from the phone's own names
+
+A native salon notification that mentions you now says who wrote it ("Alice vous a mentionné", "Quelqu'un" for a name this device never knew), and names the people mentioned in the text, from the names the app already resolved and mirrored into `display_names.json` as they change; a deleted account is dropped from it, and no name rides the push ([mobile](docs/wiki/frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18)).
+
+### Fixed - the MLS delivery client's last status-only failures are typed
+
+Twelve refused calls threw a sentence with the status spelt in; they now carry status and code ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - the native chat socket races IPv6 and IPv4, and closes a connect it abandoned
+
+On a Wi-Fi handing out an IPv6 that routes nowhere, the phone app's chat socket waited 20 s on IPv6 and never connected within 15 s, so no message or call invite arrived live; it now connects by Happy Eyeballs, and a socket that completes after the deadline is closed instead of left open. The `no TURN relay candidate` call WARN now fires only when no direct pair works ([mobile](docs/wiki/frontend/mobile.md#the-native-socket-races-ipv6-and-ipv4)).
+
+### Added - an association may republish a person's post, with the author's consent
+
+An association asks the author, who accepts or refuses from `/notifications/requests`; nothing shows before the author accepts, and either side can withdraw it later (D38b, migration 096, [profiles-and-access](docs/wiki/profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
+
+### Fixed - small P3s: one reconcile line per sweep, every organiser in the calendar, Back swipe over a sheet, socket released on page leave
+
+The cold-start sweep reports its already-asked groups as one count instead of one line each; the month grid tooltip, calendar entries (ICS feed and export) and share title name every organiser; on iOS a left-edge swipe closes a dismissible sheet; the native socket is released at `pagehide` ([backlog](docs/wiki/backlog.md)).
+
+### Added - the agenda sheet saves as PNG beside the PDF, and reads better printed
+
+A PNG button sits next to the PDF one on `/calendar/export`, through the same render path; each day gets a dark frame, stacked events a clear rule and every number an outline, with nothing moved; the frame's width and colour are a setting ([calendar](docs/wiki/frontend/modules/calendar.md#the-november-2026-sheet-outlines-and-a-png-nothing-moved-2026-10-18)).
+
+### Fixed - four more list keys built from user text in the posts surfaces
+
+The composer's file strip, a post's media cells and a poll's voter list can no longer throw `each_key_duplicate`; a voter id stored twice is counted and drawn once.
+
+### Added - the privacy policy covers bookings
+
+Data, readers, retention and account deletion of reservations, matching register row C17 ([register-of-processing](docs/wiki/compliance/register-of-processing.md)).
+
+### Changed - readings of v1.3.1-alpha.1 on both bench phones
+
+Both phones read, the first 1:1 call read with its audio numbers: six defects, the worst a decoder rejecting 30 % of the packets ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Changed - readings of v1.3.1-alpha.2 on both bench phones
+
+The call UI read on both phones (the iPhone hang-up is reachable), CALL-WIFI recovers a 6 s outage but not 14 s or 90 s, the noise is unchanged and the new diagnostics could not be read on the iPhone ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Changed - the alpha.3 bench reading: the Mi 9T's call audio never crosses its E2E worker
+
+Both phones' worker reports read: the iPhone encrypts clean Opus, the Mi 9T's transforms receive no frame and the iPhone fails to decrypt everything from it; CALL-WIFI passes on both phones ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Changed - the alpha.4 bench reading: the call audio is clean on both phones
+
+Both phones' E2E transforms carry every frame (~245 per side at 5 s, 0 decrypt failures), the Mi 9T conceals 0.2-0.6 % of the iPhone's audio with 0 decode errors, and the desktop pairings are clean; CALL-AUDIO-1 and CALL-E2E-BYPASS-MI9T close ([readings](docs/wiki/device-readings-2026-10.md)).
+
+### Added - a CanaReel sent in a conversation is announced as one in its push
+
+The push scanner reads the reel declaration of a chat video and announces it as a CanaReel in the app language, with no thumbnail, on Android and iOS; inert until the reel writer ships ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#12-what-the-push-package-rc-7-built-2026-10-19)).
+
+### Fixed - a Back during a reel's upload can no longer publish it twice, and an anonymous post lands in the personal feed
+
+The publish step now refuses a Back once the upload has begun, so the same take cannot be published a second time, and an anonymous post or reel no longer lands in the associations feed ([reels](docs/wiki/frontend/modules/reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)).
+
+### Added - CanaReels gets Instagram's rail, a comments sheet and photo pages
+
+Each CanaReels page carries a heart, comments and send rail; the comments open in a sheet over the playing reel; posts of exactly one photo join the feed as pages (`GET /api/posts?kind=reel&singlePhotos=true`); on a desktop one mouse-wheel gesture turns one reel ([reels](docs/wiki/frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)).
+
+### Fixed - forms: deleting an association or a form works again
+
+Both failed since `1.2.4`: the SQL that archives or removes a form was missing parentheses, a syntax error no unit test saw. A PostgreSQL test now runs it ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Changed - a Dependabot Rust bump that leaves two lockfiles stale is completed and merged by a machine
+
+A daily job refreshes the committed `Cargo.lock` files on a new pull request opened by the `canari-auto-merge` App, and `arm-auto-merge.yml` arms it only when it carries Dependabot's own commits patch for patch plus lockfiles that gain only crates.io sources (an unreadable answer disarms); refusals land in one issue ([cicd](docs/wiki/cicd.md#a-dependabot-cargo-bump-that-is-incomplete-by-construction-is-completed-and-merged-wp-rust-lock-automerge-2026-10-18)).
+
+### Fixed - a salon message whose process died before its broadcast is broadcast and pushed at the next boot
+
+The broadcast and the push now come from an outbox entry written in the send's transaction ([social-service](docs/wiki/services/social-service.md)).
+
+### Changed - refusals a member can act on carry one stable code each
+
+The delivery and core services name PIN, invitation, membership, block-list and directory refusals with a `code` the client words through Paraglide, never the server's English ([chat-delivery](docs/wiki/services/chat-delivery.md#refusal-codes---one-stable-name-per-refusal-a-member-can-act-on-2026-10-19)). Old message texts are unchanged.
+
+### Changed - no test sleeps for a duration
+
+The suite's real sleeps are gone: a queue yield (`flushMacrotask`), an awaited condition (`vi.waitFor`), a quiet (`settleUntilStable`) or fake timers, and `noRealSleeps.test.ts` refuses any non-zero `setTimeout` delay (literal, variable or field, any number of lines) in a file that does not really call `vi.useFakeTimers(` ([test-suite-reform](docs/wiki/test-suite-reform.md), WP-T6).
+
+`outbox.test.ts` now disposes every controller it creates after each case: the ones left alive still flushed after the file ended, and vitest failed the run with an `EnvironmentTeardownError`, intermittently, on `main` too.
+
+### Changed - the source-scan tests read one shared snapshot of the tree instead of walking it 19 times
+
+A vitest `globalSetup` snapshots `src` once per run and `src/test/sourceTree.ts` replaces the nine copied walkers, so the scans no longer time out under full-suite load (89 timeouts in 20 loaded runs, none after); `ChatArea.entryWindow` mounts 80 rows instead of 300. No app byte changes ([test-suite-reform](docs/wiki/test-suite-reform.md#wp-t9-s---one-walk-of-the-source-tree-for-every-scan-2026-10-19)).
+
+### Changed - an icon button's tooltip and accessible name are one string when they say the same thing
+
+Three buttons (unpin, record a voice message, manage communities and roles) kept the same text under two keys; they share one now, and a test refuses the next one ([design-reference](docs/wiki/frontend/design-reference.md#tooltips-one-convention-audited-2026-10-08)).
+
+### Fixed - a cold start asks for the unread counts once
+
+The community load and the live-stream reconnect shared no request, so `unread-counts` went out twice; a caller that owes no read mark now joins the one in flight, and a test counts the requests of a recorded boot ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#19-wp-w4-second-part-unread-counts-is-one-request-per-boot-ordered-after-the-read-mark-flush-2026-10-19)).
+
+## [1.3.0] - 2026-10-19
+
+### Fixed - a group joined in the background gets its conversation row at cold start, and its queued messages are no longer lost
+
+The redelivered Welcome and the push-cache merge now write and announce the missing row, and the epoch-gap healer no longer replays commits past frames still queued for that group ([mls-recovery-ladder](docs/wiki/protocols/mls-recovery-ladder.md)).
+
+### Documentation - bench readings for calls and live (2026-10-18)
+
+Calls are blocked on the phones until a pre-release carries lot 1. The WP-L1 live bench was run on
+both phones: 720p fMP4 segments for 36-42 min played through a growing MSE source with no error
+([readings](docs/wiki/device-readings-calls-live-2026-10-18.md)).
+
+### Documentation - the unplugged live bench (2026-10-18)
+
+Unplugged, the Mi 9T streamed 720p for 30 min with no stream error but drained ~59 % of its
+battery per hour ([readings](docs/wiki/device-readings-calls-live-2026-10-18.md#2b-the-same-live-unplugged-2026-10-18-1050-1125z)).
+
+### Added - the bookings API (WP-B3)
+
+`/api/bookings` books, cancels, withdraws, blocks and reads a space. Every colliding write locks the space then the resource, so a lost race is a typed `slot-taken` and quotas hold across resources ([bookings](docs/wiki/bookings-chantier.md#wp-b3-as-built-2026-10-17)).
+
+### Added - the bookings API for the booker's screens (WP-B5)
+
+The spaces a member may book, a booking's "Add to my calendar" file signed for each of its people and revoked when they stop being of it (never carrying answers, private texts or the holder's name), and block ids for whoever may lift a block ([bookings](docs/wiki/bookings-chantier.md#wp-b5-as-built---the-bookers-api-2026-10-18)).
+
+### Added - Reservations: the booker's screens (WP-B5)
+
+A Reservations page (my bookings, the listed spaces, my personal spaces) and a space's page with a grid or the next free slots, booking, blocking, cancelling, leaving and "Add to my calendar", on the space's clock and the server's booking window; reached from the sidebar, the dashboard and a space's link or QR code ([bookings](docs/wiki/bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)).
+
+### Added - the bookings data model (WP-B1, migration 087)
+
+Spaces, resources, availability, blocks, bookings and participants, with one live booking per resource and instant held by an EXCLUDE constraint (`btree_gist`); nothing reads them yet ([bookings](docs/wiki/bookings-chantier.md#wp-b1-as-built-2026-10-16)). An account erasure reaches every booking table through the shared `ERASURE_STATEMENTS` ([account-erasure](docs/wiki/account-erasure.md)).
+
+### Fixed - an account erasure could deadlock a booking on its linked resource
+
+The bookings part of the erasure now takes spaces, then resources, then bookings, like the booking path; a stray deadlock answers `try-again`, and a block starting a few seconds before the server's now starts at now instead of being refused ([bookings](docs/wiki/bookings-chantier.md#a-deleted-account-2026-10-16-review-of-1963)).
+
+### Added - bookings: file answers, a space poster, the retention purge and the XLSX export (WP-B6)
+
+A space can ask for a file, readable by its organiser and deleted N days after the slot ends. A space can also carry a client-encrypted poster. An hourly purge applies D8, D18 and D19, and the organiser exports the bookings to a spreadsheet ([bookings-chantier](docs/wiki/bookings-chantier.md#wp-b6-as-built---file-answers-the-poster-the-purge-the-export-2026-10-18)).
+
+### Added - the bookings organiser API (WP-B4, first half)
+
+Organisers create, configure and delete spaces, resources and availability under `/api/bookings`. A change that would strand a coming booking is refused and names it, checked under the same lock every booking takes ([bookings](docs/wiki/bookings-chantier.md#wp-b4-as-built---the-organisers-api-2026-10-17)).
+
+### Fixed - the bookings organiser API writes only the fields it names, and keeps history
+
+A settings or resource write copies only named keys, never the body's own, and a resource that has ever been booked can no longer be deleted (D42). Also: caps on personal spaces and resources, and instants that must carry their zone ([bookings](docs/wiki/bookings-chantier.md#wp-b4-as-built---the-organisers-api-2026-10-17)).
+
+### Added - the bookings organiser screens (WP-B4, second half)
+
+A "Réservations" section for associations, institutions and lists, and an editor per space: settings in five sections, resources, and availability with ranges across midnight and a warning for 24/7 days; a refused change lists the bookings in its way, each with its cancel ([bookings](docs/wiki/bookings-chantier.md#wp-b4-as-built---the-organisers-screens-2026-10-18)).
+
+### Fixed - the bookings register row and chantier page agree with the code
+
+Register row C17 now says a global admin reads answers (the file stays organiser-only), and the chantier page drops its stale status and privacy draft ([bookings-chantier](docs/wiki/bookings-chantier.md)).
+
+### Added - bookings slot generation (WP-B2)
+
+Slots are generated on demand from each resource's availability in the space's zone, daylight-saving changes included. A window crosses at most one midnight. The booking window, the quotas, the participants' withdrawal delay (migration 088, as the user decided) and the D29 refusal are pure rules ([bookings](docs/wiki/bookings-chantier.md#wp-b2-as-built-2026-10-17)). CI's boot probe now runs production's PostgreSQL, pinned by digest.
+
+### Changed - simultaneous readers of the account's devices and groups share one request at boot
+
+Simultaneous readers of `devices/<id>` and `users/<id>/groups` now share one request ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#18-wp-w4-first-part-the-account-level-reads-of-a-boot-are-shared-while-in-flight-2026-10-18)).
+
+### Fixed - the call-service signalling tests no longer collide on a port when run in parallel
+
+Each test's service now binds port 0 itself and reports the port it got, instead of reusing one the test had already released ([call-service](docs/wiki/services/call-service.md)).
+
+### Added - 1:1 audio calls on dev builds, peer to peer with Cloudflare TURN as the last resort
+
+`call-service` relays the handshake of a two-person room and carries no media; production builds keep calls off, a call refuses rather than ever sending clear media, and a room is bound to its conversation and rings for the server's 60 s window ([calls](docs/wiki/frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+
+### Added - a call permission per conversation, beside the notification level
+
+A conversation can allow or refuse calls for each member (migration 032, default: rings unless the conversation is at `none`); the server withholds the ring push and the app shows a missed call instead of ringing ([calls](docs/wiki/frontend/modules/calls.md#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18)).
+
+### Added - a call is refused across a block
+
+`POST /api/calls/initiate`, `POST /api/calls/ring` and `GET /api/calls/room-token` answer `403 USER_BLOCKED` when a block stands between the two people, so nothing rings. The app shows a neutral "cannot be placed" message ([moderation-and-blocking](docs/wiki/moderation-and-blocking.md#what-a-block-does-exhaustively)).
+
+### Fixed - a dev call's answer window opens when the callee starts ringing
+
+The server's 60 s window now opens at the caller's ring, before the invite leaves, rather than at room creation; a late answer reads "this call is over", a refused ring "the call could not start", and the call relay never waits on a queue ([calls](docs/wiki/frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+
+### Changed - the five calls switches are asserted against `CALLS_COMPILED`, and calls no longer reopen the Android silent-push decrypt
+
+One test now checks that the Kotlin, ObjC, `voip`, `USE_FULL_SCREEN_INTENT` and microphone-string switches agree with `CALLS_COMPILED`. The Android silent-frame guard no longer reads the calls switch, so turning calls on would not bring back a decrypt behind every read receipt ([calls](docs/wiki/frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
+
+### Removed - a carte publish body without its fingerprint
+
+Every client admitted at `minClientVersion` 1.2.7 posts `{ carte, fingerprint }` (since `v0.18.28`),
+so a bare document, a missing fingerprint or a malformed one is now a 400
+([carte-vie-asso](docs/wiki/carte-vie-asso.md)).
+
+### Changed - the chat entry-window test runs on fake timers, so it checks the arithmetic and not the clock
+
+It no longer waits on real animation frames and 250/600 ms timers; it advances them explicitly. Full-suite starvation of happy-dom is a separate, still-open cause.
+
+### Changed - hosted CI runners are pinned to `ubuntu-24.04`
+
+`ubuntu-latest` moves to Ubuntu 26 on 2026-10-19; the pin keeps today's image until a deliberate move ([cicd](docs/wiki/cicd.md#hosted-runners-are-pinned-to-ubuntu-2404-never-ubuntu-latest-2026-10-18)).
+
+### Fixed - social-service's PostgreSQL integration specs now run in CI
+
+They were gated on a database URL that no workflow set, so every one was skipped on every pull request. The new `test-social-integration` job runs them against production's PostgreSQL, fails if any is skipped, and gates `CI passed` ([cicd](docs/wiki/cicd.md#package-1-opening-a-pull-request-ciyml)).
+
+### Fixed - a reaction, edit, pin or delete the queue refuses now shows a mention with Retry, and a refused delete is no longer shown as done
+
+One notice per refused act, kept across a reload. See [media-frame section 7](docs/wiki/frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble).
+
+### Changed - the dashboard "Mes associations" card
+
+Each organisation shows its logo (its kind glyph when it has none), under three sub-headings: Associations, Listes, Institutions ([section-navigation](docs/wiki/frontend/section-navigation.md)).
+
+### Fixed - deleting an account removes its local message database and vault slot from the device
+
+Only the account the server deleted (the token's subject, never the page's) loses its local data - every per-account key through one guarded list, and the push side's plaintext files when they name that account, never another account's, never a device reset, `mls.bin` stays; an interrupted wipe resumes at the next start without touching an account signed back in, and a deleted account cannot be unlocked offline ([auth](docs/wiki/frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
+
+### Fixed - a deploy no longer believes the edge before it listens
+
+The edge gets a healthcheck on its listener, so a deploy (and the flaky `deploy-rolling` CI case it broke 3 times in 62) waits for port 80 to be open; the first deploy carrying it recreates the edge once ([cicd](docs/wiki/cicd.md#the-edge-is-ready-when-it-listens-not-when-it-runs)).
+
+### Fixed - a deploy no longer answers 502 while it runs
+
+A release starts each service's new replica beside the old one, waits for it to be healthy, then drains the old one; the host port moved to a pinned `edge` container. Before, every deploy was 1-2 minutes of "Échec de l'envoi" ([cicd](docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)).
+
+### Changed - the dev seed carries the client floor 1.2.7
+
+A reset-to-seed no longer drops dev's floor back to `0.0.0` ([dev-environment](docs/wiki/infrastructure/dev-environment.md)).
+
+### Fixed - a backup restore no longer brings back the accounts erased after the archive
+
+`restore.sh` reads the current erasure journal before it replaces the database and erases those accounts again afterwards, keeping the new account of a person who came back ([account-erasure](docs/wiki/account-erasure.md#a-restore-replays-the-erasures)).
+
+### Fixed - a push-cached message is deleted from disk only after the app has stored it
+
+The app took the native push cache and deleted it before writing it, so a process death in between lost it - a notification quick reply's only local copy included. It is now moved aside and deleted only once written ([mobile](docs/wiki/frontend/mobile.md#one-row-arriving-through-the-push-the-pull-and-the-socket-measured-2026-09-08-to-2026-10-06)).
+
+### Changed - a GIF is loaded through Canari, never from KLIPY's CDN
+
+A KLIPY GIF - in a chat, in the picker, in a comment - now goes through chat-delivery's GIF relay
+(`/api/mls/gifs/media`: KLIPY's CDN only, 12 MiB, streamed, cached, throttled), so KLIPY no longer
+sees a reader's address; a GIF from another host still loads directly, and a sent GIF keeps its
+original URL for older clients
+([chat](docs/wiki/frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18)).
+
+### Changed - the rig's sign-in answers the MiConnect terms page
+
+`login.mjs` recognises the terms page that blueprint `45-consent.yaml` will add after the password and ticks its one box, so a harness login no longer stalls on it; the stage logic moved to `tools/cross-client-harness/idpform.mjs` with a self-test ([backlog](docs/wiki/backlog.md#p1---the-miconnect-terms-stage-reaches-production-with-the-next-stable-three-things-come-first-2026-10-16)).
+
+### Fixed - a community whose answerer holds nothing is no longer asked for its history at every launch
+
+The answerer now says "I hold nothing" (`GraineBundleMsg.holds_nothing`, additive), and the requester records it per device for the key group's current tree, asking the next member until every device on the tree has answered ([channel-encryption section 24](docs/wiki/protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)).
+
+### Fixed - the iOS app delegate is kept alive after its re-assignment
+
+`v1.3.0-alpha.1`/`-alpha.2` aborted on iOS whenever the accessibility tree was read (VoiceOver, XCUITest); the re-assigned app delegate is now held strongly, as Firebase does. Unverified on hardware ([backlog](docs/wiki/backlog.md)).
+
+### Added - iOS: one syslog line per settled keyboard change, with UIKit's scroll and the page's own geometry
+
+In a DM, the iPhone's native glass chrome stood one keyboard height above its web twin. This line is what the next reading needs to tell the three possible causes apart. It is a report, not a fix, and the defect is not new in 1.2.9 ([mobile](docs/wiki/frontend/mobile.md#the-dm-whose-chrome-stands-one-keyboard-too-high-2026-10-17)).
+
+### Fixed - iOS: a silent frame reaches Canari code, banners play the palette-A trills, a comment push opens the comment
+
+A salon read on another device now clears the iPhone's banner (the silent-frame hook was never installed), iOS banners play the message, mention and reaction trills Android plays, and a comment, reply or mention push opens the post at that comment ([mobile](docs/wiki/frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17), [sounds](docs/wiki/frontend/sounds.md)).
+
+### Documented - the iPhone 12 readings of v1.2.9-alpha.7
+
+The dashboard hub, sign-out and sign-in with no consent stage, the "+" edge swipe, the weak network and the feed tabs pass. Two findings are open: in the DM, the native chrome sits one keyboard height off while the keyboard is up, and the first PIN after a sign-in is refused. Details in [device-verification](docs/wiki/device-verification.md#the-iphone-12-readings-of-v129-alpha7-2026-10-17).
+
+### Fixed - the CGU and privacy policy say salon messages are deleted with the account
+
+Both texts promised they were kept detached; erasure has deleted them since the 2026-10-16 decision, so the texts and the register row C4 now say so ([account-erasure](docs/wiki/account-erasure.md)).
+
+### Added - the server half of live broadcasts (WP-L2, WP-L3), off on production
+
+`/api/lives` starts a live, serves its key and a manifest, takes sealed segments in order and deletes everything at the end or by a 30-second sweep (orphan folders included); no database connection is held while a segment is stored, and a live is bounded in bytes, segment rate and starts per hour; every route is a 404 unless `LIVE_ENABLED`, rendered `true` on dev only ([lives](docs/wiki/services/lives.md)).
+
+### Changed - the delivery service prints one line per fan-out, not one per device
+
+A frame queued to about 100 seats wrote about 200 lines and rolled production's log over in ~20 minutes; `DONE` now carries `offline=N`, one `FCM sent batch` line replaces the per-device ones, and the skipped-device list is capped at five ([prod-queue-and-epoch-audit](docs/wiki/infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#log-lines-per-frame-and-what-aggregates-them-2026-10-18)). No retention change.
+
+### Fixed - a mention of a deleted account reads "Compte supprimé"
+
+`GET /api/users/batch` now names erased accounts in `deleted` (no name is kept) and the mention chip renders the deleted-account label ([core-service](docs/wiki/services/core-service.md#one-request-for-a-list-the-client-already-holds)).
+
+### Changed - a message page reads a page, and a drain writes the seen-frame ledger once
+
+IndexedDB v11 and a SQLite index answer a page off `[conversation, timestamp]`; the live seen-frame mark is written with the checkpoint, and bubbles no longer each hold a window and a media-query listener ([performance-audit](docs/wiki/frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)).
+
+### Changed - "Mes associations" holds associations only
+
+Lists and institutions get their own "Mes listes" and "Mes institutions" sections, on the dashboard and on `/associations` ([section-navigation](docs/wiki/frontend/section-navigation.md)).
+
+### Fixed - a damaged local MLS state no longer asks for an old PIN, and another account's state on a phone is no longer offered for reset
+
+Every save now carries the key fingerprint header, so a state altered under the right key rotates the device identity with no PIN asked, a PIN changed elsewhere is named as such, and a phone records whose `mls.bin` it holds so another account's gate withholds the reset ([mls-protocol](docs/wiki/protocols/mls-protocol.md#the-state-blobs-framing---read-first-write-later)).
+
+### Fixed - a shared post's card is always a 1200x630 image, and a failed lookup is never cached
+
+`og:image` is now one rendered JPEG per post with its size and type declared, a timed-out enrichment is served `no-store` instead of cached for a minute, and the access log says why a hit was slow or degraded ([seo](docs/wiki/frontend/seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing)).
+
+### Fixed - a shared post's card title and description are cut between words, to the lengths Facebook shows
+
+`og:title` now fits 60 characters with its site suffix and the description 125, where they were 79 and 199 and cut again mid-word by the unfurler ([seo](docs/wiki/frontend/seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing)).
+
+### Documented - two older project-team VMs are out of scope
+
+Recorded generically on [estate-migration](docs/wiki/infrastructure/estate-migration.md); no host or route is in the repository.
+
+### Changed - a text the server keeps failing shows as failed
+
+A message whose send gets five server errors in a row, at least a minute apart, now shows "Echec" with a Retry instead of retrying for ever; no network keeps retrying as before ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#17-a-text-the-server-keeps-failing-becomes-failed-with-a-retry-user-2026-10-18)).
+
+### Fixed - a text sent after a big attachment no longer waits for its upload
+
+The attachment's upload now runs outside its conversation's send lane; only its small MLS send takes the lane, and it still displays at its compose time ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18)).
+
+### Fixed - a PIN change asked from a follower tab is refused up front instead of ending in a recovery prompt
+
+The change now runs from the account's active (leader) tab only, and a follower says so before the server is asked anything ([auth](docs/wiki/frontend/modules/auth.md#the-other-tabs-of-the-account)).
+
+### Changed - the outbox re-seal of a PIN change is pinned for every row kind, and its stale backlog rows are closed
+
+A queued text, reaction and attachment are now each tested across a PIN change, with a flush racing the pass ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#137-the-file-leaves-the-outbox-row-bytes-in-indexeddb-a-key-in-the-row-2026-10-11)).
+
+### Fixed - the Play vitals key is read from the harness state directory
+
+`tools/play-vitals` looked one directory too shallow; the default is now the harness state directory, `PLAY_SA_KEY` still overrides, and a missing key names both ([play-vitals](tools/play-vitals/README.md)).
+
+### Fixed - a post with two forms took the whole feed behind the error boundary
+
+Each attached form was read and drawn twice when its answers arrived apart (`each_key_duplicate`, production 1.2.9); forms are now asked once and keyed by form, and one card that fails no longer hides the feed ([posts](docs/wiki/frontend/modules/posts.md#a-post-with-two-forms-took-the-whole-feed-down-asked-and-answered-are-two-records-2026-10-18)).
+
+### Fixed - a poll's voter list with two same-named voters
+
+The voter tooltip keyed rows by display name and threw `each_key_duplicate`; rows are keyed by voter id, and the duplicate-form warning fires once per post.
+
+### Security - presence is visible only to people sharing a conversation or a community
+
+`GET /api/presence` now answers only for the asked users who share a live conversation or a community with the caller (absent otherwise, never a 401/403), asking chat-delivery and social-service; the 10 s poll stays until the push is built. Two additive indexes serve the per-poll viewer lookup (chat-delivery 031, social-service 089) ([chat-gateway](docs/wiki/services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)).
+
+### Fixed - an account deletion on iOS no longer leaves its push context in the App Group
+
+The mirrored `push_context.json` (with its bearer push token) and the extension's decrypted cache are now removed from the App Group on the same owner proof ([auth](docs/wiki/frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
+
+### Fixed - an account deletion no longer removes the push context a new sign-in stores meanwhile
+
+The owner check and the removal now hold one lock with every writer of `push_context.json` ([auth](docs/wiki/frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
+
+### Changed - push sentences follow the app language, and a voice note says so
+
+The sentences the native push scanner composes (a reaction, a photo, a call, a group event) are now written in Rust in French or English from the app language, and a declared voice note is announced as a voice message rather than an audio file ([chat](docs/wiki/frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell)).
+
+### Added - the chat encoding profile (540p, 1.2 Mb/s) and the 60 s chat cap served by `reel-limits`
+
+Nothing sends with it yet; the writer is RC-4 ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#11-what-the-chat-profile-rc-3-built-2026-10-18)).
+
+### Added - a "CanaReels" entry in the composer's "+" menu opens the camera tab
+
+The tab was reached only by a swipe nothing announced ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#1-entering-the-camera-from-a-conversation)).
+
+### Fixed - refused calls of minesweeper, group invites, Adminer, the vault and the MLS publish/commit endpoints are typed
+
+They throw an `ApiRefusalError` (status + code) instead of a plain `Error`, and the join page and the minesweeper score word it from the status ([architecture](docs/wiki/frontend/architecture.md)).
+
+### Removed - the "Agenda global" tab of the associations header
+
+The tab pointed at `/calendar`, which stays reachable as a route ([associations](docs/wiki/frontend/modules/associations.md)).
+
+### Removed - bare-string prekeys and the reason-less key-package 404
+
+At `minClientVersion` 1.2.7 a prekey batch must be `[{ keyPackage, notAfter }]` (a bare string is a
+400); a `/key-package` 404 naming no reason is `unanswered`, and one naming a reason this build
+does not know is `unrecognized`, which keeps the invitation
+([key-package-pool](docs/wiki/protocols/key-package-pool.md)).
+
+### Removed - the whole-list role-permission PUT and its retired-key drop
+
+Every client admitted at `minClientVersion` 1.2.7 sends one `PATCH { key, granted }`, so
+`PUT /api/channels/roles/:roleId/permissions` and `RETIRED_PERMISSIONS` go
+([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+
+### Removed - the `stripe` checkout return host and `paymentMethod` input
+
+Builds below 1.2.4 named the checkout return `fr.emse.canari://stripe`; at `minClientVersion` 1.2.7
+only `payment` is declared, accepted and routed, and a submission's `paymentMethod: 'stripe'` is a 400
+([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+
+### Added - the table of the salon fan-out outbox (migration 093)
+
+A salon row committed by a process that died before its broadcast is never broadcast or pushed; the fix is a transactional outbox, its writer in a second pull request ([backlog](docs/wiki/backlog.md)).
+
+### Fixed - a salon message, edit, reaction, pin or vote made offline is sent on the reconnect, and a DM read mark survives a kill
+
+The server answers a repeated salon send with the row it holds and refuses one of a deleted message (migration 090), and the client repeats unasked only once an answer has proven that; an edit, reaction, pin or vote is taken back only on a refusal, never on a lost answer; a DM read receipt is owed from the instant it is decided and drained at the next boot ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)).
+
+### Fixed - a deleted salon message's client-id tombstone is kept 30 days, and never outlives its author's account erasure
+
+A daily purge drops tombstones 30 days after the delete (decision 2026-10-18), and a message delete racing an account erasure now waits for it and writes none ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)).
+
+### Fixed - a salon's unread badge ignores "X joined" notices and muted salons
+
+The notice is now sent silent, a salon set to "none" counts nothing on the server, and the live tally follows ([chat](docs/wiki/frontend/modules/chat.md#a-muted-salon-and-a-membership-notice-raise-no-badge-2026-10-18)).
+
+### Fixed - a sign-out during a login in progress now stops that login
+
+The login re-reads the sign-out generation after every await and, once a sign-out began, stops without setting `isLoggedIn` and releases its gateway socket and MLS client ([auth](docs/wiki/frontend/modules/auth.md#a-sign-out-during-a-login-in-progress-completed-the-login---fixed-2026-10-18)).
+
+### Fixed - one sign-out sends one logout, and "Rester connecte" no longer logs the user back in during it
+
+`clearAuth` now drops the local identity before it awaits the revocation, and a refresh answered during the sign-out can no longer restore it, so the vault unlock cannot start mid-sign-out and no second sign-out follows ([auth](docs/wiki/frontend/modules/auth.md#one-sign-out-sent-two-logouts-and-the-vault-logged-the-user-back-in-during-it---fixed-2026-10-17)).
+
+### Fixed - the dev smoke sign-in walks MiConnect's real flow
+
+It died on its first live run (`HTTP 302`): it now follows authentik's post-stage redirect, encodes `next`, starts on `password-login` and names a CAS-only denial ([cicd](docs/wiki/cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)).
+
+### Added - a real sign-in after every dev deploy, before the dev-deployed marker moves
+
+A dedicated dev-only smoke account signs in through MiConnect and the OIDC callback; absent secrets are a named skip ([cicd](docs/wiki/cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)).
+
+### Fixed - the space editor no longer crashes on opening (`DataCloneError`)
+
+Every open of `/bookings/spaces/<id>/edit` crashed in `v1.3.0-alpha.2`: the draft `structuredClone`d a `$state` proxy. It now copies with `$state.snapshot`, and the layout's crash line names the route in the in-app log ([bookings-chantier](docs/wiki/bookings-chantier.md)).
+
+### Added - chat-delivery names a frame sealed beyond the past-epoch window
+
+An application frame sealed more than two epochs behind its group logs `STALE_EPOCH_FRAME` with the sender's device and build; reported, not refused ([channel-encryption](docs/wiki/protocols/channel-encryption.md#not-the-cause-the-drain-order)).
+
+### Changed - the frontend tests read Paraglide as ten per-locale modules instead of 3,300 message files
+
+Tests only: a second compile aliased in `vitest.config.ts`, the app build untouched ([architecture](docs/wiki/frontend/architecture.md#the-tests-read-a-second-paraglide-compile-wp-t1)).
+
+### Changed - the two source-scan guards are one case per rule, and name every offender
+
+`serverProse` and `markupSources` ran one test per file (3,378 cases) and now run one per rule (3 cases), failing with the full offender list; same rules, same allowlist checks ([test-suite-reform](docs/wiki/test-suite-reform.md)).
+
+### Documented - the test estate measured, and the reform plan
+
+The frontend job is 16 minutes of CI's critical path, 5 % of it test bodies; the plan, the gaps it found and the ordered work packages are on [test-suite-reform](docs/wiki/test-suite-reform.md).
+
+### Changed - the source-text tests are triaged: the association tile is mounted, the chosen sign-out is run
+
+All 86 files that read app source were read; 13 cases that pinned the spelling of markup or of `signOutByChoice` became 12 behavioural ones, and the rest keep, each saying why ([test-suite-reform](docs/wiki/test-suite-reform.md#wp-t5-m---triage-the-source-text-tests)).
+
+### Fixed - a programming `TypeError` inside a request is no longer retried or held as "no answer"
+
+`isTransportFailure` now reads only `TransportFailureError` (and `RequestDeadlineError`); the browser's own `fetch` rejection is typed where it is raised ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)).
+
+### Changed - the server no longer sends a typing signal back to the person typing
+
+The client dropped it on arrival, so it was one frame per keystroke burst for nothing. Failed typing sends now log once per failing streak, and reactions and edits received in a channel each leave one line.
+
+### Fixed - an image or vault document over 8 MiB is refused with a message instead of spinning
+
+The association vault and every raw image upload now refuse a body the host firewall would drop, before sending it ([host-waf-body-limit](docs/wiki/infrastructure/host-waf-body-limit.md)).
+
+### Fixed - a new client against an older server no longer reports every absent profile as a breach
+
+An answer from `GET /api/users/batch` with no `deleted` field is read the old way (absence = 404, cached, quiet), a dated shim ([legacy-compatibility](docs/wiki/legacy-compatibility.md#no-date-yet---the-profile-batch-answered-without-deleted-by-a-server-older-than-2026-10-18)).
+
+### Added - a read-only report of the app version each device runs
+
+`bun tools/version-report/report.mjs` lists devices below `minClientVersion` from the version stored with each key package, on the dev estate only ([core-service](docs/wiki/services/core-service.md#nothing-records-which-build-each-device-runs-2026-08-27)).
+
+### Fixed - a voice note shown as "Format non supporte" logs why
+
+The audio element's refusal now logs its media error code, the declared type and the engine's `canPlayType` answer, so the Mi 9T report can be read ([chat](docs/wiki/frontend/modules/chat.md#format-non-supporte-names-its-cause-in-the-log-2026-10-18)).
+
+### Fixed - a burst of Welcomes no longer restores every conversation once per Welcome
+
+Restores now run one at a time with at most one queued, so a new device joining 80 groups restores twice instead of 80 times; a sign-out retires the queue, so a restore never runs as the account that left ([performance-audit](docs/wiki/frontend/performance-audit-2026-10-12.md#finding-8---built-2026-10-18-draft-pr-perfwelcome-restore-once)).
+
+### Changed - gates that fail loudly (WP-T2)
+
+An empty jest or vitest suite now fails, the docs and line-ending guards run on a docs-only pull request, and a pull request touching dependencies or build config builds the production frontend ([test-suite-reform](docs/wiki/test-suite-reform.md)).
+
+### Changed - the console no longer prints a line per typing signal and read receipt
+
+Typing and read frames (about 90 lines in two hours of one web console) and the duplicate "Triggering onChannelEvent" line are no longer logged; routing is unchanged.
+
 ## [1.2.9] - 2026-10-17
 
 ### Fixed - deleting an account is complete and guaranteed, not best effort
@@ -801,7 +1782,7 @@ Tap to a usable conversation: <= 0.35 s backgrounded, 2.7 s killed, 5 s killed b
 
 ### Changed - the 29 orphan form submissions are deleted on dev and prod
 
-Submissions naming a deleted form (5 paid, all old Stripe test charges) were backed up and then deleted in one checked transaction per estate. Migration 081 can now add its foreign key ([backlog](docs/wiki/backlog.md#p3---submissionsformid-names-a-form-nothing-keeps-and-29-rows-point-at-deleted-ones)).
+Submissions naming a deleted form (5 paid, all old Stripe test charges) were backed up and then deleted in one checked transaction per estate. Migration 081 can now add its foreign key ([forms](docs/wiki/frontend/modules/forms.md#a-form-with-submissions-is-archived-never-removed-2026-10-11)).
 
 ### Fixed - a queued attachment no longer lives inside the outbox row
 

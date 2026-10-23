@@ -120,6 +120,19 @@ export class RedisService implements OnModuleDestroy {
     if (keys.length) await this.client.del(...keys);
   }
 
+  /**
+   * Runs a Lua script atomically (`EVAL`) and returns its reply. For a check-then-write that must
+   * not interleave with another instance's - the live viewer seats (`lives/live-seats.ts`). Throws
+   * on a Redis failure: the caller decides what an unanswered question means.
+   */
+  async evalScript(
+    script: string,
+    keys: readonly string[],
+    args: readonly (string | number)[]
+  ): Promise<unknown> {
+    return this.client.eval(script, keys.length, ...keys, ...args);
+  }
+
   /** SCAN + DEL - use sparingly (e.g. cache bust after association branding changes). */
   async deleteByPattern(match: string): Promise<number> {
     let deleted = 0;

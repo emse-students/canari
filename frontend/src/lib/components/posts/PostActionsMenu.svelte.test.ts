@@ -133,3 +133,36 @@ it('offers the republication entries only when the server granted them (D38)', (
   flushSync();
   expect(onUnrepublish).toHaveBeenCalledWith('asso-2');
 });
+
+it('offers the request to the author, and the cancel of a waiting request, only when served (D38b)', () => {
+  const onRequestRepublication = vi.fn();
+  const onWithdrawRequest = vi.fn();
+  const card = mountMenu({
+    canRequestRepublication: true,
+    pendingRequests: [{ proposalId: 'prop-1', name: 'BDA' }],
+    onRequestRepublication,
+    onWithdrawRequest,
+  });
+  card.querySelector('button')!.click();
+  flushSync();
+
+  const items = Array.from(document.body.querySelectorAll('[role="menuitem"]'));
+  const ask = items.find((el) =>
+    el.textContent?.includes("Republier au nom d'une association")
+  ) as HTMLElement;
+  expect(ask).toBeDefined();
+  const cancel = items.find((el) => el.textContent?.includes('Annuler la demande de BDA'));
+  (cancel as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+  flushSync();
+  expect(onWithdrawRequest).toHaveBeenCalledWith('prop-1');
+});
+
+it('offers no request entry by default', () => {
+  const card = mountMenu({});
+  card.querySelector('button')!.click();
+  flushSync();
+  const labels = Array.from(document.body.querySelectorAll('[role="menuitem"]')).map(
+    (el) => el.textContent ?? ''
+  );
+  expect(labels.some((t) => t.includes("Republier au nom d'une association"))).toBe(false);
+});

@@ -27,11 +27,15 @@ type SignalSource = Pick<NodeJS.EventEmitter, 'once'>;
  * @param server the HTTP server the application listens with (`app.getHttpServer()`).
  * @param exit how the process leaves once drained - `process.exit` in production.
  * @param signals where SIGTERM arrives - `process` in production.
+ * @param beforeExit work the process still owes after its last request was answered (the salon
+ *   fan-outs that run AFTER an answer); awaited, then the process exits. A failure is logged and
+ *   does not stop the exit.
  */
 export function drainOnSigterm(
   server: Pick<Server, 'close'>,
   exit: (code: number) => void = (code) => process.exit(code),
-  signals: SignalSource = process
+  signals: SignalSource = process,
+  beforeExit: () => Promise<void> = () => Promise.resolve()
 ): void {
   const logger = new Logger('Drain');
   signals.once('SIGTERM', () => {
@@ -46,8 +50,12 @@ export function drainOnSigterm(
         exit(1);
         return;
       }
-      logger.log('[DRAIN] every request in flight was answered - exiting');
-      exit(0);
+      logger.log(
+        '[DRAIN] every request in flight was answered - finishing what it owes, then exiting'
+      );
+      beforeExit()
+        .catch((e: unknown) => logger.error(`[DRAIN] work owed before exit failed: ${String(e)}`))
+        .finally(() => exit(0));
     });
   });
 }

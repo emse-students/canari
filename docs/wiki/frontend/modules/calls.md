@@ -16,7 +16,7 @@
 > App Review refused the `voip` background mode under guideline 2.5.4 on 2026-08-31 for a VoIP
 > service it could not locate - correctly, on the build it tested.
 >
-> **Five things were switched off together and must come back together, in one commit:**
+> **Five things were switched off together, and the `audio` mode joined them on 2026-10-20; all six come back together, in one commit:**
 >
 > | Switch | Where | What it holds |
 > |---|---|---|
@@ -25,6 +25,7 @@
 > | `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | `showIncomingCallNotification` |
 > | `voip` | `canari_iOS/Info.plist` `UIBackgroundModes` | PushKit tokens (absent = no token, ever) |
 > | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | the locked-screen CallStyle ring |
+> | `audio` (since 2026-10-20) | `canari_iOS/Info.plist` `UIBackgroundModes` | the microphone of a hidden or locked iPhone ([WP-C-BG-I](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)); every PRE-RELEASE build gets it from `ios.yml` |
 >
 > **A SIXTH THING MOVED WHILE CALLS WERE OFF, AND IT IS NOT A SWITCH (2026-09-22).** A push payload
 > no longer carries `senderName` or `groupName` on a SILENT frame: those two are unbounded user text,
@@ -63,6 +64,265 @@
 > outbound rule, and it belongs in the revival commit's preconditions
 > ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md)).
 
+## Turning calls on in production - audio 1:1 only (owner, 2026-10-21)
+
+**The decision.** The first public build with calls enabled in production is **AUDIO 1:1 ONLY**,
+with the call kept alive in the background on Android and on the iPhone; video follows later.
+Calls stay held off (`CALLS_COMPILED = false`) until every blocker below is lifted. This section is
+the only copy of the blocker list and of the order; [revival plan](calls-revival-plan.md) keeps the
+2026-10-15 design and the test matrix (section 7), the [backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)
+row points here. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
+
+**The owner's answers, 2026-10-21** - not to be re-opened:
+
+| # | Question | Answer |
+| --- | --- | --- |
+| Q1 | Does the first release ring an app that is closed or in the background (CallKit / PushKit on the iPhone, the full-screen `call_ring` on Android)? | **No.** The native ring comes later. A call rings an app that is OPEN; it is then KEPT in the background (B8, B9) |
+| Q2 | A server-side kill switch (WP-C13, one data migration on `platform_config`) before the flip? | **Yes** - a hard pre-flip blocker (B12) |
+| Q3 | `minClientVersion` raised to the first calls stable once both stores serve it? | **Yes** |
+| Q4 | The iPhone `audio` mode is app-wide: may reels and voice messages keep playing with the screen locked? | **Accepted** |
+| Q5 | The privacy-policy and register wording of #2013 | **Presented to the owner later, and settled BEFORE calls ship** (B5 stays a blocker) |
+| Q6 | An audio rate for `CALL_RELAY_KBPS_PER_DEVICE` on production as a stopgap? | **No.** B7 is fixed first; the production budget variable is left as it is |
+
+### The blockers, each with its evidence
+
+`built` = merged on `main` or in the PR named; `draft` = an open draft PR; `read` = observed on
+hardware; `owed` = not done. A blocker closes only when its last column is true.
+
+| # | Blocker | State (2026-10-21) | Closed by |
+| --- | --- | --- | --- |
+| B0 | **No video in production.** `CALLS_VIDEO_ENABLED` was `CALLS_ENABLED`, so the flip would have shipped it; and the flag only hid the buttons - an invite with `hasVideo: true` (a modified client, or a later build) made `acceptCall` open the camera with no control on screen to close it | **built in #2171**: `CALLS_VIDEO_ENABLED = deployEnvironment() === 'development'` (`features.test.ts`), and `CallService` holds it at every boundary - the invite rings as audio (`incomingHasVideo`), `startCall` and `acceptCall` never ask for video, `cameraOn` (every camera open) refuses, and a peer's video m-line is answered `recvonly`, decrypted (so the E2E path check still judges it) and never shown. `inactive` would be possible (either side may renegotiate after the first remote description) and would spare the peer's video bandwidth and CPU; it is not taken because the path check's treatment of a negotiated m-line carrying nothing is unmeasured on a phone, and until video ships only a modified client sends one - when video ships, the floor rises past the audio-only stable or `inactive` is built. Pinned by `CallService.p2p.test.ts` ("an audio-only build", and "judges the peer's HIDDEN video": frames -> conclusive, packets with no frame -> ended) | code done; **owed on a phone**: that a receiver transform whose track has NO SINK is still fed frames (unproven on WebKit) - CALL-L1 row 13, no false `CallE2eBypassedError` on the iPhone and the Mi 9T |
+| B1 | The scope of the native ring | **decided** (Q1): not in the first release | B2' |
+| B2 | The native ring: WP-C5 (Android: names from the phone's local copy, out of the `call_ring` payload; `canUseFullScreenIntent`; decision 7 natively) and WP-C6 (iOS: no PushKit token was ever registered; every VoIP push must report a CallKit call; the answer with MLS behind the PIN). **Also to gate in the SAME commit as the native-ring switches**: both rings still ANNOUNCE a video call for a `hasVideo` invite (Android `CanariFirebaseMessagingService.kt` `setIsVideo` / `notif_incoming_video_call`, iOS `canari_push.mm` CallKit `update.hasVideo`) - on an audio-only build they must announce audio | **later - not the first release** | its own chantier, with video or after |
+| B2' | **Two facts instead of one**: `CALLS_COMPILED` for in-app calls and background continuation (`audio`, the microphone foreground service, the microphone purpose strings), a second constant for the native ring (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`), each set asserted by `callsCompiled.test.ts`. **And the iOS FCM ALERT**: no iPhone has a `voipToken`, so `CallsService.ringViaFcm` would send EVERY iPhone callee a visible alert titled with the caller's name in clear (against decision 6), opening an app that may not answer in time - removed, or decided. That branch IS reachable in the first release (unlike the native ring), and its body says "Appel entrant" whatever `hasVideo` is - if kept, it must never announce video | **owed** | a draft |
+| B3 | **The review of #1997, crypto half**: one key per direction + AAD on every frame, the key-mismatch toast (F5) | **built (#2176)**: #2013 ported onto `main` (per-direction keys, AAD on every frame, the mismatch notice), adversarially reviewed | CALL-L1 rows 1-4 re-read on it |
+| B4 | **The `fp=` log line printed 4 bytes of the call key** | **built (#2176)**: a SHA-256 fingerprint per direction (`send_fp`/`recv_fp`, `utils/callKeys.ts`), first in #2171 | done |
+| B5 | **F4 - say who sees what**: each party learns the other's IP; Cloudflare TURN relays some calls (IPs, time, volume, never audio). Into `compliance/register-of-processing.md` and `/legal/privacy`, together | register rows C21 + TURN processor in #2176, marked owed review; the `/legal/privacy` paragraphs HELD in a separate draft pull request for the owner (Q5) | the owner's yes on the wording, merged BEFORE the flip ships |
+| B6 | **A call report** (`[CALL_REPORT]`, WP-C2): without it a failing production call is found by hand, and B7 cannot tell relayed from direct | **built (#2176)**: #2011 ported onto `main` | one reading from a phone's exported log |
+| B7 | **The TURN budget counts every call as relayed at 3000 kbps per device** (`accumulateTurnUsage`): 950 GB is ~700 device-hours, ~350 call-hours a month, after which `ice-servers` answers 503 to EVERY call. Only `relayed=yes` costs in P2P, and CALL-PATH-LINE (P3) showed `relayed=` can be wrong | **being built** (another agent); the production variable stays alone (Q6) | relayed calls only, at what they cost |
+| B8 | **Background, Android (WP-C-BG-A)** | **built** (#2162, in `1.3.1-alpha.5`), pre-releases only; Play FGS declaration FILLED by the owner 2026-10-21; **twelve readings owed** on the Mi 9T ([below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20)) | the readings; at the flip the declaration moves into `src/main/AndroidManifest.xml` |
+| B9 | **Background, iPhone (WP-C-BG-I)**: the `audio` mode, pre-release only today | **built** (#2164, in `1.3.1-alpha.5`); the failure was read before the fix; **after-fix reading owed** (CALL-L1 row 12); the app-wide side effect ACCEPTED (Q4) | row 12 `PASS` |
+| B10 | **The hardware readings of the audio path**: CALL-L1 rows 0-12 on the current build; the Tier B audio cells (K1, K9, K12 on Mi 9T / iPhone / desktop; K6 both phones) of [the matrix](calls-revival-plan.md#7-the-test-matrix) | **partly read**: audio clean both ways and both transforms fed on `1.3.1-alpha.4` (#2161); forced TURN relay over UDP, TCP and TLS 443 clean on all three engines (#2165, readings PR open on 2026-10-21); row 8 `PASS` on alpha.2. **Owed**: row 0, rows 9-12 on the build carrying their fixes, cellular and campus Wi-Fi (no SIM on the bench), CALL-WS-V6's fix (#2167) on an IPv6-broken Wi-Fi | the board rows `PASS`, never `PASS-DIRTY` |
+| B11 | **Two P2 defects met on the bench**: CALL-PAIR-STALL and CALL-LATE-RING ([backlog](../../backlog.md#p2---a-call-that-never-paired-and-a-ring-for-a-call-already-hung-up-2026-10-20)) | **owed**: the dev `call-service` log of that minute and the iPhone's exported log, before any cause is named | diagnosis, then a fix or a refutation |
+| B12 | **A kill that is not two store releases** (WP-C13, `platform_config.calls_mode` = `off/testers/on`, enforced at `initiate`/`ring`/`room-token`) | **decided yes (Q2), a HARD PRE-FLIP BLOCKER; being built** (another agent) | merged and its `off` read refusing a ring, before the first alpha with the flip |
+| B13 | **The production server preflight** (read-only, below) | **checklist written** (P1-P10, each with its command, 2026-10-21); **owed**: running it after #2180 deploys production, P7 and P8 (c) in the review window | every line of the preflight read |
+| B14 | **The store answers** (below): Apple review notes + demo accounts + video, privacy labels; Play Data safety | **drafted** (the microphone string, the review notes, the privacy candidates, 2026-10-21); **owed**: the owner's answers to the privacy table, the demo pair, the video (Play FGS declaration: DONE 2026-10-21) | WP-C9 |
+
+### The order
+
+1. ~~The owner's answers~~ - taken 2026-10-21 (above), except the wording of Q5, which comes later.
+2. **Code, every piece dev-only, none flips anything** - each its own draft PR: B3 + B5 (the port of
+   #2013), B6 (the port of #2011), B7, B12, B2'. B0 and B4 are #2171.
+3. **Pre-releases and readings**: each piece reaches the bench through an ordinary `vX.Y.Z-alpha.N`
+   (dev + testers); B8, B9, B10, B11 are read there. **The App Review video and the Play video are
+   recorded FROM these runs**, never staged afterwards (revival plan section 8).
+4. **The production preflight** (B13), read-only, from a signed-in production session and the host.
+5. **THE FLIP, ONE COMMIT, ONE PR** (draft #2039 is the 2026-10-18 rehearsal of a flip WITH the
+   ring: rebuild it on `main` after B2', do not rebase it). With Q1 = no, it moves:
+
+   | Moves | File | Asserted by |
+   | --- | --- | --- |
+   | `CALLS_COMPILED = true` | `frontend/src/lib/features.ts` | `features.test.ts` |
+   | `audio` in `UIBackgroundModes` | `canari_iOS/Info.plist` | `callsCompiled.test.ts` |
+   | the microphone purpose string names calls | `Info.plist`, `fr.lproj` and `en.lproj` `InfoPlist.strings` | `callsCompiled.test.ts` |
+   | the microphone foreground service moves from `src/calls/` into `src/main/AndroidManifest.xml`, and `build.gradle.kts` stops merging it on `VITE_DEPLOY_ENVIRONMENT` | Android | `androidCallServiceManifest.test.ts`, `android.yml`'s built-manifest step |
+   | `ios.yml`'s pre-release `audio` patch is deleted with its two cases in `callsCompiled.test.ts` (dead code once the committed plist carries `audio`) | `.github/workflows/ios.yml` | `callsCompiled.test.ts` |
+   | **does NOT move**: the native ring's four (`voip`, `kCanariCallsEnabled`, Kotlin `CALLS_ENABLED`, `USE_FULL_SCREEN_INTENT`) under their own constant (B2'), and `CALLS_VIDEO_ENABLED` | | `callsCompiled.test.ts`, `features.test.ts` |
+
+6. **`vX.Y.Z-alpha.1` with the flip** -> dev and the store testers, `calls_mode` at `testers` (as
+   #2180 builds it there is no `testers` value: pre-releases talk to dev, whose own row is open). Tier B
+   audio cells re-read on it, the review build's notes and video checked. **Beta App Review**: an
+   external TestFlight group reviews the declared modes; keep the flip to internal testers or have
+   the notes ready ([mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)).
+7. **The stable** `vX.Y.Z` (it ships the alpha above) -> production web, Play, the App Store; then
+   `calls_mode` `on` (`audio` as #2180 builds it; a production change, so the owner's action at
+   `/admin/platform`). **Opened as soon as production deploys, NOT after
+   the stores publish**: the App Review build talks to PRODUCTION, so a reviewer who meets `off`
+   finds a declared `audio` mode whose feature refuses - the 2.5.4 refusal of 2026-08-31 again
+   ([B14](#the-store-answers-b14)). Production web deploys only once both store jobs are green, so
+   by then the submission is in; before that moment no production client has calls compiled, which
+   is why the mode may open then without exposing anything.
+8. **After both stores serve it**: `minClientVersion` raised to it (Q3); the first week's `[ring]`,
+   `session end` and TURN usage read on production.
+
+### The production server preflight (B13) - what must be checked, read-only
+
+Production HAS Cloudflare TURN and has never used it: the `canari-calls` key carried 0 bytes in the
+30 days to 2026-10-16 ([revival plan](calls-revival-plan.md#14-probes-of-2026-10-16-clients), Q4).
+
+- **The secrets reach the container**: the production deploy log of `chat-delivery-service` raises no
+  "not set" warning for `CLOUDFLARE_CALLS_API_TOKEN` / `CLOUDFLARE_TURN_KEY_ID`
+  (`env-manifest.tsv`: `warn`), and `CALL_ROOM_SECRET` is set (`required`).
+- **The key answers**: from a signed-in production session, `GET /api/calls/ice-servers` answers 200
+  with `turn:` URLs over udp, tcp and `turns:` 443 (the endpoint is not behind the client switch), and
+  the key id it uses is the `canari-calls` key of the Cloudflare account.
+- **The budget**: B7's meter in the deployed image and readable with the production token (P6
+  below; the Redis estimate it replaces goes with #2180); the production budget variables are not
+  touched (Q6).
+- **The kill switch**: `calls_mode` reads `off` on production before the stable deploys (B12).
+- **The relay**: `call-service` runs on production with the p2p mode (the image of the release), and
+  `wss://canari.emse.fr/api/call` upgrades through the host nginx. **The production path differs
+  from dev's**, so CALL-L1 row 0 (an idle call's keepalive Pong across the public path, no
+  `held dead`) read on dev does not answer for production: it is read once on the production path,
+  from a local build carrying the flip pointed at production, or as the first reading after the
+  stable deploys and before `calls_mode` goes `on`.
+- **Push**: Firebase is initialised on production (the `call_ring_end` and missed-call paths). The
+  APNs VoIP key is NOT needed for the first release (Q1).
+- **No UDP from the host is needed**: 1:1 is peer to peer, the host carries signalling only
+  ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md#8-what-works-with-no-port-opened-by-the-dsi-measured-2026-10-16)).
+  Nothing is asked of the DSI.
+
+#### The checklist, with the command that reads each line (2026-10-21)
+
+Every line below READS; none writes production. It is run once, after the release carrying B7 and
+B12 (#2180, open on 2026-10-21) has deployed production and before the flip's stable is tagged; its
+outcome is a row of the [readings](../../device-readings-2026-10.md) pages, each line `PASS` or the
+defect it found. **The host's address, its SSH alias, the database and Redis credentials and the
+Cloudflare account and token values are in the private operations notes**, never here: the commands
+use `<prod-host>` and read every secret from the environment of the machine that runs them, never
+from an argument. Host commands are Docker reads, free under the shared-host rule (CLAUDE.md).
+
+**One thing #2180 changes for this list: with `calls_mode = off` (production's default),
+`ice-servers` refuses (403 `CALLS_DISABLED`) and the `[TURN-METER]` report is silent.** So the two
+Cloudflare lines (P5, P6) are read straight from Cloudflare while the switch is closed, and the
+end-to-end `ice-servers` line (P7) is read in the review window, once the mode is opened (the order,
+step 7).
+
+| # | What must be true | How it is read (read-only) | `PASS` when |
+| --- | --- | --- | --- |
+| P1 | Migration 014 (core-service, `014_platform_config_calls_mode.sql`, #2180) is applied and the switch reads `off` | `PROD_PG=$(docker ps --filter label=com.docker.compose.project=canari-prod --filter label=com.docker.compose.service=postgres --format '{{.Names}}')`, then `docker exec "$PROD_PG" sh -c 'psql -At -U "$POSTGRES_USER" -d auth_db -c "SELECT filename, applied_at FROM schema_migrations WHERE filename LIKE '"'"'%014_platform_config_calls_mode.sql'"'"'; SELECT calls_mode, min_client_version FROM platform_config WHERE id = 1; SELECT conname FROM pg_constraint WHERE conname = '"'"'CHK_platform_config_calls_mode'"'"';"'` | one ledger row; `off`; the constraint present. A missing row 1 is a defect, not an `off` (`utils/calls-mode.ts` logs it at error) |
+| P2 | The switch as clients see it, and the version floor | `curl -s https://canari.emse.fr/api/version` (public, no session) | `calls.mode` is `off`; `version` is the deployed stable; `minClientVersion` is the floor of today - raised only AFTER both stores serve the calls stable (Q3, step 8), so a raise before that is a finding |
+| P3 | Every calls secret reached the containers | the production deploy job of that release: `gh run view <run-id> --log \| grep 'is not set'` (`render-env.sh` prints `::warning::<KEY> is not set - <note>` for a `warn` key, `env-manifest.tsv`) | no line for `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_TURN_ANALYTICS_TOKEN`, `FIREBASE_SERVICE_ACCOUNT_JSON`. `CALL_ROOM_SECRET` and `JWT_SECRET` are `required`: a deploy without them fails, so a green deploy proves them. Names only, never `docker exec ... env` with values printed |
+| P4 | `call-service` runs the release's image and is healthy | `docker ps --filter label=com.docker.compose.project=canari-prod --filter label=com.docker.compose.service=call-service --format '{{.Image}} {{.Status}}'` (the compose healthcheck is `curl -f localhost:3004/api/health`, not reachable from outside) | the image tag is the deployed stable; `Up ... (healthy)`; `docker logs --since 24h <that container> 2>&1 \| grep -c ERROR` explained line by line, never skipped |
+| P5 | The TURN key mints credentials (Cloudflare Realtime) | from the workstation, `POST https://rtc.live.cloudflare.com/v1/turn/keys/$CLOUDFLARE_TURN_KEY_ID/credentials/generate-ice-servers` with `Authorization: Bearer $CLOUDFLARE_CALLS_API_TOKEN` and `{"ttl": 60}` - the call `calls.service.ts` makes. **The one line that is not a pure read**: it mints a 60 s credential nobody uses, which relays nothing and costs nothing | 201 with `turn:` URLs over UDP 3478, TCP and `turns:` 443; the key id is the `canari-calls` key named in the private notes |
+| P6 | The meter B7 trips on is readable with the production token | from the workstation, the GraphQL `settings` query and one day of `callsTurnUsageAdaptiveGroups` (`sum { egressBytes }`) under `viewer.accounts(filter: { accountTag: $CLOUDFLARE_ACCOUNT_ID })`, at `https://api.cloudflare.com/client/v4/graphql` with `$CLOUDFLARE_TURN_ANALYTICS_TOKEN` - the queries are the ones #2180's `turn-usage-meter.service.ts` builds (B7) | `enabled: true`; the per-date query answers with no `errors` (the one query #2180 measured only on dev); the month's egress is the known baseline (0 bytes to 2026-10-16) or explained. **This also closes the "per-date query unexercised" line of B7 on production** |
+| P7 | `ice-servers` answers end to end, through the switch and the meter | in the review window (mode `audio`), from a signed-in production session: `GET /api/calls/ice-servers` in the browser's DevTools (the access token stays in memory, so not `curl`) | 200 with the `turn:` URLs of P5 and no `turn.status: 'unavailable'`; the hour's `[TURN-METER]` line in the `chat-delivery-service` log reads `x/y GB` at `log` level |
+| P8 | The routes: `/api/calls/` reaches chat-delivery, `/api/call` upgrades to call-service | (a) `curl -si https://canari.emse.fr/api/calls/ice-servers` with no session; (b) `curl -si -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' https://canari.emse.fr/api/call` with no session; (c) in the review window, the `101 Switching Protocols` of `wss://canari.emse.fr/api/call` in a signed-in session's DevTools | (a) and (b) answer the `auth_request` refusal (401), never the SPA's `index.html` or a 404 - which proves the host nginx, the edge and the container nginx all route the prefix (`Dockerfile.frontend`, `location /api/calls/` and `location /api/call`); (c) a `101`, and the socket held across an idle minute (CALL-L1 row 0 on the production path, above) |
+| P9 | No call state is left over from before | `docker exec <prod redis> redis-cli --scan --pattern 'call:*' \| wc -l` and `--pattern 'turn:*'` (the Redis container name as P1 finds Postgres') | `call:*` 0 with calls off (a non-zero count is a room created while the switch was open - who opened it?); `turn:metered:*` only #2180's keys, and no `turn:usage:<this month>` (the removed estimator's key, written by no deployed code once #2180 ships) |
+| P10 | Push for the call paths | the `chat-delivery-service` boot lines: `docker logs <container> 2>&1 \| grep -i firebase \| head` | Firebase initialised (it serves `call_ring` and `call_ring_end`); the APNs VoIP key is NOT checked - the first release has no native ring (Q1) |
+
+**What this list does not read, and where it is**: the privacy wording (B5), the store forms (B14,
+below), and every hardware reading (B8-B10) - each is its own blocker.
+
+### minClientVersion
+
+- **No wire compatibility is owed to an older production client**: every stable so far has
+  `CALLS_ENABLED = false`, so none ever placed or answered a call. The wire changes of B3 matter
+  between dev builds only.
+- **The first calls stable must ignore `hasVideo`** (B0): a later build with video will send video
+  invites to it, and it answers them as audio.
+- **A callee on an older stable cannot answer, and sees this**: the in-app invite is dropped and
+  logged (`calls disabled - ignoring signal`); an older Android logs `calls disabled` and rings
+  nothing; an older iPhone gets the FCM ALERT of B2' unless B2' removes it. The caller sees the call
+  go unanswered, then the missed-call line. The push token row carries no app version, so the server
+  cannot ring "only the devices that can answer".
+- **Decided (Q3)**: `minClientVersion` is raised to the first calls stable once BOTH stores serve it.
+
+### The store answers (B14)
+
+**Apple, for the stable** (the pre-release half is on [mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)):
+
+- The committed `Info.plist` carries `audio`, NOT `voip` (Q1); the pre-release patch goes (step 5).
+  `audio` is the mode Apple names for a call's audio in the background; 2.5.4 asks that the reviewer
+  can SEE it used - the refusal of 2026-08-31 was a `voip` mode it could not locate.
+- `NSMicrophoneUsageDescription` names calls (base, `fr`, `en`), asserted by `callsCompiled.test.ts`.
+  `NSCameraUsageDescription` does not change (no video).
+- **Review notes and demo accounts**: two PRODUCTION accounts sharing a direct conversation, call
+  permission allowed, no block. A reviewer has one device: a team member answers the second account
+  in a stated window, and the notes say how to reach the call screen. They say what `audio` is for:
+  "an ongoing call keeps its microphone when the screen locks".
+- **The video**: recorded on the iPhone during the Tier B runs - a call placed from a DM, the
+  microphone prompt naming calls, both parties heard, the screen locked mid-call and the voice still
+  carried, hang-up.
+- **Privacy nutrition labels** (App Store Connect, not in this repository): the call audio is E2E
+  and never stored or readable by the server - whether that is "not collected" under Apple's
+  definition is **(unverified)**; the call METADATA (who called whom, when, how long - server logs)
+  and the IP seen by the peer and by Cloudflare are new. Read the current labels first, then decide.
+
+**Google Play**:
+
+- **Foreground service declaration** (`FOREGROUND_SERVICE_MICROPHONE`): FILLED by the owner
+  2026-10-21.
+- **`USE_FULL_SCREEN_INTENT`**: not declared in the first release (Q1).
+- **Data safety form**: the same facts as Apple's labels - audio E2E, never stored; call metadata;
+  IPs to the peer and to Cloudflare as a relay. Whether E2E audio must be declared as collected under
+  Play's definition is **(unverified)**; update the form in the same week as the stable.
+
+#### The drafts still owed (2026-10-21)
+
+Everything above says WHAT each store needs; these are the texts and the gaps, read against the
+repository on 2026-10-21. **Convention, as on [store-ugc-answers](../../store-ugc-answers.md): a
+store's definition restated here is _(unverified against today's text)_** - re-read the form itself
+before filling it. The forms are the owner's one-off clicks (App Store Connect, Play Console).
+
+**1. The microphone purpose string - today's text does NOT name calls, as `callsCompiled.test.ts`
+requires while `CALLS_COMPILED` is false.** The base `Info.plist` and both `InfoPlist.strings` hold
+the same sentence (voice messages, the sound of videos for posts and CanaReels). The flip commit
+(step 5) replaces it in all three, and the test's whole-word match (`appels?` / `calls?`) is what
+holds it:
+
+| Where | Proposed text |
+| --- | --- |
+| `Info.plist` (base, French) and `fr.lproj` | `Canari utilise le microphone pour vos appels audio, pour enregistrer des messages vocaux et le son des vidéos que vous filmez pour vos publications et vos CanaReels.` |
+| `en.lproj` | `Canari uses the microphone for your audio calls, to record voice messages and the sound of the videos you film for your posts and CanaReels.` |
+
+No other key moves: `NSCameraUsageDescription` keeps its text (no video), and the app declares no
+`NSLocalNetworkUsageDescription` in a store build (the local-bench patch of `ios.yml` is
+pre-release only). Android has no purpose string for `RECORD_AUDIO`; its runtime prompt is the
+system's own. **A gap on the PRE-release side**: a pre-release build calls (and, on dev, offers
+video) with the stable's microphone string, so an EXTERNAL TestFlight group would put a calling
+build before Beta App Review with a purpose string that never mentions calls - one more reason the
+flip's alpha stays with internal testers ([mobile](../mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on)).
+
+**2. The review notes, draft (English; App Store Connect > App Review Information > Notes).** The
+bracketed parts are filled at submission; credentials go in the Sign-In Information fields, never in
+this repository.
+
+> Canari is the messaging app of the Mines Saint-Etienne student community. This version adds
+> one-to-one AUDIO calls between two members who share a direct conversation. Calls are end-to-end
+> encrypted: the audio goes directly between the two devices, relayed through Cloudflare's TURN
+> service only when no direct path exists, and our servers never receive it.
+>
+> To test: (1) on the sign-in screen, choose "Connexion externe (service-account)" and sign in with
+> the account given in Sign-In Information; (2) open the direct conversation with [second account];
+> (3) tap the call button in the conversation header [confirm the control's label on the review
+> build] - iOS asks for the microphone, and the request names calls; (4) a member of our team answers
+> on a second device [window, Europe/Paris, and a contact to arrange another time]; (5) during the
+> call, lock the screen: the call continues. That is what the `audio` background mode is used for -
+> an ongoing call keeps its microphone while the screen is locked.
+>
+> This version declares no `voip` background mode and uses neither CallKit nor PushKit: a call rings
+> only while the app is open. Video calls are not offered. From the conversation, a member can
+> report and block the other; a blocked member cannot call.
+
+**3. The demo pair - owed, and one fact is not known.** The reviewers' way in is the existing
+"Connexion externe (service-account)" sign-in ([ecosystem-convergence](../../ecosystem-convergence.md),
+item 12) with the store-review service account, which feeds exclude by design
+([moderation-and-blocking](../../moderation-and-blocking.md)). A call needs a SECOND production
+account, a direct conversation between the two, the call permission allowed on both sides and no
+block - the owner's one-off. **Unverified: whether a service account can be rung at all.** Nothing
+read here excludes one from `initiate` or `ring` (the exclusion found is a FEED filter), but it has
+never been tried; it is read by one call between the two accounts on production in the review window
+(preflight P7, P8), before the submission is sent.
+
+**4. The privacy deltas, as candidates for the owner** - the facts are register row C21 and the
+Cloudflare processor row ([register](../../compliance/register-of-processing.md)), the only copy;
+this table maps them onto the two forms. **Read the CURRENT label and Data safety answers first** -
+neither form is in this repository - and decide together with B5's wording, so the forms and
+`/legal/privacy` say the same thing.
+
+| Fact (C21) | App Store privacy label (candidate) | Play Data safety (candidate) |
+| --- | --- | --- |
+| Call audio, end-to-end encrypted, never stored or readable by the server | not collected, if Apple's "collect" (data you or a partner can access beyond servicing the request in real time) reads E2E media as outside it | not collected, if Play's exemption for end-to-end encrypted data still reads as it is remembered |
+| Call metadata in clear on the server (room binding, presence, ring fan-out; logs per C13) | Usage Data > Product Interaction, linked to the user, App Functionality - only if the current label does not already cover messaging metadata | App activity > Other actions, collected, App functionality - same proviso |
+| The peer and Cloudflare see each device's public IP, on EVERY call (relay candidates are always gathered) | Apple counts an IP as an identifier only for tracking or as derived location; neither applies, so probably no new row | no new data type if no location is derived from it; Cloudflare is a service provider (the form's sharing exemption) |
+| The `[CALL_REPORT]` lines in the in-app log | not collected: the log leaves the device only when the member exports it | same |
+| The ring push carries caller and conversation names (C7, C21) | already covered by the messaging rows, if they name push content | same |
+
+**What remains after these drafts**: the owner's answers to the table, the demo pair, the video
+(recorded during the Tier B runs, never staged), and the listing texts
+([store-listings](../../store-listings.md#2-the-current-play-texts-and-what-is-stale-2026-10-09)).
+
 ## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
 
 **What it is.** The user's 2026-10-16 decision made concrete: a 1:1 call goes DIRECT between the
@@ -75,9 +335,10 @@ Nothing in this lot needs the DSI.
 
 | Constant | Value | Holds |
 |---|---|---|
-| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `USE_FULL_SCREEN_INTENT`. Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all five switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
+| `CALLS_COMPILED` | `false` | the store binaries' calling WITHOUT the native ring (since 2026-10-21, B2'): in-app calls, `audio` (since 2026-10-20), the microphone purpose strings, the Android microphone foreground service. Once it flips, the committed plist carries `audio` and `ios.yml`'s pre-release patch finds it there and adds nothing (it is idempotent; it can then be deleted). `callsCompiled.test.ts` asserts its switches agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)) |
+| `CALLS_NATIVE_RING_COMPILED` | `false` | the NATIVE RING of an app closed or in the background (since 2026-10-21, B2'): `voip`, `USE_FULL_SCREEN_INTENT`, the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`. The owner's decision of 2026-10-21 ships the first production calls WITHOUT it; it turns on with WP-C5 + WP-C6 and their K6/K7/K8 readings, and never while `CALLS_COMPILED` is off (asserted) |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
-| `CALLS_VIDEO_ENABLED` | `false` | the video-call button and both camera toggles; waits for WP-C3 (whole-frame encryption vs H.264) |
+| `CALLS_VIDEO_ENABLED` | `deployEnvironment() === 'development'` (since 2026-10-21; `CALLS_ENABLED` from 2026-10-20) | the video-call button and the camera controls; dev builds only, and it does NOT follow `CALLS_COMPILED`: the first production calls are audio only ([the audio enablement](#turning-calls-on-in-production---audio-11-only-owner-2026-10-21), [video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
 
 `VITE_DEPLOY_ENVIRONMENT=development` is written by `build.yml` for the dev web estate and by
 `android.yml` / `ios.yml` for every pre-release - and those pipelines refuse a pre-release whose
@@ -86,7 +347,7 @@ call; production web and stable apps do not.** A local workstation build sets no
 `VITE_DEPLOY_ENVIRONMENT=development` in `frontend/.env` to call locally (it also raises the banner).
 
 **The flow.** Ring and hangup are unchanged (MLS `call_invite` / `call_answered` / `call_hangup`,
-silent, over the chat socket - so an OPEN app rings; a killed one does not, that is `CALLS_COMPILED`).
+silent, over the chat socket - so an OPEN app rings; a killed one does not, that is `CALLS_NATIVE_RING_COMPILED`).
 Then, on each side:
 
 0. `POST /api/calls/initiate` binds the new room id to its group in Redis (`call:room:<id>`, TTL =
@@ -122,10 +383,16 @@ Then, on each side:
    (`CALL_ICE_TRANSPORT_POLICY`): host, then server-reflexive, then the Cloudflare relay. The trade:
    each party can learn the other's public IP.
 5. On `connected` the client logs `[Call] selected path pair=<local>/<proto>-><remote>/<proto>
-   relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the only place
-   that says whether a call was billed.
-6. `PeerLeft` (the other socket is gone, or this device was replaced by a sibling) ends the call;
-   a second `PeerReady` (the other party's device was replaced) rebuilds the peer connection.
+   relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the client's own
+   reading of its path, a DIAGNOSTIC. The TURN budget never reads it: it reads what Cloudflare
+   metered ([the kill switch and the metered budget](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
+   From then on a `[CALL_REPORT]` line every 10 s and one at the end carries the same pair plus
+   rates, loss, audio levels and the E2E worker's frame counts
+   ([calls-revival-plan section 6](calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence)).
+6. `PeerLeft` (the other party hung up, its away seat expired, or this device was replaced by a
+   sibling) ends the call; a second `PeerReady` (the other party's device was replaced) rebuilds the
+   peer connection, while `PeerReady { resumed: true }` keeps it - see
+   [a network blip](#a-network-blip-does-not-end-the-call-call-wifi-2026-10-19).
 7. **The ring window.** Both sides arm a timer of `ringTimeoutMs`. The caller's, if no `PeerReady`
    came, ends the call as MISSED (hangup + ring-end `cancelled` + the missed-call line). The callee's
    only covers a caller that vanished silently: the ring stops and nothing is written. A timer is a
@@ -146,9 +413,10 @@ build**, so an alpha app would have sent cleartext to a web peer that decrypts -
 that fails to attach ends the call.
 
 **Measured in Chrome 155 (2026-10-17), and it changed the code:** a RECEIVER transform attached in
-`ontrack` never sees a frame - the call connects, packets arrive, every sample is concealed
-silence. Attached to the receiver of the transceiver `addTrack` created, before negotiation, every
-frame decrypts. `initPeerConnection` now does that; `ontrack` attaching late logs a WARN. The same
+`ontrack` to a receiver that was ALREADY running never saw a frame - the call connects, packets
+arrive, every sample is concealed silence. Attached to the receiver of the transceiver `addTrack`
+created, before negotiation, every frame decrypts. (Narrowed 2026-10-19: attached in `ontrack` for
+a transceiver a RENEGOTIATION created, it decrypts every frame - [measured below](#audio-quality-measured-2026-10-19).) `initPeerConnection` now does that; `ontrack` attaching late logs a WARN. The same
 session found the worker counting a failed decrypt as `decryptOk` (fixed: `decryptError` only).
 
 **Server half:** [call-service p2p mode](../../services/call-service.md#peer-to-peer-mode-2026-10-17).
@@ -161,9 +429,11 @@ session found the worker counting a failed decrypt as `decryptOk` (fixed: `decry
 | A room is bound to its group; a token for it is refused for another group, an unknown room and after the ring window | `apps/chat-delivery-service/src/services/calls.service.spec.ts` |
 | The client speaks that protocol (Join p2p, roles, offers only as initiator, answers as polite, refuses without the transform, rebuilds on replacement), honours the ring window on both sides, and writes no missed call for a call that never rang | `CallService.p2p.test.ts` (fakes of WebSocket, RTCPeerConnection, worker) |
 | Two Chrome 155 contexts connect DIRECT (`host/udp->host/udp`) through the real relay, the REAL `encryption.worker.ts` encrypts and decrypts Opus, and the callee hears the caller's 440 Hz tone (RMS 0.71, peak 445 Hz) | a scratch page mirroring `CallService`'s negotiation, by hand, chrome-devtools MCP; a wrong key yields only `decryptError` and no decoded sample |
-| The signalling socket survives an idle call | the same run: one socket held 3.6 h with only the 25 s keepalive pings (local, no proxy in front) |
+| The signalling socket survives an idle call | the same run: one socket held 3.6 h with only the keepalive pings, then every 25 s - every 10 s, and answered, since 2026-10-19 (local, no proxy in front) |
 
-**NOT verified - owed:** the real app end to end (no local estate was up); a TURN-relayed call;
+**NOT verified - owed:** the real app end to end (no local estate was up); a TURN-relayed call
+(read since, forced from outside the app on desktops and both phones, 2026-10-20 - see the TURN
+paragraph below);
 anything on the Mi 9T or the iPhone (Android System WebView's and
 WKWebView's `RTCRtpScriptTransform`, the late-receiver behaviour on WebKit, microphone permission in
 the Tauri WebViews, audio routing); cellular and campus networks; the host nginx's 60 s timeout and
@@ -172,13 +442,305 @@ the Cloudflare tunnel in front of dev (the keepalive is there for them, unmeasur
 **The dev TURN secrets EXIST since 2026-10-17** (`DEV_CLOUDFLARE_CALLS_API_TOKEN`,
 `DEV_CLOUDFLARE_TURN_KEY_ID`, GitHub secrets). `serve-dev.yml` and `env-manifest.tsv` read them, and
 `docker-compose.dev.yml` hands them to chat-delivery-service since lot 1 (it did not before - the
-secrets alone would have changed nothing). They reach dev at the next pre-release deploy; until then
-dev answers 503 on `/api/calls/ice-servers` and every call fails at step 1 - by design, not a
-fallback to STUN only.
+secrets alone would have changed nothing). **They have reached dev since `v1.3.0-alpha.2`**: the
+`v1.3.0-alpha.4` dev deploy (2026-10-19) passed both and raised no "not set" warning for them, and
+dev serves lot 1, the ring window (#2010) and the call permission (#2048). Unset, dev would answer
+503 on `/api/calls/ice-servers` and every call would fail at step 1 - by design, not a fallback to
+STUN only. The phone procedure is
+[check CALL-L1](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both).
 
-**Still open from the plan:** the TURN budget estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts EVERY
-call as relayed; in P2P only `relayed=yes` calls cost, so it over-counts (harmless on dev). (A
-conversation at `none` ringing an OPEN app was closed on 2026-10-18 by the call permission below.)
+**The TURN budget estimator is gone (B7, 2026-10-21):** it counted EVERY call as relayed at
+3000 kbps; the budget now reads Cloudflare's own meter
+([below](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)). (A conversation at
+`none` ringing an OPEN app was closed on 2026-10-18 by the call permission below.)
+
+## The server's kill switch and the metered TURN budget (B12, B7, 2026-10-21)
+
+Two server-side controls the owner asked for before calls reach production (2026-10-21: a server
+kill switch, YES; the TURN budget fixed before its production value is touched). Neither flips
+anything: production's switch defaults to `off`, and `CALLS_COMPILED` is untouched.
+
+### The kill switch - `platform_config.calls_mode`
+
+| Value | What the server allows |
+|---|---|
+| `off` (the default, migration 014) | nothing starts: `initiate`, `ring`, `room-token` and `ice-servers` answer 403 `CALLS_DISABLED` |
+| `audio` | every call, except a ring that asks for video: 403 `CALLS_VIDEO_DISABLED` - see the limit below |
+| `audio_video` | everything |
+
+- **Where it lives.** One column on core-service's singleton row (`014_platform_config_calls_mode.sql`,
+  a CHECK constraint holds the three values), set by a global admin at `/admin/platform` through the
+  existing `PATCH /api/users/admin/platform` (`callsMode`). A change is logged at `warn` with its
+  actor (`callsMode off -> audio by=<first 8 of the admin's id>`, from `x-user-id` like the
+  announcement routes). The page sends ONLY the fields changed since it loaded (or since its last
+  save's answer): a form left open while another admin closed calls used to PATCH every field back
+  as loaded and silently re-open them. With no snapshot (the load failed) the save is REFUSED
+  (`admin_platform_save_needs_load`): sent whole, it would write the form's placeholders, calls
+  `off` and a floor of `0.0.0`, over the server. The three values are spelled in five places (the CHECK,
+  core's entity, chat-delivery's reader, `utils/appVersion.ts` `CALLS_MODES`, the admin page through
+  it), and `utils/callsModesAgree.test.ts` fails the day one drifts. The plan's `testers` value was not built: pre-release builds talk to
+  the dev estate, whose OWN row is its own switch.
+- **Who enforces it.** chat-delivery-service reads the row with plain SQL on EVERY call request that
+  starts or joins a call (`utils/calls-mode.ts`, `CallsService.assertCallsOpen`), never cached, so a
+  kill holds from the next request. A missing row reads as `off` AND logs at error (`platform_config row 1 is MISSING`), so a
+  lost row is not mistaken for an admin's `off`; a value outside the three THROWS
+  (a switch that cannot be read is not read as open). `ring-end` and `presence` are never gated: they
+  stop or record a call.
+- **How far `audio` is enforced.** On the server, ONLY by the ring's DECLARED `hasVideo`: `ring`
+  refuses a ring that says it carries video. `initiate`, `room-token` and `ice-servers` take no
+  media kind and check only `off`, so a callee joining an audio call, or a client that declares
+  audio and then sends video, is not refused by anything server-side. The client hides the video
+  button and the camera-on control; the server cannot see the media, which is peer to peer.
+- **What it cannot do.** A call already connected is peer to peer and never touches the server
+  again: it runs to its end. The switch stops every new call, every callee still to answer, and
+  every new TURN credential. A modified client could still turn its camera on inside an `audio`
+  call (renegotiation goes through the relay, which reads no mode); it costs the server nothing, and
+  relayed bytes are on the meter below.
+- **What the client does.** `GET /api/version` publishes `calls: { mode }`; `serverCallsMode()`
+  (`stores/appVersionCheck.svelte.ts`) reads it, `off` until an answer came - absent or unknown
+  reads as `off`, the closed direction. `utils/callsAvailability.ts` joins it to the build switches:
+  the audio button needs `CALLS_ENABLED` and a mode other than `off`; the video button and the
+  in-call camera control need `CALLS_VIDEO_ENABLED` and `audio_video` - to turn the camera ON: the
+  control stays while the camera runs, so a mode dropped to `audio` mid-call never leaves a camera
+  nothing on screen can stop. The session cache of `/api/version` stores the WIRE shape
+  (`serverVersionInfoToWire`), the one it parses back; it stored the parsed shape and read every
+  cached mode back as `off`. A refusal at any setup step
+  carries its code (`CallInitiateError`, now also for `ring` and `ice-servers`) and
+  `describeCallFailure` words it (`call_calls_disabled`, `call_video_disabled`) - the call ends as a
+  refused setup, with no missed-call line when it failed before the invite.
+- **Dev** seeds `audio_video` (`tools/dev-seed/seed.ts`). An EXISTING dev database gets the
+  migration's `off` and must be opened once at `/admin/platform` after the deploy that carries
+  migration 014 ([backlog](../../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
+### The TURN budget reads Cloudflare's meter (B7)
+
+**What was wrong.** `getIceServers` refused credentials once a Redis counter reached
+`CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` (950), and the counter was an ESTIMATE: call duration x
+`CALL_RELAY_KBPS_PER_DEVICE` (3000), added when a device cleared its presence. Every call counted
+as relayed, at a video rate - in P2P only a call whose selected pair is a relay candidate costs, and
+an audio call is tens of kbps. 950 GB read as ~350 call-hours a month, after which every call of
+the month would have been refused.
+
+**Why not the client's path.** Counting `relayed=yes` calls from the client's final path (B6) is a
+claim the server cannot verify, and CALL-PATH-LINE showed the client's line can be wrong without
+any malice; a client that lies under-counts with no bound.
+
+**The budget itself** (`readTurnBudget`, `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB`, an optional GitHub
+secret on each estate, `silent` in `env-manifest.tsv`): UNSET or empty is the default, 950 GB. An
+explicit `0` is the owner's decision of 2026-10-21 - **calls stay open but are STUN only, never
+relayed**: `ice-servers` answers STUN only with its own code, `TURN_DISABLED` - never
+`TURN_BUDGET_REACHED`, which would read as a spent month - without asking the meter, and BEFORE the
+TURN secrets are checked, so an estate at 0 needs none and never answers 503. Logged per call at
+`log` (a decision, not a fault); the client logs it at info and a call that cannot connect says
+`call_relay_disabled` ("this server does not use a call relay"), not the "unavailable right now" of
+an outage. Anything but a whole number (digits AND a safe integer: 400 digits are refused) is read
+as 0 with the same code, the closed direction, and logged at ERROR per call and per report - and
+`render-env.sh` refuses to deploy it at all (`whole_number`). What 0 cannot do: credentials issued
+before the switch keep relaying until `CLOUDFLARE_TURN_TTL_SECONDS` (2 h) runs out. Dev and
+production are ONE Cloudflare account and one free allowance; each estate's budget is its own value
+(`DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` on dev), and the meter each reads is the account's. It used to answer 950 for every value that was not a positive integer, `0`
+included, so "never relay" could not be written at all.
+
+**What it reads instead** (`services/turn-usage-meter.service.ts`): Cloudflare's GraphQL analytics,
+dataset `callsTurnUsageAdaptiveGroups`, `sum { egressBytes }` for the WHOLE ACCOUNT from the first of
+the UTC month to today. **The budget's period is the UTC CALENDAR month**, which is not guaranteed
+to be Cloudflare's billing cycle: the cap is ours, and a cycle that straddles two calendar months
+can see up to two budgets' worth. Egress is what Cloudflare bills and its free allowance is per account, so
+another key on the account spends the same allowance. Direct calls put nothing on the meter by
+construction; no client says anything. Configuration: `CLOUDFLARE_ACCOUNT_ID` (32 hex) and
+`CLOUDFLARE_TURN_ANALYTICS_TOKEN` (a token with Account Analytics read), `env-manifest.tsv` `warn`
+on both estates. One reading is reused for 60 s (`turn:metered:<YYYY-MM>`): a member hammering
+`ice-servers` must not spend the GraphQL quota, and concurrent setups share ONE meter reading in
+flight (single flight). The TURN CREDENTIALS are never shared: one request to Cloudflare per
+`ice-servers`, since a credential is a member's for its TTL. Every request to Cloudflare - the meter's and the credentials' - carries
+`AbortSignal.timeout(5000)`: past it the meter is unavailable (typed) and the credentials call a
+logged 503, so a Cloudflare that never answers cannot hold call setups open.
+
+**The query, and the documents it is read from.** The filter is `date_geq` / `date_leq` (whole UTC
+days, `YYYY-MM-DD`), not `datetimeMinute`: the month is whole days and the dataset's own example
+filters on `date` ([TURN analytics](https://developers.cloudflare.com/realtime/turn/analytics/)).
+The window a query may span is NOT assumed: the meter first asks
+`settings { callsTurnUsageAdaptiveGroups { enabled maxDuration notOlderThan } }`
+([settings node](https://developers.cloudflare.com/analytics/graphql-api/features/discovery/settings/)),
+cached an hour (`turn:metered:settings`, logged when read), and `dateChunks` splits the days it
+must ask into whole-day ranges no wider than `maxDuration`, asked as aliased sub-queries (`c0`,
+`c1`, ...) in ONE request, each grouped by `dimensions { date }`.
+
+**Every readable day is re-asked; only days past retention come from storage.** Each reading asks
+Cloudflare for EVERY day of the month still inside `notOlderThan`, and writes what it got to the
+Redis hash `turn:metered:days:<YYYY-MM>`, overwriting: nothing is frozen while Cloudflare can still
+correct it (a late ingestion, a session booked at a day's close - a first version froze a day an
+hour after it ended, and would have under-counted those for the rest of the month). Only a day
+Cloudflare RETURNED a group for is stored; a day with no group is never stored as 0, and a field
+`covered_from` records how far back readings reached. A day that has LEFT the retention is summed
+from its stored total, or counted as no relay if it was covered and had no group, and a day never
+read at all makes the meter unavailable. The hourly report below re-reads the meter while calls are
+open, so a day is read until its last readable hour. A `maxDuration` under a day is refused too -
+an under-count is a budget that never trips.
+
+**A meter that cannot be read withholds TURN, never the call** - a typed degradation, not a
+fallback. Unconfigured, unreachable, an HTTP or GraphQL error, no visible account, a dataset not
+enabled, a non-number: `ice-servers` answers 200 with STUN only (`stun:stun.cloudflare.com:3478`) and
+`turn: { status: 'unavailable', code: 'TURN_METER_UNAVAILABLE' }`; a spent budget answers the same
+with `TURN_BUDGET_REACHED`. Both log at ERROR (`[ICE] call=<id> TURN withheld (<CODE>)`), and the
+client logs `[Call] ERROR: TURN relay withheld by the server (<CODE>) - direct path only`. WHY THIS
+SHAPE: a 503 failed EVERY call, including the ones between two reachable peers that cost nothing,
+because a third-party analytics API had a bad minute; minting credentials without a reading would
+spend the money the budget exists to cap. STUN only does neither, and a call it cannot connect (both
+peers behind NAT) fails at ICE with the error line above explaining it, and the toast says it in
+its own sentence (`CallRelayWithheldError` -> `call_relay_withheld`), not "connection lost". A failure is remembered 30 s
+(`turn:metered:unavailable`): an outage costs one API call and one error line per 30 s, not one per
+call setup. TURN NOT CONFIGURED AT ALL (`CLOUDFLARE_CALLS_API_TOKEN` / key id unset) is still a 503:
+that is a deployment defect, not a transient reading.
+
+**The meter has a report** (`CallsService.reportTurnMeter`, hourly and once a minute after boot, in
+the service's family of hourly reports): `[TURN-METER] <YYYY-MM> (UTC calendar month): x/y GB
+metered egress (z%)` at `log`, at ERROR when the budget is reached or the meter is unavailable while
+calls are open, and NOTHING while `calls_mode` is `off` (nobody's concern then, so an hourly error
+would be noise). WHY A REPORT AND NOT A FAILED DEPLOY: a missing token is one case of three - a
+revoked or mis-scoped token is invisible to a deploy, and a `required` key would block every
+production deploy while calls are off there. The report sees all three, once an hour, while it
+matters.
+
+The limits, named: credentials already issued stay valid for `CLOUDFLARE_TURN_TTL_SECONDS` (2 h), so
+the overshoot past the budget is what the credentials outstanding at that moment relay, plus the
+meter's lag (minutes).
+
+**Measured against the live API (2026-10-21, the production token):** the endpoint is
+`https://api.cloudflare.com/client/v4/graphql` (the bare `/graphql` answers 10404 "No route"), and
+the `settings` query answers `enabled=true`, `maxDuration=2764800`, `notOlderThan=2764800` (32 days).
+So a whole calendar month (31 days at most) is one chunk and never leaves the retention: on this
+account every reading asks the whole month, and the stored totals are never used. **Still unexercised:** the
+per-date usage query itself (`dimensions { date }`, `orderBy: [date_ASC]`); the first dev deploy
+carrying this answers it, and a refusal names itself in the `[ICE]` error line.
+
+## A network blip does not end the call (CALL-WIFI, 2026-10-19)
+
+**Measured** on the bench ([readings](../../device-readings-2026-10.md)): a 6 s and a 14 s Wi-Fi
+outage on the Mi 9T each ended a connected call on the FIRST signalling close -
+`[Call] terminal failure: signalling WebSocket closed code=1006 - ending call` - with no reconnect
+and no ICE restart. A transport failure is not an answer, so it no longer ends anything.
+
+**The design** - every end is an answer or a spent budget, never a clock:
+
+| Event | Client (`CallService.ts`) | Server ([call-service](../../services/call-service.md#peer-to-peer-mode-2026-10-17)) |
+|---|---|---|
+| this device's signalling socket drops after `Joined` | `onSignallingLost`: re-open on the shared ladder CAPPED at 4 s (`cappedReconnectDelayMs` in `utils/reconnectBackoff.ts`: 1, 2, 4, 4, 4... s), `Join` with the seat's `resume_token`; each attempt has ONE deadline for open AND `Joined` (`CALL_SIGNALLING_RESUME_TIMEOUT_MS`, 5 s - a resource bound: a socket stuck CONNECTING on a black-holed network costs one attempt, not the ladder) | the seat stays ABSENT for `CALL_P2P_SEAT_GRACE_SEC` (60 s) from when the server HOLDS the socket dead - a write error, or two keepalive pings unanswered (`keepalive-lost`, at most 30 s); the partner gets `PeerAway` |
+| resume joined | `signalling resumed on attempt N`; the next `Joined` brings a fresh token | the seat is taken back IN PLACE (same roles); both get `PeerReady { resumed: true }` |
+| `PeerReady { resumed: true }` | keep the peer connection; `restartIfMediaDidNotSurvive` reads EVIDENCE: either state machine down, no inbound audio packet since the break (`getStats`), or - on the initiator - an offer still pending (its answer died with a socket). Any of them -> the initiator sends an explicit restart offer, the polite side a request | - |
+| ICE `disconnected` (first restart of a loss), or ICE OR `connectionState` `failed`, after it had connected, signalling up | initiator: `createOffer({ iceRestart: true })`, sent at once, after rolling back any pending offer; the POLITE side sends `IceRestartRequest` (it cannot offer), on its OWN 3-per-loss budget, and the initiator restarts even if its own path looks connected. ONE offer (or request) per pairing is in flight: its answer comes over a live relay, or the pair breaks and a new pairing starts | relays `IceRestartRequest` verbatim |
+| `PeerAway` | the call goes on, `reconnecting = true`; a new pairing (an offer sent before is never waited on again); ICE restart deferred until `PeerReady { resumed }` | - |
+| **ends the call** | `PeerLeft`; a resume `Refused` (`call-over`: seat expired or partner hung up); the MLS `call_hangup`; **15 resume attempts** (`CALL_SIGNALLING_RESUME_ATTEMPTS`, the last starting at +55 s) or **3 ICE restarts or restart requests** since the path last connected (`CALL_ICE_RESTART_ATTEMPTS`) spent | Close frame = hangup -> `PeerLeft` at once; grace spent -> `PeerLeft` |
+| ICE `failed` on a path that NEVER connected | ends the call, as before: there is nothing to restore | - |
+
+A relay without the resume protocol (no `resume_token` in `Joined`) still ends the call on a drop,
+saying so: `... and the relay gave no resume token`.
+
+**The two clocks are not one.** On a network that refuses at once, the 15th attempt starts 55 s
+after the CLIENT's loss; the seat grace is 60 s from when the SERVER holds the socket dead (up to
+30 s later). On a black-holed network each attempt runs its 5 s deadline, and a session refresh
+before an attempt is not bounded here, so the server MAY give up first; the late resume is then
+answered `call-over` and the call ends, the outcome the budget would have reached anyway. **The
+partner of a device that never comes back ends at most ~90 s after the loss** (keepalive detection
+<= 30 s, then the 60 s grace, then `PeerLeft`) - bounded by the server's answer, never by a client
+timer, and its own socket dropping hands it to its own attempt budget.
+
+### What the `1.3.1-alpha.2` bench reading found (2026-10-19), and the fix
+
+[Readings](../../device-readings-2026-10.md): 6 s outage `PASS`; 14 s `FAIL` (resumed only at
+attempt 5, +32 s, a restart request went out, then nothing - both phones on "Reconnexion..." with no
+audio); 90 s `FAIL` (the Mi 9T ended itself at +30 s, the iPhone sat on "Reconnexion..." for 100+ s).
+Read from the Mi 9T's exported log and the code, three causes, one chain:
+
+1. **The server never saw the Mi 9T's socket die.** Wi-Fi off leaves a HALF-OPEN socket: the 25 s
+   ping write landed in the kernel buffer and "succeeded", so no `PeerAway`, no grace, no `PeerLeft`
+   - the 90 s ghost. **Fix (server):** the keepalive is 10 s and the peer must ANSWER it - two
+   pings in a row with no frame of any kind back and the socket ends `keepalive-lost`, which keeps
+   the seat for a resume like any network failure
+   ([call-service](../../services/call-service.md#peer-to-peer-mode-2026-10-17)).
+2. **The iPhone's restart offer went into that dead socket and was lost**, leaving its peer
+   connection in `have-local-offer`. Every later `pc.restartIce()` then fired no
+   `negotiationneeded` (it only does from `stable`), so nothing was ever offered again; and the Mi
+   9T's `IceRestartRequest` after its resume was dropped because "a restart was in flight" - a
+   restart of a pairing that no longer existed. **Fix (client):** the restart is an EXPLICIT
+   `createOffer({ iceRestart: true })`, sent at once, after rolling back any pending offer; and an
+   offer or request belongs to the PAIRING it was sent in (`pairEpoch`, bumped on every signalling
+   break and every `PeerReady`), so one from an earlier pairing never blocks a new one.
+   **Two invariants keep an answer with ITS offer** (review of #2148): every negotiation step -
+   the relay's frames (all but `Joined` and `Refused`, which settle the socket itself and are
+   handled at once), `negotiationneeded`, an ICE restart offer - runs on ONE queue
+   (`signalQueue`), so no offer is rolled back or made while an answer is half applied; and every
+   offer carries a NUMBER (`seq`, inside the `sdp` string the relay already forwards verbatim -
+   `call-service` is unchanged) that the answerer echoes. An answer to any offer but the pending one
+   is dropped, named. A client older than the numbering sends none, and its answers are matched by
+   signaling state alone, as before (calls are dev-only, so both phones carry it after one deploy).
+   An engine that cannot CREATE the restart offer ends the call with
+   `ICE restart offer could not be made: <error>` - a retry would meet the same connection in the
+   same state.
+3. **The resume itself was late:** the uncapped ladder put attempt 5 at +31 s. **Fix:** capped at
+   4 s, 15 attempts (the 14 s outage resumes at +15 s).
+
+Also read in that log: Android Chromium reached `connectionState=failed` while
+`iceConnectionState` stayed `disconnected`, so `connectionState=failed` now triggers the restart
+too (`mediaPathDown` reads both). And the resume decides from the inbound audio packet count
+across the outage, not from a state that may still read `connected` on a path carrying nothing.
+
+**The restart budget counts per media LOSS, across pairings** (`CALL_ICE_RESTART_ATTEMPTS`). An
+offer that went into a dead socket costs one restart - the price of a bound a flapping peer cannot
+escape, since the keepalive can now break a pairing every 20-30 s. It is CHARGED when the offer is
+actually made (`sendIceRestartOffer`, after its pairing check; the polite side's request when it is
+sent), so a restart dropped in the queue costs nothing. It is REFUNDED on evidence, not only on a
+state transition: when ICE connects, when a resume finds MORE packets after the outage than before
+it (unreadable stats are no evidence, and refund nothing), or when
+the inbound packet count at a new break is above the count taken when the last restart's
+negotiation completed (`packetsAtRestart`) - a restart that worked while ICE never left `connected`
+(review of #2148: otherwise a long call ended at its third blip). **Every queued step belongs to
+the call it was queued for**: a step whose call is over (another call, idle, or the 1.5 s ended
+summary) is dropped - SILENTLY when it is still that call's ended summary (an ordinary hangup
+delivers both the MLS hangup and `PeerLeft`: expected), logged once per call
+(`... dropped - the call is now ...`) when it met a different call or none - and `failCall`
+on a call already over does nothing - so a late `PeerLeft` or restart can never end the next call
+or print a second "terminal failure". Two edges are recorded, not built (F6, F7 in
+[backlog](../../backlog.md)). The resume ladder has no jitter: two clients that lost the same
+network at the same moment retry in step (P3 in [backlog](../../backlog.md)).
+
+**A BEHAVIOUR CHANGE: A SUSPENDED APP NOW LEAVES THE CALL.** The keepalive's Pong comes from a
+RUNNING process. An iOS or Android app the OS froze mid-call (screen locked, sent to the
+background) answers nothing, so it is held dead 20-30 s in and its partner gets `PeerLeft` ~60 s
+later; before, its half-open socket kept the seat "present" indefinitely. Whether the bench phones
+stay running in a call is owed: CALL-L1 row 11.
+
+**AN ACCEPTED COST: AN APP KILLED BY THE OS NOW LOOKS LIKE A BLIP.** A killed app sends no Close
+frame and no MLS hangup, so the server cannot tell it from a network loss: the partner sees
+"Reconnexion..." for the 60 s grace, then `PeerLeft`, where it used to get `PeerLeft` at once. A
+deliberate hangup (the button, a page closed by the user - the browser sends a Close frame) still
+ends the call immediately.
+
+**THE UI CONTRACT: `callService.reconnecting` (a `Writable<boolean>`), shown with
+`m.call_reconnecting()` ("Reconnexion..." / "Reconnecting...").** `true` while a call in `incall`
+that had connected is getting its connection back: this device's signalling is resuming, the other
+party's is (`PeerAway`), or ICE is not `connected`/`completed` after having been. `false` outside a
+call, while ringing or connecting (that is `calling`), and as soon as the ended summary shows. Every
+change is logged with its three facts: `[Call] reconnecting=<bool> (signalling=lost|up
+peer=away|present ice=<state>)`. **No component reads it in this change (#2137)**: the screen shows
+"Reconnexion..." once the call UI of #2138, stacked on it, subscribes to it. Until then the call
+survives the blip with nothing on screen saying so.
+
+**Pinned by** `CallService.p2p.test.ts` ("a network blip does not end the call": fake socket, fake
+peer connection with rollback and inbound packet stats, fake `setTimeout` stepped through the
+ladder, no real sleep - including "the bench outages of 2026-10-19, replayed": 6 s, 14 s on each
+phone, 90 s on each phone) and `apps/call-service` (`src/p2p.rs` seat tests,
+`tests/p2p_signalling.rs` drop / resume / Close / grace-0 expiry / stolen token / a silent
+half-open peer held dead by the keepalive, and its resume, over the real binary). **What the
+fakes cannot prove:** the ORDER in which a real engine completes a rollback, an offer and a
+remote answer. The async fake (`latency`) reproduces ONE interleaving class - an operation started
+beside another overlapping it - and a mutation check shows it catches both a step run beside the
+queue and a missing offer-number check; WebKit's and Chromium's real ordering is read only on a
+phone. **Owed on a phone:** check CALL-L1 row 0 first (an idle call proves the Pong crosses the
+tunnel and nginx), then steps 8-11
+([device-verification](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)).
+Not handled here: a phone that changes network WITHOUT its socket dropping relies on ICE alone
+(`disconnected` -> one restart); cellular handover is unmeasured (no SIM on the bench).
 
 ## The user's decisions of 2026-10-18
 
@@ -262,33 +824,82 @@ ring and shows the missed-call line, the server logs `withheld from 1 member(s)`
 "allowed", it rings; a DM at `none` with no choice made does not ring; the control read once on the
 Mi 9T and on the iPhone.
 
-**OWED BEFORE `CALLS_COMPILED` FLIPS** (the review of #1997, 2026-10-17; none of it blocks a dev-only
-build, all of it blocks production):
+**WHAT THE REVIEW OF #1997 SAID WAS OWED BEFORE `CALLS_COMPILED` FLIPS** (2026-10-17). Built in
+draft #2013 on 2026-10-18, PORTED onto `main` on 2026-10-21 (it predated #2158 and #2166, so it
+was recreated, not rebased):
 
-- **F4 - say who sees what.** `iceTransportPolicy: 'all'` lets each party learn the other's public
-  IP, and Cloudflare (TURN) becomes a recipient of call metadata and relayed media. Both belong in
-  `docs/wiki/compliance/register-of-processing.md` and on `/legal/privacy` before production calls.
-- **F5 - a key both ends AGREE on, or a failure the user SEES.** Each side derives its key alone
-  (`exportSecret(groupId, 'mls-webrtc-media', callId)`); two devices at different MLS epochs derive
-  different keys and the call "connects" in silence. Owed: an epoch/fingerprint agreement over the
-  signalling channel, or at least a visible "decrypt failing" toast driven by the worker's
-  `decryptError` count.
-- **One key, both directions, no AAD.** The same AES-GCM key encrypts both parties' frames and the
-  frame header is not bound as additional data; a per-direction key (or the sender's leaf index in
-  the IV/AAD) closes the nonce-collision and reflection questions.
-- **The `fp=` log line prints the first 4 BYTES OF THE KEY** (`CallService.setupEncryption`). Log a
-  hash of the key instead (e.g. the first bytes of SHA-256), never key material.
+- **One key per direction, every frame bound to its kind** (`utils/callKeys.ts`,
+  `utils/callFrameAad.ts`, `workers/encryption.worker.ts`). Each direction's key is
+  `exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>|<sender role>', 32)`; the role is
+  `caller` on the device that rang (`startCall`) and `callee` on the one that answered
+  (`acceptCall`), never the relay's `initiator`, which a resume or a replaced device can change.
+  The caller sends with `caller` and decrypts with `callee`, the callee the reverse; the worker
+  imports the send key for `encrypt` ONLY and the receive key for `decrypt` ONLY, and refuses a pair
+  of EQUAL keys. Every frame's AES-GCM additional data is `canari-call-v2|<audio|video>` followed by
+  the bytes it keeps in clear (none for audio, the VP8 payload header for video - the #2166 binding,
+  kept). **The kind is handed to the worker by the page**, in each `RTCRtpScriptTransform`'s options
+  (`{ side, kind, epoch }`, the track's own `kind`): the worker no longer reads it off the frame's
+  class NAME, and a transform carrying no kind forwards nothing and says so. So: the two directions
+  never share a `(key, nonce)` space; a reflected frame fails; an audio frame offered to the video
+  receiver fails; another call's frames fail (the call id is in the export). Pinned by
+  `encryption.worker.test.ts` (two KNOWN-ANSWER vectors computed with `node:crypto`, one audio, one
+  VP8 interframe; reflection; wrong kind; equal keys) and `callKeys.test.ts`. **Not covered: replay
+  WITHIN one direction and kind** - no sequence number is bound, so a frame replayed on the media
+  path decrypts again; DTLS-SRTP's own replay window below the transform is what stands there.
+- **F5 - a mismatch the user SEES.** Each receiver transform counts its decrypt FAILURES while it has
+  decrypted nothing; at `DECRYPT_MISMATCH_FAILURES` (100, about two seconds of audio) the worker
+  posts `undecryptable` once. A matching key opens the very first frame, so a working call never
+  reaches the count: it is a proof, not a timer. The page (`CallService.onUndecryptable`) reads it
+  against THIS peer connection's evidence: no receiver decrypted anything (`e2eReceiverSeen`) -> an
+  `ERROR E2E key mismatch` line and the `call_e2e_key_mismatch` notice, once per call; another
+  receiver decrypts -> the keys agree and this receiver is broken another way, an ERROR line and no
+  notice; a stale epoch (a replaced device's dead peer connection) -> ignored. A replaced device is
+  judged on its own frames. A key AGREEMENT over signalling is still not built (the relay carries a
+  closed set of frames); two exported logs settle it: one side's `send_fp` must equal the other's
+  `recv_fp`. The call is not ended by it: the user is told, and hangs up. **A setup never outlives
+  its call** (review of #2176): a hangup during the microphone prompt used to let `startCall` resume
+  after `cleanup`, key a worker whose memo outlived the call, and leave the NEXT call silent under
+  the previous call's keys - which this notice would have blamed on the app's version. Every await
+  of `startCall`/`acceptCall` is now followed by `assertSetupLive` (a sequence bumped at each setup
+  and each cleanup): a late microphone is stopped, late keys are zeroed and never posted, and no
+  socket or ring follows (`CallSetupAbandonedError`, no toast). The ended summary counts as over
+  too: ICE connecting inside it no longer turns `ended` back into `incall` (which skipped `cleanup`
+  and left the microphone open), the signalling socket checks the same sequence before it opens, and
+  `cleanup` settles a pending worker-key wait so its 3 s timer never reaches the next call.
+- **The key log is a hash**: `media keys derived from MLS (role= send_fp= recv_fp=, sha256)`, the
+  first 4 bytes of each key's SHA-256 (`keyFingerprint`), never key bytes. A build older than
+  2026-10-21 printed key bytes: never paste its `fp=` line.
+- **F4 - who sees what**: row C21 and a Cloudflare Realtime TURN processor row in
+  [register-of-processing](../../compliance/register-of-processing.md), marked owed review. The
+  matching `/legal/privacy` paragraphs (sections 2, 3 and 4, the wording of #2013) are HELD in a
+  separate draft pull request: **owed the owner's yes (Q5) before calls ship**, since merging them
+  would publish a policy for a feature not yet in production.
+- **The call report** (WP-C2, #2011 ported the same day): [revival plan section 6](calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence).
+
+**Wire**: `mls-webrtc-media-v2` and the AAD are INCOMPATIBLE with every build before them - audio
+was sent with no AAD under one key until then. Both ends need this build; calls run on dev builds
+only, so no shim exists ([legacy-compatibility](../../legacy-compatibility.md#nothing-to-remove---a-call-media-frame-is-v2-only-2026-10-21)).
 
 ## The switches agree, and a silent frame stays unread
 
+**Two facts since 2026-10-21 (B2').** The owner decided that the first production calls ship
+without the native ring, so `callsCompiled.test.ts` now reads TWO constants: the ring's four
+switches (the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`, `voip`,
+`USE_FULL_SCREEN_INTENT`) agree with `CALLS_NATIVE_RING_COMPILED`; `audio` and the microphone purpose
+strings agree with `CALLS_COMPILED`; and the ring is never on while `CALLS_COMPILED` is off. Nothing
+flipped: every value was `false` / absent and stays so. What the iPhone without a VoIP token is sent
+for a ring (an FCM ALERT titled with the caller's name, `ringViaFcm`) is unchanged and is the owner's
+call with the audio enablement. The paragraph below is the 2026-10-18 shape.
+
 **One test, one fact (2026-10-18).** `frontend/src/lib/mobile/callsCompiled.test.ts` reads
-`CALLS_COMPILED` from `features.ts` and asserts that the four other switches of the table at the top
+`CALLS_COMPILED` from `features.ts` and asserts that the other switches of the table at the top
 of this page AGREE with it - the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`, the `voip`
-entry of `UIBackgroundModes`, the `USE_FULL_SCREEN_INTENT` tag - and that the microphone purpose
+and (since 2026-10-20) `audio` entries of `UIBackgroundModes`, the `USE_FULL_SCREEN_INTENT` tag -
+that `ios.yml` adds `audio` to a pre-release build in the branch that turns in-app calls on, and that the microphone purpose
 string (base `Info.plist`, `fr.lproj`, `en.lproj`) names calls exactly when calls are compiled. It
 replaced three tests that each asserted "off" (`iosCallDeclarations.test.ts`, two cases of
 `androidFcmManifest.test.ts`, one of `pushSilentDecrypt.test.ts`): a hard-coded "off" fails the
-revival commit for doing its job, an agreement fails it only when it forgets one of the five. Read
+revival commit for doing its job, an agreement fails it only when it forgets one of the six. Read
 as text: it proves what is written, never what runs.
 
 **The revival no longer reopens the Android push lane.** The Kotlin silent-frame guard used to be
@@ -317,6 +928,875 @@ ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFai
 `CallService.callsEnabled.test.ts` and `CallService.p2p.test.ts`. **Any block with any other member
 refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
 for a group ([backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)).
+
+## Audio quality, measured 2026-10-19
+
+**The report.** The user: the call audio "sounds horrible", then "un bruit informe au lieu d'un son"
+(a formless noise instead of a sound). The same day's phone reading (Mi 9T calling the iPhone 12,
+`1.3.1-alpha.1`, [device-readings](../../device-readings-2026-10.md), CALL-AUDIO-1): clean network
+(jitter 3-19 ms, ~0 loss, `host/udp`), yet the Mi 9T's NetEq logged 14,568 `Decode error` (~30 % of
+the iPhone's 50 packets a second), 62 % of samples concealed, `audioLevel` 1.000.
+
+**The rig.** [`tools/call-audio-fidelity`](../../../../tools/call-audio-fidelity/README.md): two
+headless Chrome 155 processes, each with a fake microphone playing a known 12 s reference (sweep,
+speech-like, tones, noise), call each other through the app's IMPORTED capture constraints, sender
+parameters and E2E worker, in `CallService`'s order. The receiver records the decoded audio at
+48 kHz; every decrypted payload is looked up, by a 32-bit FNV-1a hash and its length, among the
+payloads the other side encoded (a membership check, not a full byte compare);
+`getStats()` every second. `bun tools/call-audio-fidelity/rig.mjs` (about 45 s a row; run nothing
+heavy beside it), `--reanalyze <dir>` re-scores saved recordings, `bun test tools/call-audio-fidelity`
+self-tests the metrics (in `make test-ci-scripts`).
+
+**Results** (Chrome 155 to Chrome 155, loopback, one host; `match` = median correlation of 50 ms
+blocks with the reference; LSD on the speech segment):
+
+| Row                                                                    | match | bit-exact frames | LSD dB | bandwidth Hz | dropouts (ms) | concealed % | verdict              |
+| ---------------------------------------------------------------------- | ----- | ---------------- | ------ | ------------ | ------------- | ----------- | -------------------- |
+| app (as shipped, E2E on)                                               | 0.98  | 1726/1726        | 3.95   | 10412        | 1 (170)       | 0           | PASS                 |
+| app, far end talking                                                   | 0.98  | 1722/1722        | 4.22   | 10412        | 1 (170)       | 0.4         | PASS                 |
+| app, no E2E transform                                                  | 0.98  | -                | 3.92   | 10412        | 1 (170)       | 0           | PASS                 |
+| voice processing off                                                   | 0.99  | 1734/1734        | 2.67   | 19515        | 0             | 0           | PASS                 |
+| app, 5 % loss                                                          | 0.94  | 1671/1671        | 5.13   | 10011        | 1 (160)       | 4.5         | PASS                 |
+| no E2E, 5 % loss                                                       | 0.95  | -                | 5.06   | 10011        | 1 (160)       | 4.8         | PASS                 |
+| app, 15 % bursty loss + 40 ms jitter                                   | 0.89  | 1473/1473        | 6.75   | 8067         | 4 (350)       | 13.7        | (not gated)          |
+| RED first                                                              | 0.98  | 1720/1720        | 3.95   | 10412        | 1 (170)       | 0.1         | PASS                 |
+| DTX on                                                                 | 0.98  | 1711/1711        | 3.96   | 10412        | 1 (170)       | 0           | PASS                 |
+| callee audio on a NEW m-line, receiver transform attached in `ontrack` | 0.96  | 1754/1754        | 4.15   | 10412        | 1 (160)       | 0           | PASS                 |
+| FAULT: wrong key on the callee                                         | 0.00  | 0/0              | 29.2   | -            | 7610          | 0           | silence              |
+| FAULT: the sender encrypts twice                                       | 0.06  | 0/1735           | 29.3   | -            | 610           | 53.1        | loud noise, clipping |
+| FAULT: no receiver transform                                           | 0.07  | -                | 48.0   | -            | 600           | 53.7        | loud noise, clipping |
+
+**What it says.**
+
+1. **The app's own path does not corrupt audio.** Chrome to Chrome, both directions, every role,
+   clean or lossy, with RED or DTX: every decrypted payload's hash matches an encoded one and
+   the output correlates 0.94-0.98 with the reference. The E2E transform costs nothing measurable
+   (app vs no-E2E: same LSD, same concealment under loss).
+2. **The phones' symptom has ONE signature in the rig: bytes that are not Opus reaching the
+   decoder.** Ciphertext into the decoder (no decrypt, or a double encryption decrypted once) gives
+   ~53 % concealment, full-scale samples and a noise floor of -13 to -21 dBFS: the Mi 9T's 62 %,
+   `audioLevel` 1.000 and "formless noise". A wrong key gives SILENCE (every frame dropped), never
+   noise, so the F5 key mismatch is not this defect. Random bytes break Opus's framing rules
+   (RFC 6716 R1-R7) about half the time, which is the decoder's `Decode error` share.
+3. **(Corrected 2026-10-20: it was the Chromium receivers - every Chromium client short-circuited
+   both transforms, [CALL-E2E-BYPASS-MI9T](#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late).)** **So the fault sits on a side the rig does not run**: the iPhone's WebKit sender (WebKit's
+   encoded transform handing over, or sending, something other than one encrypted Opus frame) or the
+   Mi 9T's Android WebView receiver not decrypting. Both are named by the log line below.
+4. **Voice processing, not the codec, sets the band**: with the app's `echoCancellation`,
+   `noiseSuppression`, `autoGainControl` the sweep falls 10 dB by 10.4 kHz (tone at 10 kHz -6 dB)
+   and one ~170 ms onset after a pause is gated - identical with and without E2E, absent with
+   processing off (19.5 kHz). That is Chrome's standard voice chain, wideband-plus, not "horrible".
+5. **Clipping under loss.** Opus concealment overshoots: 0-3215 full-scale samples per 12 s under
+   5 % loss, varying run to run, with and without processing. Not gated on lossy rows.
+6. **DTX and E2E.** With `usedtx=1` Chrome hands the sender transform 0-byte frames in every pause;
+   the worker encrypts them into 28-byte packets, so DTX would save nothing under E2E. The app does
+   not negotiate DTX.
+7. **The lot 1 note above was narrower than it read** (corrected there). A receiver transform
+   attached in `ontrack` for a transceiver a RENEGOTIATION created decrypts every frame in Chrome
+   155 (row "new m-line"); the silence measured on 2026-10-17 was a transform attached late to a
+   receiver already running.
+
+**The change (draft PR).** The worker checks every plaintext audio payload against RFC 6716 R1-R7
+(`utils/opusPacket.ts`): on the sender BEFORE it encrypts, on the receiver AFTER it decrypts, and on
+a receiver payload that fails it, tries to decrypt it AGAIN - success is proof the sender encrypted
+twice. It forwards everything unchanged (a witness, not a filter; the decoder rejects such a frame
+anyway). `CallService` logs:
+
+- `[Call] ERROR E2E sender: audio payload is not an Opus packet (N so far; len= toc= pt=)` - this
+  device's ENGINE handed the transform something that is not Opus (or the transform runs twice);
+- `[Call] ERROR E2E receiver: ...` with NO sender line on the other device - it was damaged after
+  the other side's check, or arrives undecrypted;
+- `[Call] ERROR E2E receiver: audio frames decrypt TWICE` - the other device encrypts twice.
+
+Empty frames (DTX) are exempt, and so is any frame whose metadata does not NAME `audio/opus` (a RED
+or CN frame is not an Opus packet; an engine that omits `mimeType` gives no way to tell). A
+`getMetadata()` that throws is logged as a worker `warn` and costs no frame. The rig ASSERTS the
+silence: `verdict()` fails any row whose log carries an `opusInvalid` or `doubleEncrypted` line,
+and the double-encryption fault logs both sender and receiver lines from the first frame. Pinned by
+`encryption.worker.test.ts` and `opusPacket.test.ts`.
+
+**Owed on the phones (the next reading separates the hypotheses from the app log alone):**
+
+| On which device                        | Read                                                                      | Means                                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| iPhone (sender of the noisy direction) | `ERROR E2E sender` lines; the count of `E2E encrypting audio`             | WebKit's sender frames are not single Opus packets, or the transform is applied twice |
+| Mi 9T (receiver)                       | `E2E decrypting audio (N frame(s))` growing at ~50/s while it hears noise | it DOES decrypt: the bytes were wrong before encryption (iPhone side)                 |
+| Mi 9T                                  | no `E2E decrypting audio` at all, or `WARN late E2E receiver transform`   | its receiver is not decrypting: ciphertext reaches its decoder                        |
+| Mi 9T                                  | `ERROR E2E receiver: audio frames decrypt TWICE`                          | the iPhone encrypts each frame twice                                                  |
+| both                                   | the other direction (Mi 9T heard on the iPhone)                           | not read on 2026-10-19 (store build not inspectable)                                  |
+
+**The witness may be blind on the iPhone.** It accuses only a frame whose metadata names
+`audio/opus`; if WebKit's `RTCEncodedAudioFrame.getMetadata()` omits `mimeType`, the iPhone logs no
+`ERROR E2E sender` line whatever it sends, so an ABSENT sender line there proves nothing. The Mi 9T
+receiver (Chromium) carries `mimeType` and is the side to read.
+
+The in-app log was batched during that reading (LOG-1); read the lines from the console live, as the
+reading did. A decisive check that needs no new build: call each phone from desktop Chrome on
+`dev.canari-emse.fr` (the rig's engine). The phone that plays noise from a desktop caller, or makes
+a desktop play noise, is the one at fault.
+
+### The iPhone's sender, read from the code (2026-10-19)
+
+The desktop-vs-phone reading (device-readings, 2026-10-19) put the noise on the iPhone's SENDER:
+desktop Chrome and the Mi 9T both hear it as noise (58-68 % concealed, no loss), every Chromium
+pair is clean. The receivers logged no `E2E decrypt failed`, so the iPhone's frames AUTHENTICATE
+under the call key and still decode as garbage: what the iPhone encrypted was not one Opus packet.
+Read against the app and WebKit's source (`RTCRtpScriptTransform`, `RTCEncodedStreamProducer`,
+`LibWebRTCRtp{Sender,}TransformBackend`, `RTCEncodedFrame`), ranked:
+
+| #   | Hypothesis                                                             | For                                                                                                                                                                              | Against                                                                                                                                                                                                                                                                                 |
+| --- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H1  | Each frame passes the sender transform TWICE (double encryption)       | The only rig fault whose frames authenticate AND decode as noise: 53 % concealed, full scale, ~half `Decode error`. Engine-independent of codec.                                 | No path found: the app attaches one sender transform per `addTrack` (`if (sender.transform) return`); WebKit registers its backend as the frame transformer once (`m_isRegistered`), has ONE input-callback slot and replaces a previous transform's backend (`takeBackend`), not adds. |
+| H2  | WebKit hands the sender transform something other than one Opus packet | WebKit-only, both initiators. `RTCEncodedFrame.data` copies the libwebrtc payload with no prefix, so it would sit in WebKit's libwebrtc audio path, which this repo cannot read. | WebKit's own tests run Opus through audio script transforms; no WebKit bug names it.                                                                                                                                                                                                    |
+| H3  | WebKit negotiates and sends a non-Opus codec (RED, CN, G.722, PCMU)    | Safari's offer order was never logged.                                                                                                                                           | The answer picks a codec both sides decode, and a RED/PCMU payload decrypted intact decodes cleanly (rig row "RED first"); a codec mismatch is silence or clean audio, never noise.                                                                                                     |
+| H4  | `configureCallAudioSenders`' `maxBitrate` on WebKit                    | It runs after every remote description.                                                                                                                                          | A bitrate cap changes the encoder's target, never the packet's validity; WebKit refuses a malformed `setParameters` rather than applying it.                                                                                                                                            |
+| H5  | The iPhone sends some frames bypassing the transform (clear Opus)      | -                                                                                                                                                                                | A receiver drops a frame that does not authenticate (`E2E decrypt failed`, silence), it never decodes it: noise needs bytes that authenticate.                                                                                                                                          |
+
+**The cause is NOT known, and nothing here changes what is sent.** No code path for H1 was found,
+and the iPhone classes close by hardware, never by a fix against a suspected bug nobody has seen;
+so the change is DIAGNOSTICS ONLY, built so the next iPhone call separates the hypotheses from the
+app log alone. The worker forwards every frame as before; the rig row "the sender encrypts twice"
+stays a FAULT row, and shows the receiver's `decrypt TWICE` witness firing.
+
+**The diagnostic** (no payload byte leaves the worker; a clean call adds three lines per device):
+
+- `[Call] E2E sender transformer #N (K sender in this worker): first frame audio mime= pt=` - ONE
+  line per transformer. One sender per track: a second audio `sender` count in one call is a
+  double attach, and `mime`/`pt` is the codec WebKit feeds the transform (H3).
+- `[Call] E2E sender audio #N: F frame(s), not-opus= repeated-ts= own-iv= len=min..max avg= toc=configC/codeK (P%)`
+  once after 50 frames, then every 1500 frames (~30 s) ONLY while an anomaly counter is non-zero,
+  as `ERROR`. `own-iv` counts inputs that START with one of the last 64 IVs this worker produced:
+  its own output handed back, a double pass (H1), exact and with no decrypt. `repeated-ts` counts
+  RTP timestamps the same transformer already saw (one frame handed over twice). `not-opus` is H2
+  (on an engine that names `audio/opus`), and `len`/`toc` say what the input looks like.
+- `[Call] audio send=<mime> pt= ch= [fmtp] recv=... | local m=audio <order> | remote m=audio <order>`
+  3 s after `connected` - the codec each direction is BOUND to, and both SDPs' offer order (H3).
+
+**What the next iPhone call must show** (a dev pre-release, the iPhone calling or called by desktop
+Chrome, the iPhone's log read live):
+
+| iPhone log                                                     | Desktop hears | Means                                                                          |
+| -------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------ |
+| `own-iv` > 0, or two `sender transformer` lines for audio      | noise         | H1: each frame passes the transform twice; the transformer lines name which    |
+| `not-opus` > 0, `own-iv=0`                                     | noise         | H2: WebKit hands the transform non-Opus; `len`/`toc` say what                  |
+| `repeated-ts` > 0, `own-iv=0`                                  | noise         | WebKit hands the same frame over twice (two plaintext copies)                  |
+| all zero, `mime=audio/opus`, `audio send=audio/opus`            | noise         | the bytes go wrong AFTER the worker (WebKit's packetiser): not ours to see     |
+| `mime`/`audio send=` not Opus                                  | noise         | H3: the codec WebKit actually sends                                           |
+| all zero                                                       | clean         | not reproduced on that build: read again before anything else                  |
+
+### The Mi 9T logged no worker line at all (`1.3.1-alpha.2`) - the worker is now ASKED
+
+**What was read** (device-readings, `1.3.1-alpha.2`, five calls, both roles): the Mi 9T logged the
+main thread's `E2E sender/receiver transform attached` and `audio send=` lines and NOTHING the
+worker posts - no `transformer #N`, no `sender audio #N`, not even the first-frame `E2E
+encrypting/decrypting audio (1 frame(s))`.
+
+**What the code rules out.**
+
+- The worker IS started and its messages DO reach the main thread at least once: both `attached`
+  lines are written only after `ensureWorkerKeyReady` received the worker's `keyReady`.
+- The bridge logs every kind it is sent (`getOrCreateEncryptionWorker`), and `appendLog` is a bare
+  `console.log`.
+- Nothing is rate-limited past the first frame: `transformer` and `encryptOk`/`decryptOk` post on
+  frame 1, the sender shape on frame 50 (1 s).
+- There is ONE transform path (`RTCRtpScriptTransform`; the legacy `createEncodedStreams` was
+  removed in lot 1).
+
+**What the readings rule out.** On `1.3.1-alpha.1` the Mi 9T paired with desktop Chrome was CLEAN
+both ways (0 decode errors, [device-readings](../../device-readings-2026-10.md)). Desktop Chrome
+encrypts (the rig taps it), so the Mi 9T's receiver transform decrypts, and its sender transform
+encrypts: frames DO reach the Mi 9T's worker. **So the likely fault is posts from inside the
+transform not reaching the main thread on Android WebView 152**, not a transform that is off. That
+is an inference from two builds; the next reading settles it. **REFUTED 2026-10-20**: both Chromium
+ends were bypassing, so the clean pairing carried clear audio, see [CALL-E2E-BYPASS-MI9T](#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late).
+
+**Desktop Chrome 152 does not reproduce it.** The rig run on Chrome for Testing 152.0.7977.82 (the
+WebView's major) and on 155 shows every transform-context line and the transform in the path:
+1,721-1,726 sender frames and 1,747-1,820 receiver frames per 34 s.
+
+**The change.** The worker counts every frame each side is handed, BEFORE anything can drop or
+throw, and answers `{ type: 'report' }` from its `onmessage` - the path `keyReady` already crosses
+on the Mi 9T. `CallService` asks twice per call, 5 s after the first `connected` and at the end
+(before the worker is terminated), and logs ONE line each (`utils/callE2eReport.ts`):
+
+```
+[Call] E2E worker report (5 s after connected): transformers sender=1 receiver=1 | frames in sender=250 receiver=251 | encrypted audio=250 video=0 | decrypted audio=249 video=0 | decrypt-failed=0 short=2 (empty 2) no-key=0 not-opus sender=0 receiver=0 double=0 | engine=Chrome/152 attr sender=native receiver=native
+```
+
+Rules for the line:
+
+- It starts `ERROR` when a side has no transformer or no frame, or when non-Opus audio crossed.
+- A missing NATIVE `transform` attribute (`sender.transform = x` would then be a plain property) is
+  a fact, not a verdict: with a side at 0 frames it joins the `ERROR` ("the media may flow around
+  the worker"); with both sides fed it is a note, without `ERROR`.
+- "No frame" is judged at the end of a call ONLY if the 5 s report ran: a call hung up a second
+  after connecting may legitimately have received nothing. Decided by which report ran, not a clock.
+- The end line carries the call id: `(call end, call=<id>)`.
+- No answer within 1.5 s is its own `ERROR ... the worker did not answer` line.
+- A call that never connected owes no report.
+
+**The receiver's silent drop is counted too.** A receiver frame shorter than an IV was dropped with
+no trace. The rig shows they exist: 18-39 EMPTY frames per 34 s on Chrome 155, 110 on 152, none
+from the app's sender. They are counted in `short=` (empty ones without a line), and a non-empty
+one is named.
+
+**The rig.** It asks the same report and FAILS an E2E row whose sender or receiver transform saw no
+frame (`transform-in-path`). The FAULT row "no receiver transform" now fails on it too: tx=1722,
+rx=0. Pinned by `callE2eReport.test.ts`, `encryption.worker.test.ts` and `CallService.p2p.test.ts`
+("the E2E worker report").
+
+**What the next phone call must show** (Mi 9T, each line read from its console):
+
+| Report line on the Mi 9T                                               | Means                                                                                                                                                          |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| present, frames in sender/receiver ~250 each at 5 s, `decrypted` close | the transform IS in the path; the per-frame lines are lost because posts from inside the transform do not reach the page on this WebView. Read `not-opus` here |
+| `the worker did not answer in 1500 ms`                                 | once a transform is attached, nothing the worker posts reaches the page (`keyReady` came before)                                                               |
+| `transformers sender=0` or `receiver=0`                                | the engine never handed the worker that side's transformer                                                                                                     |
+| transformers 1, `frames in` 0 on a side                                | the transformer exists and is never fed: media flows around it                                                                                                 |
+| `attr ... absent` with a side at 0 frames (`ERROR`)                    | this WebView may route media around the worker: read the other device for `E2E decrypt failed` before calling it unencrypted                                   |
+| `attr ... absent`, both sides fed (a note)                             | the attribute is missing but the transform runs; not a fault by itself                                                                                         |
+| `not-opus receiver` > 0 while hearing the iPhone                       | the iPhone's frames decrypt to non-Opus (H2/H1 above); `double` > 0 is H1                                                                                      |
+
+**The desktop counterpart is a command now.** `tools/cross-client-harness/callpeer.mjs` starts a
+harness profile with a fake microphone, tracks the page's peer connections, can dial or accept, and
+prints the RECEIVER's concealed %, loss, jitter and codec every 5 s. It also writes the samples and
+every `[Call]` line (the worker report included) to a JSON file. The by-hand reading of 2026-10-19
+becomes `bun callpeer.mjs --browser w3 --launch --url https://dev.canari-emse.fr/chat --accept`
+([README](../../../../tools/cross-client-harness/README.md#callpeermjs---a-desktop-chrome-as-the-other-end-of-a-phone-call)).
+
+**TURN / server.** Every row runs `host/udp` on loopback; nothing here exercises TURN. The phone
+reading's `TURN CreatePermission error response` (403 and 600, CALL-TURN) is NOT a credential
+fault: Cloudflare refusing relay pairs to private or IPv6 peers that could never carry media, none
+when both ends relay; and the relayed path itself carries clean E2E audio over UDP, TCP and TLS 443
+([readings, 2026-10-20 afternoon](../../device-readings-2026-10.md#2026-10-20-afternoon---v131-alpha4-across-networks-forced-relay-tcp-and-tls-turn-a-nated-hotspot)).
+
+## CALL-E2E-BYPASS-MI9T (2026-10-20) - Chromium short-circuits a transform assigned one task late
+
+**The reading** ([device-readings](../../device-readings-2026-10.md), `1.3.1-alpha.3`): on the Mi 9T
+the worker report said `transformers sender=1 receiver=1 | frames in sender=0 receiver=0`, `attr
+native`, in ten reports over five calls, while audio flowed both ways; the iPhone failed to decrypt
+every frame from the Mi 9T; the screen said "Appel chiffre de bout en bout".
+
+**The cause, measured on the Mi 9T itself** (its WebView `Chrome/152.0.7977.64`, driven over CDP
+from the running app's page, no new build), with a two-peer-connection loopback inside the WebView,
+an oscillator or the microphone, and either a counting blob worker or the APP's own
+`encryption.worker` keyed through its `setKey`:
+
+| Where the transforms are assigned | frames in (sender / receiver, per side, ~4 s) | packets |
+| --- | --- | --- |
+| synchronously after `addTrack` / on its transceiver (the rig's order) | 188-196 / 188-195, every frame decrypted by the app's worker | flowing |
+| after an `await Promise.resolve()` (a microtask) | 191-194 / 191-194 | flowing |
+| after a `setTimeout(0)` (ONE task) | **0 / 0**, transformers 1 / 1 | **flowing** |
+| after a worker round trip (what `ensureWorkerKeyReady` was) | **0 / 0**, transformers 1 / 1 | - |
+| after the offerer's `setLocalDescription` / the answerer's `setRemoteDescription` | **0 / 0**, transformers 1 / 1 | flowing |
+
+Desktop Chrome 155 (headless) gives the same two rows (microtask fed, one task 0 / 0). So Chromium
+decides at the end of the task that created a sender or transceiver: no transform by then, and it
+is SHORT-CIRCUITED for good. The transform assigned later still gets its `rtctransform` event (the
+worker counts a transformer), `sender.transform` reads back set, and nothing is ever handed to it.
+
+**What the app did.** `initPeerConnection` called `pc.addTrack(...)`, then `await
+setupSenderTransform(sender)`, whose first statement awaited `ensureWorkerKeyReady()` - the FIRST
+use of the worker, so a script load plus a `setKey`/`keyReady` round trip: a task boundary, on every
+engine. So on EVERY Chromium client (Android WebView, desktop Chrome, the Tauri desktop apps) both
+transforms were short-circuited: clear Opus left, and received frames went to the decoder as they
+arrived. WebKit has no such short-circuit; the iPhone really encrypted.
+
+**What that reconciles.**
+
+- Mi 9T and desktop Chrome, CLEAN both ways on `1.3.1-alpha.1`: BOTH bypassed - clear Opus both ways,
+  decoded perfectly, **no E2E at all**. Reproduced in the rig: row `fault-transform-late` scores match
+  0.98, 0 % concealed, with `transform frames tx=0 rx=0`. Clean audio was never evidence of E2E.
+- iPhone to Mi 9T or desktop, NOISY (56-70 % concealed, ~14.5 `Decode error`/s): the iPhone's
+  ciphertext fed to a Chromium decoder - the rig's `fault-no-decrypt` signature (53 % concealed,
+  ~half the frames rejected). **CALL-AUDIO-1 is this defect**, and "the iPhone's SENDER is the faulty
+  side" (2026-10-19) was the wrong side: the iPhone was the only one encrypting.
+- iPhone receiving the Mi 9T: clear Opus authenticates under nothing - `decrypt-failed` on every
+  frame, silence on the iPhone.
+- The rig never saw it: it keys its worker BEFORE `addTrack` and assigns synchronously, so it
+  measured an order the app did not have. `fault-transform-late` now runs the app's old order and
+  must fail `transform-in-path` (it does: tx=0 rx=0, audio clean).
+
+**The fix (primary path).**
+
+1. `setupEncryption` puts the key INTO the worker (`ensureWorkerKeyReady`, logged `E2E worker holds
+   the call key`) before signalling is joined, so before any track exists.
+2. `attachSenderTransform` / `attachReceiverTransform` are SYNCHRONOUS and THROW when the worker holds
+   no key (`keyedWorker`). `initPeerConnection` does `addTrack` and both transforms of its
+   transceiver with nothing awaited between them; so does `toggleVideo` (and removes the camera
+   sender if an attach throws, before any negotiation carries it); `handleRemoteTrack` attaches a
+   new m-line's receiver in the `ontrack` task.
+3. Pinned by `CallService.p2p.test.ts`: the fake worker now answers `keyReady` in a TASK of its own,
+   as a real worker does, and the fake sender/receiver records a transform assigned after its
+   creating task (`late`) - the old code fails it.
+
+**No claim without evidence, and no call around the worker.**
+
+- `CallService.e2eProven` is `true` only once this call's worker has posted `encryptOk` AND
+  `decryptOk` (a frame encrypted, and a frame from the peer decrypted under the call key). The call
+  screen shows "Appel chiffre de bout en bout" on that store and "Verification du chiffrement..."
+  until then (`CallOverlay`, `call_e2e_verifying`).
+- From the 5 s report on, `checkE2eInPath` reads the peer connection's RTP packets
+  (`rtpPacketCounts`) against the worker's frames (`e2eBypassedSides`): packets sent with no sender
+  frame, or packets received with no receiver frame, judged against the PREVIOUS check's packets
+  (below), is media around the worker - logged `ERROR E2E path check: media
+  flowed AROUND the transform on ...`, and the call ENDS with `CallE2eBypassedError`, read to the user
+  as `call_e2e_bypassed`. A worker that does not answer, or stats that cannot be read, WITHDRAWS the
+  claim (`e2eProven` back to false, `WARN E2E claim withdrawn`), whatever it proved before: what
+  cannot be read cannot be verified. The check is re-armed, the silent worker's ERROR is logged once
+  per silence (`the worker answers again` ends it), and frame evidence alone (`inPath`) does not
+  bring the claim back - only an answered, conclusive check does. This is a PROOF from two counters,
+  not a deadline, and it does not replace the ordering: a bypass of media that flows when a check
+  runs is ended by the NEXT check (two checks, about 10 s, after the media starts); media that only
+  starts later is judged once something starts it (below).
+
+**The same class, one step removed: a transceiver the PEER's offer created** (review of #2158,
+measured on the Mi 9T 2026-10-20 in the same loopback: one side sends two audio m-lines, the other
+one, so `setRemoteDescription` creates the second transceiver; later `addTrack` REUSES it):
+
+| The reused, offer-created transceiver | its sender's frames | packets on that m-line |
+| --- | --- | --- |
+| receiver transform assigned in `ontrack` | (receiver) 293-299, fed | flowing |
+| sender left bare in `ontrack`, transform assigned in the SAME task as the later `addTrack` | **0**, transformer 1 | ~205 out, in clear |
+| the same, transform one task after `addTrack` | **0** | flowing |
+| sender transform assigned in `ontrack` too, `addTrack` later | 203, fed | flowing |
+| a FRESH `addTransceiver` instead, transforms in its task | 201, fed | flowing |
+
+So Chromium decides when the transceiver is CREATED, by `setRemoteDescription` as by `addTrack`. The
+app's `toggleVideo` would have reused the peer's video transceiver for the camera, sent it clear,
+and kept the screen's claim. Now: `handleRemoteTrack` attaches the receiver AND the sender of the
+transceiver in the `ontrack` task, and `toggleVideo` always creates a FRESH transceiver
+(`addTransceiver`). The rig shows both: `late-reuse` (the app's path now) PASS, tx=1753;
+`fault-reuse-bare-sender` (the old path) silence, tx=0.
+
+**The path check, per kind and per peer connection.** Each transform carries its peer connection's
+`epoch` (`transformEpoch`, never reset); the worker counts frames as `<epoch>|<side>|<kind>`
+(`framesInBy`) and posts `inPath` once per transformer on its first frame encrypted or decrypted.
+`checkE2eInPath` judges this read's frames against the PREVIOUS check's packet counts, audio and
+video apart, on the current epoch only: a kind is a bypass only if it had packets at check N-1 and
+still no frame at check N. **Reading packets before frames in the SAME check is not enough** (review
+of #2159): it holds for the sender (a frame passes the transform before its packets leave), but
+`packetsReceived` counts PACKETS and a video frame reaches the receiver transform only once all its
+packets are in, so a peer camera whose first packets landed just before the read has packets and no
+frame - a healthy call checked early by a joined trigger would have ended. A kind with packets and
+no frame and no earlier reading is too YOUNG: re-checked, never judged. It runs 5 s after each peer connection's first `connected`, after
+the camera is added and after a new remote m-line (`scheduleE2ePathCheck`). A rebuilt peer connection (`onPeerReady` for a replaced device) resets the
+evidence and the check; evidence from an older epoch or another call's worker is logged and lends
+nothing. A transform that cannot be attached ends the call with a typed `CallE2eSetupError`
+(`call_e2e_setup_failed`), never "connection lost".
+
+**When the check runs, and when it may not conclude** (review of #2158, S1/S2). Zero packets of a
+kind is no leak, and no proof either: a camera whose negotiation outlasts the 5 s delay would have
+passed trivially and never been looked at again, the claim already on. So:
+
+- A pending check KEEPS its deadline; a later trigger only adds its reason (`5 s after connected,
+  after the camera was added`). Re-arming on every trigger could postpone it for ever.
+- `inconclusiveMedia` lists what the check could not judge: an m-line this side sends on that is not
+  negotiated yet (`currentDirection` null), or a negotiated direction whose kind carried no packet.
+  So does a kind with packets and no frame yet. Anything listed re-arms the check
+  (`CALL_E2E_PATH_RECHECKS`), a budget BY COUNT, logging one line per CHANGE of what it cannot judge
+  and no report per re-check. Past it the check logs a WARN and WITHDRAWS the claim, and the next
+  event that starts media re-checks with a fresh budget (`recheckE2eOnMediaStart`): signalling back
+  to `stable` (a completed negotiation, or a rollback - one more look, never a verdict), a remote
+  track unmuting, or ANY local track this peer connection sends unmuting - the initial microphone
+  and camera (`initPeerConnection`) as well as a camera added mid-call (`toggleVideo`): a track muted
+  by the OS starts sending with no negotiation. A conclusive check resets the budget and returns a
+  withdrawn claim.
+- A check that lists `carried packets, no frame yet` ALWAYS schedules its next check, OUTSIDE the
+  budget: that verdict is one check away (a frame through the transform, or a bypass against this
+  reading), so the state cannot repeat, and spending the budget must never drop it.
+- **A healthy call LOSES the claim, by design**: a negotiated camera the OS keeps muted sends nothing,
+  so after the budget (6 re-checks, about 35 s after it was added) the screen goes back to
+  "Verification du chiffrement..." and stays there until video starts. Nothing is ended - zero
+  packets is no leak - but nothing was verified either.
+- A check whose peer connection was replaced while it waited is dropped BEFORE anything else: it may
+  not withdraw the new one's claim. A rebuild also resets `e2eReportFired`, so the end report judges
+  the new peer connection's frames only once its own check ran.
+- Per KIND, not per m-line (review L2): a transform does not know its `mid`, so the worker cannot
+  key by it, and the app carries at most one media-carrying m-line per kind and direction - the
+  camera's fresh transceiver sends, the peer's offer-created one receives. Keying by `mid` would need
+  the mid passed in the transform options at attach time, which an offer-created transceiver only
+  has once negotiated; not worth it while that holds. **Two limits of comparing CUMULATIVE per-kind
+  counts**: a second m-line of the same kind (two cameras, or a screen share sent as video) would let
+  one fed transform mask a short-circuited one, so the day the app sends one, keying by `mid` is owed;
+  and padding or probe packets (bandwidth estimation, RTX) count in `packetsSent` with no frame
+  behind them - not measured: a call whose only video packets are probes before the first frame
+  would read `carried packets, no frame yet`, and one with probes and no frame two checks running
+  would be accused. Unverified on the engines; a reading owed before calls are compiled in.
+- The reports name the peer connection they judge (review L3): after a rebuild the worker's lifetime
+  counts include the dead one's frames, so the 5 s and the end report print and judge
+  `frames in ... (peer connection N)` from `framesInBy`.
+- `ontrack` names the side that threw (`E2E sender transform failed in ontrack (video)`), and the
+  offer-created sender it arms logs `armed, no track yet` - it sends nothing until a later `addTrack`.
+
+**What is still owed, on the phones** (a dev pre-release with this change):
+
+| Read | Expected |
+| --- | --- |
+| Mi 9T report, both roles, iPhone and desktop as peers | `frames in` ~250 per side at 5 s, `E2E path check: no media around the transform`, `E2E proven` within a second of `connected` |
+| Mi 9T hearing the iPhone | no NetEq `Decode error` flood, concealed near 0 % (CALL-AUDIO-1 closes here or it was not this) |
+| iPhone hearing the Mi 9T | `decrypted audio` growing, `decrypt-failed` ~0, the voice audible |
+| desktop Chrome via `callpeer.mjs` | the same report as the Mi 9T |
+| a call to an OLD (`<=1.3.1-alpha.3`) Chromium client | its clear media fails every decrypt here; the new side's own transforms are fed, so it is not ended by its check, but the OLD side never gets `e2eProven` - expected, dev-only |
+
+## Video (lot 2, 2026-10-20) - VP8 behind a clear header, held by every transceiver
+
+**What was there.** Every piece of plumbing and none of the framing: `toggleVideo` already put a
+first camera on a FRESH `addTransceiver` with both transforms in its task, `ontrack` armed both
+transforms of a peer-created video transceiver, the path check judged `sender:video` and
+`receiver:video` on their own, and the overlay had a remote `<video>` and a mirrored corner. But the
+worker encrypted a video frame WHOLE, nothing chose the codec, `track.enabled = false` was the
+camera's off (camera light on, black frames sent), there was no switch, and `CALLS_VIDEO_ENABLED`
+was `false`.
+
+**Why a whole-frame encryption cannot carry video - measured, not argued.** The receiver's RTP
+depacketiser runs BEFORE the receiver transform and reads the codec's payload header itself. Two
+experiment rows of the rig (below) settle it on Chrome 155:
+
+| Row                 | What it does                         | Result over 34 s                                                                                              |
+| ------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `video-whole-frame` | VP8 encrypted whole (the old worker) | decodes 29.9 fps, but **503-520 key frames decoded** (two runs): the P bit is random, half the deltas read as key frames |
+| `video-h264`        | H.264 negotiated, encrypted whole    | the receiver transform is handed **0 frames**, 0 decoded, 2209 sender frames counted `not-vp8` - the packetiser found no NAL units                  |
+
+**The design** (`utils/callVideoFrame.ts`, `workers/encryption.worker.ts`, `utils/callVideo.ts`):
+
+- **A VP8 frame keeps its payload header in clear** (RFC 6386 section 9.1): 10 bytes of a key frame
+  (frame tag, start code, width, height), 3 of an interframe (frame tag). Layout
+  `header || IV(12) || AES-GCM(rest)`, the header bound as **additional data** - altered on the way,
+  the frame does not decrypt (counted in `decryptFailuresBy.video`). It reveals key-or-delta, the
+  partition size and the picture size, never a pixel - the layout of WebRTC's own e2ee sample.
+  Audio had no prefix and no AAD until 2026-10-21; since then EVERY frame's additional data starts
+  with `canari-call-v2|<kind>` and each direction has its own key ([above](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+- **Every video transceiver is held to VP8 (+RTX)** by `setCodecPreferences` - the camera's, and the
+  one the peer's offer created (in `ontrack`), so whichever side offers, the answer can only be VP8.
+  WebKit lists H.264 FIRST; nothing here relies on the order.
+- **NO FALLBACK, EITHER WAY.** An engine that cannot list VP8 or has no `setCodecPreferences`
+  never opens the camera (`call_camera_unavailable`, ERROR line); a transceiver that refuses the
+  preference has its sender removed before any negotiation carries it. A video frame that still
+  names another codec is encrypted WHOLE (it cannot decode) and counted `not-vp8` - the worker
+  report then leads with ERROR and the call logs one `ERROR E2E: video frames of <mime>, not VP8`
+  line. Never a clear frame. **The frame's own check FAILS CLOSED**: an engine whose frame metadata
+  names no codec is not read as VP8 - its frames are encrypted whole and counted, the clear split
+  is taken only on the engine's word (`setCodecPreferences` stays the real guard).
+- **Short frames are handled the same way on both sides**: an EMPTY video frame is passed through
+  untouched by sender and receiver (it carries nothing); a non-empty one shorter than its header
+  (not a frame an encoder emits) is DROPPED by the sender and counted (`short-sent`) - framed whole,
+  the receiver would read its first IV byte as a header and split it elsewhere. A flipped P bit
+  moves the split (3 read as 10, or 10 as 3) and the frame does not decrypt: the header LENGTH is
+  bound too (worker test).
+- **No E2E replay window.** Nothing in the frame layout numbers frames: a frame replayed inside the
+  same call decrypts. Replay is covered hop by hop by SRTP (DTLS-SRTP keys per peer connection),
+  as for audio since lot 1; a relay that is not a party cannot inject.
+- **The audio IV window stays audio's**: the ring the double-encryption probe reads holds audio IVs
+  only, so 30 video frames a second never flush it.
+- **Camera OFF** stops the capture (the light goes out), `replaceTrack(null)`, direction
+  `recvonly`: the peer's track MUTES and its screen shows the avatar (`remote track muted`). **ON
+  again** hands a new capture to the SAME sender, `sendrecv` - its transform stays attached and fed
+  (rig `video-off-on`). The first camera of a call that had none is a FRESH transceiver, as before.
+- **Switch** stops the current capture first (a phone opens one camera at a time), opens the other
+  with an EXACT `facingMode`, `replaceTrack` on the same sender. A switch that cannot open the other
+  camera turns the camera OFF, said (`call_camera_switch_failed`) and logged at ERROR - never a
+  silent keep of the old one. Offered only when `enumerateDevices` lists two cameras.
+- **One camera operation at a time, OFF always wins**: a tap while an on or a switch is still
+  opening the camera means OFF and is QUEUED, applied when that operation ends. A capture that
+  resolves after its call ended - or after ANOTHER call began, the permission prompt still up - is
+  stopped and never adopted (the operation remembers its call id and local stream).
+- **The background turns the camera OFF for real** (the same `cameraOff`: capture stopped, peer
+  sees the avatar) and the return turns it ON again; never `track.enabled = false`, which kept the
+  capture open and sent black frames. A button tap meanwhile cancels the automatic resume.
+- **640x480 at 30 fps, capped at 700 kb/s** (`CALL_VIDEO_MAX_BITRATE`); the cap is on the SENDER's
+  encodings, so it survives a switch.
+- **The screen**: the peer's picture full screen only while its track is live AND unmuted (else the
+  avatar); the self view full screen until there is a peer picture, then a corner (landscape-aware);
+  mirrored for the front camera only; `cover` when the peer's picture is held the way this screen
+  is, `contain` when not (read from the picture's own `resize`). The ring says `Appel video entrant`.
+  The bar keeps the camera on (as every phone) and carries a camera-off button and the peer's
+  thumbnail. The screen stays on while a picture shows (wake lock, [background](#the-call-in-the-background-2026-10-19)).
+- **The report**: the worker line adds `video frames in sender=.. receiver=.. encrypted=..
+  decrypted=.. decrypt-failed=.. keyframes-in=.. not-vp8=..` on a call that carried video (an audio
+  call's line is unchanged), and a conclusive path check adds the decoder's own numbers
+  (`describeVideoStats`: size, fps, frames decoded, key frames, freezes, PLI, the send limit).
+
+**Measured in the rig, 2026-10-20** (Chrome 155 to Chrome 155, fake camera at 30 fps, 34 s a row,
+the app's own worker, constraints, cap and `preferVp8`):
+
+| Row                                                                   | Verdict           | Video                                                                                                                                                                                            |
+| --------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `video` (both cameras from the start)                                 | PASS              | VP8 640x480, 30 fps, 0 freezes, 3 key frames, 0 PLI, ~600 kb/s; worker frames sender 1090 / receiver 1080, decrypted 1080, failed 0; the remote picture's mean colour matches the sent one |
+| `video-camera-late` (callee's camera added mid-call)                  | PASS              | 29.6 fps, 2 key frames, 1083 / 1083                                                                                                                                                                 |
+| `video-switch`                                                        | PASS              | 29.9 fps, 1086 sender frames AFTER the switch, through the same transform                                                                                                                                  |
+| `video-off-on`                                                        | PASS              | the peer's track mutes when off; events `unmute, mute, unmute`                                                                                                                                   |
+| `video-whole-frame`, `video-h264`                                     | experiments       | the table above                                                                                                                                                                                  |
+| `fault-video-bare-sender` (a camera on a REUSED offer-created sender) | fails, as it must | sender frames 0, decrypt-failed 1140, 105 PLI                                                                                                                                                    |
+
+Audio stays clean on every row (match 0.96-0.98, LSD 3.92-4.02 dB on the gated rows, the `app` audio row unchanged at 3.92 dB).
+
+**Owed on the phones** (a dev pre-release carrying this change; until then this is the rig only):
+
+| Read                                                                                                               | Expected                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mi 9T to desktop Chrome, `bun callpeer.mjs --browser w3 --launch --dial --video --hangup` (and the phone dialling) | `video ... VP8`, ~30 fps, freezes 0, key frames a handful; the worker line's `video frames` growing both ways, `not-vp8=0`; `E2E proven`                                                                               |
+| Mi 9T: off/on, switch front/back, minimise                                                                         | the desktop's picture mutes to the avatar and comes back; the back camera is not mirrored; the bar shows the thumbnail and the camera button                                                                           |
+| Mi 9T: rotate                                                                                                      | the desktop's picture is `contain` in landscape, `cover` in portrait; the corner turns                                                                                                                                 |
+| iPhone 12 (WKWebView)                                                                                              | `RTCRtpReceiver.getCapabilities('video')` lists VP8 and `setCodecPreferences` exists (else the camera stays off, said), frame metadata names `video/VP8` (a WebKit that names nothing FAILS CLOSED: whole frame, a `not-vp8` ERROR); orientation; the camera purpose string at the native revival |
+
+**Notes, accepted as they stand:**
+
+- **RTX on WebKit is unverified.** The preference list keeps VP8's RTX; whether WebKit pairs it and
+  retransmits through the transform has not been read on the iPhone.
+- **An old client cannot decrypt the new video** (a `<=1.3.1-alpha.4` dev build framed video whole).
+  Those builds had `CALLS_VIDEO_ENABLED = false` and only dev builds call at all, so no shipped
+  build is affected; audio between the two is unchanged.
+
+## The call UI: the whole screen, or a bar at the top (2026-10-19)
+
+**The user's verdict** (2026-10-19): *"l'UI de l'appel telephonique (surtout audio seul) est nulle,
+inadaptee sur mobile ... Sur un Messenger, soit ca fait toute l'interface, soit ca fait un bandeau
+en haut, pas cette espece de modal qui en plus est sur ou sous le reste de l'interface."* And from
+the iPhone the same day (CALL-IOS-HANGUP, P1): the docked card's mute, speaker and hang-up sat UNDER
+the native glass tab bar - the red glyph visible through the glass, no tap reaching it - so the call
+could only be ended from the other phone. A native view is drawn above the whole WebView, so no
+z-index can lift a web control over it.
+
+**Two shapes, one flag** (`stores/callView.svelte.ts`, `minimised`):
+
+| Shape | Component | Where it lives | Why it cannot be covered |
+|---|---|---|---|
+| Full screen: avatar, name, status/timer, 64px controls under the thumb (mute, speaker on the apps, hang-up; decline/accept when ringing), the E2E line, a chevron to minimise | `chat/CallOverlay.svelte` | portalled to the body, `fixed inset-0`, `--z-call`, safe-area padding on all four sides | it joins `coversScreen`, which HIDES the native tab bar and the native glass pieces; `--z-call` is above every sheet, modal, toast and confirmation |
+| A slim bar: "Bob · 02:13", a tap returns to the full screen, mute and hang-up on the bar (decline/accept when ringing) | `layout/CallBanner.svelte` | a ROW of the root layout's banner column, in flow, under the status bar | it pushes the page down rather than covering it (the column publishes `--app-banner-height`), and nothing native is drawn above the content's top edge - the glass pieces follow their web twins down |
+
+Every call opens full screen (an incoming ring too, on every route: the compact incoming toast and
+its `--z-call-notice` rung are gone). **The system Back, Escape, the chevron and the bar's expand
+all MINIMISE through ONE path** - the binder's `dismissFromUi()` (`bindHistoryOverlay`), so a
+minimise from the UI leaves a ghost entry the next expand REUSES; a direct `callView.minimise()`
+from a button would leave the history stack one entry deeper per cycle (the review of #2138 found it;
+`CallOverlay.svelte.test.ts` counts the depth and `history.length` over two cycles). No gesture ends
+a call. Measured in Chromium at 390x844 (touch) and 1280x800, on `/legal/privacy`
+with a stand-in `CallService` (no local estate, no account): the bar is 52px at the top of the
+content under the environment banner, the page starts below it, and `elementFromPoint` at the
+centre of each of its three controls lands on that control (44x44 each on touch). A conversation
+was NOT rendered under the bar (no signed-in account here) - `ChatArea`'s header is in flow inside
+`main`, so it is pushed like any page; **owed: one look on each phone with a conversation open.**
+
+**Who is on the other end** is read from the CALL's conversation (`utils/chat/callPeers.ts`,
+`CallService.currentGroupId`), never from the one on screen: once the app can be browsed under the
+bar, `currentConvo` is whatever was opened last, and the old overlay would have renamed the call
+after it.
+
+**What the surfaces say** is one `CallStatusKind` (`callStatusKind`): `ringing`, `incoming`,
+`connecting` (the callee is `incall` from the tap, seconds before any sound), `live` (the timer),
+`reconnecting` ("Reconnexion...", `CallService.reconnecting` - the ONE flag the CALL-WIFI resume
+writes from signalling lost, peer away and ICE state; the UI only reads it, and only once `connectedAt`
+is set), `ended` ("Appel termine ·
+02:13").
+
+### Which layer the call is on, and what it may never cover
+
+**The full screen has its own rung, `--z-call` (330), ABOVE `--z-critical` (320, a confirmation).**
+A call that rings while a "sign out?" or "delete?" confirmation is open must still be answerable;
+the confirmation is not lost - minimise the call and it is there, unchanged. Sharing 320 with
+`ModalOverlay` would have left the winner to DOM order, which is exactly the "on or under the rest"
+the user reported.
+
+**The PIN lock is never covered, and it is not by a z-index.** `PinModal` sits at `--z-modal` (280),
+below the call - so while it is up (`ChatBackgroundService` -> `callView.setLocked(showPinModal)`)
+the full screen STEPS BACK and the call is the top bar, which is in flow and covers nothing; it comes
+back when the PIN is entered. A ring on a locked app is still answerable from the bar - the device is
+not unlocked by it, and the conversation behind stays sealed.
+
+### The bar is never under a layer (CALL-BAR-COVERED, 2026-10-19)
+
+**Read on both phones (`1.3.0-alpha.2`):** with the new-post composer (a modal, 280) or its camera
+(a viewer, 300) open, the bar - a row of the banner column at `--z-banner` (120) - was under that
+layer, `elementFromPoint` at its hang-up returned the camera's video, and the call could not be
+ended until the layer closed.
+
+**THE RULE: while a call bar is up, nothing that covers the screen covers the bar.** `CallBanner`
+sets `data-call-bar` on the root, and `app.css` then:
+
+1. lifts the banner column (`.app-banner-column`) to `--z-call` - above every sheet, modal, viewer
+   and confirmation (the full screen, which also takes `--z-call`, is never up at the same time);
+2. pushes every covering surface's top inset below the column: the `coversScreen` action marks its
+   node `data-covers-screen`, and on such a node `--safe-area-inset-top` reads `--app-cover-top`
+   (status bar + `--app-banner-height`, resolved on the root). The surface still fills the screen
+   behind the bar; its OWN top controls (the camera's close, a phone-full modal's title) move below
+   it, as under a phone's in-call status bar. Every top control reads `--safe-area-inset-top`, never
+   `env()`, which is what makes one variable enough;
+3. gives the camera TAB (`fullscreen-place-open`, which runs under the status bar) its top padding
+   back, or the bar would sit under the notch.
+
+So a NEW covering surface is covered by the rule if it uses `coversScreen` and a rung below
+`--z-call`. `styles/callBarLayer.test.ts` fails on a covering file naming a rung at or above
+`--z-call`, on a component reading `env(safe-area-inset-top)`, and on any of the three rules gone.
+Measured in Chromium at 390x844 (touch) and 1280x800 with a stand-in `CallService` and a stand-in
+viewer-rung layer marked `data-covers-screen`: `elementFromPoint` at the centre of each of the bar's
+three controls lands on that control, and the layer's top control moves from y = 12 to y = 64 (the
+52px bar + its own 12px). With `data-call-bar` removed, the same probe on hang-up lands on the layer.
+**Owed: one look on each phone** with the composer and the camera open during a call.
+
+**The OS banner on top of the ring (CALL-OS-BANNER, iPhone, same reading).** In the foreground the
+ring is already the whole screen, and an "Appel entrant" OS notification was drawn over it. The local
+notification (`useNotifications.notifyIncomingCall`) is now DEFERRED while the page is visible:
+posted if the app leaves the screen while the call still rings, dropped when the ring ends; logged
+`[NOTIF] incoming call in <group> rings in-app - no OS notification while the app is on screen`.
+If a banner still shows in the foreground on the next reading, it is not this path - see
+[backlog](../../backlog.md#p3---an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix-2026-10-19).
+
+### One call screen on every platform (2026-10-23)
+
+**The request** (user): *"la parite, au moins en apparence, sur toutes les plateformes pour les appels. Un affichage plein ecran avec le nom, la photo et les boutons pour decrocher/decliner ... comme une application d'appel (Messenger, WhatsApp)."*
+
+**The audit found the structure already there** (`CallOverlay` is full screen with safe-area padding, name, avatar, decline/accept, mute, hang-up, timer, on web and in both apps, because the apps embed the same frontend). What was missing was the LOOK, and the three surfaces speaking one language:
+
+| Moment | In-app screen (web, Android, iPhone) | Android native ring (CallStyle + full-screen intent) | iPhone native ring |
+|---|---|---|---|
+| Incoming | name, photo, "Appel entrant", **Refuser (red, left) - Accepter (green, right)** | the system CallStyle: Decline left, Answer right | generic alert until the native ring (another work package) ships; CallKit's own screen, once it does, is decline left, accept right |
+| Outgoing | name, photo, **"Appel..." / "Calling..."** (was "Sonnerie..." / "Ringing..."), mute, hang-up | - | - |
+| In call | name, photo, `mm:ss`, mute, camera, speaker (apps only), hang-up | the ongoing CallStyle with the same "Calling..." text while dialling (it reads the same `call_ringing_label`) | - |
+
+What changed: the other person's photo, blown up, blurred and dimmed, is the backdrop of an audio screen (the SAME `Avatar` component, so one cache and one fallback; with no photo it is the dark initials tile; hidden from assistive tech; absent over a video picture). The avatar is larger (128 px, 176 px from `md`), the name is `text-3xl`, and the accept and decline buttons take two tokens, `--color-call-accept` and `--color-call-decline`, fixed in both themes like `cn-scrim`. An incoming ring after a notification tap is the same screen: every call opens full screen, on any route. Calls are 1:1 (a group has no call), so there is no group screen to draw. No control depends on the keyboard, and `motion-safe` gates the ringing halo.
+
+`CallOverlay.svelte.test.ts` ("the screen every platform shows") pins the name, the backdrop, decline-before-accept DOM order, the tokens, "Calling..." and the absence of Accept on an outgoing call.
+
+**Rendered in Chromium** with a stand-in `CallService` on a public route (no estate, no account, so the photo is the initials tile): [incoming at 390x844](assets/call-screen-incoming-390.png), [in call at 390x844](assets/call-screen-live-390.png), [calling at 1280x800](assets/call-screen-calling-1280.png) (the desktop screen is the whole window, as on Messenger web). **Owed to a phone:** a REAL photo behind the blur on the Mi 9T and the iPhone (WebKit's `blur-3xl` on a scaled element is the cost to read), the safe-area on the notch, and the Android speaker button in the screenshot's place.
+
+### Ringing, announcing, hearing
+
+- **The ring is an `alertdialog` with focus on Accept** (`preventScroll`); once answered it is a
+  plain `dialog`. ONE `role="status"` region, outside the full screen so it survives a minimise,
+  announces each state change - "Appel connecte" rather than the timer, which would speak every second.
+- **A refused voice says so.** A WebView may refuse `play()` without a gesture (`NotAllowedError`);
+  the voice usually arrives seconds after the last tap. `utils/callVoice.ts` tells that refusal from
+  any other failure, the screen and the bar say "Toucher pour entendre", and the NEXT pointer event
+  anywhere (or the Accept tap, which primes the sink) starts it. Logged: `[Call] WARN voice refused
+  without a gesture (<why>) - waiting for a tap`.
+- **A second call while one is up is not rung, and nothing is sent back.** A hangup would reach the
+  whole conversation - our own other devices included, which may be free to answer it. Logged:
+  `[Call] invite <callId> in <groupId> not rung - busy (state=... call=...)`
+  (`CallService.p2p.test.ts`, "a second call while one is up").
+- **The 64px controls are size-checked on the RENDERED screen**, not by `iconButtonScale.test.ts`:
+  they are drawn by a snippet that markup scan cannot see through. `CallOverlay.svelte.test.ts`
+  holds every button of the ring and of the call to `ui-icon-button` or `size-16`; the bar's buttons
+  are plain markup and stay under the scan.
+
+## The call in the background (2026-10-19)
+
+**The timer is a function of timestamps**: `CallService.connectedAt` (first `connected`, not the
+tap) and `endedAt`, read by `utils/callClock.ts`; the 1 s interval and a `visibilitychange` only
+REPAINT it. A throttled or frozen page is right on its first frame back.
+
+**One audio sink for the whole call.** It used to live in each of the old overlay's two views, so
+minimising destroyed the element playing the voice and built another. `CallOverlay` is mounted for
+the whole call and holds the only `<audio>`; every `<video>` is muted.
+
+**What the web can and cannot do** (what each engine does is unmeasured; the native half is a
+backlog item, [P1 - a call does not survive the app leaving the screen](../../backlog.md#p1-blocks-calls_compiled-not-dev---a-call-does-not-survive-the-app-leaving-the-screen-on-either-phone-2026-10-19)):
+
+| Concern | Web (done) | Native (owed) |
+|---|---|---|
+| The OS knows a call is up | Media Session: title = the peer, `hangup` / `togglemicrophone` handlers, `setMicrophoneActive` (Chromium) - `utils/callMediaSession.ts`, each action in its own `try`, each refusal logged | Android: BUILT, [below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) (a `microphone` foreground service, not `phoneCall`); iOS CallKit for EVERY call (owed) |
+| The microphone in the background | nothing can hold it: Android 9+ gives a backgrounded app silence; WKWebView stops capture when hidden | Android: the foreground service (BUILT); iOS: an `AVAudioSession` call session (owed) |
+| Audio route (speaker, earpiece, Bluetooth) | iOS only: label-matched `setSinkId`, best effort, logged when there is nothing to route to | Android: `AudioManager.setCommunicationDevice` in the service (BUILT); iOS: `AVAudioSession` (owed) |
+| Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it. **A video call holds one** while either picture is on screen (`ScreenWakeLock` of `live/liveDevice.ts`, tag `CALL-WAKE`), taken again on every return to the foreground | - |
+| Diagnosis | `[Call] app hidden` / `visible`, with `state=`, `mic=live/os-muted` and `voice=playing` or `paused`, `the system took the microphone`, `the voice was paused while hidden - starting it again` | - |
+| The partner is told | `MicSuspended { suspended }` over the relay, sent by the side whose OS took its microphone; a notice on both screens and in the live region, a toast on the way back ([below](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)) | - |
+
+**Read on both phones since** ([device readings](../../device-readings-2026-10.md)): the Mi 9T loses its
+call socket and all audio 5 s into a lock (CALL-LOCK-ANDROID, WP-C-BG-A); the iPhone keeps the call
+and loses only its microphone - next section.
+
+## WP-C-BG-I - the iPhone's microphone in the background (2026-10-20)
+
+**What was measured first** (`v1.3.1-alpha.4`, TestFlight build 100300104, iPhone 12 on iOS 27.0.1,
+Mi 9T caller, same Wi-Fi; the Mi 9T's `getStats()` every 5 s over CDP, the iPhone's app state through
+WDA every 15 s). The iPhone was locked by WDA for 3 min 20 s mid-call:
+
+| Observable | During the lock |
+| --- | --- |
+| The iPhone's process | the SAME pid before and after, WDA app state `3` (running in the background) at every poll, never `2` (suspended) |
+| The iPhone's WebRTC stack | ALIVE: its RTCP receiver reports kept reaching the Mi 9T (`remote-inbound-rtp` round-trip measurements 4 -> 39, the iPhone's `remote-outbound-rtp` reports 3 -> 42), so it was receiving the Mi 9T's audio and answering for it |
+| The iPhone's microphone | GONE within 3 s: the Mi 9T's inbound audio packets froze at 1020 and did not move for the whole lock (its concealed samples climbing by 240 000 every 5 s) |
+| On unlock | packets again within 10 s (1020 -> 1614), audio level back |
+
+That is the alpha.3 reading (`WARN the system took the microphone (track muted)`) with its cause
+separated: **nothing is suspended, CallKit or not; only the capture is muted.** WKWebView mutes a
+page's microphone when the app is hidden **unless `UIBackgroundModes` contains `audio`** - stated by
+WebKit's media-capture maintainer ([WebKit bug 226620](https://bugs.webkit.org/show_bug.cgi?id=226620),
+comment 3) and reported fixed by exactly that on iOS 17.5
+([Apple forums 689182](https://developer.apple.com/forums/thread/689182)). WebKit configures the audio
+session itself while it captures (`playAndRecord`), so no native `AVAudioSession` code is written:
+none was shown to be missing.
+
+**What was built:**
+
+- **The `audio` mode on every PRE-RELEASE iPhone build**, patched by `ios.yml` in the SAME branch that
+  writes `VITE_DEPLOY_ENVIRONMENT=development` (the line that turns in-app calls on), never into the
+  committed `Info.plist`. A stable cannot call (`CALLS_COMPILED = false`), and a mode declared and
+  unused is what App Review refused once (2.5.4). It becomes the SIXTH switch: `callsCompiled.test.ts`
+  asserts the committed mode follows `CALLS_COMPILED` and that `ios.yml` adds it only in that branch.
+- **CallKit is NOT the fix for this.** The process was never suspended, so a CallKit report would buy
+  nothing the measurement shows missing; reporting every call to CallKit stays with the `voip` revival
+  (it is mandatory for a VoIP push, which the in-app call does not use).
+- **The partner is told, whatever the cause** (Siri, another app's call, a build without the mode):
+  `CallService.watchSystemMicrophone` listens to the capture track's `mute` / `unmute` (moved there
+  from `CallOverlay`, which only logged them) and sends `MicSuspended { suspended }` over the relay;
+  only the sender knows, and silence, a lost path and a quiet room look the same from the other end.
+  The partner's full screen, its top bar and the live region read *"Le téléphone de X a coupé son
+  micro"* while it lasts; the local screen reads *"Votre téléphone a coupé votre micro"*, and because
+  that screen was hidden while it lasted, a toast says for how long on the way back
+  (`call_mic_was_suspended`, measured on `performance.now()`, a clock no network time can move).
+  The notice shows, and is announced, only while the call is LIVE - one rule, `callMicNotice`, read
+  by the full screen, the bar and the live region alike. When it ends the live region says the
+  other party is heard again ONCE, or nothing for this device's own (the toast says it), and never
+  falls back to "connected". A `PeerAway` clears the partner's report (no fresh evidence), and each
+  pairing (`PeerReady`, first, replaced or resumed) re-announces a microphone still held, so a
+  `false` lost with a dropped socket cannot leave the notice stuck. Server half: [call-service](../../services/call-service.md#signal-frames).
+
+**Owed on hardware** (a pre-release carrying this, both phones; the steps are
+[CALL-L1](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)
+row 12): the `UIBackgroundModes of this pre-release build:` line of the iOS job lists `audio`; the
+iPhone locked 60 s and backgrounded 60 s mid-call - the Mi 9T's inbound audio packets keep rising,
+the iPhone logs NO `the system took the microphone`, and the Mi 9T's voice is heard on the locked
+iPhone. Three more, because the mode is APP-WIDE and the signal is new: whether a reel and a voice
+message now keep PLAYING locked or in the background (a behaviour change to accept or refuse); an
+audio route change (AirPods, a wired headset) and a short interruption mid-call, measured for a
+`mute`/`unmute` FLICKER - each one would put a false notice on the partner's screen, and no debounce
+is written before that rate is read; and a call accepted from the lock screen (the track handed over
+already muted). If the mode does not keep the capture, the next candidate is WebKit's own policy,
+read from the iPhone's syslog (`pymobiledevice3 syslog live`, `mediaserverd` / `WebKit` lines) - not a
+native audio session written blind.
+
+### WP-C-BG-A - the Android ongoing-call service (2026-10-20)
+
+**Why.** Read on the Mi 9T (`1.3.1-alpha.3`, [readings](../../device-readings-2026-10.md), CALL-L1
+row 11): locked 40 s or sent HOME 40 s, the call socket was reset 5 s in and both directions of audio
+stopped, while the page's JavaScript KEPT RUNNING (a `connection failed` every 4 s in the
+background). The process was not frozen, it was cut off from the network and the microphone - what
+Android does to a process with nothing in the foreground. A foreground service is the platform's
+answer, and the one every calling app holds.
+
+**What is built:**
+
+| Piece | Where | What it does |
+|---|---|---|
+| The service | `CallForegroundService.kt` | type `microphone`; the ONGOING `CallStyle.forOngoingCall` notification (the peer's name, a chronometer from `CallService.connectedAt`, the system's own hang-up button, a tap brings the task forward with a launcher intent - never a deep link); the audio MODE set only when nobody set it before, and never restored from a saved value (see "The mode has another owner" below); a PARTIAL wake lock released by every end path, acquired for a 4 h period and renewed while the call is up (see "Every end path"); silent channel `canari_call_ongoing`, created on the first call so a build that places none never shows it |
+| The route | `CallAudio` in the same file, choice in `call/OngoingCall.kt` (`pickCallOutput`) | speaker on: the loudspeaker; off: the most personal output present - hearing aid, BLE then SCO headset, wired, USB, earpiece - re-chosen when a device comes or goes, logged only when the choice changes. API 28-30: `isSpeakerphoneOn` only (no Bluetooth SCO). Replaces the label-matched `setSinkId` on Android, which found no labelled output on the Mi 9T |
+| The transition table | `call/OngoingCall.kt` (`decide`) | start / update / stop / hang-up against the CALL ID in the foreground (null when none); every command is logged with its effect. A start of the running call is a refresh; a start of ANOTHER call while one runs takes the foreground over and logs an ERROR (the earlier call's stop was lost); an update or a stop of a call that is not the running one is an earlier call's command landing late, or one in flight when the service had left - EXPECTED, logged at INFO with that cause; a stop naming no call (the page gone, a new page) stops whatever runs; the notification's hang-up makes the service LEAVE THE FOREGROUND ITSELF and then tells the page, which ends the call - the service's end never waits on a page being there |
+| The bridge | `CallBridge.kt` (`window.canariCall`: `start(json)`, `update(json)` - the description plus the `callId` the page draws per call -, `stop(callId, reason)`, `pageLoaded()`) and one DOM event up, `canari:call-native` (`started`, `failed` with a `code` - `off-screen` or `refused` -, `stopped`, `hangup`, `foreground`), every one naming its `callId`; the page DROPS an event of another call | registered by `MainActivity` ONLY when the service is in the merged manifest. `start` is refused BEFORE it is attempted when the activity is not RESUMED (`off-screen`) or `RECORD_AUDIO` is not granted (`refused`) - the two preconditions of a microphone service, known here, never learnt from a crash. The start is a PLAIN `startService` (legal: the app is on screen), and the service calls `startForeground` in `onStartCommand`: a refusal is then a logged exception and a `failed` event, where after `startForegroundService` a service stopping without `startForeground` is counted as a crash of the process. A `SecurityException` or `ForegroundServiceStartNotAllowedException` met while the app is NOT on screen (HOME pressed between the bridge's check and `startForeground` on the main thread) is `off-screen`, not `refused` (`classifyStartRefusal`). Every `stopSelf` names its `startId`, so a start delivered before a preceding stop was handled is not destroyed with it |
+| The page's side | `lib/mobile/androidCallService.ts`, opened by `CallOverlay` once per call | `ongoingCallSpec` turns the call's status kind into the description (a Paraglide word, never the running timer); `start` once the call HOLDS the microphone and is the caller's `ringing` or the callee's `connecting` - seconds after the tap, so on screen with the grant answered; `update` only on a change; `stop` at `ended`. An `off-screen` refusal is a WARN and is asked ONCE more, with the call's current description, when native sends `foreground` (the activity resumed with that refusal pending) - an EVENT, never a clock; a second refusal, or any `refused`, is an ERROR and final for the call. A build without the bridge logs `ERROR this Android build has no ongoing-call service` once per call. The speaker toggle is shown on Android only when the bridge exists - the route IS the service's - and is DISABLED, labelled "output unavailable for now", while a start waits for `foreground` and once the service is refused or gone for the call |
+| Teardown | `MainActivity.onDestroy`, `onTaskRemoved`, `onBackPressed`, `+layout.svelte` | a destroyed activity (its WebView is destroyed with it, and the call) stops the service; a swipe from Recents stops it; a page that LOADS calls `pageLoaded()` once (see "Every end path"); Back at the root during a call moves the task back on API 28-30 (API 31+ does that itself) |
+
+**The mode has another owner (review F1).** Chromium's `AudioManagerAndroid` may set
+`MODE_IN_COMMUNICATION` itself when the page opens a capture for a call, and put the mode back when
+the capture closes. The service starts AFTER the capture (`micHeld`), so a mode SAVED by the service
+would usually already be `MODE_IN_COMMUNICATION`, and "restoring" it after Chromium had put
+`MODE_NORMAL` back would leave the process stuck in communication mode. So `CallAudio` never saves
+and restores: if the mode already reads `MODE_IN_COMMUNICATION` it is left to its owner (logged
+`mode already MODE_IN_COMMUNICATION ... left to its owner`); only otherwise does the service set it,
+and only then does it reset it at the end - to `MODE_NORMAL`, and only if it still reads
+`MODE_IN_COMMUNICATION`. The OUTPUT (`setCommunicationDevice`, cleared at the end) is the service's
+alone. Which branch the WebView actually takes is not read yet: `dumpsys audio` during AND after a
+call is in the owed list below.
+
+**Every end path, and none waits on the page (review F2, F6).** A page reload mid-call (the app's own
+`window.location.reload` sites, a renderer that crashed and came back) leaves a page with no call
+and no listener. So: the notification's hang-up leaves the foreground in the SERVICE and only then
+tells the page (with no page attached it logs a WARN and the leaving is the whole answer); and the
+root layout calls `releaseCallServiceOfPreviousPage` once per page load on Android, whose
+`pageLoaded()` stops a service still running (an orphan of the page before) and says nothing when
+none runs, so an ordinary boot is silent. A stop the page asked for, or caused by the page going
+(`stopForPageGone`, logged at INFO), sends no `stopped` back - the page knows, or is gone; `stopped`
+is reserved for an exit the page did not cause. The wake lock is released by `leave()` on every one
+of those paths. Nothing bounds a call's length - the server's 4 h is a Redis room-binding TTL and a
+counting cap (`MAX_COUNTED_CALL_SEC`), not a hang-up - so 4 h is only the EXPECTED horizon: the lock
+is acquired for 4 h (an acquire with no timeout is what Android's lint names a leak) and RENEWED for
+another 4 h, logged at INFO, while the call is still in the foreground. No clock ends a call.
+
+**A refusal for being off screen is answered by the next resume, whatever thread met it.** The
+bridge's check runs on a binder thread, `onResume` on the main thread; unlocked, the bridge could
+read "not on screen", the activity resume and find nothing pending, and the refusal then be recorded
+with no resume left to answer it. `OffScreenGate` (`call/OngoingCall.kt`) holds the pending call id
+under one lock, with the reports made inside it and `isInForeground` written before the gate is
+asked: every interleaving ends in exactly one of "the start goes ahead" or "`failed` then
+`foreground`" - which a 20 000-iteration two-thread test in `OngoingCallTest.kt` asserts.
+
+**Started at `ringing`, not at `incall`** - a deviation from the backlog's wording, for a platform
+rule: Android grants a microphone service only to an app that is on screen (`startForeground` with a
+while-in-use type throws from the background on API 34+), and a caller who dials then pockets the
+phone while it rings would be refused at `incall`.
+
+**`microphone`, not `phoneCall`.** `phoneCall` is for calls placed through Telecom's
+`ConnectionService`; Android 14 starts it only for the default dialer or an app holding
+`MANAGE_OWN_CALLS` (a self-managed `ConnectionService`). This app has neither, and Android's own
+list of `microphone` uses names "communication apps". Moving to `phoneCall` means a self-managed
+`ConnectionService`, a larger piece of work with its own Play declaration.
+
+**Only in builds that place calls.** `src/calls/AndroidManifest.xml` (the service,
+`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`) is merged by `app/build.gradle.kts` into the
+debug and release build types when `VITE_DEPLOY_ENVIRONMENT` is `development` - read from the process
+environment, then `frontend/.env`, the order Vite reads them, and printed by Gradle
+(`Canari ongoing-call service: IN this build ...`). That is every pre-release and a local build that
+sets it; a stable merges nothing. `androidCallServiceManifest.test.ts` asserts the main manifest
+declares it exactly when `CALLS_COMPILED` is true - so the revival commit moves it into
+`src/main/AndroidManifest.xml` with the other `CALLS_COMPILED` switches, or fails there (not with
+the native ring's `CALLS_NATIVE_RING_COMPILED`: an in-app call needs it). `CALLS_COMPILED` stays false.
+
+**Google Play.** Since API 34 every foreground service declares a type, and Play asks the developer
+to declare each foreground-service permission in the Play Console (App content, "Foreground service
+permissions"): per permission, which feature uses it, a description, and a video showing it in use.
+**The owner FILLED that declaration on 2026-10-21** (`FOREGROUND_SERVICE_MICROPHONE`, in-app 1:1
+calls); what Play's review answers is not known yet. Written before it was filled, and kept for the
+record - **two things were unknown:** whether an upload to the
+`internal` track (where every pre-release goes, `android.yml`) is refused while the declaration is
+missing, and what the review says of `microphone` for in-app calls. **The first pre-release carrying
+this is where it shows** - if the Play step of `android.yml` is refused, the GitHub release APK is
+still built.
+
+**What was BUILT is checked too.** `android.yml` reads the merged manifest of BOTH artifacts after
+the build (the AAB's protobuf manifest through `unzip | grep -a`, its strings are plain UTF-8; the
+APK's binary XML through `aapt2 dump xmltree`) and FAILS when `FOREGROUND_SERVICE_MICROPHONE` or
+`CallForegroundService` is present in a stable while `CALLS_COMPILED` is false - or absent from a
+pre-release. `RECORD_AUDIO` is the anchor: a dump that lost it is reported unread, never a pass,
+and `CALLS_COMPILED` is parsed as the one exported boolean - anything else fails the step. **When
+`CALLS_COMPILED` flips to true, a stable FAILS this step by design**: gradle still merges the
+service only on `VITE_DEPLOY_ENVIRONMENT=development`, so the revival commit must move the
+declaration into `src/main/AndroidManifest.xml` (the manifest test holds it to that) before a stable
+can pass.
+
+**Pinned by** `androidCallService.test.ts` (start/update/stop with the call id, the one
+`foreground`-driven second ask after an `off-screen` refusal and nothing after a second, no stop
+after the notification's hang-up, an event of another call dropped, the route's availability, the
+page-load release, no bridge), `androidCallServiceManifest.test.ts` (the declaration, the gating,
+the workflow step, both sides of the bridge named alike - methods, codes, the `callId` field -, the
+plain `startService`, the resume hook) and `OngoingCallTest.kt` (`decide` by call id,
+`classifyStartRefusal`, `OffScreenGate` and its race, the spec validation, `pickCallOutput`).
+**What none of them proves:** that Android keeps this process's network and microphone with the
+service up, that the WebView is not frozen, that Chromium does not override the mode or the output.
+
+**Owed on the Mi 9T** (a build with the service: the next pre-release, or a local debug build -
+installing one over a release-signed install costs the enrolment), in a call with the iPhone or a
+desktop peer (`callpeer.mjs`): (1) lock 40 s, (2) HOME 40 s - each: the other side keeps hearing the
+Mi 9T and the Mi 9T keeps hearing it, no `closed code=1006` and no server `held dead`; (3) the
+notification shows the name and a running timer, its hang-up ends the call on both ends; (4) Back
+at the root during a call keeps it; (5) speaker / earpiece from the call screen, read with
+`adb shell dumpsys audio` (mode `MODE_IN_COMMUNICATION`, the communication device, and WHO set the
+mode - Chromium may set it too); (6) `adb shell dumpsys activity services fr.emse.canari` shows the
+service `isForeground=true` with `foregroundServiceType=0x80` during the call and gone after;
+(7) `adb shell dumpsys audio` AFTER the hang-up: mode `MODE_NORMAL` and no communication device -
+the reading that settles the mode's owner (F1 above); (8) reload the page mid-call (any
+`window.location.reload` site), then press the notification's hang-up: the service leaves
+(`pageLoaded` should already have stopped it - the log says which), nothing stays in the shade;
+(9) the FIRST-EVER call on a fresh install, through the microphone permission prompt: the service
+starts once the grant is answered, or is refused `off-screen` and started on the `foreground` event -
+never neither; (10) swipe the app from Recents mid-call: the notification goes, the peer sees the
+call end; (11) connect and disconnect a Bluetooth and a wired headset mid-call: the output follows,
+logged once per change; (12) notifications DENIED for the app: the service still holds the call
+(Android 13+ hides the notification from the shade, not the service) - read `dumpsys activity
+services`. **The API 28-30 paths have NO bench device** - the Back `moveTaskToBack` and the
+`isSpeakerphoneOn` route are compiled and unread; the Mi 9T reads `ro.build.version.sdk` = 36
+(Android 16, read 2026-10-20), so it exercises only the API 31+ paths.
+Log lines to read: `CallFgService`, `CallAudio`, `CallBridge` in `logcat`; `[Call] ongoing-call
+service ...` in the app log.
 
 ## Responsibilities
 
@@ -423,7 +1903,10 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 | Component | Role |
 |---|---|
-| `components/chat/CallOverlay.svelte` | The whole call UI: incoming, outgoing, in-call controls, duration, E2E badge |
+| `components/chat/CallOverlay.svelte` | The full-screen call (incoming, outgoing, in call, ended) and the call's one audio sink; mounted for the whole call |
+| `components/layout/CallBanner.svelte` | The minimised call: a row of the root layout's banner column |
+| `composables/useCallModel.svelte.ts` | The service's stores as runes, the status kind and the duration, for both; the local camera TRACK and the peer's live, unmuted video track |
+| `stores/callView.svelte.ts` | `minimised`, and `callStatusKind` |
 
 (Corrected 2026-10-15: this table named `CallUI`, `IncomingCallOverlay`, `CallButton` and
 `CallDuration`, none of which exists.)
@@ -433,7 +1916,10 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 | Service | Role |
 |---|---|
 | `CallService.ts` | WebRTC peer connection management, media capture, SFU signaling, ring/hangup push triggers |
-| `workers/encryption.worker.ts` | E2E frame transform (AES-GCM, MLS-derived key) |
+| `workers/encryption.worker.ts` | E2E frame transform (AES-GCM, MLS-derived key); names a plaintext audio payload that is not Opus, per side, and proves a double encryption ([above](#audio-quality-measured-2026-10-19)); a VP8 frame behind its clear payload header, bound as additional data ([video](#video-lot-2-2026-10-20---vp8-behind-a-clear-header-held-by-every-transceiver)) |
+| `utils/callVideoFrame.ts`, `utils/callVideo.ts` | The clear prefix of a video frame and the VP8 codec filter; the camera's constraints, its bitrate cap and `preferVp8` - imported by the rig, never copied |
+| `utils/opusPacket.ts` | `isValidOpusPacket` - RFC 6716 section 3.4 rules R1-R7, the worker's witness |
+| `utils/callE2eReport.ts` | the E2E worker report as one log line, and the engine facts it is read against ([above](#the-mi-9t-logged-no-worker-line-at-all-131-alpha2---the-worker-is-now-asked)) |
 | `utils/callAudio.ts`, `utils/callPresence.ts`, `utils/callFailure.ts` | Sender audio parameters, presence, the typed initiate failure |
 | `utils/chat/callSystemMessages.ts` | Call started/ended/missed messages in the timeline |
 
@@ -441,12 +1927,12 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, bind the new room ID to the group (Redis `call:room:<id>`), return a room token + room ID + `ringTimeoutMs`. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET` (`room_id`, `sub`, `group_id`), valid 5 minutes |
+| POST | `/api/calls/initiate` | 403 `CALLS_DISABLED` when the [kill switch](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21) is `off` (as are `room-token`, `ring` and `ice-servers`). Verify membership, bind the new room ID to the group (Redis `call:room:<id>`), return a room token + room ID + `ringTimeoutMs`. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET` (`room_id`, `sub`, `group_id`), valid 5 minutes |
 | GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window |
-| GET | `/api/calls/ice-servers` | Get ICE server configuration (Cloudflare TURN) |
+| GET | `/api/calls/ice-servers` | Get ICE server configuration (Cloudflare TURN). STUN only with a typed `turn: { status: 'unavailable', code }` (`TURN_BUDGET_REACHED`, `TURN_METER_UNAVAILABLE`) once Cloudflare's metered egress for the month reaches the budget, or when the meter cannot be read |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
-| POST | `/api/calls/ring` | Fan out incoming-call ring to the group members whose [call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18) allows it |
+| POST | `/api/calls/ring` | 403 `CALLS_VIDEO_DISABLED` for a video ring when the mode is `audio`. Fan out incoming-call ring to the group members whose [call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18) allows it |
 | PATCH | `/api/mls/groups/:groupId/calls` | Set the caller's call permission for one conversation (`{ allowed: boolean }`) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere |
 

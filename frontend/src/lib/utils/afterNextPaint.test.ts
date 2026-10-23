@@ -35,6 +35,9 @@ describe('afterNextPaint', () => {
 
 describe('a pressed salon row', () => {
   it('lights up before the salon mounts, and a later press wins (2026-10-13)', () => {
+    // WHY A SOURCE TEST (WP-T5: keep). The helper is driven above; the ORDER of three statements in
+    // `MainChatPage`'s salon handler is the property, and mounting the whole chat page to press one
+    // row would assert the mocks it needs, not the order.
     const page = readFileSync(join(here, '../components/MainChatPage.svelte'), 'utf8');
     const handler = page.slice(page.indexOf('onSelectChannelConversation:'));
     const highlight = handler.indexOf('channels.selectedChannelConversationId = channelId;');

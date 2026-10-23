@@ -15,6 +15,7 @@ under the 50 MB ciphertext cap) and the server stores the bytes.
 
 | Number | Value | Lives in | Clients read it from |
 | --- | --- | --- | --- |
+| Longest reel sent in a chat | 60 000 ms (D-size, 2026-10-09; served as `chatMaxDurationMs`, absent from an older server) | `CHAT_REEL_MAX_DURATION_MS`, same file | `GET /api/posts/reel-limits` |
 | Longest reel | 90 000 ms (C4) | `REEL_MAX_DURATION_MS`, `posts/reel.constants.ts` | `GET /api/posts/reel-limits` |
 | Kept for | 30 days (C6) | `REEL_RETENTION_DAYS`, same file | same route, and every row's `expiresAt` |
 | "About to expire" window | 7 days | `REEL_EXPIRY_WARNING_DAYS`, same file | same route, and `my-reels` |
@@ -29,7 +30,7 @@ says why for the 50 MB), so the camera asks the box before it arms its ring time
 ### `GET /api/posts/reel-limits` (JWT)
 
 ```json
-{ "maxDurationMs": 90000, "retentionDays": 30, "warningWindowDays": 7 }
+{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "retentionDays": 30, "warningWindowDays": 7 }
 ```
 
 ### Publishing: `POST /api/posts` with `kind: "reel"`
@@ -88,6 +89,22 @@ Every post row - feed, search, `GET /api/posts/:id`, the notification link - now
 **absent means both**, so the feed shows reels where it shows posts (C7: *a reel is read in the
 feed*). The full-screen viewer asks for `kind=reel` and pages with `limit`/`offset` like the feed.
 Every filter the feed has applies (blocked authors, moderation-hidden, promo gate, service account).
+
+**`singlePhotos=true` (with `kind=reel`, 2026-10-19)** adds the posts whose ONLY content is one
+picture - the photo pages of the CanaReels viewer ([client half](../frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)).
+The clause is `SINGLE_PHOTO_POST_SQL` (`posts/single-photo-sql.ts`): exactly one element in
+`images`, typed `image` (or untyped with an `image/` mime type, a legacy row), no poll, no form, no
+attached form, no linked calendar event, no `http(s)://` in the text (whose preview the page would
+drop). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
+`jsonb_typeof` - `jsonb_array_length` raises on it and would fail the page. It is OR-ed into the
+reel filter of every feed arm, behind the same visibility rules, and keys its own cache entry.
+Without `kind=reel` it means nothing. **An older server strips the unknown parameter**
+(`ValidationPipe({ whitelist: true })`) and answers reels only, so a newer client against it simply
+shows no photo pages. **`kind=reel` is ordered by `publishedAt` alone** (`listOrderSql`): a pin is
+a feed concept and does not head the CanaReels list. Every `listPosts` and `searchPosts` order ends
+in `posts.id DESC`, so posts published at the same instant (scheduled ones) can neither repeat nor
+be skipped across `OFFSET` pages; the post an event card links back to is picked the same way. Pinned by `posts.service.reels.spec.ts` (every
+arm) and `single-photo-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
 
 **An expired reel is never served**, whether the worker has reached it or not: a reel whose
 `expiresAt` has passed is excluded from every read (`GET /api/posts/:id` answers `404`). The client

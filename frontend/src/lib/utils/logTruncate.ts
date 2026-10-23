@@ -87,8 +87,15 @@ export function truncateLogIds(text: string): string {
  * `sink`, when given, receives every non-`debug` line AFTER it is printed - the in-app log
  * (`appLog.captureConsoleLine`) is wired here and nowhere else. It is a parameter rather than an
  * import so this module stays a leaf: the sink's redaction imports {@link truncateLogIds}.
+ *
+ * `redactPrinted`, when given, runs on every string argument before it is PRINTED (the sink still
+ * receives the unredacted line and applies its own, stricter redaction): the live devtools console
+ * must not echo what the stored log withholds (`appLogRedact.redactConsoleProse`).
  */
-export function installConsoleIdTruncation(sink?: ConsoleSink): void {
+export function installConsoleIdTruncation(
+  sink?: ConsoleSink,
+  redactPrinted?: (line: string) => string
+): void {
   if (installed) return;
   installed = true;
 
@@ -97,7 +104,12 @@ export function installConsoleIdTruncation(sink?: ConsoleSink): void {
     const original = console[method].bind(console) as (...args: unknown[]) => void;
     console[method] = (...args: unknown[]): void => {
       const condensed = args.map((a) => (typeof a === 'string' ? truncateLogIds(a) : a));
-      original(logPrefix(), ...condensed);
+      original(
+        logPrefix(),
+        ...(redactPrinted
+          ? condensed.map((a) => (typeof a === 'string' ? redactPrinted(a) : a))
+          : condensed)
+      );
       if (sink && method !== 'debug') sink(method, condensed);
     };
   }

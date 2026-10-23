@@ -196,7 +196,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/push/acquire-add-lock` | PushSecret | Acquire add-lock |
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package |
-| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit. `baseEpoch` + `commitPayload` REQUIRED (400 otherwise) |
+| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit. `baseEpoch` + `commitPayload` REQUIRED (400 otherwise). The Welcome is stored in the epoch advance's transaction. `201 {status: 'accepted'}` or `409 {status: 'rejected', reason}` |
 | POST | `/api/mls/push/send` | PushSecret | Send message (background) |
 
 ### Security / PIN
@@ -354,7 +354,6 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | POST | `/api/channels/invites/:token/accept` | Join through an invite. Refuses a community with no members left (`WORKSPACE_HAS_NO_MEMBERS`) |
 | POST | `/api/channels` | Create channel |
 | POST | `/api/channels/:channelId/messages` | Send encrypted message |
-| POST | `/api/channels/:channelId/members/join` | Join channel |
 | POST | `/api/channels/:channelId/members/invite` | Invite user |
 | POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (400 on a public one) |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message |
@@ -377,7 +376,7 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 
 ### Lives
 
-`/api/lives/*` and `GET /api/media/live/:liveId/:name`: see [lives](../services/lives.md), the only
+`/api/lives/*` and `GET /api/media/public/live/:liveId/:name` (no token, cached by nginx): see [lives](../services/lives.md), the only
 copy of the routes and their refusal codes. Every one is a 404 unless `LIVE_ENABLED=true`.
 
 ### Associations

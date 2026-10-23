@@ -67,7 +67,8 @@ ring/invite: MLS SystemMsg over chat-gateway + POST /api/calls/ring (FCM data / 
 - **Every media byte crosses the host's uplink once per subscribed stream**, and Cloudflare TURN once
   per leg on each side. TURN spend is capped by `CLOUDFLARE_TURN_MONTHLY_BUDGET_GB` (950) against an
   ESTIMATE (`CALL_RELAY_KBPS_PER_DEVICE`, 3000 kbps x duration, counted on presence clear) - an
-  estimate, not Cloudflare's byte count.
+  estimate, not Cloudflare's byte count. **Replaced 2026-10-21 (B7):** the budget now reads
+  Cloudflare's metered egress ([calls](calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
 - **Signalling to the SFU rides the existing HTTPS origin** (`/api/call` in
   `infrastructure/local/Dockerfile.frontend`, rewritten to `/ws`), so it adds no port; whether a
   30-minute WebSocket survives the edge (Cloudflare tunnel, the DSI's CrowdSec) is **F4**.
@@ -78,7 +79,7 @@ ring/invite: MLS SystemMsg over chat-gateway + POST /api/calls/ring (FCM data / 
 | --- | --- | --- |
 | Client call engine | `frontend/src/lib/services/CallService.ts` (1297 lines) | complete for 1:1; held off by `CALLS_ENABLED` |
 | Call UI | `frontend/src/lib/components/chat/CallOverlay.svelte` (931 lines) | exists; shows an E2E badge from `e2eActive` |
-| E2E frames | `frontend/src/lib/workers/encryption.worker.ts` + `CallService.setupEncryption` | key = `exportSecret(groupId, 'mls-webrtc-media', callId, 32)`, AES-GCM, random 12-byte IV prefixed, WHOLE frame encrypted |
+| E2E frames | `frontend/src/lib/workers/encryption.worker.ts` + `CallService.setupEncryption` | one key per direction since 2026-10-21 = `exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>\|<sender role>', 32)` (`utils/callKeys.ts`), AES-GCM with `canari-call-v2\|<kind>` (+ the VP8 clear header) as additional data (`utils/callFrameAad.ts`), random 12-byte IV ([calls](calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
 | Audio tuning | `frontend/src/lib/utils/callAudio.ts` | sender params per call kind |
 | Missed-call message | `frontend/src/lib/utils/chat/callSystemMessages.ts` (`recordCallMissed`) | a timeline system message; no call-history screen exists |
 | Failure type | `frontend/src/lib/utils/callFailure.ts` | `CallInitiateError` |
@@ -187,16 +188,35 @@ GB beyond the free tier **(unverified: current Cloudflare pricing)**. E2E is una
 
 ## 6. Observability - a call report that carries evidence
 
-**Today:** the SFU's `session end` record separates server-side causes; the client logs states but no
-numbers. **Owed (WP-C2):** one `[CALL_REPORT]` line per call per device, through `appendLog` (so the
-in-app log export carries it), at hangup and every 10 s while `incall`, built from `getStats()`:
+**WP-C2 is BUILT** (draft #2011 of 2026-10-18, PORTED onto `main` 2026-10-21; it runs wherever
+`CALLS_ENABLED` is true, today the `development` deploy; **owed one reading from a phone's exported
+log**). One `[CALL_REPORT]` line per call per device, through `appendLog` (so the in-app log export
+carries it), every 10 s while `incall` and once at the end, built by `buildCallReport`
+(`frontend/src/lib/utils/callStats.ts`; tests in `callStats.test.ts` and `CallService.p2p.test.ts`):
 
 ```
-[CALL_REPORT] call=<roomId> phase=end dur_ms= setup_ms=<tap->first remote audio> engine=<ua/webview/ios>
-  ice=<state> pair=<relay|srflx|host>/<udp|tcp|tls> rtt_ms= turn_url=<host:port, no credential>
+[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms=<tap->first remote audio> engine=<[tauri-<shell>/]Chrome/N|Safari/N|iOS/N|Firefox/N>
+  ice=<state> pair=<local type>/<proto>-><remote type>/<proto> relayed=<yes|no> [relay_proto=] [rtt_ms=] turn=<host:port, no credential>
   out_kbps= in_kbps= loss_in_pct= jitter_ms= audio_level_out= audio_level_in=
-  e2e=<on|refused> enc_frames= dec_frames= dec_fail= keyframes_in= codec_a= codec_v=
+  e2e=<on|-> enc_frames= dec_frames= dec_fail= keyframes_in= codec_a= codec_v=
+[CALL_REPORT] call=<roomId|-> phase=refused engine= e2e=refused reason=no-rtp-script-transform
 ```
+
+- A field the stats do not carry is `-`, never guessed. Rates are computed between two readings on
+  the stats' OWN timestamps, never a wall clock; a rebuilt peer connection restarts them.
+- `engine=` is the E2E worker report's name for the engine (`engineFromUserAgent`), so the two lines
+  of one call name it the same way.
+- The E2E fields are the worker's EXACT totals, asked through the same bounded `report` request as
+  the path check (`askE2eReport`), not the sampled progress lines. `dec_fail` = AES-GCM failures +
+  NON-empty frames too short to be ours (a peer sending in clear); empty frames are not failures
+  (Chrome hands a few to every receiver). `e2e=on` only when the worker answered; otherwise `e2e=-`
+  and the worker's silence has its own ERROR line. The worker's transform errors now reach the call
+  log, sampled (first 3, then every 100th), instead of a worker console nothing exports.
+- Each tick is armed when the previous one was WRITTEN, so two never overlap. The END report is
+  stamped and READ at the hangup, while the peer connection and the worker are still alive (cleanup
+  releases them when the 1.5 s summary closes), and WRITTEN after a tick still in flight, so no tick
+  line follows it. Nothing waits on it: teardown is unchanged, and a read that fails says
+  `WARN call report (end) not written`. A call that never built a peer connection writes none.
 
 - `call=` is the room id, the same value as the SFU's `room=` - the only join key between the halves
   ([call-service](../../services/call-service.md#the-join-key)). Keep it one value.
@@ -308,14 +328,17 @@ calls would need MLS membership and is not proposed.
 | --- | --- |
 | App Store privacy label - Audio Data, Photos or Videos | media is E2E and never stored; whether that is "not collected" under Apple's definition is **(unverified)** |
 | Call metadata (who called whom, duration, IP to Cloudflare TURN) | the SFU and chat-delivery logs hold user ids, room ids, durations; Cloudflare sees IPs. Likely "Usage Data / Product Interaction" linked to identity - decide, and say it in the privacy policy ([store-listings](../../store-listings.md)) |
-| Google Play - `USE_FULL_SCREEN_INTENT` | Android 14+ grants it by default only to calling/alarm apps; Play asks for a declaration **(unverified: current form)**; `callsCompiled.test.ts` asserts it present exactly when `CALLS_COMPILED` is true |
+| Google Play - `USE_FULL_SCREEN_INTENT` | Android 14+ grants it by default only to calling/alarm apps; Play asks for a declaration **(unverified: current form)**; `callsCompiled.test.ts` asserts it present exactly when `CALLS_NATIVE_RING_COMPILED` is true (the native ring's own switch since 2026-10-21, B2') |
 | Google Play - foreground service `phoneCall`/`microphone` | needs a declaration and, per Play's form, a video **(unverified)** - record it from the Tier B Mi 9T cells like the Apple one |
 | Info.plist strings | microphone and camera strings must name calls; they are French literals in `Info.plist` today, not Paraglide |
 
 ## 9. Rollout - a server-side switch instead of five code switches (proposal)
 
-**Today** five switches move in one commit ([calls](calls.md)): two constants (TS, Kotlin), one ObjC
-constant, one plist key, one manifest permission. The two store declarations cannot be runtime
+**Written when** five switches moved in one commit. **Since 2026-10-21 (B2') they are two groups**
+([calls](calls.md)): `CALLS_COMPILED` carries the in-app call (the plist's `audio`, the microphone
+purpose strings, the Android microphone foreground service), and `CALLS_NATIVE_RING_COMPILED` carries
+the native ring (the Kotlin and ObjC constants, `voip`, `USE_FULL_SCREEN_INTENT`), which the first
+production calls ship WITHOUT. The two store declarations cannot be runtime
 switches - a store reads the binary - but everything ELSE can.
 
 **Proposal:**
@@ -352,7 +375,7 @@ migrations and the adversarial reviews; **sonnet** for mechanical work.
 | --- | --- | --- | --- | --- | --- | --- |
 | **WP-C0** | **TURN reachability probe, no SFU, no app code**: a throwaway page fetches credentials from dev's `/api/calls/ice-servers` and gathers relay candidates per URL (udp/tcp/tls), then a relay-only loopback | a scratch HTML page + `apps/chat-delivery-service/src/services/calls.service.ts` `getIceServers` (read only) | run on E1, E4, E5, E6, E7 over N1, N2, N5 | sonnet + the user for SIMs | F1 (for the SFU half only) | a table: endpoint x network -> which TURN transport yields a relay candidate, and its RTT. **An hour of work that decides F5 before anything is built** |
 | **WP-C1** | **The decisive call, by hand, on dev**: `CALLS_ENABLED` flipped in the LOCAL tree only, a local-only `getStats` dump, Tier A cells (K1, then K2/K3) | `frontend/src/lib/features.ts`, `CallService.ts` `initPeerConnection`; dev's `call-service` logs | Tier A; read `[call] session end` and `ice connected after_ms=` on dev | opus (lead) | **F1, F4**; dev must have the Cloudflare TURN secrets **(unverified)** | Tier A all `PASS` with numbers, or the failing layer NAMED (TURN, DTLS, SFU, E2E). Answers section 5 for 0.17. Nothing committed but the page that records it |
-| WP-C2 | The `[CALL_REPORT]` line (section 6) | `CallService.ts` (new `callStats.ts` util beside `callAudio.ts`) | unit test on a fake `RTCStatsReport`; no wall clock | sonnet | - | the line on every exit path; read once from a phone's exported log |
+| WP-C2 | The `[CALL_REPORT]` line (section 6) - **BUILT 2026-10-21 (port of #2011), owed the phone reading** | `CallService.ts` (new `callStats.ts` util beside `callAudio.ts`) | unit test on a fake `RTCStatsReport`; no wall clock | sonnet | - | the line on every exit path; read once from a phone's exported log |
 | WP-C3 | E2E correctness: refuse instead of degrade; fix the asymmetric legacy path; header-in-clear framing per codec (VP8/H.264) or force VP8+Opus; decrypt failures into `appendLog` | `encryption.worker.ts`, `CallService.attachMediaTransforms` / `setupReceiverTransform` | worker unit tests per codec; K2 Chrome <-> WKWebView | opus + adversarial review | WP-C1 (which codecs actually negotiate) | `dec_fail = 0` on every Tier A/B video cell; no engine can join in clear |
 | WP-C4 | **Decision**: keep Rust SFU 0.17 pinned / port to 0.20 / managed SFU | this page section 5, the feasibility page | - | the user, on the lead's recommendation | **F1, F2, F3, F7**, WP-C1 | a recorded decision; if "keep", `webrtc = "=0.17.n"` pinned |
 | WP-C5 | Android: ring and background - FSI back + `canUseFullScreenIntent`, foreground service `phoneCall`, caller name from the device cache (not the payload; decided 2026-10-18, an unknown caller shows "Canari call"), the native `call_invite` branch honouring the per-conversation call permission, audio routing incl. Bluetooth | `CanariFirebaseMessagingService.kt`, `AndroidManifest.xml`, `androidFcmManifest.test.ts` | K6, K7, K8, K10 on E4; NOTIF rows unaffected | opus | WP-C1 | Tier B Android cells `PASS` |
@@ -415,7 +438,8 @@ the only copy. What it changes here:
   `main.rs`; WP-C1's Tier A then runs on it. **Two decisions for the user** (the first taken 2026-10-18: `'all'` stays): `iceTransportPolicy:
   'all'` (a contact learns your public IP; direct calls cost nothing) or `'relay'` (every call through
   Cloudflare, IP hidden, billed); and whether the TURN estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts
-  only calls whose `[CALL_REPORT]` `pair=` says `relay`.
+  only calls whose `[CALL_REPORT]` `pair=` says `relay` - answered 2026-10-21 by neither: the
+  estimator is deleted and the budget reads Cloudflare's meter ([calls](calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
 - **WP-C4 narrows to the GROUP question**: Cloudflare Realtime SFU (no DSI, no host uplink, TURN
   free with it, 1 000 GB/month free shared, a new app + two secrets) versus keeping the Rust SFU on
   the old `canari` VM (its UDP reaches Cloudflare, measured; but it is the documented rollback VM)

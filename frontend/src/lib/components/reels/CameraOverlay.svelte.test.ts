@@ -22,6 +22,7 @@ import {
   initHistoryOverlayStack,
   pushHistoryOverlay,
 } from '$lib/utils/historyOverlayStack';
+import { flushMacrotask } from '../../../test/flush';
 
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn(() => Promise.resolve(true)) }));
 const getReelLimits = vi.fn();
@@ -89,7 +90,7 @@ async function settle() {
 /** Lets every queued traversal land, and whatever it closes settle. */
 async function drainTraversals(model: ReturnType<typeof installHistoryModel>) {
   for (let i = 0; i < 10 && model.pending() > 0; i++) {
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     await settle();
   }
 }

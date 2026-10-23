@@ -1,21 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { relativeTo, sourceFiles } from '../../../test/sourceTree';
 import { CARD_GRID, CARD_GRID_MIN } from './cardGrid';
-
-// FROM `process.cwd()`, NOT FROM `import.meta.url`, for the reason its sibling
-// `sessionExpiredRelease.test.ts` already records: under this directory Vite hands the module a
-// non-`file:` `import.meta.url`, and reading `.pathname` off it yields `/F:/src/routes` - a real
-// path, just not this one, so the walk fails with ENOENT rather than a wrong answer.
-const SRC = join(process.cwd(), 'src');
-
-function svelteFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) return svelteFiles(full);
-    return name.endsWith('.svelte') ? [full] : [];
-  });
-}
 
 /**
  * A line that opens an element carrying a grid class, whatever else it carries.
@@ -42,8 +27,12 @@ const LOOKBACK = 10;
  */
 function cardTileGrids(): { file: string; line: number; grid: string | null }[] {
   const found: { file: string; line: number; grid: string | null }[] = [];
-  for (const file of svelteFiles(SRC)) {
-    const lines = readFileSync(file, 'utf8').split('\n');
+  for (const { path: file, text } of sourceFiles({
+    under: 'src',
+    extensions: ['svelte'],
+    tests: 'include',
+  })) {
+    const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {
       if (!/<CardTile\b/.test(lines[i])) continue;
       let grid: string | null = null;
@@ -54,10 +43,7 @@ function cardTileGrids(): { file: string; line: number; grid: string | null }[] 
         }
       }
       found.push({
-        file: file
-          .slice(SRC.length + 1)
-          .split('\\')
-          .join('/'),
+        file: relativeTo(file, 'src'),
         line: i + 1,
         grid,
       });

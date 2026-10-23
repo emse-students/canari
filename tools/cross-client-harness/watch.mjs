@@ -470,6 +470,14 @@ const BENIGN = [
   // A group the OWNER deleted, seen by the other side. `del1.mjs` and the GRP teardowns both produce
   // it, and it is the discovery pass reporting a tombstone it handled correctly.
   /^\[DISCOVERY\] UI group ".*" deleted \(tombstone\) server-side - marked removed$/,
+  // TWO DECISION LINES THE CODING STANDARD REQUIRES, read 2026-10-22 on GRP. Every overlay a row
+  // opens over a ghost history entry REPLACES that entry rather than pushing a new one
+  // (`historyOverlayStack.ts`), and the line names which of the two it did; the composer reports its
+  // first measured height once per mount (`composerHeight.ts`). Both are expected on any healthy
+  // client that opens a panel or a conversation, and both are necessary: the first is the only trace
+  // of a back-stack hand-off, the second of the band the keyboard layout is computed from.
+  /^\[historyOverlay\] overlay \d+ takes the ghost entry under the pointer \(a hand-off\)$/,
+  /^\[ChatComposer\] composer height (?:unset|\d+px) -> \d+px$/,
 ];
 
 /**
@@ -1079,10 +1087,9 @@ const NOTABLE = [
   // classifier has to be right on both sides of it.
   /^\[PENDING\] Welcome \u2192 \S+ \(user: \S+\) (?:pour|for) \S+$/,
   // THE FIFTH SPELLING OF "THE GUARD HELD", reached from the ERROR path rather than a pre-check:
-  // the Add threw `DuplicateSignatur`, so the leaf was already in the tree. It is the heaviest of
-  // the five - `handleDuplicateLeafError` follows and that KICKS - but the kick's own outcome lines
-  // carry their own verdicts (`[KICK]` has no rule at all, deliberately), so this line is `notable`
-  // and the repair behind it is judged on its own.
+  // the Add threw `DuplicateSignatur`, so the key was already in the tree. Nothing is kicked since
+  // 2026-10-22: the tree is read again, a leaf of this identity means the invitation is fulfilled,
+  // and any other holder of the key is a `console.error` judged on its own - so this line is `notable`.
   /^\[PENDING\] \S+ already in MLS tree of \S+$/,
   // THE WrongEpoch RACE RESOLVING ITSELF: the concurrent commit had already added this device, so
   // the membership reads `active` and the sweep stops. `notable` - the race is real and self-
@@ -1171,7 +1178,7 @@ const NOTABLE = [
   // passes reporting a different spelling of "the guard held". So the site was read whole
   // (actions.ts:753-975 plus sessionAuth.ts:987) and every line placed deliberately:
   //
-  //   notable      - the six below plus `Welcome -> `, `leaf in MLS tree - kick + re-add` (claimed
+  //   notable      - the six below plus `Welcome -> `, `leaf in MLS tree - remove + re-add in one commit` (claimed
   //                  by the generic `re-?add` rule) and `re-add suspended`. A guard that held.
   //   unexplained  - the ten that are a refusal, an abort, an error, or the >30-day KeyPackage
   //                  FALLBACK. Deliberately ruleless, and pinned that way in classify-selftest.mjs
@@ -2047,6 +2054,19 @@ export const PAGE_BOOT_NARRATION = [
   // The salon unread counts (2026-10-08) are read from the server at every boot, once when the
   // communities load and once when the live stream opens. Seen first on GRAINE-AUTH-6, 2026-10-13.
   /^\[UNREAD\] (?:communities loaded|live stream back): \d+ salon\(s\) unread on the server, \d+ count\(s\) moved here$/,
+  // THE REST OF A RELOADED PAGE'S DECISIONS, read on GRAINE-AUTH-1, -2 and -6 (2026-10-22), each a
+  // decision the coding standard requires logged: the restored list, the snapshot replacing it, the
+  // counts request joined, the avatars not asked for, the route preloads, the drain's checkpoint and
+  // the view's first page. `[STRAY]` is forgiven ONLY with nothing refused and nothing unanswered.
+  /^\[RESTORE\] kept \d+ salon row\(s\) the community load owns$/,
+  /^\[RESTORE\] \d+ conversation row\(s\) seeded - history follows$/,
+  /^\[WORKSPACE-SNAPSHOT\] the list on screen is the server's now \(\d+ community\(ies\)\)$/,
+  /^\[UNREAD\] communities loaded: joined the counts request already in flight$/,
+  /^\[AvatarPresence\] \d+ of \d+ have no photo - not requested$/,
+  /^\[RoutePreload\] \{"pathname":"\/[a-z]*","first":true\}$/,
+  /^\[MLS\] Bulk ingest checkpoint landed - committing its progress markers\.$/,
+  /^\[STRAY\] compared \d+ tree\(s\): \d+ roster\(s\) in one read, 0 refused, 0 not answered \(nobody removed in them\)$/,
+  /^\[CHAT_VIEW\] channel_ messages \d+ \(hasNewMessage=(?:true|false), response=[a-z-]+\)$/,
 ];
 
 /**
@@ -2366,7 +2386,7 @@ export function logcatReport(lines, label = 'A1') {
    * hand this app the platform's failures.
    */
   const OURS_BY_NAME =
-    /^(CanariRust|CanariFCM|CanariWorker|CanariApp|CanariBoot|CanariNotifAction|CanariOutboxRetry|MlsDeviceKeyStore|PushSecretKeystore|KeyboardMedia|MainActivity|mines_app_lib|tokio_tungstenite|RustStdoutStderr|Tauri\/Plugin)$/;
+    /^(CanariRust|CanariFCM|CanariWorker|CanariApp|CanariBoot|CanariNotifAction|CanariOutboxRetry|MlsDeviceKeyStore|NativeCacheKey|PushSecretKeystore|KeyboardMedia|MainActivity|mines_app_lib|tokio_tungstenite|RustStdoutStderr|Tauri\/Plugin)$/;
   const RUST_MODULE = /^[a-z][a-z0-9_]*(::[a-z0-9_]+)+$/;
   const isOurs = (tag) => OURS_BY_NAME.test(tag) || RUST_MODULE.test(tag);
 
@@ -2381,6 +2401,10 @@ export function logcatReport(lines, label = 'A1') {
     // being recorded rather than a tick. MSG-8 types into the composer, which is what raises it.
     ['ime-inset', /^IME inset: \d+ -> content padding$/],
     ['keystore-read', /^retrieve: success alias=/],
+    // The install's native cache key (`NativeCacheKey.ensure`, every process start): found, or made
+    // once on the first start of an install - and that one creation is the only `store:` it causes.
+    ['native-cache-key', /^ensure: (present|created)$/],
+    ['native-cache-key-store', /^store: success alias=canari_native_cache_key$/],
     ['keystore-health', /^checkKeystoreHealth: Keystore operational/],
     ['push-secret', /^processPendingPushSecret: /],
     ['installer', /^recordInstallerPackage: /],
@@ -2405,11 +2429,15 @@ export function logcatReport(lines, label = 'A1') {
     // REQUIRED - the call site emits it unconditionally since 2026-09-24, and a rule that tolerated
     // its absence would go on matching a build that had quietly lost the discriminator.
     ['fcm-channel-generic', /^handleChannelMessage: no seed\/ciphertext -> generic notification channel=\S+ session=\S* missing=\S+$/],
+    // What that generic banner leaves out: the author and the mention the server named, which only an
+    // open proves. Explained, because the blind banner it rides on is already `notable` on its own.
+    ['fcm-channel-blind-no-author', /^handleChannelMessage: blind banner -> no author, no mention \(server named sender=\S* mentioned=(true|false)\) channel=\S+$/],
     // The generic banner above, COUNTED: the phone tells `/api/mls/push/blind-banner` once the
     // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
     ['fcm-channel-blind-reported', /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/],
     ['fcm-channel-redraw', /^handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=\S+ index=\d+$/],
-    ['fcm-channel-notify', /^handleChannelMessage: notification title=.*mentionsMe=(true|false)$/],
+    // No title and no body since 2026-10-22: a release log line carries no content (nativeLogContent.test.ts).
+    ['fcm-channel-notify', /^handleChannelMessage: notification posted showsMessage=(true|false) bodyChars=\d+ mentionsMe=(true|false)$/],
     // The seed arriving on its own push, and being stored. `decryptProto: graine key material` is a
     // DIFFERENT branch from the `success` one above - that one decrypted a message, this one
     // recognised key material and decrypted nothing - so it needs its own rule rather than a wider
@@ -2445,6 +2473,9 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-requeue-behind-welcome', /^tryDecrypt refused group=[0-9a-f]+: its Welcome is queued behind this frame -> re-queued after it$/],
     ['fcm-channel-requeue-behind-welcome', /^handleChannelMessage: the Welcome into key group [0-9a-f]+ is queued behind this push -> re-queued after it channel=\S+ index=\d+$/],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
+    // A re-draw of an announced message that is a new post (a held salon mention moving channel once
+    // its seed lands, or a blind banner swiped away first) is reposted silent - see `RepostAlert`.
+    ['fcm-repost-silent', /^showMessageNotification: a re-draw is a new post -> reposted silent \(groupId=\S+ channel=\S+ existing=(true|false)\)$/],
     // ── the silent half of the notification surface, which the list knew nothing about ──
     // Every one of these is a DECISION, not a tick: a silent frame shows nothing, and a silent frame
     // FROM SELF means another device of this account read the conversation, so this device's
@@ -2483,7 +2514,7 @@ export function logcatReport(lines, label = 'A1') {
     // ONLY THE `D` SITE, DELIBERATELY. Its sibling at `W` - "reaction push without groupId -
     // dropped, nothing to attach it to" - is a push that reached the device and was thrown away,
     // which is a real loss and must keep surfacing.
-    ['fcm-reaction', /^reaction: group=[0-9a-f]+ actor=[0-9a-f]+ emoji=/],
+    ['fcm-reaction', /^reaction: group=[0-9a-f]+ actor=[0-9a-f]+$/],
     // ── the boot receiver, and the reason it fires without a boot ────────────────────────────────
     // ANDROID REPLAYS THE BOOT BROADCAST TO A PACKAGE LEAVING THE STOPPED STATE, so `force-stop`
     // followed by a launch delivers `LOCKED_BOOT_COMPLETED` then `BOOT_COMPLETED` on a device that

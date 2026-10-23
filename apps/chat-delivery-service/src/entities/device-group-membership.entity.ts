@@ -40,8 +40,8 @@ export type DeviceGroupStatus = 'pending' | 'active';
  *    Two paths still INSERT a `pending` row and are not demotions: `registerDevice` and
  *    `addGroupMember` enrol a device that has never been in this group's tree, so there is nothing
  *    to remove from a routing set it was never in, and `orIgnore` leaves an existing `active` row
- *    alone. `sendWelcome` likewise only guarantees the row exists and clears `kickedAt`; it does
- *    not promote, and it must never demote - it wrote `'pending'` unconditionally until 2026-09-12,
+ *    alone. `sendWelcome` likewise only guarantees the row exists and never touches an existing
+ *    one: it does not promote, it does not clear `kickedAt`, and it must never demote - it wrote `'pending'` unconditionally until 2026-09-12,
  *    which knocked already-active devices out of the fan-out. `invitations.controller` exposes the
  *    pending list to clients.
  *
@@ -101,8 +101,9 @@ export class DeviceGroupMembership {
    * that reset a live membership, and `null` from the cron and the self-reported demotion, neither
    * of which removed anything. `null` LEAVES THE COLUMN AS IT STANDS rather than clearing it - a
    * demotion is a step towards cleanup and promises no Add, so a row demoted after a kick is still
-   * a row a kick left behind. Cleared when a Welcome is queued for the device - the proof the
-   * re-add landed - and by the one path that marks it `active`.
+   * a row a kick left behind. Cleared when an accepted commit ADMITS the device - the proof the
+   * re-add landed - and by the one path that marks it `active`. Never by a Welcome (2026-10-22): a
+   * Welcome is bytes, not an Add, and a kicked device is refused at the commit gate until answered.
    */
   @Column({ type: 'timestamptz', nullable: true })
   kickedAt: Date | null;

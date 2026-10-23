@@ -156,7 +156,7 @@ export async function closeBrowser(which, timeoutMs = 20_000) {
  * left behind. A default is a navigation literal like any other and belongs to the one constant
  * that decides where the campaign runs.
  */
-export async function startBrowser(which, url = `${SITE}/chat`) {
+export async function startBrowser(which, url = `${SITE}/chat`, extraArgs = []) {
   const { port, profile } = BROWSERS[which];
   if (await isUp(which)) throw new Error(`${which} is already up on ${port} - kill it first`);
   const child = spawn(
@@ -169,6 +169,8 @@ export async function startBrowser(which, url = `${SITE}/chat`) {
       "--disable-backgrounding-occluded-windows",
       "--disable-renderer-backgrounding",
       "--disable-features=CalculateNativeWinOcclusion,ChromeWhatsNewUI",
+      // A caller's own flags (`callpeer.mjs`: the fake microphone), BEFORE the URL.
+      ...extraArgs,
       url,
     ],
     { detached: true, stdio: "ignore" },

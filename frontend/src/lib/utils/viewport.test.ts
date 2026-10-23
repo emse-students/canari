@@ -71,6 +71,8 @@ describe('the viewport queries', () => {
     }
   });
 
+  // WHY A SOURCE TEST (WP-T5: keep). A stylesheet fact: happy-dom compiles no Tailwind, so nothing
+  // rendered here could disagree with the hardcoded breakpoints - only `app.css` itself can.
   it('app.css overrides no Tailwind breakpoint, which is what makes 768/1280 the truth here', () => {
     const css = readFileSync(resolve(here, '../../app.css'), 'utf8');
     expect(

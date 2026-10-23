@@ -15,6 +15,9 @@ export default defineConfig({
     // `src/test/environment.test.ts`. Why a per-file docblock rather than a central list:
     // docs/wiki/test-suite-reform.md (WP-T4).
     environment: 'node',
+    // The source tree is walked ONCE per run for the ~20 scan files, not once per file: see
+    // `src/test/sourceTreeSetup.ts` and docs/wiki/test-suite-reform.md (WP-T9).
+    globalSetup: ['./src/test/sourceTreeSetup.ts'],
     include: ['src/**/*.{test,spec}.ts'],
     coverage: {
       exclude: [

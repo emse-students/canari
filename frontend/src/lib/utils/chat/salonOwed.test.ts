@@ -4,6 +4,7 @@
  * write under the same key replaces the owed one, and a write delivered once is never delivered twice.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
@@ -100,11 +101,13 @@ describe('deliverSalonWrite', () => {
     expect(
       await run(() => {
         connectivity.notifyServerUnreachable();
-        return Promise.reject(new TypeError('Failed to fetch'));
+        return Promise.reject(new TransportFailureError(new TypeError('Failed to fetch')));
       })
     ).toEqual(['owed']);
     connectivity.reset();
-    expect(await run(() => Promise.reject(new TypeError('Failed to fetch')))).toEqual(['failed']);
+    expect(
+      await run(() => Promise.reject(new TransportFailureError(new TypeError('Failed to fetch'))))
+    ).toEqual(['failed']);
   });
 });
 
@@ -120,7 +123,9 @@ describe('nothingLeftTheDevice', () => {
   });
 
   it('is false for no answer with the link up: the outcome is unknown, the server may hold it', () => {
-    expect(nothingLeftTheDevice(new TypeError('Failed to fetch'))).toBe(false);
+    expect(nothingLeftTheDevice(new TransportFailureError(new TypeError('Failed to fetch')))).toBe(
+      false
+    );
     expect(nothingLeftTheDevice(new RequestDeadlineError('api' as never, 1, 'POST', '/x', 0))).toBe(
       false
     );

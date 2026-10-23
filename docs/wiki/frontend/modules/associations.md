@@ -11,7 +11,7 @@
   [Association permissions](../../association-permissions.md); this module renders it.
 - Calendar of events.
 - Document storage (PDFs, files).
-- Boutique / shop (products, Stripe checkout).
+- Boutique / shop (products, online checkout - [payments](payments.md#a-product-checkout-is-a-row-one-per-attempt-2026-10-21)).
 - Forms with payment (see forms module for form execution; this module handles form management within an association).
 - Stripe Connect onboarding for receiving online payments.
 - Tag-based autocomplete for association tagging on posts.
@@ -48,6 +48,12 @@
 | `/lists/[slug]/edit` | Edit member list |
 
 ## One header and one creation flow for the three directories (2026-10-07)
+
+**"Mes ..." blocks live in their own tab (user, 2026-10-19).** `MyMembershipsSection.svelte` is the pinned block on top
+of a directory: `/associations` draws only "Mes associations", `/institutions` only "Mes institutions", `/lists` only
+"Mes listes" (one `groupAssociationsForSelect` classifier, the data `listMyAssociations` already returned). Empty blocks
+are not drawn. The directory below still lists every row with the member's own one badged (the pinned-subset pattern the
+Associations tab always had). Test: `routes/associations/mineBlocks.svelte.test.ts`.
 
 Audited on 2026-10-07 after a screenshot of `/associations`: four buttons of two kinds (three links to
 directories, one creation) drawn alike, and **`/institutions` had NO creation button**. What existed
@@ -116,6 +122,24 @@ surfaces showing it - the tile and the detail header - cannot disagree.
 `associations.service.logo-slot.spec.ts` pins that neither slot writes the other's column, that the
 replaced object deleted is the one the SAME slot held, and that the validation is shared.
 
+**What `logoUrl` may hold (input validation, 2026-10-22).** The upload writes
+`/api/media/public/<id>?v=<n>`; the create and update bodies still accept the field, and on both the
+service holds it to an allowlist - that own-media shape, or an absolute `https:` URL with no quote,
+angle bracket or whitespace - and refuses anything else with `400 ASSOCIATION_IMAGE_URL_INVALID`
+(`apps/social-service/src/associations/association-image-url.ts`; a blank value clears it). Migration
+`106` brings any stored value outside the allowlist back to the row's own media, or clears it -
+**and loses nothing silently**: each changed row's id, old value and `updatedAt` are copied first
+into `association_logo_url_rewrites`, and the count is raised as a `NOTICE` in the deploy log
+(`association-logo-url-migration.integration.spec.ts` runs it against PostgreSQL). The deploy applies
+migrations by itself (`infrastructure/lib/migrations.sh`), so releasing it IS applying it. Its SQL
+patterns are at least as strict as the reader, not a byte-for-byte copy of the writer (which also
+parses the URL). The reader's half is `imageSrcOrNull` (`frontend/src/lib/utils/imageSrc.ts`), called
+by `associationLogoSrc`: only a path or an http(s) URL is ever drawn, and a dropped value is said
+through `Log.i`. The two export sheets built as HTML strings (`calendarExport.ts`, `trombinoscope.ts`)
+escape every interpolated value, attributes included, through the one `escapeHtmlAttribute`
+(`frontend/src/lib/utils/escapeHtml.ts`). In the trombinoscope, a photo that does not load shows
+initials (`showInitialsInstead`).
+
 ### What a list's card says, and what it stopped saying
 
 Three changes, all of them about not repeating what the page already states (user, 2026-09-22):
@@ -129,8 +153,10 @@ Three changes, all of them about not repeating what the page already states (use
 The archived and "Membre" notes stay on both kinds, because they answer something the shelf does
 not; the middot separator belongs to the count, so a list prints the note without one.
 `AssociationTile` is shared by five call sites across `/associations` and `/lists`, which is why
-the count is a CONDITION rather than a deletion, and why `associationTileList.test.ts` reads the
-markup - every one of these was valid markup that rendered without complaint.
+the count is a CONDITION rather than a deletion. `AssociationTile.render.svelte.test.ts` MOUNTS the
+tile for each of these (it read the markup's spelling until WP-T5, 2026-10-18,
+[test-suite-reform](../../test-suite-reform.md)) - every one of them was valid markup that
+rendered without complaint.
 
 ### What the detail header says, and the space a compiler kept eating
 

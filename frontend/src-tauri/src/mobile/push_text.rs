@@ -60,6 +60,11 @@ pub enum PushText<'a> {
     VoiceNote,
     /// An audio file that is not declared a voice note: imported, or recorded before 2026-09-17.
     Audio,
+    /// A CanaReel sent in a conversation (`MediaMsg.intent = REEL_MESSAGE`, WP-RC-7), with the
+    /// caption the sender typed when there is one. Unlike a photo, the caption FOLLOWS the
+    /// announcement rather than replacing it: a reel expires, and a banner showing only its caption
+    /// would not say there is a 30-day video to open.
+    Reel(Option<&'a str>),
     Attachment,
     Poll(&'a str),
     VideoCallIncoming,
@@ -112,6 +117,11 @@ impl PushText<'_> {
             Self::Video => s("\u{1f3a5} Vidéo", "\u{1f3a5} Video"),
             Self::VoiceNote => s("\u{1f3a4} Message vocal", "\u{1f3a4} Voice message"),
             Self::Audio => s("\u{1f3b5} Fichier audio", "\u{1f3b5} Audio file"),
+            Self::Reel(None) => s("\u{1f3ac} CanaReel", "\u{1f3ac} CanaReel"),
+            Self::Reel(Some(caption)) => pick(
+                format!("\u{1f3ac} CanaReel : {caption}"),
+                format!("\u{1f3ac} CanaReel: {caption}"),
+            ),
             Self::Attachment => s("\u{1f4ce} Pièce jointe", "\u{1f4ce} Attachment"),
             Self::Poll(question) => pick(
                 format!("\u{1f4ca} Sondage : {question}"),
@@ -134,7 +144,7 @@ mod tests {
     /// renderings; this guarantees the English one is English - a copy-pasted French arm compiles.
     #[test]
     fn every_sentence_is_written_in_both_languages() {
-        let cases: [(PushText<'_>, &str, &str); 19] = [
+        let cases: [(PushText<'_>, &str, &str); 21] = [
             (
                 PushText::GroupRenamed(None),
                 "a renommé le groupe",
@@ -202,6 +212,16 @@ mod tests {
                 PushText::Audio,
                 "\u{1f3b5} Fichier audio",
                 "\u{1f3b5} Audio file",
+            ),
+            (
+                PushText::Reel(None),
+                "\u{1f3ac} CanaReel",
+                "\u{1f3ac} CanaReel",
+            ),
+            (
+                PushText::Reel(Some("Au gala")),
+                "\u{1f3ac} CanaReel : Au gala",
+                "\u{1f3ac} CanaReel: Au gala",
             ),
             (
                 PushText::Attachment,

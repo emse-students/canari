@@ -9,6 +9,7 @@
  */
 import { it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
+import { flushMacrotask } from '../../../test/flush';
 
 const fetchActivePaymentProvider = vi.fn();
 vi.mock('$lib/associations/api', () => ({ fetchActivePaymentProvider }));
@@ -24,7 +25,7 @@ afterEach(() => {
 });
 
 /** Flushes the `$effect`'s `fetchActivePaymentProvider().then(...)` microtask. */
-const flushProvider = () => new Promise((resolve) => setTimeout(resolve, 0));
+const flushProvider = () => flushMacrotask();
 
 function mountHint() {
   const target = document.createElement('div');

@@ -9,6 +9,8 @@
     <string name="notif_channel_forms_desc">Reminders before a form opens</string>
     <string name="notif_channel_calls_name">Canari calls</string>
     <string name="notif_channel_calls_desc">Incoming calls (ringtone)</string>
+    <string name="notif_channel_call_ongoing_name">Ongoing call</string>
+    <string name="notif_channel_call_ongoing_desc">The notification shown during a call, with the button to hang up</string>
     <string name="notif_channel_mentions_name">Canari mentions</string>
     <string name="notif_channel_mentions_desc">Messages that mention you (@)</string>
     <string name="notif_channel_reactions_name">Reactions to your messages</string>
@@ -19,6 +21,9 @@
     <string name="notif_sync_running_body">Syncing messages...</string>
 
     <string name="notif_outbox_pending_body">You may have messages waiting to be sent - open the app to send them.</string>
+
+    <string name="notif_new_device_title">New device</string>
+    <string name="notif_new_device_body">A new device was added to your account. If it was not you, open Canari.</string>
 
     <string name="notif_sender_self">You</string>
     <string name="notif_channel_unnamed">Channel</string>
@@ -59,12 +64,24 @@
     <string name="notif_social_association_repost_body">New post</string>
     <string name="notif_social_repost_proposed_title">%1$s proposes a post to share</string>
     <string name="notif_social_repost_proposed_body">A post to share</string>
+    <string name="notif_social_repost_personal_requested_title">%1$s asks to share your post</string>
+    <string name="notif_social_repost_personal_requested_body">A request to share your post</string>
     <string name="notif_social_coorganise_proposed_title">%1$s proposes to co-organise an event</string>
     <string name="notif_social_coorganise_proposed_body">An event to co-organise</string>
+    <string name="notif_social_live_started_title">%1$s is live</string>
+    <string name="notif_social_live_started_body">Tap to watch</string>
+    <string name="notif_social_live_cut_title">Your live was stopped</string>
+    <string name="notif_social_live_cut_body">Moderators cut your live. This is a warning.</string>
+    <string name="notif_social_live_suspended_title">Lives suspended</string>
+    <string name="notif_social_live_suspended_body">After another cut by moderators, you cannot start a live for now.</string>
+    <string name="notif_social_live_withdrawn_title">Right to go live withdrawn</string>
+    <string name="notif_social_live_withdrawn_body">Moderators have withdrawn your right to start a live.</string>
     <string name="notif_form_opening_soon_title">Form opening soon</string>
     <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
     <string name="notif_form_open_title">Form now open!</string>
     <string name="notif_form_open_body">The form is available - hurry, spots are limited!</string>
+    <string name="notif_form_paid_over_capacity_title">Payment on a full form</string>
+    <string name="notif_form_paid_over_capacity_body">“%1$s”: a payment arrived after the form was full. A refund is owed.</string>
     <!-- The agenda's five. See the note in values/strings.xml. -->
     <string name="notif_event_proposed_title">Event to review</string>
     <string name="notif_event_proposed_body">%1$s is proposing “%2$s”</string>

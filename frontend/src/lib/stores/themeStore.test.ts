@@ -5,12 +5,14 @@ import { themeStore } from './themeStore.svelte';
 
 /** OS dark-mode flag driven by the test, read by the matchMedia stub. */
 let osDark = false;
-/** Listeners the store registered on the media query, so a test can fire an OS switch. */
-let osListeners: Array<(e: { matches: boolean }) => void> = [];
+/**
+ * Listeners the store registered on the media query, so a test can fire an OS switch. Never reset:
+ * the store attaches its ONE listener for the module's life, in whichever test first arms it.
+ */
+const osListeners: Array<(e: { matches: boolean }) => void> = [];
 
 beforeEach(() => {
   osDark = false;
-  osListeners = [];
   localStorage.clear();
   document.documentElement.removeAttribute('data-theme');
   (window as any).matchMedia = vi.fn((query: string) => ({
@@ -126,6 +128,31 @@ describe('themeStore', () => {
     release();
     expect(set.mock.calls).toEqual([['dark'], ['dark'], ['light']]);
     delete (window as any).canariTheme;
+  });
+
+  it("sur iOS, la caméra ne bascule pas l'app en sombre : l'écho du style de fenêtre n'est pas l'OS", () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    // The iOS shell: a posted theme becomes the window's style, which WKWebView's media query follows.
+    const postMessage = vi.fn((theme: string) => {
+      const dark = theme === 'dark';
+      if (dark === osDark) return;
+      osDark = dark;
+      for (const cb of osListeners) cb({ matches: dark });
+    });
+    (window as any).webkit = { messageHandlers: { canariTheme: { postMessage } } };
+    themeStore.init();
+    expect(document.documentElement.dataset.theme).toBe('light');
+
+    const release = themeStore.holdNativeBar('dark');
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(themeStore.isDark).toBe(false);
+    release();
+
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(postMessage.mock.calls).toEqual([['light'], ['dark'], ['light']]);
+    expect(themeStore.preference).toBe('system');
+    expect(localStorage.getItem('canari-theme')).toBeNull();
+    delete (window as any).webkit;
   });
 
   it('ne fait rien sans shell natif (navigateur)', () => {
