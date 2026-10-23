@@ -541,8 +541,8 @@ below; **owed on both phones**
 
 - **The rail** (`ReelActionRail`, inside `ReelSlide`'s frame, bottom-right on the caption's
   baseline; the caption keeps `pr-16` free for it): **heart** with the number of reactions,
-  **comments** with the number of comments, **send** (`sharePostLink`: the system share sheet on
-the public link in the phone apps, a copied link elsewhere). Drawn only when the viewer has a reader
+  **comments** with the number of comments, **send** (the post's share sheet, `PostShareSheet`:
+  into a conversation, copy the link, the system sheet - [sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)). Drawn only when the viewer has a reader
   (`likerId`), so a conversation's reel (RC-1) has none. `data-no-double-tap` keeps it out of the
   double tap, `data-reel-rail` out of the viewer's swipe (`NOT_A_GESTURE`).
 - **The heart says "I reacted"** (`reels/reelRail.ts`): a post carries reactions of several kinds,
@@ -564,8 +564,10 @@ the public link in the phone apps, a copied link elsewhere). Drawn only when the
   (`GET /api/posts/:id`, every comment and no total) sets it to the rows it read - on the read's
   own object, so its served stamp survives. On the card, a comment write declares `comments` AND
   `commentCount` to its ledger: a read issued before the write adopts neither.
-- **Send is the post menu's share** (`posts/sharePost.ts`: copy the public link, toast). Sending a
-  post INTO a conversation does not exist; it is an owed decision, not built here.
+- **Send is the post menu's share**: both open the post's share sheet (`PostShareSheet`, loaded on
+  the first send and drawn inside the viewer, so above it). Sending INTO a conversation lands the
+  link in that conversation's composer, and a tap on that link's card there opens the reel in this
+  viewer ([sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)).
 - **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
   `docked` mode (the list scrolls, the composer stays at the bottom), written through
   `posts/postCommentThread.svelte.ts`, the class the card now uses too, and reported through

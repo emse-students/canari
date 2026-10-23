@@ -10,7 +10,6 @@ import ReelViewer from './ReelViewer.svelte';
 import type { PostComment, PostEntity } from '$lib/posts/api';
 import { addReaction, removeReaction } from '$lib/posts/api';
 import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
-import { sharePostLink } from '$lib/posts/sharePost';
 import { showToast } from '$lib/stores/toast.svelte';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { m } from '$lib/paraglide/messages';
@@ -34,7 +33,9 @@ vi.mock('$lib/posts/api', async (importOriginal) => ({
   addReaction: vi.fn(),
   removeReaction: vi.fn(),
 }));
-vi.mock('$lib/posts/sharePost', () => ({ sharePostLink: vi.fn() }));
+vi.mock('$lib/components/posts/PostShareSheet.svelte', async () => ({
+  default: (await import('./PostShareSheetStub.test-helper.svelte')).default,
+}));
 // The thread's avatars and names, as `PostComments`'s own tests stand them in: nothing fetched.
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (id: string) => `User ${id}`,
@@ -92,7 +93,6 @@ beforeEach(() => {
   vi.mocked(addReaction).mockReset();
   vi.mocked(removeReaction).mockReset();
   vi.mocked(pushHistoryOverlay).mockClear();
-  vi.mocked(sharePostLink).mockClear();
 });
 afterEach(() => {
   while (mounted.length) unmount(mounted.pop()!);
@@ -174,10 +174,11 @@ it("the heart takes the reader's own reaction back, whatever its kind", async ()
   expect(q('[data-reel-rail-heart]')!.getAttribute('aria-pressed')).toBe('false');
 });
 
-it("the send is the post menu's share", async () => {
+it("the send opens the post's share sheet on that reel", async () => {
   await render(post('a'), 'alice');
+  expect(q('[data-share-sheet]')).toBeNull();
   await click('[data-reel-rail-send]');
-  expect(sharePostLink).toHaveBeenCalledWith('a');
+  await vi.waitFor(() => expect(q('[data-share-sheet="a"]')).not.toBeNull());
 });
 
 it('the comments open in a sheet over the reel, as a history entry of their own', async () => {

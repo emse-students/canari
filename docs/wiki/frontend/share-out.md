@@ -2,8 +2,8 @@
 
 "Partager" opens the operating system's share sheet, the way Messenger or Discord offer it: a
 message's text, a message's attachment (decrypted), a post's or a reel's public link. Phone apps
-only (`canShareOut`); the web and the desktop app have no native sheet, and there a post's
-"Partager" copies its link as it always did. It is half of the sharing chantier (user, 2026-10-11;
+only (`canShareOut`); the web and the desktop app have no native sheet, and there a post's share
+sheet simply has no "Partager via..." row. It is half of the sharing chantier (user, 2026-10-11;
 a priority since 2026-10-21) - the other half, sharing INTO Canari, is on `sharing.md` once its
 pull request merges, and this page is folded into it then.
 
@@ -12,9 +12,8 @@ pull request merges, and this page is folded into it then.
 | Control | Shared | Code |
 | --- | --- | --- |
 | A message's long-press sheet, "Partager" | the attachment, decrypted, or else the text | `MessageBubble` -> `sharing/shareOut.ts` (`shareMediaOut`, `shareTextOut`) |
-| A post's menu, "Partager" | its public link (`publicAppUrl('/posts/<id>')`) | `posts/sharePost.ts` (`sharePostLink`) |
-| A post's menu, "Copier le lien" (phone apps only) | the same link, copied | `copyPostLink` |
-| The CanaReels rail's send | the reel's public link | `sharePostLink` |
+| A post's or a reel's share sheet, "Partager via..." (the post menu's "Partager", the CanaReels rail's send) | its public link (`postShareUrl`) | `posts/sharePost.ts` (`sharePostLinkOut`), sheet in [sharing S6](sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6) |
+| The same sheet, "Copier le lien" (every build) | the same link, copied | `copyPostLink` |
 
 **Not offered**: on a CanaReel received in a conversation (it is not forwarded either, and it
 expires), on an attachment still uploading (no blob to decrypt yet), on a deleted message.
