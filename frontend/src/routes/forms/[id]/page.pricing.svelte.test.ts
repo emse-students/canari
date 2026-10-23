@@ -146,6 +146,19 @@ describe('the price of a form whose priced question is not answered yet', () => 
     expect(text()).toContain('30,00');
   });
 
+  it('states the price once, in the footer, with the pricing that applied (user, 2026-10-23)', async () => {
+    form.items = [choice('formation', ['icm', 'ast'])];
+    submission.pricing = {
+      ...grid({ formation: ['icm', 'ast'] }, { icm: 3000, ast: 4000, _others: null }),
+      appliedLabels: ['Cotisant'],
+    };
+    await render();
+    await choose('icm');
+
+    expect(text()).toContain(`${m.form_view_total_to_pay()} (Cotisant)`);
+    expect(text().match(/30,00/g)?.length).toBe(2); // the total and the pay button, no header badge
+  });
+
   it('closes no option of one priced question while ANOTHER is still blank', async () => {
     form.items = [choice('formation', ['icm', 'ast']), choice('promo', ['p1', 'p2'])];
     const cells: Record<string, number | null> = {};
