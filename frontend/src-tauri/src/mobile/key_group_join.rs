@@ -22,7 +22,8 @@
 //!   `mls.bin` with the digest of what was loaded. Nothing is written to `mls.bin` before the server
 //!   accepts: an external commit cannot be cleared, so an unaccepted one must leave no trace.
 //! - **The finish** ([`finish_key_group_join`]) - installs the staged state only over the very file it
-//!   was built from (a compare-and-swap, [`background_write_mls_bin_if_unchanged`]).
+//!   was built from, and never in a warm process (a compare-and-swap,
+//!   [`background_write_mls_bin_if_unchanged_and_cold`]).
 //!
 //! Android only today: the iOS notification extension reads a MIRROR of `mls.bin` in the App Group
 //! and never writes the app's state, so a join made there would put a leaf in the tree whose secrets
@@ -34,7 +35,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::MlsManager;
 
 use crate::concurrency::{
-    background_write_mls_bin_if_unchanged, foreground_is_active, live_manager_in_process,
+    background_write_mls_bin_if_unchanged_and_cold, foreground_is_active, live_manager_in_process,
     mls_bin_digest,
 };
 
@@ -430,7 +431,7 @@ pub fn finish_key_group_join(data_dir: &Path) -> Result<usize, String> {
     }
     let (digest, sealed) = staged.split_at(32);
     let digest: [u8; 32] = digest.try_into().map_err(|_| "staged digest".to_string())?;
-    background_write_mls_bin_if_unchanged(&data_dir.join("mls.bin"), &digest, sealed)?;
+    background_write_mls_bin_if_unchanged_and_cold(&data_dir.join("mls.bin"), &digest, sealed)?;
     log::info!(
         "[KG_PUSH_JOIN] joined state installed (mls.bin {} bytes)",
         sealed.len()

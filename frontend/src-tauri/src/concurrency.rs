@@ -316,49 +316,35 @@ pub(crate) fn background_write_mls_bin_if_unchanged(
     loaded_digest: &[u8; 32],
     data: &[u8],
 ) -> Result<(), String> {
-    let _guard = mls_bin_write_lock()
-        .lock()
-        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
-    if foreground_is_active() {
-        return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
-    }
-    let current = std::fs::read(path).map_err(|e| format!("re-read mls.bin: {e}"))?;
-    if &mls_bin_digest(&current) != loaded_digest {
-        return Err(
-            "mls.bin changed since it was loaded - background write abandoned (lost update refused)"
-                .to_string(),
-        );
-    }
-    write_mls_bin_atomically(path, data)
+    background_write_mls_bin_compare_and_swap(path, loaded_digest, data, false)
 }
 
-/// The digest a background engine takes of the `mls.bin` bytes it LOADED, so that
-/// [`background_write_mls_bin_if_unchanged`] can refuse to write over a file that moved since.
-#[cfg(any(target_os = "android", target_os = "ios", test))]
-pub(crate) fn mls_bin_digest(bytes: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes).into()
-}
-
-/// [`background_write_mls_bin`], AND ONLY OVER THE FILE THE CALLER LOADED - a compare-and-swap.
+/// [`background_write_mls_bin_if_unchanged`], AND ALSO REFUSED IN A WARM PROCESS - the writer of
+/// the key-group join from a push (channel-encryption section 26).
 ///
-/// The plain background write closes the foreground race with a guard (a foreground that is
-/// active, or a foreground operation in flight) and leaves one lost update open, named in
-/// `docs/wiki/durable-rules.md`: a background engine writing back a blob that changed since it
-/// loaded it. Every background path so far finishes in seconds, under `MlsStateLock`, without a
-/// network round trip. A key-group join from a push (channel-encryption section 26) does not: it
-/// holds its loaded state across TWO round trips to the server, and the foreground can start,
-/// checkpoint and stop again inside that span - after which the guard reads "inactive" and the
-/// write would erase what the foreground did. So this write compares the file's CURRENT bytes with
-/// the digest of the bytes the caller loaded, under the same write lock every `mls.bin` writer
-/// takes (the foreground's [`write_mls_state_blob`] included), and refuses on any difference.
-///
-/// A refusal is an error the caller must say out loud: the work it wanted to persist is lost.
+/// That join holds its loaded state across TWO round trips to the server, and it is the one
+/// background write that can be deferred to the app without losing anything: a foreground manager
+/// loaded in this process ([`live_manager_in_process`]) would persist over the install at its next
+/// resume, so the join refuses and the app's own load joins the group instead. The check is made
+/// under the same write lock as the compare, which is what makes it a proof
+/// ([`foreground_load_mls_bin`] marks the process warm before it reads under that lock).
 #[cfg(any(target_os = "android", target_os = "ios", test))]
-pub(crate) fn background_write_mls_bin_if_unchanged(
+pub(crate) fn background_write_mls_bin_if_unchanged_and_cold(
     path: &std::path::Path,
     loaded_digest: &[u8; 32],
     data: &[u8],
+) -> Result<(), String> {
+    background_write_mls_bin_compare_and_swap(path, loaded_digest, data, true)
+}
+
+/// The one body of both background writers above: the foreground guard, optionally the warm-process
+/// refusal, then the compare-and-swap, all under [`mls_bin_write_lock`].
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+fn background_write_mls_bin_compare_and_swap(
+    path: &std::path::Path,
+    loaded_digest: &[u8; 32],
+    data: &[u8],
+    refuse_warm_process: bool,
 ) -> Result<(), String> {
     let _guard = mls_bin_write_lock()
         .lock()
@@ -366,7 +352,7 @@ pub(crate) fn background_write_mls_bin_if_unchanged(
     if foreground_is_active() {
         return Err("foreground active - background mls.bin write abandoned (C1/FCM3)".to_string());
     }
-    if live_manager_in_process() {
+    if refuse_warm_process && live_manager_in_process() {
         return Err(
             "a foreground manager is loaded in this process - background mls.bin write abandoned (a resume would persist over it)"
                 .to_string(),
