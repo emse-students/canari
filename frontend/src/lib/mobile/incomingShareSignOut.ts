@@ -59,7 +59,10 @@ export async function eraseIncomingShare(reason: string): Promise<void> {
   // session's share: handed to the store, whose fence it passes, rather than deleted.
   if (fenced !== null && manifest.epoch >= fenced) {
     appendLog(`[SHARE] a share made after the sign-out (epoch ${manifest.epoch}) kept`);
-    incomingShare.offer({ text: manifest.text, files: manifest.files }, manifest.epoch);
+    incomingShare.offer(
+      { text: manifest.text, files: manifest.files, suggested: manifest.target },
+      manifest.epoch
+    );
     return;
   }
   appendLog(`[SHARE] an undrained share erased (${reason}): ${manifest.files.length} file(s)`);

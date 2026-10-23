@@ -23,8 +23,10 @@
   is IN, and the merge conflict it used to cause is what tools:replace answers.
     - FCM meta-data default_notification_icon / _channel_id (= CHANNEL_MESSAGES in Kotlin)
     - the SEND / SEND_MULTIPLE intent-filter on MainActivity (share into Canari)
+    - the android.app.shortcuts meta-data on MainActivity (share suggestions, @xml/shortcuts)
   CI guardrail: src/lib/mobile/androidFcmManifest.test.ts fails if any of these is dropped,
-  src/lib/mobile/androidShareManifest.test.ts if the share filter is.
+  src/lib/mobile/androidShareManifest.test.ts if the share filter is,
+  src/lib/mobile/androidShortcutsManifest.test.ts if the shortcuts meta-data is.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -108,6 +110,12 @@
                 <data android:mimeType="audio/*" />
                 <data android:mimeType="application/*" />
             </intent-filter>
+            <!-- SHARE SUGGESTIONS (sharing lot S5): the share-target the recent conversations are
+                 suggested under in the share sheet (res/xml/shortcuts.xml). Hand-maintained, outside
+                 the deep-link plugin's generated block below; androidShortcutsManifest.test.ts. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
