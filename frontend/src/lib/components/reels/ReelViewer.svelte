@@ -229,6 +229,10 @@
 
   /** The post whose comments sheet is open, by id - the sheet follows the row, not an index. */
   let commentsFor = $state<string | null>(null);
+  /** The sheet has begun to slide out: the reel grows back to the screen with it. */
+  let commentsLeaving = $state(false);
+  /** The reel is a rounded card above the sheet (Instagram's): `scale` of the full screen. */
+  const commentsCard = $derived(commentsFor !== null && !commentsLeaving);
   const commentsPost = $derived(
     commentsFor ? (reels.find((r) => r.id === commentsFor) ?? null) : null
   );
@@ -267,6 +271,7 @@
       onHeart: () => toggleHeart(post),
       onComments: () => {
         console.debug(`[reel-viewer] comments opened on ${post.id}`);
+        commentsLeaving = false;
         commentsFor = post.id;
       },
       onSend: () => openShareSheet(post.id),
@@ -511,7 +516,19 @@
     aria-label={m.reels_viewer_label()}
     data-reel-viewer
   >
-    <div bind:this={frame} class="absolute inset-0 touch-none">
+    <!-- THE REEL SHRINKS INTO A CARD while the comments are open (transform only, the motion scale of
+         design-reference "Motion"; the global reduced-motion rule makes it instant). The corner radius is
+         set at once, not animated, and is drawn at the card's scale, so it reads about 12 px. -->
+    <div
+      bind:this={frame}
+      class="absolute inset-0 touch-none {commentsCard ? 'overflow-hidden rounded-[2.25rem]' : ''}"
+      style:transform-origin="50% 0"
+      style:transform={commentsCard
+        ? 'translate3d(0, calc(var(--safe-area-inset-top, 0px) + 0.75rem), 0) scale(0.34)'
+        : 'none'}
+      style:transition="transform var(--motion-slow) var(--motion-ease-out)"
+      data-reel-card={commentsCard}
+    >
       <div
         class="absolute inset-0"
         style:transform="translate3d({offsetX}px, calc({-index * 100}% + {offsetY}px), 0)"
@@ -588,7 +605,11 @@
         currentUserId={likerId}
         {authToken}
         onChange={setPost}
-        onClose={() => (commentsFor = null)}
+        onClosing={() => (commentsLeaving = true)}
+        onClose={() => {
+          commentsFor = null;
+          commentsLeaving = false;
+        }}
       />
     {/if}
 
