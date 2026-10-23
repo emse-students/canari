@@ -30,14 +30,15 @@ export async function exportBackupImpl(
   if (!ctx.getStorage()) return null;
   setIsExporting(true);
   try {
-    await exportUserBackup({
+    const exported = await exportUserBackup({
       storage: ctx.getStorage()!,
       userId: ctx.getUserId(),
       deviceKeyB64: ctx.getDeviceKey(),
       myDeviceId: ctx.getMyDeviceId(),
       log,
     });
-    return backupExportOutcome();
+    // A cancelled save produced no file, so there is no code to show and nothing to report.
+    return exported ? backupExportOutcome(exported.recoveryCode, exported.codeOrigin) : null;
   } catch (e) {
     log(`[BACKUP] Export failed: ${e}`);
     return backupExportFailure(e);
@@ -47,8 +48,8 @@ export async function exportBackupImpl(
 }
 
 /**
- * Imports a previously exported backup file, decrypts it with the current PIN,
- * replaces IndexedDB, and reloads conversations.
+ * Imports a previously exported backup file - opened with its recovery code (v3) or the session's
+ * device key (v2) - merges it into the local store, and reloads conversations.
  * Sets isImporting flag during the operation.
  *
  * @returns What to tell the user - which refusal, or how much was restored and onto what. `null`
@@ -60,13 +61,15 @@ export async function importBackupImpl(
   file: File,
   setIsImporting: (v: boolean) => void,
   clearConversations: () => void,
-  reloadConversations: () => Promise<void>
+  reloadConversations: () => Promise<void>,
+  recoveryCode?: string
 ): Promise<BackupOutcome | null> {
   if (!ctx.getStorage()) return null;
   setIsImporting(true);
   try {
     const result = await importUserBackup({
       file,
+      recoveryCode,
       deviceKeyB64: ctx.getDeviceKey(),
       storage: ctx.getStorage()!,
       myDeviceId: ctx.getMyDeviceId(),

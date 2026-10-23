@@ -1087,10 +1087,9 @@ const NOTABLE = [
   // classifier has to be right on both sides of it.
   /^\[PENDING\] Welcome \u2192 \S+ \(user: \S+\) (?:pour|for) \S+$/,
   // THE FIFTH SPELLING OF "THE GUARD HELD", reached from the ERROR path rather than a pre-check:
-  // the Add threw `DuplicateSignatur`, so the leaf was already in the tree. It is the heaviest of
-  // the five - `handleDuplicateLeafError` follows and that KICKS - but the kick's own outcome lines
-  // carry their own verdicts (`[KICK]` has no rule at all, deliberately), so this line is `notable`
-  // and the repair behind it is judged on its own.
+  // the Add threw `DuplicateSignatur`, so the key was already in the tree. Nothing is kicked since
+  // 2026-10-22: the tree is read again, a leaf of this identity means the invitation is fulfilled,
+  // and any other holder of the key is a `console.error` judged on its own - so this line is `notable`.
   /^\[PENDING\] \S+ already in MLS tree of \S+$/,
   // THE WrongEpoch RACE RESOLVING ITSELF: the concurrent commit had already added this device, so
   // the membership reads `active` and the sweep stops. `notable` - the race is real and self-
@@ -1179,7 +1178,7 @@ const NOTABLE = [
   // passes reporting a different spelling of "the guard held". So the site was read whole
   // (actions.ts:753-975 plus sessionAuth.ts:987) and every line placed deliberately:
   //
-  //   notable      - the six below plus `Welcome -> `, `leaf in MLS tree - kick + re-add` (claimed
+  //   notable      - the six below plus `Welcome -> `, `leaf in MLS tree - remove + re-add in one commit` (claimed
   //                  by the generic `re-?add` rule) and `re-add suspended`. A guard that held.
   //   unexplained  - the ten that are a refusal, an abort, an error, or the >30-day KeyPackage
   //                  FALLBACK. Deliberately ruleless, and pinned that way in classify-selftest.mjs

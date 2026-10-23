@@ -20,7 +20,7 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.ShortcutInfoCompat
-import androidx.core.content.pm.ShortcutManagerCompat
+import app.tauri.gallery.ConversationShortcuts
 import androidx.core.graphics.drawable.IconCompat
 import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -279,6 +279,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Reserved ID for the "messages pending sync" notification (messages channel -> auto-cleared on open). */
         private const val PENDING_SYNC_NOTIF_ID = 9998
 
+        /** Reserved ID for the "a new device was added to your account" notification. */
+        private const val NEW_DEVICE_NOTIF_ID = 9996
+
         /** App-private cleartext mirror of the outbox (written by the TS) drained by the background send. */
         private const val OUTBOX_PENDING_FILE = "outbox_pending.ndjson"
 
@@ -441,6 +444,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * small icon the corner badge, so the notification shows ONE identity. Re-published on every
          * post so a changed avatar replaces the old one; the shortcut id is stable per conversation.
          *
+         * Pushed through `ConversationShortcuts` (tauri-plugin-gallery), which RECORDS the id first
+         * so the sign-out can erase it - the shortcut carries the conversation's name and a face of
+         * this account - and bounds how many are kept (docs/wiki/frontend/sharing.md).
+         *
          * @param label the conversation's name: the group title, or the other person for a DM.
          * @return the shortcut id to hand to `setShortcutId`, or null when the platform refused
          *         (logged), in which case the caller keeps the plain large icon.
@@ -453,7 +460,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             person: Person,
             tapIntent: Intent,
         ): String? {
-            val id = "chat_$groupId"
+            val id = "${ConversationShortcuts.ID_PREFIX}$groupId"
             return try {
                 val info = ShortcutInfoCompat.Builder(context, id)
                     .setShortLabel(label.ifEmpty { context.getString(R.string.app_name) })
@@ -463,8 +470,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .setPerson(person)
                     .setCategories(setOf("androidx.core.content.pm.SHORTCUT_CATEGORY_CONVERSATION"))
                     .build()
-                ShortcutManagerCompat.pushDynamicShortcut(context, info)
-                id
+                if (ConversationShortcuts.push(context, info)) id else null
             } catch (e: Exception) {
                 Log.e(TAG, "publishConversationShortcut: refused for group=${groupId.take(8)}: ${e.message}")
                 null
@@ -1573,6 +1579,38 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
+         * "A new device was added to your account" - one notification, whatever the number of
+         * devices (a second one replaces it by id). Tapping it opens the app, whose in-app alert
+         * names the device and links to the device list.
+         */
+        internal fun showNewDeviceNotification(context: Context) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            CanariApplication.ensureChannels(context, manager)
+            val res = appLocaleContext(context)
+            val tapIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context, NEW_DEVICE_NOTIF_ID, tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val body = res.getString(R.string.notif_new_device_body)
+            val notif = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(res.getString(R.string.notif_new_device_title))
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setContentIntent(pendingIntent)
+                .build()
+            manager.notify(NEW_DEVICE_NOTIF_ID, notif)
+            Log.d(TAG, "showNewDeviceNotification: shown (id=$NEW_DEVICE_NOTIF_ID)")
+        }
+
+        /**
          * The lane a WebSocket-triggered notification is built on.
          *
          * Separate from [MLS_PUSH_LANE] deliberately: this one fetches an avatar over HTTP with a
@@ -2308,6 +2346,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     external fun nativeGraineSeedHeld(dataDir: String, cacheKeyB64: String, channelId: String, sessionId: String): Int
 
+    /**
+     * Claims the `ownDeviceAdded` keys (a JSON array) in the device-notice ledger under [dataDir],
+     * the one the app's own claim uses, and returns the keys nobody announced before as a JSON
+     * array - `mobile/device_notice.rs`.
+     */
+    external fun nativeClaimDeviceNotices(dataDir: String, keysJson: String): String
+
     // Opens a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) against
     // the seed mirror in `dataDir`, sealed under `cacheKeyB64`. Rust reads the session itself and
     // applies every rule the app applies to a row - the floor, and under a v2 session the author,
@@ -2340,6 +2385,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /**
      * Builds an MLS Welcome for [keyPackageB64] in group [groupId] and STAGES the post-add state
      * beside mls.bin - mls.bin itself is untouched until [nativeInstallStagedWelcome].
+     * [requester] (`userId:deviceId`) is the device the request was made for: a package whose
+     * credential names another device, or that device under an unpinned key, is refused
+     * (`identity-mismatch`, `signature-key-changed`) and nothing is staged.
      * Returns JSON: {"ok":true,"welcome","ratchetTree","commit","baseEpoch"} or
      * {"ok":false,"reason":"<token>"} (`mobile/background.rs`, `prepare_welcome_background_with_key`).
      */
@@ -2350,6 +2398,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         userId: String,
         deviceId: String,
         groupId: String,
+        requester: String,
         keyPackageB64: String,
     ): String
 
@@ -3200,7 +3249,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 JSONObject(nativePrepareWelcomeBackground(
                     filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId,
-                    groupId, keyPackage,
+                    groupId, "$requesterUserId:$requesterDeviceId", keyPackage,
                 ))
             }
             if (result == null) {
@@ -3255,6 +3304,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 BackgroundWelcomeAnswer.Level.DEBUG -> Log.d(TAG, "$line - $suffix")
                 BackgroundWelcomeAnswer.Level.WARN -> Log.w(TAG, "$line - $suffix")
                 BackgroundWelcomeAnswer.Level.ERROR -> Log.e(TAG, "$line - $suffix")
+            }
+            // The device this phone just admitted may be a new device of its OWN account: the local
+            // notification is raised only once the server ACCEPTED the commit - it admitted the
+            // device, whether or not this phone could install its own copy. A refused Add's events
+            // lived only in the discarded staged state, so nobody announces them.
+            if (outcome is BackgroundWelcomeAnswer.Outcome.Accepted) {
+                announceOwnDevicesAdded(result, "processWelcomeRequestBackground")
             }
         } finally {
             // 6. Release the Redis lock in all cases
@@ -3795,6 +3851,41 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     // CanariNotificationActionReceiver (quick reply / mark as read) can reuse them without
     // duplicating the outbox-drain logic.
 
+    /**
+     * "A new device was added to your account" (user decision 2026-10-22), from a commit this
+     * service merged - never from a server message.
+     *
+     * [answer] is a native answer (a push decrypt, an accepted background Add); its `ownDeviceAdded`
+     * array holds the keys Rust found to be this account's owner alerts (`mobile/device_notice.rs`).
+     * They are claimed in the ledger the app shares (`nativeClaimDeviceNotices`), so a push replaying
+     * the same commit, or the app having already shown it, announces nothing. In the FOREGROUND
+     * nothing is claimed or posted: the app takes the same event and shows its in-app alert, which is
+     * the only alert a user looking at the app gets.
+     */
+    private fun announceOwnDevicesAdded(answer: JSONObject, where: String) {
+        val keys = answer.optJSONArray("ownDeviceAdded") ?: return
+        if (keys.length() == 0) return
+        if (MainActivity.isInForeground) {
+            Log.d(TAG, "$where: ${keys.length()} device(s) added to this account - foreground, the app alerts")
+            return
+        }
+        val claimed = try {
+            JSONArray(nativeClaimDeviceNotices(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath, keys.toString()))
+        } catch (e: UnsatisfiedLinkError) {
+            Log.e(TAG, "$where: native library not loaded - new-device notice not raised: ${e.message}")
+            return
+        } catch (e: Exception) {
+            Log.e(TAG, "$where: new-device claim failed - notice not raised: ${e.message}")
+            return
+        }
+        if (claimed.length() == 0) {
+            Log.d(TAG, "$where: device(s) added to this account were already announced")
+            return
+        }
+        Log.i(TAG, "$where: ${claimed.length()} new device(s) on this account - local notification")
+        showNewDeviceNotification(this)
+    }
+
     /** Shows the "messages pending" nudge if sends remain queued and the app is closed. */
     private fun maybeNotifyPendingSync(remaining: Int) {
         if (remaining <= 0) return
@@ -3814,6 +3905,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun parseNativeDecrypt(jsonStr: String, where: String): PushDecrypt {
         val json = JSONObject(jsonStr)
+        // Whatever the answer says, the commits it merged may have added a device to this account.
+        announceOwnDevicesAdded(json, where)
         if (!json.optBoolean("ok", false)) {
             // THE REASON IS THE POINT. `{"ok": false}` came back from ELEVEN distinct places -
             // six JNI marshalling faults, an unreadable state, a control frame, an MLS refusal,

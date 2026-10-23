@@ -72,7 +72,7 @@ none of these holds:
 | --- | --- | --- |
 | The commit carried any Remove proposal - an external commit's removal of the joiner's OWN old leaf included | `StagedCommit::remove_proposals()`, before the merge | `run reset reason=departure` |
 | A `(credential, signature key)` pair is in the tree before the merge and not after it - whatever removed it (an update that swaps a key or a credential needs no Remove proposal) | a counted diff of the two trees | `reason=departure` |
-| An ADDED leaf of a NEW USER - the canonical user half of the leaf's own credential (ASCII-lowercased; one reader shared with device trust is [owed](../backlog.md#p3---one-identity-reader-for-rotation-and-device-trust-2263--2268)) had no leaf before the commit; a credential that is not exactly `user:device` counts as new. The same for an Add and an external commit | the same diff | `reason=new-user` |
+| An ADDED leaf of a NEW USER - the user its own credential names, read by device trust's `canonical_user_of` (ASCII-lowercased; a `user:device` or a legacy bare `user` credential names its user), had no leaf before the commit; a credential naming no user counts as new. The same for an Add and an external commit | the same diff | `reason=new-user` |
 | The commit started from another epoch than the run's last one | `fingerprint_before` | `reason=gap` |
 | No run existed | - | `reason=none` |
 
@@ -94,8 +94,10 @@ run; nothing else reads it.
 
 **The same rule holds for an external commit (decided under D5, 2026-10-22).** Key groups are joined
 by external commit: a leaf naming a user who already has a leaf continues the run, a leaf naming a
-user with none - or not a well-formed `user:device` - ends it. The user is read from the leaf's own
-credential, never from server input; the server separately checks that the leaf names the caller
+user with none - or naming no user at all - ends it. The user is read from the leaf's own
+credential by device trust's one reader, `canonical_user_of`: a `user:device` or a legacy bare
+`user` credential ([legacy-compatibility](../legacy-compatibility.md)) names its user, anything else
+names nobody. It is never read from server input; the server separately checks that the leaf names the caller
 (`readCommitFrame` + `validateCommit`, `commit_identity_mismatch`).
 
 **A batch applies every commit in order**, one merge at a time, so a departure in its middle ends

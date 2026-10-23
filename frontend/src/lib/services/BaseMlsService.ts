@@ -11,6 +11,7 @@ import type {
   StateLoadFailure,
 } from '$lib/mls-client';
 import {
+  GroupDrainAbandonedError,
   LocalStateNotReadyError,
   MlsDeliveryApi,
   isKeystoreKeyUnavailable,
@@ -54,6 +55,14 @@ import type {
   IncomingDeliveryMeta,
 } from '$lib/mls-client/IMlsService';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import {
+  DeviceTrustRefusedError,
+  isDeviceTrustRefusal,
+  verdictAdmits,
+  type DeviceEvent,
+  type DevicePin,
+  type KeyPackageVerdict,
+} from '$lib/mls-client/deviceTrust';
 import {
   SenderMismatchError,
   setSenderMismatchReporter,
@@ -138,6 +147,8 @@ import {
   snapshotPendingHistoryMarks,
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
+import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
+import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import {
@@ -783,6 +794,8 @@ export abstract class BaseMlsService implements IMlsService {
     // would hold its group's flight for ever and hand every later caller the same hung promise.
     this.wakeKeyPackageRoundWaiters(true);
     externalJoinFlights.get(this)?.clear();
+    // Nor a wait for a drain this client will never see (the admission gate's parked asks).
+    this.abandonGroupDrainedWaiters();
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -1501,6 +1514,103 @@ export abstract class BaseMlsService implements IMlsService {
     await this.messageScheduler.waitUntilGroupIdle(groupId);
   }
 
+  /** @inheritdoc */
+  isGroupDrained(groupId: string): boolean {
+    const drained = this.groupDrainedNow(groupId);
+    if (!drained) {
+      console.debug(
+        `[QUEUE] group ${groupId.slice(0, 8)} not known drained: pulled=${this.mailboxEmptiedByAPull} pulling=${Boolean(this.pendingPullInFlight)} socket=${this.isWsOpen()} idle=${this.messageScheduler.isGroupIdle(groupId)}`
+      );
+    }
+    return drained;
+  }
+
+  /** {@link isGroupDrained}'s evidence, read silently - the waiters re-read it on every event. */
+  private groupDrainedNow(groupId: string): boolean {
+    return (
+      this.mailboxEmptiedByAPull &&
+      !this.pendingPullInFlight &&
+      this.isWsOpen() &&
+      this.messageScheduler.isGroupIdle(groupId)
+    );
+  }
+
+  /** Waiters of {@link whenGroupDrained}, by group. */
+  private readonly groupDrainedWaiters = new Map<
+    string,
+    Array<{ resolve: () => void; reject: (e: Error) => void }>
+  >();
+
+  /** Groups whose scheduler idleness is already being waited for, so it is armed once per group. */
+  private readonly groupDrainedArmed = new Set<string>();
+
+  /** @inheritdoc */
+  whenGroupDrained(groupId: string): Promise<void> {
+    if (this.groupDrainedNow(groupId)) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const waiters = this.groupDrainedWaiters.get(groupId) ?? [];
+      waiters.push({ resolve, reject });
+      this.groupDrainedWaiters.set(groupId, waiters);
+      this.armGroupDrained(groupId);
+    });
+  }
+
+  /**
+   * Waits for the scheduler to finish `groupId`'s frames, then re-reads the evidence. Armed ONLY
+   * while the group still has frames: an idle group waiting on the pull or the socket is woken by
+   * the pull's end instead, and re-arming on an idle group would resolve at once, for ever.
+   */
+  private armGroupDrained(groupId: string): void {
+    if (this.groupDrainedArmed.has(groupId) || this.messageScheduler.isGroupIdle(groupId)) return;
+    this.groupDrainedArmed.add(groupId);
+    void this.messageScheduler.waitUntilGroupIdle(groupId).then(() => {
+      this.groupDrainedArmed.delete(groupId);
+      this.wakeGroupDrainedWaiters('group idle');
+    });
+  }
+
+  /**
+   * Resolves every {@link whenGroupDrained} waiter whose group now reads drained, and re-arms the
+   * others whose group has frames again. Called where the evidence can change: a group's frames
+   * done, a pull ended.
+   */
+  private wakeGroupDrainedWaiters(cause: string): void {
+    for (const [groupId, waiters] of this.groupDrainedWaiters) {
+      if (!this.groupDrainedNow(groupId)) {
+        this.armGroupDrained(groupId);
+        continue;
+      }
+      this.groupDrainedWaiters.delete(groupId);
+      console.debug(
+        `[QUEUE] group ${groupId.slice(0, 8)} drained (${cause}) - waking ${waiters.length} waiter(s)`
+      );
+      for (const { resolve } of waiters) resolve();
+    }
+  }
+
+  /** How many {@link whenGroupDrained} waiters are pending, across groups. */
+  private pendingGroupDrainWaiters(): number {
+    let n = 0;
+    for (const waiters of this.groupDrainedWaiters.values()) n += waiters.length;
+    return n;
+  }
+
+  /**
+   * Rejects every pending {@link whenGroupDrained} waiter with {@link GroupDrainAbandonedError}: this
+   * client is ending and will drain nothing more. Called by {@link destroy}.
+   */
+  private abandonGroupDrainedWaiters(): void {
+    const pending = this.pendingGroupDrainWaiters();
+    if (pending > 0) {
+      console.info(`[QUEUE] destroy - ${pending} drain waiter(s) abandoned`);
+    }
+    for (const [groupId, waiters] of this.groupDrainedWaiters) {
+      for (const { reject } of waiters) reject(new GroupDrainAbandonedError(groupId));
+    }
+    this.groupDrainedWaiters.clear();
+    this.groupDrainedArmed.clear();
+  }
+
   private async settleMailbox(): Promise<void> {
     await this.pendingPullInFlight?.catch(() => {});
     return this.messageScheduler.waitUntilIdle();
@@ -1997,6 +2107,9 @@ export abstract class BaseMlsService implements IMlsService {
           const closing = drainIngest;
           drainIngest = null;
           await this.endBulkIngest(closing);
+          // AFTER the window closes: a contact line is a row like any other, and the rows of the
+          // drain are flushed first. Not awaited - a notice must never hold the next drain.
+          void this.handOverDeviceEvents('drain end');
         },
       }
     );
@@ -2100,6 +2213,14 @@ export abstract class BaseMlsService implements IMlsService {
             e
           );
         }
+        // WHAT THIS FAILURE HOLDS UP, made visible: a drain waiter (a parked seed ask, an admission
+        // observation) is woken only by a pull that ENDS whole, so it waits for the next one.
+        const waiting = this.pendingGroupDrainWaiters();
+        if (waiting > 0) {
+          console.info(
+            `[PENDING] ${waiting} drain waiter(s) (parked seed asks, admission observations) wait for a pull that completes`
+          );
+        }
       }
     })();
     // CHAINED, NEVER OVERWRITTEN. Two pulls can overlap (a reconnect and the restore's seeded-rows
@@ -2121,6 +2242,9 @@ export abstract class BaseMlsService implements IMlsService {
       if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
     }
     await this.settleMailbox();
+    // THE PULL'S END IS AN EVENT FOR `whenGroupDrained`: a group that went idle before the mailbox
+    // was listed whole reads drained only now (the start-up sync runs before the first full pull).
+    this.wakeGroupDrainedWaiters('pull ended');
     // Every frame refused for lack of a conversation row before this pull started has now been
     // listed AND handled - read, or refused again under a later mark - so the gap healer stops
     // holding live frames behind it (`refusedBacklogIsQueued`). A pull that died half-way proves
@@ -2440,6 +2564,12 @@ export abstract class BaseMlsService implements IMlsService {
         const published = await this.generateKeyPackageImpl(deviceKeyB64);
         // A published round proves this page's identity is accepted: any refused-rotation run ended.
         forgetRefusedRotationReloads();
+        // And the server is reachable: an abandoned id a rotation could not delete is retried here.
+        void retireAbandonedDevices({
+          userId: this.userId,
+          liveDeviceId: this.deviceId,
+          deleteDevice: (u, d) => this.deleteDevice(u, d),
+        });
         return published;
       } catch (e) {
         if (!(e instanceof DeviceRevokedError)) throw e;
@@ -2723,12 +2853,65 @@ export abstract class BaseMlsService implements IMlsService {
     // that, from the peers' side, this device has never made.
     resetSendRatchetLedger(this.userId);
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
-    // our fresh state no longer holds (NoMatchingKeyPackage). Best-effort: a revoked id is already
-    // gone server-side, and a mismatch must not block on the network.
-    this.deleteDevice(this.userId, oldDeviceId).catch((err) =>
-      console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
-    );
+    // our fresh state no longer holds (NoMatchingKeyPackage). RECORDED BEFORE IT IS ASKED, so a
+    // failed delete is retried at the next published round rather than forgotten; never awaited, so
+    // a rotation does not block on the network.
+    recordAbandonedDevice(this.userId, oldDeviceId);
+    // The refusals the abandoned id remembered were judged by pins its discarded state held.
+    forgetRefusedDevicesOf({ userId: this.userId, deviceId: oldDeviceId });
+    void retireAbandonedDevices({
+      userId: this.userId,
+      liveDeviceId: this.deviceId,
+      deleteDevice: (u, d) => this.deleteDevice(u, d),
+    });
     return oldDeviceId;
+  }
+
+  /**
+   * Whether this device's saved MLS state is PROVABLY absent - no file / no record, or an empty one.
+   * `false` on anything the store could not answer: an error is not an absence.
+   *
+   * Gates {@link reenrolLostState}, the one rotation that starts from a MISSING state rather than an
+   * unusable one, so it must never fire on a state that is merely unread (a locked keystore, a
+   * failing disk, a PIN problem - those reach `_initImpl` with a state, or throw).
+   */
+  protected abstract savedStateProvenAbsent(): Promise<boolean>;
+
+  /**
+   * A DEVICE THAT KEPT ITS ID BUT LOST ITS STATE IS A NEW DEVICE (lead decision, 2026-10-22). Its old
+   * signature key went with the state, so peers that pinned it refuse a re-add under the old name
+   * (`docs/wiki/protocols/mls-protocol.md#device-binding`); a new id is a first sight for them, and
+   * the owner's devices announce it as a new device. The old id is retired through the ordinary
+   * device deletion, for that id only (`abandonedDevices.ts`).
+   *
+   * Taken only when ALL of these hold: an id pre-existed this boot (`stateWasExpected`), the caller
+   * did not claim a state exists (`noFreshStart`), and the store PROVES there is none.
+   *
+   * @returns whether the identity was rotated (the fresh client is then loaded and persisted).
+   */
+  protected async reenrolLostState(
+    deviceKeyB64: string,
+    opts?: { noFreshStart?: boolean }
+  ): Promise<boolean> {
+    if (!this.stateWasExpected || opts?.noFreshStart) return false;
+    let absent = false;
+    try {
+      absent = await this.savedStateProvenAbsent();
+    } catch (e) {
+      console.warn(`[MLS] could not prove the saved state absent - not rotating: ${String(e)}`);
+      return false;
+    }
+    if (!absent) {
+      console.warn(
+        `[MLS] ${sanitizeForLog(this.deviceId)} expected a saved state, none was passed, and the store did not prove it absent - not rotating`
+      );
+      return false;
+    }
+    await this.rotateDeviceIdentity(
+      deviceKeyB64,
+      'saved state lost - the device re-enrols as a new device'
+    );
+    return true;
   }
 
   /**
@@ -2835,6 +3018,8 @@ export abstract class BaseMlsService implements IMlsService {
     Array<{
       keyPackage: Uint8Array;
       deviceId: string;
+      /** The `userId` asked for, carried so an Add can check each package names this device. */
+      userId: string;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
@@ -3380,10 +3565,12 @@ export abstract class BaseMlsService implements IMlsService {
   /** Stages an Add commit WITHOUT merging. Returns the commit, shared Welcome, the input
    *  positions actually added / dropped-as-invalid (already-member dedup is silent), and
    *  `groupInfo`: the external-join base for the epoch the commit CREATES (see
-   *  {@link runCommitTransaction}). */
+   *  {@link runCommitTransaction}). Each package travels with the `userId:deviceId` it was
+   *  FETCHED FOR, and Rust skips one whose credential names another device or whose key is not
+   *  the one pinned for it (`deviceTrust.ts`). */
   protected abstract stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -3391,6 +3578,14 @@ export abstract class BaseMlsService implements IMlsService {
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }>;
+  /** Stages ONE commit removing the device `identity`'s leaf and adding it back from `keyPackage`,
+   *  WITHOUT merging (`replace_device_with_base`). Returns the commit, the Welcome for that device
+   *  and the external-join base for the epoch the commit creates. */
+  protected abstract stageReplaceDevice(
+    groupId: string,
+    identity: string,
+    keyPackage: Uint8Array
+  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }>;
   /** Stages a Remove commit (all devices of the given users) WITHOUT merging. Returns the commit
    *  and the external-join base for the epoch it creates. */
   protected abstract stageRemoveMembers(
@@ -4830,15 +5025,168 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
+  /** Asks the MLS layer whether a package may be added as `identity` - see {@link vetKeyPackage}. */
+  protected abstract vetKeyPackageNative(
+    keyPackage: Uint8Array,
+    identity: string
+  ): Promise<KeyPackageVerdict>;
+  /** Takes the pending device events from the MLS layer - see {@link takeDeviceEvents}. */
+  protected abstract takeDeviceEventsNative(): Promise<DeviceEvent[]>;
+  /** Reads the pin of one device from the MLS layer - see {@link pinnedSignatureKeys}. */
+  protected abstract pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<DevicePin | null>;
+  /** Reads the recorded departures from the MLS layer - see {@link removalEpochs}. */
+  protected abstract removalEpochsNative(groupId: string, userId: string): Promise<number[]>;
+
+  /**
+   * What THIS DEVICE has seen of `userId:deviceId`'s signature key in a signed tree it merged or
+   * joined (`DevicePin`), or `null` for a device it never saw - THE SINGLE SOURCE OF TRUST for "a key
+   * this device has seen" (`MlsManager::pinned_signature_keys`, the device pins).
+   *
+   * WHY: a verifier of a signature made by a device key (a community admission voucher, a signed
+   * history entry) must not take the key from the server, which is the party the signature has to
+   * hold against. A pinned key came from a tree whose commits this device verified itself.
+   *
+   * `null` MEANS UNVERIFIED, NEVER FORGED. Pins are bounded, and past the bound (at load only, never
+   * on a heal) the pin of a device no held tree contains any more is dropped, so a device seen once
+   * can come back unknown. `anchored: false` MEANS THE SAME FOR A CONTRADICTION: that pin was
+   * written after the device's previous pin was pruned, from whatever tree came next, so a signature
+   * failing under it is unverified, never forged. Several `keys` come back only for a state seeded
+   * from trees that disagreed; a signature verifying under ANY of them was made by a key this device
+   * saw for that device. The user half matches case-insensitively and the device half exactly, as
+   * the KeyPackage binding reads them. A miss is logged once, in Rust - this per-message path adds
+   * no line of its own.
+   */
+  async pinnedSignatureKeys(userId: string, deviceId: string): Promise<DevicePin | null> {
+    return this.pinnedSignatureKeysNative(userId, deviceId);
+  }
+
+  /**
+   * The epochs at which this device saw `userId` LEAVE `groupId`'s tree - a merged commit removed
+   * the user's last leaf; each epoch is the first one the user is no longer in - oldest first.
+   *
+   * WHY: a verifier that must know whether a user was removed (and when) cannot ask the server, and
+   * observing the tree finds a removal only when it happens to look between a kick and a re-add.
+   * This is recorded at MERGE time in Rust, in the one place every merged commit passes - live,
+   * replayed on catch-up, or our own.
+   *
+   * TWO PROPERTIES A CALLER RELIES ON: it is PER USER - a single commit that swaps a leaf (a resync,
+   * a heal) and the removal of one device among several record nothing, while a kick and a re-add in
+   * TWO commits is a departure whatever the kick was for; and it holds only commits THIS device
+   * merged - a device that entered the group later knows no departure from before it arrived.
+   *
+   * AN EMPTY LIST IS "NOT SEEN", NEVER "NEVER HAPPENED": commits merged before this record existed,
+   * by a state since lost, before this device joined, or dropped past its bound are absent. Kept in
+   * the sealed state; never a device event and never user-visible.
+   */
+  async removalEpochs(groupId: string, userId: string): Promise<number[]> {
+    return this.removalEpochsNative(groupId, userId);
+  }
+
+  /**
+   * Whether `keyPackage` may be added as the device `userId:deviceId`, WITHOUT staging anything.
+   *
+   * For the caller that must decide BEFORE a destructive step: the re-add of a device whose leaf is
+   * still in the tree removes that leaf first, and a removal made for a replacement the Add then
+   * refuses would take the device out of the group for nothing. The Add re-runs the same check in
+   * Rust, so this is the same decision taken earlier, never a second policy.
+   */
+  async vetKeyPackage(
+    keyPackage: Uint8Array,
+    userId: string,
+    deviceId: string
+  ): Promise<KeyPackageVerdict> {
+    const verdict = await this.vetKeyPackageNative(keyPackage, `${userId}:${deviceId}`);
+    console.debug(
+      `[TRUST] KeyPackage for ${sanitizeForLog(userId).slice(0, 8)}:${sanitizeForLog(deviceId)} vetted: ${verdict}`
+    );
+    return verdict;
+  }
+
+  /**
+   * Every device admission recorded since the last call (`DeviceEvent`), oldest first, and forgets
+   * them. Computed in Rust from the signed commits this device merged - never from the server - and
+   * kept in the sealed MLS state until taken. The notices take them through
+   * {@link setDeviceEventConsumer}; this is the direct read.
+   */
+  async takeDeviceEvents(): Promise<DeviceEvent[]> {
+    return this.takeDeviceEventsNative();
+  }
+
+  /** Who the device events go to - the new-device notices (`deviceNotices.svelte.ts`). */
+  private deviceEventConsumer: ((events: DeviceEvent[]) => Promise<void>) | null = null;
+  /** Serialises the hand-overs, so two drains ending together deliver in order. */
+  private deviceEventHandOver: Promise<void> = Promise.resolve();
+
+  /**
+   * Registers the consumer of device events, or removes it (`null`, sign-out). Registering hands it
+   * whatever the state already holds - events recorded while nothing listened (a previous session,
+   * a background Add written to `mls.bin`) - so the bounded store drains rather than filling.
+   */
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void {
+    this.deviceEventConsumer = consumer;
+    console.debug(`[TRUST] device-event consumer ${consumer ? 'registered' : 'removed'}`);
+    if (consumer) void this.handOverDeviceEvents('consumer registered');
+  }
+
+  /**
+   * Takes the pending device events and hands them to the consumer - an empty take included, so the
+   * consumer retries what it parked. Called when a drain ends (the commits it merged are the usual
+   * source), after this device's own Adds and at registration. With no consumer the events stay in
+   * the sealed state, untaken, for the next one.
+   *
+   * A consumer that throws loses the events it was handed - logged at error, since that is a notice
+   * the user will never see; the consumer isolates each event itself so one cannot cost the others.
+   */
+  protected handOverDeviceEvents(why: string): Promise<void> {
+    const run = this.deviceEventHandOver.then(async () => {
+      const consumer = this.deviceEventConsumer;
+      if (!consumer) return;
+      let events: DeviceEvent[];
+      try {
+        events = await this.takeDeviceEventsNative();
+      } catch (e) {
+        console.error(`[TRUST] device events not taken (${why}) - they stay in the state:`, e);
+        return;
+      }
+      // AN EMPTY TAKE IS HANDED OVER TOO: the consumer parks an event whose evidence the server did
+      // not answer, and each hand-over - registration, every drain end, every own Add - is the
+      // durable moment it retries it. Skipping the call would leave it parked on a quiet account.
+      if (events.length > 0) {
+        console.debug(`[TRUST] ${events.length} device event(s) handed to the notices (${why})`);
+      }
+      try {
+        await consumer(events);
+      } catch (e) {
+        console.error(
+          `[TRUST] the device-notice consumer failed - ${events.length} event(s) lost:`,
+          e
+        );
+      }
+    });
+    this.deviceEventHandOver = run;
+    return run;
+  }
+
   async addMember(
     groupId: string,
-    keyPackageBytes: Uint8Array,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
     excludeDeviceIds?: string[]
   ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
+    // REFUSED BEFORE THE LOCK, NOT INSIDE IT: a package the binding or the pin refuses would make
+    // Rust stage nothing and answer with a sentence; the type is decided here, from the verdict.
+    const verdict = await this.vetKeyPackage(device.keyPackage, device.userId, device.deviceId);
+    if (!verdictAdmits(verdict) && isDeviceTrustRefusal(verdict)) {
+      throw new DeviceTrustRefusedError(verdict, device.userId, device.deviceId);
+    }
     const result = await this.runCommitTransaction(
       groupId,
       async () => {
-        const staged = await this.stageAddMembers(groupId, [keyPackageBytes]);
+        const staged = await this.stageAddMembers(groupId, [
+          { keyPackage: device.keyPackage, identity: `${device.userId}:${device.deviceId}` },
+        ]);
         return {
           commit: staged.commit,
           welcome: staged.welcome,
@@ -4847,12 +5195,46 @@ export abstract class BaseMlsService implements IMlsService {
       },
       { excludeDeviceIds, exportTree: true }
     );
+    // This device's own Add may have given its account - or a contact - a new device.
+    void this.handOverDeviceEvents('own add');
+    return { welcome: result.welcome, ratchetTree: result.ratchetTree };
+  }
+
+  /**
+   * Re-adds a device whose leaf is STILL in the tree, removing that leaf and adding the device back
+   * from `device.keyPackage` in ONE commit (staged, validated, merged as every commit is - C7-A).
+   *
+   * WHY ONE COMMIT: a kick and a re-add in two commits leave one epoch where the user is out of the
+   * tree, which reads as a departure to every member (`removalEpochs`) - and a server that answers
+   * one way could steer an honest member into that shape. One commit has no such epoch. The package
+   * is vetted first and a trust refusal throws the typed `DeviceTrustRefusedError`, as `addMember`.
+   */
+  async replaceMember(
+    groupId: string,
+    device: { keyPackage: Uint8Array; userId: string; deviceId: string },
+    excludeDeviceIds?: string[]
+  ): Promise<{ welcome?: Uint8Array; ratchetTree?: Uint8Array }> {
+    const verdict = await this.vetKeyPackage(device.keyPackage, device.userId, device.deviceId);
+    if (!verdictAdmits(verdict) && isDeviceTrustRefusal(verdict)) {
+      throw new DeviceTrustRefusedError(verdict, device.userId, device.deviceId);
+    }
+    console.info(
+      `[TRUST] replacing ${sanitizeForLog(device.userId).slice(0, 8)}:${sanitizeForLog(device.deviceId)} in ${groupId.slice(0, 8)}... in one commit`
+    );
+    const result = await this.runCommitTransaction(
+      groupId,
+      async () =>
+        this.stageReplaceDevice(groupId, `${device.userId}:${device.deviceId}`, device.keyPackage),
+      { excludeDeviceIds, exportTree: true }
+    );
+    // As `addMember`: a replaced device under a new key is a device event this commit recorded.
+    void this.handOverDeviceEvents('own add');
     return { welcome: result.welcome, ratchetTree: result.ratchetTree };
   }
 
   async addMembersBulk(
     groupId: string,
-    devices: Array<{ keyPackage: Uint8Array; deviceId: string }>,
+    devices: Array<{ keyPackage: Uint8Array; deviceId: string; userId: string }>,
     excludeDeviceIds?: string[]
   ): Promise<{
     welcome?: Uint8Array;
@@ -4860,12 +5242,12 @@ export abstract class BaseMlsService implements IMlsService {
     addedDeviceIds: string[];
     skipped: SkippedDevice[];
   }> {
-    return this.runCommitTransaction(
+    const result = await this.runCommitTransaction(
       groupId,
       async () => {
         const staged = await this.stageAddMembers(
           groupId,
-          devices.map((d) => d.keyPackage)
+          devices.map((d) => ({ keyPackage: d.keyPackage, identity: `${d.userId}:${d.deviceId}` }))
         );
         return {
           commit: staged.commit,
@@ -4880,6 +5262,8 @@ export abstract class BaseMlsService implements IMlsService {
       },
       { excludeDeviceIds, exportTree: true }
     );
+    void this.handOverDeviceEvents('own add');
+    return result;
   }
 
   async removeMember(groupId: string, userIds: string[]): Promise<void> {
@@ -4984,6 +5368,7 @@ export abstract class BaseMlsService implements IMlsService {
   abstract getEpoch(groupId: string): number;
   abstract getGroupMemberIdentities(groupId: string): Promise<string[]>;
   abstract memberSignatureKey(groupId: string, identity: string): Promise<Uint8Array | null>;
+  abstract leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
   abstract graineRun(groupId: string): Promise<GraineRunReading>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
   abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;

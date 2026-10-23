@@ -143,6 +143,14 @@ MiConnect is the Service Provider, Alumnforce (the alumni portal) the Identity P
 - **The metadata carries NO certificate** (no `KeyDescriptor`): the source has no signing keypair,
   so authentik does not sign its requests. An IdP that insists on a SP certificate needs one created
   and attached to the source first, which is a production write.
+- **The source ships DISABLED, and may only be enabled with its verification certificate**
+  (`30-sources.yaml`, `enabled: false`). A SAML source verifies a response's signature only when a
+  verification key pair is attached, so enabling one without the IdP's certificate would mean no
+  signature is checked. The precondition for re-enabling, in one step: import Alumnforce's
+  certificate, attach it as the source's `verification_kp`, and keep `signed_response` and
+  `signed_assertion` true. `test-blueprints.sh` enforces this as a CI gate - it refuses any enabled
+  SAML source that has no verification key pair, and refuses an unsigned, weakly-signed (SHA-1/MD5)
+  or IdP-initiated configuration on ANY source, so the source cannot be enabled half-configured.
 - **What the IdP gives back goes into the source**: its metadata URL (Alumnforce's looks like
   `https://mines-saint-etienne.org/sso/saml/metadata`) fills `sso_url`, the issuer and the
   verification certificate. The blueprint (`30-sources.yaml`) still carries a PLACEHOLDER `sso_url`,

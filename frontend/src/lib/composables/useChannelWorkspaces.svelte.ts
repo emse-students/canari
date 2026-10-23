@@ -75,6 +75,7 @@ import {
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
+import { signDirectAdmission } from '$lib/utils/graine/admissionIssue';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -1728,9 +1729,23 @@ export function useChannelWorkspaces() {
       // it is called there. A role is named only when the inviter picked one above it.
       const backendRoleName =
         roleName === 'admin' ? 'Administrateur' : roleName === 'moderator' ? 'Modérateur' : null;
+      // THE PROOF THAT LETS A MEMBER HAND THE NEWCOMER THE PAST (channel-encryption section 25),
+      // signed by this device and stored with the membership. Without it the invitation still
+      // admits; the newcomer then reads from their arrival on, so a failure is said, not hidden.
+      let admissionVoucher: string | undefined;
+      if (currentWorkspace?.workspaceDbId) {
+        try {
+          admissionVoucher = await signDirectAdmission(currentWorkspace.workspaceDbId, memberId);
+        } catch (e) {
+          console.error(
+            `[GRAINE] admission of ${memberId.slice(0, 8)} NOT signed - they will read only from their arrival on: ${String(e)}`
+          );
+        }
+      }
       const invited = await service.inviteToChannel(channelId, {
         targetUserId: memberId,
         ...(backendRoleName ? { roleName: backendRoleName } : {}),
+        ...(admissionVoucher ? { admissionVoucher } : {}),
       });
 
       // WHOEVER ADMITS A NEWCOMER WELCOMES THEM (channel-encryption section 20). This device is

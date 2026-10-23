@@ -22,6 +22,9 @@
 
     <string name="notif_outbox_pending_body">You may have messages waiting to be sent - open the app to send them.</string>
 
+    <string name="notif_new_device_title">New device</string>
+    <string name="notif_new_device_body">A new device was added to your account. If it was not you, open Canari.</string>
+
     <string name="notif_sender_self">You</string>
     <string name="notif_channel_unnamed">Channel</string>
 

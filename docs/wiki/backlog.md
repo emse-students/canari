@@ -27,6 +27,45 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Decided by the user on 2026-10-22 - the local key on a phone is held by secure hardware
+
+On the phone apps the local at-rest key is held by the device's secure hardware, the PIN only
+unlocks it (and stays short), and backups get their own recovery secret. Web and desktop keep the
+PIN-derived key. BUILT in a draft pull request (`feat/hardware-held-local-key`); the mechanism is
+[auth](frontend/modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22).
+Owed before it ships:
+
+- **Device readings, Mi 9T and iPhone**: the list is in
+  [auth](frontend/modules/auth.md#backups-get-their-own-recovery-secret) ("Owed on hardware"),
+  including the iOS build no gate here compiles.
+- **Decided (user, 2026-10-22): notifications stay complete on a locked phone, and the PIN is
+  verified by the server; the hardware key protects the device's stored data. Practicality first.**
+  The four lead decisions are BUILT and recorded with their costs in
+  [auth](frontend/modules/auth.md#decisions-taken-on-2026-10-22-and-what-each-costs).
+- **`minClientVersion` follows the first release carrying the hardware-held key** once both stores
+  serve it.
+- **Two keys stay on purpose**: #2271's push-cache key is not derived from the at-rest key, because it
+  must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
+  reset). Revisit only if #2271 lands with a design that tolerates a rotation.
+
+## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
+
+Built: the owner's in-app alert, the contact line in every DM and group shared with the contact
+(never in communities, wherever the device was first seen), the owner's notice of a refused device
+of their own with its remedy, and the native local notification on both background engines, one
+ledger between them - see
+[mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day).
+Only CI compiles the Kotlin, the Swift and the Android/iOS Rust targets.
+
+Owed readings (Mi 9T and iPhone 12): add a web device to the account with both phones shut - a local
+notification on each (the iPhone at its next message push), then the in-app alert on opening, and
+no second notification; a line "X added a device" in a DM with a contact who adds a device; NO line
+in a community or salon. Owed decisions: whether a phone whose WebView is alive in the background
+should also raise the local notification (today the in-app alert only), and whether a device first
+seen in a tree this device joined should be announced; and whether 7 days is the right bound for
+a contact's line (a device first seen by the server earlier is a heal, not a new device - see the
+evidence table in mls-protocol).
+
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 
 The adding device pushes its whole local store to the invitee (`sendFullHistoryBundle`, up to 5
@@ -42,6 +81,22 @@ the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer t
 nothing is built for it. Design and limits:
 [history-answer-addressing](protocols/history-answer-addressing.md#decided-a-quote-of-an-earlier-message),
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
+
+## P1 - A community's past goes only to a proven admission: BUILT (draft PR), owed its readings and a client floor (2026-10-22)
+
+Decided by the user: communities stay `shared` by default, the past goes only to an admission a
+member can verify, and a new user's arrival rotates (D5, #2263). Migration `107` is approved by the
+user. Owed, in order: merge after #2262 and #2264; the rig rows COMM-26..31; and a
+`minClientVersion` floor at the version carrying it, since an older answering client still hands
+the past to whoever the roster names. **The cut date is DECIDED** (user, 2026-10-23):
+`ADMISSION_PROOF_SINCE` is the day the production stable carrying the proof ships, planned for
+2026-10-27 UTC. **Old invite links are ACCEPTED as they are** (user, 2026-10-23): a newcomer through
+an old link reads from arrival until a member re-admits them.
+
+**Release checklist for that stable: before cutting its final pre-release, check that
+`ADMISSION_PROOF_SINCE` (`frontend/src/lib/utils/graine/admissionGate.ts`) equals that stable's
+day.** Design:
+[channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22).
 
 ## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)
 
@@ -77,14 +132,6 @@ commit alike; (2) bound the bundle in bytes and page it, after measuring what th
 the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
-
-### P3 - one identity reader for rotation and device trust (#2263 / #2268)
-
-`user_of` in `frontend/mls-core/src/graine_run.rs` reads the canonical user of a leaf (well-formed
-`user:device`, user half ASCII-lowercased). It becomes #2268's shared reader `canonical_user_of`,
-done by whichever of #2263 and #2268 lands second, so rotation and trust never disagree on who a
-user is. One difference the swap changes: `canonical_user_of` reads a legacy bare `userId`
-credential as that user, while `user_of` treats it as malformed and so rotates on it.
 
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
 
@@ -471,14 +518,14 @@ The school applied a setting on its TEST CAS and the IP-only and user-agent-only
 
 Reuse the bench phones with screen recording to make demo videos and screenshots for the stores and for communication, from the fictional dev seed (never production). Personal data blurred frame by frame and the result reviewed before delivery; Apple and Google formats. Capture and sizes: [store-listings](store-listings.md#6-capture). Not built.
 
-## Sharing into and out of Canari - S1-S3 built, S4 set aside (user, 2026-10-11, a priority 2026-10-21)
+## Sharing into and out of Canari - S1-S3 and S5 (Android) built, S4 in review (user, 2026-10-11, a priority 2026-10-21)
 
 Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
-waiting share is erased at sign-out (user, 2026-10-22). Owed: the Mi 9T and iPhone 12 readings.
-**S4, share IN on iOS, is SET ASIDE (user, 2026-10-22)**: a Share Extension needs an App ID
-`fr.emse.canari.share` in the App Group and its provisioning profiles, which only the user can
-create on the Apple portal - not started until they exist. Then the suggestions (S5). CanaRun
-waits. [sharing](frontend/sharing.md)
+waiting share is erased at sign-out (user, 2026-10-22). The Android share-sheet suggestions (S5) are
+built too: recent conversations as direct targets, erased at sign-out, behind a setting. **S4, share
+IN on iOS**: the App ID and both profiles exist (user, 2026-10-22); the Share Extension is a draft
+pull request, and it carries the iOS suggestions next. CanaRun waits. Owed: the Mi 9T and iPhone 12
+readings. [sharing](frontend/sharing.md)
 
 ## Owed a VERIFICATION, and nothing else
 
@@ -717,9 +764,28 @@ Job `vendored-upstream` of `scheduled.yml` now reports an upstream `tauri-plugin
 
 `CallService`'s signalling resume retries at fixed moments (1, 2, 4, 4, 4... s, `cappedReconnectDelayMs`), so two clients that lost the same Wi-Fi at the same instant reconnect in lockstep - harmless at two phones, a burst on `call-service` once many share a network. Jitter must not become a clock that decides anything: it spreads WHEN an attempt starts, the budget stays a count. Mechanism: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix). Delete this item when jitter ships or the burst is measured as irrelevant.
 
-## P3 - ChatArea's mount cost grows with the whole thread, not with the 60-row window (measured 2026-10-19)
+## P2 - The deploy's rolling replace: two POSTs answered 502 across a release, cause not settled (CI, 2026-10-22)
 
-Mounting `ChatArea` on 300 messages costs 2.0 s in happy-dom, on 70 messages 0.5 s, although the entry window mounts 60 rows either way, so something walks or derives from every message before the window cuts it. Found while making `ChatArea.entryWindow` stop timing out under load ([test-suite-reform](test-suite-reform.md#wp-t9-s---one-walk-of-the-source-tree-for-every-scan-2026-10-19), which now mounts 80 rows). Not read in the component; profile a long real thread on the Mi 9T before assuming it matters there. Delete this item with the cause or the measurement that refutes it.
+`deploy-rolling.test.sh` (`make test-ci-scripts`, case 1, a release under load) failed ONCE: run 39796209603, attempt 1, head `537b4c736`. Tally `{"200":340,"502":2}`, slowest response 2155 ms, right after the frontend's old replica was retired with a 1 s drain. The rerun passed, and so does every other run read. The logs of attempt 1 are not retrievable: the API serves the passing attempt.
+
+**What is known, by reading `infrastructure/lib/rolling.sh`, `infrastructure/edge/nginx.conf` and the fixture.**
+- The edge is a LAYER 4 relay (`stream`). It cannot answer `502`: a connect it cannot make closes the client's connection instead (`transport:ECONNRESET` in the client's tally, as in the control case). So both 502s were written by a FRONTEND nginx whose upstream, `api`, failed after the request was handed to it. That rules out the edge's failover, and the accept-backlog reset of the retiring frontend, as the cause: either would show as a transport failure, not a 502.
+- The 2155 ms is the edge's 2 s `proxy_connect_timeout` spent on the retired frontend's vanished address, then the next replica. That is the designed failover, and it answered 200.
+- Not settled: WHICH frontend wrote the 502s, and what `api` did. Candidates:
+  - the old frontend's worker, during its graceful SIGQUIT, failing a request that still needed `resolver` (a variable `proxy_pass`);
+  - a frontend whose cached `api` set held only a retired address.
+
+**Why it is not settled.**
+- `retire` runs `docker rm` on the old replica, so its error log, the one line that names the hop, is gone with it.
+- The test prints no frontend log when case 1 fails.
+- Not reproduced locally.
+
+**Owed, in order.**
+1. Make the evidence survive: `retire` prints the retired replica's error lines before `rm`, and the test prints both frontends' logs when a POST fails.
+2. Re-run case 1 until it fails, and read which hop wrote the 502.
+3. Fix the order in the deploy library if the swap drops a request. A retry or a wider timeout is not the fix.
+
+Filed from #2286.
 
 ## P2 - Live chat and floating reactions (WP-L6): the server is MERGED (#2131), the client in review (#2136), five things are owed (2026-10-19)
 

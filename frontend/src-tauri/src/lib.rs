@@ -30,38 +30,45 @@ use tauri::{
 use crate::state::{AppState, PendingDb};
 
 // Re-export commands for generate_handler!
+use crate::commands::at_rest_key::{
+    cle_au_repos_lire, cle_au_repos_marquer, cle_au_repos_oublier, cle_au_repos_preparer,
+    cle_au_repos_schema, supprimer_cle_appareil,
+};
 #[cfg(feature = "bench-observables")]
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::display_names::store_display_names;
 use crate::commands::handoff::{advance_share_epoch, read_and_clear_pending_share};
 use crate::commands::mls::{
-    actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
-    creer_groupe, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
-    exporter_secret, generer_key_packages_et_persister, graine_member_signature_key, graine_run,
-    graine_session_keypair, graine_sign_with_device_credential, graine_sign_with_session_key,
-    graine_verify_signature, groupe_actif, initialiser_mls, key_package_a_clef_privee,
-    lister_groupes, lister_identites_membres, obtenir_epoch, oublier_groupe, oublier_key_packages,
-    recenser_key_packages, recevoir_message_bytes, recevoir_messages_batch,
-    recuperer_cle_session_mls, rejoindre_par_commit_externe, retirer_membres,
+    actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit,
+    cles_signature_epinglees, confirmer_commit, creer_groupe, envoyer_message_bytes,
+    epoques_departs, exporter_group_info, exporter_ratchet_tree, exporter_secret,
+    feuille_portant_cle, generer_key_packages_et_persister, graine_member_signature_key,
+    graine_run, graine_session_keypair, graine_sign_with_device_credential,
+    graine_sign_with_session_key, graine_verify_signature, groupe_actif, initialiser_mls,
+    key_package_a_clef_privee, lister_groupes, lister_identites_membres, obtenir_epoch,
+    oublier_groupe, oublier_key_packages, prendre_evenements_appareils, recenser_key_packages,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, remplacer_appareil, retirer_membres,
     retirer_membres_par_appareil, sauvegarder_mls_et_persister, skip_send_generations,
-    trailer_welcome,
+    trailer_welcome, verifier_key_package,
 };
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
-    ack_fcm_cache, check_push_secret_health, delete_user_push_files, forget_graine_channel,
-    forget_graine_sessions, get_fcm_token, get_push_diagnostic, get_voip_token, load_push_context,
-    read_and_clear_outbox_sent, read_and_clear_pending_call_accept, read_and_clear_read_watermarks,
-    read_outbox_mirror, set_push_context_locale, store_device_identity, store_graine_seed,
-    store_outbox_mirror, store_push_context, store_push_secret, take_fcm_cache,
+    ack_fcm_cache, check_push_secret_health, claim_device_notices, delete_user_push_files,
+    forget_graine_channel, forget_graine_sessions, get_fcm_token, get_push_diagnostic,
+    get_voip_token, load_push_context, read_and_clear_outbox_sent,
+    read_and_clear_pending_call_accept, read_and_clear_read_watermarks, read_outbox_mirror,
+    set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
+    store_push_context, store_push_secret, take_fcm_cache,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
     get_local_storage_usage, get_native_flags, load_mls_state, mls_foreground_heartbeat,
-    mls_state_owner, mls_state_size, pause_mls_foreground, recharger_mls_au_resume,
-    remove_native_flag, save_mls_state, set_native_flag,
+    mls_state_absent, mls_state_owner, mls_state_size, pause_mls_foreground,
+    recharger_mls_au_resume, remove_native_flag, save_mls_state, set_native_flag,
 };
 
 // ─── JNI functions (Android background push) ──────────────────────────────
@@ -316,6 +323,37 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024C
         log::error!("[FCM_CACHE] sealed line not returned: {e}");
         null()
     })
+}
+
+/// Claims the `ownDeviceAdded` keys a push decrypt or a background Add answered in the shared
+/// device-notice ledger under `dataDir` (`MlsContextLoader.tauriDataDir`, the directory the app's
+/// own claim uses) and returns, as a JSON array, the keys nobody announced before - the ones the
+/// service raises its "a new device was added to your account" notification for. `[]` when the
+/// arguments cannot be read. See `mobile::device_notice`.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeClaimDeviceNotices<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _service: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    keys_json: jni::objects::JString<'a>,
+) -> jni::objects::JString<'a> {
+    let claimed = (|| -> Option<String> {
+        let dir: String = env.get_string(&data_dir).ok()?.into();
+        let json: String = env.get_string(&keys_json).ok()?.into();
+        Some(mobile::device_notice::claim_device_notices_json(
+            std::path::Path::new(&dir),
+            &json,
+        ))
+    })()
+    .unwrap_or_else(|| {
+        log::error!("[DEVICE_NOTICE] jni arguments unreadable - nothing claimed");
+        "[]".to_string()
+    });
+    env.new_string(&claimed)
+        .unwrap_or_else(|_| env.new_string("[]").unwrap())
 }
 
 /// Opens a salon push against the seed mirror under `dataDir` - every v1 and v2 rule, in the one
@@ -659,6 +697,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
+    requester: jni::objects::JString<'a>,
     key_package_b64: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
@@ -676,6 +715,10 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
             .map_err(|e| e.to_string())?
             .into();
         let group_id_str: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
+        let requester_str: String = env
+            .get_string(&requester)
+            .map_err(|e| e.to_string())?
+            .into();
         let kp_b64: String = env
             .get_string(&key_package_b64)
             .map_err(|e| e.to_string())?
@@ -687,8 +730,11 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativePrepa
             &key_b64_str,
             &user_id_str,
             &device_id_str,
-            &group_id_str,
-            &kp_b64,
+            &mobile::background::WelcomeRequest {
+                group_id: &group_id_str,
+                requester: &requester_str,
+                key_package_b64: &kp_b64,
+            },
         ))
     })();
 
@@ -1272,6 +1318,12 @@ pub fn run() {
             graine_member_signature_key,
             graine_run,
             recuperer_cle_session_mls,
+            cle_au_repos_schema,
+            cle_au_repos_preparer,
+            cle_au_repos_marquer,
+            cle_au_repos_lire,
+            cle_au_repos_oublier,
+            supprimer_cle_appareil,
             sauvegarder_mls_et_persister,
             creer_groupe,
             lister_groupes,
@@ -1283,6 +1335,12 @@ pub fn run() {
             key_package_a_clef_privee,
             oublier_key_packages,
             ajouter_membres_bulk,
+            verifier_key_package,
+            feuille_portant_cle,
+            cles_signature_epinglees,
+            remplacer_appareil,
+            epoques_departs,
+            prendre_evenements_appareils,
             lister_identites_membres,
             retirer_membres,
             retirer_membres_par_appareil,
@@ -1311,8 +1369,10 @@ pub fn run() {
             delete_mls_state,
             load_mls_state,
             mls_state_size,
+            mls_state_absent,
             mls_state_owner,
             store_push_secret,
+            claim_device_notices,
             clear_app_data,
             delete_user_database,
             delete_user_push_files,

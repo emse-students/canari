@@ -118,3 +118,54 @@ PY
   exit 1
 fi
 echo "the terms stage is held: every provider authorizes through the implicit-consent flow"
+
+# EVERY SAML SOURCE IS SIGNED AND GATED. A SAML source with no verification key pair verifies no
+# signature (authentik's ResponseProcessor.parse checks signatures only `if source.verification_kp`),
+# so if such a source is ENABLED a forged, unsigned assertion is accepted and enrols an account. This
+# asserts, on the instance just built, that the configuration can never be in that shape: no source
+# is enabled without a verification key pair, every source demands a signed response AND a signed
+# assertion, no source runs a weak (SHA-1/MD5) signature or digest algorithm, none allows
+# IdP-initiated SSO (which skips request-ID validation), and each uses an expected NameID format.
+echo "SAML sources: signed on both levels, no weak algorithm, and none enabled without a certificate"
+if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -qx 'SAML-SOURCES-OK'; then
+from authentik.sources.saml.models import SAMLSource
+
+ALLOWED_NAME_ID = {
+    "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+    "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+    "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+}
+WEAK = ("sha1", "md5", "#rsa-sha1", "#dsa-sha1")
+
+problems = []
+for s in SAMLSource.objects.all():
+    tag = f"saml source '{s.slug}'"
+    if not s.signed_assertion:
+        problems.append(f"{tag}: signed_assertion is False (unsigned assertions would be accepted)")
+    if not s.signed_response:
+        problems.append(f"{tag}: signed_response is False (unsigned responses would be accepted)")
+    if s.allow_idp_initiated:
+        problems.append(f"{tag}: allow_idp_initiated is True (request-ID validation is skipped)")
+    for field in ("signature_algorithm", "digest_algorithm"):
+        val = (getattr(s, field, "") or "").lower()
+        if not val:
+            problems.append(f"{tag}: {field} is empty")
+        elif any(w in val for w in WEAK):
+            problems.append(f"{tag}: {field} is weak ({getattr(s, field)})")
+    if s.name_id_policy not in ALLOWED_NAME_ID:
+        problems.append(f"{tag}: name_id_policy {s.name_id_policy!r} is not in the allowlist")
+    # The invariant: the IdP's certificate is what makes verification possible, so it is required the
+    # instant a source is enabled. A source that lacks it must stay disabled.
+    if s.enabled and s.verification_kp is None:
+        problems.append(f"{tag}: ENABLED with no verification_kp (signatures are not verified)")
+
+if problems:
+    for p in problems:
+        print("  -", p)
+    raise SystemExit("a SAML source is unsigned, weakly signed, or enabled without a certificate")
+print("SAML-SOURCES-OK")
+PY
+  echo "::error::a SAML source is unsigned, weakly signed, or enabled without a verification certificate - read the assertion above"
+  exit 1
+fi
+echo "every SAML source is signed, strongly, and none is enabled without a verification certificate"

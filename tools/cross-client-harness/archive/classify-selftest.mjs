@@ -416,7 +416,13 @@ const CASES = [
     '[14:26:09] [WELCOME_REQ] web-b78568a3\u2026 already a member of 1bf6fefe... - skip',
     'notable',
   ],
-  // A kick followed by a re-add, claimed by the generic `re-?add` rule rather than a rule of its own.
+  // A leaf replaced (Remove + Add in ONE commit), claimed by the generic `re-?add` rule rather than
+  // a rule of its own. The older two-commit spelling is kept: an embedded APK emits it until updated.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] web-b78568a3... leaf in MLS tree - remove + re-add in one commit (no Welcome sent from here this session)',
+    'notable',
+  ],
   [
     'log',
     '[14:26:09] [WELCOME_REQ] web-b78568a3... leaf in MLS tree - kick + re-add',

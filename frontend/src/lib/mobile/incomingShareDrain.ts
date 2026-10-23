@@ -40,7 +40,7 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
   }
   Log.d(
     'IncomingShare',
-    `drained: ${manifest.text.length} chars, ${manifest.files.length} file(s), ${manifest.refused} refused natively`
+    `drained: ${manifest.text.length} chars, ${manifest.files.length} file(s), ${manifest.refused} refused natively, suggestion=${manifest.target !== null}`
   );
   // A CAPTURE THAT STARTED BEFORE A SIGN-OUT belongs to the session that ended: deleted unread,
   // never offered - and not reported, the member who made it is no longer signed in here.
@@ -66,7 +66,10 @@ export async function drainNativeShare(): Promise<{ lost: number } | null> {
     );
     return null;
   }
-  incomingShare.offer({ text: manifest.text, files: manifest.files }, manifest.epoch);
+  incomingShare.offer(
+    { text: manifest.text, files: manifest.files, suggested: manifest.target },
+    manifest.epoch
+  );
   return { lost: manifest.refused };
 }
 
