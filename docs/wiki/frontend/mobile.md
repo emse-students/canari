@@ -2771,15 +2771,13 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
 - **BootReceiver** (`CanariBootReceiver`): re-registers FCM token + drains outbox on boot
 - **Foreground guard**: retry is deferred when the TS outbox flusher is active
 - **The ongoing-call foreground service** (`CallForegroundService`, type `microphone`, WP-C-BG-A,
-  2026-10-20): the ONLY foreground service this app declares, and only in builds that place calls
-  (`src/calls/AndroidManifest.xml`, merged by `app/build.gradle.kts` when `VITE_DEPLOY_ENVIRONMENT`
-  is `development`). A backgrounded or locked app lost its call socket and its microphone 5 s in
+  2026-10-20): the ONLY foreground service this app declares, declared in the main manifest since the flip of `CALLS_COMPILED` (2026-10-22; it was a gradle-merged overlay on pre-releases before). A backgrounded or locked app lost its call socket and its microphone 5 s in
   while its JavaScript kept running; the service keeps both for the call's life, draws the
   `CallStyle` notification and owns the audio OUTPUT (the mode is Chromium's when Chromium set it).
   Started by the page through `window.canariCall` (`CallBridge.kt`) with a plain `startService`
   while the activity is resumed, never from the background; every end path (hang-up, page reload,
-  Recents, activity destroyed) releases it without waiting on the page. `android.yml` fails a stable
-  whose built manifest carries it. Design, Play declaration and the readings owed:
+  Recents, activity destroyed) releases it without waiting on the page. `android.yml` fails a build whose manifest
+  disagrees with `CALLS_COMPILED`. Design, Play declaration and the readings owed:
   [calls](modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20).
 
 **THE WORKER LOOKS AT THE QUEUE FIRST, AND ONLY A DRAIN THAT RAN IS AN ATTEMPT (2026-10-01).** It
@@ -3628,21 +3626,20 @@ owed.**
 **0.14.15 also carries `48d31eaa` itself**, which is owed regardless of calls: it is why an iPad
 could not obtain an FCM token either, and therefore received no message notification of any kind.
 
-**The `audio` background mode follows the same rule as `voip`, and is in PRE-RELEASE builds only
-(2026-10-20, WP-C-BG-I).** WKWebView mutes a page's microphone the moment the app is hidden or the
+**The `audio` background mode follows the calls switch, not the native ring's: it was in PRE-RELEASE
+builds only (2026-10-20, WP-C-BG-I) and is in the COMMITTED plist since the flip PR (2026-10-22).** WKWebView mutes a page's microphone the moment the app is hidden or the
 screen locks unless `UIBackgroundModes` holds `audio` (measured on the iPhone: the process and its
 WebRTC stack kept running, only the capture stopped -
-[calls](modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)). A
-pre-release can call, so `ios.yml` patches `audio` into that build's `Info.plist`, in the branch
-that writes `VITE_DEPLOY_ENVIRONMENT=development`; a stable cannot, so the committed plist does not
-declare it until `CALLS_COMPILED` flips (`callsCompiled.test.ts`). **A TestFlight build for EXTERNAL
+[calls](modules/calls.md#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)). The
+flip made every build able to call, so the committed `Info.plist` declares it and the `ios.yml` patch is
+deleted; the iOS job prints the built app's `UIBackgroundModes` and microphone string, read-only
+(`callsCompiled.test.ts` asserts no build step writes them). **A TestFlight build for EXTERNAL
 testers goes through Beta App Review, and that is the same risk as the 2.5.4 `voip` refusal.** A
 reviewer probably cannot place a call on it: calling needs two accounts on the DEV estate and a
 direct conversation between them, so the reviewer may again find a declared mode whose feature it
 cannot locate. Internal testers are not reviewed. If an external group is ever added, the answer
 must be ready before submission: a demo pair of dev accounts in the review notes, or the mode left
-out of that group's build. Such a build also carries the stable's microphone purpose string, which
-does not name calls; the stable's notes and string are drafted in
+out of that group's build. The microphone purpose string names calls since the flip; the stable's review notes are drafted in
 [calls, B14](modules/calls.md#the-drafts-still-owed-2026-10-21).
 
 ### Where the three channels actually are - READ THEM, NEVER READ THIS
@@ -3763,6 +3760,65 @@ The 2026-09-06 measurement (a notification posted by the WebView carried no acti
 **The principle is decided, not to be re-opened** (the user accepted it 2026-08-26): zero-tap signs the new device in with no second factor, Google says the API "does not handle multi-factor authentication", so a restore never asks MiConnect for anything its sign-in would. Accepted because a restored session authenticates, it does not decrypt: Keystore material is non-exportable, the MLS device key does not travel, and the new device still enrols as a new MLS client ([backup](backup.md)).
 
 **Three traps for the build:** (1) the logout half is a requirement - Play requires deleting the restore key on sign-out, so a Tauri command down to `ClearCredentialStateRequest(TYPE_CLEAR_RESTORE_CREDENTIAL)`, run on the paths that log out WITHOUT a gesture too (401/403, revoked session); (2) the library was `1.7.0-alpha03` - check for a stable line before starting; (3) `E2eeUnavailableException` is expected (no screen lock or no Google backup), handled by retrying with `isCloudBackupEnabled = false`, a second path that is logged at a level that accuses with its rate measured.
+
+## A sign-out ends this device's push registration (2026-10-22)
+
+The device half of the guarantee on
+[sessions](../sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22). It runs
+at EVERY sign-out from `clearAuth` (`endPushRegistration`), independent of the session, the
+network, the tab's registration marker and the app shell.
+
+**What the native side kept per account, and what a sign-out now does with it:**
+
+| Material | Where | At sign-out |
+|---|---|---|
+| FCM token | FCM / `fcm_token.txt` + prefs | deleted natively (`FirebaseMessaging.deleteToken`, `-[FIRMessaging deleteTokenWithCompletion:]`), mirror removed, a fresh token fetched for the next sign-in |
+| PushKit (VoIP) token | `voip_token.txt` | removed; PushKit hands a fresh one at the next launch |
+| push secret | `pending_push_secret.txt`, Android Keystore-wrapped prefs, iOS Keychain, App Group `push_secret.txt` | all four erased |
+| `push_context.json` (`baseUrl`, bearer `pushToken`) | data dir, App Group copy | reduced to `userId`, `deviceId`, `locale` (allowlist); App Group copy removed |
+| `mls.bin`, device key, `graine_seeds.json`, FCM cache | data dir / Keystore / App Group | kept - a sign-out keeps the local state; without a `baseUrl` no background reader loads a context, so nothing decrypts with them |
+
+**Two durable marks** (`push_registration.rs` writes both; names shared with
+`PushRegistrationEnd.kt` and `canari_push.mm`):
+
+- `push_signed_out` - no account owns this install's pushes. `onMessageReceived` (Android) and
+  `CanariHandleFcmData` (iOS app) drop every push while it exists; `write_push_secret` - the
+  server answering a registration - removes it.
+- `push_token_deletion_owed` - the OS token has not been deleted yet (offline sign-out). Removed by
+  the native side once FCM confirmed the deletion. While it exists, `MainActivity.onCreate`, the
+  boot receiver and `CanariSyncFcmTokenIfApnsReady` complete the deletion instead of mirroring the
+  old token, and `startPushService` calls `complete_owed_push_token_deletion` and registers NOTHING
+  until it answers true - the token of the account that left is never registered for the next.
+
+Both marks survive the factory wipe of a revoked device (`KEPT_AT_TOP_LEVEL` in `storage.rs`),
+which runs right after that device's sign-out wrote them.
+
+**One deletion at a time.** The sign-out, `startPushService`'s check and an activation can owe the
+deletion at once. Each platform runs it under one process-wide lock - `OwedTokenDeletion`
+(`push/OwedTokenDeletion.kt`, tested in `android-tests`) on Android, `@synchronized` on iOS - reads
+the mark again inside it, and fetches and mirrors the fresh token inside it too, so the mirror always
+names the live token. On iOS the fresh token is fetched only once APNs has answered (the APNs callback
+fetches it otherwise), and `CanariSyncFcmTokenIfApnsReady` completes an owed deletion only after its
+APNs guard, so a cold start never waits on APNs; `startPushService` completes it on its own before
+any registration either way. On Android, the sign-out's erasure of the push secret and every adoption
+of `pending_push_secret.txt` into the Keystore hold `PushSecretKeystore.handoffLock`, so an adoption
+cannot store a secret after the sign-out cleared it.
+
+`push_signed_out` is lifted only once EVERY copy of a new secret is written (`write_push_secret`), and
+a secret the app could not store fails the registration (`secret-not-stored`): it is not counted, and
+the next attempt registers again. While signed out, the iOS PushKit handler reports any VoIP push to
+CallKit - Apple requires it - as a placeholder with no caller and ends it at once.
+
+The native background paths that could re-register a token (`onNewToken`, the boot receiver,
+`CanariPersistFcmToken`) need a push context and a secret, so after a sign-out they do nothing; they
+now look for the secret only once a context exists, so a signed-out device does not log a Keystore
+fault it does not have.
+
+**What no code here can do.** The iOS Notification Service Extension cannot suppress an alert
+without the filtering entitlement: a push already in flight is drawn with the server's fallback
+text, never decrypted (its context and secret are gone). Proven by compiling on Android
+(`compileArm64DebugKotlin`) and by Rust tests of the file half; the iOS half compiles only in CI, and
+both halves run only on hardware.
 
 ## One row arriving through the push, the pull and the socket (measured 2026-09-08 to 2026-10-06)
 

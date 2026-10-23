@@ -264,7 +264,7 @@ only when 2-6 hold.
 
 User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede L7 and change what blocks a stable.
 
-- **D1 - lives come BEFORE the calls revival** (supersedes L7 of 2026-10-15). WP-L0 no longer precedes the lives; calls stay dev-only (`CALLS_COMPILED = false`, [calls](calls.md)).
+- **D1 - lives come BEFORE the calls revival** (supersedes L7 of 2026-10-15). WP-L0 no longer precedes the lives; in-app calls were compiled in by the flip PR of 2026-10-22 (`CALLS_COMPILED = true`, held shut by the server's `calls_mode`; [calls](calls.md)).
 - **D2 - bitrate is fixed at launch by the server.** v1 picks 720p or 480p from the TOTAL live load at the moment the live starts, and never changes it mid-live. The server transcodes nothing. Mid-live adaptive bitrate is NOT v1: MediaRecorder cannot reliably change resolution or bitrate without a new init segment.
 - **D3 - any member may start a live in v1, so WP-L8 is a RELEASE BLOCKER.** Moderation (hide message, remove viewer, block, report a live, staff remote cut) and the per-account limits already built must exist before any stable. Apple guideline 1.2 and the Play UGC answers (Q2) precede any store submission.
 - **D4 - a "X est en live" notification**, like "X a publié", is wanted. The server half (WP-L7) is built (#2106, spaces respected like a post); a tap lands on the feed, and the client LIVE card and the live's own viewer route are owed.
