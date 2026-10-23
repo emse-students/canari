@@ -197,6 +197,27 @@ describe('ModerationService - reports', () => {
       expect(reportRepo.count).not.toHaveBeenCalled();
     });
 
+    it('lets a viewer the broadcaster REMOVED report the live itself - what they watched before is theirs', async () => {
+      reportRepo.manager.query
+        .mockResolvedValueOnce([{ broadcasterId: 'bob', visible: true }]) // the live
+        .mockResolvedValueOnce([]); // no block between alice and bob
+
+      await service.createReport({
+        reporterId: 'alice',
+        contentType: 'live',
+        contentId: LIVE,
+        reason: 'inappropriate',
+      });
+
+      // The removal is a chat-line predicate only: the live's own read never consults the list.
+      expect(String(reportRepo.manager.query.mock.calls[0][0])).not.toContain(
+        'live_removed_viewers'
+      );
+      expect(reportRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ contentType: 'live', reportedUserId: 'bob' })
+      );
+    });
+
     it.each([
       ['an id that is not a uuid', 'not-a-uuid', []],
       ['a live with no row', LIVE, []],
@@ -248,7 +269,7 @@ describe('ModerationService - reports', () => {
     };
 
     /** Answers each statement by its table, so the order of the service's reads is free. */
-    function answer(opts: { removed?: boolean }) {
+    function answer(opts: { afterRemoval?: boolean }) {
       reportRepo.manager.query.mockImplementation((sql: string) => {
         if (sql.includes('"liveId"::text FROM live_chat_messages')) return [{ liveId: LIVE }];
         if (sql.includes('FROM lives'))
@@ -257,7 +278,6 @@ describe('ModerationService - reports', () => {
               broadcasterId: 'bob',
               liveKey: Buffer.alloc(32),
               visible: true,
-              removed: !!opts.removed,
             },
           ];
         if (sql.includes('FROM live_chat_messages'))
@@ -268,6 +288,7 @@ describe('ModerationService - reports', () => {
               clientId: CLIENT,
               sealed: Buffer.alloc(40),
               createdAt: new Date(),
+              afterRemoval: !!opts.afterRemoval,
             },
           ];
         return [];
@@ -278,14 +299,33 @@ describe('ModerationService - reports', () => {
       process.env.LIVE_REPORT_SIGNING_KEY = 'k'.repeat(64);
     });
 
-    it('answers 404 LIVE_NOT_FOUND to a viewer the broadcaster removed from that live', async () => {
-      answer({ removed: true });
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('answers 404 LIVE_NOT_FOUND for a line written AFTER the reporter was removed from the live', async () => {
+      answer({ afterRemoval: true });
 
       await expect(service.createReport(report)).rejects.toMatchObject({
         status: 404,
         response: { code: 'LIVE_NOT_FOUND' },
       });
       expect(reportRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lets a removed viewer report a line written BEFORE the removal (the text check then decides)', async () => {
+      answer({ afterRemoval: false });
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+
+      // The sealed bytes are not a real seal, so passing the removal gate lands on the mismatch.
+      await expect(service.createReport(report)).rejects.toMatchObject({
+        status: 400,
+        response: { code: 'LIVE_CHAT_REPORT_MISMATCH' },
+      });
+      const lineRead = reportRepo.manager.query.mock.calls.find(([sql]: [string]) =>
+        sql.includes('AS "afterRemoval"')
+      );
+      expect(lineRead?.[1]).toEqual([MSG, 'alice']);
     });
 
     it('logs a content mismatch at warn ONCE per (reporter, message), then at debug', async () => {
@@ -306,7 +346,32 @@ describe('ModerationService - reports', () => {
         status: 400,
       });
       expect(warn).toHaveBeenCalledTimes(2);
-      jest.restoreAllMocks();
+    });
+
+    it('bounds the once-only set: past 1000 distinct pairs it is cleared, so the first pair warns again', async () => {
+      answer({});
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation();
+
+      for (let i = 0; i < 1000; i++) {
+        await expect(
+          service.createReport({ ...report, reporterId: `r${i}` })
+        ).rejects.toMatchObject({ status: 400 });
+      }
+      expect(warn).toHaveBeenCalledTimes(1000);
+      // The first pair is still remembered while the set is full.
+      await expect(service.createReport({ ...report, reporterId: 'r0' })).rejects.toMatchObject({
+        status: 400,
+      });
+      expect(warn).toHaveBeenCalledTimes(1000);
+      // The 1001st distinct pair clears the set, so the first pair warns once more.
+      await expect(service.createReport({ ...report, reporterId: 'r1000' })).rejects.toMatchObject({
+        status: 400,
+      });
+      await expect(service.createReport({ ...report, reporterId: 'r0' })).rejects.toMatchObject({
+        status: 400,
+      });
+      expect(warn).toHaveBeenCalledTimes(1002);
     });
 
     it.each([
@@ -353,7 +418,6 @@ describe('ModerationService - reports', () => {
 
         expect(row.contentPreview).toBe(preview);
         expect(row.liveChat?.text).toBe('hello');
-        jest.restoreAllMocks();
       }
     );
   });

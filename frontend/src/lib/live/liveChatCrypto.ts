@@ -13,9 +13,10 @@
  * The AAD binds a message to its LIVE, its idempotence key and its AUTHOR: a server or a store that
  * served one member's ciphertext under another member's name, or replayed it on another live, makes
  * it FAIL to open, and the viewer drops it. A distinct label keeps a chat message and a segment from
- * ever being read as one another under the same key. Like the segments, the seal protects the
- * media store, caches and anyone who holds a segment URL. It is NOT a protection against
- * social-service itself, which serves the key and holds its database.
+ * ever being read as one another under the same key. Unlike a segment, a chat line never reaches the
+ * media store: it lives only in social-service's database, beside the live key, so the seal gives NO
+ * confidentiality against whoever holds that database or its backups, nor against social-service.
+ * What it gives is the binding above.
  *
  * Owed an adversarial crypto review before its pull request leaves draft, as the segment seal was.
  * NEVER LOGS key material, plaintext or ciphertext - lengths only.

@@ -239,8 +239,9 @@ export class ModerationService {
    * and not yet purged) and be visible to the reporter by the rule of a post
    * (`liveVisibleToViewerSql`), with no block between them - otherwise 404 `LIVE_NOT_FOUND`, the
    * live API's own answer, so the report route is no oracle for a live the reporter could not watch.
-   * A viewer the broadcaster removed from that live (`live_removed_viewers`) gets the same 404: the
-   * server refuses them the live's key, so a line they report was never legitimately shown to them.
+   * A viewer the broadcaster removed from that live (`live_removed_viewers`) may still report THE
+   * LIVE itself - what they watched before the removal is theirs to report - so this does not refuse
+   * them; the chat-line path refuses only a line written AFTER their `removedAt`.
    * A live ended and purged has nothing left to review (no replay, L3): report the person instead.
    * Returns the broadcaster (stored as the report's `reportedUserId`) and the live key, which a chat
    * line's report checks the reporter's plaintext with. `FOR SHARE` when `lock`: the live's row then
@@ -252,26 +253,24 @@ export class ModerationService {
     liveId: string,
     lock = false
   ): Promise<{ broadcasterId: string; liveKey: string }> {
-    if (!UUID_RE.test(liveId)) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
-    const rows: { broadcasterId: string; liveKey: string; visible: boolean; removed: boolean }[] =
+    const refuse = (why: string): NotFoundException => {
+      this.logger.debug(
+        `[REPORT] live ${sanitizeLog(liveId)} not reportable by ${sanitizeLog(reporterId)}: ${why}`
+      );
+      return new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    };
+    if (!UUID_RE.test(liveId)) throw refuse('not a live id');
+    const rows: { broadcasterId: string; liveKey: string; visible: boolean }[] =
       await manager.query(
-        `SELECT "broadcasterId", "liveKey", ${liveVisibleToViewerSql('lives', '$2')} AS visible,
-                EXISTS (SELECT 1 FROM live_removed_viewers r
-                         WHERE r."liveId" = lives.id AND r."viewerId" = $2) AS removed
+        `SELECT "broadcasterId", "liveKey", ${liveVisibleToViewerSql('lives', '$2')} AS visible
            FROM lives WHERE id = $1${lock ? ' FOR SHARE' : ''}`,
         [liveId.toLowerCase(), reporterId]
       );
     const live = rows[0];
-    if (
-      !live ||
-      live.visible !== true ||
-      live.removed === true ||
-      (await isBlockedBetween(manager, reporterId, live.broadcasterId))
-    ) {
-      this.logger.debug(
-        `[REPORT] live ${sanitizeLog(liveId)} not reportable by ${sanitizeLog(reporterId)}`
-      );
-      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    if (!live) throw refuse('no such live');
+    if (live.visible !== true) throw refuse('not visible to the reporter');
+    if (await isBlockedBetween(manager, reporterId, live.broadcasterId)) {
+      throw refuse('a block with the broadcaster');
     }
     return { broadcasterId: live.broadcasterId, liveKey: live.liveKey };
   }
@@ -297,8 +296,9 @@ export class ModerationService {
    * meanwhile - both take it `FOR UPDATE`), then the message `FOR SHARE` (an erasure deleting it waits
    * for this commit, then anonymises the kept line it then sees), then:
    *
-   * 1. who may report it: who may report the live (visible, no block with the broadcaster), and no
-   *    block with the AUTHOR either way (a line they were never shown) - else 404 `LIVE_NOT_FOUND`,
+   * 1. who may report it: who may report the live (visible, no block with the broadcaster), no
+   *    block with the AUTHOR either way (a line they were never shown), and, for a viewer the
+   *    broadcaster removed, a line written no later than that removal - else 404 `LIVE_NOT_FOUND`,
    *    as for a hidden line, a purged live or a message that never existed: no oracle;
    * 2. THE PLAINTEXT IS CHECKED, not trusted: the sealed line is opened with the live key the row
    *    still holds, and must equal `message` exactly - else 400 `LIVE_CHAT_REPORT_MISMATCH`, so a
@@ -352,13 +352,24 @@ export class ModerationService {
         clientId: string;
         sealed: Buffer | null;
         createdAt: Date;
+        afterRemoval: boolean;
       }[] = await tx.query(
-        `SELECT seq, "authorId", "clientId"::text, sealed, "createdAt" FROM live_chat_messages
-          WHERE id = $1 FOR SHARE`,
-        [messageId]
+        `SELECT m.seq, m."authorId", m."clientId"::text, m.sealed, m."createdAt",
+                EXISTS (SELECT 1 FROM live_removed_viewers r
+                         WHERE r."liveId" = m."liveId" AND r."viewerId" = $2
+                           AND m."createdAt" > r."removedAt") AS "afterRemoval"
+           FROM live_chat_messages m
+          WHERE m.id = $1 FOR SHARE OF m`,
+        [messageId, data.reporterId]
       );
       const line = rows[0];
       if (!line || line.sealed === null) throw notFound('gone or hidden');
+      // A removed viewer saw every line written before their removal legitimately; one written
+      // after it was never shown to them (the server refuses them the key from then on). Compared
+      // in SQL, at the database's microsecond precision.
+      if (line.afterRemoval === true) {
+        throw notFound('written after the reporter was removed from the live');
+      }
       if (await isBlockedBetween(tx, data.reporterId, line.authorId)) {
         throw notFound('a block with the author');
       }
