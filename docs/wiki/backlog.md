@@ -59,15 +59,20 @@ nothing is built for it. Design and limits:
 [history-answer-addressing](protocols/history-answer-addressing.md#decided-a-quote-of-an-earlier-message),
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
 
-## P1 - A community's past goes only to a proven admission: BUILT (draft PR), owed its migration, its readings, a client floor and one decision (2026-10-22)
+## P1 - A community's past goes only to a proven admission: BUILT (draft PR), owed its readings and a client floor (2026-10-22)
 
 Decided by the user: communities stay `shared` by default, the past goes only to an admission a
-member can verify, and a new user's arrival rotates (D5, #2263). Owed, in order: merge after #2262
-and #2264 (merging and releasing applies migration `107`, so the merge waits for the user's yes);
-the rig rows COMM-26..31; a `minClientVersion` floor at the version carrying it, since an older
-answering client still hands the past to whoever the roster names; and one decision - whether the
-cut date (`ADMISSION_PROOF_SINCE`, 2026-10-22) should be the date the change reaches production
-instead. Old invite links give no past until re-issued. Design:
+member can verify, and a new user's arrival rotates (D5, #2263). Migration `107` is approved by the
+user. Owed, in order: merge after #2262 and #2264; the rig rows COMM-26..31; and a
+`minClientVersion` floor at the version carrying it, since an older answering client still hands
+the past to whoever the roster names. **The cut date is DECIDED** (user, 2026-10-23):
+`ADMISSION_PROOF_SINCE` is the day the production stable carrying the proof ships, planned for
+2026-10-27 UTC. **Old invite links are ACCEPTED as they are** (user, 2026-10-23): a newcomer through
+an old link reads from arrival until a member re-admits them.
+
+**Release checklist for that stable: before cutting its final pre-release, check that
+`ADMISSION_PROOF_SINCE` (`frontend/src/lib/utils/graine/admissionGate.ts`) equals that stable's
+day.** Design:
 [channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22).
 
 ## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)

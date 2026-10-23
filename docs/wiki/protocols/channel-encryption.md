@@ -3776,11 +3776,11 @@ hands the past to whoever the roster names, so the protection is complete only w
 | Creating the community | nobody - the creator is a root | none needed |
 | A member adds someone from the panel (`inviteToChannel`) | that member's device, at the add | `direct`, sent with the add |
 | A newcomer follows an invite link (`acceptWorkspaceInvite`) | the device that SHOWED the link, at display; the newcomer redeems it | `link`, sent with the accept |
-| A link shown by an old client, or copied without its `#` part | nobody | none: the newcomer joins, and reads from their arrival on |
+| A link shown by an old client, or copied without its `#` part | nobody | none: the newcomer joins, and reads from their arrival on (accepted by the user, 2026-10-23) |
 | Any other way onto the roster | nobody | none: answered as `joined` |
 
 **An old invite link keeps working for joining and gives no past until it is re-issued** - the cost
-the user accepted. A link shown by this version carries its proof after the `#`; one shown before it
+the user accepted (2026-10-23): old links are taken as they are. A link shown by this version carries its proof after the `#`; one shown before it
 does not, and its newcomer reads from their arrival on until a member adds them again or they follow
 a fresh link (a member already on the roster who follows a fresh link has the voucher written onto
 their row). The `#` part reaches the join page on every surface: a browser keeps it, and the app
@@ -3798,10 +3798,12 @@ An answering device reads only what it holds itself - its ADMISSION LEDGER (root
 admissions, per account) and its MLS layer (pins and departures):
 
 - **Roots**, fixed at the first community sync after the proof existed (the roster reconciliation
-  calls `observeAdmissionState`): the members who arrived before `ADMISSION_PROOF_SINCE`
-  (2026-10-22) or created the community, AND have a leaf in the community's key group at that sync.
-  A roster row with no leaf is never a root, and a root counts now only while the roster still
-  shows the arrival it was rooted with.
+  calls `observeAdmissionState`): the members who arrived before `ADMISSION_PROOF_SINCE` or created
+  the community, AND have a leaf in the community's key group at that sync. A roster row with no
+  leaf is never a root, and a root counts now only while the roster still shows the arrival it was
+  rooted with. **The cut date is the day the production stable carrying the proof ships** (decided
+  by the user, 2026-10-23): planned for 2026-10-27 UTC. If that stable moves, the constant moves
+  with it, in one line, before the stable's final pre-release.
 - **Verified admissions**: each voucher that held, at the place it was signed.
 - **Observations**: for each voucher on the roster, where (the community key group's epoch) and
   when (this device's clock) this device first saw it. An observation is made only while the key

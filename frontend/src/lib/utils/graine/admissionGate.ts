@@ -63,10 +63,14 @@ import { historyVisibilityFor, isGraineReady, requireGraineRuntime } from './run
 
 /**
  * The instant the admission proof starts: a member who arrived before it, and was present in the
- * key group when this device first synced the community, is a root (2026-10-22, the day the user
- * decided it). Compared only with the server's own `joinedAt`, recorded once.
+ * key group when this device first synced the community, is a root. Compared only with the server's
+ * own `joinedAt`, recorded once.
+ *
+ * THE DAY THE PRODUCTION STABLE CARRYING THE PROOF SHIPS (decided by the user, 2026-10-23), planned
+ * for 2026-10-27 UTC. If that stable moves, this line moves with it, before the stable's final
+ * pre-release is cut (the release checklist in the backlog says so).
  */
-export const ADMISSION_PROOF_SINCE = Date.parse('2026-10-22T00:00:00.000Z');
+export const ADMISSION_PROOF_SINCE = Date.parse('2026-10-27T00:00:00.000Z');
 
 /** What the answer to one asker may carry: everything held, or only from their arrival on. */
 export type PastPolicy = GraineHistoryVisibility;
