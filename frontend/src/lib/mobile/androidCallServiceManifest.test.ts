@@ -105,7 +105,8 @@ describe('the bridge, both sides of the WebView', () => {
       'pageLoaded()',
     ]) {
       expect(bridgeKt).toMatch(
-        new RegExp(`@JavascriptInterface\\s+fun ${method.replace(/[()]/g, '\\$&')}`)
+        // Every metacharacter, backslash included, so the signature is matched as literal text.
+        new RegExp(`@JavascriptInterface\\s+fun ${method.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
       );
     }
     for (const method of [
