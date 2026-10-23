@@ -6,6 +6,11 @@
 # Scripts Windows : doivent rester en CRLF.
 *.bat text eol=crlf
 *.cmd text eol=crlf
+# The Gradle wrapper script is committed by Dependabot's gradle-wrapper bump
+# with CRLF already IN THE INDEX, so normalising it turns every checkout into a
+# phantom 112-line modification that a later `git add` commits as churn.
+# Stored as-is, it stays byte-identical to what the bump wrote.
+frontend/src-tauri/android-tests/gradlew.bat -text
 
 # Fichiers binaires : jamais normalisés (sinon corruption).
 *.png   binary
