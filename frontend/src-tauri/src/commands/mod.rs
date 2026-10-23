@@ -14,4 +14,5 @@ pub mod mls;
 pub mod notifications;
 pub mod picked_files;
 pub mod push;
+pub mod push_registration;
 pub mod storage;

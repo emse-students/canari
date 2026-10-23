@@ -101,6 +101,16 @@ if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2
 fi
 echo "the profile editor reads and changes users, and nothing else"
 
+# PKCE, REDEEMED. Canari's sign-in sends an S256 challenge and core-service redeems the code with its
+# verifier; what makes a captured code worthless is MiConnect REFUSING it without the verifier. Only
+# the real token endpoint shows that (infrastructure/authentik/test-pkce.py).
+echo "PKCE: authorizing with a challenge and redeeming with and without the verifier"
+if ! run_ak_shell "$worker" <"$here/test-pkce.py" 2>&1 | tee >(cat >&2) | grep -qx 'PKCE-OK'; then
+  echo "::error::MiConnect did not enforce PKCE as the sign-in relies on - read the assertion above"
+  exit 1
+fi
+echo "a challenged code is redeemed with its verifier only, and a verifier is never ignored"
+
 # THE TERMS OF USE ARE HELD (user, 2026-10-17: stable 1.2.9 ships without them; docs/wiki/backlog.md).
 # 45-consent.yaml waits in blueprints/held/, so the driven test (test-consent-flow.py) has no stage to
 # drive. What is asserted instead is the hold itself, on the instance just built: no provider

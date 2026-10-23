@@ -82,7 +82,14 @@ describe('parseServerVersionInfo', () => {
       maintenance: { enabled: true, message: 'Pause' },
       callsMode: 'off',
       livesMode: 'off',
+      oidcPkce: false,
     });
+  });
+
+  it('reads the PKCE capability, and an absent or non-true field as none', () => {
+    expect(parseServerVersionInfo({ version: '1.2.3', oidcPkce: true })?.oidcPkce).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.2.3' })?.oidcPkce).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.2.3', oidcPkce: 'true' })?.oidcPkce).toBe(false);
   });
 
   it.each(['off', 'audio', 'audio_video'] as const)('reads the calls kill switch %s', (mode) => {
@@ -153,6 +160,7 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'audio',
       livesMode: 'on',
+      oidcPkce: true,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -169,6 +177,7 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       livesMode: 'off',
+      oidcPkce: false,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -179,6 +188,10 @@ describe('buildAppVersionCheckResult', () => {
 
   it('knows lives as closed before any server has answered', () => {
     expect(buildAppVersionCheckResult(null).livesMode).toBe('off');
+  });
+
+  it('offers no PKCE before any server has answered', () => {
+    expect(buildAppVersionCheckResult(null).oidcPkce).toBe(false);
   });
 });
 
@@ -221,6 +234,7 @@ describe('fetchServerAppVersionReliable', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       livesMode: 'off',
+      oidcPkce: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
