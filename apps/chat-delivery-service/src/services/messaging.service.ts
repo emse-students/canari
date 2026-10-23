@@ -1908,6 +1908,28 @@ export class MessagingService {
         message: 'this device is not registered to the committer',
       });
     }
+    // AND THE DEVICE IS NOT REVOKED. A revocation purges the static KeyPackage, so the check above
+    // usually refuses it first - but that is a coincidence of the purge, not a rule: a revoked
+    // device is exactly the one whose leaf members are removing, and a commit from it would move
+    // the epoch of every group it still holds, its Remove of THEIR leaves included. Refused before
+    // the lock and before the duplicate answer below: a resubmission is a commit too, and a revoked
+    // device is told so rather than told it landed. Read by the pair, on the `(userId, deviceId)`
+    // unique index the denylist already carries - no migration.
+    const revoked = await this.revokedDeviceRepo.findOne({
+      where: activeRevocationWhere({ userId: committer, deviceId }),
+      select: { id: true },
+    });
+    if (revoked) {
+      this.logger.warn(
+        `[COMMIT][${traceId}] REJECT device_revoked group=${groupId} device=${deviceId} ` +
+          `sender=${sanitizeLogValue(committer)}`
+      );
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.DEVICE_REVOKED, 'this device was revoked', {
+          error: 'device_revoked',
+        })
+      );
+    }
     const baseEpoch =
       typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)
         ? Math.floor(body.baseEpoch)
