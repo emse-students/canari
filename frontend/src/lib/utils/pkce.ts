@@ -1,14 +1,23 @@
 /**
  * PKCE (RFC 7636) for the MiConnect sign-in: the proof that the client redeeming an authorization
- * code is the one that asked for it.
+ * code holds the verifier of the request that produced it.
  *
  * WHY CANARI NEEDS IT ALTHOUGH ITS CLIENT IS CONFIDENTIAL. The client secret lives in core-service,
- * and core-service redeems whatever code it is POSTed. A code that reaches anybody else - a custom
- * scheme (`fr.emse.canari://callback`) another app also claims, a loopback port another process
- * listens on - could therefore be redeemed through core-service with the secret's full authority.
- * The verifier never leaves this device until the redemption, so a code alone is worth nothing.
- * MiConnect (authentik) checks the pair at its token endpoint and refuses a verifier sent for a
- * code issued without a challenge, so nobody can strip it on the way.
+ * and core-service redeems whatever code it is POSTed. A code that reaches somebody else on its way
+ * back - a custom scheme (`fr.emse.canari://callback`) another app also claims, a loopback port
+ * another process listens on - could otherwise be redeemed through core-service with the secret's
+ * full authority. With PKCE that captured code is refused without this device's verifier, which
+ * never leaves the device until the redemption. MiConnect (authentik) checks the pair at its token
+ * endpoint, and refuses a verifier sent for a code issued without a challenge, so nobody can strip
+ * the challenge on the way (measured: `infrastructure/authentik/test-pkce.py`).
+ *
+ * WHAT IT DOES NOT CLOSE. PKCE binds a code to a verifier, not to an app: a party that runs its
+ * own authorization runs its own PKCE too, and still receives the custom-scheme redirect. That is
+ * closed by a redirect only Canari can receive (a claimed `https` host), tracked in the backlog
+ * (docs/wiki/backlog.md, "the mobile sign-in returns through a custom scheme").
+ *
+ * A challenge is sent only to a core-service that publishes `oidcPkce` in `GET /api/version`: an
+ * older one drops the verifier, and MiConnect refuses a challenged code redeemed without it.
  */
 
 /** The pair one authorization request needs: the secret kept here, the hash sent to MiConnect. */

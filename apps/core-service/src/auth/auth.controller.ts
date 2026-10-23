@@ -46,13 +46,6 @@ import {
 interface OidcCallbackDto {
   code: string;
   redirect_uri: string;
-  /**
-   * The PKCE verifier of the authorization request that produced `code` (RFC 7636). MiConnect checks
-   * it against the challenge the client sent, so a code captured on its way back cannot be redeemed
-   * here by anybody but the device that asked for it. Absent only from a build that predates PKCE
-   * (docs/wiki/legacy-compatibility.md).
-   */
-  code_verifier?: string;
 }
 
 /** Claims carried by the refresh JWT. `sid`/`jti` are absent on tokens issued before WP-SESS-2. */
@@ -346,19 +339,9 @@ export class AuthController {
       admin: boolean;
     };
   }> {
-    const { code, redirect_uri, code_verifier } = body ?? {};
+    const { code, redirect_uri } = body ?? {};
     if (!code) throw new BadRequestException('code is required');
     if (!redirect_uri) throw new BadRequestException('redirect_uri is required');
-    if (code_verifier !== undefined && typeof code_verifier !== 'string') {
-      throw new BadRequestException('code_verifier must be a string');
-    }
-    if (!code_verifier) {
-      // A sign-in with no proof that the caller started it: a build older than PKCE, or a caller
-      // that is not the app at all. Named so its rate is measured before the shim is removed.
-      this.logger.warn(
-        `OIDC callback without a PKCE verifier (origin=${req.get('origin') ?? 'none'}) - legacy client`
-      );
-    }
 
     if (!this.authentikBaseUrl || !this.authentikClientId || !this.authentikClientSecret) {
       throw new BadRequestException('Authentik OIDC is not configured on the server');
@@ -375,16 +358,14 @@ export class AuthController {
         redirect_uri,
         client_id: this.authentikClientId,
         client_secret: this.authentikClientSecret,
-        ...(code_verifier ? { code_verifier } : {}),
       }),
     });
 
     if (!tokenRes.ok) {
-      // The provider's answer is logged here and NOT handed to the caller: it describes the
-      // provider's checks to whoever POSTed the code, and the client has nothing to do with it.
       const errText = await tokenRes.text().catch(() => '');
-      this.logger.warn(`Authentik token exchange refused (${tokenRes.status}): ${errText}`);
-      throw new UnauthorizedException(`Authentik token exchange failed (${tokenRes.status})`);
+      throw new UnauthorizedException(
+        `Authentik token exchange failed (${tokenRes.status}): ${errText}`
+      );
     }
 
     const tokenData = (await tokenRes.json()) as {

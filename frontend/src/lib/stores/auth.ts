@@ -23,6 +23,7 @@ import {
 } from '$lib/stores/tokenIdentity.svelte';
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { createPkcePair } from '$lib/utils/pkce';
+import { getAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -55,7 +56,13 @@ import {
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
-/** The PKCE verifier of the sign-in under way, redeemed with its code - see `$lib/utils/pkce`. */
+/**
+ * The PKCE verifier of the sign-in under way, redeemed with its code - see `$lib/utils/pkce`. On the
+ * web it lives in `sessionStorage`, not `localStorage`: the redirect to MiConnect and back happens in
+ * the SAME tab, which is all `sessionStorage` has to survive, and the secret then dies with the tab
+ * instead of staying readable by every tab of the origin. A native app keeps it in the store file
+ * with the state, for the reason {@link setOidcEntry} gives.
+ */
 const OIDC_VERIFIER_KEY = 'canari_oidc_verifier';
 /** MiConnect's id_token for the session this device signed in with - see {@link leaveSignedOut}. */
 const OIDC_ID_TOKEN_KEY = 'canari_oidc_id_token';
@@ -64,36 +71,43 @@ const OIDC_STORE_FILE = 'oidc-state.json';
 /**
  * Writes an OIDC state entry.
  * On Tauri desktop uses `tauri-plugin-store` (survives WebKitGTK navigation
- * which clears `localStorage`). Falls back to `localStorage` on web.
+ * which clears `localStorage`). On web, `webStorage` - `localStorage` unless the entry says otherwise.
  */
-async function setOidcEntry(key: string, value: string): Promise<void> {
+async function setOidcEntry(
+  key: string,
+  value: string,
+  webStorage: Storage = localStorage
+): Promise<void> {
   if (isTauriRuntime()) {
     const { load } = await import('@tauri-apps/plugin-store');
     const store = await load(OIDC_STORE_FILE, { autoSave: true, defaults: {} });
     await store.set(key, value);
   } else {
-    localStorage.setItem(key, value);
+    webStorage.setItem(key, value);
   }
 }
 
-/** Reads an OIDC state entry (Tauri Store on desktop, localStorage on web). */
-async function getOidcEntry(key: string): Promise<string | null> {
+/** Reads an OIDC state entry (Tauri Store on desktop, `webStorage` on web). */
+async function getOidcEntry(
+  key: string,
+  webStorage: Storage = localStorage
+): Promise<string | null> {
   if (isTauriRuntime()) {
     const { load } = await import('@tauri-apps/plugin-store');
     const store = await load(OIDC_STORE_FILE, { autoSave: true, defaults: {} });
     return (await store.get<string>(key)) ?? null;
   }
-  return localStorage.getItem(key);
+  return webStorage.getItem(key);
 }
 
-/** Removes an OIDC state entry (Tauri Store on desktop, localStorage on web). */
-async function removeOidcEntry(key: string): Promise<void> {
+/** Removes an OIDC state entry (Tauri Store on desktop, `webStorage` on web). */
+async function removeOidcEntry(key: string, webStorage: Storage = localStorage): Promise<void> {
   if (isTauriRuntime()) {
     const { load } = await import('@tauri-apps/plugin-store');
     const store = await load(OIDC_STORE_FILE, { autoSave: true, defaults: {} });
     await store.delete(key);
   } else {
-    localStorage.removeItem(key);
+    webStorage.removeItem(key);
   }
 }
 
@@ -431,10 +445,20 @@ export async function startOidcLogin(
   const state = crypto.randomUUID();
   await setOidcEntry(OIDC_STATE_KEY, state);
   await setOidcEntry(OIDC_RETURN_KEY, returnTo);
-  // PKCE binds the code MiConnect hands back to THIS device: the verifier stays here until the
-  // redemption, so a code captured on the way (another app claiming the custom scheme) is useless.
-  const pkce = await createPkcePair();
-  await setOidcEntry(OIDC_VERIFIER_KEY, pkce.verifier);
+
+  // PKCE binds the code MiConnect hands back to the verifier kept here until the redemption, so a
+  // code captured on its way back is refused without it. Sent only to a core-service that says it
+  // forwards the verifier (`oidcPkce`, read by the login preamble's `refreshAppVersionCheck()`): an
+  // older one drops it, and MiConnect refuses a challenged code redeemed without it. A CAPABILITY
+  // read before the request, not a fallback - no failed attempt sits behind it.
+  const pkce = getAppVersionCheck()?.oidcPkce === true ? await createPkcePair() : null;
+  if (pkce) {
+    await setOidcEntry(OIDC_VERIFIER_KEY, pkce.verifier, sessionStorage);
+  } else {
+    // A verifier left by a sign-in that never came back must not ride this unchallenged code:
+    // MiConnect refuses a verifier sent for a code issued without a challenge.
+    await removeOidcEntry(OIDC_VERIFIER_KEY, sessionStorage);
+  }
 
   const redirectUri = oidcRedirectUri();
   const params = new URLSearchParams({
@@ -443,15 +467,19 @@ export async function startOidcLogin(
     response_type: 'code',
     scope: 'openid profile promo name formation',
     state,
-    code_challenge: pkce.challenge,
-    code_challenge_method: 'S256',
   });
+  if (pkce) {
+    params.set('code_challenge', pkce.challenge);
+    params.set('code_challenge_method', 'S256');
+  }
 
   const authorizePath = `/application/o/authorize/?${params}`;
   const authUrl = options?.flowSlug
     ? `${baseUrl}/if/flow/${options.flowSlug}/?next=${encodeURIComponent(authorizePath)}`
     : `${baseUrl}${authorizePath}`;
-  alog(`login returnTo=${returnTo} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'}`);
+  alog(
+    `login returnTo=${returnTo} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'} pkce=${pkce ? 'S256' : 'none (server has no oidcPkce)'}`
+  );
 
   // On Tauri mobile (Android + iOS), open in a dedicated in-app browser session so the main
   // WebView is never navigated away and the Tauri IPC bridge stays intact. The callback returns
@@ -543,11 +571,12 @@ async function handleOidcCallbackUnderway(
     throw new Error('Invalid OIDC state - possible CSRF attack');
   }
   await removeOidcEntry(OIDC_STATE_KEY);
-  // Read once and spent: a code can be redeemed once, and so can the proof that goes with it. A
-  // sign-in started by a build that predates PKCE has none, and its code carries no challenge.
-  const codeVerifier = await getOidcEntry(OIDC_VERIFIER_KEY);
-  await removeOidcEntry(OIDC_VERIFIER_KEY);
-  if (!codeVerifier) awarn('OIDC callback: no PKCE verifier stored for this sign-in');
+  // Read once and spent: a code can be redeemed once, and so can the proof that goes with it. None is
+  // held when the sign-in sent no challenge (a server without `oidcPkce`, or a build before PKCE), and
+  // then its code carries no challenge either.
+  const codeVerifier = await getOidcEntry(OIDC_VERIFIER_KEY, sessionStorage);
+  await removeOidcEntry(OIDC_VERIFIER_KEY, sessionStorage);
+  alog(`callback pkce=${codeVerifier ? 'verifier' : 'none'}`);
 
   const redirectUri = oidcRedirectUri();
   console.debug('[auth] redirectUri:', redirectUri, 'coreUrl:', coreUrl());

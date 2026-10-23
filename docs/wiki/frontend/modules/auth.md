@@ -26,10 +26,33 @@
 
 **PKCE (RFC 7636, S256).** `startOidcLogin` keeps a verifier beside the state (`$lib/utils/pkce`),
 sends its hash as the challenge, and the callback hands the verifier to core-service with the code;
-MiConnect checks the pair at its token endpoint. It binds a code to the device that asked for it,
-which the client secret cannot do, since core-service is the party holding that secret. A callback
-with no verifier comes from an older build: core-service logs it, and its removal condition is in
-[legacy-compatibility](../../legacy-compatibility.md).
+MiConnect checks the pair at its token endpoint. A code captured on its way back is then refused
+without the verifier, which the client secret cannot ensure, since core-service is the party holding
+that secret. What authentik refuses is measured by `infrastructure/authentik/test-pkce.py`
+([authentik](../../infrastructure/authentik.md)).
+
+- **Sent only to a server that can redeem it.** The challenge goes out only when the last
+  `/api/version` answer carried `oidcPkce: true` (`getAppVersionCheck()`, refreshed by the login
+  preamble just before). A core-service older than that field drops the verifier, and MiConnect
+  refuses a challenged code redeemed without one, so a challenge sent to it would make the sign-in
+  fail. This is a CAPABILITY read before the request, not a fallback: no failed attempt sits behind
+  it, and a new client facing an older server simply signs in without PKCE, as before. A verifier
+  left by a sign-in that never returned is removed when no challenge is sent, since MiConnect also
+  refuses a verifier for an unchallenged code.
+- **Ship order.** The server half ships first, and core-service is never rolled back below the
+  release that publishes `oidcPkce`; the condition that later makes PKCE required lives in
+  [legacy-compatibility](../../legacy-compatibility.md).
+- **Where the verifier lives.** On the web, `sessionStorage`: the redirect to MiConnect and back stays
+  in one tab, and the secret dies with it rather than staying readable by every tab of the origin. In
+  the apps, the `oidc-state.json` plugin store, with the state, because the WebView's navigation can
+  clear web storage. It is read once and removed by the callback.
+- **What it does not close.** PKCE binds a code to a verifier, not to an app: on a phone the redirect
+  is the `fr.emse.canari://callback` custom scheme, which the OS does not verify. That is the next
+  step, an `https` callback on a claimed host (in the backlog).
+- **No `nonce`.** The authorize request carries none, and nothing checks one: the id_token is
+  fetched by core-service straight from the token endpoint over TLS, bound to the code (and now to
+  the verifier), never received through the browser, so the replay a `nonce` guards against has no
+  path here. The client keeps that id_token only as the sign-out's `id_token_hint`.
 
 ### The press is not the first thing that happens, and the button must say so
 
