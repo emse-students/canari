@@ -526,9 +526,29 @@ request is read at Lydia, and the verified Business must be the one it was issue
 **Production rollout (per the user, 2026-10-22, relayed by the lead session):** migrations 100 (the
 per-association Lydia Business key) and 101 (product checkout attempts) MAY ride the next STABLE to
 production; payments stay OFF in production (`platform_config.payment_provider` unchanged).
-**Corrected 2026-10-23:** production's `payment_provider` already read `lydia` when that was written, so
-"off" held only because no association had a validated Business. Read on 2026-10-23 after the first
-production test: one association linked, none validated, no key stored - so none is payment-ready.
+**Corrected 2026-10-23:** production's `payment_provider` already read `lydia` when that was written. What
+kept production inert was NOT the flag: it was the sandbox Provider pair (a request issued to Lydia's
+sandbox moves no money) and the absence of any onboarded Business or stored callback key. Read on
+2026-10-23: one association linked, none validated, no key stored - so none was payment-ready.
+
+**What changed with the production pair (2026-10-23, the user's direct order).** The production secrets
+now hold Lydia's PRODUCTION Provider pair, and the production core-service was recreated with
+`LYDIA_ENV=production`, so it talks to `lydia-app.com`: a request it issues now moves REAL money, and an
+association whose Business is linked and validated takes real payments. The flag stays `lydia` (the
+onboarding needs it); if nothing is configured after the test, set it back to `disabled`.
+
+- **The recreate**: the core-service container alone, through the same compose file the deploy uses, with
+  `LYDIA_ENV=production` in the environment of that one command. No file on the host was edited.
+- **The rollback**: the same recreate with `LYDIA_ENV=homologation`, which puts the core back on the sandbox
+  URL; paired with the production tokens it then fails loudly (Lydia answers "Provider inconnu", code 104)
+  rather than moving money.
+- **THE TRAP**: that value lives only in the running container. A deploy re-renders the production `.env`
+  from the manifest, which carried no `LYDIA_ENV` before #2323, and recreates the core from it - so a
+  deploy silently undoes the recreate and leaves the production tokens on the wrong base URL. **No stable
+  and no deploy of any kind until #2323 is merged**: it makes `LYDIA_ENV` a required secret rendered with
+  an allowed-values check.
+- **While live**, anything unexpected is reported at once: a payment request nobody launched, an
+  association other than the test one holding a Business, any callback arriving.
 
 **Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
