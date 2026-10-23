@@ -2897,7 +2897,7 @@ mod tests {
 
     /// The phone serving its own account's new device in the background names it for the local
     /// notification, and the event reaches `mls.bin` - where the app takes it for the in-app alert -
-    /// ONLY with the accepted install: a discarded Add leaves no event for anyone to announce.
+    /// ONLY once the accepted Add is merged: a cleared Add leaves no event for anyone to announce.
     #[test]
     fn a_background_add_of_an_own_device_reaches_the_app_only_once_accepted() {
         let _s = crate::concurrency::test_support::serialise();
@@ -2936,7 +2936,7 @@ mod tests {
                 .count()
         };
 
-        // Refused by the server: discarded, and nothing for the app to announce.
+        // Refused by the server: cleared, and nothing for the app to announce.
         let refused_dir = dir_holding(&format!("{tag}-refused"), &state);
         let out = prepare(&refused_dir);
         assert_eq!(
@@ -2944,14 +2944,24 @@ mod tests {
             Some(1),
             "{out}"
         );
-        discard_staged_welcome(&refused_dir, &gid, RefusalMemo::Nothing);
+        assert_eq!(
+            settle(
+                &refused_dir,
+                29,
+                tag,
+                &gid,
+                &out,
+                WelcomeAnswer::Refused(RefusalMemo::Nothing)
+            )["settled"],
+            "cleared"
+        );
         assert_eq!(
             owner_events(&refused_dir),
             0,
-            "a discarded Add announces nothing"
+            "a cleared Add announces nothing"
         );
 
-        // Accepted: installed, and the event is the app's.
+        // Accepted: merged, and the event is the app's.
         let accepted_dir = dir_holding(&format!("{tag}-accepted"), &state);
         let out = prepare(&accepted_dir);
         let keys = out["ownDeviceAdded"]
@@ -2962,7 +2972,10 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with(&format!("{requester}|")));
-        assert_eq!(install_staged_welcome(&accepted_dir, &gid)["ok"], true);
-        assert_eq!(owner_events(&accepted_dir), 1, "the installed Add's event");
+        assert_eq!(
+            settle(&accepted_dir, 29, tag, &gid, &out, WelcomeAnswer::Accepted)["settled"],
+            "merged"
+        );
+        assert_eq!(owner_events(&accepted_dir), 1, "the merged Add's event");
     }
 }
