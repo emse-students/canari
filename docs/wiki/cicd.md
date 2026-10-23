@@ -1399,6 +1399,45 @@ lock instead - `cargo update -p serde_with --precise 3.21.0` also added `bs58` a
 `windows-*` crates, a resolver-wide change on the one target this repository can only verify by
 compiling. The rule is in [durable-rules](durable-rules.md).
 
+### Native and identity-provider manifests (2026-10-23)
+
+A dependency audit found three committed manifest trees nothing watched. What is declared now, and
+what is deliberately not:
+
+| Tree | Dependabot | What gates an update |
+| --- | --- | --- |
+| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | **Nothing on a pull request**, so `ceiling_gate_for_ref` (`lib/ceiling.sh`) refuses every update there. The `:app` module cannot be configured without the generated, git-ignored `tauri.settings.gradle` and the `google-services.json` secret; only `android.yml` builds it, at release time. The refusal names the missing gate: a pull-request job that compiles `:app`. |
+| `frontend/src-tauri/android-tests` (the JVM test project) | `gradle`, its own block | `test-android`, which builds and runs it whenever it changes. The only Gradle directory the ceiling lets through - an allowlist, so a new Gradle directory starts refused. |
+| `frontend/src-tauri/gen/apple` | **not declared** | The Podfile declares no pod, CocoaPods is not a Dependabot ecosystem, and the `swift` ecosystem reads `Package.swift` while Firebase is pinned in `project.pbxproj` + `Package.resolved` of an Xcode project. `firebase-ios-sdk` moves by hand. |
+| `infrastructure/authentik/compose.yml` | `docker-compose`, its own block | The ceiling's datastore arm, against **this file's** PostgreSQL major. |
+
+**Why the identity provider's file needed a ceiling change before it could be watched.** Its
+PostgreSQL ran 16 while production ran 18 (2026-10-23). Dependabot proposes the highest tag with the
+same suffix, so its first pull request there is `16-alpine -> 18-alpine`; compared with
+production's compose file - the only one the ceiling read - that is "the major production runs" and
+it would have passed: the 2026-09-01 outage, moved onto the database every sign-in depends on. So
+`ceiling_compose_from_ref` reads the directory off Dependabot's branch
+(`dependabot/docker_compose/infrastructure/authentik/...`) and the datastore arm compares with that
+file; `version-gap.yml`, which records rehearsals of PRODUCTION's data directory, lifts nothing
+there. Image names are compared without `docker.io/library/`, which that file spells and production's
+does not (`ceiling_image_name`). The `dependency-ceiling` job's sparse checkout carries the file, and
+`ceiling.test.sh` derives the stateful images from it exactly as it does from production's.
+
+**Each new directory has its OWN block** rather than joining a `directories:` list, because the
+ceiling reads the directory off the branch name, and one block per directory is what guarantees the
+branch carries it.
+
+**Two things this does not cover, owed a decision rather than code:**
+
+- **The authentik server and worker images are invisible to Dependabot.** They are written
+  `${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.0}` so the host's `.env`
+  can override them, and Dependabot does not resolve an interpolated reference. A literal reference
+  would be watched (and `test-miconnect-blueprints` boots it, so an update would be gated) but would
+  take the `.env` override away on a host this repository does not own. That is the operator's call.
+- **`gen/android` may not resolve at all.** Its `settings.gradle` applies the git-ignored
+  `tauri.settings.gradle`; if Dependabot's update job fails on it, the symptom is an absence of pull
+  requests, exactly as for the two cargo directories below. Read the first Monday's update job.
+
 ### And a manifest can make a whole directory invisible to Dependabot
 
 Enabling the switch above did not ship the fix, because a THIRD refusal was waiting under it, and
