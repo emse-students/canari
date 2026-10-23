@@ -1,5 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { GroupRosterBatch } from '$lib/mls-client/mlsDeliveryApi';
+import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import { removeStrayLeaves } from './strayLeaves';
 
 /**
@@ -280,6 +281,23 @@ describe('removeStrayLeaves - revoked devices', () => {
 
     expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
     expect(lines.join(' | ')).toContain('could not remove 1 revoked device(s)');
+  });
+
+  it('removes nothing from a state the published base cannot vouch for, and says why', async () => {
+    // The removal is a commit nobody asked for: on a forked device it would be accepted by the
+    // epoch gate and break every healthy member, so the service stages nothing and says so.
+    trees.g1 = ['alice:web-1', 'bob:web-1', 'bob:phone-1'];
+    batch = answered({ g1: ['alice', 'bob'] }, [], { g1: ['bob:phone-1'] });
+    removeMemberDevice.mockRejectedValue(
+      new UnpublishedBranchError('g1', 'diverged', 'revoked-leaf removal')
+    );
+
+    expect(await removeStrayLeaves(mls(), ['g1'], 'alice', log)).toEqual([]);
+    const said = lines.join(' | ');
+    expect(said).toContain('NOT removed: the published base cannot vouch');
+    expect(said).toContain('(diverged)');
+    // Not reported as a refusal that left leaves: nothing was staged, the tree is not re-read.
+    expect(said).not.toContain('could not remove');
   });
 
   it('says the leaf is gone, not that it stays, when another member removed it first', async () => {

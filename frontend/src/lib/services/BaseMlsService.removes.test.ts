@@ -75,7 +75,11 @@ describe('BaseMlsService - a staged Remove declares whom it removes', () => {
   it('removeMemberDevice names the one device', async () => {
     const runCommitTransaction = vi.fn().mockResolvedValue({});
 
-    await proto.removeMemberDevice.call({ runCommitTransaction }, 'g-1', ['user-c:web-c1']);
+    // The published-branch check is `BaseMlsService.leafRefresh.test.ts`'s; here it vouches.
+    const assertOnPublishedBranch = vi.fn(async () => async () => {});
+    await proto.removeMemberDevice.call({ runCommitTransaction, assertOnPublishedBranch }, 'g-1', [
+      'user-c:web-c1',
+    ]);
 
     expect(runCommitTransaction.mock.calls[0][2]).toEqual({
       removes: [{ userId: 'user-c', deviceId: 'web-c1' }],

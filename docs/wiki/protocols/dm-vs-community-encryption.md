@@ -164,7 +164,8 @@ and this page carries the reasoning.
 1. **Leaves refresh themselves since 2026-10-22, every 7 days of activity per device and group**
    ([mls-protocol](mls-protocol.md#the-periodic-leaf-refresh), with the commit ceiling on these fleet
    numbers), and a revoked device's leaf is removed by the stray-leaf collector. Community key groups
-   are excluded until a seed rotates on departures only.
+   are excluded: a refresh there is no departure, but it costs every sender a seed redistribution
+   and the tighter reused caps (the cost is on that page).
 2. **The large group conversation is the shape §3 rejected for salons.** 109 device seats carry
    messages over MLS. Two things are worth doing: measure its unreadable-frame rate against the
    communities' (`LOST frame` against `reportUnreadableChannelMessage`), and decide whether a group

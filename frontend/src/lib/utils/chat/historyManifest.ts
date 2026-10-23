@@ -26,6 +26,7 @@
  *
  * @see docs/wiki/frontend/modules/chat.md#pooling-history-between-devices
  */
+import { mixedHash32 } from '$lib/utils/hash32';
 
 /** One message as the manifest sees it: an identity, and the instant used only for ordering. */
 export type HistoryEntry = { id: string; timestamp: number };
@@ -126,22 +127,10 @@ function compareIds(a: string, b: string): number {
  * pile its whole history into one slice and degenerate to a full bundle.
  */
 export function historyRangeOf(id: string, depth: number): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < id.length; i++) {
-    hash ^= id.charCodeAt(i) & 0xff;
-    hash = Math.imul(hash, 0x01000193);
-  }
-  // MurmurHash3's finaliser. FNV-1a alone leaves its HIGH bits barely mixed for short, similar
-  // inputs, and the prefix is taken from exactly those bits: measured, 64 ids differing only in a
-  // trailing counter landed in 5 of the 16 depth-1 slices. That is not a correctness failure - a
-  // slice holds the same ids on both devices either way - but it is a three-fold over-send for every
-  // difference, on precisely the derived ids this function exists to spread.
-  hash ^= hash >>> 16;
-  hash = Math.imul(hash, 0x85ebca6b);
-  hash ^= hash >>> 13;
-  hash = Math.imul(hash, 0xc2b2ae35);
-  hash ^= hash >>> 16;
-  return (hash >>> 0).toString(16).padStart(8, '0').slice(0, depth);
+  // MurmurHash3's finaliser is inside `mixedHash32`: FNV-1a alone left 64 ids differing only in a
+  // trailing counter in 5 of the 16 depth-1 slices - a three-fold over-send for every difference, on
+  // precisely the derived ids this function exists to spread.
+  return mixedHash32(id).toString(16).padStart(8, '0').slice(0, depth);
 }
 
 /**

@@ -53,11 +53,8 @@ import {
 } from '$lib/mls-client/sendRatchetLedger';
 import { sealedFrameEpoch } from '$lib/mls-client/sealedFrameEpoch';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
-import {
-  LeafRefreshUnverifiedError,
-  noteOwnLeafRefreshed,
-  refreshLeafIfDue,
-} from '$lib/mls-client/leafRefresh';
+import { noteOwnLeafRefreshed, refreshLeafIfDue } from '$lib/mls-client/leafRefresh';
+import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -5934,10 +5931,20 @@ export abstract class BaseMlsService implements IMlsService {
     );
   }
 
+  /**
+   * Removes the leaves of the named devices in ONE commit - the revoked-leaf collector's commit
+   * (`strayLeaves.ts`), decided by no person, so staged only on the branch the server publishes
+   * ({@link assertOnPublishedBranch}): a forked device's removal would be accepted by the epoch
+   * gate and break every healthy member.
+   */
   async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
+    const assertOnBranch = await this.assertOnPublishedBranch(groupId, 'revoked-leaf removal');
     await this.runCommitTransaction(
       groupId,
-      (intent) => this.stageRemoveMembersByDevice(groupId, deviceIdentities, intent),
+      async (intent) => {
+        await assertOnBranch();
+        return this.stageRemoveMembersByDevice(groupId, deviceIdentities, intent);
+      },
       { removes: commitRemovals({ deviceIdentities }) }
     );
   }
@@ -5946,22 +5953,53 @@ export abstract class BaseMlsService implements IMlsService {
    * Replaces this device's own leaf in `groupId` - the periodic refresh (`leafRefresh.ts`). A commit
    * like any other: staged, submitted to the epoch gate, merged on its accept (which dates the leaf
    * in the refresh ledger) or cleared on its refusal, which throws {@link CommitRefusedError}.
-   * Admits nobody and removes nobody, so it declares neither.
+   * Admits nobody and removes nobody, so it declares neither. Staged only on the published branch.
    */
   async refreshOwnLeaf(groupId: string): Promise<void> {
-    // The base is read OUTSIDE the lock (network) and compared INSIDE it, against the state the
-    // commit is built from: an epoch that moved in between no longer matches, and nothing is staged.
-    const base = await this.delivery.fetchGroupInfo(groupId);
-    if (!base) throw new LeafRefreshUnverifiedError(groupId, 'no-base');
-    const baseBytes = fromBase64(base.groupInfo);
+    const assertOnBranch = await this.assertOnPublishedBranch(groupId, 'leaf refresh');
     await this.runCommitTransaction(groupId, async (intent) => {
-      const epoch = await this.freshEpoch(groupId);
-      if (base.baseEpoch !== epoch) throw new LeafRefreshUnverifiedError(groupId, 'other-epoch');
-      if (!(await this.ownContextMatchesBase(groupId, baseBytes))) {
-        throw new LeafRefreshUnverifiedError(groupId, 'diverged');
-      }
+      await assertOnBranch();
       return this.stageSelfUpdate(groupId, intent);
     });
+  }
+
+  /**
+   * Reads the external-join base the server publishes for `groupId` and returns the check a
+   * MECHANISM's commit runs in its stage callback, before staging anything (`publishedBranch.ts`):
+   * this device's epoch must be the base's, and its context (tree hash, confirmed transcript hash)
+   * the one the base describes.
+   *
+   * The base is read OUTSIDE the MLS lock (network) and compared INSIDE it, against the state the
+   * commit is built from: an epoch that moved in between no longer matches, and nothing is staged.
+   *
+   * **A `diverged` ANSWER IS A FORK, AND IT IS HANDED TO THE RECOVERY LADDER HERE**, where it is
+   * known, for every caller: the group is marked in the epoch-gap registry - which keeps every send
+   * out of it and hands it to the sync watchdog's rung 2 (forget + re-Welcome) - with an
+   * error-level line, the route {@link escalateUnreadableSubmission} takes for the other state
+   * whose branch cannot be trusted. Rung 1 (replaying the commit log) cannot help: the device is not
+   * behind, it is beside. `no-base` and `other-epoch` accuse nothing and enter nothing.
+   *
+   * @throws {UnpublishedBranchError} from the returned check, and from here when no base exists.
+   */
+  private async assertOnPublishedBranch(
+    groupId: string,
+    what: string
+  ): Promise<() => Promise<void>> {
+    const base = await this.delivery.fetchGroupInfo(groupId);
+    if (!base) throw new UnpublishedBranchError(groupId, 'no-base', what);
+    const baseBytes = fromBase64(base.groupInfo);
+    return async () => {
+      const epoch = await this.freshEpoch(groupId);
+      if (base.baseEpoch !== epoch) throw new UnpublishedBranchError(groupId, 'other-epoch', what);
+      if (await this.ownContextMatchesBase(groupId, baseBytes)) return;
+      markEpochGap(groupId);
+      console.error(
+        `[FORK] ${groupId.slice(0, 8)}... ${what} not staged: this device's context DIVERGES from ` +
+          `the published base at the same epoch ${epoch} - another branch; the group is handed to ` +
+          'rung 2 (forget + re-Welcome) through the epoch-gap registry'
+      );
+      throw new UnpublishedBranchError(groupId, 'diverged', what);
+    };
   }
 
   /** The epoch at which a refresh of each group last failed this session (`leafRefresh.ts`). */
@@ -6062,8 +6100,8 @@ export abstract class BaseMlsService implements IMlsService {
     // ACTIVITY IN THE GROUP IS WHAT DUE LEAF REFRESHES WAIT FOR: a conversation frame the server
     // just accepted. An ALLOWLIST of the two conversation kinds, by identity, because neither the
     // value nor `durable` can tell them from key material: a seed is shaped exactly like a mutation,
-    // and an addressed seed is a fresh object each time. Never a seed (an epoch move on a key group
-    // rotates every sender's seed - and the key-group registry is empty at a cold start), never
+    // and an addressed seed is a fresh object each time. Never a seed (key groups are not refreshed,
+    // see `leafRefresh.ts` - and the key-group registry is empty at a cold start), never
     // transport traffic, which every connection sends. See `leafRefresh.ts`.
     if (frameDelivery === DELIVERY.visible || frameDelivery === DELIVERY.mutation) {
       this.scheduleLeafRefresh(groupId);

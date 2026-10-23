@@ -167,14 +167,27 @@ A QUESTION first: measure that group's unreadable-frame rate against the communi
 whether a group conversation above some size should be backed by Graine
 ([dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#dms-and-group-conversations)).
 
-## P2 - Community key groups: no periodic leaf refresh and no revoked-device removal yet (2026-10-22)
+## P2 - Community key groups: no periodic leaf refresh and no revoked-device removal yet (2026-10-22, re-decided 2026-10-23)
 
 Conversations refresh their leaves and drop revoked devices
-([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)). Key groups are excluded from
-the refresh because any key-group epoch change rotates every sender's seed today; owed once seeds
-rotate on departures only (a self-update is a non-departure epoch). Their roster collector
-(`reconcileDistributionGroupRoster`) does not read the `revoked` answer yet; owed: the same allowlist
-there (a removal IS a departure, so it rotates, as it should).
+([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)). Two halves are deferred for
+key groups, and they are NOT the same question:
+
+- **The refresh.** Seeds rotate on departures only since 2026-10-22 (`graineOutboundVerdict`), and
+  a refresh is not one, so it would not mint a seed by itself. Its cost is that each refresh moves
+  the epoch: every sender's next send REDISTRIBUTES its seed (one frame per sender per refresh), and
+  a redistributed session takes the reused caps (50 messages, 24 h FROM ITS MINT), so a session past
+  a day rotates. One refresh per active device per week keeps every sender's session under a day
+  old in a busy community. Owed before it is turned on: a redistribution that does not tighten the
+  caps for a refresh-only epoch move (or caps counted from the redistribution), and the rotation rate
+  re-measured with it.
+- **The revoked device's leaf.** The roster collector (`reconcileDistributionGroupRoster`) does not
+  read the `revoked` answer, so a revoked device's leaf stays in every key group it was in and can
+  read every seed distributed there until the group is re-created. The server now refuses its
+  COMMITS (`validateCommit`, `DEVICE_REVOKED`) and its routing is purged, so it receives nothing new
+  through the delivery service - what is left is the cryptographic half. Owed: the same allowlist
+  there, staged on the published branch like the conversation one; a removal IS a departure, so it
+  rotates, as it should.
 
 ## P3 - A commit left unresolved past the commit-log horizon reads as refused (2026-10-22)
 
@@ -624,6 +637,7 @@ tab-swipe gestures (no touch input was driven).
 
 | What | The measurement that closes it |
 | --- | --- |
+| the checkpoint every commit awaits under the MLS lock before its first request (`checkpointStageBeforeSend`, the leaf-refresh PR #2269): ~1.4-2 s per commit on a Mi 9T DEBUG capture, a burst of N commits ~2N checkpoints ([mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh)) | in the pre-release carrying #2269, on a RELEASE build on the Mi 9T AND the iPhone 12: the `[COMMIT]` stage-checkpoint duration of one commit (a leaf refresh or an invite), and of a burst (a group creation adding several devices), read from the device log; the rig rows LEAF-REFRESH-1..4 ([cross-client-testing](cross-client-testing.md)) on the same build |
 | the organiser alert for a payment over capacity (#2228, D3; owed only once `FORM_ORGANISER_ALERT_ENABLED` is `true`) | first the client floor: `minClientVersion` at or above the version carrying #2228 on both estates, both stores serving it; then on the Mi 9T AND the iPhone 12, one payment landing on a full form on dev: the push arrives with the title only, a tap (app killed AND backgrounded) opens `/forms` with that form's responses accordion open and in view, and the bell row reads the alert sentence ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)) |
 | a video filmed with the new-post composer's camera is a CanaReel, with a deletion notice and "Garder comme post" (user, 2026-10-19: one camera, one behaviour; component tests only) | check CR on the Mi 9T and the iPhone 12, next pre-release ([device-verification](device-verification.md#cr-the-composers-camera-films-a-canareel---owed-on-both-phones)) |
 | calls lot 1 (#1997, #2010): 1:1 audio peer to peer on dev builds, never placed on a phone - BLOCKED 2026-10-18, no tag carries it ([bench readings](device-readings-calls-live-2026-10-18.md#1-calls---blocked-no-build-within-reach-carries-lot-1)) | after the next pre-release: a call PC <-> Mi 9T and Mi 9T <-> iPhone 12 on dev - setup time, the selected pair (direct or Cloudflare TURN), audio heard both ways, the ring on a throttled uplink, and a key mismatch on a build with #2013 |

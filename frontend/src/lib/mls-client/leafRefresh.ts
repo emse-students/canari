@@ -11,7 +11,7 @@
  * online, holds a current tree, and the server has just accepted a frame from it. The decision is
  * then read from durable facts: how old THIS leaf is. A device that sends nothing commits nothing,
  * and a device that sends a hundred messages commits at most once per {@link LEAF_REFRESH_INTERVAL_MS}.
- * No jitter and no clock-driven loop: two runs over the same state decide the same thing.
+ * No randomness and no clock-driven loop: two runs over the same state decide the same thing.
  *
  * **THE AGE OF THE LEAF, AND WHERE EACH HALF OF IT LIVES.**
  * - A leaf ADMITTED from a KeyPackage is dated by the TREE (`own_leaf_minted_at`: the package's
@@ -20,23 +20,44 @@
  *   (openmls puts a path in every member commit it builds - pinned by `mls-core/tests/self_update.rs`).
  *   So {@link noteOwnLeafRefreshed} is written by the one seam every own commit passes through,
  *   after the server accepted it - a refresh, a Remove and an Add alike - and by the external join.
- * - A ledger entry can only describe a commit-sourced leaf, so for a KeyPackage-dated leaf it is
- *   ignored: such a leaf is a newer incarnation (a Welcome after the group was forgotten).
  *
- * **WHERE IT MUST NOT RUN.** A community's key group: there, any epoch move rotates every sender's
- * Graine seed at its next send (`shouldRotateGraineSession`), so a refresh would mint seeds the way
- * the 2026-10-21 measurement already deplores. A group in an epoch gap: the recovery ladder owns it.
- * A group this device was removed from: it can commit nothing there. A group HELD by something
- * that needs its epoch to stay put ({@link holdLeafRefresh} - a call being set up). And a device
- * whose own context is not the base the server publishes for the epoch
- * ({@link LeafRefreshUnverifiedError}): the server's gate compares only epoch numbers, so a forked
- * device's refresh would be accepted and break every healthy member.
+ * **THE FIRST REFRESH IS SPREAD, OR IT IS A HERD.** The day this mechanism ships, every leaf in every
+ * group is older than the interval, so a decision on age alone makes each seat refresh at its first
+ * send: ~1600 commits in the first week, back to back in a 109-seat group, where a slow device keeps
+ * only two past epochs (`max_past_epochs`) and loses the frames sealed before the ones it missed.
+ * So a leaf this device has no refresh of its own for is first OBSERVED (a ledger entry, written at
+ * its first send, never due then), and becomes due at the observation plus a fixed offset in
+ * `[0, interval)` derived from `(deviceId, groupId)` ({@link leafRefreshOffsetMs}) - the seats of
+ * one group land on different days of the week, the same days at every run. After that first
+ * refresh each seat's next one follows its own, so the spread holds without being re-applied.
+ *
+ * **THE CLOCK IS THIS DEVICE'S, AND THAT IS ACKNOWLEDGED, NOT DERIVED AWAY.** The interval is a
+ * duration, and no durable MLS fact measures one: an epoch moves on commits, so a quiet group would
+ * never be due and a busy one would be due hourly. What a WRONG clock costs: it decides only WHEN a
+ * refresh is owed, never what a commit contains. A clock ahead makes refreshes early - at most one
+ * per group per forward jump, since the refresh it causes is dated by the same clock; a clock behind
+ * makes them late. A ledger date in the FUTURE (the clock that wrote it was ahead and has come back)
+ * is not believed: the leaf is observed again, so the delay is bounded by one interval rather than
+ * by however far ahead that clock was.
+ *
+ * **WHERE IT MUST NOT RUN.** A community's key group, for its cost: a refresh there is not a
+ * departure, so it does not rotate the Graine seeds by itself (`graineOutboundVerdict`), but it
+ * moves the epoch, and every sender's next send then re-distributes its seed - one frame per sender
+ * per refresh - and a re-distributed session takes the tighter caps (50 messages, 24 hours FROM ITS
+ * MINT), so any session already past a day ROTATES instead. Kept out until that cost is weighed
+ * against the key group's own healing (`docs/wiki/backlog.md`). A group in an epoch gap: the
+ * recovery ladder owns it. A group this device was removed from: it can commit nothing there. A
+ * group HELD by something that needs its epoch to stay put ({@link holdLeafRefresh} - a call being
+ * set up). And a device whose own context is not the base the server publishes for the epoch
+ * ({@link UnpublishedBranchError}, `publishedBranch.ts`).
  *
  * @see docs/wiki/protocols/mls-protocol.md#the-periodic-leaf-refresh
  */
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+import { mixedHash32 } from '$lib/utils/hash32';
 import { CommitRefusedError } from './CommitRefusedError';
 import { CommitOutcomeUnknownError } from './commitSubmission';
+import { UnpublishedBranchError } from './publishedBranch';
 
 /**
  * How long a leaf may hold the same key material before this device replaces it: SEVEN DAYS.
@@ -49,56 +70,115 @@ import { CommitOutcomeUnknownError } from './commitSubmission';
 export const LEAF_REFRESH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * The most groups the ledger keeps; the oldest refresh goes first. A device sits in far fewer
+ * The most groups the ledger keeps; the oldest entry goes first. A device sits in far fewer
  * conversations than this, so the bound only ever trims entries of groups long forgotten.
  */
 export const LEAF_REFRESH_LEDGER_MAX_GROUPS = 512;
 
-/** When this device's leaf in one group was last replaced by its own commit, and at which epoch. */
+/**
+ * One group's ledger entry: either this device's own accepted commit replaced its leaf (a REFRESH),
+ * or this device first saw a leaf it holds no refresh of its own for (an OBSERVATION).
+ */
 export interface LeafRefreshRecord {
-  /** Unix ms of the server's accept of that commit, as this device's clock read it. */
+  /** Unix ms of the server's accept of that commit, or of the observation, by this device's clock. */
   at: number;
-  /** The epoch that commit created. */
+  /** The epoch that commit created, or the epoch at the observation. */
   epoch: number;
+  /**
+   * Present on an OBSERVATION only. It is not a refresh: it anchors the first one
+   * ({@link leafRefreshOffsetMs}), and it describes only the leaf it saw - `mintedAtSec` names it.
+   */
+  observed?: true;
+  /** The observed leaf's `own_leaf_minted_at`, `null` for a commit-sourced one. Observations only. */
+  mintedAtSec?: number | null;
 }
 
-/** What the age of the current leaf was read from. */
-export type LeafAgeBasis = 'admission' | 'ledger' | 'first-sight';
+/**
+ * What the age of the current leaf was read from: its KeyPackage (`admission`), this device's own
+ * refresh (`ledger`), an earlier observation of a commit-sourced leaf (`observed`), or nothing yet
+ * (`first-sight`, which records an observation and is never due).
+ */
+export type LeafAgeBasis = 'admission' | 'ledger' | 'observed' | 'first-sight';
 
 /** Whether a refresh is owed, and the fact that decided it. */
 export interface LeafRefreshDecision {
   due: boolean;
   basis: LeafAgeBasis;
-  /** Since when the current key material is known to exist, Unix ms. */
+  /** Since when the current key material is known to exist (or was first seen), Unix ms. */
   sinceMs: number;
+  /** From when the refresh is owed, Unix ms; `null` on a first sight. */
+  dueAtMs: number | null;
+}
+
+/**
+ * The fixed offset, in `[0, intervalMs)`, at which this device's first refresh in `groupId` falls
+ * after it first observed the leaf. PURE and DETERMINISTIC: derived from `(deviceId, groupId)` and
+ * nothing else - not a clock, not a random draw per run - so a reload, a second tab or a retry all
+ * read the same day, and the seats of one group spread evenly over the interval.
+ */
+export function leafRefreshOffsetMs(
+  deviceId: string,
+  groupId: string,
+  intervalMs: number = LEAF_REFRESH_INTERVAL_MS
+): number {
+  return Math.floor((mixedHash32(`${deviceId}|${groupId}`) / 2 ** 32) * intervalMs);
 }
 
 /**
  * Decides whether the leaf is old enough to replace. PURE.
  *
- * `first-sight` - a commit-sourced leaf with no ledger entry (the ledger was cleared, or this build
- * is the first to keep one) - is NEVER due: dating it "now" costs at most one interval of delay,
- * while dating it "never" would turn a lost ledger into a commit in every group at the next send.
+ * - A KeyPackage-dated leaf (`mintedAtSec`) is due at the LATER of `minted + interval` and its
+ *   observation plus the offset. Only an observation OF THAT LEAF counts (`mintedAtSec` equal): a
+ *   ledger refresh describes a commit-sourced leaf, so beside a KeyPackage-dated one it is a former
+ *   incarnation (a Welcome after the group was forgotten).
+ * - A leaf this device's own commit produced is due at `refresh + interval` (`ledger`).
+ * - A commit-sourced leaf with only an observation is due at the observation plus the offset.
+ * - Anything else - no entry, an entry of another incarnation, or one dated in the future - is a
+ *   `first-sight`: NEVER due, and the caller records an observation. Dating it "now" costs at most
+ *   one interval of delay, while dating it "never" would turn a lost ledger into a commit in every
+ *   group at the next send.
  */
 export function decideLeafRefresh(input: {
   mintedAtSec: number | null;
   record: LeafRefreshRecord | undefined;
   nowMs: number;
+  offsetMs: number;
   intervalMs?: number;
 }): LeafRefreshDecision {
   const interval = input.intervalMs ?? LEAF_REFRESH_INTERVAL_MS;
+  const { mintedAtSec, nowMs, offsetMs } = input;
+  // A date this device's clock has not reached yet was written by a clock that was ahead: believing
+  // it would postpone the refresh by however far ahead that clock was. Observed again instead.
+  const record = input.record && input.record.at <= nowMs ? input.record : undefined;
+  const observation =
+    record?.observed && (record.mintedAtSec ?? null) === mintedAtSec ? record : undefined;
+  const firstSight: LeafRefreshDecision = {
+    due: false,
+    basis: 'first-sight',
+    sinceMs: nowMs,
+    dueAtMs: null,
+  };
+
   let basis: LeafAgeBasis;
   let sinceMs: number;
-  if (input.mintedAtSec !== null) {
+  let dueAtMs: number;
+  if (mintedAtSec !== null) {
+    if (!observation) return firstSight;
     basis = 'admission';
-    sinceMs = input.mintedAtSec * 1000;
-  } else if (input.record) {
+    sinceMs = mintedAtSec * 1000;
+    dueAtMs = Math.max(sinceMs + interval, observation.at + offsetMs);
+  } else if (record && !record.observed) {
     basis = 'ledger';
-    sinceMs = input.record.at;
+    sinceMs = record.at;
+    dueAtMs = record.at + interval;
+  } else if (observation) {
+    basis = 'observed';
+    sinceMs = observation.at;
+    dueAtMs = observation.at + offsetMs;
   } else {
-    return { due: false, basis: 'first-sight', sinceMs: input.nowMs };
+    return firstSight;
   }
-  return { due: input.nowMs - sinceMs >= interval, basis, sinceMs };
+  return { due: nowMs >= dueAtMs, basis, sinceMs, dueAtMs };
 }
 
 function ledgerKey(userId: string, deviceId: string): string {
@@ -107,8 +187,8 @@ function ledgerKey(userId: string, deviceId: string): string {
 
 /**
  * The refresh ledger of this account on this device. An unreadable one reads as empty - which
- * makes every commit-sourced leaf a `first-sight` (never due), the direction that costs no commit -
- * and it is said, because an empty ledger and an unreadable one are different causes.
+ * makes every leaf a `first-sight` (never due), the direction that costs no commit - and it is
+ * said, because an empty ledger and an unreadable one are different causes.
  */
 export function readLeafRefreshLedger(
   userId: string,
@@ -125,10 +205,36 @@ export function readLeafRefreshLedger(
   } catch (e) {
     console.warn(
       `[LEAF_REFRESH] ledger unreadable for ${userId.slice(0, 8)}... - read as empty, so no ` +
-        'refreshed leaf is due until it is dated again:',
+        'leaf is due until it is observed again:',
       String(e).slice(0, 120)
     );
     return {};
+  }
+}
+
+/** Writes one group's entry, bounded to the newest {@link LEAF_REFRESH_LEDGER_MAX_GROUPS}. */
+function writeLedgerEntry(
+  userId: string,
+  deviceId: string,
+  groupId: string,
+  record: LeafRefreshRecord,
+  what: string
+): void {
+  const ledger = readLeafRefreshLedger(userId, deviceId);
+  ledger[groupId] = record;
+  const entries = Object.entries(ledger);
+  const kept =
+    entries.length <= LEAF_REFRESH_LEDGER_MAX_GROUPS
+      ? entries
+      : entries.sort((a, b) => b[1].at - a[1].at).slice(0, LEAF_REFRESH_LEDGER_MAX_GROUPS);
+  try {
+    localStorage.setItem(ledgerKey(userId, deviceId), JSON.stringify(Object.fromEntries(kept)));
+  } catch (e) {
+    console.warn(
+      `[LEAF_REFRESH] could not record the ${what} of ${groupId.slice(0, 8)}... at epoch ` +
+        `${record.epoch} - the next send decides from the entry before it:`,
+      String(e).slice(0, 120)
+    );
   }
 }
 
@@ -146,49 +252,30 @@ export function noteOwnLeafRefreshed(
   epoch: number,
   nowMs: number = Date.now()
 ): void {
-  const ledger = readLeafRefreshLedger(userId, deviceId);
-  ledger[groupId] = { at: nowMs, epoch };
-  const entries = Object.entries(ledger);
-  const kept =
-    entries.length <= LEAF_REFRESH_LEDGER_MAX_GROUPS
-      ? entries
-      : entries.sort((a, b) => b[1].at - a[1].at).slice(0, LEAF_REFRESH_LEDGER_MAX_GROUPS);
-  try {
-    localStorage.setItem(ledgerKey(userId, deviceId), JSON.stringify(Object.fromEntries(kept)));
-  } catch (e) {
-    console.warn(
-      `[LEAF_REFRESH] could not record the refresh of ${groupId.slice(0, 8)}... at epoch ${epoch} - ` +
-        'the next send may refresh it again:',
-      String(e).slice(0, 120)
-    );
-  }
+  writeLedgerEntry(userId, deviceId, groupId, { at: nowMs, epoch }, 'refresh');
 }
 
-/** Why the server's published base could not vouch for this device's state. */
-export type LeafRefreshUnverifiedReason = 'no-base' | 'other-epoch' | 'diverged';
-
 /**
- * Thrown by `BaseMlsService.refreshOwnLeaf` BEFORE anything is staged, when this device's group
- * context is not the one the server publishes for the epoch.
- *
- * WHY: the server's commit gate compares epoch NUMBERS. A device that merged a commit nobody else
- * did sits at the right number on the wrong branch, its refresh is accepted, and every healthy
- * member then fails to apply it. A commit nobody asked for must not be what spreads a fork, so it is
- * staged only when the device's context (tree hash, confirmed transcript hash) IS the published one.
- * - `no-base`: nothing is published for the group - nothing to compare against;
- * - `other-epoch`: the published base is of another epoch (this device is behind, or the base is);
- * - `diverged`: same epoch, different hashes - THIS DEVICE IS ON ANOTHER BRANCH.
+ * Records the first sight of a leaf this device holds no refresh of its own for - the anchor its
+ * first refresh is spread from ({@link decideLeafRefresh}). `mintedAtSec` names the leaf, so the
+ * observation is never read for another incarnation of it. A failed write leaves the leaf a first
+ * sight at the next send, which commits nothing, and is said.
  */
-export class LeafRefreshUnverifiedError extends Error {
-  constructor(
-    readonly groupId: string,
-    readonly reason: LeafRefreshUnverifiedReason
-  ) {
-    super(
-      `leaf refresh of ${groupId.slice(0, 8)}... not vouched for by the published base: ${reason}`
-    );
-    this.name = 'LeafRefreshUnverifiedError';
-  }
+export function noteLeafObserved(
+  userId: string,
+  deviceId: string,
+  groupId: string,
+  epoch: number,
+  mintedAtSec: number | null,
+  nowMs: number
+): void {
+  writeLedgerEntry(
+    userId,
+    deviceId,
+    groupId,
+    { at: nowMs, epoch, observed: true, mintedAtSec },
+    'observation'
+  );
 }
 
 /**
@@ -281,17 +368,22 @@ export async function refreshLeafIfDue(
   if (!(await deps.isGroupActive(groupId))) return 'inactive';
 
   const now = deps.now();
+  const mintedAtSec = await deps.ownLeafMintedAt(groupId);
+  const offsetMs = leafRefreshOffsetMs(deps.deviceId, groupId);
   const decision = decideLeafRefresh({
-    mintedAtSec: await deps.ownLeafMintedAt(groupId),
+    mintedAtSec,
     record: readLeafRefreshLedger(deps.userId, deps.deviceId)[groupId],
     nowMs: now,
+    offsetMs,
   });
   const epoch = deps.getEpoch(groupId);
   if (decision.basis === 'first-sight') {
-    noteOwnLeafRefreshed(deps.userId, deps.deviceId, groupId, epoch, now);
+    noteLeafObserved(deps.userId, deps.deviceId, groupId, epoch, mintedAtSec, now);
     deps.log(
-      `[LEAF_REFRESH] ${short}... leaf refreshed at an unknown time (no ledger entry) - dated now, ` +
-        'first refresh in seven days'
+      `[LEAF_REFRESH] ${short}... first sight of this leaf (${mintedAtSec === null ? 'commit-sourced' : 'admitted'}, ` +
+        `no refresh of ours on record) - observed now, its first refresh is owed from ` +
+        `${(offsetMs / (24 * 60 * 60 * 1000)).toFixed(1)} d after this` +
+        (mintedAtSec === null ? '' : ' or seven days after its admission, whichever is later')
     );
     return 'first-sight';
   }
@@ -322,13 +414,14 @@ export async function refreshLeafIfDue(
     await deps.refreshOwnLeaf(groupId);
   } catch (e) {
     deps.attemptedAtEpoch.set(groupId, epoch);
-    if (e instanceof LeafRefreshUnverifiedError) {
-      // Nothing was staged. `diverged` is the one that accuses: this device is on a branch the
-      // server does not publish, and the recovery ladder - not a refresh - is what owns that.
+    if (e instanceof UnpublishedBranchError) {
+      // Nothing was staged. `diverged` is the one that accuses, and it was handed to the recovery
+      // ladder where it was thrown (`BaseMlsService.assertOnPublishedBranch`): this only says so.
       deps.log(
         e.reason === 'diverged'
           ? `[LEAF_REFRESH] ${short}... NOT refreshed at epoch ${epoch}: this device's context ` +
-              'DIVERGES from the published base at the same epoch (diverged) - a fork; nothing staged'
+              'DIVERGES from the published base at the same epoch (diverged: a fork) - nothing staged, the ' +
+              'group is handed to the recovery ladder'
           : `[LEAF_REFRESH] ${short}... not refreshed at epoch ${epoch}: the published base cannot ` +
               `vouch for this state (${e.reason}) - nothing staged, asked again after the epoch moves`
       );
@@ -353,8 +446,9 @@ export async function refreshLeafIfDue(
     return 'failed';
   }
   deps.attemptedAtEpoch.delete(groupId);
-  // AWAITED: the server already holds the new epoch, and the private half of our new leaf exists
-  // only in memory until this lands - the same reason the external join awaits its checkpoint.
+  // AWAITED, SO THE MERGE IS ON DISK - not so the new leaf survives: the stage and its submission
+  // record reached disk before the commit left (`checkpointStageBeforeSend`), so a reload before
+  // this lands finds the refresh STAGED, and its resubmission (answered `duplicate`) merges it.
   let checkpointed = false;
   try {
     checkpointed = await deps.checkpoint();
@@ -365,7 +459,10 @@ export async function refreshLeafIfDue(
   }
   deps.log(
     `[LEAF_REFRESH] ${short}... refreshed - epoch ${deps.getEpoch(groupId)}` +
-      (checkpointed ? '' : ' (NOT checkpointed: a reload before the next write loses the new leaf)')
+      (checkpointed
+        ? ''
+        : ' (merge NOT checkpointed: a reload before the next write finds the refresh staged, and ' +
+          'its resubmission at the next connection merges it)')
   );
   return 'refreshed';
 }

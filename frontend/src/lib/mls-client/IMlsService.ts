@@ -1220,7 +1220,11 @@ export interface IMlsService {
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
   removeMember(groupId: string, userIds: string[]): Promise<void>;
-  /** Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and broadcasts it. */
+  /**
+   * Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and
+   * broadcasts it. The revoked-leaf collector's commit: staged only when this device's context is
+   * the base the server publishes, else it throws `UnpublishedBranchError` having staged nothing.
+   */
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
   /**
    * Every leaf identity (`userId:deviceId`) in the group's MLS ratchet tree, read locally.
