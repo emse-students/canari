@@ -3,7 +3,6 @@ import { IsNull, type EntityManager } from 'typeorm';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
-import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 
 const logger = new Logger('GroupMembership');
