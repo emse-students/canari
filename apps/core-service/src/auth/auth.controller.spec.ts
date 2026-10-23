@@ -685,8 +685,42 @@ describe('AuthController sessions', () => {
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(UnauthorizedException);
       expect((err as UnauthorizedException).message).not.toContain('provider internals');
+      expect(JSON.stringify((err as UnauthorizedException).getResponse())).not.toContain(
+        'provider internals'
+      );
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('provider internals'));
       warn.mockRestore();
+    });
+
+    /** Runs a callback that Authentik refuses with `status`, and returns the typed refusal code. */
+    async function refusalCode(status: number, verifier: string | undefined): Promise<unknown> {
+      fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(new globalThis.Response('{"error":"invalid_grant"}', { status }));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const err = await callbackController()
+        .oidcCallback(
+          {
+            code: 'c',
+            redirect_uri: 'https://canari.example/auth/callback',
+            ...(verifier === undefined ? {} : { code_verifier: verifier }),
+          } as never,
+          makeReq({ origin: 'https://canari.example' }),
+          makeRes().res
+        )
+        .catch((e: unknown) => e);
+      warn.mockRestore();
+      expect(err).toBeInstanceOf(UnauthorizedException);
+      return ((err as UnauthorizedException).getResponse() as { code?: unknown }).code;
+    }
+
+    it('types a refused PKCE redemption apart from a refused unchallenged code', async () => {
+      expect(await refusalCode(400, 'v'.repeat(43))).toBe('OIDC_PKCE_REFUSED');
+      expect(await refusalCode(400, undefined)).toBe('OIDC_CODE_REFUSED');
+    });
+
+    it('does not call a provider failure a refusal of the code', async () => {
+      expect(await refusalCode(502, 'v'.repeat(43))).toBe('OIDC_TOKEN_EXCHANGE_FAILED');
     });
 
     it('says so when Authentik sent none, since that sign-out cannot end MiConnect', async () => {

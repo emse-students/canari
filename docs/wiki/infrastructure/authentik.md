@@ -209,7 +209,10 @@ What authentik does with the pair is MEASURED, not assumed: `test-pkce.py`, run 
 the code the way core-service does. On 2026.8.0 (2026-10-23) a challenged code with no verifier and
 with a wrong one answer `400 invalid_grant`, the right verifier answers `200` with an id_token, and a
 verifier sent for an unchallenged code answers `400 invalid_grant`. core-service turns any refusal
-into a `401` (`auth.controller.spec.ts`).
+into a `401` carrying a typed `code` (`oidcTokenRefusal`): `OIDC_PKCE_REFUSED` when a verifier was sent
+and MiConnect answered `400`, `OIDC_CODE_REFUSED` when none was, `OIDC_TOKEN_EXCHANGE_FAILED` for any
+other status. A wrong verifier and a spent or expired code both answer `invalid_grant`, so no finer
+code can be stated truthfully; the provider's body is logged, never returned (`auth.controller.spec.ts`).
 
 The user's `sub` claim from Authentik becomes the canonical `userId` across all Canari services (`findOrCreateFromOidc` uses `userinfo.sub` as the primary key).
 

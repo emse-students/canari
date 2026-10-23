@@ -56,6 +56,43 @@ interface OidcCallbackDto {
   code_verifier?: string;
 }
 
+/**
+ * The typed refusals of `POST /auth/oidc/callback` when MiConnect will not redeem the code. The
+ * client renders on `code`, never on `message`.
+ *
+ * - `OIDC_PKCE_REFUSED`: the code was redeemed WITH a verifier and MiConnect answered `400`. The
+ *   verifier did not match the challenge, or the code was spent or expired - authentik answers
+ *   `invalid_grant` to all of them alike (measured by infrastructure/authentik/test-pkce.py), so
+ *   nothing finer can be stated truthfully. What it does state: the sign-in was a PKCE one.
+ * - `OIDC_CODE_REFUSED`: the code was redeemed WITHOUT a verifier and MiConnect answered `400` - a
+ *   spent or expired code from a client that did not challenge, or a challenged code whose verifier
+ *   the caller lost.
+ * - `OIDC_TOKEN_EXCHANGE_FAILED`: any other status. Not a judgement on the code.
+ */
+export type OidcTokenRefusalCode =
+  | 'OIDC_PKCE_REFUSED'
+  | 'OIDC_CODE_REFUSED'
+  | 'OIDC_TOKEN_EXCHANGE_FAILED';
+
+/**
+ * Classifies MiConnect's refusal of a code from the two facts this server KNOWS - the status it got
+ * and whether it sent a verifier - never from the provider's prose, which is logged and not returned.
+ */
+export function oidcTokenRefusal(
+  status: number,
+  verifierSent: boolean
+): { code: OidcTokenRefusalCode; message: string } {
+  if (status !== 400) {
+    return {
+      code: 'OIDC_TOKEN_EXCHANGE_FAILED',
+      message: `Authentik token exchange failed (${status})`,
+    };
+  }
+  return verifierSent
+    ? { code: 'OIDC_PKCE_REFUSED', message: 'MiConnect refused the code and its PKCE verifier' }
+    : { code: 'OIDC_CODE_REFUSED', message: 'MiConnect refused the code' };
+}
+
 /** Claims carried by the refresh JWT. `sid`/`jti` are absent on tokens issued before WP-SESS-2. */
 interface RefreshClaims {
   sub: string;
@@ -355,7 +392,10 @@ export class AuthController {
     }
     if (!code_verifier) {
       // A sign-in with no proof that the caller started it: a build older than PKCE, or a caller
-      // that is not the app at all. Named so its rate is measured before the shim is removed.
+      // that is not the app at all. THIS LINE IS THE REMOVAL METRIC of the legacy branch
+      // (docs/wiki/legacy-compatibility.md, "an OIDC callback with no PKCE verifier"): the branch
+      // goes when it is silent on production for a week, so it stays a warn - demoting it to debug
+      // would make that condition true by hiding it, not by the clients upgrading.
       this.logger.warn(
         `OIDC callback without a PKCE verifier (origin=${req.get('origin') ?? 'none'}) - legacy client`
       );
@@ -384,8 +424,11 @@ export class AuthController {
       // The provider's answer is logged here and NOT handed to the caller: it describes the
       // provider's checks to whoever POSTed the code, and the client has nothing to do with it.
       const errText = await tokenRes.text().catch(() => '');
-      this.logger.warn(`Authentik token exchange refused (${tokenRes.status}): ${errText}`);
-      throw new UnauthorizedException(`Authentik token exchange failed (${tokenRes.status})`);
+      const refusal = oidcTokenRefusal(tokenRes.status, Boolean(code_verifier));
+      this.logger.warn(
+        `Authentik token exchange refused (${tokenRes.status}, ${refusal.code}): ${errText}`
+      );
+      throw new UnauthorizedException(refusal);
     }
 
     const tokenData = (await tokenRes.json()) as {
