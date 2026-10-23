@@ -48,21 +48,23 @@ Owed before it ships:
   must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
   reset). Revisit only if #2271 lands with a design that tolerates a rotation.
 
-## New-device notices: decided by the user on 2026-10-22 - the UI is owed
+## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 
-No mandatory approval of a new device. The client that processes the signed change produces the
-notices itself, never a server message: the account owner gets an alert "a new device was added to
-your account" (in the app and as a local notification on the phone), and contacts see a discreet
-line "X added a device" in private conversations only - 1:1 and groups, never communities or salons.
+Built: the owner's in-app alert, the contact line in every DM and group shared with the contact
+(never in communities, wherever the device was first seen), the owner's notice of a refused device
+of their own with its remedy, and the native local notification on both background engines, one
+ledger between them - see
+[mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day).
+Only CI compiles the Kotlin, the Swift and the Android/iOS Rust targets.
 
-Built: the event (`DeviceEvent`, `IMlsService.takeDeviceEvents()`), the audience rule
-(`deviceEventAudience()`) and the dedup key (`deviceEventKey()`) - see
-[mls-protocol](protocols/mls-protocol.md#device-binding). Owed, as its own work package: the
-Paraglide strings, the conversation line, the in-app alert, and the native local notification when
-the Android or iOS background path merges such a commit (its events wait in `mls.bin` until the app
-takes them), deduplicated per device. Also owed there: telling a device's owner, in the app, that
-peers refuse to re-add it under its kept id until it is reset (today only the members' logs say
-so, once per session).
+Owed readings (Mi 9T and iPhone 12): add a web device to the account with both phones shut - a local
+notification on each (the iPhone at its next message push), then the in-app alert on opening, and
+no second notification; a line "X added a device" in a DM with a contact who adds a device; NO line
+in a community or salon. Owed decisions: whether a phone whose WebView is alive in the background
+should also raise the local notification (today the in-app alert only), and whether a device first
+seen in a tree this device joined should be announced; and whether 7 days is the right bound for
+a contact's line (a device first seen by the server earlier is a heal, not a new device - see the
+evidence table in mls-protocol).
 
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 
@@ -79,6 +81,22 @@ the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer t
 nothing is built for it. Design and limits:
 [history-answer-addressing](protocols/history-answer-addressing.md#decided-a-quote-of-an-earlier-message),
 [history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21).
+
+## P1 - A community's past goes only to a proven admission: BUILT (draft PR), owed its readings and a client floor (2026-10-22)
+
+Decided by the user: communities stay `shared` by default, the past goes only to an admission a
+member can verify, and a new user's arrival rotates (D5, #2263). Migration `107` is approved by the
+user. Owed, in order: merge after #2262 and #2264; the rig rows COMM-26..31; and a
+`minClientVersion` floor at the version carrying it, since an older answering client still hands
+the past to whoever the roster names. **The cut date is DECIDED** (user, 2026-10-23):
+`ADMISSION_PROOF_SINCE` is the day the production stable carrying the proof ships, planned for
+2026-10-27 UTC. **Old invite links are ACCEPTED as they are** (user, 2026-10-23): a newcomer through
+an old link reads from arrival until a member re-admits them.
+
+**Release checklist for that stable: before cutting its final pre-release, check that
+`ADMISSION_PROOF_SINCE` (`frontend/src/lib/utils/graine/admissionGate.ts`) equals that stable's
+day.** Design:
+[channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22).
 
 ## P2 - A revoked device erases its owner's arrival, so their next device loses history (review of #2226, 2026-10-22)
 
@@ -478,6 +496,21 @@ The fix makes the eviction and the activation exclude each other. Before choosin
 lock and a conditional activation, count how often `[DISTRIBUTION_GROUP] evict` and an `ADMITS` or
 activation line for the same user and group fall within one second of each other on production.
 
+## P2 - The mobile sign-in returns through a custom scheme: PKCE binds the code, not the app (2026-10-23)
+
+PKCE (S256, [auth](frontend/modules/auth.md#login-flow)) makes a code worthless to anybody who lacks
+the verifier of the request that produced it. It does not say WHICH app receives the redirect: the
+phone sign-in returns on `fr.emse.canari://callback`, a custom scheme the OS does not verify, and a
+party that runs its own authorization runs its own PKCE too. What closes that is a redirect only
+Canari can receive: an `https` callback on a verified host (`MOBILE_APP_LINK_HOSTS` in
+`frontend/src/lib/mobile/appSiteAssociation.ts`, App Links on Android, Universal Links on iOS)
+registered on the providers in `infrastructure/authentik/blueprints/50-providers.yaml`; then, once
+`minClientVersion` covers it, the custom-scheme redirect URI comes off the providers and core-service
+refuses a callback with no verifier
+([legacy-compatibility](legacy-compatibility.md#no-date-yet---an-oidc-callback-with-no-pkce-verifier)).
+Owed first: whether `ASWebAuthenticationSession` and the Custom Tab both hand an `https` callback on a
+claimed host back to the app on the bench phones, a reading, since no gate here sees it.
+
 ## P3 - `POST /mls/commit` has no rate limit (2026-10-22)
 
 Neither an edge `limit_req` nor the configured `ThrottlerModule` applies to the commit route. A key
@@ -800,9 +833,28 @@ Job `vendored-upstream` of `scheduled.yml` now reports an upstream `tauri-plugin
 
 `CallService`'s signalling resume retries at fixed moments (1, 2, 4, 4, 4... s, `cappedReconnectDelayMs`), so two clients that lost the same Wi-Fi at the same instant reconnect in lockstep - harmless at two phones, a burst on `call-service` once many share a network. Jitter must not become a clock that decides anything: it spreads WHEN an attempt starts, the budget stays a count. Mechanism: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-reading-found-2026-10-19-and-the-fix). Delete this item when jitter ships or the burst is measured as irrelevant.
 
-## P3 - ChatArea's mount cost grows with the whole thread, not with the 60-row window (measured 2026-10-19)
+## P2 - The deploy's rolling replace: two POSTs answered 502 across a release, cause not settled (CI, 2026-10-22)
 
-Mounting `ChatArea` on 300 messages costs 2.0 s in happy-dom, on 70 messages 0.5 s, although the entry window mounts 60 rows either way, so something walks or derives from every message before the window cuts it. Found while making `ChatArea.entryWindow` stop timing out under load ([test-suite-reform](test-suite-reform.md#wp-t9-s---one-walk-of-the-source-tree-for-every-scan-2026-10-19), which now mounts 80 rows). Not read in the component; profile a long real thread on the Mi 9T before assuming it matters there. Delete this item with the cause or the measurement that refutes it.
+`deploy-rolling.test.sh` (`make test-ci-scripts`, case 1, a release under load) failed ONCE: run 39796209603, attempt 1, head `537b4c736`. Tally `{"200":340,"502":2}`, slowest response 2155 ms, right after the frontend's old replica was retired with a 1 s drain. The rerun passed, and so does every other run read. The logs of attempt 1 are not retrievable: the API serves the passing attempt.
+
+**What is known, by reading `infrastructure/lib/rolling.sh`, `infrastructure/edge/nginx.conf` and the fixture.**
+- The edge is a LAYER 4 relay (`stream`). It cannot answer `502`: a connect it cannot make closes the client's connection instead (`transport:ECONNRESET` in the client's tally, as in the control case). So both 502s were written by a FRONTEND nginx whose upstream, `api`, failed after the request was handed to it. That rules out the edge's failover, and the accept-backlog reset of the retiring frontend, as the cause: either would show as a transport failure, not a 502.
+- The 2155 ms is the edge's 2 s `proxy_connect_timeout` spent on the retired frontend's vanished address, then the next replica. That is the designed failover, and it answered 200.
+- Not settled: WHICH frontend wrote the 502s, and what `api` did. Candidates:
+  - the old frontend's worker, during its graceful SIGQUIT, failing a request that still needed `resolver` (a variable `proxy_pass`);
+  - a frontend whose cached `api` set held only a retired address.
+
+**Why it is not settled.**
+- `retire` runs `docker rm` on the old replica, so its error log, the one line that names the hop, is gone with it.
+- The test prints no frontend log when case 1 fails.
+- Not reproduced locally.
+
+**Owed, in order.**
+1. Make the evidence survive: `retire` prints the retired replica's error lines before `rm`, and the test prints both frontends' logs when a POST fails.
+2. Re-run case 1 until it fails, and read which hop wrote the 502.
+3. Fix the order in the deploy library if the swap drops a request. A retry or a wider timeout is not the fix.
+
+Filed from #2286.
 
 ## P2 - Live chat and floating reactions (WP-L6): the server is MERGED (#2131), the client in review (#2136), five things are owed (2026-10-19)
 
@@ -2136,6 +2188,28 @@ Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come 
 12. **Lives on R2 (#2211), decisions O-1 to O-7.** The lead decides following the recommendations in that pull request and records EACH decision here with the measurement that justifies it. No visible viewer cap; the technique follows.
 13. **Store questionnaires and pieces** (App Store privacy answers and the review video for lives, #2196; Play data safety, calls B14, #2188). The lead submits only what accompanies a stable it cut, and NEVER changes a data declaration without the user.
 14. **Production incident during the window.** The lead may cut a kill switch, restart a container, or redeploy the previous stable. Nothing destructive: no data deletion, no reverse migration, and no admin bypass without writing to the user first in the conversation.
+
+## Decided by the user on 2026-10-23 - bookings redesign, sharing, reels, calls, payments, MiConnect, release
+
+All taken in session on 2026-10-23. Bookings rows are D44-D54 in [bookings-chantier](bookings-chantier.md#redesign-decided-2026-10-23).
+
+**Release and priorities.** The next stable ships *"as soon as possible, we reach a big update"*; this REPLACES the 2026-10-27 date, and `ADMISSION_PROOF_SINCE` must follow the real day. UI changes ride the `1.4.1` pre-release after adversarial review and green CI, are read on the Mi 9T and the iPhone, then shown to the user. Priorities named: lives in production, video calls (lot 2), association enrolment with conditions and documents, dependency majors (SvelteKit 3, adapter-node 6, webrtc 0.21, mediabunny), bookings. Containers are a SEPARATE lot (non-root users, Debian trixie for the Rust runtimes), pre-release first. Store listings come AFTER the stable. The Pixel 6a is the user's personal phone, looked at only when the user asks.
+
+**Bookings redesign** (mockups first, built *"Tout de suite, en parallele de la stable"*): rows D44-D54 of [bookings-chantier](bookings-chantier.md#redesign-decided-2026-10-23).
+
+**Sharing (#2311).** A shared reel card opens the reels viewer; the post page header Share opens the same sheet; no warning to the sender; no dedicated MLS message type (link plus card); the external link preview stays as is; single-destination send first, multi-send later.
+
+**Reels and comments (#2309, #2310, #2314, #2327).** A long press on the reaction opens a vertical drawer. Minimal player: thin progress line at the bottom, no timecode, never a play/pause button at load or autoplay; rail order reaction, comments, share, download, then sound. Post comments use the same drawer as CanaReels with a short animation, no quoted post header, over the interface on phones. The Instagram quick-emoji strip is NOT wanted.
+
+**Calls.** Full-screen call screen with name and photo on every platform (#2306). The iPhone Recents history of calls is KEPT. The app is not distributed in China. The native ring switch is split per platform (Master's decision).
+
+**Payments.** Production Lydia is live for the user's test with the production pair; production accepts ONLY `LYDIA_ENV=production`; `payment_provider` stays `lydia` after the test.
+
+**MiConnect** (user: *"MiConnect est une partie extremement sensible, beton, securisee; s'il faut signer, on signe"*). The Alumni SAML source is disabled in production (#2318, applied 2026-10-23, two fields changed); every SAML source must be signed and is enabled only with a verification certificate. The default `akadmin` account was DEACTIVATED in production on 2026-10-23. Impersonation is to be disabled; the profile-editor token is to be restricted to non-admin accounts. The `localhost:1420`/`1421` redirects are kept for now (local development has no dev identity provider). The authentik bump to 2026.8.5 is authorised (#2315).
+
+**Repository settings.** Secret-scanning push protection is enabled; a `code_scanning` rule (CodeQL, high or higher) was added to ruleset `22152902` on 2026-10-23.
+
+**#2273.** The cut date is the day the production stable carrying it ships (fixed constant `ADMISSION_PROOF_SINCE`, re-checked before the stable's final pre-release). Old invite links are accepted as a "from arrival" reading. A removed signer's voucher counts only if the device saw it BEFORE the removal. The invite-link grant expires with the link (30 days when it has none). Migration social-service 107 may ride the stable.
 
 ## P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167
 

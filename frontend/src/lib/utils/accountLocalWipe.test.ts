@@ -203,6 +203,7 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     for (const id of ['user-a', 'user-ab']) {
       localStorage.setItem(ACCOUNT_KEY.sendRatchetLedger(id), '{}');
       localStorage.setItem(ACCOUNT_KEY.historyHeldNothing(id), '{}');
+      localStorage.setItem(ACCOUNT_KEY.admissionLedger(id), '{}');
       localStorage.setItem(ACCOUNT_KEY.seenCipher(id, 'g1'), '[]');
       localStorage.setItem(ACCOUNT_KEY.historyAudit(id, 'd1'), '1');
     }
@@ -210,6 +211,7 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([]);
     expect(localStorage.getItem(ACCOUNT_KEY.sendRatchetLedger('user-a'))).toBeNull();
     expect(localStorage.getItem(ACCOUNT_KEY.historyHeldNothing('user-a'))).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.admissionLedger('user-a'))).toBeNull();
     expect(localStorage.getItem(ACCOUNT_KEY.seenCipher('user-a', 'g1'))).toBeNull();
     expect(localStorage.getItem(ACCOUNT_KEY.historyAudit('user-a', 'd1'))).toBeNull();
     // An id that merely STARTS with the deleted one is another account.

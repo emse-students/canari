@@ -269,6 +269,18 @@ export class LocalStateNotReadyError extends Error {
 }
 
 /**
+ * What a pending {@link IMlsService.whenGroupDrained} rejects with when its service is destroyed
+ * (sign-out): the group will never be drained by THIS client, and a waiter left pending would hold
+ * the account that left in memory until a reload.
+ */
+export class GroupDrainAbandonedError extends Error {
+  constructor(readonly groupId: string) {
+    super(`the MLS service ended before key group ${groupId.slice(0, 8)} drained`);
+    this.name = 'GroupDrainAbandonedError';
+  }
+}
+
+/**
  * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state did not
  * open under the key in hand for a reason an OLD PIN may still cure. Nothing was written.
  *
@@ -570,7 +582,10 @@ export interface IMlsService {
     state?: Uint8Array,
     opts?: MlsInitOptions
   ): Promise<void>;
-  /** Creates a new local MLS group with the given ID. */
+  /**
+   * Creates a new local MLS group with the given ID. Refused on a follower tab
+   * (`FollowerTabCommitError`), whose state is a copy the leader never holds.
+   */
   createGroup(groupId: string): Promise<void>;
   /** Creates a new named group on the delivery server and returns its assigned group ID. */
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
@@ -707,10 +722,16 @@ export interface IMlsService {
   leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
   /**
    * The new devices (first sight or a changed key) recorded from merged signed commits since the
-   * last call, oldest first; taking them forgets them. The notices built from them are owed
-   * (`deviceEventAudience`).
+   * last call, oldest first; taking them forgets them. The new-device notices take them through
+   * `setDeviceEventConsumer`.
    */
   takeDeviceEvents(): Promise<DeviceEvent[]>;
+  /**
+   * Registers who device events are handed to - after each drain, after this device's own Adds,
+   * and once at registration for what the state already holds - or removes it with `null`. The
+   * new-device notices (`deviceNotices.svelte.ts`) are the one consumer.
+   */
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
   /**
    * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
    * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF
@@ -1108,6 +1129,28 @@ export interface IMlsService {
    * an outbox flush, a re-encrypted bundle whose epoch depends on every commit applied.
    */
   waitForGroupQueueIdle(caller: string, groupId: string): Promise<void>;
+  /**
+   * Whether this device has merged everything the server holds for `groupId`, as a FACT read now,
+   * never waited for: the last pull listed the whole mailbox, no pull is running, the socket that
+   * pull was trusted with is still open, and the scheduler holds nothing of the group (nothing
+   * queued, parked or being applied). `false` is "not known to be drained", never "behind".
+   *
+   * For a decision that must not be taken on a group state the server may still be holding commits
+   * for - the admission gate's first observation of a voucher (channel-encryption section 25). It
+   * reads the evidence {@link waitForGroupQueueIdle} and {@link waitForMessageQueueIdle} stand on.
+   */
+  isGroupDrained(groupId: string): boolean;
+  /**
+   * Resolves the first time {@link isGroupDrained} holds for `groupId` - at once when it holds now.
+   *
+   * AN EVENT, NEVER A POLL: it is re-checked only where a piece of that evidence can change - the
+   * scheduler finishing a frame of the group, and a pull ending. Never await it inside a frame of
+   * the group itself: that frame is the group's current work, so the group cannot be drained until
+   * it returns. A caller chains on it instead (the admission gate's parked asks, section 25).
+   *
+   * @throws {GroupDrainAbandonedError} (as a rejection) when the service is destroyed first.
+   */
+  whenGroupDrained(groupId: string): Promise<void>;
   /**
    * Tells the service the local conversation store is now authoritative.
    *

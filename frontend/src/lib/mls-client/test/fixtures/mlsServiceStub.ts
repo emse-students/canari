@@ -20,10 +20,14 @@ export function createMlsServiceStub(
     // Default: no leaf carries the package's key - a duplicate-key test names the holder.
     leafHoldingKeyOf: vi.fn().mockResolvedValue(null),
     takeDeviceEvents: vi.fn().mockResolvedValue([]),
+    setDeviceEventConsumer: vi.fn(),
     // Default: a device never seen - a verifier test overrides it with the key it pins.
     pinnedSignatureKeys: vi.fn().mockResolvedValue(null),
     // Default: no departure seen.
     removalEpochs: vi.fn().mockResolvedValue([]),
+    // Default: every group drained - a test about a held commit overrides it.
+    isGroupDrained: vi.fn().mockReturnValue(true),
+    whenGroupDrained: vi.fn().mockResolvedValue(undefined),
     addMembersBulk: vi.fn().mockResolvedValue({
       addedDeviceIds: [],
       skipped: [],

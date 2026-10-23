@@ -732,12 +732,116 @@ processed, never from a server message** (a server that stays silent must not si
 - contacts see a discreet line "X added a device" in **private conversations only** (1:1 and
   groups), **never in a community or salon key group**, where it would be noise.
 
-The rule is written once, `deviceEventAudience()` in `deviceTrust.ts`, and one device under one key
-is announced once (`deviceEventKey()`). **The UI is not built yet**: the strings, the conversation
-line, the in-app alert and the native local notification on the background path are their own work
-package ([backlog](../backlog.md#new-device-notices-decided-by-the-user-on-2026-10-22---the-ui-is-owed)).
-A remembered refusal is told to its reader only in the logs today; telling the refused device's
-owner in the app is part of that same UI work.
+**What counts as a new device** is decided where the event is recorded, as a fact
+(`DeviceEvent.memberAlreadyPresent`: the user already had a leaf before the commit) and one predicate,
+`announcesNewDevice()` / `DeviceEvent::announces_new_device`:
+
+| Event | Announced? |
+|---|---|
+| first sight, the user was already in the conversation | yes |
+| first sight, the user arrives with it (a new member, a new conversation) | no - that is the member-added line |
+| a resync, a heal, a kick and re-add under the pinned key | no - not even recorded (`pinned` is refused by the predicate as well) |
+| `key-changed` admitted by a commit | yes, wherever it is - nothing proves it |
+| `key-changed` found in a joined tree (`addedBy` null) | no - no commit admitted it |
+| the processing device itself | never |
+| an event recorded before `memberAlreadyPresent` existed | no |
+
+Then `deviceEventAudience()` (`deviceTrust.ts`) routes it: `owner-alert` for this account, from
+any group; `contact-line` for a contact, asked once PER CONVERSATION the line could go in, so a
+community or salon key group never gets it; `none` otherwise. Rust's
+`DeviceEvent::is_owner_alert` applies the owner half for the background engines, and both are held
+to ONE table, `frontend/mls-core/tests/fixtures/device_notices.json`, read by a Rust and a TypeScript
+test. One device under one key is announced once (`deviceEventKey()` = `notice_key()`).
+
+**First sight by THIS device is not "new to its owner"** (#2278 review): a fresh install, a restore,
+a pin dropped by the bound, or a heal re-adding a device that was never in a tree this device holds
+all show OLD devices for the first time - and heals happen daily. So the app weighs one more piece
+of evidence, `isNewToItsOwner()` (`deviceTrust.ts`): the server's first sight of the device's key
+(`DeviceSignatureKey.firstSeenAt`, served as `firstSeen` by `GET /api/mls/devices/:u/:d/signature-keys`).
+It is used ONLY TO SUPPRESS, never to raise - the signed commit stays the only source of a notice,
+and the device list stays the place to audit the account:
+
+| Key first seen by the server | Owner alert | Contact line |
+|---|---|---|
+| never dated (published before the key history began) | no | no |
+| before THIS device enrolled (first sight of its own key) | no | no |
+| since this device enrolled | yes, however late this device learns of it | only within 7 days (`CONTACT_NEW_DEVICE_WINDOW_MS`) of learning of it |
+
+Chosen over a per-contact baseline of pins, which cannot tell a contact's old laptop a heal brings
+into a DM from a new one; the window trades a late line for no false one (the user: notices must not
+become noise). An age the server did not answer keeps the event for the next delivery
+(`undecided`, durable, 64 at most) - neither raised without evidence nor lost for want of it. The
+app finds the key by fingerprint (`keyFingerprintOf()`, Rust's `key_fingerprint`, held to
+`mls-core/tests/fixtures/key_fingerprints.json`).
+
+**Who consumes the events.** `BaseMlsService.setDeviceEventConsumer` hands the taken events to
+`deliverDeviceEvents` (`utils/chat/deviceNotices.svelte.ts`, registered by `registerDeviceNotices`
+at session start): after every drain, after this device's own Adds (`addMember`,
+`addMembersBulk`, `replaceMember`), and once at registration for what the sealed state already
+holds - so the 512-event store drains. An EMPTY take is handed over too: it is the durable moment
+the notices retry what they parked (an `undecided` event, an owed line), so a quiet account does not
+leave an alert parked until some unrelated device event arrives. With no consumer they stay:
+sign-out removes it (`unregisterDeviceNotices`), so the events wait in the state for the account
+that consumes them next.
+
+- **The contact line** is a client-written system row (`chat_system_device_added`), message id
+  `device-added:<groupId>:<key>` - one per conversation, idempotent, not unread, no sound, like every
+  `system` row. It is written in EVERY 1:1 and group row whose tree (`getGroupMemberIdentities`,
+  read locally) holds a leaf of the device's owner, whichever group admitted the device - a
+  contact's new device is often first seen in a community they share, and the line still reaches
+  the private conversations. Never in a channel row or a key group. Written once per device and
+  key, durably (`lined`, the last 256), not only against the messages a conversation has loaded.
+  A device is LINED only once no line is still owed: a group this device holds
+  (`getLocalGroups`) with the contact in its tree but no row loaded yet - the start-up drain may
+  run before the rows load - or whose tree is unreadable keeps the line OWED (`owedLines`, durable,
+  64 at most, an overflow warned with its count), retried at each hand-over without asking the
+  evidence again, and dropped past the 7-day contact window (the drop is persisted too). A held
+  group with no row loaded is owed only if the DURABLE store holds a live row for it
+  (`IStorage.getConversation`, lifecycle not `removed`): a key group never has one, and the
+  session-local `isDistributionGroup` may not name it yet at start-up; a deleted conversation's
+  lingering state has lost its row.
+- **A reset device re-added in one commit** (`replaceMember`) under a key a member never saw for it
+  reads to that member as "added a device": it is a device under a key they never saw, which is
+  what the line says. Defensible, and deliberate - the line never claims the device id is new. A
+  repair under the PINNED key announces nothing (`pinned`).
+- **The owner alert in the app** is `NewDeviceBanner.svelte` in the layout's banner column: the
+  device's name when the device list has one, when this device learned of it, and a link to
+  `/settings/security`. Durable per account (`ACCOUNT_KEY.deviceNotices`: the unseen alerts and the
+  last 256 announced keys) until dismissed or followed.
+- **A refused device of the owner's own** (`refusedDevices.ts`, a changed key under a kept id) is
+  told in the same banner column, with the remedy (`device_refused_remedy`: remove it from the
+  devices, sign in on it again, and it enrols as a new device). Built from the refusals this device
+  remembers at registration and from each new one (`setRefusedDeviceListener`); dismissed once, it
+  does not come back (`refusedSeen`). A contact's refused device is not told to anyone: its owner
+  learns of it only from a device of their own that refuses it too.
+- **The local notification** is raised by the native background engines only, from a commit they
+  merged in memory: the Android FCM service (a commit push, a catch-up, or its own background Add of
+  the account's new device once the server accepted it) and the iOS notification extension (a
+  catch-up before a message - the extension never sees a silent commit push, so an iPhone whose app
+  is closed learns of the device at the next message push or when the app opens). Each push-decrypt
+  answer carries `ownDeviceAdded` (`mobile/device_notice.rs`); the keys are claimed in a ledger of
+  one marker file per key (`create_new`, atomic across the app and the extension), in the app data
+  directory on Android and the App Group on iOS. The app claims the keys it showed
+  (`claim_device_notices`), so a later push replaying the commit notifies nothing. In the
+  foreground neither engine posts: Android reads `MainActivity.isInForeground`, the iOS extension
+  the `app_in_foreground` file the app keeps in the App Group (`CanariSetAppGroupForegroundFlag`).
+  The engines have no key ages, so at registration the app PRE-CLAIMS every key of the account's
+  other listed devices that `isNewToItsOwner` calls old - an old device a heal brings back is then
+  never posted. The ledger is swept with the account's push files on deletion.
+- **A background Add the server refused** (Android `processWelcomeRequestBackground`) admitted
+  nobody, and announces nothing. Its events exist only in the STAGED post-add state
+  (`prepare_welcome_background_with_key`), which is installed into `mls.bin` only on the server's
+  acceptance and discarded otherwise, so a refusal leaves the app no event to read. The service
+  posts the notification on `Outcome.Accepted` alone: the server admitted the device, whether or
+  not this phone could install its own copy.
+
+**Known limits, owed a decision or a reading:** a phone whose WebView is alive in the background
+processes the commit itself and so shows the in-app alert only, with no local notification; and a
+device first seen inside a tree this device JOINED (its leaf pinned silently) is never announced.
+The pre-claim reads the device list, which omits devices idle for 30 days, so a background engine
+can still post for such a device when a heal brings it back; the app does not announce it. A
+contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
+the history began carry that date, not their device's enrolment.
 
 ## Key packages
 
@@ -897,8 +1001,9 @@ from the type (`checkpointWroteNothing`, `utils/hex.ts`):
   checkpoint before the resubmission: no request leaves carrying a commit that is not on disk. That
   settle checkpoint is paid only when a kept commit is settled.
 
-**A follower tab does not commit** (`FollowerTabCommitError`, refused before anything is staged, and
-by `externalJoin` too: a join is a commit). Its
+**A follower tab does not commit** (`FollowerTabCommitError`, refused before anything is staged, by
+`externalJoin` too - a join is a commit - and by `createGroup`, at the service's own entry: a group
+created in a follower's copy is one the leader never holds). Its
 state is a copy loaded once: the version guard refuses its writes once the leader has written, so the
 checkpoint above would fail on every follower commit; and before that checkpoint existed, a commit
 sent from a follower moved the group past the state the leader keeps, because the leader cannot read
@@ -906,7 +1011,10 @@ a commit of its own leaf back (`OwnPrivateMessage`). Commits are reached from a 
 (`groupActions.ts`, `groupCreation.ts`, `actions.ts`); refusing them by the leadership fact is the
 gate the outbox already applies to sends. The member is told, by type: a creation answers the
 `follower-tab` refusal, and an invite or a removal shows the same sentence
-(`reportFollowerTabRefusal`, `conversationRefusalMessage.ts`) - do it in the main tab.
+(`reportFollowerTabRefusal`, `conversationRefusalMessage.ts`) - do it in the main tab. A community's
+or a salon's key group refused this way (`leaveKeyGroupToMainTab`, `followerTabKeyGroup.ts`) tells
+the member on a gesture (creating a community or a salon, joining a salon) and goes on without the
+group; on a load it is logged and the load goes on, since the main tab enters it.
 
 **Cost: one checkpoint per commit, awaited under the MLS lock**, which blocks decrypts and sends in
 every group while it runs. The live web path is the WASM ChaCha20 seal
