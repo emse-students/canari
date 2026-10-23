@@ -55,6 +55,11 @@ export const ACCOUNT_KEY = {
    */
   admissionLedger: (userId: string) => `canari_graine_admission_ledger:v1:${userId}`,
   /**
+   * `graine/historyClosedSeen.ts`: the communities whose past this device was last told is closed
+   * (`joined`) - community ids only, so a switch to `shared` re-asks their past.
+   */
+  historyClosedSeen: (userId: string) => `canari_graine_history_closed_seen:v1:${userId}`,
+  /**
    * `salonUnsent.ts`: the PLAINTEXT of salon messages not yet sent (lower-cased, as it always was) -
    * the one key here whose content alone makes leaving it behind a leak.
    */
@@ -158,6 +163,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.seenCipherIndex(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.admissionLedger(userId),
+    ACCOUNT_KEY.historyClosedSeen(userId),
     ACCOUNT_KEY.salonUnsent(userId),
     ACCOUNT_KEY.salonReadMarks(userId),
     ACCOUNT_KEY.dmReadMarks(userId),
