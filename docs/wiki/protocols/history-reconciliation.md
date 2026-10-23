@@ -1180,7 +1180,9 @@ queues a second, and the same merge reaches that row's copy in memory when both 
 and its batch write never downgrades a stored proven row, and keeps a stored proof the incoming copy
 lacks (`replayedStoredRow`). Not downgrading is about the copy's own word only: an author-signed
 tombstone or edit that a marked copy carries still applies to the proven row, the edit's signed TEXT
-onto that row's own body (`provenRowUnderMarkedCopy`). Within one bundle that
+onto that row's own body (`provenRowUnderMarkedCopy`). Memory follows the batch write in the same
+pass: a row it shows marked that the page wrote proven - a decrypted original included - is replaced
+by the written row, a tombstone surviving (`provenRowsIntoMemory`). Within one bundle that
 carries an id twice, a proven copy wins over a marked one in either order
 (`systemMessageHandler.ts`, `upgradeUnverifiedRows`).
 

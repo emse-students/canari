@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { replayedStoredRow } from './history';
+import { provenRowsIntoMemory, replayedStoredRow } from './history';
+import type { ChatMessage } from '$lib/types';
 import type { StoredMessage } from '$lib/db';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { chat_system_message_deleted } from '$lib/paraglide/messages';
@@ -159,5 +160,65 @@ describe('replayedStoredRow', () => {
     expect(row.isEdited).toBeUndefined();
     expect(row.editedAt).toBeUndefined();
     expect(row.authorship).toEqual(PROOF('msg'));
+  });
+});
+
+/**
+ * Memory after the page's batch write, under the same rule as storage: a row memory shows MARKED that
+ * the page wrote PROVEN - here a decrypted original, the case no bundle upgrade reaches - is replaced
+ * in the same pass, never left marked until a reload.
+ */
+describe('provenRowsIntoMemory', () => {
+  function shown(extra: Partial<ChatMessage> = {}): ChatMessage {
+    return {
+      id: 'm1',
+      senderId: 'mallory',
+      content: 'relayed words',
+      timestamp: new Date(1),
+      isOwn: false,
+      restoredUnverified: true,
+      isEdited: true,
+      editedAt: new Date(5),
+      ...extra,
+    };
+  }
+  const original = { senderId: 'alice', content: 'signed words', authorship: PROOF('msg') };
+
+  it('replaces a marked memory row with the proven row the page wrote for its decrypted original', () => {
+    const prev = stored({
+      senderId: 'mallory',
+      content: 'relayed words',
+      restoredUnverified: true,
+    });
+    const written = replayedStoredRow(original, prev, at);
+    const next = provenRowsIntoMemory([shown()], [written], 'me');
+    expect(next).not.toBeNull();
+    const [row] = next!;
+    expect(row.senderId).toBe('alice');
+    expect(row.content).toBe('signed words');
+    expect(row.restoredUnverified).toBeUndefined();
+    expect(row.isEdited).toBeUndefined();
+    expect(row.editedAt).toBeUndefined();
+  });
+
+  it('keeps a tombstone memory holds over the proven body', () => {
+    const written = replayedStoredRow(original, undefined, at);
+    const [row] = provenRowsIntoMemory([shown({ isDeleted: true })], [written], 'me')!;
+    expect(row.senderId).toBe('alice');
+    expect(row.isDeleted).toBe(true);
+    expect(row.content).toBe(chat_system_message_deleted());
+  });
+
+  it('leaves memory alone when the written row is marked too, or memory is not marked', () => {
+    const marked = replayedStoredRow(
+      { senderId: 'mallory', content: 'relayed words', restoredUnverified: true },
+      undefined,
+      at
+    );
+    expect(provenRowsIntoMemory([shown()], [marked], 'me')).toBeNull();
+    const proven = replayedStoredRow(original, undefined, at);
+    expect(
+      provenRowsIntoMemory([shown({ restoredUnverified: undefined })], [proven], 'me')
+    ).toBeNull();
   });
 });

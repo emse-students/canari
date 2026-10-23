@@ -605,6 +605,46 @@ export function replayedStoredRow(
 }
 
 /**
+ * Memory's rows after a replay page wrote `written`, under the storage rule: a row memory holds
+ * MARKED unverified that the page wrote PROVEN - a decrypted original, or a copy a bundle proved - is
+ * replaced entirely by the written row, and only a tombstone survives. Memory takes it in the same
+ * pass rather than staying marked until a reload. Every other memory row is left as it is: the page
+ * merges what it may change on those through its own accumulators.
+ *
+ * @returns The new message list, or `null` when nothing was replaced.
+ */
+export function provenRowsIntoMemory(
+  messages: ChatMessage[],
+  written: StoredMessage[],
+  userId: string
+): ChatMessage[] | null {
+  const proven = new Map<string, StoredMessage>();
+  for (const row of written) if (!row.restoredUnverified) proven.set(row.id, row);
+  let replaced = 0;
+  const next = messages.map((held) => {
+    const row = held.restoredUnverified ? proven.get(held.id) : undefined;
+    if (!row) return held;
+    replaced++;
+    const [fresh] = mapStoredMessagesToChatMessages([row], userId);
+    if (!held.isDeleted || fresh.isDeleted) return fresh;
+    // A tombstone was applied on its author's grounds and survives the proven body.
+    const tombstone: ChatMessage = {
+      ...fresh,
+      isDeleted: true,
+      content: chat_system_message_deleted(),
+    };
+    delete tombstone.isEdited;
+    delete tombstone.editedAt;
+    return tombstone;
+  });
+  if (replaced === 0) return null;
+  console.debug(
+    `[HISTORY_REPLAY] ${replaced} unverified row(s) in memory replaced by a proven copy`
+  );
+  return next;
+}
+
+/**
  * Converts raw StoredMessage rows (from IndexedDB, or out of a peer's history bundle) to ChatMessage
  * objects, deriving BOTH sender-relative flags - `isOwn` and `isSystem` - from `senderId`.
  *
@@ -1387,6 +1427,13 @@ export async function replayConversationHistory(params: {
         });
       });
       await storage.saveMessages(toStore, deviceKey());
+      // Memory takes what storage now holds for a row it shows unverified, in the same pass.
+      const convoForProven = getConversation(contactName);
+      const provenMessages =
+        convoForProven && provenRowsIntoMemory(convoForProven.messages, toStore, userId);
+      if (convoForProven && provenMessages) {
+        setConversation(contactName, { ...convoForProven, messages: provenMessages });
+      }
     }
 
     // The conversation-level state the page carried - read watermarks and the shared floor - applied
