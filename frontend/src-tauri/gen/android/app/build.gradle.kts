@@ -154,7 +154,7 @@ dependencies {
     // grep sees, which is why this is an explicit dependency and not a transitive one.
     implementation("androidx.coordinatorlayout:coordinatorlayout:1.3.0")
     implementation("androidx.webkit:webkit:1.14.0")
-    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.0")
