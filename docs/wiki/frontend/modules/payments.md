@@ -288,8 +288,9 @@ Lydia's own error page with no link back. `LYDIA_REQUEST_STATES` classifies 0 / 
 settled). A `declined` request is final: a retry settles it and issues a new one, and
 `confirm-payment` releases the answer so the payer can retry
 ([forms](forms.md#a-declined-payment-releases-the-answer-2026-10-21)). Before that it read as an
-unmeasured `other`, and a retry refused with `PREVIOUS_PAYMENT_OPEN` until the hold ended. A boutique attempt closes as `declined` on it, and its buyer can start a new one. Still not measured here: what `request/cancel` answers on a PAID or a
-DECLINED request (the state read after an error 2 is what makes either harmless). Request `12115506` was left open on the sandbox; it
+unmeasured `other`, and a retry refused with `PREVIOUS_PAYMENT_OPEN` until the hold ended. A boutique attempt closes as `declined` on it, and its buyer can start a new one. On a PAID request `request/cancel` answers error 2 and the request stays paid (measured
+2026-10-23); on a DECLINED one it is still not measured (the state read after an error 2 is what makes
+either harmless). Request `12115506` was left open on the sandbox; it
 expires on its own (`expire_time 3600`).
 
 ## Which onboarding flag a screen reads (2026-10-03)
@@ -525,6 +526,9 @@ request is read at Lydia, and the verified Business must be the one it was issue
 **Production rollout (per the user, 2026-10-22, relayed by the lead session):** migrations 100 (the
 per-association Lydia Business key) and 101 (product checkout attempts) MAY ride the next STABLE to
 production; payments stay OFF in production (`platform_config.payment_provider` unchanged).
+**Corrected 2026-10-23:** production's `payment_provider` already read `lydia` when that was written, so
+"off" held only because no association had a validated Business. Read on 2026-10-23 after the first
+production test: one association linked, none validated, no key stored - so none is payment-ready.
 
 **Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
@@ -552,6 +556,32 @@ association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`, `UserResourceThrottlerGuard
 **The secret is REQUIRED on both estates** (`env-manifest.tsv`, like `AGENDA_SIGNING_KEY`): a deploy
 without `LYDIA_KEY_ENCRYPTION_SECRET` / `DEV_LYDIA_KEY_ENCRYPTION_SECRET`, or with one under 32
 characters, fails its render naming the secret rather than starting a service that cannot store a key.
+
+## Enrolment goes through Canari, and only through it (2026-10-23)
+
+**The user's decision, 2026-10-23:** every association's Lydia Business is CREATED by Canari's
+onboarding (`business/create` under Canari's Provider). Linking an account the association already holds
+with Lydia is not offered, because the partnership with Lydia rests on the Businesses Canari's Provider
+creates; a direct database edit could still link one, and is not to be done. Lydia does accept such an
+older account under our Provider ([lydia-api](../../lydia-api.md#1-the-four-credentials-and-what-each-is-for)),
+which is exactly why the rule has to be written rather than enforced by Lydia.
+
+**The first production payment (2026-10-23)**, run by the user and the lead session: one real payment of
+the minimum amount through an association's older Business, linked by hand for the test and unlinked
+afterwards. The `confirm` callback reached Canari's route and verified with the pasted Business key. The
+same day, two Businesses were created through the onboarding in production; neither is validated yet.
+
+**What the enrolment screen does not say yet, and owes** (found by that run; the work package is in
+[backlog](../../backlog.md#enrolment-through-canari---the-screen-owes-the-path-to-validation-2026-10-23)):
+
+- After `business/create` the card says "En attente" and offers "Ouvrir le tableau de bord Lydia", whose
+  link answers 404 to anyone not signed in to Lydia's console. The manager is left with no next step.
+- The path to validation is Lydia's activation e-mail (sign in to the console with the Lydia Pro app,
+  upload documents, wait for Lydia); how a NEW Business's holder signs in is not known yet
+  ([lydia-api](../../lydia-api.md#activating-a-business-that-businesscreate-made-production-2026-10-23)).
+- "Pending" cannot tell "waiting for Lydia" from "validated by Lydia, not yet marked here": the global
+  admin's "Valider l'onboarding" is a declaration. Lydia's error 5 on `request/do` is the one measured
+  signal of a Business not yet validated.
 
 ## A product checkout is a row, one per attempt (2026-10-21)
 
