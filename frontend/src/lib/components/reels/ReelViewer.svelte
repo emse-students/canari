@@ -19,12 +19,12 @@
    * picker) is drawn above the viewer (`markViewerLayer`).
    */
   import { onMount } from 'svelte';
+  import { themeStore } from '$lib/stores/themeStore.svelte';
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
   import ReelSlide from './ReelSlide.svelte';
   import ReelCommentsSheet from './ReelCommentsSheet.svelte';
   import { markViewerLayer } from '$lib/utils/viewerLayer';
   import { railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
-  import { sharePostLink } from '$lib/posts/sharePost';
   import { WheelPageLock, wheelOverScrollable, wheelStep } from '$lib/reels/reelWheel';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
@@ -107,9 +107,12 @@
   );
 
   onMount(() => {
+    // The viewer paints black under the status bar: light icons while it is up, handed back after.
+    const releaseBar = themeStore.holdNativeBar('dark');
     reels = [startPost];
     overlay.syncOpen();
     console.debug(`[reel-viewer] opened on ${startPost.id}`);
+    return releaseBar;
   });
 
   const mounted = $derived(mountedReelIndices(index, reels.length));
@@ -230,6 +233,26 @@
     commentsFor ? (reels.find((r) => r.id === commentsFor) ?? null) : null
   );
 
+  /**
+   * The post whose share sheet is open (the rail's send), by id. The sheet (`PostShareSheet`) is
+   * loaded on the first send, never with the viewer: it reads the conversation list, which a
+   * viewer opened only to watch has no reason to load. Drawn inside the viewer, so its dialogs
+   * take the viewer's rung (`markViewerLayer`).
+   */
+  let shareFor = $state<string | null>(null);
+  let ShareSheet = $state<
+    typeof import('$lib/components/posts/PostShareSheet.svelte').default | null
+  >(null);
+
+  function openShareSheet(postId: string) {
+    import('$lib/components/posts/PostShareSheet.svelte')
+      .then((mod) => {
+        ShareSheet = mod.default;
+        shareFor = postId;
+      })
+      .catch((e: unknown) => console.error('[reel-viewer] the share sheet did not load', e));
+  }
+
   /** Replaces the loaded post `next.id` - a comment written in the sheet. */
   function setPost(next: PostEntity) {
     reels = reels.map((r) => (r.id === next.id ? next : r));
@@ -246,7 +269,7 @@
         console.debug(`[reel-viewer] comments opened on ${post.id}`);
         commentsFor = post.id;
       },
-      onSend: () => void sharePostLink(post.id),
+      onSend: () => openShareSheet(post.id),
     };
   }
 
@@ -339,7 +362,7 @@
     const lock = new WheelPageLock();
     function onWheel(e: WheelEvent) {
       const step = wheelStep(e);
-      if (!step || commentsFor || wheelOverScrollable(e.target, el!)) return;
+      if (!step || commentsFor || shareFor || wheelOverScrollable(e.target, el!)) return;
       e.preventDefault();
       // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
       const free = lock.free && !settling;
@@ -461,7 +484,7 @@
   /** The keyboard: up/down page, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
     // The comments sheet has the keyboard while it is open: its field types, and Escape closes IT.
-    if (e.defaultPrevented || settling || commentsFor) return;
+    if (e.defaultPrevented || settling || commentsFor || shareFor) return;
     if (scrollOpenCaption(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'PageDown') {
       e.preventDefault();
@@ -514,17 +537,22 @@
       </div>
     </div>
 
+    <!-- THE TOP SCRIM (user, 2026-10-23: the status bar icons vanished on black) lies under the
+         close button and the phone's status bar, so white icons read on a bright reel too; the
+         native icons themselves are held light (`holdNativeBar`). The X has no disc: a disc
+         against a letterboxed frame's rounded corner read as overlapping it. Safe-area aware. -->
     <div
-      class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+      class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+      data-reel-top-scrim
     >
       <button
         type="button"
-        class="ui-icon-button pointer-events-auto rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button pointer-events-auto rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
         aria-label={m.reels_viewer_close()}
         title={m.reels_viewer_close()}
         onclick={() => overlay.dismissFromUi()}
       >
-        <X size={24} strokeWidth={2.5} />
+        <X size={26} strokeWidth={2.5} class="drop-shadow-md" />
       </button>
     </div>
 
@@ -562,6 +590,10 @@
         onChange={setPost}
         onClose={() => (commentsFor = null)}
       />
+    {/if}
+
+    {#if ShareSheet && shareFor}
+      <ShareSheet open postId={shareFor} onClose={() => (shareFor = null)} />
     {/if}
   </div>
 </div>

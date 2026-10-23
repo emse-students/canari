@@ -47,6 +47,7 @@ function makeCtx(verdict: KeyPackageVerdict) {
     vetKeyPackageNative: vi.fn(async () => verdict),
     stageAddMembers: vi.fn(async () => staged),
     exportRatchetTree: vi.fn(async () => new Uint8Array([4])),
+    handOverDeviceEvents: vi.fn(async () => {}),
     // Runs the stage function and hands back what the real transaction would after a merge.
     runCommitTransaction: vi.fn(
       async (_g: string, stage: (intent: Uint8Array) => Promise<typeof staged>) => {
@@ -189,6 +190,7 @@ describe('BaseMlsService.replaceMember - one commit, vetted first', () => {
       vetKeyPackage: proto.vetKeyPackage,
       vetKeyPackageNative: vi.fn(async () => verdict),
       stageReplaceDevice: vi.fn(async () => staged),
+      handOverDeviceEvents: vi.fn(async () => {}),
       runCommitTransaction: vi.fn(
         async (
           _g: string,
@@ -228,6 +230,8 @@ describe('BaseMlsService.replaceMember - one commit, vetted first', () => {
       exportTree: true,
     });
     expect(out.welcome).toEqual(new Uint8Array([2]));
+    // As every own Add: the device events this commit recorded go to the notices.
+    expect(ctx.handOverDeviceEvents).toHaveBeenCalledWith('own add');
     info.mockRestore();
   });
 });

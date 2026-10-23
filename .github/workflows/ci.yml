@@ -1257,10 +1257,13 @@ jobs:
           # `infrastructure/dev/version-gap.yml` is here because the datastore refusal NAMES it as
           # the way to retire itself. Without it `dev_proven_major` read an absent file in CI and
           # answered empty, so a rehearsal recorded there would have lifted nothing.
+          # `infrastructure/authentik/compose.yml` for the same reason as production's: the identity
+          # provider runs its OWN PostgreSQL major, and an update to that file is compared with it.
           sparse-checkout: |
             .github/scripts
             infrastructure/docker-compose.prod.yml
             infrastructure/dev/version-gap.yml
+            infrastructure/authentik/compose.yml
 
       # THE TABLE IS TESTED IN THE RUN THAT USES IT, and it had no test at all until it cost an
       # outage: `postgres` was simply absent from the ceiling. `ceiling.test.sh` derives the

@@ -470,6 +470,13 @@ impl MlsManager {
         events
     }
 
+    /// The pending device events, oldest first, LEFT in place - for a background engine that writes
+    /// this state back (`mls.bin`), so the app still takes them at its next drain while the engine
+    /// raises its own notice from the same events.
+    pub fn pending_device_events(&self) -> Vec<crate::device_trust::DeviceEvent> {
+        self.device_trust.persisted_events()
+    }
+
     /// The signature keys THIS DEVICE has seen for `user_id:device_id` in a tree it merged or
     /// joined - the single source of trust for "a key this device has seen" - or `None` for a device
     /// it never saw.

@@ -75,6 +75,11 @@
   --color-banner-notice: #f59e0b;
   --color-banner-danger: #dc2626;
   --color-banner-info: #2563eb;
+  /* The call screen's answer and hang-up buttons, fixed in BOTH themes like the `cn-scrim` they
+     sit on: green accepts, red declines or ends - the colours every phone dialler uses, so the web
+     screen, the Android full-screen ring and the iPhone CallKit screen read as one. */
+  --color-call-accept: #16a34a;
+  --color-call-decline: #dc2626;
 
   /* ================================= THE BUBBLES =================================
      The outgoing bubble is the most identity-carrying surface in a chat application, and the
