@@ -73,6 +73,17 @@ export interface OpenableChannelMessage {
 }
 
 /**
+ * Thrown when a v2 row reaches its final step with no signature verdict: the engine answered fewer
+ * verdicts than it was asked, a defect upstream and never a row to skip.
+ */
+export class GraineVerdictMissingError extends Error {
+  constructor(readonly sessionId: string) {
+    super(`[GRAINE] v2 row of session ${sessionId} finished without a signature verdict`);
+    this.name = 'GraineVerdictMissingError';
+  }
+}
+
+/**
  * Thrown when this device does not hold the seed a message names.
  *
  * A TYPE, because it is the one unreadability a repair can fix (WP-33), and the caller decides
@@ -522,7 +533,7 @@ async function finishChannelMessage(
   const { row } = prepared;
   let bytes: Uint8Array;
   if (prepared.kind === 'v2') {
-    if (verdict === undefined) throw new Error('[GRAINE] v2 row finished without a verdict');
+    if (verdict === undefined) throw new GraineVerdictMissingError(row.senderSessionId);
     bytes = await finishGraineV2Open(prepared.seed, prepared.open, verdict);
   } else {
     bytes = await openWithGraine(prepared.seed, row.senderSessionId, row.messageIndex, {
