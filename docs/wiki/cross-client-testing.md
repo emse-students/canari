@@ -585,3 +585,19 @@ Read [channel-encryption section 21](protocols/channel-encryption.md#21-graine-v
 | GRAINE-AUTH-7 | 21.8, THE DOOR (`--only 7`): W1 POSTs the unsigned row under a fresh session. Answer 400 `CHANNEL_SIGNATURE_REQUIRED`, `[CHANNEL_SIGNATURE] REFUSED ... session=<8 chars>` at ERROR in social-service, no row stored (count unchanged; a stored row is deleted so a FAIL leaves no debris) | `W1` | `pending` - needs an estate carrying #1802 (on `main`, and on dev since `v1.2.7-alpha.1`) |
 
 **NOTIF-19 and NOTIF-20 on a v2 session are `PASS` since 2026-10-05** (the phone pass below: APK `7ab8f1780`, which carries the G2-5 writer, seed rows read `signature IS NOT NULL` while NOTIF-20 ran; ledger 23:27 and 23:29). Their State cells above still quote the v1 runs. What G2-5b adds natively, the Kotlin `REFUSED N v1 seed(s)` and the NSE line, has no rig row: an honest client no longer sends a v1 seed, so only a replay of a pre-floor frame reaches that path, and the readings are owed on a device ([channel-encryption 21.7](protocols/channel-encryption.md#217-an-arriving-v1-seed-is-refused-wp-g2-5b---the-floor-reached-the-writer-2026-10-11), last paragraph).
+
+## 21 - LEAF - the periodic leaf refresh and the revoked leaf
+
+Read [mls-protocol](protocols/mls-protocol.md#the-periodic-leaf-refresh) first. **Owed by the
+leaf-refresh pull request (#2269) before any stable carries it, and no runner exists yet.** Each row
+is run on a pre-release build, the phone half on a RELEASE build, with the commit's stage-checkpoint
+duration read from the device log ([backlog](backlog.md#owed-a-verification-and-nothing-else)). A
+refresh is made due by the bench ledger (`mls_leaf_refresh:<userId>:<deviceId>`, an observation one
+interval old), never by moving a clock.
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| LEAF-REFRESH-1 | The network is CUT while a due refresh is being submitted, then W1 sends: the commit is kept unresolved, no send leaves into the group until a resubmission answers, and after the link returns the resubmission is answered (`DUPLICATE` or a refusal) and the queued message arrives on W2 - nothing sealed at an epoch the peer cannot open | `W1` `W2` | `pending` - no runner |
+| LEAF-REFRESH-2 | A RELOAD while a refresh is unresolved: the stage and its record come back from disk (`checkpointStageBeforeSend`), the settle at the next connection merges or clears it, and the ledger names the epoch the server holds | `W1` `W2` | `pending` - no runner |
+| LEAF-REFRESH-3 | A refresh while a member is OFFLINE, then that member catches up: it applies the refresh commit from the log (rung 1) and decrypts every frame sealed after it, with no re-Welcome | `W1` `W2` `+A1` | `pending` - no runner |
+| LEAF-REFRESH-4 | A device of the peer is REVOKED: at W1's next connection its leaf leaves every conversation W1 holds (one `[STRAY] ... revoked device(s) still hold a leaf - removing` per group), and a commit attempted from the revoked device is refused `DEVICE_REVOKED` | `W1` `W2` `+user` | `pending` - no runner |
