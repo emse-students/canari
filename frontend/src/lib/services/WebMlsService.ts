@@ -903,7 +903,7 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** WASM client wrapper - calls `this.client.create_group` to create a new local MLS group. */
-  async createGroup(groupId: string): Promise<void> {
+  protected async createGroupImpl(groupId: string): Promise<void> {
     this.client.create_group(groupId);
   }
 

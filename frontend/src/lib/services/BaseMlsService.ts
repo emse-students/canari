@@ -3666,7 +3666,28 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<void>;
   protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<DatedKeyPackage>;
   abstract publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
-  abstract createGroup(groupId: string): Promise<void>;
+
+  /**
+   * Creates `groupId` in this device's MLS state, as its only member.
+   *
+   * CONCRETE, AND REFUSED ON A FOLLOWER TAB ({@link FollowerTabCommitError}), for the reason a
+   * commit is ({@link runCommitTransaction}): a follower's state is a copy no disk and no other tab
+   * follows, so a group created there exists only in that copy - the leader never holds it, and
+   * every message and commit of it after that is the follower's alone. Here rather than at each
+   * caller, so no caller can create one around it.
+   */
+  async createGroup(groupId: string): Promise<void> {
+    if (getTabLeadership() === 'follower') {
+      console.warn(
+        `[MLS] createGroup ${groupId.slice(0, 8)}... refused on a follower tab - only the leader creates groups`
+      );
+      throw new FollowerTabCommitError(groupId);
+    }
+    await this.createGroupImpl(groupId);
+  }
+
+  /** The platform half of {@link createGroup}. */
+  protected abstract createGroupImpl(groupId: string): Promise<void>;
 
   // ── One commit regime (C7-A unified: stage -> validate -> merge/clear) ──────
   //

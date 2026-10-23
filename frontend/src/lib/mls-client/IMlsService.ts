@@ -570,7 +570,10 @@ export interface IMlsService {
     state?: Uint8Array,
     opts?: MlsInitOptions
   ): Promise<void>;
-  /** Creates a new local MLS group with the given ID. */
+  /**
+   * Creates a new local MLS group with the given ID. Refused on a follower tab
+   * (`FollowerTabCommitError`), whose state is a copy the leader never holds.
+   */
   createGroup(groupId: string): Promise<void>;
   /** Creates a new named group on the delivery server and returns its assigned group ID. */
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;

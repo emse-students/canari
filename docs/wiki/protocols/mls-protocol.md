@@ -897,8 +897,9 @@ from the type (`checkpointWroteNothing`, `utils/hex.ts`):
   checkpoint before the resubmission: no request leaves carrying a commit that is not on disk. That
   settle checkpoint is paid only when a kept commit is settled.
 
-**A follower tab does not commit** (`FollowerTabCommitError`, refused before anything is staged, and
-by `externalJoin` too: a join is a commit). Its
+**A follower tab does not commit** (`FollowerTabCommitError`, refused before anything is staged, by
+`externalJoin` too - a join is a commit - and by `createGroup`, at the service's own entry: a group
+created in a follower's copy is one the leader never holds). Its
 state is a copy loaded once: the version guard refuses its writes once the leader has written, so the
 checkpoint above would fail on every follower commit; and before that checkpoint existed, a commit
 sent from a follower moved the group past the state the leader keeps, because the leader cannot read
@@ -906,7 +907,10 @@ a commit of its own leaf back (`OwnPrivateMessage`). Commits are reached from a 
 (`groupActions.ts`, `groupCreation.ts`, `actions.ts`); refusing them by the leadership fact is the
 gate the outbox already applies to sends. The member is told, by type: a creation answers the
 `follower-tab` refusal, and an invite or a removal shows the same sentence
-(`reportFollowerTabRefusal`, `conversationRefusalMessage.ts`) - do it in the main tab.
+(`reportFollowerTabRefusal`, `conversationRefusalMessage.ts`) - do it in the main tab. A community's
+or a salon's key group refused this way (`leaveKeyGroupToMainTab`, `followerTabKeyGroup.ts`) tells
+the member on a gesture (creating a community or a salon, joining a salon) and goes on without the
+group; on a load it is logged and the load goes on, since the main tab enters it.
 
 **Cost: one checkpoint per commit, awaited under the MLS lock**, which blocks decrypts and sends in
 every group while it runs. The live web path is the WASM ChaCha20 seal
