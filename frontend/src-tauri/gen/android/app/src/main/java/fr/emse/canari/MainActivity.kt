@@ -111,18 +111,26 @@ class MainActivity : TauriActivity() {
             }
         }
 
-        // Sync the FCM token to fcm_token.txt read by the Rust command get_fcm_token.
-        // Needed on restart: onNewToken is not called again when the token is unchanged.
-        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
-            if (!token.isNullOrEmpty()) {
-                try {
-                    val dataDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }
-                    File(dataDir, "fcm_token.txt").writeText(token)
-                    getSharedPreferences(CanariFirebaseMessagingService.PREFS_NAME, MODE_PRIVATE)
-                        .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
-                    Log.i("MainActivity", "FCM token synced (${token.length} chars)")
-                } catch (e: Exception) {
-                    Log.w("MainActivity", "FCM token sync failed: ${e.message}")
+        // A SIGN-OUT THAT COULD NOT DELETE ITS TOKEN IS COMPLETED HERE, and the old token is not
+        // mirrored: it belongs to the account that left. The deletion fetches the fresh one.
+        if (PushRegistrationEnd.isDeletionOwed(this)) {
+            Log.i("MainActivity", "FCM token deletion owed by a sign-out - completing it")
+            val appContext = applicationContext
+            Thread({ PushRegistrationEnd.completeOwedDeletion(appContext) }, "canari-push-end").start()
+        } else {
+            // Sync the FCM token to fcm_token.txt read by the Rust command get_fcm_token.
+            // Needed on restart: onNewToken is not called again when the token is unchanged.
+            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                if (!token.isNullOrEmpty()) {
+                    try {
+                        val dataDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }
+                        File(dataDir, "fcm_token.txt").writeText(token)
+                        getSharedPreferences(CanariFirebaseMessagingService.PREFS_NAME, MODE_PRIVATE)
+                            .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
+                        Log.i("MainActivity", "FCM token synced (${token.length} chars)")
+                    } catch (e: Exception) {
+                        Log.w("MainActivity", "FCM token sync failed: ${e.message}")
+                    }
                 }
             }
         }
