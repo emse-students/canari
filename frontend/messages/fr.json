@@ -753,6 +753,8 @@
   "post_share_label": "Partager",
   "post_link_copied_label": "Lien copié",
   "post_copy_link_label": "Copier le lien",
+  "post_share_send_to": "Envoyer à {name}",
+  "post_share_system_label": "Partager via...",
   "post_pin_action_label": "Épingler",
   "post_action_unmask_anonymous": "Retirer l'anonymat",
   "post_unpin_action_label": "Désépingler",

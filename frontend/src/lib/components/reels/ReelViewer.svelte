@@ -24,7 +24,6 @@
   import ReelCommentsSheet from './ReelCommentsSheet.svelte';
   import { markViewerLayer } from '$lib/utils/viewerLayer';
   import { railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
-  import { sharePostLink } from '$lib/posts/sharePost';
   import { WheelPageLock, wheelOverScrollable, wheelStep } from '$lib/reels/reelWheel';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
@@ -230,6 +229,26 @@
     commentsFor ? (reels.find((r) => r.id === commentsFor) ?? null) : null
   );
 
+  /**
+   * The post whose share sheet is open (the rail's send), by id. The sheet (`PostShareSheet`) is
+   * loaded on the first send, never with the viewer: it reads the conversation list, which a
+   * viewer opened only to watch has no reason to load. Drawn inside the viewer, so its dialogs
+   * take the viewer's rung (`markViewerLayer`).
+   */
+  let shareFor = $state<string | null>(null);
+  let ShareSheet = $state<
+    typeof import('$lib/components/posts/PostShareSheet.svelte').default | null
+  >(null);
+
+  function openShareSheet(postId: string) {
+    import('$lib/components/posts/PostShareSheet.svelte')
+      .then((mod) => {
+        ShareSheet = mod.default;
+        shareFor = postId;
+      })
+      .catch((e: unknown) => console.error('[reel-viewer] the share sheet did not load', e));
+  }
+
   /** Replaces the loaded post `next.id` - a comment written in the sheet. */
   function setPost(next: PostEntity) {
     reels = reels.map((r) => (r.id === next.id ? next : r));
@@ -246,7 +265,7 @@
         console.debug(`[reel-viewer] comments opened on ${post.id}`);
         commentsFor = post.id;
       },
-      onSend: () => void sharePostLink(post.id),
+      onSend: () => openShareSheet(post.id),
     };
   }
 
@@ -339,7 +358,7 @@
     const lock = new WheelPageLock();
     function onWheel(e: WheelEvent) {
       const step = wheelStep(e);
-      if (!step || commentsFor || wheelOverScrollable(e.target, el!)) return;
+      if (!step || commentsFor || shareFor || wheelOverScrollable(e.target, el!)) return;
       e.preventDefault();
       // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
       const free = lock.free && !settling;
@@ -461,7 +480,7 @@
   /** The keyboard: up/down page, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
     // The comments sheet has the keyboard while it is open: its field types, and Escape closes IT.
-    if (e.defaultPrevented || settling || commentsFor) return;
+    if (e.defaultPrevented || settling || commentsFor || shareFor) return;
     if (scrollOpenCaption(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'PageDown') {
       e.preventDefault();
@@ -562,6 +581,10 @@
         onChange={setPost}
         onClose={() => (commentsFor = null)}
       />
+    {/if}
+
+    {#if ShareSheet && shareFor}
+      <ShareSheet open postId={shareFor} onClose={() => (shareFor = null)} />
     {/if}
   </div>
 </div>

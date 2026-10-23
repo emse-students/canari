@@ -14,6 +14,7 @@ builds on the IN half later and is not started.
 | S3 | Share OUT (Android + iOS): `share_text` / `share_staged`, message and post menus | built - [share-out](share-out.md) |
 | S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a new signing profile; **the iOS conversation suggestions (`INSendMessageIntent`) follow it**, since they need that extension | in review - the App ID and both profiles exist (user, 2026-10-22) |
 | S5 | Conversation suggestions in the Android sheet (Direct Share / sharing shortcuts) | built (Android), [below](#share-suggestions-android---lot-s5) |
+| S6 | A post's or a reel's share sheet, Instagram's: send into a conversation, copy the link, the system sheet | first step built, design open with the user - [below](#a-post-or-a-reel-shared-from-its-sheet---lot-s6) |
 
 ## Share IN, Android - the path
 
@@ -157,6 +158,89 @@ preselection, never a destination by itself.
 member PINNED from the launcher menu cannot be removed by any app: it is disabled at the next
 publish or clear that drops it, and the launcher decides whether its label stays. iOS: none - the
 suggestions need the Share Extension, so they are part of S4.
+
+## A post or a reel, shared from its sheet - lot S6
+
+**Asked by the user on 1.4.0 (2026-10-23):** *"Le partage d'un post/reel devrait permettre de
+partager dans l'app, et avoir un 'copier le lien', comme sur instagram"* - and to look at the design
+together, so this section is a PROPOSAL whose first step is built; the questions below are the
+user's.
+
+**What existed before it.** A post's menu had "Partager" (the system sheet on the phone apps, a
+copied link elsewhere) and, on the phone apps only, "Copier le lien"; the reel rail's send was the
+same "Partager" ([share-out](share-out.md)). Nothing sent a post INTO a conversation. But the pieces
+were all there: a link to `/posts/<id>` pasted in a conversation already draws an in-app card
+(`LinkPreviewCard` -> `canariLinkPreview.ts`), and a share from another app already travels
+picker -> landing -> composer (lots S1+S2, above).
+
+**Instagram's sheet, read on the user's phone (2026-10-23).** A bottom sheet with a grabber; a
+search field with an "add people" icon; a three-column grid of recent conversations and people
+(round avatar, name under it, a green dot when active, stacked avatars for a group), scrolling; a
+fixed bottom row of round labelled actions scrolling sideways - "Copier le lien" first, WhatsApp,
+"Ajouter a la story", "Partager" (the system sheet), Snapchat... The post behind is dimmed. A tap
+on a person SELECTS it (several can be), and a "write a message" field and a Send button appear.
+
+**What is built (`PostShareSheet.svelte`).** "Partager" in a post's menu and the rail's send both
+open it. Canari has no presence and no story, so neither is copied.
+- A grabber, the search field (name or community), and the grid of the picker's own destinations
+  (`shareCandidates`, the function `ForwardMessageModal` now reads too), **most recent first**
+  (`compareConversationRecency`, the sidebar's key); a salon shows its community under its name.
+- The bottom row: **"Copier le lien"** first, then **"Partager via..."** (the system sheet) where
+  one exists (`canShareOut`, the phone apps). On the web "Partager" no longer means "copy": the
+  sheet is the same everywhere, minus the system row.
+- **A tap on a conversation sends the post's link INTO it the way a share from another app goes**
+  (`sendPostLinkInApp`): `incomingShare.offerTo` offers the link with its destination already
+  picked - so the S1 picker never opens for it - `landShareOn` opens that conversation as a tapped
+  notification would, and the chat page puts the link in the composer (`takeFor`). **The member
+  sends with Send; a word can be typed first**, which is Instagram's message field without a second
+  one. The navigation drains the overlay stack, so the sheet and the reel viewer close with it.
+- The sheet is loaded on its first open (`import()`), never with a card: it reads the conversation
+  list (`globalChatSingleton`), which a feed scrolled past must not pay for.
+- `offerTo` stamps the share with the page's current FLOOR (the last sign-out it saw): it was made
+  after it, so the fence cannot refuse it, and a sign-out still drops it like any held share
+  (`eraseIncomingShare` -> `incomingShare.drop`).
+
+**What the link reveals, and to whom.** The link is `https://canari.emse.fr/posts/<id>`
+(`postShareUrl`), the same for every row: the id and nothing else.
+- **In a conversation**, the card is fetched by EACH READER under their own session (`getPost`): a
+  reader the post's spaces exclude, or who is signed out, gets the fallback card ("unavailable",
+  the route's generic label) - not a word of the post. The message itself stays end-to-end
+  encrypted; an in-app link never goes through the server's link-preview fetch (`isInAppHref`
+  branch), so no server learns which post was sent where.
+- **Opened**, the link is the app's (Universal / App Link, `/posts/*` is claimed) or the web page,
+  both behind sign-in and the post's own audience - a reader who may not see it gets "not found".
+- **Pasted outside Canari** (copy, system sheet), an unfurler reads the server-rendered card: an
+  ASSOCIATION post's text and picture to anyone holding the link, whatever its spaces; a personal
+  post gets the generic card. That is the open decision of
+  [open-questions](../open-questions.md#decision-owed---should-a-shared-association-post-preview-whatever-its-audience-2026-10-18),
+  unchanged by this lot - but S6 makes the link easier to carry, so it matters more.
+- No new data is collected: no share count, no log of who shared what to whom.
+
+**Questions for the user (S6, not built).**
+1. **Several destinations at once, sent from the sheet** (Instagram's selection + message + Send):
+   the built step lands in ONE conversation's composer, because a send from outside the chat page
+   needs the messaging context only that page builds. Sending from the sheet means building that
+   context outside it - is it wanted, or is "one tap, then Send" enough?
+2. **A message type for a shared post**, or the link and its card as today? A dedicated
+   `PostShare` frame (post id in the MLS payload, drawn as a large card with the picture, opening
+   the reel full screen) would look like Instagram's; the link costs nothing new and degrades to a
+   plain link on any client. Not built: a new MLS payload kind is a protocol change.
+3. **A reel opened from the card**: today it opens `/posts/<id>` (the card, then the reel). Open
+   the reel viewer directly?
+4. **Warn the sender** when the post is scoped to spaces some recipients are not in? The client
+   cannot know another member's spaces; the server could answer "who in this conversation may not
+   read it" - a new question asked of the server about other members.
+5. **The open-questions decision above** - should a campus-scoped association post still unfurl
+   outside Canari?
+6. **The post page's own header button** (`/posts/<id>`, "Partager" that copies) is left as it
+   was: open the same sheet there too?
+
+**Owed**: on the Mi 9T and the iPhone - the sheet from a feed card and from a reel (it must sit
+above the viewer), a tap lands in the conversation with the link in the composer, Send draws the
+card; the recipient without the post's space sees "unavailable"; "Copier le lien" and "Partager
+via..." from both. Tests: `PostShareSheet.svelte.test.ts`, `sharePost.test.ts`,
+`shareDestinations.test.ts`, `incomingShare.svelte.test.ts` (`offerTo`), `ReelViewer.rail` (the
+send opens the sheet).
 
 ## Decisions
 
