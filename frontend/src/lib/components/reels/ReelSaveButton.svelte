@@ -14,7 +14,8 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
 
-  let { reel }: { reel: SaveableReel } = $props();
+  /** `rail`: drawn as the reel rail's plain icon (no disc), the settings remedy as an icon too. */
+  let { reel, rail = false }: { reel: SaveableReel; rail?: boolean } = $props();
 
   let saving = $state(false);
   let denied = $state(false);
@@ -52,17 +53,27 @@
 {#if denied}
   <button
     type="button"
-    class="inline-flex items-center gap-2 rounded-full bg-black/50 px-3 py-2 text-xs font-semibold text-white outline-none hover:bg-black/70 focus-visible:ring-2 focus-visible:ring-amber-500"
+    class={rail
+      ? 'ui-icon-button rounded-full text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
+      : 'inline-flex items-center gap-2 rounded-full bg-black/50 px-3 py-2 text-xs font-semibold text-white outline-none hover:bg-black/70 focus-visible:ring-2 focus-visible:ring-amber-500'}
+    aria-label={rail ? m.reels_open_settings() : undefined}
+    title={rail ? m.reels_open_settings() : undefined}
     onclick={settings}
     data-reel-open-settings
   >
-    <Settings size={16} strokeWidth={2.5} />
-    {m.reels_open_settings()}
+    <Settings
+      size={rail ? 26 : 16}
+      strokeWidth={rail ? 2 : 2.5}
+      class={rail ? 'drop-shadow-md' : ''}
+    />
+    {#if !rail}{m.reels_open_settings()}{/if}
   </button>
 {:else}
   <button
     type="button"
-    class="ui-icon-button rounded-full bg-black/40 text-white outline-none hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-60"
+    class="ui-icon-button rounded-full text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-60 {rail
+      ? ''
+      : 'bg-black/40 hover:bg-black/60'}"
     aria-label={m.reels_save()}
     title={m.reels_save()}
     disabled={saving}
@@ -70,9 +81,13 @@
     data-reel-save
   >
     {#if saving}
-      <LoaderCircle size={22} strokeWidth={2.5} class="animate-spin" />
+      <LoaderCircle size={rail ? 26 : 22} strokeWidth={rail ? 2 : 2.5} class="animate-spin" />
     {:else}
-      <Download size={22} strokeWidth={2.5} />
+      <Download
+        size={rail ? 26 : 22}
+        strokeWidth={rail ? 2 : 2.5}
+        class={rail ? 'drop-shadow-md' : ''}
+      />
     {/if}
   </button>
 {/if}
