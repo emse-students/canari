@@ -167,6 +167,8 @@ import { appendLog } from '$lib/utils/sessionLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
 import { handleHistoryRequest, processPendingInvitations } from '$lib/utils/chat/actions';
+import type { JoinApprovalRequest } from '$lib/utils/chat/actions';
+import { raiseJoinRequest, settleSweptJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
 import {
   drainDeferredWelcomeRequests,
   serveWelcomeRequest,
@@ -371,6 +373,7 @@ export function makeWelcomeRequestContext(
     conversations: cb.conversations,
     log: cb.log,
     deferred: ctx.deferredWelcomeRequests,
+    onJoinApprovalRequested: raiseJoinRequest,
   };
 }
 
@@ -382,7 +385,10 @@ export async function processDeviceInvitationsLocally(
   if (ctx.isSyncing()) return;
   ctx.setIsSyncing(true);
   try {
-    await processPendingInvitations({
+    // A new person's pending device is never added by the sweep; it raises a member's approval. The
+    // sweep reads the server's durable rows, so what a completed one raised replaces what is shown.
+    const raised: JoinApprovalRequest[] = [];
+    const swept = await processPendingInvitations({
       mlsService: ctx.ensureMls(),
       storage: ctx.getStorage(),
       userId: ctx.getUserId(),
@@ -390,7 +396,9 @@ export async function processDeviceInvitationsLocally(
       conversations: cb.conversations,
       requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
       log: cb.log,
+      onJoinApprovalRequested: (request) => raised.push(request),
     });
+    if (swept) settleSweptJoinRequests(raised);
   } finally {
     ctx.setIsSyncing(false);
   }

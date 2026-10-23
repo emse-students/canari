@@ -68,6 +68,7 @@ import {
   setSenderMismatchReporter,
   type EnvelopeSender,
 } from '$lib/mls-client/verifiedSender';
+import { setUninvitedEntryReporter } from '$lib/mls-client/uninvitedEntry';
 import {
   keyPackagePublication,
   type DeviceKeyPackageAnswer,
@@ -566,6 +567,11 @@ export abstract class BaseMlsService implements IMlsService {
     // logs it (`[SENDER_MISMATCH]`, channel-encryption section 21).
     setSenderMismatchReporter((report) =>
       this.delivery.deliveryPost('sender-mismatch', { ...report })
+    );
+    // The same for an entry no member made (`uninvitedEntry.ts`): the server's `[UNINVITED_ENTRY]`
+    // line is the count the refusal of such an entry waits on.
+    setUninvitedEntryReporter((report) =>
+      this.delivery.deliveryPost('uninvited-entry', { ...report })
     );
   }
 

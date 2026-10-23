@@ -6,6 +6,7 @@
  * - Group-level operations (create, rename, delete, invite, kick)
  * - Storage helpers (save, load history, reload)
  */
+import type { JoinRequest } from '$lib/utils/chat/joinRequests.svelte';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -2032,6 +2033,45 @@ export function useConversations() {
   }
 
   /**
+   * A member ADMITS a new person who asked to join (`joinRequests.svelte.ts`): the same Add as an
+   * invitation from the member list, built and signed by this device - the one way a new person
+   * enters a conversation (`automaticAdmission` in `actions.ts`).
+   *
+   * Throws when there is no group conversation to admit them into, so the ask stays on screen. An Add
+   * that fails further in is logged by the invite flow and leaves the server's `pending` row as it
+   * was, so the next sweep raises the ask again.
+   */
+  async function approveJoinRequest(request: JoinRequest, ctx: ConversationContext) {
+    const convo = conversations.get(request.groupId);
+    if (!convo || (convo.conversationType ?? 'group') !== 'group') {
+      throw new Error(`no group conversation ${request.groupId.slice(0, 8)}... to admit into`);
+    }
+    await inviteMembersToGroup([request.userId], convo, {
+      mlsService: ctx.ensureMls(),
+      storage: ctx.storage,
+      userId: ctx.userId,
+      deviceKeyB64: ctx.deviceKeyB64,
+      historyBaseUrl: ctx.historyBaseUrl,
+      conversations,
+      selectConversation: (name) => selectConversationWithCtx(name, ctx),
+      saveConversation: (name) => saveConversation(name, ctx),
+      log: ctx.log,
+    });
+    if (selectedContact === convo.id) await loadGroupMembers(convo.id, ctx);
+  }
+
+  /**
+   * A member DECLINES a new person who asked to join: their roster row and pending devices leave the
+   * server, which is what stops the ask from coming back. There is no leaf to remove - nobody added
+   * one - so no commit is made. A refusal of the server (a member without the right) throws, and the
+   * ask stays.
+   */
+  async function declineJoinRequest(request: JoinRequest, ctx: ConversationContext) {
+    await ctx.ensureMls().removeMemberFromServer(request.groupId, request.userId);
+    ctx.log(`[JOIN_REQUEST] ${request.userId} declined - roster row removed`);
+  }
+
+  /**
    * Opens or creates a direct 1-to-1 conversation with the given user.
    *
    * Forwards the outcome for the same reason `createNewGroup` does.
@@ -2362,6 +2402,8 @@ export function useConversations() {
     createNewGroup,
     /** Invites one or more users to the currently selected group. */
     inviteMembersToCurrentGroup,
+    approveJoinRequest,
+    declineJoinRequest,
     /** Opens or creates a direct 1-to-1 conversation with the given user. */
     startNewConversation,
     /** Renames the currently selected group and broadcasts the change. */

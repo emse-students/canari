@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceEvent } from '$lib/mls-client/deviceTrust';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import {
+  resetReportedUninvitedEntries,
+  setUninvitedEntryReporter,
+} from '$lib/mls-client/uninvitedEntry';
+import {
   deliverDeviceEvents,
   dismissDeviceNotice,
   dismissRefusedDeviceNotice,
@@ -410,5 +414,92 @@ describe('noteRefusedOwnDevices - the refused device of my own', () => {
     loadDeviceNotices('alice');
     await noteRefusedOwnDevices(['alice:old'], { ownUserId: 'alice', ...labels });
     expect(pendingRefusedDeviceNotices()).toEqual([]);
+  });
+});
+
+// AN ENTRY NO MEMBER MADE: a new person admitted by their own commit (`entersUninvited`). Written in
+// the conversation itself and reported to the server once - the measurement the refusal waits on.
+// Never in a community key group, where an external commit is how every member enters.
+describe('deliverDeviceEvents - an entry no member made', () => {
+  const intruder = (over: Partial<DeviceEvent> = {}) =>
+    event({
+      groupId: 'group-1',
+      identity: 'mallory:dev1',
+      addedBy: 'mallory:dev1',
+      memberAlreadyPresent: false,
+      ...over,
+    });
+  const reporter = vi.fn(async () => {});
+  beforeEach(() => {
+    reporter.mockClear();
+    resetReportedUninvitedEntries();
+    setUninvitedEntryReporter(reporter);
+  });
+  afterEach(() => setUninvitedEntryReporter(null));
+  const quiet = () => vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  it('writes a line in the conversation it entered, and reports it once', async () => {
+    const error = quiet();
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([intruder()], ctx);
+    await deliverDeviceEvents([intruder()], ctx);
+
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['group-1']);
+    const [sender, content, , options] = addMessageToChat.mock.calls[0];
+    expect(sender).toBe('system');
+    expect(content).toContain('mallory');
+    expect(options).toMatchObject({ isSystem: true });
+    expect(reporter).toHaveBeenCalledTimes(1);
+    expect(reporter).toHaveBeenCalledWith({
+      groupId: 'group-1',
+      entrant: 'mallory:dev1',
+      epoch: 5,
+      keyFingerprint: '00ff',
+    });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('UNINVITED ENTRY'));
+    error.mockRestore();
+  });
+
+  it('says nothing for a community key group, where every member enters this way', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([intruder({ groupId: 'community-key' })], ctx);
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).not.toHaveBeenCalled();
+  });
+
+  it('says nothing for a new person a member added', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([intruder({ addedBy: 'bob:phone-1' })], ctx);
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).not.toHaveBeenCalled();
+  });
+
+  it('says nothing for a group with no conversation row at all', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([intruder({ groupId: 'unnamed-key' })], ctx);
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(reporter).not.toHaveBeenCalled();
+  });
+
+  it('owes the line of a conversation whose row is not loaded yet, across a reload, and writes it once loaded', async () => {
+    const error = quiet();
+    const first = makeCtx();
+    first.conversations.delete('group-1');
+    await deliverDeviceEvents([intruder()], first.ctx);
+    expect(first.addMessageToChat).not.toHaveBeenCalled();
+    // Reported at once: the measurement does not wait for a row to load.
+    expect(reporter).toHaveBeenCalledTimes(1);
+
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    const second = makeCtx();
+    await deliverDeviceEvents([], second.ctx);
+
+    expect(linesWrittenIn(second.addMessageToChat.mock.calls)).toEqual(['group-1']);
+    expect(reporter).toHaveBeenCalledTimes(1);
+    error.mockRestore();
   });
 });

@@ -6,6 +6,7 @@ import {
   DeviceTrustRefusedError,
   deviceEventAudience,
   deviceEventKey,
+  entersUninvited,
   isNewToItsOwner,
   keyFingerprintOf,
   reportDeviceTrustRefusal,
@@ -188,5 +189,68 @@ describe('reportDeviceTrustRefusal', () => {
     expect(debug).toHaveBeenCalledTimes(1);
     error.mockRestore();
     debug.mockRestore();
+  });
+});
+
+// A NEW PERSON WHO BROUGHT THEMSELVES IN: the admitted user signed the commit (an external commit -
+// the joiner is its own sender) and held no leaf before it. Read from the signed commit alone, so a
+// server that stays silent cannot hide it.
+describe('entersUninvited - an entry no member made', () => {
+  it('is a user absent from the tree who signed their own admission', () => {
+    expect(
+      entersUninvited(
+        event({ identity: 'mallory:dev1', addedBy: 'mallory:dev1', memberAlreadyPresent: false })
+      )
+    ).toBe(true);
+  });
+
+  it('reads the user half canonically', () => {
+    expect(
+      entersUninvited(
+        event({ identity: 'mallory:dev1', addedBy: 'Mallory:dev1', memberAlreadyPresent: false })
+      )
+    ).toBe(true);
+  });
+
+  it('is not a commit another device signed, even of the same user', () => {
+    // A member's Add is signed by a device already in the tree, never by the leaf it admits.
+    expect(
+      entersUninvited(
+        event({ identity: 'mallory:dev2', addedBy: 'mallory:dev1', memberAlreadyPresent: false })
+      )
+    ).toBe(false);
+  });
+
+  it('is not a new person a member added', () => {
+    expect(
+      entersUninvited(
+        event({ identity: 'carol:dev1', addedBy: 'alice:dev1', memberAlreadyPresent: false })
+      )
+    ).toBe(false);
+  });
+
+  it('is not a member bringing in their own new device', () => {
+    expect(
+      entersUninvited(
+        event({ identity: 'bob:web-2', addedBy: 'bob:web-2', memberAlreadyPresent: true })
+      )
+    ).toBe(false);
+  });
+
+  it('is never an event recorded before memberAlreadyPresent existed, nor a joined tree', () => {
+    expect(
+      entersUninvited(
+        event({
+          identity: 'mallory:dev1',
+          addedBy: 'mallory:dev1',
+          memberAlreadyPresent: undefined,
+        })
+      )
+    ).toBe(false);
+    expect(
+      entersUninvited(
+        event({ identity: 'mallory:dev1', addedBy: null, memberAlreadyPresent: false })
+      )
+    ).toBe(false);
   });
 });

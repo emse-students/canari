@@ -843,6 +843,39 @@ can still post for such a device when a heal brings it back; the app does not an
 contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
 the history began carry that date, not their device's enrolment.
 
+### Who admits a new person (2026-10-23)
+
+**A new person enters a conversation by a member's own gesture, never by an automatic Add.** The
+two automatic adders - the pending-invitation sweep (`processPendingInvitations`) and the
+`welcome_request` handler, plus the Android background answer (`prepare_welcome_background_with_key`)
+- act on what the delivery service says: a `pending` row, a roster row, a relayed request. None of
+that is a member's decision. So before either builds an Add, it reads THIS device's tree: a requester
+whose USER already holds a leaf is a member's new or recovering device, and is added as before; a
+user who holds none is a new person, and is not added (`automaticAdmission` in `actions.ts`,
+`MlsManager::user_holds_leaf` in Rust, `treeHoldsUser` in TypeScript). A tree that cannot be read
+proves no membership, so nothing is added (it used to fall through to the Add).
+
+Instead, the ask is put to a member: **"X asks to join"**, with Add and Decline
+(`JoinRequestBanner`, `joinRequests.svelte.ts`). Add is the member's own Add (`inviteMembersToGroup`,
+signed by their device); Decline removes the roster row (`removeMemberFromServer`), which is what
+stops the ask coming back. The sweep reads the server's `pending` rows, the durable state, so each
+completed sweep replaces the asks on screen: one another member answered leaves with the next sweep.
+The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>`), which used to
+admit the person with no member involved. The Android background answer refuses such a request as
+`newcomer` and leaves it to the foreground's sweep.
+
+**A new person who entered by their own commit is made visible.** It shows in the signed commit as a
+`DeviceEvent` whose `addedBy` IS the admitted leaf and whose `memberAlreadyPresent` is `false`
+(`entersUninvited`, pinned in Rust by
+`an_external_commit_by_a_new_user_is_recorded_as_signed_by_the_device_it_admits`). In a conversation
+- decided on its row, loaded or durable, never on the session-local key-group set - the client writes
+"X joined the conversation without a member adding them" (`chat_system_uninvited_entry`, owed
+durably until the row loads), logs it at ERROR and reports it once (`POST mls/uninvited-entry`,
+`[UNINVITED_ENTRY]` in the delivery log). Never in a community or salon key group, where an external
+commit is how every member enters. The shape is `sender-mismatch`'s: a measurement, read on
+production before anything is decided about such entries. The receiving side is hardened in a
+second step.
+
 ## Key packages
 
 ### The two kinds of key package

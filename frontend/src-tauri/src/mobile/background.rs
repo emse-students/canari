@@ -525,7 +525,8 @@ pub struct WelcomeRequest<'a> {
 /// `groupInfo` is the external-join base of the epoch the commit creates, published by the route
 /// in the advance's own transaction - COMM-22), or
 /// `{"ok": false, "reason"}` with one of: `foreground-active`, `stale-epoch-known`,
-/// `key-package-unreadable`, `state-unreadable`, `group-not-held`, `already-member`, `add-failed`,
+/// `key-package-unreadable`, `state-unreadable`, `group-not-held`, `newcomer` (the requester's user
+/// holds no leaf: a new person, whom only a member's gesture admits), `already-member`, `add-failed`,
 /// `stage-failed`, or the [`mls_core::SkippedKeyPackageReason`] wire name the package is refused for
 /// (`identity-mismatch`, `signature-key-changed`, `expired`, ...).
 ///
@@ -588,6 +589,24 @@ pub fn prepare_welcome_background_with_key(
             return welcome_refused("group-not-held");
         }
     };
+    // A NEW PERSON IS NOT ADDED FROM A PUSH. Everything that brought this request here - the roster
+    // row, the relayed request, the KeyPackage - is the delivery service's word; this device's tree is
+    // not. A requester whose user holds no leaf is a new person, admitted only by a member's own
+    // gesture: the foreground raises that approval at its next sweep (`automaticAdmission` in
+    // `actions.ts`, the same rule).
+    match manager.user_holds_leaf(group_id, requester) {
+        Ok(true) => {}
+        Ok(false) => {
+            log::warn!(
+                "[BG_WELCOME] {requester} has no leaf in group={short} - a new person is not added from a push, a member's approval is owed"
+            );
+            return welcome_refused("newcomer");
+        }
+        Err(e) => {
+            log::warn!("[BG_WELCOME] tree of group={short} unreadable ({e}) - nothing added");
+            return welcome_refused("group-not-held");
+        }
+    }
     // Bound to the requester BEFORE staging, typed: the refusal travels as its wire name. mls-core
     // has already logged a substitution (`identity-mismatch`, `signature-key-changed`) at ERROR.
     match manager.key_package_verdict(&kp_bytes, requester) {
@@ -2028,7 +2047,8 @@ mod tests {
 
     /// A shut phone (`alice`) in a group that moved on without it: `bob` admitted `dave`, so the
     /// group is one epoch past alice's `mls.bin`. Returns alice's stale sealed state, the commit that
-    /// moved the group, carol's key package (the newcomer asking for a Welcome) and the group id.
+    /// moved the group, the key package of a NEW DEVICE of bob (`dev-c`, asking for a Welcome - a member's device, the one
+    /// case a background Add answers) and the group id.
     fn shut_phone_behind_its_group(
         tag: &str,
         key_seed: u8,
@@ -2041,7 +2061,7 @@ mod tests {
             .add_member(&gid, &dave.generate_key_package().unwrap())
             .expect("bob adds dave");
         bob.merge_pending_commit_for(&gid).expect("bob merges");
-        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None).unwrap();
+        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         (stale, bob, moved, kp, gid)
     }
@@ -2075,7 +2095,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "refused-carol:dev-c",
+                requester: "refused-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2120,7 +2140,7 @@ mod tests {
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(42)).unwrap();
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding("accepted", &state);
-        let mut carol = MlsManager::load_or_create("accepted-carol", "dev-c", None).unwrap();
+        let mut carol = MlsManager::load_or_create("accepted-bob", "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
 
         let prepared = prepare_welcome_background_with_key(
@@ -2131,7 +2151,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "accepted-carol:dev-c",
+                requester: "accepted-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2179,7 +2199,7 @@ mod tests {
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(48)).unwrap();
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding("base", &state);
-        let carol = MlsManager::load_or_create("base-carol", "dev-c", None).unwrap();
+        let carol = MlsManager::load_or_create("base-bob", "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
 
         let prepared = prepare_welcome_background_with_key(
@@ -2190,7 +2210,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "base-carol:dev-c",
+                requester: "base-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2224,7 +2244,7 @@ mod tests {
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(43)).unwrap();
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding("moved", &state);
-        let carol = MlsManager::load_or_create("moved-carol", "dev-c", None).unwrap();
+        let carol = MlsManager::load_or_create("moved-bob", "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         let prepared = prepare_welcome_background_with_key(
             &dir,
@@ -2234,7 +2254,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "moved-carol:dev-c",
+                requester: "moved-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2261,7 +2281,7 @@ mod tests {
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding("nostage", &state);
         std::fs::write(dir.join("mls.bin"), b"written by the foreground").unwrap();
-        let carol = MlsManager::load_or_create("nostage-carol", "dev-c", None).unwrap();
+        let carol = MlsManager::load_or_create("nostage-bob", "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         let prepared = prepare_welcome_background_with_key(
             &dir,
@@ -2271,7 +2291,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "nostage-carol:dev-c",
+                requester: "nostage-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2296,7 +2316,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "ledger-carol:dev-c",
+                requester: "ledger-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2320,7 +2340,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "ledger-carol:dev-c",
+                requester: "ledger-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2351,7 +2371,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "ahead-carol:dev-c",
+                requester: "ahead-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2394,7 +2414,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "race-carol:dev-c",
+                requester: "race-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2422,7 +2442,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "target-carol:dev-c",
+                requester: "target-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2475,7 +2495,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "fg-carol:dev-c",
+                requester: "fg-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2529,7 +2549,7 @@ mod tests {
             "dev-a",
             &WelcomeRequest {
                 group_id: &gid,
-                requester: "subst-carol:dev-c",
+                requester: "subst-bob:dev-c",
                 key_package_b64: &kp,
             },
         );
@@ -2542,6 +2562,37 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
     }
 
+    /// A NEW PERSON IS NOT ADDED FROM A PUSH. The roster row, the relayed request and the KeyPackage
+    /// are the delivery service's word; a requester whose user holds no leaf in this phone's tree is
+    /// refused as `newcomer`, and nothing is staged or written - a member's own gesture admits them.
+    #[test]
+    fn a_new_person_is_not_added_from_a_push() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let (alice, _bob, gid) = joined_pair("stranger");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(57)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("stranger", &state);
+        let carol = MlsManager::load_or_create("stranger-carol", "dev-c", None).unwrap();
+        let kp = STANDARD.encode(carol.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(57),
+            "stranger-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "stranger-carol:dev-c",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["ok"], false, "{out}");
+        assert_eq!(out["reason"], "newcomer", "{out}");
+        assert!(!staged_welcome_path(&dir, &gid).exists());
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
     /// A package naming a device this phone pinned, under ANOTHER signature key, is refused: nothing
     /// proves the change, so the background answer does not re-add it.
     #[test]
@@ -2549,7 +2600,14 @@ mod tests {
         let _s = crate::concurrency::test_support::serialise();
         crate::concurrency::mark_foreground_inactive();
         let (mut alice, bob, gid) = joined_pair("rekey");
-        // bob leaves, so the request is a re-add and not an `already-member`.
+        // bob keeps another device, so he is still a member and the request is a member's device -
+        // the one case a background Add answers (`newcomer` otherwise) - and the KEY is what refuses.
+        let bob_phone = MlsManager::load_or_create("rekey-bob", "dev-b9", None).unwrap();
+        alice
+            .add_member(&gid, &bob_phone.generate_key_package().unwrap())
+            .expect("add bob's phone");
+        alice.merge_pending_commit_for(&gid).expect("merge add");
+        // bob's dev-b leaves, so the request is a re-add and not an `already-member`.
         alice
             .remove_members_for_devices(&gid, &["rekey-bob:dev-b"])
             .expect("remove bob");

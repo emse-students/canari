@@ -98,6 +98,25 @@ export function announcesNewDevice(event: DeviceEvent): boolean {
 }
 
 /**
+ * Whether this event is a NEW PERSON who brought themselves into the group: the commit that admitted
+ * the device was signed by that very device (an external commit - the joiner is its own sender), and
+ * its user held no leaf before it.
+ *
+ * Exact from the signed commit alone. A member's Add is signed by a device already in the tree, never
+ * by the leaf it admits, so a commit signed by the admitted device whose user was absent can only be
+ * the joiner's own external commit. In a conversation that is an entry no member made - the server served the
+ * group info and accepted the commit, and nothing else did - so it is reported and written in the
+ * conversation (`deviceNotices.svelte.ts`); in a community or salon key group it is how every member
+ * enters, and the caller does not ask. An event recorded before `memberAlreadyPresent` existed is
+ * never one.
+ */
+export function entersUninvited(event: DeviceEvent): boolean {
+  if (event.addedBy === null || event.memberAlreadyPresent !== false) return false;
+  const admitted = canonicalIdentity(event.identity);
+  return admitted !== null && canonicalIdentity(event.addedBy) === admitted;
+}
+
+/**
  * Who is told about a device event (decided by the user 2026-10-22, refined the same day):
  * - `owner-alert`: the account the device belongs to - "a new device was added to your account", in
  *   the app and as a local notification, whatever kind of group the commit came from;

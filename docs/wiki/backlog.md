@@ -48,6 +48,16 @@ Owed before it ships:
   must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
   reset). Revisit only if #2271 lands with a design that tolerates a rotation.
 
+## A new person is admitted only by a member (decided by the user on 2026-10-23): step one built
+
+Built: no automatic Add brings in a user absent from the adder's tree, web, native and the Android
+background answer alike; a member is asked "X asks to join" (Add / Decline), which replaces the
+group link's automatic admission; and an entry no member made is written in the conversation and
+reported (`[UNINVITED_ENTRY]`) - see
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Owed: the
+`[UNINVITED_ENTRY]` count on production once the build serves both stores, and a second step on the
+receiving side (private operations notes).
+
 ## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 
 Built: the owner's in-app alert, the contact line in every DM and group shared with the contact

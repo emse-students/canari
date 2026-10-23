@@ -193,6 +193,40 @@ export class MessagingController {
     return { recorded: true };
   }
 
+  /**
+   * A client stating that a NEW PERSON entered one of its conversations by their own commit - an
+   * external commit signed by the very device it admitted, from a user who held no leaf before it.
+   * No member added them; the group info this service serves and the commit it accepted are all
+   * that let them in.
+   *
+   * A MEASUREMENT, exactly as `mls/sender-mismatch`: such an entry is either a device whose user lost
+   * every leaf rejoining by itself - a path nobody has counted - or one nobody wanted. It stores
+   * nothing; the WARN line and its date are the count.
+   *
+   * Every field goes through `sanitizeLogValue`; the reporter is the authenticated user, never a
+   * field of the body.
+   */
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @Post('mls/uninvited-entry')
+  reportUninvitedEntry(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') reporterDeviceId: string | undefined,
+    @Body()
+    body: { groupId?: unknown; entrant?: unknown; epoch?: unknown; keyFingerprint?: unknown }
+  ): { recorded: true } {
+    // The one numeric field, printed as its digits; anything else is `invalid` like every field.
+    const epoch =
+      typeof body.epoch === 'number' && Number.isSafeInteger(body.epoch)
+        ? String(body.epoch)
+        : body.epoch;
+    this.logger.warn(
+      `[UNINVITED_ENTRY] reporter=${sanitizeLogValue(authUserId)}:${sanitizeLogValue(reporterDeviceId)} ` +
+        `group=${sanitizeLogValue(body.groupId)} entrant=${sanitizeLogValue(body.entrant)} ` +
+        `epoch=${sanitizeLogValue(epoch)} key=${sanitizeLogValue(body.keyFingerprint)}`
+    );
+    return { recorded: true };
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Post('mls/base-refresh-request')
   /**
