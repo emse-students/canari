@@ -17,8 +17,14 @@ export interface ScrollDirectionState {
 /** The distance, in px, a reader must travel against the current state before it flips. */
 export const SCROLL_DEAD_ZONE_PX = 8;
 
-/** The state a page starts in: at the top, header shown. */
-export const INITIAL_SCROLL_DIRECTION: ScrollDirectionState = { anchor: 0, shown: true };
+/**
+ * The state a page starts in: header shown, anchored at where the page already is (`top`, 0 when
+ * omitted). A page restored mid-scroll is not at the top, and anchoring it at 0 would read its whole
+ * offset as one scroll down on the first event and hide the header unasked.
+ */
+export function initialScrollDirection(top = 0): ScrollDirectionState {
+  return { anchor: Math.max(0, top), shown: true };
+}
 
 /**
  * One step. The header is ALWAYS shown at the very top (`top <= 0`, which also covers an iOS

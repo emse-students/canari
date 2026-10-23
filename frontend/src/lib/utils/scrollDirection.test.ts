@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  INITIAL_SCROLL_DIRECTION,
+  initialScrollDirection,
   nextScrollDirection,
   type ScrollDirectionState,
 } from './scrollDirection';
 
-const run = (tops: number[], from: ScrollDirectionState = INITIAL_SCROLL_DIRECTION) =>
+const run = (tops: number[], from: ScrollDirectionState = initialScrollDirection()) =>
   tops.reduce((s, t) => nextScrollDirection(s, t), from);
 
 describe('nextScrollDirection', () => {
@@ -41,6 +41,22 @@ describe('nextScrollDirection', () => {
   });
 
   it('returns the same state object when nothing changed', () => {
-    expect(nextScrollDirection(INITIAL_SCROLL_DIRECTION, 0)).toBe(INITIAL_SCROLL_DIRECTION);
+    const start = initialScrollDirection();
+    expect(nextScrollDirection(start, 0)).toBe(start);
+  });
+});
+
+describe('initialScrollDirection', () => {
+  it('anchors at where a restored page already is, so its first event is not read as a scroll down', () => {
+    const restored = initialScrollDirection(600);
+    expect(restored).toEqual({ anchor: 600, shown: true });
+    expect(run([604], restored).shown).toBe(true);
+    expect(run([620], restored).shown).toBe(false);
+    // Anchored at 0 instead, the same first event would have hidden the row unasked.
+    expect(run([604]).shown).toBe(false);
+  });
+
+  it('never anchors above the top (an overscroll bounce reported at mount)', () => {
+    expect(initialScrollDirection(-20)).toEqual({ anchor: 0, shown: true });
   });
 });
