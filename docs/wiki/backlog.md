@@ -27,6 +27,43 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## Decided by the user on 2026-10-22 - the local key on a phone is held by secure hardware
+
+On the phone apps the local at-rest key is held by the device's secure hardware, the PIN only
+unlocks it (and stays short), and backups get their own recovery secret. Web and desktop keep the
+PIN-derived key. BUILT in a draft pull request (`feat/hardware-held-local-key`); the mechanism is
+[auth](frontend/modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22).
+Owed before it ships:
+
+- **Device readings, Mi 9T and iPhone**: the list is in
+  [auth](frontend/modules/auth.md#backups-get-their-own-recovery-secret) ("Owed on hardware"),
+  including the iOS build no gate here compiles.
+- **Decided (user, 2026-10-22): notifications stay complete on a locked phone, and the PIN is
+  verified by the server; the hardware key protects the device's stored data. Practicality first.**
+  The four lead decisions are BUILT and recorded with their costs in
+  [auth](frontend/modules/auth.md#decisions-taken-on-2026-10-22-and-what-each-costs).
+- **`minClientVersion` follows the first release carrying the hardware-held key** once both stores
+  serve it.
+- **Two keys stay on purpose**: #2271's push-cache key is not derived from the at-rest key, because it
+  must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
+  reset). Revisit only if #2271 lands with a design that tolerates a rotation.
+
+## New-device notices: decided by the user on 2026-10-22 - the UI is owed
+
+No mandatory approval of a new device. The client that processes the signed change produces the
+notices itself, never a server message: the account owner gets an alert "a new device was added to
+your account" (in the app and as a local notification on the phone), and contacts see a discreet
+line "X added a device" in private conversations only - 1:1 and groups, never communities or salons.
+
+Built: the event (`DeviceEvent`, `IMlsService.takeDeviceEvents()`), the audience rule
+(`deviceEventAudience()`) and the dedup key (`deviceEventKey()`) - see
+[mls-protocol](protocols/mls-protocol.md#device-binding). Owed, as its own work package: the
+Paraglide strings, the conversation line, the in-app alert, and the native local notification when
+the Android or iOS background path merges such a commit (its events wait in `mls.bin` until the app
+takes them), deduplicated per device. Also owed there: telling a device's owner, in the app, that
+peers refuse to re-add it under its kept id until it is reset (today only the members' logs say
+so, once per session).
+
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 
 The adding device pushes its whole local store to the invitee (`sendFullHistoryBundle`, up to 5
@@ -77,14 +114,6 @@ commit alike; (2) bound the bundle in bytes and page it, after measuring what th
 the queue accept; (3) a key-group frame stored once per group, not once per seat (31 copies per
 payload, 883 MB of the 1.5 GB queue). Reasoning and numbers:
 [dm-vs-community-encryption](protocols/dm-vs-community-encryption.md#where-each-system-can-improve).
-
-### P3 - one identity reader for rotation and device trust (#2263 / #2268)
-
-`user_of` in `frontend/mls-core/src/graine_run.rs` reads the canonical user of a leaf (well-formed
-`user:device`, user half ASCII-lowercased). It becomes #2268's shared reader `canonical_user_of`,
-done by whichever of #2263 and #2268 lands second, so rotation and trust never disagree on who a
-user is. One difference the swap changes: `canonical_user_of` reads a legacy bare `userId`
-credential as that user, while `user_of` treats it as malformed and so rotates on it.
 
 ## P3 - A group conversation of 109 device seats carries its messages over MLS, the shape Graine rejected for salons (2026-10-21)
 

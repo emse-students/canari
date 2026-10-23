@@ -674,6 +674,13 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   state is sealed beside `mls.bin` with the digest of the bytes it was built from, installed by a
   compare-and-swap on `accepted` (or handed over, below), and deleted on anything else. A transport failure or a 5xx is
   `unknown`: not installed, because installing a refusal is the fork this exists to prevent.
+- **The KeyPackage is bound to the requester, as the foreground's Add binds it.** The phone hands
+  Rust the `userId:deviceId` the push named (`WelcomeRequest.requester`). A package whose credential
+  names another device, or that device under a key the phone never pinned for it, is refused BEFORE
+  anything is staged (`MlsManager::key_package_verdict`, the check the Add re-runs). The answer's
+  reason is the skip's wire name: `identity-mismatch` or `signature-key-changed`, logged at ERROR.
+  Pinned by `a_substituted_key_package_is_refused_on_the_background_path` and
+  `a_key_package_under_an_unpinned_key_is_refused_on_the_background_path`.
 - **No catch-up and no retry.** The background never applies the group's commits to `mls.bin` (the
   foreground's replay owns that, and what it does around a commit); a stale phone is refused, and the
   request is left to the foreground or another member. An `epoch_mismatch` whose server epoch is

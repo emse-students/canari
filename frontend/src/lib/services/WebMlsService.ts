@@ -1,5 +1,6 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
@@ -37,6 +38,7 @@ import {
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import {
+  loadMlsState,
   saveMlsState,
   MlsStateWriteRefusedError,
   type MlsStateWriteLatch,
@@ -801,6 +803,10 @@ export class WebMlsService extends BaseMlsService {
     // the pin-check.
     await this.resolveDeviceId(userId);
 
+    // A KEPT ID WITH A LOST STATE RE-ENROLS AS A NEW DEVICE (`reenrolLostState`): the rotation loads
+    // and persists the fresh client itself, so nothing below has anything left to load.
+    if (!state && (await this.reenrolLostState(deviceKeyB64, opts))) return;
+
     // Same span name as `TauriMlsService`, and for the reason written there: a browser report and
     // an Android report have to answer the same question with the same word to be comparable.
     beginBootSpan('mls-load-state');
@@ -1181,7 +1187,7 @@ export class WebMlsService extends BaseMlsService {
    */
   protected async stageAddMembers(
     groupId: string,
-    keyPackages: Uint8Array[]
+    devices: Array<{ keyPackage: Uint8Array; identity: string }>
   ): Promise<{
     commit: Uint8Array;
     welcome?: Uint8Array;
@@ -1189,11 +1195,11 @@ export class WebMlsService extends BaseMlsService {
     addedIndices: number[];
     skipped: SkippedKeyPackage[];
   }> {
-    const jsArray = keyPackages.reduce((arr, kp) => {
-      arr.push(kp);
-      return arr;
-    }, [] as Uint8Array[]);
-    const res = this.client.add_members_bulk(groupId, jsArray);
+    const res = this.client.add_members_bulk(
+      groupId,
+      devices.map((d) => d.keyPackage),
+      devices.map((d) => d.identity)
+    );
     return {
       commit: res[0] as Uint8Array,
       welcome: res[1] as Uint8Array | undefined,
@@ -1201,6 +1207,55 @@ export class WebMlsService extends BaseMlsService {
       skipped: (res[3] as SkippedKeyPackage[] | undefined) ?? [],
       groupInfo: res[4] as Uint8Array,
     };
+  }
+
+  /** WASM client wrapper - `replace_device`, `[commit, welcome, group_info]`, staged not merged. */
+  protected async stageReplaceDevice(
+    groupId: string,
+    identity: string,
+    keyPackage: Uint8Array
+  ): Promise<{ commit: Uint8Array; welcome: Uint8Array; groupInfo: Uint8Array }> {
+    const res = this.client.replace_device(groupId, identity, keyPackage);
+    return {
+      commit: res[0] as Uint8Array,
+      welcome: res[1] as Uint8Array,
+      groupInfo: res[2] as Uint8Array,
+    };
+  }
+
+  /**
+   * IndexedDB answered, and answered "nothing" (an empty record counts as nothing - `stateOrAbsent`).
+   * A failed read throws out of `loadMlsState`, which `reenrolLostState` reads as "not proven".
+   */
+  protected async savedStateProvenAbsent(): Promise<boolean> {
+    return (await loadMlsState(this.userId)) === null;
+  }
+
+  /** WASM client wrapper - `vet_key_package`, the Rust verdict on binding and pin. */
+  protected async vetKeyPackageNative(
+    keyPackage: Uint8Array,
+    identity: string
+  ): Promise<KeyPackageVerdict> {
+    return this.client.vet_key_package(keyPackage, identity) as KeyPackageVerdict;
+  }
+
+  /** WASM client wrapper - `pinned_signature_keys`, `{ keys, anchored, reaffirmations }` or `undefined`. */
+  protected async pinnedSignatureKeysNative(
+    userId: string,
+    deviceId: string
+  ): Promise<DevicePin | null> {
+    const pin = this.client.pinned_signature_keys(userId, deviceId) as DevicePin | undefined;
+    return pin ?? null;
+  }
+
+  /** WASM client wrapper - `removal_epochs`, a `Float64Array` of epochs. */
+  protected async removalEpochsNative(groupId: string, userId: string): Promise<number[]> {
+    return Array.from(this.client.removal_epochs(groupId, userId));
+  }
+
+  /** WASM client wrapper - `take_device_events`, JSON from Rust (`DeviceEvent`, camelCase). */
+  protected async takeDeviceEventsNative(): Promise<DeviceEvent[]> {
+    return JSON.parse(this.client.take_device_events()) as DeviceEvent[];
   }
 
   /** WASM client wrapper - stages a Remove commit for all devices of the given users (no merge). */
@@ -1460,6 +1515,13 @@ export class WebMlsService extends BaseMlsService {
     if (!this.client)
       throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
     return (this.client.member_signature_key(groupId, identity) as Uint8Array | undefined) ?? null;
+  }
+
+  /** WASM client wrapper - `leaf_holding_key_of`, the leaf carrying a package's key, or null. */
+  async leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
+    return (this.client.leaf_holding_key_of(groupId, keyPackage) as string | undefined) ?? null;
   }
 
   /**

@@ -76,6 +76,8 @@
      * colours by construction, with the theme holding them.
      */
     letterbox?: boolean;
+    /** How a letterboxed VIDEO fills the box: the whole frame (`contain`, the feed's rule) or cropped (`cover`, a square gallery cell). */
+    videoFit?: 'contain' | 'cover';
     /**
      * Hold the download until the card comes near the viewport.
      *
@@ -105,6 +107,7 @@
     onOpen,
     galleryMode = false,
     letterbox = false,
+    videoFit = 'contain',
     deferred = false,
     postInfo,
     barActions,
@@ -481,12 +484,11 @@
     {:else if mediaType === 'video'}
       <!-- ========== VIDEO ========== -->
       <!-- UNDER A SINGLE-ATTACHMENT POST THE BOX IS THE CALLER'S (`letterbox`): `PostContent`
-           reserves it at the video's own shape, so the video FILLS it, cropped only by the
-           `--media-max-height` ceiling. It used to draw its own 16:9 box inside that reservation,
+           reserves it at the video's own shape under the `--media-max-height` ceiling, and the
+           video is CONTAINED in it: the whole frame, the sides filled by a blurred copy of its first frame (`InlineVideo` `backdrop`)
+           (user, 2026-10-22; a gallery cell passes `videoFit="cover"`, its square being the point). It used to draw its own 16:9 box inside that reservation,
            which put a phone's vertical clip in a narrow strip over a grey band (Mi 9T, 2026-09-29).
-           Cropping is right for a video where it is not for a still: the poster rule
-           (`mediaAspectStyle`) is about text at the edge of a picture, a clip's subject is in its
-           middle, and the whole frame is one tap away in the viewer. -->
+           It was cropped (`object-cover`) until 2026-10-22, which cut a portrait clip. -->
       <InlineVideo
         src={playUrl!}
         disableRemotePlayback={streamManaged}
@@ -494,10 +496,15 @@
         onVideo={attachStream}
         onOpen={() => (onOpen ? onOpen() : (lightboxOpen = true))}
         openLabel={m.post_fullscreen_label()}
+        backdrop={letterbox && videoFit === 'contain'}
         class={letterbox
-          ? 'h-full w-full bg-black'
+          ? videoFit === 'contain'
+            ? 'bg-cn-surface h-full w-full'
+            : 'h-full w-full bg-black'
           : 'aspect-video w-full max-w-md rounded-3xl bg-black/10 shadow-sm dark:bg-black/40'}
-        videoClass="h-full w-full {letterbox ? 'object-cover object-center' : 'object-contain'}"
+        videoClass="relative h-full w-full {letterbox && videoFit === 'cover'
+          ? 'object-cover object-center'
+          : 'object-contain'}"
       />
     {:else if mediaType === 'audio'}
       <!-- ========== AUDIO ========== -->
