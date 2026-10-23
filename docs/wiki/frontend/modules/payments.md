@@ -30,6 +30,17 @@ Lydia has no live status-poll endpoint, no customer object and no saved methods:
 not map onto it were removed rather than faked. The provider mapping and the credentials are in
 [`plans/stripe-to-lydia-migration.md`](../../../../plans/stripe-to-lydia-migration.md) (archived).
 
+**Which Lydia the credentials address is `LYDIA_ENV`, and each estate sets it differently (2026-10-23).**
+`lydia-payment-provider.ts` uses `https://lydia-app.com` only for the exact word `production` and the
+homologation sandbox for anything else. Production renders it from the GitHub secret `LYDIA_ENV`
+(manifest row `required`); `render-env.sh` refuses a production deploy without it, or with any value
+but `production` or `homologation`, so production holds its Provider pair against the Lydia it names.
+Until that row existed, production's `.env` kept `infrastructure/.env.example`'s `homologation` - the
+compose default `${LYDIA_ENV:-production}` never applies, because the template always sets the key.
+Dev skips the row and pins `LYDIA_ENV: homologation` as a literal in `docker-compose.dev.yml`, with
+the sandbox pair in `DEV_LYDIA_*` ([dev-environment](../../infrastructure/dev-environment.md)). The
+setting above still decides whether payments are live at all.
+
 ## Where a provider's name may appear, and where it may not
 
 **A provider's name is true in exactly one layer.** The message catalogue says "prestataire de

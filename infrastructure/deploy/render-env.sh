@@ -215,6 +215,17 @@ whole_number() {
   return 1
 }
 
+# ── Enumerated values ─────────────────────────────────────────────────────────
+# A value the service reads as ONE OF A FEW WORDS. core-service maps any LYDIA_ENV other than
+# `production` to the sandbox base URL, so a typo such as `prod` would silently send production's
+# Provider pair to the sandbox. Prints the accepted words, space-separated, or nothing when the key
+# is free-form.
+allowed_values() {
+  case "$1" in
+  LYDIA_ENV) printf 'production homologation' ;;
+  esac
+}
+
 # ── Pass 1: resolve everything, and fail before writing anything ─────────────
 # Two passes deliberately. A required secret discovered missing halfway through would otherwise
 # leave .env regenerated from the template with some keys upserted and the rest at their template
@@ -289,6 +300,18 @@ while IFS=$'\t' read -r key prod dev source note; do
   if whole_number "$key" && ! [[ "$value" =~ ^[0-9]{1,15}$ ]]; then
     printf '::error::%s is set for the %s environment but is not a whole number - %s
 '       "$key" "$ENVIRONMENT" "$note" >&2
+    MISSING=1
+    continue
+  fi
+
+  allowed="$(allowed_values "$key")"
+  accepted=0
+  for word in $allowed; do
+    if [ "$value" = "$word" ]; then accepted=1; fi
+  done
+  if [ -n "$allowed" ] && [ "$accepted" -eq 0 ]; then
+    printf '::error::%s is set for the %s environment to "%s", which is not one of: %s - %s\n' \
+      "$key" "$ENVIRONMENT" "$value" "$allowed" "$note" >&2
     MISSING=1
     continue
   fi
