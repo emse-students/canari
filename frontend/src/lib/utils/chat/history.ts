@@ -35,7 +35,7 @@ import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
-import { applyReaction } from '$lib/utils/chat/messageReactions';
+import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
 import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
@@ -484,6 +484,64 @@ export function replayedRowBody(
 }
 
 /**
+ * The stored row a replay page writes for one queued message, given the row this device already
+ * stores under its id (`prev`, read before the batch write). A replay re-reads what earlier runs
+ * wrote, so the stored row is evidence:
+ *
+ * - **Never downgraded.** A stored row that is not marked keeps its sender, body, time and proofs
+ *   against a copy that is MARKED - only that copy's vetted reactions merge onto it.
+ * - **A proven copy replaces an unverified row entirely.** The stored row's sender, body and edit
+ *   state were a relayer's word; only a tombstone survives, applied on its author's grounds.
+ * - **A proof is kept** when the incoming copy carries none for the same state - re-replaying a
+ *   frame without its proof does not erase the one stored.
+ */
+export function replayedStoredRow(
+  pm: Omit<PendingHistoryMessage, 'ingestSequence'>,
+  prev: StoredMessage | undefined,
+  at: { id: string; conversationId: string; userId: string }
+): StoredMessage {
+  if (prev && !prev.restoredUnverified && pm.restoredUnverified) {
+    const reactions = mergeReactions(prev.reactions ?? [], pm.reactions ?? []);
+    return reactions ? { ...prev, reactions } : prev;
+  }
+  const base =
+    prev?.restoredUnverified && !pm.restoredUnverified && !prev.isDeleted ? undefined : prev;
+  const deleted = base?.isDeleted === true || pm.isDeleted === true;
+  const edited = base?.isEdited === true || pm.isEdited === true;
+  const authorship = pm.authorship ?? base?.authorship;
+  const editProof = pm.editProof ?? base?.editProof;
+  const deleteProof = pm.deleteProof ?? base?.deleteProof;
+  return {
+    id: at.id,
+    conversationId: at.conversationId,
+    senderId: pm.senderId.toLowerCase(),
+    // Preserve deleted/edited content from DB if the mutation event was already processed in a
+    // prior run and is now in seenCipherHashes (`base`), combined with the state the history_bundle
+    // carried (`pm`), so fresh installs reflect deletions and edits without replaying the events.
+    content: replayedRowBody(base, pm),
+    // No lookup: this path builds rows from the bundle, and what we already hold is `base`.
+    timestamp: resolveMessageTimestamp(
+      pm,
+      () => undefined,
+      isOwnMessage(pm.senderId, at.userId)
+    ).getTime(),
+    ...(deleted ? { isDeleted: true } : {}),
+    ...(edited ? { isEdited: true } : {}),
+    // What we already hold wins - it came from the edit event itself - and the bundle supplies it on
+    // a fresh install, which would otherwise show "edited" with no time for ever.
+    ...(base?.editedAt || pm.editedAt ? { editedAt: base?.editedAt ?? pm.editedAt } : {}),
+    ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
+    ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
+    // The authors' signatures and the mark, at rest with the row, so this device relays the proofs
+    // in its own bundles and shows the mark after a reload. A tombstone keeps only its own proof.
+    ...(authorship && !deleted ? { authorship } : {}),
+    ...(editProof && edited && !deleted ? { editProof } : {}),
+    ...(deleteProof && deleted ? { deleteProof } : {}),
+    ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+  };
+}
+
+/**
  * Converts raw StoredMessage rows (from IndexedDB, or out of a peer's history bundle) to ChatMessage
  * objects, deriving BOTH sender-relative flags - `isOwn` and `isSystem` - from `senderId`.
  *
@@ -739,10 +797,18 @@ export async function replayConversationHistory(params: {
     // because addMessageToChat does not need them (the mutations arrive via separate MLS
     // events during a normal session).
     const pendingMessages: PendingHistoryMessage[] = [];
+    // The same queued objects, by message id: a replayed bundle naming one updates it in place
+    // (`applyReplaySystemEvent`) instead of queueing a second row the batch write would store last.
+    const pendingById = new Map<string, PendingHistoryMessage>();
+    const queuePending = (pm: PendingHistoryMessage): void => {
+      pendingMessages.push(pm);
+      const id = normalizeMessageId(pm.messageId);
+      if (id) pendingById.set(id, pm);
+    };
     let historyIngestSeq = 0;
     /** Queues a decoded message into the page batch (assigns ingest order, bumps the count). */
     const pushPendingMessage = (entry: Omit<PendingHistoryMessage, 'ingestSequence'>): void => {
-      pendingMessages.push({
+      queuePending({
         ...entry,
         // DERIVED HERE, ONCE, FOR EVERY WRITER THAT REACHES THIS SEAM. Two of them do: the system
         // events this replay renders itself, which pass the flag, and the history_bundle loop, which
@@ -995,7 +1061,7 @@ export async function replayConversationHistory(params: {
           const serverMs = parseServerTimestampMs(msg.timestamp);
           const envelope = parsed ? appMsgToEnvelope(parsed, serverMs) : null;
           if (envelope) {
-            pendingMessages.push({
+            queuePending({
               senderId: msg.sender_id,
               content: envelope.content,
               ...envelope.options,
@@ -1039,6 +1105,7 @@ export async function replayConversationHistory(params: {
               reactionUpdates,
               authorKeys: mlsService,
               rowPatches,
+              pendingById,
               deletedMessages,
               editedMessages,
               readWatermarkUpdates,
@@ -1250,45 +1317,11 @@ export async function replayConversationHistory(params: {
 
       const toStore: StoredMessage[] = pendingMessages.map((pm) => {
         const msgId = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
-        const prev = existingById.get(msgId);
-        return {
+        return replayedStoredRow(pm, existingById.get(msgId), {
           id: msgId,
           conversationId: id,
-          senderId: pm.senderId.toLowerCase(),
-          // Preserve deleted/edited content from DB if the mutation event was already
-          // processed in a prior run and is now in seenCipherHashes.
-          // prev.isDeleted/isEdited : state from a previous run (seenCipherHashes).
-          // pm.isDeleted/isEdited   : state carried by the history_bundle.
-          // Both sources are combined so fresh installs reflect the deletions/edits
-          // without having replayed the MLS events.
-          content: replayedRowBody(prev, pm),
-          // No lookup: this path builds rows from the bundle, and what we already hold is read from
-          // `prev` above rather than searched for.
-          timestamp: resolveMessageTimestamp(
-            pm,
-            () => undefined,
-            isOwnMessage(pm.senderId, userId)
-          ).getTime(),
-          ...(prev?.isDeleted || pm.isDeleted ? { isDeleted: true } : {}),
-          ...(prev?.isEdited || pm.isEdited ? { isEdited: true } : {}),
-          // Same two sources as `content` above. What we already hold wins - it came from the edit
-          // event itself - and the bundle supplies it on a fresh install, which has no row to
-          // preserve it from and would otherwise show "edited" with no time for ever.
-          ...(prev?.editedAt || pm.editedAt ? { editedAt: prev?.editedAt ?? pm.editedAt } : {}),
-          ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
-          ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
-          // The authors' signatures and the unverified mark, at rest with the row, so this device
-          // relays the proofs in its own bundles and shows the mark after a reload. A tombstone
-          // keeps only its own proof - the original bytes go with the body.
-          ...(pm.authorship && !(prev?.isDeleted || pm.isDeleted)
-            ? { authorship: pm.authorship }
-            : {}),
-          ...(pm.editProof && !(prev?.isDeleted || pm.isDeleted)
-            ? { editProof: pm.editProof }
-            : {}),
-          ...(pm.deleteProof ? { deleteProof: pm.deleteProof } : {}),
-          ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
-        };
+          userId,
+        });
       });
       await storage.saveMessages(toStore, deviceKey());
     }

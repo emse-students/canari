@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canari } from '$lib/proto/canari.js';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { StoredMessagePatch } from '$lib/db/types';
-import { applyReplaySystemEvent } from './historySystemEvents';
+import { applyReplaySystemEvent, type PendingHistoryMessage } from './historySystemEvents';
 import { keySource, newTestAuthor, signedBy } from '$lib/crypto/messageAuthorship.testKit';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { mkSystem } from '$lib/proto/codec';
@@ -48,11 +48,13 @@ async function replayBundle(
   keys: ReturnType<typeof keySource>,
   relayer: string,
   messages: Record<string, unknown>[],
-  rows: ChatMessage[] = []
+  rows: ChatMessage[] = [],
+  pending: PendingHistoryMessage[] = []
 ) {
   let convo = { id: CONVO, name: 't', messages: rows, lifecycle: 'active' } as Conversation;
   const sinks = {
     pushed: [] as Record<string, unknown>[],
+    pendingById: new Map(pending.map((p) => [String(p.messageId), p])),
     reactionUpdates: new Map<string, MessageReaction[]>(),
     rowPatches: new Map<string, StoredMessagePatch>(),
     deletedMessages: new Map<string, { by: string; proof?: RecordedAuthorship }>(),
@@ -78,6 +80,7 @@ async function replayBundle(
     messageReactions: new Map(),
     reactionUpdates: sinks.reactionUpdates,
     rowPatches: sinks.rowPatches,
+    pendingById: sinks.pendingById,
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
     readWatermarkUpdates: {} as ReadWatermarks,
@@ -268,6 +271,88 @@ describe('a history_bundle replayed from the archive', () => {
       [held()]
     );
     expect(reactionUpdates.get('m1')?.map((r) => r.emoji)).toEqual(['y']);
+  });
+
+  it('an upgrade replaces the unverified row ENTIRELY - the sender comes from the proof', async () => {
+    const { alice, keys } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const { convo, rowPatches } = await replayBundle(
+      keys,
+      'mallory',
+      [{ id: 'm1', senderId: 'alice', content: 'x', timestamp: 1, authorship }],
+      [
+        held({
+          senderId: 'mallory',
+          content: 'words nobody signed',
+          restoredUnverified: true,
+          isEdited: true,
+          editedAt: new Date(5),
+        }),
+      ]
+    );
+    const row = convo().messages[0];
+    expect(row.senderId).toBe('alice');
+    expect(row.isEdited).toBeFalsy();
+    expect(row.editedAt).toBeUndefined();
+    expect(rowPatches.get('m1')).toEqual(
+      expect.objectContaining({
+        senderId: 'alice',
+        content: helloContent,
+        isEdited: false,
+        editedAt: null,
+        editProof: null,
+        restoredUnverified: false,
+      })
+    );
+  });
+
+  it('never queues a second row for an id this page already queued - a proven one is never downgraded', async () => {
+    const { alice, keys } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const queued: PendingHistoryMessage = {
+      senderId: 'alice',
+      content: helloContent,
+      messageId: 'm1',
+      authorship,
+      ingestSequence: 0,
+    };
+    const { pushed, pendingById } = await replayBundle(
+      keys,
+      'mallory',
+      [{ id: 'm1', senderId: 'alice', content: 'relayed words', timestamp: SENT_AT }],
+      [],
+      [queued]
+    );
+    expect(pushed).toEqual([]);
+    const row = pendingById.get('m1')!;
+    expect(row.content).toBe(helloContent);
+    expect(row.authorship).toEqual(authorship);
+    expect(row.restoredUnverified).toBeUndefined();
+  });
+
+  it('upgrades a row this page queued unverified when a proven copy follows', async () => {
+    const { alice, keys } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const queued: PendingHistoryMessage = {
+      senderId: 'mallory',
+      content: 'relayed words',
+      messageId: 'm1',
+      restoredUnverified: true,
+      ingestSequence: 0,
+    };
+    const { pushed, pendingById } = await replayBundle(
+      keys,
+      'mallory',
+      [{ id: 'm1', senderId: 'alice', content: 'x', timestamp: 1, authorship }],
+      [],
+      [queued]
+    );
+    expect(pushed).toEqual([]);
+    const row = pendingById.get('m1')!;
+    expect(row.senderId).toBe('alice');
+    expect(row.content).toBe(helloContent);
+    expect(row.authorship).toEqual(authorship);
+    expect(row.restoredUnverified).toBeFalsy();
   });
 
   it('upgrades a held MARKED row from a copy whose proof verifies, and clears the mark', async () => {

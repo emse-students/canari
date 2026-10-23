@@ -17,7 +17,9 @@ import type { AuthorKeySource, RecordedAuthorship } from '$lib/crypto/messageAut
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { m } from '$lib/paraglide/messages';
 import type { MessageReaction } from '$lib/types';
+import type { StoredMessagePatch } from '$lib/db/types';
 import { editSupersedes } from './editPrecedence';
+import { isOwnMessage } from './messageUtils';
 import { mergeReactions } from './messageReactions';
 import {
   vetRestoredDelete,
@@ -37,6 +39,18 @@ export interface BundleEntry extends RestoredMessageEntry {
   editedAt?: number;
   serverTimestamp?: number;
   deleteProof?: RecordedAuthorship;
+}
+
+/**
+ * A held MARKED row a copy proves. The proven copy replaces the row ENTIRELY: an unverified row's
+ * sender was a relayer's word exactly like its body, so the sender is the proven author too.
+ */
+export interface BundleUpgrade {
+  /** The proven author, canonical. */
+  senderId: string;
+  content: string;
+  timestamp: number;
+  authorship: RecordedAuthorship;
 }
 
 /** What vetting reads of a row this device already holds. */
@@ -69,7 +83,7 @@ export interface VettedBundle<E extends BundleEntry> {
   /** How many of `fresh` are marked unverified. */
   unverified: number;
   /** Held MARKED rows a copy proves: their body and time from the signed bytes, the mark cleared. */
-  upgrades: Map<string, { content: string; timestamp: number; authorship: RecordedAuthorship }>;
+  upgrades: Map<string, BundleUpgrade>;
   /** Per row id - fresh, upgraded, or held when asked - the entry and what it may change. */
   decisions: Map<string, { entry: E; decision: BundleRowDecision }>;
 }
@@ -130,6 +144,7 @@ export async function vetBundle<E extends BundleEntry>(
 
   // 2) A HELD ROW IS UPGRADED BY PROOF, AND BY NOTHING ELSE. A marked row takes a copy whose proof
   //    verifies here; a row that is not marked is never replaced, whatever a copy carries.
+  const upgradedBy = new Map<string, E>();
   for (const entry of entries) {
     const row = held.get(entry.id);
     if (!row?.restoredUnverified || row.isDeleted || !entry.authorship) continue;
@@ -137,11 +152,14 @@ export async function vetBundle<E extends BundleEntry>(
     const verdict = await vetRestoredMessage(keys, groupId, entry, relayer, log);
     if (verdict.kind === 'forged') onForged('message', entry.id, verdict.why);
     if (verdict.kind !== 'verified') continue;
+    // `verified` means the proof names this entry's sender as its signer.
     out.upgrades.set(entry.id, {
+      senderId: canonicalUserId(entry.senderId),
       content: verdict.content,
       timestamp: verdict.timestamp,
       authorship: verdict.authorship,
     });
+    upgradedBy.set(entry.id, entry);
   }
 
   // 3) What each entry may change on its row, against the row as it will stand: the one just
@@ -155,8 +173,10 @@ export async function vetBundle<E extends BundleEntry>(
     }
   }
   for (const [id, up] of out.upgrades) {
-    const row = held.get(id)!;
-    targets.set(id, { entry: lastById.get(id)!, row: { ...row, content: up.content } });
+    targets.set(id, {
+      entry: upgradedBy.get(id)!,
+      row: { id, senderId: up.senderId, content: up.content },
+    });
   }
   for (const { entry, verdict } of out.fresh) {
     targets.set(entry.id, {
@@ -299,4 +319,51 @@ export function mergeVettedRow<R extends MergeableRow>(
   }
   out.next = next;
   return out;
+}
+
+/** What {@link upgradedRow} reads and rewrites of an in-memory row. */
+export interface UpgradableRow {
+  senderId: string;
+  content: string;
+  timestamp: Date;
+  isOwn?: boolean;
+  restoredUnverified?: boolean;
+  isEdited?: boolean;
+  editedAt?: Date;
+}
+
+/**
+ * The in-memory row after an upgrade: sender, body and time from the proof, the mark and the
+ * unproven edit state gone (a verified EDITED message carries its signed edit, which the merge then
+ * applies to the original as to any held row).
+ */
+export function upgradedRow<R extends UpgradableRow>(row: R, up: BundleUpgrade, userId: string): R {
+  if (canonicalUserId(row.senderId) !== up.senderId) {
+    console.warn('[AUTHORSHIP] upgrade changed the claimed sender of a restored message');
+  }
+  const next: R = {
+    ...row,
+    senderId: up.senderId,
+    content: up.content,
+    timestamp: new Date(up.timestamp),
+    ...('isOwn' in row ? { isOwn: isOwnMessage(up.senderId, userId) } : {}),
+  };
+  delete next.restoredUnverified;
+  delete next.isEdited;
+  delete next.editedAt;
+  return next;
+}
+
+/** The stored-row patch of an upgrade: the same as {@link upgradedRow}, at rest. */
+export function upgradePatch(up: BundleUpgrade): StoredMessagePatch {
+  return {
+    senderId: up.senderId,
+    content: up.content,
+    timestamp: up.timestamp,
+    authorship: up.authorship,
+    restoredUnverified: false,
+    isEdited: false,
+    editedAt: null,
+    editProof: null,
+  };
 }

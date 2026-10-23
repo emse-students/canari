@@ -38,10 +38,15 @@ import type { AuthorKeySource } from '$lib/crypto/messageAuthorship';
 import type { StoredMessagePatch } from '$lib/db/types';
 import {
   mergeVettedRow,
+  upgradedRow,
+  upgradePatch,
   vetBundle,
   type BundleEntry,
+  type BundleHeldRow,
+  type BundleUpgrade,
   type ForgedReport,
   type MergeableRow,
+  type MergedRow,
 } from './bundleVetting';
 
 /**
@@ -101,6 +106,12 @@ export interface ReplaySystemEventCtx {
    */
   rowPatches: Map<string, StoredMessagePatch>;
   /**
+   * The messages this page already queued, by id - the same objects `pushPendingMessage` queued, so
+   * a replayed bundle that names one of them updates it in place rather than queueing a second row
+   * that the batch write would store last.
+   */
+  pendingById: Map<string, Omit<PendingHistoryMessage, 'ingestSequence'>>;
+  /**
    * Messages deleted via a `delete_message` event during this replay, each with the id of the
    * member that sent the event. The author check cannot always happen here - the message may not be
    * in memory yet - so the claim is carried to whoever can verify it against the stored row.
@@ -138,6 +149,26 @@ export interface ReplaySystemEventCtx {
   dropOwnExcluded: <M extends { id: string; serverTimestamp?: number; timestamp: number | Date }>(
     messages: M[]
   ) => Promise<M[] | null>;
+}
+
+/** Writes what the one merge changed back onto a queued message, with the proofs it took. */
+function writeMergedPending(
+  pm: Omit<PendingHistoryMessage, 'ingestSequence'>,
+  merged: MergedRow<MergeableRow>
+): void {
+  const row = merged.next;
+  pm.content = row.content;
+  if (merged.reactions) pm.reactions = merged.reactions;
+  if (row.isDeleted) {
+    // A tombstone keeps only its own proof - the original bytes go with the body.
+    pm.isDeleted = true;
+    delete pm.authorship;
+    delete pm.editProof;
+  }
+  if (row.isEdited) pm.isEdited = true;
+  if (row.editedAt) pm.editedAt = row.editedAt.getTime();
+  if (merged.editProof && !row.isDeleted) pm.editProof = merged.editProof;
+  if (merged.deleteProof) pm.deleteProof = merged.deleteProof;
 }
 
 /**
@@ -182,6 +213,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     messageReactions,
     reactionUpdates,
     rowPatches,
+    pendingById,
     deletedMessages,
     editedMessages,
     readWatermarkUpdates,
@@ -441,9 +473,21 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             typeof m.content === 'string' &&
             m.content !== ''
         ) as unknown as BundleEntry[];
-        const heldRows = new Map(
+        // HELD = what memory holds AND what this page already queued. A row queued earlier in the
+        // page - a decrypted original, or another bundle's copy - is held like a stored one: it is
+        // upgraded by a proof and never queued twice, so a later copy cannot overwrite it.
+        const heldRows = new Map<string, BundleHeldRow>(
           (getConversation(contactName)?.messages ?? []).map((row) => [row.id, row])
         );
+        for (const [id, pm] of pendingById) {
+          heldRows.set(id, {
+            id,
+            senderId: pm.senderId,
+            content: pm.content,
+            ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+            ...(pm.isDeleted ? { isDeleted: true } : {}),
+          });
+        }
         // The messages we would ADD, through the same hygiene filter the live handler applies - a
         // bundle replayed from the stream is the same answer arriving late, and a message from
         // inside our own exclusion window is no more ours for having waited.
@@ -472,44 +516,76 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           );
         }
 
-        // Held MARKED rows a copy proves: body and time from the signed bytes, the mark cleared, the
-        // edit state dropped with the unproven body (a verified edited message carries its signed
-        // edit, which the merge below applies to the original).
+        // Held MARKED rows a copy proves are replaced ENTIRELY by it (`upgradedRow`): a queued one
+        // in place, a stored one in memory and, at the end of the page, at rest (`upgradePatch`).
+        const memoryUpgrades = new Map<string, BundleUpgrade>();
+        for (const [id, up] of vetted.upgrades) {
+          const pm = pendingById.get(id);
+          if (!pm) {
+            memoryUpgrades.set(id, up);
+            continue;
+          }
+          const next = upgradedRow(
+            { senderId: pm.senderId, content: pm.content, timestamp: new Date(up.timestamp) },
+            up,
+            userId
+          );
+          pm.senderId = next.senderId;
+          pm.content = next.content;
+          pm.timestamp = next.timestamp;
+          pm.authorship = up.authorship;
+          delete pm.restoredUnverified;
+          delete pm.isEdited;
+          delete pm.editedAt;
+          delete pm.editProof;
+        }
         const beforeUpgrade = getConversation(contactName);
-        if (vetted.upgrades.size > 0 && beforeUpgrade) {
+        if (memoryUpgrades.size > 0 && beforeUpgrade) {
           setConversation(contactName, {
             ...beforeUpgrade,
             messages: beforeUpgrade.messages.map((row) => {
-              const up = vetted.upgrades.get(row.id);
-              if (!up) return row;
-              const {
-                restoredUnverified: _mark,
-                isEdited: _edited,
-                editedAt: _editedAt,
-                ...rest
-              } = row;
-              return { ...rest, content: up.content, timestamp: new Date(up.timestamp) };
+              const up = memoryUpgrades.get(row.id);
+              return up ? upgradedRow(row, up, userId) : row;
             }),
           });
-          for (const [id, up] of vetted.upgrades) {
-            rowPatches.set(id, {
-              ...rowPatches.get(id),
-              content: up.content,
-              timestamp: up.timestamp,
-              authorship: up.authorship,
-              restoredUnverified: false,
-            });
+          for (const [id, up] of memoryUpgrades) {
+            rowPatches.set(id, { ...rowPatches.get(id), ...upgradePatch(up) });
           }
         }
 
-        // What each entry may change on a held row, merged by the one merge and written at the end
-        // of the page (`rowPatches`, `reactionUpdates`).
+        // What each entry may change on a row this page queued, merged by the one merge in place.
+        for (const [id, pm] of pendingById) {
+          const d = vetted.decisions.get(id);
+          if (!d) continue;
+          const merged = mergeVettedRow<MergeableRow>(
+            {
+              id,
+              senderId: pm.senderId,
+              content: pm.content,
+              ...(pm.isDeleted ? { isDeleted: true } : {}),
+              ...(pm.isEdited ? { isEdited: true } : {}),
+              ...(pm.editedAt ? { editedAt: new Date(pm.editedAt) } : {}),
+              ...(pm.reactions ? { reactions: pm.reactions } : {}),
+              ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+            },
+            d.entry,
+            d.decision,
+            senderNorm,
+            messageReactions.get(id)
+          );
+          if (!merged.changed) continue;
+          writeMergedPending(pm, merged);
+          if (merged.reactions) messageReactions.set(id, merged.reactions);
+        }
+
+        // What each entry may change on a row memory holds, merged by the one merge and written at
+        // the end of the page (`rowPatches`, `reactionUpdates`).
         const convoForMerge = getConversation(contactName);
         if (convoForMerge) {
           let mergedAny = false;
           const mergedMsgs = convoForMerge.messages.map((existing) => {
             const d = vetted.decisions.get(existing.id);
-            if (!d) return existing;
+            if (!d || pendingById.has(existing.id)) return existing;
             const merged = mergeVettedRow(
               existing,
               d.entry,
@@ -567,7 +643,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             // Seeded so later reaction stream events apply on top of it, not onto an empty array.
             messageReactions.set(m.id, merged.reactions);
           }
-          pushPendingMessage({
+          const pm: Omit<PendingHistoryMessage, 'ingestSequence'> = {
             senderId: row.senderId ?? canonicalUserId(m.senderId),
             content: row.content,
             messageId: m.id,
@@ -583,17 +659,11 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             ...(typeof m.serverTimestamp === 'number'
               ? { serverTimestamp: m.serverTimestamp }
               : {}),
-            ...(merged.reactions ? { reactions: merged.reactions } : {}),
-            ...(row.isDeleted ? { isDeleted: true } : {}),
-            ...(row.isEdited ? { isEdited: true } : {}),
-            ...(row.editedAt ? { editedAt: row.editedAt.getTime() } : {}),
-            // The proofs travel on with the row, so this device relays them in its own bundles; a
-            // tombstone keeps only its own.
-            ...(m.authorship && !row.isDeleted ? { authorship: m.authorship } : {}),
-            ...(merged.editProof && !row.isDeleted ? { editProof: merged.editProof } : {}),
-            ...(merged.deleteProof ? { deleteProof: merged.deleteProof } : {}),
+            ...(m.authorship ? { authorship: m.authorship } : {}),
             ...(row.restoredUnverified ? { restoredUnverified: true } : {}),
-          });
+          };
+          writeMergedPending(pm, merged);
+          pushPendingMessage(pm);
         }
       }
     }

@@ -103,6 +103,7 @@ async function replay(
     reactionUpdates: sinks.reactionUpdates,
     authorKeys: keySource({}),
     rowPatches: new Map(),
+    pendingById: new Map(),
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
     readWatermarkUpdates: sinks.readWatermarkUpdates,

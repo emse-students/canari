@@ -27,7 +27,12 @@ import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
 import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/chat/historyReconcile';
 import { owedPullTicket } from '$lib/utils/chat/historyOverheardPull';
 import { dropOwnExcludedMessages } from '$lib/utils/chat/historyEntitlement';
-import { mergeVettedRow, vetBundle } from '$lib/utils/chat/bundleVetting';
+import {
+  mergeVettedRow,
+  upgradedRow,
+  upgradePatch,
+  vetBundle,
+} from '$lib/utils/chat/bundleVetting';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
 import {
@@ -1069,9 +1074,9 @@ export async function handleSystemEvent(
           );
         }
 
-        // 2) The upgrades, in memory and at rest. The edit state goes with the unproven body: a
-        //    verified EDITED message carries its signed edit, which step 4 applies to this original
-        //    as to any held row.
+        // 2) The upgrades, in memory and at rest: the proven copy replaces the marked row ENTIRELY -
+        //    sender, body and time - and the unproven edit state goes with it (a verified EDITED
+        //    message carries its signed edit, which step 4 applies to this original).
         const upgrades = vettedBundle.upgrades;
         const beforeUpgrade = conversations.get(convoKey);
         if (upgrades.size > 0 && beforeUpgrade) {
@@ -1079,14 +1084,7 @@ export async function handleSystemEvent(
             ...beforeUpgrade,
             messages: beforeUpgrade.messages.map((row) => {
               const up = upgrades.get(row.id);
-              if (!up) return row;
-              const {
-                restoredUnverified: _mark,
-                isEdited: _edited,
-                editedAt: _editedAt,
-                ...rest
-              } = row;
-              return { ...rest, content: up.content, timestamp: new Date(up.timestamp) };
+              return up ? upgradedRow(row, up, userId) : row;
             }),
           });
           log(
@@ -1094,16 +1092,7 @@ export async function handleSystemEvent(
           );
           for (const [id, up] of upgrades) {
             try {
-              await storage?.updateMessage(
-                id,
-                {
-                  content: up.content,
-                  timestamp: up.timestamp,
-                  authorship: up.authorship,
-                  restoredUnverified: false,
-                },
-                deviceKey()
-              );
+              await storage?.updateMessage(id, upgradePatch(up), deviceKey());
             } catch (e) {
               log(`[AUTHORSHIP] upgrade of ${id.slice(0, 8)} not persisted: ${String(e)}`);
             }

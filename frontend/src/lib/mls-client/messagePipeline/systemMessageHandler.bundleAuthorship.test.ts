@@ -8,6 +8,7 @@ import {
 } from '$lib/crypto/messageAuthorship.testKit';
 import { mkSystem } from '$lib/proto/codec';
 import { mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
+import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from '$lib/db/messagePayload';
 import {
   recordedIntegrityFindings,
   resetIntegrityFindings,
@@ -356,6 +357,72 @@ describe('history_bundle - restored history carries its author signature', () =>
       'device-key'
     );
     expect(added(ctx)).toEqual([]);
+  });
+
+  it('an upgrade replaces the unverified row ENTIRELY - the sender comes from the proof', async () => {
+    // The marked row names mallory under an id alice's signed message carries: its sender was a
+    // relayer's word like its body, and must not survive the proof.
+    const { alice, mallory } = await cast();
+    const held = {
+      id: 'm1',
+      senderId: 'mallory',
+      content: 'words nobody signed',
+      timestamp: new Date(1),
+      restoredUnverified: true,
+      isEdited: true,
+      editedAt: new Date(5),
+    };
+    const ctx = makeCtx(alice, mallory, [held]);
+    const authorship = await signedBy(alice, GROUP, HELLO);
+
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [{ id: 'm1', senderId: 'alice', content: 'x', timestamp: 1, authorship }] },
+      ctx as any
+    );
+
+    const row = ctx.conversations.get(GROUP).messages[0];
+    expect(row.senderId).toBe('alice');
+    expect(row.content).toBe(helloContent);
+    expect(row.isEdited).toBeFalsy();
+    expect(row.editedAt).toBeUndefined();
+    const patch = ctx.storage.updateMessage.mock.calls.find((c: any[]) => c[0] === 'm1')?.[1];
+    expect(patch).toEqual(
+      expect.objectContaining({
+        senderId: 'alice',
+        content: helloContent,
+        authorship,
+        restoredUnverified: false,
+        isEdited: false,
+        editedAt: null,
+        editProof: null,
+      })
+    );
+    // And after a reload: the stored row carries none of the unproven edit state.
+    const reloaded = fromMessagePayload(
+      { id: 'm1', conversationId: GROUP, timestamp: SENT_AT },
+      toMessagePayload(
+        mergeStoredMessage(
+          {
+            id: 'm1',
+            conversationId: GROUP,
+            senderId: 'mallory',
+            content: 'words nobody signed',
+            timestamp: 1,
+            restoredUnverified: true,
+            isEdited: true,
+            editedAt: 5,
+          },
+          patch
+        )
+      )
+    );
+    expect(reloaded).toEqual(
+      expect.objectContaining({ senderId: 'alice', content: helloContent, authorship })
+    );
+    expect(reloaded.isEdited).toBeFalsy();
+    expect(reloaded.editedAt).toBeUndefined();
+    expect(reloaded.restoredUnverified).toBeFalsy();
   });
 
   it('never replaces a held row that is not marked, whatever proof a copy carries', async () => {

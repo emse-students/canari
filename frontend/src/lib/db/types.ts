@@ -75,9 +75,10 @@ export interface StoredMessage {
   /**
    * Unix ms of the last edit, carried by the `edit_message` event. Optional and absent from rows
    * written before it existed: `isEdited` alone still renders the "edited" marker, and the info
-   * tooltip simply omits the time rather than inventing one.
+   * tooltip simply omits the time rather than inventing one. `null` clears it (a restored row whose
+   * unproven edit state an upgrade drops).
    */
-  editedAt?: number;
+  editedAt?: number | null;
   /** True when stored from FCM notification preview (plain text). */
   isFcmPreview?: boolean;
   /**
