@@ -109,7 +109,12 @@ re-issuable (measured). An unknown `provider_token` answers `{status: "error", c
 onboarding replaces the linked Business silently: **refuse or confirm** is owed ([backlog](backlog.md)).
 
 Fields Canari sends: `provider_token`, `name`, `address`, `zipcode`, `city`, `country`, `business_email`,
-`business_phone`. In production (measured 2026-10-23) the answer also carries `merchant_ident`, EMPTY while
+`business_phone`, each as typed in the onboarding form (`country` is the word typed, e.g. "France", not an
+ISO code). **That these seven SUFFICE is measured** (three creations accepted in production 2026-10-23;
+`provider_token` alone answers error 1). **That they are the WHOLE list is not**: it was taken from Lydia's
+API documentation during the 2026-09 migration plan, which is not kept in this repository, and no optional
+field was ever tried (the plan names an optional `webhook`). Which field, if any, names the Business's
+HOLDER is the open question of the console sign-in below (asked to Lydia). In production (measured 2026-10-23) the answer also carries `merchant_ident`, EMPTY while
 the Business is not validated, and `dashboard_url` is `.../console-pro/<business id>-<slug>`. That link
 answers **404 to anyone not signed in to the Lydia console**, on the sandbox and in production alike: it is
 not a sign-in link, and the console path is the one below.
