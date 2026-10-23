@@ -218,8 +218,8 @@ it('the comments open in a sheet over the reel, as a history entry of their own'
 
   await click('[data-reel-rail-comments]');
 
-  expect(q('[data-reel-comments-sheet]')).not.toBeNull();
-  expect(q('[data-reel-comments-sheet]')!.textContent).toContain('text c1');
+  expect(q('[data-comments-drawer-sheet]')).not.toBeNull();
+  expect(q('[data-comments-drawer-sheet]')!.textContent).toContain('text c1');
   // The reel is still mounted under it: the sheet covers its lower part, it does not replace it.
   expect(q('[data-reel-slide="a"]')).not.toBeNull();
   expect(vi.mocked(pushHistoryOverlay).mock.calls.length).toBe(pushedBefore + 1);
@@ -235,7 +235,7 @@ it('Back closes the sheet and leaves the viewer open', async () => {
   back();
   await settle();
 
-  expect(q('[data-reel-comments-sheet]')).toBeNull();
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
   expect(onClose).not.toHaveBeenCalled();
 });
 
@@ -246,7 +246,7 @@ it('Escape closes the sheet, not the viewer', async () => {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
   await settle();
 
-  expect(q('[data-reel-comments-sheet]')).toBeNull();
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
   expect(onClose).not.toHaveBeenCalled();
 });
 
@@ -254,12 +254,12 @@ it('the X and a tap on the reel above close the sheet', async () => {
   await render(post('a'), 'alice');
 
   await click('[data-reel-rail-comments]');
-  await click('[data-reel-comments-close]');
-  expect(q('[data-reel-comments-sheet]')).toBeNull();
+  await click('[data-comments-drawer-close]');
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
 
   await click('[data-reel-rail-comments]');
-  await click('[data-reel-comments-backdrop]');
-  expect(q('[data-reel-comments-sheet]')).toBeNull();
+  await click('[data-comments-drawer-backdrop]');
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
 });
 
 it('a post of one picture is a photo page, with the rail and no player', async () => {
