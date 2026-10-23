@@ -1994,6 +1994,9 @@ export abstract class BaseMlsService implements IMlsService {
           const closing = drainIngest;
           drainIngest = null;
           await this.endBulkIngest(closing);
+          // AFTER the window closes: a contact line is a row like any other, and the rows of the
+          // drain are flushed first. Not awaited - a notice must never hold the next drain.
+          void this.handOverDeviceEvents('drain end');
         },
       }
     );
@@ -4887,11 +4890,66 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * Every device admission recorded since the last call (`DeviceEvent`), oldest first, and forgets
    * them. Computed in Rust from the signed commits this device merged - never from the server - and
-   * kept in the sealed MLS state until taken, so the UI that will show "a device was added" is one
-   * caller of this (decided by the user 2026-10-22; the UI is owed).
+   * kept in the sealed MLS state until taken. The notices take them through
+   * {@link setDeviceEventConsumer}; this is the direct read.
    */
   async takeDeviceEvents(): Promise<DeviceEvent[]> {
     return this.takeDeviceEventsNative();
+  }
+
+  /** Who the device events go to - the new-device notices (`deviceNotices.svelte.ts`). */
+  private deviceEventConsumer: ((events: DeviceEvent[]) => Promise<void>) | null = null;
+  /** Serialises the hand-overs, so two drains ending together deliver in order. */
+  private deviceEventHandOver: Promise<void> = Promise.resolve();
+
+  /**
+   * Registers the consumer of device events, or removes it (`null`, sign-out). Registering hands it
+   * whatever the state already holds - events recorded while nothing listened (a previous session,
+   * a background Add written to `mls.bin`) - so the bounded store drains rather than filling.
+   */
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void {
+    this.deviceEventConsumer = consumer;
+    console.debug(`[TRUST] device-event consumer ${consumer ? 'registered' : 'removed'}`);
+    if (consumer) void this.handOverDeviceEvents('consumer registered');
+  }
+
+  /**
+   * Takes the pending device events and hands them to the consumer - an empty take included, so the
+   * consumer retries what it parked. Called when a drain ends (the commits it merged are the usual
+   * source), after this device's own Adds and at registration. With no consumer the events stay in
+   * the sealed state, untaken, for the next one.
+   *
+   * A consumer that throws loses the events it was handed - logged at error, since that is a notice
+   * the user will never see; the consumer isolates each event itself so one cannot cost the others.
+   */
+  protected handOverDeviceEvents(why: string): Promise<void> {
+    const run = this.deviceEventHandOver.then(async () => {
+      const consumer = this.deviceEventConsumer;
+      if (!consumer) return;
+      let events: DeviceEvent[];
+      try {
+        events = await this.takeDeviceEventsNative();
+      } catch (e) {
+        console.error(`[TRUST] device events not taken (${why}) - they stay in the state:`, e);
+        return;
+      }
+      // AN EMPTY TAKE IS HANDED OVER TOO: the consumer parks an event whose evidence the server did
+      // not answer, and each hand-over - registration, every drain end, every own Add - is the
+      // durable moment it retries it. Skipping the call would leave it parked on a quiet account.
+      if (events.length > 0) {
+        console.debug(`[TRUST] ${events.length} device event(s) handed to the notices (${why})`);
+      }
+      try {
+        await consumer(events);
+      } catch (e) {
+        console.error(
+          `[TRUST] the device-notice consumer failed - ${events.length} event(s) lost:`,
+          e
+        );
+      }
+    });
+    this.deviceEventHandOver = run;
+    return run;
   }
 
   async addMember(
@@ -4919,6 +4977,8 @@ export abstract class BaseMlsService implements IMlsService {
       },
       { excludeDeviceIds, exportTree: true }
     );
+    // This device's own Add may have given its account - or a contact - a new device.
+    void this.handOverDeviceEvents('own add');
     return { welcome: result.welcome, ratchetTree: result.ratchetTree };
   }
 
@@ -4949,6 +5009,8 @@ export abstract class BaseMlsService implements IMlsService {
         this.stageReplaceDevice(groupId, `${device.userId}:${device.deviceId}`, device.keyPackage),
       { excludeDeviceIds, exportTree: true }
     );
+    // As `addMember`: a replaced device under a new key is a device event this commit recorded.
+    void this.handOverDeviceEvents('own add');
     return { welcome: result.welcome, ratchetTree: result.ratchetTree };
   }
 
@@ -4962,7 +5024,7 @@ export abstract class BaseMlsService implements IMlsService {
     addedDeviceIds: string[];
     skipped: SkippedDevice[];
   }> {
-    return this.runCommitTransaction(
+    const result = await this.runCommitTransaction(
       groupId,
       async () => {
         const staged = await this.stageAddMembers(
@@ -4982,6 +5044,8 @@ export abstract class BaseMlsService implements IMlsService {
       },
       { excludeDeviceIds, exportTree: true }
     );
+    void this.handOverDeviceEvents('own add');
+    return result;
   }
 
   async removeMember(groupId: string, userIds: string[]): Promise<void> {

@@ -48,21 +48,23 @@ Owed before it ships:
   must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
   reset). Revisit only if #2271 lands with a design that tolerates a rotation.
 
-## New-device notices: decided by the user on 2026-10-22 - the UI is owed
+## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
 
-No mandatory approval of a new device. The client that processes the signed change produces the
-notices itself, never a server message: the account owner gets an alert "a new device was added to
-your account" (in the app and as a local notification on the phone), and contacts see a discreet
-line "X added a device" in private conversations only - 1:1 and groups, never communities or salons.
+Built: the owner's in-app alert, the contact line in every DM and group shared with the contact
+(never in communities, wherever the device was first seen), the owner's notice of a refused device
+of their own with its remedy, and the native local notification on both background engines, one
+ledger between them - see
+[mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day).
+Only CI compiles the Kotlin, the Swift and the Android/iOS Rust targets.
 
-Built: the event (`DeviceEvent`, `IMlsService.takeDeviceEvents()`), the audience rule
-(`deviceEventAudience()`) and the dedup key (`deviceEventKey()`) - see
-[mls-protocol](protocols/mls-protocol.md#device-binding). Owed, as its own work package: the
-Paraglide strings, the conversation line, the in-app alert, and the native local notification when
-the Android or iOS background path merges such a commit (its events wait in `mls.bin` until the app
-takes them), deduplicated per device. Also owed there: telling a device's owner, in the app, that
-peers refuse to re-add it under its kept id until it is reset (today only the members' logs say
-so, once per session).
+Owed readings (Mi 9T and iPhone 12): add a web device to the account with both phones shut - a local
+notification on each (the iPhone at its next message push), then the in-app alert on opening, and
+no second notification; a line "X added a device" in a DM with a contact who adds a device; NO line
+in a community or salon. Owed decisions: whether a phone whose WebView is alive in the background
+should also raise the local notification (today the in-app alert only), and whether a device first
+seen in a tree this device joined should be announced; and whether 7 days is the right bound for
+a contact's line (a device first seen by the server earlier is a heal, not a new device - see the
+evidence table in mls-protocol).
 
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 

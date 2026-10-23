@@ -579,6 +579,8 @@ pub fn prepare_welcome_background_with_key(
                 return welcome_refused("state-unreadable");
             }
         };
+    // The events already waiting in the state are not this Add's; only those after them are.
+    let events_before = manager.pending_device_events().len();
     let base_epoch = match manager.get_epoch(group_id) {
         Ok(e) => e,
         Err(e) => {
@@ -660,14 +662,26 @@ pub fn prepare_welcome_background_with_key(
         "[BG_WELCOME] staged group={short} base_epoch={base_epoch} ({} bytes) - mls.bin untouched until the server accepts",
         sealed.len()
     );
-    serde_json::json!({
+    // The device this Add admitted may be a new device of THIS account - the phone serving its own
+    // account's new laptop. Its events ride in the STAGED state, so they reach `mls.bin` (and the
+    // app's notices) only with an accepted install, and vanish with a discard. The keys go to the
+    // caller for the local notification (`ownDeviceAdded`, as on the decrypt paths), which it raises
+    // only once the server ACCEPTED the commit.
+    let pending = manager.pending_device_events();
+    let added = &pending[events_before.min(pending.len())..];
+    let own_alerts = super::device_notice::owner_alert_keys_of(added, user_id, device_id);
+    let mut answer = serde_json::json!({
         "ok": true,
         "welcome": STANDARD.encode(&welcome),
         "ratchetTree": STANDARD.encode(&ratchet_tree),
         "commit": STANDARD.encode(&commit),
         "groupInfo": STANDARD.encode(&group_info),
         "baseEpoch": base_epoch,
-    })
+    });
+    if !own_alerts.is_empty() {
+        answer["ownDeviceAdded"] = serde_json::json!(own_alerts);
+    }
+    answer
 }
 
 /// Installs the state [`prepare_welcome_background_with_key`] staged for `group_id` - called ONLY
@@ -1046,6 +1060,36 @@ pub fn decrypt_push_message_with_key(
         return refused("state-unreadable");
     };
 
+    let answer = decrypt_loaded(&mut manager, frame, language);
+    with_owner_alerts(answer, &mut manager, user_id, device_id)
+}
+
+/// Adds `ownDeviceAdded` - the keys of the "a new device was added to your account" alerts the
+/// commits this push path merged in memory produced (`device_notice::owner_alert_keys`) - to a
+/// push-decrypt answer, WHATEVER the answer is: a control frame, a message, a refusal after the
+/// catch-up applied its commits. Absent when there are none. The native caller claims the keys in
+/// the shared ledger and raises one local notification for those it claimed.
+fn with_owner_alerts(
+    mut answer: serde_json::Value,
+    manager: &mut MlsManager,
+    user_id: &str,
+    device_id: &str,
+) -> serde_json::Value {
+    let keys = super::device_notice::owner_alert_keys(manager, user_id, device_id);
+    if !keys.is_empty() {
+        if let Some(obj) = answer.as_object_mut() {
+            obj.insert("ownDeviceAdded".to_string(), serde_json::json!(keys));
+        }
+    }
+    answer
+}
+
+/// The body of [`decrypt_push_message_with_key`] once the state is loaded.
+fn decrypt_loaded(
+    manager: &mut MlsManager,
+    frame: &PushFrame<'_>,
+    language: PushLanguage,
+) -> serde_json::Value {
     let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
         Ok(Some(app)) => app,
         Ok(None) => {
@@ -1063,7 +1107,7 @@ pub fn decrypt_push_message_with_key(
         }
     };
 
-    classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
+    classify_verified(manager, frame.group_id, frame.sender_id, app, language)
 }
 
 /// Refuses a decrypted frame whose envelope names another sender than the one MLS verified, then
@@ -1286,19 +1330,22 @@ pub fn decrypt_push_message_with_commits_with_key(
         }
     }
 
-    let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
-        Ok(Some(app)) => app,
+    let answer = match manager
+        .process_incoming_message_with_sender(frame.group_id, frame.ciphertext)
+    {
+        Ok(Some(app)) => {
+            classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
+        }
         Ok(None) => {
             log::debug!("[PushBG] key-based catch-up: control frame applied, nothing to render");
-            return refused("control-frame");
+            refused("control-frame")
         }
         Err(e) => {
             log::error!("[PushBG] key-based catch-up decrypt failed: {e}");
-            return refused_by_mls(&e);
+            refused_by_mls(&e)
         }
     };
-
-    classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
+    with_owner_alerts(answer, &mut manager, user_id, device_id)
 }
 
 #[cfg(test)]
@@ -2528,5 +2575,162 @@ mod tests {
         assert_eq!(out["reason"], "signature-key-changed", "{out}");
         assert!(!staged_welcome_path(&dir, &gid).exists());
         assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
+    /// User decision 2026-10-22: the owner's phone is told, even shut, when a device joins the
+    /// account. A commit adding one reaches it as a control frame (Android) or inside a catch-up
+    /// (both platforms), and BOTH answers carry the alert's key - whatever else they say.
+    #[test]
+    fn a_commit_adding_an_own_device_carries_the_owner_alert_on_both_push_paths() {
+        let tag = "own-device";
+        let (mut alice, bob, group_id) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(23)).expect("key");
+        let bob_behind = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+
+        // alice serves the welcome request of bob's new laptop.
+        let laptop = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-laptop", None)
+            .expect("laptop load_or_create");
+        let kp = laptop.generate_key_package().expect("laptop key package");
+        let (commit, _w, _a, _s) = alice
+            .add_members_bulk(&group_id, &[&kp])
+            .expect("add the laptop");
+        alice.merge_pending_commit_for(&group_id).expect("merge");
+
+        let as_control_frame = decrypt_push_message_with_key(
+            &bob_behind,
+            &key_b64(23),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &commit,
+            },
+            PushLanguage::French,
+        );
+        assert_eq!(as_control_frame["reason"], "control-frame");
+        let keys = as_control_frame["ownDeviceAdded"]
+            .as_array()
+            .expect("the alert rides on the refusal");
+        assert_eq!(keys.len(), 1, "{as_control_frame}");
+        assert!(keys[0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{tag}-bob:dev-laptop|")));
+
+        // The catch-up: the commit replayed in memory, then a message decrypted at the new epoch.
+        let frame =
+            super::super::proto_fields::build_text_app_message("m-1", 1_700_000_000_000, "hi");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let out = send_messages_background_with_key(
+            &dir_holding(tag, &alice_state),
+            &alice_state,
+            &key_b64(23),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &[entry("m-1", &group_id, &frame)],
+        )
+        .expect("alice encrypts");
+        let info = decrypt_push_message_with_commits_with_key(
+            &bob_behind,
+            &key_b64(23),
+            &format!("{tag}-bob"),
+            "dev-b",
+            &[commit],
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &ciphertexts_of(&out)[0],
+            },
+            PushLanguage::French,
+        );
+        assert_eq!(info["ok"], true, "{info}");
+        assert_eq!(info["ownDeviceAdded"], as_control_frame["ownDeviceAdded"]);
+
+        // A contact's phone merging the same commit has no owner alert.
+        let contact = decrypt_push_message_with_key(
+            &alice_state,
+            &key_b64(23),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-alice"),
+                ciphertext: &ciphertexts_of(&out)[0],
+            },
+            PushLanguage::French,
+        );
+        assert!(contact.get("ownDeviceAdded").is_none(), "{contact}");
+    }
+
+    /// The phone serving its own account's new device in the background names it for the local
+    /// notification, and the event reaches `mls.bin` - where the app takes it for the in-app alert -
+    /// ONLY with the accepted install: a discarded Add leaves no event for anyone to announce.
+    #[test]
+    fn a_background_add_of_an_own_device_reaches_the_app_only_once_accepted() {
+        let _s = crate::concurrency::test_support::serialise();
+        crate::concurrency::mark_foreground_inactive();
+        let tag = "own-welcome";
+        let (alice, _bob, gid) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(29)).expect("key");
+        let state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let laptop = MlsManager::load_or_create(&format!("{tag}-alice"), "dev-laptop", None)
+            .expect("laptop");
+        let kp = STANDARD.encode(laptop.generate_key_package().expect("kp"));
+        let requester = format!("{tag}-alice:dev-laptop");
+        let prepare = |dir: &Path| {
+            prepare_welcome_background_with_key(
+                dir,
+                &state,
+                &key_b64(29),
+                &format!("{tag}-alice"),
+                "dev-a",
+                &WelcomeRequest {
+                    group_id: &gid,
+                    requester: &requester,
+                    key_package_b64: &kp,
+                },
+            )
+        };
+        let owner_events = |dir: &Path| {
+            let saved = std::fs::read(dir.join("mls.bin")).expect("mls.bin");
+            let mut reloaded =
+                MlsManager::load_with_key(&format!("{tag}-alice"), "dev-a", Some(saved), &key)
+                    .expect("reload");
+            reloaded
+                .take_device_events()
+                .into_iter()
+                .filter(|e| e.is_owner_alert(&format!("{tag}-alice"), "dev-a"))
+                .count()
+        };
+
+        // Refused by the server: discarded, and nothing for the app to announce.
+        let refused_dir = dir_holding(&format!("{tag}-refused"), &state);
+        let out = prepare(&refused_dir);
+        assert_eq!(
+            out["ownDeviceAdded"].as_array().map(Vec::len),
+            Some(1),
+            "{out}"
+        );
+        discard_staged_welcome(&refused_dir, &gid, RefusalMemo::Nothing);
+        assert_eq!(
+            owner_events(&refused_dir),
+            0,
+            "a discarded Add announces nothing"
+        );
+
+        // Accepted: installed, and the event is the app's.
+        let accepted_dir = dir_holding(&format!("{tag}-accepted"), &state);
+        let out = prepare(&accepted_dir);
+        let keys = out["ownDeviceAdded"]
+            .as_array()
+            .expect("named for the notice");
+        assert_eq!(keys.len(), 1, "{out}");
+        assert!(keys[0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("{requester}|")));
+        assert_eq!(install_staged_welcome(&accepted_dir, &gid)["ok"], true);
+        assert_eq!(owner_events(&accepted_dir), 1, "the installed Add's event");
     }
 }

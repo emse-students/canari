@@ -707,10 +707,16 @@ export interface IMlsService {
   leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
   /**
    * The new devices (first sight or a changed key) recorded from merged signed commits since the
-   * last call, oldest first; taking them forgets them. The notices built from them are owed
-   * (`deviceEventAudience`).
+   * last call, oldest first; taking them forgets them. The new-device notices take them through
+   * `setDeviceEventConsumer`.
    */
   takeDeviceEvents(): Promise<DeviceEvent[]>;
+  /**
+   * Registers who device events are handed to - after each drain, after this device's own Adds,
+   * and once at registration for what the state already holds - or removes it with `null`. The
+   * new-device notices (`deviceNotices.svelte.ts`) are the one consumer.
+   */
+  setDeviceEventConsumer(consumer: ((events: DeviceEvent[]) => Promise<void>) | null): void;
   /**
    * The pin of `userId:deviceId` - the signature keys this device has seen for it in a signed tree
    * it merged or joined (`DevicePin`) - or `null` for a device it never saw: THE SINGLE SOURCE OF

@@ -207,6 +207,7 @@ import {
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
+import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 
 /**
  * Unregisters this session's presence listener. Module-level because the presence store outlives
@@ -1723,6 +1724,15 @@ export async function loginImpl(
         onBulkIngestEnd: (phase) => endUi(phase),
       });
     }
+    // The new-device notices consume the device events from here on, and drain what is pending.
+    registerDeviceNotices(mlsService, {
+      getUserId: () => ctx.getUserId(),
+      getMyDeviceId: () => ctx.getMyDeviceId(),
+      conversations: cb.conversations,
+      storedConversation: (groupId) => storageSettled.value.getConversation(groupId),
+      addMessageToChat: (senderId, content, contactName, options) =>
+        cb.addMessageToChat(senderId, content, contactName, options),
+    });
     endStartupCatchupPhase();
 
     /**

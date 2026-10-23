@@ -635,7 +635,13 @@ export class DevicesController {
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    return { keys: await this.deviceSignatureKeys.keysFor(safeUserId, safeDeviceId) };
+    // `firstSeen` dates the keys the history recorded (`firstSeenFor`); additive, so an older
+    // client reading `keys` alone is unaffected.
+    const [keys, firstSeen] = await Promise.all([
+      this.deviceSignatureKeys.keysFor(safeUserId, safeDeviceId),
+      this.deviceSignatureKeys.firstSeenFor(safeUserId, safeDeviceId),
+    ]);
+    return { keys, firstSeen };
   }
 
   @UseGuards(HeaderAuthGuard)
