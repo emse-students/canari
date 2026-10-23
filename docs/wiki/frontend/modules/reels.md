@@ -565,8 +565,8 @@ below; **owed on both phones**
   `commentCount` to its ledger: a read issued before the write adopts neither.
 - **Send is the post menu's share**: both open the post's share sheet (`PostShareSheet`, loaded on
   the first send and drawn inside the viewer, so above it). Sending INTO a conversation lands the
-  link in that conversation's composer; the rest of the design is open with the user
-  ([sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)).
+  link in that conversation's composer, and a tap on that link's card there opens the reel in this
+  viewer ([sharing S6](../sharing.md#a-post-or-a-reel-shared-from-its-sheet---lot-s6)).
 - **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
   `docked` mode (the list scrolls, the composer stays at the bottom), written through
   `posts/postCommentThread.svelte.ts`, the class the card now uses too, and reported through
