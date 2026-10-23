@@ -532,7 +532,7 @@ jobs:
         # schema with `synchronize` (extensions included) and the account-erasure SQL runs on it below:
         # proving either on another major proves it on a server production does not run. Bump it WITH
         # the compose files, never alone.
-        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: boot-probe
@@ -709,7 +709,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe
@@ -1324,6 +1324,7 @@ jobs:
   # request red until the one that fixes it merges, which is the point; and an outage makes this
   # job slow (three attempts with backoff) without making it red. The nightly `scheduled.yml` keeps
   # `registry_outage_is_failure: true`, so a tree npm never answered for is still reported there.
+  # The container image scan (`image-scan`, 2026-10-23) is in the same half on the same terms.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   dependency-audit:
     name: Dependency audit
