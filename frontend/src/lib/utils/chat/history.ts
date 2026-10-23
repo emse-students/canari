@@ -41,6 +41,7 @@ import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { editSupersedes } from './editPrecedence';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -484,12 +485,75 @@ export function replayedRowBody(
 }
 
 /**
+ * A PROVEN stored row against a MARKED copy of it. The copy's sender, body and time are a relayer's
+ * word and never move; what it carries on a proof of its own does - the vetting applied an author's
+ * signed tombstone or edit to it (`writeMergedPending` keeps `deleteProof` / `editProof` only then),
+ * and dropping it here would leave a row its author deleted visible for ever. Reactions merge pair by
+ * pair, as vetted.
+ */
+function provenRowUnderMarkedCopy(
+  prev: StoredMessage,
+  pm: Omit<PendingHistoryMessage, 'ingestSequence'>
+): StoredMessage {
+  const reactions = mergeReactions(prev.reactions ?? [], pm.reactions ?? []);
+  const kept: StoredMessage = reactions ? { ...prev, reactions } : prev;
+  // A mutation's proof names the author it was verified against: the MARKED copy's claimed sender.
+  // It speaks for the proven row only when that is the same author.
+  if (prev.isDeleted || canonicalUserId(pm.senderId) !== canonicalUserId(prev.senderId)) {
+    return kept;
+  }
+  if (pm.isDeleted && pm.deleteProof) {
+    console.debug(
+      `[HISTORY_REPLAY] a signed deletion carried by an unverified copy tombstones proven ${at8(prev.id)}`
+    );
+    const tombstone: StoredMessage = {
+      ...kept,
+      isDeleted: true,
+      content: chat_system_message_deleted(),
+      deleteProof: pm.deleteProof,
+    };
+    // A tombstone keeps only its own proof - the original bytes go with the body.
+    delete tombstone.authorship;
+    delete tombstone.editProof;
+    delete tombstone.isEdited;
+    delete tombstone.editedAt;
+    return tombstone;
+  }
+  if (
+    pm.isEdited &&
+    pm.editProof &&
+    typeof pm.editedAt === 'number' &&
+    editSupersedes({ editedAt: pm.editedAt, content: pm.content }, prev)
+  ) {
+    console.debug(
+      `[HISTORY_REPLAY] a signed edit carried by an unverified copy applies to proven ${at8(prev.id)}`
+    );
+    // The signed TEXT onto the proven row's own body: the copy's envelope (reply, media) is the
+    // relayer's word and stays out.
+    return {
+      ...kept,
+      content: applyEditToBody(prev.content, envelopeBodyText(pm.content)),
+      isEdited: true,
+      editedAt: pm.editedAt,
+      editProof: pm.editProof,
+    };
+  }
+  return kept;
+}
+
+/** The first eight characters of an id, for a log line. */
+function at8(id: string): string {
+  return `${id.slice(0, 8)}…`;
+}
+
+/**
  * The stored row a replay page writes for one queued message, given the row this device already
  * stores under its id (`prev`, read before the batch write). A replay re-reads what earlier runs
  * wrote, so the stored row is evidence:
  *
  * - **Never downgraded.** A stored row that is not marked keeps its sender, body, time and proofs
- *   against a copy that is MARKED - only that copy's vetted reactions merge onto it.
+ *   against a copy that is MARKED - only what that copy carries on its own proof moves onto it
+ *   ({@link provenRowUnderMarkedCopy}).
  * - **A proven copy replaces an unverified row entirely.** The stored row's sender, body and edit
  *   state were a relayer's word; only a tombstone survives, applied on its author's grounds.
  * - **A proof is kept** when the incoming copy carries none for the same state - re-replaying a
@@ -501,8 +565,7 @@ export function replayedStoredRow(
   at: { id: string; conversationId: string; userId: string }
 ): StoredMessage {
   if (prev && !prev.restoredUnverified && pm.restoredUnverified) {
-    const reactions = mergeReactions(prev.reactions ?? [], pm.reactions ?? []);
-    return reactions ? { ...prev, reactions } : prev;
+    return provenRowUnderMarkedCopy(prev, pm);
   }
   const base =
     prev?.restoredUnverified && !pm.restoredUnverified && !prev.isDeleted ? undefined : prev;

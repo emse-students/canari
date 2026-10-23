@@ -1176,8 +1176,11 @@ row's sender was a relayer's word like its body), body and time from the signed 
 the unproven edit state cleared, in memory and at rest (`upgradedRow`, `upgradePatch`); a changed
 sender is logged at WARN. A held row that is not marked is never replaced. The archive replay holds
 the rows its page already queued like stored ones - a bundle naming one updates it in place, never
-queues a second - and its batch write never downgrades a stored proven row, and keeps a stored proof
-the incoming copy lacks (`replayedStoredRow`). Within one bundle that
+queues a second, and the same merge reaches that row's copy in memory when both name one author -
+and its batch write never downgrades a stored proven row, and keeps a stored proof the incoming copy
+lacks (`replayedStoredRow`). Not downgrading is about the copy's own word only: an author-signed
+tombstone or edit that a marked copy carries still applies to the proven row, the edit's signed TEXT
+onto that row's own body (`provenRowUnderMarkedCopy`). Within one bundle that
 carries an id twice, a proven copy wins over a marked one in either order
 (`systemMessageHandler.ts`, `upgradeUnverifiedRows`).
 

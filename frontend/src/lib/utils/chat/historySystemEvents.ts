@@ -28,6 +28,7 @@ import {
 import {
   serializeEnvelope,
   applyEditToBody,
+  envelopeBodyText,
   mkChannelInviteEnvelope,
   mkChannelInviteSentEnvelope,
   channelInviteMessageId,
@@ -43,6 +44,7 @@ import {
   vetBundle,
   type BundleEntry,
   type BundleHeldRow,
+  type BundleRowDecision,
   type BundleUpgrade,
   type ForgedReport,
   type MergeableRow,
@@ -521,10 +523,10 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         const memoryUpgrades = new Map<string, BundleUpgrade>();
         for (const [id, up] of vetted.upgrades) {
           const pm = pendingById.get(id);
-          if (!pm) {
-            memoryUpgrades.set(id, up);
-            continue;
-          }
+          // Memory follows, whether or not the page queued the row: what the stored write misses
+          // is patched at the end of the page; a queued row's own write already carries it.
+          memoryUpgrades.set(id, up);
+          if (!pm) continue;
           const next = upgradedRow(
             { senderId: pm.senderId, content: pm.content, timestamp: new Date(up.timestamp) },
             up,
@@ -545,10 +547,14 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             ...beforeUpgrade,
             messages: beforeUpgrade.messages.map((row) => {
               const up = memoryUpgrades.get(row.id);
-              return up ? upgradedRow(row, up, userId) : row;
+              // A queued row was the held one; memory's copy of it is upgraded only if it is marked
+              // too - a proven row in memory is never rewritten by a bundle.
+              if (!up || (pendingById.has(row.id) && !row.restoredUnverified)) return row;
+              return upgradedRow(row, up, userId);
             }),
           });
           for (const [id, up] of memoryUpgrades) {
+            if (pendingById.has(id)) continue;
             rowPatches.set(id, { ...rowPatches.get(id), ...upgradePatch(up) });
           }
         }
@@ -585,7 +591,39 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           let mergedAny = false;
           const mergedMsgs = convoForMerge.messages.map((existing) => {
             const d = vetted.decisions.get(existing.id);
-            if (!d || pendingById.has(existing.id)) return existing;
+            if (!d) return existing;
+            const queued = pendingById.get(existing.id);
+            if (queued) {
+              // The page queued this row too, and the queued row's write (`replayedStoredRow`)
+              // is what reaches storage - memory takes the same merge so it does not wait for a
+              // reload. The decision was vetted against the QUEUED row's author, so it speaks for
+              // memory's only when that is the same author; a signed edit's text goes onto
+              // memory's own body.
+              if (canonicalUserId(existing.senderId) !== canonicalUserId(queued.senderId)) {
+                return existing;
+              }
+              const edit = d.decision.edit;
+              const decision: BundleRowDecision =
+                edit?.kind === 'apply'
+                  ? {
+                      ...d.decision,
+                      edit: {
+                        ...edit,
+                        content: applyEditToBody(existing.content, envelopeBodyText(edit.content)),
+                      },
+                    }
+                  : d.decision;
+              const merged = mergeVettedRow(
+                existing,
+                d.entry,
+                decision,
+                senderNorm,
+                existing.reactions
+              );
+              if (!merged.changed) return existing;
+              mergedAny = true;
+              return merged.next;
+            }
             const merged = mergeVettedRow(
               existing,
               d.entry,

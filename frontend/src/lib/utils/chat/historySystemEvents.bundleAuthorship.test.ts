@@ -355,6 +355,114 @@ describe('a history_bundle replayed from the archive', () => {
     expect(row.restoredUnverified).toBeFalsy();
   });
 
+  it('a row both in memory and queued takes the signed tombstone in memory too', async () => {
+    const { alice, keys } = await cast();
+    const deleteProof = await signedBy(
+      alice,
+      GROUP,
+      mkSystem('delete_message', JSON.stringify({ messageId: 'm1' }))
+    );
+    const queued: PendingHistoryMessage = {
+      senderId: 'alice',
+      content: 'relayed words',
+      messageId: 'm1',
+      restoredUnverified: true,
+      ingestSequence: 0,
+    };
+    const { convo, pendingById, rowPatches } = await replayBundle(
+      keys,
+      'mallory',
+      [
+        {
+          id: 'm1',
+          senderId: 'alice',
+          content: 'x',
+          timestamp: SENT_AT,
+          isDeleted: true,
+          deleteProof,
+        },
+      ],
+      [held()],
+      [queued]
+    );
+    expect(pendingById.get('m1')?.isDeleted).toBe(true);
+    expect(pendingById.get('m1')?.deleteProof).toEqual(deleteProof);
+    expect(convo().messages[0].isDeleted).toBe(true);
+    // The queued row's write reaches storage; no second write is patched over it.
+    expect(rowPatches.size).toBe(0);
+  });
+
+  it("a row both in memory and queued takes the signed edit's TEXT onto memory's own body", async () => {
+    const { alice, keys } = await cast();
+    const editProof = await signedBy(
+      alice,
+      GROUP,
+      mkSystem(
+        'edit_message',
+        JSON.stringify({ messageId: 'm1', newContent: 'fixed', editedAt: 9000 })
+      )
+    );
+    // Memory's body quotes one message, the relayed copy another: the quote is the body's, and only
+    // the signed text moves.
+    const ownQuote = { id: 'q-own', senderId: 'bob', content: 'quoted' };
+    const memoryBody = serializeEnvelope({ kind: 'text', text: 'hello', replyTo: ownQuote });
+    const queued: PendingHistoryMessage = {
+      senderId: 'alice',
+      content: serializeEnvelope({
+        kind: 'text',
+        text: 'relayed words',
+        replyTo: { id: 'q-relayed', senderId: 'mallory', content: 'other' },
+      }),
+      messageId: 'm1',
+      restoredUnverified: true,
+      ingestSequence: 0,
+    };
+    const { convo } = await replayBundle(
+      keys,
+      'mallory',
+      [
+        {
+          id: 'm1',
+          senderId: 'alice',
+          content: 'anything',
+          timestamp: SENT_AT,
+          isEdited: true,
+          editedAt: 9000,
+          editProof,
+        },
+      ],
+      [held({ content: memoryBody })],
+      [queued]
+    );
+    const row = convo().messages[0];
+    expect(row.content).toBe(serializeEnvelope({ kind: 'text', text: 'fixed', replyTo: ownQuote }));
+    expect(row.isEdited).toBe(true);
+  });
+
+  it('a row both in memory and queued, MARKED in both, is upgraded in memory too', async () => {
+    const { alice, keys } = await cast();
+    const authorship = await signedBy(alice, GROUP, HELLO);
+    const queued: PendingHistoryMessage = {
+      senderId: 'mallory',
+      content: 'relayed words',
+      messageId: 'm1',
+      restoredUnverified: true,
+      ingestSequence: 0,
+    };
+    const { convo, rowPatches } = await replayBundle(
+      keys,
+      'mallory',
+      [{ id: 'm1', senderId: 'alice', content: 'x', timestamp: 1, authorship }],
+      [held({ senderId: 'mallory', content: 'relayed words', restoredUnverified: true })],
+      [queued]
+    );
+    const row = convo().messages[0];
+    expect(row.senderId).toBe('alice');
+    expect(row.content).toBe(helloContent);
+    expect(row.restoredUnverified).toBeFalsy();
+    expect(rowPatches.size).toBe(0);
+  });
+
   it('upgrades a held MARKED row from a copy whose proof verifies, and clears the mark', async () => {
     const { alice, keys } = await cast();
     const authorship = await signedBy(alice, GROUP, HELLO);

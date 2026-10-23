@@ -3,6 +3,7 @@ import { replayedStoredRow } from './history';
 import type { StoredMessage } from '$lib/db';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { chat_system_message_deleted } from '$lib/paraglide/messages';
+import { envelopeBodyText } from '$lib/envelope';
 
 /**
  * The row a replay page writes for one queued message, against the row this device already stores.
@@ -56,6 +57,87 @@ describe('replayedStoredRow', () => {
     expect(row.content).toBe('signed words');
     expect(row.senderId).toBe('alice');
     expect(row.authorship).toEqual(PROOF('msg'));
+  });
+
+  it('tombstones a proven stored row when a marked copy carries its author-signed deletion', () => {
+    const prev = stored({ content: 'signed words', authorship: PROOF('msg') });
+    const row = replayedStoredRow(
+      {
+        senderId: 'alice',
+        content: chat_system_message_deleted(),
+        isDeleted: true,
+        deleteProof: PROOF('del'),
+        restoredUnverified: true,
+      },
+      prev,
+      at
+    );
+    expect(row.isDeleted).toBe(true);
+    expect(row.content).toBe(chat_system_message_deleted());
+    expect(row.deleteProof).toEqual(PROOF('del'));
+    expect(row.authorship).toBeUndefined();
+    expect(row.restoredUnverified).toBeUndefined();
+  });
+
+  it('applies the signed edit a marked copy carries onto a proven stored row, never its body', () => {
+    const prev = stored({ content: 'signed words', authorship: PROOF('msg') });
+    const row = replayedStoredRow(
+      {
+        senderId: 'alice',
+        content: 'signed edit',
+        isEdited: true,
+        editedAt: 9,
+        editProof: PROOF('edit'),
+        restoredUnverified: true,
+      },
+      prev,
+      at
+    );
+    // The signed TEXT onto the proven row's own body - its envelope, never the relayed one.
+    expect(envelopeBodyText(row.content)).toBe('signed edit');
+    expect(row.isEdited).toBe(true);
+    expect(row.editedAt).toBe(9);
+    expect(row.editProof).toEqual(PROOF('edit'));
+    expect(row.authorship).toEqual(PROOF('msg'));
+    expect(row.restoredUnverified).toBeUndefined();
+  });
+
+  it('ignores an unsigned edit or deletion a marked copy carries onto a proven stored row', () => {
+    const prev = stored({ content: 'signed words', authorship: PROOF('msg') });
+    const edited = replayedStoredRow(
+      {
+        senderId: 'alice',
+        content: 'relayed edit',
+        isEdited: true,
+        editedAt: 9,
+        restoredUnverified: true,
+      },
+      prev,
+      at
+    );
+    expect(edited).toEqual(prev);
+    const deleted = replayedStoredRow(
+      { senderId: 'alice', content: 'x', isDeleted: true, restoredUnverified: true },
+      prev,
+      at
+    );
+    expect(deleted).toEqual(prev);
+  });
+
+  it('ignores a signed mutation a marked copy carries when it claims another author', () => {
+    const prev = stored({ content: 'signed words', authorship: PROOF('msg') });
+    const row = replayedStoredRow(
+      {
+        senderId: 'mallory',
+        content: 'x',
+        isDeleted: true,
+        deleteProof: PROOF('del'),
+        restoredUnverified: true,
+      },
+      prev,
+      at
+    );
+    expect(row).toEqual(prev);
   });
 
   it('lets a proven copy replace a stored UNVERIFIED row entirely, its edit state included', () => {
