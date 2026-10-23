@@ -91,6 +91,16 @@ if ! run_ak_shell "$worker" <"$here/test-enrollment-flow.py" 2>&1 | tee >(cat >&
 fi
 echo "the enrolment flow lets the right people in, refuses the others, and writes the profile"
 
+# THE WAYS IN THAT ARE NOT THE CAS, DRIVEN. A password sign-in refuses a superuser, asks for a second
+# factor that exists, and stops after five wrong passwords; the enrolment flow does not plan without a
+# source (infrastructure/authentik/test-password-guard.py).
+echo "password sign-in and direct enrolment: driving them through the executor"
+if ! run_ak_shell "$worker" <"$here/test-password-guard.py" 2>&1 | tee >(cat >&2) | grep -qx 'PASSWORD-GUARD-OK'; then
+  echo "::error::a way into MiConnect that is not the CAS is not guarded - read the assertion above"
+  exit 1
+fi
+echo "password sign-in is guarded and enrolment starts only from a source"
+
 # THE PROFILE EDITOR, USED. Applying 80-profile-editor.yaml proves the account, role and token exist;
 # only calling the API with the token shows what a holder of it can DO - read and change users, and
 # nothing else (infrastructure/authentik/test-profile-editor.py).
