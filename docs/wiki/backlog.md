@@ -386,9 +386,14 @@ The reading has one setup and three checks:
 - **Phone (logcat).** Both of these lines appear (their wording since the typed answer, see
   [chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)):
   - `processWelcomeRequestBackground: Welcome staged ... baseEpoch=N`;
-  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - state installed`.
+  - `processWelcomeRequestBackground: group=... target=... accepted at base N - Welcome sent - staged Add merged`.
 
-  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT INSTALLED` line appears.
+  No `REFUSED`, `OUTCOME UNKNOWN` or `ACCEPTED AND NOT HELD` line appears.
+- **The same reading with the app OPENED inside the round trip** (open the app between the
+  `Welcome staged` line and the answer): the phone logs `stage left in mls.bin (left-to-foreground)`
+  or `already settled by the foreground`, then the WebView logs `[COMMIT] settling 1 staged commit(s)
+  by resubmission` and `... accepted - merged`; the newcomer reads the next message. No
+  `ACCEPTED AND NOT HELD`.
 - **The same reading with the phone STALE** (its group moved while it was shut, as on 2026-10-22):
   the phone logs `REFUSED epoch_mismatch: built on base N, the group is at M`, the server answers 409,
   the phone then reads the group's next message once opened, and the newcomer's next ask logs
@@ -414,6 +419,46 @@ the swiped-away phone for four `message` pushes and it applied the external-comm
 on that build. **READ later the same day, with the user's agreement to delete one local-estate row:** the request was
 sent and the phone answered it from a stale epoch, see the P2 above. The phone stays on the debug
 build, signed in on the local estate only, which is stopped.
+
+## P2 - WP-CHECKPOINT-CAS: the foreground checkpoint writes over a file it did not load (2026-10-23, design owed a review before code)
+
+**The race.** `write_mls_state_blob` (`concurrency.rs`) writes `mls.bin` blind. Every background
+writer is a compare-and-swap over the bytes it loaded; the foreground is not. A live manager that
+never loaded what a background engine wrote - a resume reload refused as `live-ahead` (the WebView then
+persists the live state, `TauriMlsService.reloadStateFromDisk`) or as an epoch regression
+(`reload_into`) - writes over it. It heals (the device's own commit comes back through the replay and
+the recovery ladder), and that does not make it right: a staged background Add the server accepted is
+then `ACCEPTED AND NOT HELD`, and a background decrypt's ratchet advance is lost the same way. Decided
+2026-10-23: not accepted as permanent; its own pull request, stacked after the recorded-stage
+background Welcome
+([chat-delivery](services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)).
+
+**The design (for review; nothing built):**
+
+- **The foreground knows which file its manager stands on.** A process-global digest beside the
+  write lock, set by every foreground load that installs a state (`initialiser_mls`, a `reloaded`
+  resume) and by every foreground write.
+- **The checkpoint is a compare-and-swap.** Under the write lock, `write_mls_state_blob` compares the
+  file's digest with that one. Equal (or no file and no digest), it writes and records the new digest.
+  Different, it writes NOTHING and reconciles.
+- **The reconcile is per group, under the manager lock.** It loads the file as a candidate and, for
+  each group: held by the file only (a background Welcome received) - the file's; held by the live
+  manager only - the live one; held by both - the FILE's when the live manager has not advanced that
+  group past the file (same epoch, no unsaved ratchet advance IN THAT GROUP, no pending commit of its
+  own), the LIVE one otherwise. Both sides advanced the same group is a real conflict: the live one is
+  kept (its send ratchet may have moved, and the file's version would re-issue a spent generation),
+  said at ERROR with the group. The merged state is written by compare-and-swap against the bytes just
+  read, and the digest recorded.
+- **What mls-core must give it:** the unsaved-advance flag per group (today one flag for the whole
+  manager), and a per-group transplant between two managers - the openmls group and its storage
+  entries (epoch secrets, message secrets, own leaf keys, pending commit) plus the Canari maps keyed by
+  group (pending submissions, owed Welcomes, Graine runs, device-trust seeds). Key packages stay the
+  live manager's: a background engine consumes one only by joining, and a private key kept for a
+  consumed package is harmless.
+- **Tests first, with the foreground marked active as in real life:** a background stage in G2 and a
+  live decrypt in G1 - the checkpoint keeps both; a background-joined group survives a checkpoint;
+  both sides advanced G - the live one is kept and the line says so; a reload refused as `live-ahead`
+  followed by its persist keeps the stage.
 
 ## P1 - WP-KEYGROUP-JOIN-GATE: a key-group external join is asked of social-service - BUILT, owed its 503 rate (2026-10-22)
 

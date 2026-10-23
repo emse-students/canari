@@ -279,36 +279,17 @@ pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
     remove_mls_state_in(&data_dir)
 }
 
-/// The prefix of a background Welcome's staged post-add state beside `mls.bin`, one file per group
-/// (`mobile/background.rs`). It holds that state's epoch secrets, so it leaves with `mls.bin`.
-pub(crate) const STAGED_WELCOME_PREFIX: &str = "mls.bin.welcome-";
-
 /// The memo of background Welcomes the server refused as stale, keyed by the digest of `mls.bin`
 /// (`mobile/background.rs`). It describes `mls.bin`, so it leaves with it.
 pub(crate) const STALE_WELCOME_LEDGER_FILE: &str = "welcome_request_stale.json";
 
 /// [`delete_mls_state`] minus the `AppHandle`, so what it removes is tested on a real directory:
-/// `mls.bin`, its owner record, and the background Welcome files built from it - no epoch secret
-/// outlives the state it belongs to.
+/// `mls.bin`, its owner record, and the stale memo built from it.
 fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
     log::debug!("[MLS] removing mls.bin and what was built from it");
-    // `mls.bin` GOES AFTER WHAT WAS BUILT FROM IT: the staged files and the ledger describe it, so a
-    // sweep that fails part-way leaves the state intact and the next reset finishes the job - never
-    // staged epoch secrets, or a memo about a digest, beside no state...
-    match std::fs::read_dir(data_dir) {
-        Ok(entries) => {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                if name.to_string_lossy().starts_with(STAGED_WELCOME_PREFIX) {
-                    std::fs::remove_file(entry.path())
-                        .map_err(|e| format!("remove {}: {e}", name.to_string_lossy()))?;
-                    log::info!("[MLS] staged background Welcome state removed with mls.bin");
-                }
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("list {}: {e}", data_dir.display())),
-    }
+    // `mls.bin` GOES AFTER THE LEDGER, which describes it: a sweep that fails part-way leaves the
+    // state intact and the next reset finishes the job - never a memo about a digest beside no
+    // state...
     // ...and the owner record AFTER it: a failed removal of `mls.bin` leaves the state with the
     // record naming whose it is, never a state nobody is named for.
     let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
@@ -1188,17 +1169,12 @@ mod tests {
         // And it is idempotent on an install that holds neither.
         remove_mls_state_in(&dir).unwrap();
 
-        // A background Welcome's staged state and stale memo go with the state they were built
-        // from: a staged file holds that state's epoch secrets.
+        // A background Welcome's stale memo goes with the state it was built from.
         file(&dir, "mls.bin");
-        file(&dir, "mls.bin.welcome-0123456789abcdef");
-        file(&dir, "mls.bin.welcome-0123456789abcdef.tmp");
         file(&dir, "welcome_request_stale.json");
         file(&dir, "welcome_request_stale.json.tmp");
         file(&dir, "unrelated.json");
         remove_mls_state_in(&dir).unwrap();
-        assert!(!dir.join("mls.bin.welcome-0123456789abcdef").exists());
-        assert!(!dir.join("mls.bin.welcome-0123456789abcdef.tmp").exists());
         assert!(!dir.join("welcome_request_stale.json").exists());
         assert!(
             !dir.join("welcome_request_stale.json.tmp").exists(),
@@ -1211,15 +1187,15 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// `mls.bin` GOES AFTER THE STAGED FILES AND THE LEDGER: a sweep that fails part-way leaves the
-    /// state it was sweeping intact, never staged epoch secrets beside no state.
+    /// `mls.bin` GOES AFTER THE LEDGER: a sweep that fails part-way leaves the state it was
+    /// sweeping intact, never a memo about a digest beside no state.
     #[test]
     fn a_sweep_that_fails_part_way_leaves_mls_bin_in_place() {
         let dir = temp_dir("mls-sweep-order");
         file(&dir, "mls.bin");
         record_mls_state_owner(&dir, "user-a").unwrap();
-        // A staged name that cannot be removed as a file: the sweep fails on it.
-        std::fs::create_dir_all(dir.join("mls.bin.welcome-fedcba9876543210")).unwrap();
+        // A ledger name that cannot be removed as a file: the sweep fails on it.
+        std::fs::create_dir_all(dir.join("welcome_request_stale.json")).unwrap();
 
         assert!(remove_mls_state_in(&dir).is_err());
         assert!(

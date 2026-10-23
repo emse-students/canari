@@ -4086,6 +4086,23 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * The MLS state was replaced under this session - a resume reload installed `mls.bin`, which a
+   * background engine may have written with a commit staged and unsettled (an Android background
+   * Welcome whose answer it never read). The derived index is dropped AT ONCE, before this returns,
+   * so the next send re-reads the state and settles first ({@link knownUnresolvedGroups}); then every
+   * staged commit is settled, without holding the caller: its outcome needs the server, and a resume
+   * must not wait on the network.
+   */
+  protected settleAfterStateReplaced(): void {
+    this.unresolvedGroups = null;
+    void this.settleUnresolvedCommits().catch((e: unknown) =>
+      console.error(
+        `[COMMIT] settling the commits of a reloaded state failed: ${String(e).slice(0, 160)}`
+      )
+    );
+  }
+
+  /**
    * Settles `groupId`'s staged commit, if its state holds one, by resubmitting the submission kept
    * beside it. MUST be called holding the MLS lock (and inside the group's epoch-advance barrier):
    * it merges or clears.

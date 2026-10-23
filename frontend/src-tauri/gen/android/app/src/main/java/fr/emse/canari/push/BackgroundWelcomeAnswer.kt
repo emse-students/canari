@@ -3,8 +3,10 @@ package fr.emse.canari.push
 /**
  * WHAT `POST /api/mls/push/send-welcome-and-commit` ANSWERED, AND WHAT THE PHONE DOES ABOUT IT.
  *
- * The background Welcome stages its post-add state and installs it only once the server ACCEPTS the
- * commit; every other answer discards it. This used to read `HTTP 201` as "Welcome sent" - and the
+ * The background Welcome stages its Add in mls.bin, with the record of its submission, before the
+ * commit leaves. A definitive answer settles it here - merged on acceptance, cleared on a refusal; an
+ * answer nobody read settles nothing, and the foreground settles the stage against the server at its
+ * next load, as it settles its own commits. This used to read `HTTP 201` as "Welcome sent" - and the
  * route answered 201 for a refusal too, so a phone answering from a stale epoch logged a success
  * for a Welcome the server had refused (Mi 9T, 2026-10-22, docs/wiki/backlog.md).
  *
@@ -41,8 +43,8 @@ object BackgroundWelcomeAnswer {
     /** The classified answer. */
     sealed class Outcome {
         /**
-         * The commit passed the gate, and its Welcome was stored in the same transaction: install the
-         * staged state.
+         * The commit passed the gate, and its Welcome was stored in the same transaction: merge the
+         * staged Add.
          */
         object Accepted : Outcome()
 
@@ -53,26 +55,29 @@ object BackgroundWelcomeAnswer {
         data class Failed(val httpCode: Int) : Outcome()
 
         /**
-         * No answer was read (a transport failure, a 5xx): the server MAY have accepted. Not installed,
-         * because installing on a refusal is the fork this whole path exists to prevent.
+         * No answer was read (a transport failure, a 5xx): the server MAY have accepted. Nothing is
+         * settled here - guessing either way is the fork this path exists to prevent.
          */
         data class Unknown(val httpCode: Int?) : Outcome()
     }
 
-    /** What to do with the staged state. */
+    /** What becomes of the Add staged in mls.bin. */
     sealed class Settlement {
-        object Install : Settlement()
+        object Merge : Settlement()
 
         /**
-         * Discard it. [staleBase] and [serverEpoch] are set only for an `epoch_mismatch`, recorded for
+         * Clear it. [staleBase] and [serverEpoch] are set only for an `epoch_mismatch`, recorded for
          * the group; [targetRefused] only for a refused target, recorded for that target alone - both
-         * against the mls.bin the commit was built from, so the same bytes do not answer again.
+         * against the mls.bin the clear writes, so the same bytes do not answer again.
          */
-        data class Discard(
+        data class Clear(
             val staleBase: Long?,
             val serverEpoch: Long?,
             val targetRefused: Boolean = false,
         ) : Settlement()
+
+        /** No answer was read: the stage stays in mls.bin, for the foreground to settle. */
+        object Leave : Settlement()
     }
 
     /**
@@ -93,98 +98,95 @@ object BackgroundWelcomeAnswer {
     }
 
     /**
-     * What the staged state becomes. Only [Outcome.Accepted] installs; a stale refusal is recorded so
-     * the same bytes are not offered again - the newcomer re-asks every 60 s while its app is open,
-     * and a phone that answered each ask would be refused each time. Nothing here retries: the
-     * foreground replays the group's commits at its next start, and answers from there.
+     * What the staged Add becomes. An acceptance merges it, a refusal clears it - and a stale refusal
+     * is recorded so the same bytes are not offered again: the newcomer re-asks every 60 s while its
+     * app is open, and a phone that answered each ask would be refused each time. An answer nobody
+     * read leaves it, settled by the foreground's resubmission of the same bytes. Nothing here retries.
      *
      * @param baseEpoch the epoch the staged commit was built on
      */
     fun settle(outcome: Outcome, baseEpoch: Long): Settlement = when (outcome) {
-        Outcome.Accepted -> Settlement.Install
+        Outcome.Accepted -> Settlement.Merge
         is Outcome.Refused -> when {
             outcome.reason == Refusal.EPOCH_MISMATCH && outcome.serverEpoch != null && baseEpoch >= 0 ->
-                Settlement.Discard(baseEpoch, outcome.serverEpoch)
+                Settlement.Clear(baseEpoch, outcome.serverEpoch)
             outcome.reason == Refusal.WELCOME_TARGET_UNKNOWN || outcome.reason == Refusal.WELCOME_TARGET_NOT_MEMBER ->
-                Settlement.Discard(null, null, targetRefused = true)
-            else -> Settlement.Discard(null, null)
+                Settlement.Clear(null, null, targetRefused = true)
+            else -> Settlement.Clear(null, null)
         }
-        is Outcome.Failed, is Outcome.Unknown -> Settlement.Discard(null, null)
+        is Outcome.Failed -> Settlement.Clear(null, null)
+        is Outcome.Unknown -> Settlement.Leave
     }
 
-    /** What the native install reported, read from its JSON. */
-    data class InstallReport(val ok: Boolean, val reason: String?, val error: String?)
+    /** What the native settlement reported, read from its JSON: `reason` is a token, never prose. */
+    data class SettleReport(val ok: Boolean, val reason: String?)
 
     /**
-     * The staged post-add state, as the service holds it: the seam a JVM test drives in place of the
-     * JNI and the MLS state lock.
+     * The Add staged in mls.bin, as the service holds it: the seam a JVM test drives in place of the
+     * JNI and the MLS state lock. Each call returns `null` when the lock was not acquired, so nothing
+     * ran and the stage is still in mls.bin.
      */
     interface StagedWelcome {
-        /**
-         * Installs the staged state under the MLS state lock. `null` when the lock was not acquired,
-         * so the install never ran and the staged file is still on disk.
-         */
-        fun install(): InstallReport?
+        fun merge(): SettleReport?
 
-        /**
-         * Deletes the staged file; records a stale base when both epochs are given, or a refused
-         * target when [targetRefused].
-         */
-        fun discard(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean)
+        fun clear(staleBase: Long?, serverEpoch: Long?, targetRefused: Boolean): SettleReport?
     }
 
-    /** What became of the staged state once its settlement was applied. */
+    /** What became of the staged Add once its settlement was applied. */
     sealed class Applied {
-        object Installed : Applied()
+        object Merged : Applied()
 
-        /** The native install ran and refused; it removed its own staged file. */
-        data class NotInstalled(val reason: String?, val error: String?) : Applied()
+        object Cleared : Applied()
 
-        /** The MLS state lock was busy: the install never ran, and the staged file was deleted here. */
-        object LockBusy : Applied()
+        /** The foreground settled it before this answer was applied. */
+        object AlreadySettled : Applied()
 
-        object Discarded : Applied()
+        /** Nothing was settled here: the stage is in mls.bin, for the foreground's resubmission. */
+        data class Left(val why: String) : Applied()
+
+        /** Accepted, and mls.bin holds neither the stage nor the epoch it creates. */
+        object NotHeld : Applied()
     }
 
     /** The level a line is logged at, so the decision is tested here and only printed by the service. */
     enum class Level { DEBUG, WARN, ERROR }
 
+    private const val ALREADY_SETTLED = "already-settled"
+    private const val ACCEPTED_NOT_HELD = "accepted-not-held"
+
     /**
-     * Applies a settlement to the staged state. A busy lock on an install is the one case the
-     * staged file would outlive the attempt - it holds the group's old epoch secret - so it is
-     * deleted here, never left for a later attempt to find.
+     * Applies a settlement to the staged Add. A busy lock, or a native refusal to write, leaves the
+     * stage where it is: it is in mls.bin with its record, which is everything the foreground needs.
      */
-    fun apply(settlement: Settlement, staged: StagedWelcome): Applied = when (settlement) {
-        Settlement.Install -> {
-            val report = staged.install()
-            when {
-                report == null -> {
-                    staged.discard(null, null, targetRefused = false)
-                    Applied.LockBusy
-                }
-                report.ok -> Applied.Installed
-                else -> Applied.NotInstalled(report.reason, report.error)
-            }
+    fun apply(settlement: Settlement, staged: StagedWelcome): Applied {
+        val (report, done) = when (settlement) {
+            Settlement.Leave -> return Applied.Left("no answer read")
+            Settlement.Merge -> staged.merge() to Applied.Merged
+            is Settlement.Clear ->
+                staged.clear(settlement.staleBase, settlement.serverEpoch, settlement.targetRefused) to Applied.Cleared
         }
-        is Settlement.Discard -> {
-            staged.discard(settlement.staleBase, settlement.serverEpoch, settlement.targetRefused)
-            Applied.Discarded
+        return when {
+            report == null -> Applied.Left("lock busy")
+            report.ok -> done
+            report.reason == ALREADY_SETTLED -> Applied.AlreadySettled
+            report.reason == ACCEPTED_NOT_HELD -> Applied.NotHeld
+            else -> Applied.Left(report.reason ?: "unspecified")
         }
     }
 
     /**
-     * The level and suffix of the line that ends a background Welcome. An acceptance not installed
-     * is an error: the server holds a commit this device does not, and the foreground's replay meets
-     * it and recovers through the usual ladder. An answer nobody read may have been an acceptance.
+     * The level and suffix of the line that ends a background Welcome. Only an acceptance mls.bin no
+     * longer holds is an error: the server holds a commit this device does not, and the foreground's
+     * replay meets it and recovers through the usual ladder.
      */
-    fun report(applied: Applied, outcome: Outcome): Pair<Level, String> = when (applied) {
-        Applied.Installed -> Level.DEBUG to "state installed"
-        Applied.LockBusy -> Level.ERROR to
-            "ACCEPTED AND NOT INSTALLED reason=lock busy - the staged file was deleted"
-        is Applied.NotInstalled -> Level.ERROR to
-            "ACCEPTED AND NOT INSTALLED reason=${applied.reason} ${applied.error ?: ""}".trimEnd()
-        Applied.Discarded ->
-            (if (outcome is Outcome.Unknown) Level.ERROR else Level.WARN) to "staged state discarded"
+    fun report(applied: Applied): Pair<Level, String> = when (applied) {
+        Applied.Merged -> Level.DEBUG to "staged Add merged"
+        Applied.Cleared -> Level.WARN to "staged Add cleared"
+        Applied.AlreadySettled -> Level.DEBUG to "already settled by the foreground"
+        is Applied.Left -> Level.WARN to
+            "stage left in mls.bin (${applied.why}) - the foreground settles it against the server at its next load"
+        Applied.NotHeld -> Level.ERROR to
+            "ACCEPTED AND NOT HELD - mls.bin no longer holds the staged Add; the foreground's replay recovers"
     }
 
     /** The one line the phone logs for an answer, naming what happened. */
@@ -193,16 +195,17 @@ object BackgroundWelcomeAnswer {
         is Outcome.Refused -> when (outcome.reason) {
             Refusal.EPOCH_MISMATCH ->
                 "REFUSED epoch_mismatch: built on base $baseEpoch, the group is at ${outcome.serverEpoch} - " +
-                    "this phone answered from a state the group left; nothing installed, left to the foreground"
-            Refusal.CONCURRENT_COMMIT -> "REFUSED concurrent_commit - another commit won the lock; nothing installed"
-            Refusal.NOT_A_MEMBER -> "REFUSED not_a_member - the target was removed; nothing installed"
+                    "this phone answered from a state the group left; the Add is cleared, left to the foreground"
+            Refusal.CONCURRENT_COMMIT -> "REFUSED concurrent_commit - another commit won the lock; the Add is cleared"
+            Refusal.NOT_A_MEMBER -> "REFUSED not_a_member - the target was removed; the Add is cleared"
             Refusal.WELCOME_TARGET_UNKNOWN, Refusal.WELCOME_TARGET_NOT_MEMBER ->
-                "REFUSED ${outcome.token} - the server does not admit this target; nothing installed, " +
+                "REFUSED ${outcome.token} - the server does not admit this target; the Add is cleared, " +
                     "not answered again from this mls.bin"
-            Refusal.OTHER -> "REFUSED ${outcome.token} - nothing installed"
+            Refusal.OTHER -> "REFUSED ${outcome.token} - the Add is cleared"
         }
-        is Outcome.Failed -> "FAILED HTTP ${outcome.httpCode} - not accepted, nothing installed"
+        is Outcome.Failed -> "FAILED HTTP ${outcome.httpCode} - not accepted, the Add is cleared"
         is Outcome.Unknown ->
-            "OUTCOME UNKNOWN (HTTP ${outcome.httpCode ?: "none"}) - the server may have accepted; nothing installed"
+            "OUTCOME UNKNOWN (HTTP ${outcome.httpCode ?: "none"}) - the server may have accepted; the Add stays " +
+                "staged in mls.bin for the foreground"
     }
 }

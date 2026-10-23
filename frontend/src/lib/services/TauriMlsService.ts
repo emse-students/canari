@@ -1009,6 +1009,9 @@ export class TauriMlsService extends BaseMlsService {
         // file), so the epochs are re-read with the groups - a stale-low epoch reads as "behind".
         await this.syncGroupCachesFromNative();
         console.log('[MLS][Tauri] mls.bin reloaded on resume (C2) - group cache refreshed.');
+        // The installed state may hold a commit a background engine staged and could not settle (a
+        // background Welcome whose answer it never read): settled like this session's own.
+        this.settleAfterStateReplaced();
       } else if (outcome === 'live-ahead') {
         console.warn(
           '[MLS][Tauri] Resume reload SKIPPED: the live manager holds a send or a decrypted frame that mls.bin does not - reloading would put the ratchet back. Persisting the live state instead.'

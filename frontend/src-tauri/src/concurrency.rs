@@ -249,14 +249,19 @@ pub(crate) fn mls_bin_digest(bytes: &[u8]) -> [u8; 32] {
 /// plain write it replaced let a state loaded under one key land over a file re-sealed under another
 /// (`mobile/background.rs`, `write_over_loaded_state`).
 ///
-/// A background engine that holds its loaded state across a network round trip - the background
-/// Welcome waits for the server's answer before it installs anything - cannot rely on the
-/// foreground guard alone: the foreground can start, checkpoint and stop again inside that span,
-/// after which the guard reads "inactive" and a plain write would erase what the foreground did.
-/// So this write compares the file's CURRENT bytes with the digest of the bytes the caller loaded,
-/// under the same write lock every `mls.bin` writer takes, and refuses on any difference.
+/// A background engine that loads, works and writes cannot rely on the foreground guard alone: the
+/// foreground can start, checkpoint and stop again inside that span, after which the guard reads
+/// "inactive" and a plain write would erase what the foreground did. So this write compares the
+/// file's CURRENT bytes with the digest of the bytes the caller loaded, under the same write lock
+/// every `mls.bin` writer takes, and refuses on any difference.
 ///
-/// A refusal is an error the caller must say out loud: the work it wanted to persist is lost.
+/// A refusal is an error the caller must say out loud: what it wanted to persist is not written. A
+/// send batch is re-encrypted at the next drain; a background Welcome's stage, already in the file,
+/// is settled by the foreground.
+///
+/// **THIS GUARDS THE BACKGROUND HALF ONLY.** The foreground's checkpoint
+/// ([`write_mls_state_blob`]) is a blind write, so a live manager that never loaded what a
+/// background engine wrote writes over it (docs/wiki/backlog.md, WP-CHECKPOINT-CAS).
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn background_write_mls_bin_if_unchanged(
     path: &std::path::Path,

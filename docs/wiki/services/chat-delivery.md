@@ -660,8 +660,7 @@ once the queue has drained. Silent when there is nothing to say.
 
 A killed Android phone answers a `welcome_request_pending` push from its `mls.bin`
 (`processWelcomeRequestBackground` in `CanariFirebaseMessagingService.kt`, Rust
-`prepare_welcome_background_with_key` / `install_staged_welcome` / `discard_staged_welcome` in
-`mobile/background.rs`). Read on the Mi 9T on 2026-10-22: the phone had been shut while its group moved
+`prepare_welcome_background_with_key` / `settle_background_welcome` in `mobile/background.rs`). Read on the Mi 9T on 2026-10-22: the phone had been shut while its group moved
 from epoch 1 to 3, built its add on base 1, the gate refused it (`epoch_mismatch`), the route answered
 `201`, and the phone logged "Welcome sent". Worse, it had merged the add into `mls.bin` before the
 answer, so it held an epoch nobody else had and could not read the group's next message.
@@ -670,10 +669,22 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   `409 {status: 'rejected', reason, currentEpoch?}` otherwise. The phone classifies
   the body's `status` token (`push/BackgroundWelcomeAnswer.kt`), so it reads a pre-2026-10-22 server
   (`201 {status: 'rejected'}`, `201 {status: 'done'}`) correctly too.
-- **The phone stages, and installs only an acceptance** - the foreground's order since C7. The post-add
-  state is sealed beside `mls.bin` with the digest of the bytes it was built from, installed by a
-  compare-and-swap on `accepted`, and deleted on anything else. A transport failure or a 5xx is
-  `unknown`: not installed, because installing a refusal is the fork this exists to prevent.
+- **The phone stages the Add IN `mls.bin`, and merges it only on an acceptance** - the foreground's
+  order since C7, and its recorded stage (`add_members_recorded`, `mls-core/src/pending_submission.rs`):
+  the pending commit and its submission record are written by compare-and-swap over the bytes the Add
+  was built from, BEFORE the commit leaves. `accepted` merges it, a refusal clears it, each written by
+  compare-and-swap over the `mls.bin` loaded at that moment. A transport failure or a 5xx is
+  `unknown`: nothing is settled, because guessing either way is the fork this exists to prevent.
+- **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
+  busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
+  `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
+  commits (`settleUnresolvedCommits`, at connect, before a send in that group, and after a resume
+  reload that installed a new state): it resubmits the recorded commit, the gate answers an accepted
+  one `duplicate`, and it merges - then sends the Welcome its record owes (`excludeDeviceIds` and
+  `keyPackageDevices` name the admitted device; the intent is pinned on both sides by
+  `src/lib/mls-client/test/fixtures/background-welcome-intent.json`). The joiner refuses the second
+  copy of a Welcome it already took. A group holding an unsettled stage is not answered again
+  (`commit-pending`), and the background outbox seals nothing in it (the entry stays queued).
 - **The KeyPackage is bound to the requester, as the foreground's Add binds it.** The phone hands
   Rust the `userId:deviceId` the push named (`WelcomeRequest.requester`). A package whose credential
   names another device, or that device under a key the phone never pinned for it, is refused BEFORE
@@ -689,10 +700,11 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   not answered again from the same bytes; any write to `mls.bin` lifts it. A refused TARGET
   (`welcome_target_unknown` / `welcome_target_not_member`) is remembered the same way, for that target
   alone (`{group}|{userId:deviceId}`), so a holder does not commit and get refused on every ask; a
-  target admitted later is answered from the next bytes, or by another holder or the foreground. Deleting the MLS state
-  (`remove_mls_state_in`) sweeps the memo, its `.tmp` and every staged `mls.bin.welcome-*` with it,
-  since a staged file holds that state's epoch secrets - and deletes `mls.bin` after them, so a sweep
-  that fails part-way leaves the state intact for the next reset to finish; the owner record
+  target admitted later is answered from the next bytes, or by another holder or the foreground. The memo of a refusal is written
+  against the bytes the clear WROTE, which are the bytes the next request is answered from. Deleting
+  the MLS state (`remove_mls_state_in`) sweeps the memo and its `.tmp` with it - and deletes
+  `mls.bin` after them, so a sweep that fails part-way leaves the state intact for the next reset to
+  finish; the owner record
   (`mls.owner` and its `.tmp`) goes after `mls.bin`, so a failed removal never leaves a state nobody
   is named for.
 - **The newcomer heals on its own cadence**: `requestReAdd` re-asks every 60 s while its app is open
@@ -739,12 +751,15 @@ answer, so it held an epoch nobody else had and could not read the group's next 
 - **The commit is fanned out once.** `validateCommit` fans an accepted commit out itself; the route used
   to broadcast it a second time.
 - **What the phone does with the answer is decided in `BackgroundWelcomeAnswer.apply`**, behind a
-  `StagedWelcome` seam the JVM tests drive: an install that finds the MLS state lock busy never ran, so
-  the staged file is deleted there and the line says `lock busy`.
-- **What is left open:** an acceptance whose install is refused (the foreground started and wrote
-  `mls.bin` inside the round trip) leaves the server one commit ahead of this device, logged
-  `ACCEPTED AND NOT INSTALLED`; the device then recovers through the usual ladder. iOS has no
-  background re-add (its branch was unreachable and is deleted).
+  `StagedWelcome` seam the JVM tests drive: a merge or a clear that finds the MLS state lock busy never
+  ran, and the stage is left to the foreground (`stage left in mls.bin (lock busy)`).
+- **What is left open:** the foreground's checkpoint is a BLIND write (`write_mls_state_blob`). A live
+  manager that never loaded the stage - a resume reload refused as `live-ahead` (which then persists
+  the live state) or as an epoch regression - writes over it, and an accepted Add is then held by the
+  server and not by this device, logged `ACCEPTED AND NOT HELD`; the device recovers through the usual
+  ladder. The same write loses any background advance, not only this one; it is its own work package
+  ([backlog](../backlog.md#p2---wp-checkpoint-cas-the-foreground-checkpoint-writes-over-a-file-it-did-not-load-2026-10-23-design-owed-a-review-before-code)).
+  iOS has no background re-add (its branch was unreachable and is deleted).
 
 ### A roster seat is not a key, and only a Welcome tells the two apart
 
