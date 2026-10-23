@@ -426,9 +426,13 @@ export class AuthController {
     await this.usersService.claimLegacyCotisations(user);
 
     // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked
-    const access_token = jwt.sign({ sub: user.id, admin: !!user.admin, type: 'access' }, this.jwtSecret, {
-      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-    });
+    const access_token = jwt.sign(
+      { sub: user.id, admin: !!user.admin, type: 'access' },
+      this.jwtSecret,
+      {
+        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+      }
+    );
     const session = await this.authSessions.create(user.id, this.clientInfo(req));
     const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
 
@@ -624,9 +628,13 @@ export class AuthController {
     }
     const nextTokenId = result.tokenId;
 
-    const access_token = jwt.sign({ sub: payload.sub, admin: isAdmin, type: 'access' }, this.jwtSecret, {
-      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-    });
+    const access_token = jwt.sign(
+      { sub: payload.sub, admin: isAdmin, type: 'access' },
+      this.jwtSecret,
+      {
+        expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+      }
+    );
     const new_refresh = this.signRefreshToken(payload.sub, sessionId, nextTokenId);
 
     // Rotate on BOTH transports the caller can hold, for the reason above. From this moment the old
