@@ -134,105 +134,13 @@ pub fn claim_device_notices_json(data_dir: &Path, keys_json: &str) -> String {
     })
 }
 
-/// The name prefix of a WITHDRAWN-event marker in the ledger directory - kept apart from the claim
-/// markers, which never carry it (their names are hex).
-const WITHDRAWN_PREFIX: &str = "w-";
-
-/// The id an event is withdrawn by: the group, the epoch the commit created, and the device - one
-/// commit, one admission. The app builds the same id (`deviceEventId`).
-pub fn device_event_id(event: &mls_core::DeviceEvent) -> String {
-    format!("{}|{}|{}", event.group_id, event.epoch, event.identity)
-}
-
-/// WITHDRAWS the events a background Add recorded when the server then REFUSED its commit: nobody
-/// merged it, so it admitted nobody, and the app must not announce what it recorded. One marker per
-/// id beside the claim ledger; the app takes them ([`take_withdrawn_device_events`]) before it
-/// announces anything. Returns how many were written; a payload that is not an array of strings
-/// writes nothing, logged.
-pub fn withdraw_device_events_json(data_dir: &Path, ids_json: &str) -> usize {
-    let ids: Vec<String> = match serde_json::from_str(ids_json) {
-        Ok(ids) => ids,
-        Err(e) => {
-            log::error!("[DEVICE_NOTICE] withdrawal payload is not a JSON array of strings: {e}");
-            return 0;
-        }
-    };
-    let dir = data_dir.join(DEVICE_NOTICES_DIR);
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        log::error!(
-            "[DEVICE_NOTICE] ledger directory unavailable, {} event(s) NOT withdrawn: {e}",
-            ids.len()
-        );
-        return 0;
-    }
-    let mut written = 0;
-    for id in &ids {
-        match std::fs::write(
-            dir.join(format!("{WITHDRAWN_PREFIX}{}", marker_name(id))),
-            b"",
-        ) {
-            Ok(()) => written += 1,
-            Err(e) => log::error!("[DEVICE_NOTICE] event {id} NOT withdrawn: {e}"),
-        }
-    }
-    log::info!("[DEVICE_NOTICE] {written} event(s) of a refused Add withdrawn");
-    prune(&dir, true);
-    written
-}
-
-/// Takes every withdrawn event id (and removes its marker): the app reads them once, before it
-/// announces anything from the events the background Add left in the state.
-pub fn take_withdrawn_device_events(data_dir: &Path) -> Vec<String> {
-    let dir = data_dir.join(DEVICE_NOTICES_DIR);
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut ids = Vec::new();
-    for entry in entries.filter_map(Result::ok) {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let Some(hex) = name.strip_prefix(WITHDRAWN_PREFIX) else {
-            continue;
-        };
-        let bytes: Option<Vec<u8>> = (0..hex.len())
-            .step_by(2)
-            .map(|i| {
-                hex.get(i..i + 2)
-                    .and_then(|h| u8::from_str_radix(h, 16).ok())
-            })
-            .collect();
-        match bytes.and_then(|b| String::from_utf8(b).ok()) {
-            Some(id) => ids.push(id),
-            None => log::error!("[DEVICE_NOTICE] unreadable withdrawal marker {name} dropped"),
-        }
-        if let Err(e) = std::fs::remove_file(entry.path()) {
-            log::warn!("[DEVICE_NOTICE] withdrawal marker {name} not removed: {e}");
-        }
-    }
-    if !ids.is_empty() {
-        log::info!("[DEVICE_NOTICE] {} withdrawn event(s) taken", ids.len());
-    }
-    ids
-}
-
 /// Keeps the newest [`MAX_DEVICE_NOTICE_MARKERS`] claim markers.
 fn prune_markers(dir: &Path) {
-    prune(dir, false);
-}
-
-/// Keeps the newest [`MAX_DEVICE_NOTICE_MARKERS`] markers of one kind - withdrawals or claims - so
-/// neither bound ever removes the other kind.
-fn prune(dir: &Path, withdrawals: bool) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     let mut markers: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
         .filter_map(Result::ok)
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with(WITHDRAWN_PREFIX)
-                == withdrawals
-        })
         .filter_map(|e| {
             let modified = e.metadata().ok()?.modified().ok()?;
             Some((modified, e.path()))
@@ -295,32 +203,6 @@ mod tests {
             .unwrap()
             .count();
         assert_eq!(count, MAX_DEVICE_NOTICE_MARKERS);
-    }
-
-    /// An Add the server REFUSED admitted nobody: the events it recorded are withdrawn, and the app
-    /// takes each withdrawal once - apart from the claim ledger and its bound.
-    #[test]
-    fn a_withdrawn_event_is_taken_once_and_never_counts_as_a_claim() {
-        let dir = temp_dir("withdraw");
-        let ids = vec!["g|4|alice:laptop".to_string(), "g|4|bob:web".to_string()];
-        assert_eq!(
-            withdraw_device_events_json(&dir, &serde_json::to_string(&ids).unwrap()),
-            2
-        );
-        let keys: Vec<String> = (0..MAX_DEVICE_NOTICE_MARKERS)
-            .map(|i| format!("u:d{i}|ff"))
-            .collect();
-        claim_device_notices(&dir, &keys);
-        let mut taken = take_withdrawn_device_events(&dir);
-        taken.sort();
-        assert_eq!(taken, ids, "the claim bound pruned no withdrawal");
-        assert!(take_withdrawn_device_events(&dir).is_empty());
-        assert_eq!(
-            claim_device_notices(&dir, &["u:d0|ff".to_string()]),
-            Vec::<String>::new(),
-            "a withdrawal never removed a claim"
-        );
-        assert_eq!(withdraw_device_events_json(&dir, "{}"), 0);
     }
 
     /// The background engine's half end to end: a commit that gives this account another device,

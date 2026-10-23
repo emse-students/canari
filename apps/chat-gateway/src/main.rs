@@ -1,3 +1,4 @@
+mod addressing;
 mod audience;
 mod handlers;
 mod models;
@@ -181,7 +182,11 @@ async fn main() {
     let app_state = Arc::new(AppState::new(redis_client.clone(), jwt_secret, audience));
 
     // ── Redis pub/sub subscriber ──────────────────────────────────────────
-    subscribers::spawn_redis_subscriber(redis_client.clone(), app_state.connected_users.clone());
+    subscribers::spawn_redis_subscriber(
+        redis_client.clone(),
+        app_state.connected_users.clone(),
+        app_state.session_caps.clone(),
+    );
 
     // ── CORS configuration ────────────────────────────────────────────────
     // An UNSET variable means someone is running the binary by hand, and the wildcard keeps that

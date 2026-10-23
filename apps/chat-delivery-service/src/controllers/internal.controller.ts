@@ -35,6 +35,7 @@ import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { sanitizeIdentityValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
+import { endDeviceMemberships } from '../utils/group-membership';
 import { MessagingService } from '../services/messaging.service';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { parsePresenceAudienceBody } from '../utils/presence-audience';
@@ -504,8 +505,11 @@ export class InternalController {
       return { evicted: false, memberships: 0, queued: 0, routes: 0 };
     }
 
-    const memberships = await this.deviceGroupRepo.delete({ groupId: group.id, userId });
-    const queued = await this.queuedMessageRepo.delete({ groupId: group.id, recipientId: userId });
+    // The rows and everything queued for them on this group - Welcomes included - go in ONE
+    // transaction ({@link endDeviceMemberships}).
+    const ended = await this.groupRepo.manager.transaction((manager) =>
+      endDeviceMemberships(manager, { userId, groupId: group.id }, 'all')
+    );
 
     const routed = await this.redis.smembers(`group:members:${group.id}`);
     const toRemove = routed.filter((m) => m.startsWith(`${userId}:`));
@@ -515,12 +519,12 @@ export class InternalController {
 
     this.logger.log(
       `[DISTRIBUTION_GROUP] evict scope=${label} group=${group.id} user=${userId.slice(0, 8)} ` +
-        `memberships=${memberships.affected ?? 0} queued=${queued.affected ?? 0} routes=${toRemove.length}`
+        `memberships=${ended.memberships} queued=${ended.queued} routes=${toRemove.length}`
     );
     return {
       evicted: true,
-      memberships: memberships.affected ?? 0,
-      queued: queued.affected ?? 0,
+      memberships: ended.memberships,
+      queued: ended.queued,
       routes: toRemove.length,
     };
   }
@@ -679,6 +683,9 @@ export class InternalController {
 
     // ── User's own records ────────────────────────────────────────────────
     const manager = this.groupRepo.manager;
+    // Every device row of the account and everything queued FOR it - Welcomes included - in ONE
+    // transaction ({@link endDeviceMemberships}).
+    const departed = await manager.transaction((tx) => endDeviceMemberships(tx, { userId }, 'all'));
     const [, sentQueued] = (await manager.query(
       `DELETE FROM queued_message
         WHERE "senderId" = $1 AND "isCommit" IS NOT TRUE AND "isWelcome" IS NOT TRUE`,
@@ -691,8 +698,6 @@ export class InternalController {
       this.groupMemberRepo.delete({ userId }),
       // The account's membership history goes with it: nothing will ever answer for this person.
       this.membershipIntervalRepo.delete({ userId }),
-      this.deviceGroupRepo.delete({ userId }),
-      this.queuedMessageRepo.delete({ recipientId: userId }),
       this.pushTokenRepo.delete({ userId }),
       this.pinVerifierRepo.delete({ userId }),
       this.revokedDeviceRepo.delete({ userId }),
@@ -703,7 +708,10 @@ export class InternalController {
       this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);
 
-    this.logger.log(`[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued}`);
+    this.logger.log(
+      `[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued} ` +
+        `deviceMemberships=${departed.memberships} queuedFor=${departed.queued}`
+    );
     return { ok: true };
   }
 }

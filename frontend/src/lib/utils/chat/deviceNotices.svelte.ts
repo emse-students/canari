@@ -1,9 +1,8 @@
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions } from '$lib/types';
 import {
   deviceEventAudience,
-  deviceEventId,
   deviceEventKey,
   isNewToItsOwner,
   type DeviceEvent,
@@ -87,11 +86,6 @@ export interface DeviceNoticeContext {
   keyAge: (userId: string, deviceId: string, fingerprint: string) => Promise<KeyAge>;
   /** When the server first saw THIS device's own key - its enrolment; `null` if never dated. */
   ownEnrolledAt: () => Promise<number | null | 'unanswered'>;
-  /**
-   * Takes the ids (`deviceEventId`) of the events a background Add recorded and the server then
-   * REFUSED (`take_withdrawn_device_events`, Android) - announced by nobody.
-   */
-  withdrawnEvents?: () => Promise<string[]>;
   /** Claims alert keys in the native ledger the background engines share (phones only). */
   claimNative?: (keys: string[]) => Promise<void>;
   now: () => number;
@@ -139,12 +133,6 @@ let undecided: DeviceEvent[] = [];
 const refusedNotices = new SvelteMap<string, RefusedDeviceNotice>();
 let refusedSeen: string[] = [];
 let boundAccount: string | null = null;
-/**
- * Ids of the events refused Adds left behind, taken from the native side once (it deletes what it
- * hands over), so kept for the session: the event may reach a later delivery than the withdrawal.
- */
-const withdrawn = new SvelteSet<string>();
-
 function isNotice(v: unknown): v is OwnDeviceNotice {
   if (!v || typeof v !== 'object') return false;
   const n = v as Record<string, unknown>;
@@ -221,7 +209,6 @@ export function forgetDeviceNotices(): void {
   lined = [];
   undecided = [];
   refusedSeen = [];
-  withdrawn.clear();
   boundAccount = null;
 }
 
@@ -276,13 +263,6 @@ export async function deliverDeviceEvents(
     console.error(`[DEVICE_NOTICE] no account bound - ${events.length} device event(s) dropped`);
     return;
   }
-  if (ctx.withdrawnEvents) {
-    try {
-      for (const id of await ctx.withdrawnEvents()) withdrawn.add(id);
-    } catch (e) {
-      console.error('[DEVICE_NOTICE] withdrawn events unreadable:', e);
-    }
-  }
   // The events a previous delivery could not decide come first, oldest first.
   const retried = undecided;
   undecided = [];
@@ -308,10 +288,6 @@ export async function deliverDeviceEvents(
       const key = deviceEventKey(event);
       if (audience === 'none' || key === null) {
         silent++;
-        continue;
-      }
-      if (withdrawn.has(deviceEventId(event))) {
-        console.log('[DEVICE_NOTICE] an event of an Add the server refused - announced by nobody');
         continue;
       }
       if ((audience === 'owner-alert' ? announced : lined).includes(key)) continue;

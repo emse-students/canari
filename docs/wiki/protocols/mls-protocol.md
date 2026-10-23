@@ -635,8 +635,9 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   was built on - ours accepted, or a member's - or, if its commit is refused, from the tree it falls
   back to at that moment.
 - **Reaffirmations.** A pin counts the merged commits that showed its device holding the pinned key -
-  its leaf re-entering under that key, or a commit it signed. This is what lifts a remembered
-  refusal (below).
+  its leaf re-entering under that key, or a commit it signed. A merge with nothing pending signed
+  nothing and counts nothing (`a_merge_with_nothing_pending_reaffirms_no_pin`). This is what lifts
+  a remembered refusal (below).
 - **The replace path: ONE commit.** `handleWelcomeRequest`, for a device whose leaf is still in the
   tree, sends Remove and Add in the SAME commit (`replaceMember` -> Rust
   `MlsManager::replace_device_with_base`, WASM `replace_device`, Tauri `remplacer_appareil`); the
@@ -812,10 +813,11 @@ that consumes them next.
   other listed devices that `isNewToItsOwner` calls old - an old device a heal brings back is then
   never posted. The ledger is swept with the account's push files on deletion.
 - **A background Add the server refused** (Android `processWelcomeRequestBackground`) admitted
-  nobody, yet merged and saved its events: the answer names them (`addedEvents`, ids
-  `group|epoch|identity`), the service posts nothing and withdraws them
-  (`nativeWithdrawDeviceEvents`, `w-` markers beside the ledger), and the app skips them
-  (`take_withdrawn_device_events`).
+  nobody, and announces nothing. Its events exist only in the STAGED post-add state
+  (`prepare_welcome_background_with_key`), which is installed into `mls.bin` only on the server's
+  acceptance and discarded otherwise, so a refusal leaves the app no event to read. The service
+  posts the notification on `Outcome.Accepted` alone: the server admitted the device, whether or
+  not this phone could install its own copy.
 
 **Known limits, owed a decision or a reading:** a phone whose WebView is alive in the background
 processes the commit itself and so shows the in-app alert only, with no local notification; and a

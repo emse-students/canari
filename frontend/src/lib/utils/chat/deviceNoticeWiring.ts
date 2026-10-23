@@ -55,15 +55,6 @@ async function claimNativeDeviceNotices(keys: string[]): Promise<void> {
 }
 
 /**
- * Takes the ids of the device events a background Add left in the state and the server then
- * refused (`take_withdrawn_device_events`; Android writes them, iOS answers none).
- */
-async function takeWithdrawnDeviceEvents(): Promise<string[]> {
-  const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<string[]>('take_withdrawn_device_events');
-}
-
-/**
  * The name the account gave one of its devices, from the device list - best effort: the alert is
  * shown without a name when the list cannot be read, and that is logged.
  */
@@ -216,7 +207,6 @@ export function registerDeviceNotices(mls: IMlsService, session: DeviceNoticeSes
       keyAge: (userId, deviceId, fingerprint) => keyAgeOf(mls, userId, deviceId, fingerprint),
       ownEnrolledAt: () => ownEnrolledAtOf(mls, session.getUserId(), session.getMyDeviceId()),
       claimNative: onPhone ? claimNativeDeviceNotices : undefined,
-      withdrawnEvents: onPhone ? takeWithdrawnDeviceEvents : undefined,
       now: () => Date.now(),
     })
   );

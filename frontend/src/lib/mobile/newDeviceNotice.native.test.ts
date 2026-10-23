@@ -47,19 +47,16 @@ describe('new-device notice - the native seams', () => {
     expect(swift).toContain('announceOwnDevicesAdded(json, ctx: ctx, where: "catchup")');
   });
 
-  it('Android: a refused background Add withdraws its events through a matching JNI symbol', () => {
-    expect(libRs).toContain(
-      'Java_fr_emse_canari_CanariFirebaseMessagingService_nativeWithdrawDeviceEvents'
+  it('Android: a background Add notifies only once the server ACCEPTED it', () => {
+    const announce = kotlin.indexOf(
+      'announceOwnDevicesAdded(result, "processWelcomeRequestBackground")'
     );
-    expect(kotlin).toMatch(
-      /external fun nativeWithdrawDeviceEvents\(dataDir: String, idsJson: String\): Int/
+    const guard = kotlin.lastIndexOf(
+      'if (outcome is BackgroundWelcomeAnswer.Outcome.Accepted)',
+      announce
     );
-    const failed = kotlin.slice(
-      kotlin.indexOf('sendWelcomeAndCommit failed for group=$groupId")'),
-      kotlin.indexOf('sendWelcomeAndCommit failed for group=$groupId")') + 700
-    );
-    expect(failed).toContain('result.optJSONArray("addedEvents")');
-    expect(failed).toContain('nativeWithdrawDeviceEvents(dataDir, added.toString())');
+    expect(guard).toBeGreaterThan(-1);
+    expect(announce - guard).toBeLessThan(120);
   });
 
   it('iOS: the extension raises nothing while the app is in the foreground (shared flag)', () => {

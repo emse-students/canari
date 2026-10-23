@@ -532,6 +532,39 @@ fn a_commit_signed_by_a_pinned_device_reaffirms_its_pin() {
     );
 }
 
+/// A MERGE WITH NOTHING PENDING PROVES NOTHING: no commit was signed, so no pin is reaffirmed - our
+/// own included - and the trust state is not touched.
+#[test]
+fn a_merge_with_nothing_pending_reaffirms_no_pin() {
+    let gid = "g-noop-merge";
+    let mut alice = device("alice", "dev1");
+    let mut bob = device("bob", "dev1");
+    alice.create_group(gid.into()).expect("create");
+    let kp = bob.generate_key_package().unwrap();
+    add_and_join(&mut alice, &mut bob, gid, &kp, "bob:dev1");
+    let own = alice
+        .pinned_signature_keys("alice", "dev1")
+        .expect("own pin")
+        .reaffirmations;
+    let others = alice
+        .pinned_signature_keys("bob", "dev1")
+        .unwrap()
+        .reaffirmations;
+    alice.take_device_events();
+
+    alice.merge_pending_commit_for(gid).expect("no-op merge");
+
+    let after = |user: &str| {
+        alice
+            .pinned_signature_keys(user, "dev1")
+            .unwrap()
+            .reaffirmations
+    };
+    assert_eq!(after("alice"), own, "own pin untouched");
+    assert_eq!(after("bob"), others, "member pin untouched");
+    assert!(alice.take_device_events().is_empty());
+}
+
 /// A DEPARTURE IS RECORDED AT MERGE TIME, so a device that never saw the tree between a kick and a
 /// re-add - it caught up on both commits later - records the removal all the same, in the sealed
 /// state, and as no device event.

@@ -1775,7 +1775,11 @@ export function useMessaging() {
   }
 
   /** Stages picked files in the pending queue, to be sent with the next message. */
-  async function handleFilesSelected(files: File[], ctx: MessagingContext) {
+  async function handleFilesSelected(
+    files: File[],
+    ctx: MessagingContext,
+    opts?: { stillWanted?: () => boolean }
+  ) {
     // The conversation the files were picked IN, read before the preparation (a video re-encode)
     // gives the member time to open another one.
     const stagedIn = ctx.selectedContact;
@@ -1785,6 +1789,12 @@ export function useMessaging() {
     }
     const readyFiles = await prepareMediaFiles(files, ctx);
     if (readyFiles.length === 0) return;
+    // ASKED AFTER THE PREPARATION, which can take seconds: a sign-out during it has already emptied
+    // the queues (`forgetAccount`), and staging now would hand this account's file to the next one.
+    if (opts?.stillWanted && !opts.stillWanted()) {
+      ctx.log(`[MEDIA] ${readyFiles.length} file(s) not staged: no longer wanted (signed out)`);
+      return;
+    }
     ctx.log(`[MEDIA] ${readyFiles.length} file(s) staged in ${stagedIn}`);
     setPendingMediaFiles(stagedIn, [...pendingMediaFilesFor(stagedIn), ...readyFiles]);
   }

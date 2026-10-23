@@ -409,39 +409,12 @@ impl MlsManager {
     /// (`validateCommit`). Advances the local epoch. Counterpart of `clear_pending_commit_for`.
     /// [[C7]] Option A: validate-then-merge, never a local fork on rejection.
     ///
-    /// Every NEW device the commit put in the tree is recorded ([`crate::device_trust`]) - our own
-    /// Adds were vetted against the pins when they were staged, so this only pins first sights and
-    /// records them. An external join of ours pins the tree it joined HERE, once the server took it.
+    /// Every NEW device the commit put in the tree is recorded ([`crate::device_trust`]), and an
+    /// external join of ours pins the tree it joined HERE, once the server took it. The merge is also
+    /// observed by Graine's departure tracker (`graine_run.rs`), so a Remove this device commits ends
+    /// the run its sessions were minted in. Both happen in [`Self::merge_pending_commit_with_summary`].
     pub fn merge_pending_commit_for(&mut self, group_id: &str) -> Result<(), MlsError> {
-        let own_identity = String::from_utf8_lossy(self.credential.identity()).to_string();
-        let own_key = self.keypair.public().to_vec();
-        let group = self
-            .groups
-            .get_mut(group_id)
-            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
-        let before = leaf_keys(group);
-        group
-            .merge_pending_commit(&self.provider)
-            .map_err(|e| MlsError::OpenMls(format!("Merge pending commit error: {:?}", e)))?;
-        let after = leaf_keys(group);
-        let epoch = group.epoch().as_u64();
-        if self.pending_external_joins.remove(group_id) {
-            // OUR EXTERNAL JOIN, ACCEPTED: its tree is pinned now, as a Welcome's is - joining a
-            // tree is first sight of its members, never "a device was added".
-            self.device_trust
-                .observe_joined_tree(group_id, epoch, &after, &own_identity);
-        } else {
-            self.device_trust.observe_merged_commit(
-                group_id,
-                epoch,
-                &before,
-                &after,
-                Some(&own_identity),
-                (&own_identity, &own_key),
-            );
-        }
-        self.mark_state_dirty();
-        Ok(())
+        self.merge_pending_commit_with_summary(group_id).map(|_| ())
     }
 
     /// Whether `key_package_bytes` may be added as the device `expected_identity`, WITHOUT staging
@@ -455,17 +428,26 @@ impl MlsManager {
         key_package_bytes: &[u8],
         expected_identity: &str,
     ) -> &'static str {
-        let kp = match KeyPackageIn::tls_deserialize(&mut &key_package_bytes[..]) {
-            Ok(kp_in) => match kp_in.validate(self.provider.crypto(), ProtocolVersion::Mls10) {
-                Ok(kp) => kp,
-                Err(e) => return SkippedKeyPackageReason::from_verify(&e).as_str(),
-            },
-            Err(_) => return SkippedKeyPackageReason::Undecodable.as_str(),
-        };
-        match vet_validated(&self.device_trust, &kp, Some(expected_identity)) {
+        match self.key_package_verdict(key_package_bytes, expected_identity) {
             Ok(trust) => trust.as_str(),
             Err(reason) => reason.as_str(),
         }
+    }
+
+    /// [`Self::vet_key_package`] as a TYPE: the trust an Add would admit the package under, or the
+    /// [`SkippedKeyPackageReason`] it would skip it for - for a Rust caller that branches on it.
+    pub fn key_package_verdict(
+        &self,
+        key_package_bytes: &[u8],
+        expected_identity: &str,
+    ) -> Result<LeafTrust, SkippedKeyPackageReason> {
+        let kp = match KeyPackageIn::tls_deserialize(&mut &key_package_bytes[..]) {
+            Ok(kp_in) => kp_in
+                .validate(self.provider.crypto(), ProtocolVersion::Mls10)
+                .map_err(|e| SkippedKeyPackageReason::from_verify(&e))?,
+            Err(_) => return Err(SkippedKeyPackageReason::Undecodable),
+        };
+        vet_validated(&self.device_trust, &kp, Some(expected_identity))
     }
 
     /// Hands over every device event recorded since the last call, oldest first, and forgets them

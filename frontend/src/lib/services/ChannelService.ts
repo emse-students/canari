@@ -127,10 +127,6 @@ export interface ChannelDto {
 
 export type CreateChannelResultDto = ChannelDto;
 
-export interface ChannelJoinDto {
-  roleName?: string;
-}
-
 export interface ChannelInviteDto {
   targetUserId: string;
   roleName?: string;
@@ -580,16 +576,6 @@ export class ChannelService {
     );
     await this.handleError(res);
     return res.json() as Promise<ChannelDto[]>;
-  }
-
-  async joinChannel(channelId: string, dto: ChannelJoinDto) {
-    const cid = this.normalizeChannelId(channelId);
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/join`, {
-      method: 'POST',
-      body: JSON.stringify(dto),
-    });
-    await this.handleError(res);
-    return res.json();
   }
 
   /**

@@ -201,15 +201,6 @@ export function isNewToItsOwner(
   return ctx.isOwnAccount || keyFirstSeenAt >= ctx.learnedAt - CONTACT_NEW_DEVICE_WINDOW_MS;
 }
 
-/**
- * The id one admission is withdrawn by - its group, the epoch its commit created, the device - the
- * same string Rust's `device_notice::device_event_id` writes when the server refused a background
- * Add.
- */
-export function deviceEventId(event: DeviceEvent): string {
-  return `${event.groupId}|${event.epoch}|${event.identity}`;
-}
-
 /** Whether a verdict lets the package be added. */
 export function verdictAdmits(verdict: KeyPackageVerdict): verdict is 'first-sight' | 'pinned' {
   return verdict === 'first-sight' || verdict === 'pinned';

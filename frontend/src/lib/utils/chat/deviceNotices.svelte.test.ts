@@ -264,27 +264,6 @@ describe('deliverDeviceEvents - only a device new to its owner is announced', ()
   });
 });
 
-describe('deliverDeviceEvents - an Add the server refused announces nothing', () => {
-  it('skips the events a refused background Add withdrew, and only those', async () => {
-    const own = event({
-      identity: 'alice:laptop-9',
-      keyFingerprint: 'cc',
-      groupId: 'dm-1',
-      epoch: 7,
-    });
-    const { ctx, addMessageToChat } = makeCtx({
-      withdrawnEvents: vi.fn(async () => ['dm-1|7|alice:laptop-9', 'dm-1|5|bob:web-2']),
-    });
-    await deliverDeviceEvents([own, event()], ctx);
-    expect(pendingDeviceNotices()).toEqual([]);
-    expect(addMessageToChat).not.toHaveBeenCalled();
-
-    // The same device admitted again, by a commit the server took, is announced.
-    await deliverDeviceEvents([{ ...own, epoch: 8 }], ctx);
-    expect(pendingDeviceNotices()).toHaveLength(1);
-  });
-});
-
 describe('deliverDeviceEvents - a contact line is written once, durably', () => {
   it('does not come back when the conversation has not loaded the earlier line', async () => {
     const { ctx, addMessageToChat, conversations } = makeCtx();

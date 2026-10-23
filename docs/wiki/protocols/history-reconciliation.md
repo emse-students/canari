@@ -774,29 +774,23 @@ for ONE person, only where that person is known. Two steps, in this order (Maste
   `CREATION_ARRIVAL_BOUND_MS` (1 s, either side) of the group row's `createdAt` is the creation, and
   gets its gaps only. Measured on the local estate: the creator's interval 4 ms after the group row,
   the next member 13.5 s. A joiner's span is unchanged.
-- `sendFullHistoryBundle` passes the invitee (`userIdOfLeaf(to)`) to `entitledHistorySelection`,
-  whose filter becomes the union of gaps plus that one person's withheld windows. This is safe as a
-  broadcast because every other member is entitled to a superset of what the invitee is. For a new
-  device of a continuous member, the span ends at that member's own arrival, so the restore is
-  untouched (`groupActions.historyEntitlement.test.ts`).
+- Against a server that predates addressed answers, `sendFullHistoryBundle` still passes the invitee
+  (`userIdOfLeaf(to)`) to `entitledHistorySelection`, whose filter is the union of gaps plus that one
+  person's withheld windows.
 - Receiver hygiene: `dropOwnExcludedMessages` reads this device's own `withheld` windows, so an honest
   newcomer drops what precedes its arrival from any bundle it overhears.
 
-**The residual of C, stated as the verdict asked:** a newcomer can still read pre-arrival messages
-from broadcast answers meant for others' new devices until A lands. Answers to a request (the diff
-`sendHistoryBundleForIds` and the scrollback `sendHistoryRangeBundle`) still filter on the union of
-gaps only, since they are broadcasts with no one person to filter for. An honest client drops what it
-overhears. A modified one keeps it.
+**Step A - every answer is addressed to the device that asked, and filtered for it (built
+2026-10-22).** The diff, the scrollback AND the push go to `recipientDevices = [to]` and are filtered
+on that reader's own `withheld` windows (`readerHistorySelection`), so an answer reaches only the device
+that asked, and that device is not held to the union of everyone's gaps. The design, its six rules, what it protects against (an honest server and
+an honest answerer, nothing more: addressing is a routing control and MLS still encrypts for the whole
+group) and what it does not close are on
+[history-answer-addressing](history-answer-addressing.md), the only copy. **Owed: the rig row
+GRP-ADDR-1** ([cross-client-testing](../cross-client-testing.md)).
 
-**Step A - DESIGN FIRST, reviewed before any code: answers addressed to the asking device.** The
-design is owed as its own page. It covers the equivocation threat of lifting the `recipientDevices`
-allowlist (`messaging.service.ts`, which accepts it on a key group only), the server marking
-addressed rows, the receiver refusing an addressed frame that is not a history control (at error),
-the split-view residual through bundle contents, and why sealing to an ephemeral X25519 key was not
-chosen.
-
-**What neither closes.** An older client keeps pushing its whole store at invitation until
-`minClientVersion` is a release carrying C, and that floor moves only once both stores serve the
+**What neither closes.** An older client keeps pushing and answering by broadcast until
+`minClientVersion` is a release carrying A, and that floor moves only once both stores serve the
 reader. The server cannot refuse such a frame, because it cannot read it. What a newcomer has already
 received cannot be taken back. Tracked in [backlog](../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not).
 
