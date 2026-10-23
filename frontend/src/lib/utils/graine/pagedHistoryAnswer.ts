@@ -23,6 +23,7 @@
  */
 
 import { ACCOUNT_KEY } from '../accountLocalKeys';
+import { forgetWorkspaceRecord } from './workspaceRecords';
 
 /** One community's history ask and what arrived of its answer. */
 interface PagedHistoryRecord {
@@ -171,8 +172,5 @@ export function incompleteHistoryPages(userId: string, workspaceId: string): num
 
 /** Forgets the record of `workspaceId`: the community left this device, and its asks went with it. */
 export function forgetPagedHistoryAnswer(userId: string, workspaceId: string): void {
-  const records = readAll(userId);
-  if (!(workspaceId in records)) return;
-  delete records[workspaceId];
-  writeAll(userId, records);
+  forgetWorkspaceRecord(userId, workspaceId, readAll, writeAll);
 }
