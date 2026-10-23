@@ -12,21 +12,65 @@ decisions"): architecture **C** (segmented HTTP, no transcoding), key design **Q
 production** (below).
 
 Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep, `live-seats.ts`,
-`live-announcer.ts`, `live-chat.service.ts`, `live-chat.controller.ts`), migrations `091_lives.sql`,
+`live-announcer.ts`, `live-chat.service.ts`, `live-chat.controller.ts`, `live-report-age.scheduler.ts`), migrations `091_lives.sql`,
 `094_live_announced_at.sql`, `097_live_moderation.sql`, `098_live_chat.sql` and
 `099_live_strikes_and_reported_chat_lines.sql`,
-`apps/media-service/src/media/live-segments.service.ts` (the bytes), and the `live_segments` cache in
+`apps/media-service/src/media/live-segments.service.ts` (the bytes), the runtime kill switch
+(`lives-mode.ts` in both services, core-service's `015_platform_config_lives_mode.sql`), and the `live_segments` cache in
 `infrastructure/local/Dockerfile.frontend` (Canari's nginx).
 
-## The switch: `LIVE_ENABLED`
+## The two switches: `LIVE_ENABLED` and `lives_mode`
 
 Every `/api/lives` route and the two media routes that serve or store segments answer **404 unless
-`LIVE_ENABLED` is exactly `true`** - the nginx segment location included, since what it caches is
-media-service's answer (a 404, kept 10 s) (`live-enabled.guard.ts`, `isLiveEnabled` in media-service).
-`render-env.sh` computes it per estate (`compute_live_enabled`): **`true` on dev, `false` on
-production**, asserted on the rendered files by `deploy-env.test.sh`. The local compose defaults it
-to `true`. Three things run whatever it says, on purpose: the live sweep and the media purge and live-list routes, so
-a live started while the switch was on is still ended and deleted after it is turned off.
+BOTH switches are open** - the nginx segment location included, since what it caches is
+media-service's answer (a 404, kept 10 s). The answer is the same whichever switch is closed.
+
+**The deploy lock, `LIVE_ENABLED`** (`live-enabled.guard.ts`, `isLiveEnabled` in media-service):
+open only when exactly `true`. `render-env.sh` computes it per estate (`compute_live_enabled`):
+**`true` on dev, `false` on production**, asserted on the rendered files by `deploy-env.test.sh`. The
+local compose defaults it to `true`. Moving it takes a deploy.
+
+**The runtime kill switch, `platform_config.lives_mode`** (owner, 2026-10-21: lives get a switch
+the server holds BEFORE they open in production, exactly like calls - once the client lock is in a
+store binary, closing lives again would otherwise take a stable store release). `off` / `on`,
+core-service migration `015_platform_config_lives_mode.sql`, **default `off` on every row, dev's
+included** (the dev seed writes `on`). A global admin moves it at `/admin/platform`
+(`PATCH /api/users/admin/platform`, `GlobalAdminGuard`, a `warn` line `livesMode off -> on by=<8
+chars>`). Read, never cached, on every request:
+
+- social-service: `LiveEnabledGuard` asks `LIVE_ENABLED` first (a closed estate never reads the
+  database), then `readLivesMode` (`lives/lives-mode.ts`, one primary-key read of `auth_db`'s
+  one-row table, as chat-delivery reads `calls_mode`). Both live controllers sit behind that guard.
+- media-service has no database: each segment route asks social-service's internal
+  `GET /api/internal/lives/mode` (`InternalLivesModeController`, `X-Internal-Secret`; `fetchLivesMode`
+  in `media/lives-mode.ts`) AFTER its own cheap refusals (the secret, the canonical path), so a
+  caller refused anyway never costs the hop. No cache on media-service's side: nginx's
+  `live_segments` cache already makes it one hop per segment per cache miss.
+
+**FAIL CLOSED everywhere.** A missing row reads `off` (logged at `error`); a value outside the two
+throws (500), as does a failed read; an unreachable or refusing relay is a 503 on media-service. A
+switch that cannot be read is never read as open.
+
+**What a flip to `off` does, and its one bound.** From the next request: no live starts, no
+manifest, no key, no chat, no ingest - an on-air broadcaster's next segment is a 404 (its own end
+route too), and the live is ended by the sweep after 60 s without a segment. **A segment nginx ALREADY cached stays servable for up to its two minutes**
+(`proxy_cache_valid 200 2m`) to a caller holding its URL: ciphertext under a key no new viewer can be
+handed, learned only from a manifest that now answers 404. A flip to `on` waits out at most the
+10 s of a cached refusal on a segment URL fetched while closed. **The staff routes close with it**
+(cut, withdrawal, chat hide sit behind the same guard): a live on air at the flip ends through the
+60 s sweep, but staff cannot cut it until lives reopen. Intended, as the simplest consistent
+behaviour - one guard, nothing live answers while closed, and nothing is left on air to cut - and
+open to revisiting if a closed estate ever needs a staff path.
+
+**The client hides what the server would refuse.** `GET /api/version` carries `lives: { mode }`;
+the client's `livesAvailable(serverLivesMode())` (`utils/livesAvailability.ts`) is the build's
+`LIVE_ENABLED` AND `on`, and gates the live card, the viewer and the composer's Live chip
+([live](../frontend/modules/live.md)). Absent or unknown reads `off`.
+
+Three things run whatever either switch says, on purpose: the live sweep and the media purge and
+live-list routes, so a live started while the switches were open is still ended and deleted after
+they close. What must be true before lives open in production, and in what order:
+[live-production](../frontend/modules/live-production.md).
 
 ## The numbers, and where each is the ONE copy
 
@@ -48,6 +92,7 @@ a live started while the switch was on is still ended and deleted after it is tu
 | A suspension of broadcasting | 30 days from the cut that set it (strike 2 and later) | `LIVE_SUSPENSION_FROM_STRIKE`, `LIVE_SUSPENSION_MS` | same route (`suspensionMs`) |
 | A withdrawal may be taken from | 3 cuts on record | `LIVE_WITHDRAWAL_FROM_CUTS` | - |
 | Longest a reported chat line is kept | 90 days from `keptAt`, or the report handled, whichever is first | `LIVE_CHAT_REPORT_MAX_KEEP_MS` | - |
+| Response commitment to a live report | 24 h of WORKING time (Monday to Friday, `Europe/Paris`) - past it, the [hourly alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e) is an `error` | `LIVE_REPORT_RESPONSE_WORKING_MS`, `LIVE_REPORT_WORKING_ZONE` | - |
 
 The 60 s window, the bitrate, the margin and the one-second segment floor are planning figures,
 **to be confirmed on the WP-L1 bench**.
@@ -64,7 +109,7 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | `GET /api/lives/standing` | any member | the CALLER's own `{ cutsOnRecord, suspendedUntil, withdrawnAt }` ([the ladder](#the-strike-ladder-wp-l8b)), so the pre-live screen can say why a start would be refused before it is pressed |
 | `POST /api/lives` `{ key, associationId?, acceptedRulesVersion? }` | any member (L1) | `201` the live with its key. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `403 LIVE_RULES_NOT_ACCEPTED` (with `rulesVersion`), `403 LIVE_BROADCAST_WITHDRAWN`, `403 LIVE_BROADCAST_SUSPENDED` (with `suspendedUntil`), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour) |
 | `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }`, `no-store`. Takes a SEAT ([below](#the-viewer-cap-wp-l4)): `503 LIVE_FULL` (with `viewerCap`) past the cap, `503 LIVE_SEATS_UNAVAILABLE` when the seat count does not answer |
-| `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }] }` - the newest 10, or from `from` on; `no-store` (the live edge: the shortest cache is none, and the answer is per viewer); renews the seat, same two 503s |
+| `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }], viewers }` - the newest 10, or from `from` on; `viewers` is [how many watch](#the-viewer-count-2026-10-21), a number and never a name; `no-store` (the live edge: the shortest cache is none, and the answer is per viewer); renews the seat, same two 503s |
 | `DELETE /api/lives/:id/seat` | any member | `204`: the caller's seat on that live goes back to the cap now. Idempotent, no watch check (a viewer may always give back what it holds); `503 LIVE_SEATS_UNAVAILABLE` |
 | `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `409 LIVE_SEGMENT_IN_PROGRESS` (that index is still storing: retry, the repeat then answers), `409 LIVE_SEGMENT_RESERVATION_LOST` (its reservation was taken over as abandoned), `413` over 4 MiB, `413 LIVE_BUDGET_EXHAUSTED`, `429 LIVE_SEGMENT_TOO_FAST`, `429` from nginx (no `code`), `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded, the index released), `503 LIVE_INGEST_BUSY` |
 | `POST /api/lives/:id/end` | the broadcaster | `{ id, endedAt, endReason }`, idempotent while the row exists; once the end's purge deleted it, a repeat is `404 LIVE_NOT_FOUND`, which the client reads as "ended and deleted" - nothing keeps a deleted live's end to answer with (no replay, L3) |
@@ -157,7 +202,8 @@ a same request is one a cache answers.
 - CORS as nginx's own API errors: the three WebView origins (`$api_error_cors_origin`),
   credentials allowed, `Vary: Origin`; the web app is same-origin. The CSP and the two security
   headers are restated (`add_header` replaces the inherited set). The app's CSP already allows it:
-  `connect-src 'self'` on the web, none on Tauri (`"csp": null`).
+  `connect-src 'self'` on the web; on Tauri the WebView's `connect-src` names every backend a
+  store build may bake ([cloudflare-edge](../infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)).
 - `limit_except GET` (HEAD included), and `lives_segments`: 30 r/s burst 60 per client address,
   answering the JSON `@api_error_429`. 30 r/s is the whole cap below fetching a segment a second
   from ONE campus address.
@@ -218,6 +264,13 @@ which is what the cap below is for.
 
 ## The viewer cap (WP-L4)
 
+**THE OWNER'S STANDING WISH (2026-10-20, restated 2026-10-21): NO VISIBLE AUDIENCE CEILING FOR A
+LIVE - "the technique must follow".** The cap of 24 below is a TEMPORARY TECHNICAL BOUND (the host's
+uplink, as measured), never a product rule. The "live complet" screen is not a product feature: it
+exists only until the cap goes ([the plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)),
+and nothing may be built on it or around it (no waiting list, no "full" badge, no messaging that
+treats a ceiling as intended). Lifting the cap is a separate design.
+
 L8 asked for no cap; the plan's answer was "a cap set by the host's uplink, to be MEASURED". The
 measurement exists ([realtime-media-feasibility](../infrastructure/realtime-media-feasibility.md)
 section 4 and 2a: ~90-107 Mb/s out of production on 443, two separate hours, one outside client),
@@ -244,7 +297,8 @@ all, and nobody has measured that path.
   the cap. The check and the write cannot interleave across instances (a rolling deploy runs two),
   and the clock is Redis's own (`TIME`), so no instance's clock is compared with another's. Proven
   against a real Redis: 40 simultaneous takes at a cap of 5 grant exactly 5
-  (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`).
+  (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`, run in CI by `test-social-integration`
+  since 2026-10-21 - [cicd](../cicd.md)).
 - The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
   "full"; the broadcaster takes none.
 - **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
@@ -315,6 +369,64 @@ times four ever passes a quarter of 1 500.
 polling a manifest and fetching a segment every few seconds is ~10-20 requests a second from that
 address, which a crawl scenario could read as abuse. **Unknown, and a question for the DSI before
 the first public live** (not a change: a question).
+
+## The viewer count (2026-10-21)
+
+**The owner's decision (2026-10-21): the viewers of a live see HOW MANY watch it, like Instagram,
+and so does its broadcaster.** The number is EXACT, not rounded - confirmed by the owner
+2026-10-21 ([below](#exact-not-rounded---confirmed-by-the-owner-2026-10-21)). Before it, nobody saw a number and the broadcaster had no list
+either: no route answers viewer ids (the broadcaster learns an account id only from a chat line's
+author, which is how a removal names one). That stays true - **a COUNT, never an identity and never a
+list, to anybody: the broadcaster, a viewer, staff.**
+
+**A viewer is a SEAT** - an account holding one on this live (above): taken by the key read, renewed
+by every manifest poll, gone on `DELETE .../seat`, a removal, the live's end, or 30 s without a poll.
+So the count is accounts, not devices (a seat is the account's), the broadcaster is never counted (it
+takes none), and the caller is counted in its own answer. **A blocked account is counted**: a block
+between the broadcaster and a member keeps that member from watching (no seat, so not counted), but a
+block between two VIEWERS hides neither from the other's count - the same stance as online presence,
+which a block does not hide either (register C18, [moderation-and-blocking](../moderation-and-blocking.md#what-a-block-does-not-do)).
+A number names nobody, so there is nothing for a block to withhold. **No second tracker and no new state**: the
+count is read from `live:seats`, in Redis, by the scripts of `live-seats.ts`:
+
+- **a viewer's poll**: `TAKE_SEAT_LUA` answers `{1, seated, watching}`, `watching` counted in the
+  SAME script as the grant, after the sweep - so it never disagrees with the cap, and a lapsed seat is
+  gone from it before it is counted;
+- **the broadcaster's poll** (its chat loop, `chat=1`, the one request it already makes):
+  `COUNT_LIVE_SEATS_LUA`, read-only, the seats renewed within the lease on Redis's clock - exactly
+  the ones the next sweep keeps. Its KEY read (`GET /:id`, on a return from the background) shows no
+  count and runs none (`viewerCount` is asked by the manifest only).
+
+**The members are read INSIDE the script** and only a number leaves Redis, so no viewer's id reaches
+social-service for this, let alone a response. `lives.integration.spec.ts` asserts that neither a
+viewer's nor the broadcaster's manifest carries another viewer's id; `live-seats.spec.ts` proves the
+count against a real Redis (two lives, a renewal not counted twice, a leave, a lapsed lease, a
+refusal carrying no count).
+
+**It rides the poll both sides already make** - the manifest, once a second; no new loop, no new
+route, and the cost per viewer is the one script it already ran, now also walking the set. That walk is
+linear in the set, which the cap bounds (24 members across every live). **When the cap goes** ([the
+plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20)), a poll walking every
+seat of the estate is N x N: the seats move to one set PER LIVE (`ZCARD`), which is that plan's own
+"the set only COUNTS" step.
+
+**If the count does not answer.** A viewer's take fails closed as it always did (`503
+LIVE_SEATS_UNAVAILABLE`; no count is ever made up). The broadcaster's read is its CHAT poll too, which
+a display number must not take down: `watching` answers `null`, logged as an `error` (`[LIVE_SEAT]
+... the viewer count did not answer`), and the screen shows no number. Every viewer's poll is failing
+on the same outage at that moment, so the line is not alone.
+
+### Exact, not rounded - confirmed by the owner 2026-10-21
+
+**EXACT, CONFIRMED BY THE OWNER 2026-10-21.** The implementer proposed it from the "like Instagram"
+reference, and the owner accepted it on being asked. The reasoning, kept so it is not re-opened: the
+plan had proposed a rounded count for viewers. With at most 24 seats an exact small number can tell someone who already suspects it that a
+particular person just arrived (the count went from 3 to 4 when a friend said "I'm opening it"). Rounding
+was weighed and refused: at this size any bucket wide enough to hide one arrival (say 1-5, 6-10)
+makes the number useless as "how many are here", and it only moves the tell to the bucket's edge. The
+count carries no identity, the chat already shows its writers' names to the same audience, and an
+arrival is otherwise invisible. So "like Instagram" was taken literally: the exact number, to the
+broadcaster and the viewers alike, with no asymmetry between them.
 
 ## The key (Q4): served like a post CEK, removal enforced by the server
 
@@ -476,10 +588,9 @@ so PostgreSQL orders a cut against them rather than anything reconciling them af
 
 After the commit: the purge (every seat released, segments and row deleted - or left to the sweep
 while a segment is storing, whose confirm then purges), and an in-app notice to the broadcaster
-(`post_notifications` type `live_cut`, `text` = the reason CODE, no actor; **no push yet**: a push
-needs `notif_social_live_cut_*` in both native apps first, so `skipPush` - and so no "no push
-content" warn either). The broadcaster's own screen learns it at once from the `410` its next
-segment gets.
+(`post_notifications` type `live_cut`, `text` = the reason CODE, no actor) **and its push**
+([the ladder's pushes](#the-three-pushes-a-broadcaster-gets-wp-l8b)). The broadcaster's own screen
+learns it at once from the `410` its next segment gets.
 
 **Why `live_cuts` outlives the live row.** The row is deleted at the end (L3), within milliseconds of
 a cut. The cut row is then what answers `410 LIVE_ENDED` with the live's own end (`endReason:
@@ -529,11 +640,43 @@ rolling 90 days). No automatic cut: every rung starts from a person's cut. Code:
 - **A start** reads the standing under that lock, after the mute, the association right and the
   rules, before the hourly rate: `403 LIVE_BROADCAST_WITHDRAWN`, else `403 LIVE_BROADCAST_SUSPENDED`
   `{ suspendedUntil }`. `GET /api/lives/standing` is the caller's own standing.
-- **The notice** (`post_notifications`, `text` = the reason code, no actor, `skipPush`): `live_cut`
+- **The notice** (`post_notifications`, `text` = the reason code, no actor) **and its push**: `live_cut`
   for strike 1 when the cut ended the live (as before); **`live_suspended`** for strike 2 and later
   (whether or not the live was still open: a suspension is news either way); **`live_withdrawn`** at a
   withdrawal. A strike-1 cut of a live the broadcaster had already ended is not notified (unchanged).
-  The client strings for the two new types are owed.
+  The bell rows for all three are built (`NotificationRow`, `notif_live_*_text`, the reason label).
+
+### The three pushes a broadcaster gets (WP-L8b)
+
+Built 2026-10-21. The three notices above are pushed through the one pipeline
+(`PostNotificationsService.createNotification` -> `pushContent`), no longer `skipPush`:
+
+| Notice | `contentKey` | FR (EN) |
+| --- | --- | --- |
+| `live_cut` | `social_live_cut` | "Votre live a été interrompu" / "La modération a coupé votre live. Ceci est un avertissement." ("Your live was stopped" / "Moderators cut your live. This is a warning.") |
+| `live_suspended` | `social_live_suspended` | "Lives suspendus" / "Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment." ("Lives suspended" / "After another cut by moderators, you cannot start a live for now.") |
+| `live_withdrawn` | `social_live_withdrawn` | "Droit de lancer un live retiré" / "La modération vous a retiré le droit de lancer un live." ("Right to go live withdrawn" / "Moderators have withdrawn your right to start a live.") |
+
+- **Fixed sentences, composed on the device** (`notif_social_live_*` on Android, `notif.social.live_*`
+  in the iOS app and NSE, fr + en): no actor (which moderator acted is not the broadcaster's to
+  read), no fragment (the reason is a WORD, worded by the bell row), **no icon** (nobody to show; an
+  empty user id would be a present key with nothing to fetch). The server's French rides along as
+  `title`/`body` for builds without the keys. Pinned by `push-content.spec.ts` (legacy French =
+  the Android table) and `nativeStrings.test.ts` (every table, every composer).
+- **The tap opens the notifications list**: `pushData.target = 'notifications'` (`NOTIFICATIONS_TARGET`,
+  `push-target.ts`) wins over `postId`, which is the live's id (or the member's, for a withdrawal) -
+  a `post/<id>` link would open a post that does not exist. The `notifications` host is declared in
+  `tauri.conf.json` and the Android manifest (`deepLinkHostsDeclared.test.ts`) and routed by
+  `appRouteForDeepLink`. What a build older than that change does with the tap is EXPECTED, not
+  observed: the Android deep-link plugin should drop the undeclared host, and elsewhere the hook's
+  unknown-host branch should land on the list.
+- **Never muted BY CANARI**: the three keys are deliberately absent from chat-delivery's
+  `push-category.ts`, so no in-app notification setting silences a sanction on the reader's own
+  account (`push-category.spec.ts`). That holds on the server only: on Android they draw on the
+  social notification channel (`CHANNEL_SOCIAL`), so a member who turned that channel off in the
+  system settings does not see them - the in-app row on the notifications list remains.
+- **The 30 days are not in any sentence**: the suspension's end is `GET /api/lives/standing`'s to
+  say, so a change of `LIVE_SUSPENSION_MS` changes no table.
 - **The queue** carries `live.broadcasterStanding` (`{ cutsOnRecord, suspendedUntil, withdrawnAt,
   withdrawalDue }`) beside `broadcasterCuts`, which is now the WINDOWED count.
 - **Per-account start limits** are the ones that existed: 6 starts in a rolling hour and one open
@@ -609,6 +752,39 @@ hides a line automatically.
 report's `reporterId` (the posts' rule for `content_reports`) and the line stays the same way; in
 both cases that account's signature alone reads `erased`. Register row C20 states it.
 
+### The 24 h alarm on the live report queue (WP-L8b item e)
+
+The owner's commitment to the stores (2026-10-20): a live report is answered within **24 hours on
+working days**. Until 2026-10-21 nothing measured it. `LiveReportAgeScheduler`
+(`lives/live-report-age.scheduler.ts`), hourly at :53, reads every PENDING `live` and `live_chat`
+report and prints ONE line:
+
+| Queue | Level | Line |
+| --- | --- | --- |
+| empty | `log` | `[LIVE_REPORT_AGE] pending=0` - printed anyway, so an alarm that stopped never reads as an empty queue |
+| every report inside the commitment | `log` | `pending=<n> overdue=0 oldest=<h>h working (<h>h wall), inside the 24.0h` |
+| one or more past it | **`error`**, every hour until answered | `pending=<n> overdue=<k> oldest=<h>h working (<h>h wall): <k> live report(s) past the 24.0h working-day commitment to the stores - answer them in /admin/moderation` |
+| the queue cannot be read | **`error`** | `could not read the live report queue - the 24 h commitment is unwatched this hour` |
+
+- **No user data**: no report id, no account, no reason - counts and ages. The queue is where a
+  moderator goes from it.
+- **Working time, not wall time** (`workingMsBetween`, `lives/live-report-age.ts`): the parts of
+  the age that fall Monday to Friday in `Europe/Paris`, each day cut at the zone's own midnights, so
+  a report filed on a Friday evening is not late on Sunday. A span crossing a weekend that holds a
+  daylight-saving change is tested and exact (2026-10-23 to 26: 73 h on the wall, 24 h of work).
+  **Public holidays count as working days** - no calendar of them exists here - so the
+  alarm may fire a day EARLY around one, never late. Overdue is strictly past 24 h.
+- **One clock, the database's**: `now()` and the creation instants come from one statement.
+  `content_reports."createdAt"` is a `timestamp` without zone written by `now()`; `::timestamptz`
+  reads it back in the same session zone, so the instant is exact (asserted on PostgreSQL: a report
+  moved ten days back reads ten days, to the minute).
+- Runs whatever `LIVE_ENABLED` says, like the sweep: a report filed while the switch was on is still
+  owed its answer. Purely a report: it changes nothing.
+
+Pinned by `live-report-age.spec.ts` (the arithmetic across a weekend and the October DST night, the
+three levels, no id in the line) and `lives.integration.spec.ts` (the SQL: only pending live and
+live_chat reports, the cast).
+
 ### The first-live rules (L11)
 
 `live_rules_acceptances`: one row per account, the version accepted and when. A start is refused
@@ -652,9 +828,8 @@ live row and cut button and the `LiveEndReason` / `LiveRefusalCode` additions ar
 ([the moderation client](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
 What is left:
 
-- **The push for a cut**: `notif_social_live_cut_*` in both native apps, then `skipPush` goes.
-- **The ladder's screens** (WP-L8b): the `live_suspended` and `live_withdrawn` bell rows, the two
-  start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) and the
+- **The ladder's screens** (WP-L8b; the three pushes and the two bell rows are
+  [built](#the-three-pushes-a-broadcaster-gets-wp-l8b)): the two start refusals (`LIVE_BROADCAST_SUSPENDED` with its date, `LIVE_BROADCAST_WITHDRAWN`) and the
   pre-live screen reading `GET /api/lives/standing`; in `/admin/moderation`, the standing on a live
   report and the withdraw / lift buttons, and the `live_chat` row with its integrity - `altered`,
   `key-rotated` and `unverifiable` shown with ONE weight, "not proven" ([why](#a-reported-chat-line-wp-l8b)).
@@ -662,7 +837,7 @@ What is left:
 ## Decisions of 2026-10-20: moderation, reactions, the audience
 
 The user's answers to the open moderation questions. **The ladder, the 90 days, the reported line
-and the reactions are BUILT (2026-10-21, server)**; the 24 h alarm and the viewer cap are not - WP-L8b in the
+and the reactions are BUILT (2026-10-21, server)**, and so is [the 24 h alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e); the viewer cap is not - WP-L8b in the
 [backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-is-built-the-decisions-of-2026-10-20-are-taken-and-their-server-work-is-owed-2026-10-19).
 
 | Question | Decision | What it changes in what exists |
@@ -670,7 +845,7 @@ and the reactions are BUILT (2026-10-21, server)**; the 24 h alarm and the viewe
 | Strike policy | **Warning, then suspension, then withdrawal.** 1st abuse: a warning and the live is cut. 2nd: the right to broadcast is SUSPENDED. 3rd: the right is WITHDRAWN, **decided by staff** | **BUILT** ([the ladder](#the-strike-ladder-wp-l8b)). **A suspension lasts 30 days** (decided 2026-10-20) |
 | Cut retention | **90 days** | **BUILT**: `LIVE_CUT_RETENTION_MS` is 90 days, as register row C20 says. **The ladder counts the cuts still on record: a rolling 90 days**, so an abuse older than 90 days is forgotten (decided 2026-10-20) |
 | Automatic cut on N reports | **No** - staff cut by hand only | Matches the code (a live is never cut by a count); posts keep their own auto-hide at 5 |
-| Response time to the stores | **24 hours on WORKING DAYS** for live reports (decided 2026-10-20) | Nothing measures it: the queue has no age alarm. A commitment with no report is found by hand, a day late (CLAUDE.md): the oldest pending report's age must be measured and reported |
+| Response time to the stores | **24 hours on WORKING DAYS** for live reports (decided 2026-10-20) | **BUILT 2026-10-21**: the [hourly alarm](#the-24-h-alarm-on-the-live-report-queue-wp-l8b-item-e) names the oldest pending live report's working age at `error` once it is past 24 h |
 | First-live rules text | **The posts' publication rules, no live-specific clause** | The sheet's four `live_rules_*` lines are live-specific. **No standalone "posts publication rules" text exists**: what posts are judged by is the terms of use, section 6 ([moderation-and-blocking](../moderation-and-blocking.md)); the sheet must show or link that text. **`LIVE_RULES_VERSION` is 2 since 2026-10-21** (the client sheet that shows it is #2170), so every member accepts once more |
 | Viewer cap | **None wanted** ("Je ne veux pas de plafond") | The cap is 24 and stays in code until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured; it is the wish of L8 (2026-10-15) again, which the cap was the honest answer to |
 

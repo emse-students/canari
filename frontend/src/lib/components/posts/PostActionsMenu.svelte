@@ -6,6 +6,7 @@
     Trash2,
     Flag,
     Link,
+    Share2,
     Ellipsis,
     VenetianMask,
     Repeat2,
@@ -14,7 +15,8 @@
     Megaphone,
     X,
   } from '@lucide/svelte';
-  import { sharePostLink } from '$lib/posts/sharePost';
+  import { copyPostLink, sharePostLink } from '$lib/posts/sharePost';
+  import { canShareOut } from '$lib/sharing/shareOut';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -165,8 +167,8 @@
   }
 
   /**
-   * Copies the post's public link and confirms it with a toast (`posts/sharePost.ts`, shared with
-   * the CanaReels rail).
+   * Shares the post's public link - the system sheet on a phone, a copy and a toast elsewhere
+   * (`posts/sharePost.ts`, shared with the CanaReels rail).
    *
    * A TOAST, NOT AN IN-MENU CHECKMARK - `pick()` sets `open = false` in the same tick as this row
    * flipped to its checkmark, so the confirmation only ever painted for the 150 ms slide-out
@@ -175,6 +177,9 @@
   function sharePost() {
     sharePostLink(postId);
   }
+
+  /** On a phone "Partager" opens the system sheet, so copying the link needs a row of its own. */
+  const nativeShare = canShareOut();
 
   /** One row per action: same box, same padding, so the menu reads as a list rather than a pile. */
   const ROW =
@@ -222,9 +227,24 @@
           onclick={() => pick(sharePost)}
           class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
         >
-          <Link size={16} strokeWidth={2.5} />
+          {#if nativeShare}<Share2 size={16} strokeWidth={2.5} />{:else}<Link
+              size={16}
+              strokeWidth={2.5}
+            />{/if}
           {m.post_share_label()}
         </button>
+
+        {#if nativeShare}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => pick(() => copyPostLink(postId))}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Link size={16} strokeWidth={2.5} />
+            {m.post_copy_link_label()}
+          </button>
+        {/if}
 
         {#if canRepublish}
           <button

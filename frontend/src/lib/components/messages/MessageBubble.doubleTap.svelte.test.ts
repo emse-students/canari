@@ -13,7 +13,11 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   getGlobalChat: () => null,
 }));
 const openExternal = vi.fn(async () => {});
-vi.mock('$lib/utils/openExternal', () => ({ openExternal: () => openExternal() }));
+// `isTauriRuntime`: the long-press sheet asks whether a share sheet exists (`canShareOut`).
+vi.mock('$lib/utils/openExternal', () => ({
+  openExternal: () => openExternal(),
+  isTauriRuntime: () => false,
+}));
 vi.mock('$lib/utils/canariLinkPreview', () => ({
   fetchCanariLinkPreview: async () => null,
   getCachedCanariLinkPreview: () => null,

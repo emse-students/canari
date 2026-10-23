@@ -1,3 +1,3 @@
-### Changed - privacy policy: what an audio call shows to whom (held for the owner's review)
+### Changed - privacy policy: what an audio call shows to whom (draft, takes effect early)
 
-The `/legal/privacy` paragraphs matching register row C21 and the Cloudflare TURN processor row ([register-of-processing](docs/wiki/compliance/register-of-processing.md)).
+The `/legal/privacy` calls paragraphs, push row, retention row and Cloudflare STUN/TURN paragraph, matching register row C21 ([register-of-processing](docs/wiki/compliance/register-of-processing.md)).

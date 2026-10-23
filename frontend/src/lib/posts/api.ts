@@ -82,7 +82,12 @@ export interface PostForm {
 
 export interface PostComment {
   id: string;
-  userId: string;
+  /**
+   * The writer's account. ABSENT on an anonymous or an association comment for a reader who may not
+   * see who is behind it (the server withholds it): no control derives a right from this field - the
+   * server serves `canEdit` and `canDelete` per reader.
+   */
+  userId?: string;
   displayName?: string | null;
   firstName?: string | null;
   lastName?: string | null;
@@ -90,8 +95,46 @@ export interface PostComment {
   parentId?: string | null;
   likes: string[];
   createdAt: string;
+  /** Set by the server when the text was edited; absent on a comment never touched. */
+  editedAt?: string | null;
+  /** Written anonymously: no name is served, and the account only to moderation and its writer. */
+  anonymous?: boolean;
+  /** For an anonymous comment on a PERSONAL post: whether it was written by the post's author. */
+  byPostAuthor?: boolean;
+  /** The association this comment speaks for, when it does (it then carries no personal name). */
+  association?: { id: string; name: string; slug: string; logoUrl: string | null } | null;
+  /** Whether THIS reader may edit it / delete it - served per reader, never derived from `userId`. */
+  canEdit?: boolean;
+  canDelete?: boolean;
   /** Encrypted media attached to this comment (GIF, screenshot, etc.). */
   media?: PostMediaRef;
+}
+
+/** The longest comment, in characters. The server copy is `COMMENT_MAX_LENGTH` in `apps/social-service/src/posts/comment-page.ts`. */
+export const COMMENT_MAX_LENGTH = 2000;
+
+/** One page of whole comment threads (a head and all its replies), as `GET /posts/:id/comments` serves it. */
+export interface CommentPage {
+  comments: PostComment[];
+  /** Pass back as `cursor` for the next page; `null` when the page was empty. */
+  nextCursor: number | null;
+  hasMore: boolean;
+}
+
+export interface FetchCommentsOptions {
+  cursor?: number | null;
+  limit?: number;
+  order?: 'recent' | 'oldest';
+}
+
+/** Query string of `fetchComments`; only the options actually given are sent. */
+export function buildCommentsSearchParams(opts: FetchCommentsOptions): string {
+  const params = new URLSearchParams();
+  if (opts.cursor !== undefined && opts.cursor !== null) params.set('cursor', String(opts.cursor));
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+  if (opts.order) params.set('order', opts.order);
+  const q = params.toString();
+  return q ? `?${q}` : '';
 }
 
 /** Display payload for posts published as an association (author identity hidden). */
@@ -458,12 +501,28 @@ export async function removeReaction(
 
 export async function addComment(
   postId: string,
-  payload: { text: string; parentId?: string; media?: PostImageRef }
+  payload: {
+    text: string;
+    parentId?: string;
+    media?: PostImageRef;
+    /** Comment AS this association (needs `POST_AS_ASSO` there; the server checks). */
+    associationId?: string;
+    /** Comment anonymously (any member may; exclusive with `associationId`). */
+    anonymous?: boolean;
+  }
 ): Promise<{ ok: boolean; comment: PostComment }> {
   return request(`/api/posts/${postId}/comments`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+/** One page of a post's comments, as whole threads - see `CommentPage`. */
+export async function fetchComments(
+  postId: string,
+  opts: FetchCommentsOptions = {}
+): Promise<CommentPage> {
+  return request<CommentPage>(`/api/posts/${postId}/comments${buildCommentsSearchParams(opts)}`);
 }
 
 export async function likeComment(

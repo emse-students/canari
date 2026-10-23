@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
+import type { LiveStanding } from '$lib/live/types';
 
 /**
  * A refusal from the moderation API, carrying the machine-readable discriminator the server sent.
@@ -23,6 +24,21 @@ export class ModerationApiError extends Error {
   /** True when this refusal is the server saying the caller has already reported this content. */
   get isAlreadyReported(): boolean {
     return this.code === 'ALREADY_REPORTED';
+  }
+
+  /** `400 LIVE_CHAT_REPORT_MISMATCH`: the handed-over text is not the line the server holds. */
+  get isLiveChatReportMismatch(): boolean {
+    return this.code === 'LIVE_CHAT_REPORT_MISMATCH';
+  }
+
+  /** `400 LIVE_CHAT_REPORT_MESSAGE_INVALID`: the handed-over text is over the server's 900 bytes. */
+  get isLiveChatReportInvalid(): boolean {
+    return this.code === 'LIVE_CHAT_REPORT_MESSAGE_INVALID';
+  }
+
+  /** `503 LIVE_REPORT_SIGNING_UNAVAILABLE`: the server cannot sign the evidence right now. */
+  get isLiveReportSigningUnavailable(): boolean {
+    return this.code === 'LIVE_REPORT_SIGNING_UNAVAILABLE';
   }
 
   /** True when the reported live is gone or was never visible to the reporter (`404 LIVE_NOT_FOUND`). */
@@ -70,6 +86,8 @@ export interface ReportedLive {
   endReason: string | null;
   cutReason: string | null;
   broadcasterCuts: number;
+  /** The broadcaster's place on the strike ladder; null when the live has no known broadcaster. */
+  broadcasterStanding: LiveStanding | null;
 }
 
 /** A content report filed by a user. */
@@ -119,6 +137,32 @@ export async function createReport(
   return request<ContentReport>('/api/moderation/reports', {
     method: 'POST',
     body: JSON.stringify({ contentType, contentId, reason, details, reportedUserId }),
+  });
+}
+
+/**
+ * Reports ONE line of a live chat (`contentType: 'live_chat'`, WP-L8b). `contentId` is the
+ * message's server id, `liveId` names its live, and `message` is the plaintext the reporter's
+ * client opened - the server cannot read it (the live key goes with the live), so it signs what it
+ * receives for staff ([lives](docs/wiki/services/lives.md), "A reported chat line is kept until
+ * handled"). The reported account is read by the server from its own row, never sent. Throws
+ * {@link ModerationApiError}.
+ */
+export async function createLiveChatReport(report: {
+  liveId: string;
+  messageId: string;
+  reason: 'spam' | 'harassment' | 'inappropriate' | 'other';
+  message: string;
+}): Promise<ContentReport> {
+  return request<ContentReport>('/api/moderation/reports', {
+    method: 'POST',
+    body: JSON.stringify({
+      contentType: 'live_chat',
+      contentId: report.messageId,
+      liveId: report.liveId,
+      reason: report.reason,
+      message: report.message,
+    }),
   });
 }
 

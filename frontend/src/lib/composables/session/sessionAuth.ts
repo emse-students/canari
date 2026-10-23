@@ -46,6 +46,7 @@ import {
   LocalStateNotReadyError,
   type VaultRefusal,
 } from '$lib/mls-client';
+import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import {
   getToken,
   clearAuth,
@@ -98,6 +99,7 @@ import {
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
 import { disposeMlsEncryptWorker } from '$lib/mls-client/mlsEncryptWorkerSession';
+import { forgetRefusedRotationReloads } from '$lib/mls-client/refusedRotationReloads';
 import {
   setupMessageHandler,
   openGatewayConnection,
@@ -402,8 +404,14 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
  * still only the observation, and keeps the sentence naming both remedies.
  */
 export function savedStateFailure(
-  reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError
+  reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError | MlsStateWriteRefusedError
 ): LoginFailure {
+  // The device identity rotation could not record its fresh state: another tab of this account
+  // wrote the stored one after this login loaded it (`BaseMlsService.rotateDeviceIdentity`).
+  // Nothing was moved, so the remedy is the other tab, never the PIN or a reset.
+  if (reason instanceof MlsStateWriteRefusedError) {
+    return new LoginFailure('state_written_by_another_tab', m.auth_state_written_by_another_tab());
+  }
   if (reason instanceof SavedStateOfAnotherAccountError) {
     return new LoginFailure('device_holds_other_account', m.auth_vault_other_account_device());
   }
@@ -1206,7 +1214,8 @@ export async function loginImpl(
       if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
       if (
         reason instanceof SavedStateUnopenedError ||
-        reason instanceof SavedStateOfAnotherAccountError
+        reason instanceof SavedStateOfAnotherAccountError ||
+        reason instanceof MlsStateWriteRefusedError
       ) {
         throw savedStateFailure(reason);
       }
@@ -2572,6 +2581,8 @@ export function tearDownLiveSession(
   resetHistoryReconciliation();
   // A Welcome this session sent says nothing about the next user's requests.
   resetWelcomeSent();
+  // Nor does a run of refused rotations: a sign-in after this one in the same tab starts its own.
+  forgetRefusedRotationReloads();
   // The probe sender closes over this session's storage and device key, so it must not outlive it:
   // a reconciliation from the next login would otherwise describe the previous user's store.
   setHistoryProbeSender(null);
@@ -2641,6 +2652,7 @@ export function tearDownLiveSession(
   // restore this session queued would refill the map as the account that just left.
   cb.invalidateRestores();
   cb.conversations.clear();
+  cb.forgetUnconfirmedSalonDraws();
   resetSalonUnread();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);

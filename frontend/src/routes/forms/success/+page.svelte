@@ -4,7 +4,7 @@
   import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { confirmSubmissionPayment } from '$lib/forms/api';
-  import { paymentReturnVerdict } from '$lib/forms/paymentReturn';
+  import { pollPaymentReturn } from '$lib/forms/paymentReturnPoll';
   import { SocialApiError } from '$lib/associations/api';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
 
@@ -15,17 +15,13 @@
    */
   const submissionId = $derived(page.url.searchParams.get('submission_id'));
 
-  /** Ceiling on how long the page keeps asking before it says the payment is still unconfirmed. */
-  const MAX_POLLS = 10;
-  const POLL_INTERVAL_MS = 3000;
-
   /**
    * A return with no submission starts on its answer: its first title, the one the route announcer
    * reads at the navigation, is already "Paiement introuvable".
    */
-  let status = $state<'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'error'>(
-    untrack(() => submissionId) ? 'loading' : 'error'
-  );
+  let status = $state<
+    'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'declined' | 'ended' | 'error'
+  >(untrack(() => submissionId) ? 'loading' : 'error');
   let formId = $state<string | null>(null);
 
   /**
@@ -38,6 +34,8 @@
     confirmed: () => m.form_success_confirmed_heading(),
     pending: () => m.form_success_pending_heading(),
     overCapacity: () => m.form_success_over_capacity_heading(),
+    declined: () => m.form_success_declined_heading(),
+    ended: () => m.form_success_ended_heading(),
     error: () => m.form_success_not_found_heading(),
   };
   $effect(() => {
@@ -45,35 +43,17 @@
   });
   onDestroy(() => setPageTitle(null));
 
-  async function confirmBySubmission(id: string) {
-    for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
-      const submission = await confirmSubmissionPayment(id);
-      formId = submission.formId;
-      const verdict = paymentReturnVerdict(submission.paymentStatus);
-      if (verdict === 'confirmed') {
-        status = 'confirmed';
-        return;
-      }
-      if (verdict === 'overCapacity') {
-        status = 'overCapacity';
-        return;
-      }
-      if (verdict === 'failed') {
-        status = 'error';
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    }
-    status = 'pending';
-  }
-
   onMount(async () => {
     if (!submissionId) {
       console.warn('[forms/success] reached without a submission_id');
       return;
     }
+    const id = submissionId;
     try {
-      await confirmBySubmission(submissionId);
+      status = await pollPaymentReturn(
+        () => confirmSubmissionPayment(id),
+        (submission) => (formId = submission.formId)
+      );
     } catch (err) {
       if (err instanceof SocialApiError && err.status === 429) {
         // The server's per-answer limit on asking Lydia (a reload after a full poll): an answer,
@@ -109,7 +89,7 @@
           <CircleCheck size={48} class="text-green-ok" />
         </div>
       </div>
-    {:else if status === 'error'}
+    {:else if status === 'error' || status === 'declined' || status === 'ended'}
       <div class="flex justify-center">
         <div class="bg-red-err/20 rounded-full p-4">
           <CircleX size={48} class="text-red-500" />
@@ -131,7 +111,11 @@
               ? m.form_success_pending_desc()
               : status === 'overCapacity'
                 ? m.form_success_over_capacity_desc()
-                : m.form_success_not_found_desc()}
+                : status === 'declined'
+                  ? m.form_success_declined_desc()
+                  : status === 'ended'
+                    ? m.form_success_ended_desc()
+                    : m.form_success_not_found_desc()}
         </p>
       {/if}
     </div>
@@ -142,6 +126,14 @@
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {m.form_success_back_to_form()}
+      </a>
+    {:else if status === 'declined' || status === 'ended'}
+      <!-- The answer is released: the form's own pay button is the retry, one tap away. -->
+      <a
+        href={formId ? `/forms/${formId}` : '/forms'}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+      >
+        {m.form_success_retry()}
       </a>
     {:else if status === 'overCapacity'}
       <a

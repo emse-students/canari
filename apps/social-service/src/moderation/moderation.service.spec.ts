@@ -42,6 +42,22 @@ describe('ModerationService - reports', () => {
   });
 
   describe('createReport', () => {
+    it('takes the writer of a reported comment from the stored comment, never from the client', async () => {
+      reportRepo.manager.query.mockResolvedValue([{ user_id: 'real-writer' }]);
+
+      await service.createReport({
+        reporterId: 'alice',
+        contentType: 'comment',
+        contentId: 'c1',
+        reason: 'spam',
+        reportedUserId: 'spoofed',
+      });
+
+      expect(reportRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ reportedUserId: 'real-writer' })
+      );
+    });
+
     it('refuses a duplicate with a code, not with a sentence a client would have to read', async () => {
       reportRepo.findOne.mockResolvedValue({ id: 'r0', status: 'pending' });
 

@@ -17,10 +17,12 @@ import { LiveChatReportedLine } from './entities/live-chat-reported-line.entity'
 import { LIVE_STORE_TIMEOUT_MS } from './live.constants';
 import { HttpLiveSegmentStore, LIVE_SEGMENT_STORE } from './live-segment-store';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
+import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer } from './live-announcer';
 import { LiveSeats } from './live-seats';
 import { LiveChatController } from './live-chat.controller';
 import { LiveChatService } from './live-chat.service';
+import { InternalLivesModeController } from './internal-lives-mode.controller';
 import { LivesController } from './lives.controller';
 import { LivesService } from './lives.service';
 
@@ -41,8 +43,10 @@ export const LIVE_ENTITIES = [
 /**
  * Lives (docs/wiki/services/lives.md): the row, its key and removed viewers (WP-L2), the segment
  * ingest, the manifest and the sweep (WP-L3), and the push to the followers when a live goes on air
- * (WP-L7, server half), and the live chat and floating reactions (WP-L6). Every route, and that
- * push, is behind `LIVE_ENABLED`.
+ * (WP-L7, server half), and the live chat and floating reactions (WP-L6). Every route is behind
+ * `LIVE_ENABLED` AND the runtime kill switch `platform_config.lives_mode` (`LiveEnabledGuard`), the
+ * push behind `LIVE_ENABLED`; the sweep and the hourly report-age alarm run regardless. The internal
+ * `internal/lives/mode` relays the kill switch to media-service.
  */
 @Module({
   imports: [
@@ -56,10 +60,11 @@ export const LIVE_ENTITIES = [
     // `PostNotificationsService`: a live's start is pushed through the post notices' one pipeline.
     PostsModule,
   ],
-  controllers: [LivesController, LiveChatController],
+  controllers: [LivesController, LiveChatController, InternalLivesModeController],
   providers: [
     LivesService,
     LiveRetentionScheduler,
+    LiveReportAgeScheduler,
     LiveAnnouncer,
     LiveSeats,
     LiveChatService,

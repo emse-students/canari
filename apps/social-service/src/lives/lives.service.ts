@@ -23,6 +23,7 @@ import { isUniqueViolation } from '../common/pg-errors';
 import { isBlockedBetween } from '../common/user-blocks';
 import { ModerationService } from '../moderation/moderation.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
+import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import {
   LIVE_BYTE_BUDGET,
@@ -95,6 +96,13 @@ export interface LiveManifest {
   lastSegmentAt: Date | null;
   serverNow: Date;
   segments: LiveManifestSegment[];
+  /**
+   * HOW MANY ACCOUNTS WATCH THIS LIVE - the seats it holds on the host's cap, the caller's own
+   * included, the broadcaster never (it takes none). A COUNT ONLY: no response of this API names a
+   * viewer, to anybody (lives.md, "The viewer count"). The owner decided viewers see the count
+   * (2026-10-21), EXACT and not rounded - confirmed by the owner 2026-10-21. `null` only on the broadcaster's poll when the count did not answer ({@link LiveSeats.watching}).
+   */
+  viewers: number | null;
 }
 
 /** The answer to an ingest, and to its idempotent repeat. */
@@ -416,7 +424,7 @@ export class LivesService implements OnModuleDestroy {
    */
   async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifest> {
     const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
-    await this.takeSeat(row, viewerId);
+    const viewers = await this.viewerCount(row, viewerId, await this.takeSeat(row, viewerId));
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
     const segments: LiveManifestSegment[] = await this.db.query(
       `SELECT s."index", s.name, s.bytes
@@ -432,6 +440,7 @@ export class LivesService implements OnModuleDestroy {
       lastSegmentAt: row.lastSegmentAt,
       serverNow: row.serverNow,
       segments,
+      viewers,
     };
   }
 
@@ -1028,10 +1037,11 @@ export class LivesService implements OnModuleDestroy {
    *   moderators stopped the live, which they did not.
    *
    * `text` the reason CODE (the client words it), no actor (`''`, as an anonymous post's notice:
-   * which moderator cut is not the broadcaster's to read). NO PUSH YET: a push needs its native
-   * strings in both apps first (`skipPush`, so no "no push content" warn either) - the broadcaster's
-   * own screen is told at once anyway, by the 410 its next segment gets. Best-effort: the cut is
-   * already durable.
+   * which moderator cut is not the broadcaster's to read). AND A PUSH, through the same call
+   * (`social_live_cut` / `social_live_suspended`, fixed sentences the device words), whose tap opens
+   * the notifications list (`NOTIFICATIONS_TARGET`): the live is deleted, so there is no page of it
+   * to open. The broadcaster's own screen is told at once anyway, by the 410 its next segment gets;
+   * the push is for the broadcaster who already left it. Best-effort: the cut is already durable.
    */
   private async notifyCut(cut: LiveCutResult): Promise<void> {
     if (cut.broadcasterId === DELETED_ACCOUNT) return;
@@ -1045,6 +1055,7 @@ export class LivesService implements OnModuleDestroy {
       this.logger.debug(`[LIVE_CUT] ${cut.liveId}: strike 1 on a live already ended - no notice`);
       return;
     }
+    this.logger.debug(`[LIVE_CUT] ${cut.liveId}: ${type} notice and push to the broadcaster`);
     try {
       await this.notifications.createNotification({
         recipientId: cut.broadcasterId,
@@ -1053,7 +1064,7 @@ export class LivesService implements OnModuleDestroy {
         actorId: '',
         actorName: '',
         text: cut.reason,
-        skipPush: true,
+        pushData: { target: NOTIFICATIONS_TARGET },
       });
     } catch (e) {
       this.logger.warn(
@@ -1157,7 +1168,8 @@ export class LivesService implements OnModuleDestroy {
    * `LIVE_WITHDRAWAL_NOT_DUE` with the count - the ladder is the owner's, and a moderator who wants
    * an account silenced sooner has the mute. Idempotent: a repeat answers the first withdrawal with
    * `newlyWithdrawn: false`. An open live of the account is NOT ended by it: that is a cut.
-   * The member is told by a `live_withdrawn` notice (reason code, no actor, no push yet).
+   * The member is told by a `live_withdrawn` notice (reason code, no actor) and its push
+   * (`social_live_withdrawn`, opening the notifications list).
    */
   async withdraw(
     reviewerId: string,
@@ -1222,7 +1234,7 @@ export class LivesService implements OnModuleDestroy {
           actorId: '',
           actorName: '',
           text: result.reason,
-          skipPush: true,
+          pushData: { target: NOTIFICATIONS_TARGET },
         });
       } catch (e) {
         this.logger.warn(
@@ -1403,10 +1415,26 @@ export class LivesService implements OnModuleDestroy {
    * takes or renews a seat, 503 `LIVE_FULL` past the host's cap. Taken AFTER the watch check, so a
    * removed, blocked or ended answer is never masked as "full". The broadcaster takes none: its
    * reads cost the uplink nothing a viewer's would.
+   *
+   * Answers the live's viewer count as the take counted it, or `null` for the broadcaster (no seat,
+   * no take) - who asks {@link viewerCount} instead, and only where a count is shown.
    */
-  private async takeSeat(row: LiveRow, viewerId: string): Promise<void> {
-    if (row.broadcasterId === viewerId) return;
-    await this.seats.take(row.id, viewerId);
+  private async takeSeat(row: LiveRow, viewerId: string): Promise<number | null> {
+    if (row.broadcasterId === viewerId) return null;
+    return this.seats.take(row.id, viewerId);
+  }
+
+  /**
+   * THE VIEWER COUNT a manifest carries (lives.md, "The viewer count") - from the seats, no second
+   * tracker: a viewer's from its own take (`taken`), the broadcaster's from a read-only count of the
+   * same set. Asked by the manifest only: the key read shows no count, so it runs no count.
+   */
+  private async viewerCount(
+    row: LiveRow,
+    viewerId: string,
+    taken: number | null
+  ): Promise<number | null> {
+    return row.broadcasterId === viewerId ? this.seats.watching(row.id) : taken;
   }
 
   /**

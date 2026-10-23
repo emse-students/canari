@@ -22,7 +22,9 @@
   build.gradle.kts -> merge failure). fullBackupContent stays out; dataExtractionRules
   is IN, and the merge conflict it used to cause is what tools:replace answers.
     - FCM meta-data default_notification_icon / _channel_id (= CHANNEL_MESSAGES in Kotlin)
-  CI guardrail: src/lib/mobile/androidFcmManifest.test.ts fails if any of these is dropped.
+    - the SEND / SEND_MULTIPLE intent-filter on MainActivity (share into Canari)
+  CI guardrail: src/lib/mobile/androidFcmManifest.test.ts fails if any of these is dropped,
+  src/lib/mobile/androidShareManifest.test.ts if the share filter is.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -52,13 +54,15 @@
     <!-- WP-XP-4: push-token re-registration + outbox drain at boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- WP-XP-5 declared USE_FULL_SCREEN_INTENT here for the locked-screen CallStyle ring. It is
-         GONE while calls are held off (frontend/src/lib/features.ts, CALLS_COMPILED): Play grants
+         GONE while the native ring is held off (frontend/src/lib/features.ts,
+         CALLS_NATIVE_RING_COMPILED, its own switch since 2026-10-21): Play grants
          that permission only to apps whose core function is calling or alarms, and declaring it for
          a surface no user can reach is the Play analogue of the `voip` background mode App Review
          refused on 2026-08-31. The tag is deleted rather than commented out on purpose - a commented
          tag still satisfies a `toContain` guardrail, which is how a removal turns into a false
-         green. Restore it in the same commit that flips CALLS_COMPILED
-         (callsCompiled.test.ts asserts the two agree). -->
+         green. Restore it in the same commit that flips CALLS_NATIVE_RING_COMPILED
+         (callsCompiled.test.ts asserts the two agree), not with CALLS_COMPILED: in-app calls ship
+         first, without the native ring. -->
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
@@ -89,6 +93,20 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <!-- SHARE INTO CANARI ("Partager -> Canari"): text, links, pictures, videos and files from
+                 any app. MainActivity copies the content and the page asks where to send it
+                 (IncomingShare.kt, docs/wiki/frontend/sharing.md). Hand-maintained, outside the
+                 deep-link plugin's generated block below. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/*" />
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->
             <intent-filter >
@@ -236,6 +254,32 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="republication-requests" />
+                
+                
+                
+                
+            </intent-filter>
+            <intent-filter >
+                <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fr.emse.canari" />
+                <data android:host="notifications" />
+                
+                
+                
+                
+            </intent-filter>
+            <intent-filter >
+                <action android:name="android.intent.action.VIEW" />
+                <!-- ChromeOS ARC++ uses a different action for deep links -->
+                <action android:name="org.chromium.arc.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="fr.emse.canari" />
+                <data android:host="form-responses" />
                 
                 
                 

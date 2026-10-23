@@ -1,3 +1,0 @@
-### Fixed - calls on Chromium were not end-to-end encrypted, and the screen said they were (dev builds only)
-
-The E2E transforms were assigned one task after `addTrack`, which Chromium short-circuits: clear audio left every Chromium client and the iPhone's ciphertext reached its decoder (the "noise"). They are now assigned in the same task, the screen claims encryption only from frames the worker encrypted and decrypted, and a call whose media flows around the worker ends ([calls](docs/wiki/frontend/modules/calls.md#call-e2e-bypass-mi9t-2026-10-20---chromium-short-circuits-a-transform-assigned-one-task-late)).

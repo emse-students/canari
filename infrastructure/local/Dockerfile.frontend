@@ -50,8 +50,21 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 #   NOT api.klipy.com, since 2026-10-16: the GIF search goes through chat-delivery's
 #   /api/mls/gifs so KLIPY never sees a reader's query, IP or identifier (gifSearch.ts).
 # img-src stays wide (https:) because it renders arbitrary user-posted image URLs;
-# connect-src must not, since it governs what the app can read into memory.
-RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"'; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+# connect-src must not, since it governs what the app can read into memory. It names
+# no bare ws:/wss: either: both WebSockets are same-origin, and the estate's own wss://
+# names are listed because 'self' matches wss: only under CSP Level 3 (older Safari).
+#
+# NO 'unsafe-inline' FOR SCRIPTS, AND A PAGE IS NOT GOVERNED BY THIS SNIPPET (2026-10-22).
+# These directives are written ONCE MORE, in frontend/src/lib/security/cspPolicy.js, and
+# csp.test.ts holds the two equal: SvelteKit sends that policy on every PAGE, plus the
+# hash of each inline script the page carries, which only the build knows. This snippet
+# covers every OTHER response - a worker script's policy is its own response's, so the
+# MLS worker compiles its WebAssembly under 'wasm-unsafe-eval' from here. A page block
+# (@ssr, @app_shell) must NOT include it: a second policy is intersected with the first,
+# and this one, holding no hash, would refuse the page's own scripts. It includes
+# csp-page.conf instead, which says only what a <meta> policy cannot (frame-ancestors).
+RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss://canari.emse.fr wss://canari-emse.fr wss://www.canari-emse.fr wss://dev.canari-emse.fr https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+RUN printf 'add_header Content-Security-Policy "frame-ancestors '"'"'none'"'"'" always;\n' > /etc/nginx/snippets/csp-page.conf
 
 # The headers of an error this nginx makes itself on an API route (@api_error_*): JSON, never cached,
 # readable cross-origin by the three WebView origins ($api_error_cors_origin, an allowlist - empty
@@ -72,11 +85,24 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # because a map takes the first rule that matches. The GIF RELAY (`/api/mls/gifs/media?url=`) keeps its\n\
 # path but not its query either: which GIF a reader loaded, beside their address, is the association\n\
 # the relay exists to keep from KLIPY - our own log must not rebuild it.\n\
+# A GUEST RECEIPT IS NOT LOGGED (2026-10-22, paid public forms WP-P2): `/f/<id>/receipt?receipt=` is\n\
+# a guest'"'"'s proof of a paid answer, the only one it has, so the route keeps its path and drops its\n\
+# query. The page itself sends no Referer (`no-referrer`), so its own requests do not carry it either.\n\
 map $request_uri $logged_request_uri {\n\
     "~^/api/mls/gifs/media(?:[?]|$)" "/api/mls/gifs/media?query-redacted";\n\
     "~^/api/mls/gifs(?:[?/]|$)" "/api/mls/gifs?query-redacted";\n\
+    "~^(?<receipt_path>/f/[^/?]+/receipt)[?]" "${receipt_path}?query-redacted";\n\
     "~^(?<uri_before_token>.*[?&])token=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}token=redacted${uri_after_token}";\n\
     default $request_uri;\n\
+}\n\
+# A PUBLIC FORM PAGE SENDS NO REFERER (2026-10-22, paid public forms WP-P2). `/f/<id>/receipt` carries\n\
+# a guest'"'"'s receipt in its query, and the page boots on the client: the first requests it makes (its\n\
+# own chunks) leave before any <meta> in it can apply, carrying the whole URL as their Referer. So the\n\
+# policy is a HEADER of the page itself, on every `/f/` page. Keyed on $request_uri, which @app_shell'"'"'s\n\
+# try_files does not rewrite. An empty value sends no header, so every other page is unchanged.\n\
+map $request_uri $public_form_referrer_policy {\n\
+    default "";\n\
+    "~^/f/" "no-referrer";\n\
 }\n\
 # FIVE DIAGNOSTIC FIELDS TRAIL THE LINE (2026-10-18), for the intermittent Messenger preview failure the\n\
 # access log could not explain: it held two response sizes for one crawler hit and nothing to say why.\n\
@@ -160,6 +186,15 @@ map $upstream_http_x_canari_degraded $ssr_cache_control {\n\
     default $ssr_cache_control_declared;\n\
     "~." "no-store";\n\
 }\n\
+# THE LYDIA CALLBACK IS THE ONE PUBLIC POST THAT READS A KEY AND THEN ASKS LYDIA (payments.md): a\n\
+# signature is checked per call against a Business key fetched from social-service, and a verified\n\
+# one makes social-service read the request at Lydia. Lydia sends a handful per payment; 5 r/s burst\n\
+# 50 per client address is far above that and bounds what a flood of forged bodies can cost.\n\
+map $request_method $lydia_callback_key {\n\
+    default "";\n\
+    POST $binary_remote_addr;\n\
+}\n\
+limit_req_zone $lydia_callback_key zone=lydia_callback:1m rate=5r/s;\n\
 \n\
 server {\n\
     listen 80;\n\
@@ -495,7 +530,11 @@ server {\n\
     # default, and the sitemap's own public max-age passes through the first map unchanged.\n\
     proxy_hide_header Cache-Control;\n\
     add_header Cache-Control $ssr_cache_control always;\n\
-    include /etc/nginx/snippets/csp.conf;\n\
+    add_header Referrer-Policy $public_form_referrer_policy always;\n\
+    # THE CONTENT-SECURITY-POLICY OF A PAGE IS WRITTEN BY SVELTEKIT (kit.csp, hash mode), passed from the\n\
+    # upstream with the hash of each inline script; csp.conf here would be intersected with it and\n\
+    # refuse those scripts. csp-page.conf adds only frame-ancestors (see the snippet comment above).\n\
+    include /etc/nginx/snippets/csp-page.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
     error_page 502 503 504 =200 @app_shell;\n\
@@ -516,7 +555,10 @@ server {\n\
     try_files /app-shell.html =502;\n\
     add_header Cache-Control "no-store" always;\n\
     add_header X-Canari-Degraded "ssr-unavailable" always;\n\
-    include /etc/nginx/snippets/csp.conf;\n\
+    add_header Referrer-Policy $public_form_referrer_policy always;\n\
+    # The prerendered shell carries its policy as a <meta> (kit.csp, hashes included), which cannot\n\
+    # say frame-ancestors - csp-page.conf says it.\n\
+    include /etc/nginx/snippets/csp-page.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
     }\n\
@@ -819,6 +861,27 @@ server {\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_post social-service:3014;\n\
     proxy_pass http://$upstream_post;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
+    # The public Lydia callback, rate-limited at the edge (zone lydia_callback); otherwise /api/payments.\n\
+    location = /api/payments/lydia-request-callback {\n\
+    limit_req zone=lydia_callback burst=50 nodelay;\n\
+    limit_req_status 429;\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
+    proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
+    set $upstream_payment core-service:3012;\n\
+    proxy_pass http://$upstream_payment;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\

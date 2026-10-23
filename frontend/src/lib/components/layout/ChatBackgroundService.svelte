@@ -116,6 +116,7 @@
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { channelService } from '$lib/services/ChannelService';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
+  import IncomingShareHost from './IncomingShareHost.svelte';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { CALLS_ENABLED } from '$lib/features';
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
@@ -911,6 +912,7 @@
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
       invalidateRestores: () => globalConvs.invalidateRestores(),
+      forgetUnconfirmedSalonDraws: () => globalConvs.forgetUnconfirmedSalonDraws(),
       beginConversationSource: () => globalConvs.beginConversationSource(),
       endConversationSource: () => globalConvs.endConversationSource(),
       previewLandingTarget: (input: {
@@ -2068,6 +2070,9 @@
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
   account={globalSession.userId}
 />
+
+<!-- "Envoyer a...": where a share from another app goes (visible on all routes, after the PIN) -->
+<IncomingShareHost />
 
 <!-- PIN recovery after a cross-device PIN change -->
 <ChangePinModal

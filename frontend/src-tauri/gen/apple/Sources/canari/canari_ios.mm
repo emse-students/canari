@@ -100,6 +100,66 @@ static void CanariMigrateDeviceKeyFromJson(void) {
   NSLog(@"[CanariIOS] migrateDeviceKey: key promoted to Keychain, JSON stripped, App Group mirror deleted");
 }
 
+/// The install's native cache key (Rust `native_cache`, the only copy of the design): a random
+/// 32-byte key sealing `graine_seeds.json` and the push cache at rest. Kept exactly like the device
+/// key's background copy - a Keychain item `mls_bg_key_<alias>` shared with the notification
+/// extension through the App Group access group, AfterFirstUnlockThisDeviceOnly, never synchronised
+/// and never in a backup - so the extension and the app (through the keystore plugin's unattended
+/// read) both find it. CREATED HERE AND NOWHERE ELSE: one creator, so one file is never sealed under
+/// two keys. Created only on errSecItemNotFound; any other status (a locked device before its first
+/// unlock) leaves everything as it is and says so. Android twin: NativeCacheKey.ensure.
+static void CanariEnsureNativeCacheKey(void) {
+  NSString *account = @"mls_bg_key_canari_native_cache_key";
+  NSDictionary *probe = @{
+    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService : @"fr.emse.canari",
+    (__bridge id)kSecAttrAccount : account,
+    (__bridge id)kSecAttrAccessGroup : @"group.fr.emse.canari",
+  };
+  OSStatus found = SecItemCopyMatching((__bridge CFDictionaryRef)probe, nil);
+  if (found == errSecSuccess) {
+    NSLog(@"[CanariIOS] nativeCacheKey: present");
+    return;
+  }
+  if (found != errSecItemNotFound) {
+    NSLog(@"[CanariIOS] nativeCacheKey: ERROR Keychain unreadable (status=%d) - left as it is", (int)found);
+    return;
+  }
+  NSMutableData *key = [NSMutableData dataWithLength:32];
+  if (SecRandomCopyBytes(kSecRandomDefault, 32, key.mutableBytes) != errSecSuccess) {
+    NSLog(@"[CanariIOS] nativeCacheKey: ERROR no random bytes - not created");
+    return;
+  }
+  NSMutableDictionary *add = [probe mutableCopy];
+  add[(__bridge id)kSecValueData] = key;
+  add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
+  OSStatus status = SecItemAdd((__bridge CFDictionaryRef)add, nil);
+  [key resetBytesInRange:NSMakeRange(0, key.length)];
+  if (status == errSecSuccess) {
+    NSLog(@"[CanariIOS] nativeCacheKey: created");
+  } else if (status == errSecDuplicateItem) {
+    NSLog(@"[CanariIOS] nativeCacheKey: present (created meanwhile)");
+  } else {
+    NSLog(@"[CanariIOS] nativeCacheKey: ERROR creation failed (status=%d) - the native caches stay unwritten", (int)status);
+  }
+}
+
+/// Keeps the two native caches - `graine_seeds.json` and the push cache - out of every backup, in
+/// the app's data directory and in the App Group container the notification extension reads. THE
+/// CACHES ONLY, NEVER THEIR DIRECTORY: it also holds `mls.bin`, `push_context.json` and the identity
+/// files, and those must come back with a restore - the device key that opens `mls.bin` is derived
+/// from the PIN, so a restored state is openable, and a restore that brought back WebKit's
+/// IndexedDB without it would look like a damaged MLS state. The caches gain nothing from a restore:
+/// their key is a ThisDeviceOnly Keychain item that does not travel. Per file, so every writer
+/// re-applies it after its atomic write; this pass at bootstrap and activation covers a file an
+/// older build wrote. Android excludes its data domain (`data_extraction_rules.xml`).
+static void CanariExcludeNativeCachesFromBackup(void) {
+  CanariExcludeNativeCacheFilesFromBackup(CanariTauriDataDir());
+  CanariExcludeNativeCacheFilesFromBackup([[NSFileManager defaultManager]
+      containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"]
+                                              .path);
+}
+
 static void CanariProcessPendingPushSecret(void) {
   NSString *secret = CanariRetrievePushSecret();
   if (secret != nil) {
@@ -580,6 +640,10 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariProcessPendingPushSecret();
   CanariMigrateDeviceKeyFromJson();
   CanariCheckKeystoreHealth();
+  // Before the frontend's first take of the push cache: the key that seals it, and the backup
+  // exclusion of where it lives. Both idempotent; the bootstrap ran them already when it could.
+  CanariEnsureNativeCacheKey();
+  CanariExcludeNativeCachesFromBackup();
   CanariPushCancelMessageNotifications();
   // Pick up whatever the NSE decrypted while we were killed or backgrounded. It writes into the
   // App Group because an extension cannot reach the app's data container; this is the hop that
@@ -739,6 +803,10 @@ void canari_ios_bootstrap(void) {
               }];
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();
+  // The native cache key before any push can be handled by this process, and the backup exclusion
+  // of where the caches live (see each; the activation runs them again).
+  CanariEnsureNativeCacheKey();
+  CanariExcludeNativeCachesFromBackup();
   // Cold start: drain before the WebView exists, so the very first take_fcm_cache of
   // this launch already sees the pushes handled while the app was killed.
   CanariDrainAppGroupFcmCache();

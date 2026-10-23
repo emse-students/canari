@@ -42,10 +42,18 @@
 "notif.social.coorganise_proposed.body" = "Événement à co-organiser";
 "notif.social.live_started.title" = "%@ est en live";
 "notif.social.live_started.body" = "Appuyez pour regarder";
+"notif.social.live_cut.title" = "Votre live a été interrompu";
+"notif.social.live_cut.body" = "La modération a coupé votre live. Ceci est un avertissement.";
+"notif.social.live_suspended.title" = "Lives suspendus";
+"notif.social.live_suspended.body" = "Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment.";
+"notif.social.live_withdrawn.title" = "Droit de lancer un live retiré";
+"notif.social.live_withdrawn.body" = "La modération vous a retiré le droit de lancer un live.";
 "notif.form.opening_soon.title" = "Formulaire bientôt ouvert";
 "notif.form.opening_soon.body" = "Un formulaire que vous suivez ouvre dans 5 minutes !";
 "notif.form.open.title" = "Formulaire ouvert !";
 "notif.form.open.body" = "Le formulaire est disponible - dépêchez-vous, les places sont limitées !";
+"notif.form.paid_over_capacity.title" = "Paiement sur un formulaire complet";
+"notif.form.paid_over_capacity.body" = "« %1$@ » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.";
 
 /* The agenda's five, added 2026-09-09 with the notifications themselves. */
 "notif.event.proposed.title" = "Événement à valider";

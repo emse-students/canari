@@ -9,6 +9,8 @@ pub enum Error {
     #[cfg(mobile)]
     #[error(transparent)]
     PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
+    #[error("the media type is not a plain type/subtype")]
+    BadMime,
     #[error("the file name is empty or names a path")]
     BadName,
     #[error("the staging session is not a plain token")]

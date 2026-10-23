@@ -54,7 +54,7 @@ WHERE "lastName" ILIKE :'last' AND "firstName" ILIKE :'first';`
 | Communities | `channel_members` (`userId`), `channel_messages` (`authorId`; content is ciphertext) |
 | Feed | `posts` (`authorId`; comments and reactions are JSON inside `posts` - search `comments`/`reactions` for the id), `post_notifications` (`recipientId`, `actorId`), `post_republications` |
 | Associations | `association_members`, `association_role_history`, `association_push_mutes`, `user_tags`, `document_reviewer_grants` (`userId`); `association_follows`, `user_follows` (`followerUserId`, `followedUserId`); `association_calendar_events` (`createdBy`) |
-| Forms and payments | `submissions`, `form_respondents`, `form_reminders`, `purchase_records`, `webhook_deliveries` (`userId`); `form_files` (`uploaderId`); `forms` (`ownerId`) |
+| Forms and payments | `submissions`, `form_respondents`, `form_reminders`, `purchase_records`, `webhook_deliveries`, `product_checkouts` (`userId`); `form_files` (`uploaderId`); `forms` (`ownerId`) |
 | Moderation | `content_reports` (`reporterId`, `reportedUserId`), `user_blocks` (`blockerId`, `blockedId`), `user_moderation` (`userId`) |
 | Legacy | `legacy_cotisations` (`claimedByUserId`, or the match key (last name, first name, promo) for a person with no account) |
 | Games | `minesweeper_scores`, `minesweeper_challenges`, `minesweeper_bans` (`userId`) |
@@ -88,6 +88,10 @@ through the Immich admin, see [dpia-migallery-faces](dpia-migallery-faces.md#6-o
 `users` (`uuid`), `ledger` (`uuid_user`, `uuid_staff`), `canari_ledger_details`,
 `perm_bartenders`, `sessions` (`uuid_user`). Erasure anonymises the account and keeps the ledger
 (accounting).
+
+### Audio calls (register C21)
+
+**An export will not contain call metadata**: it exists only in Redis (room binding 60 s ring + 4 h, presence 2 h, deleted at hang-up) and in the technical logs (90 days at most, C13), never in a database table. Tell the person so in the answer, and search the logs for their user id only if the request names calls specifically. The call lines in a conversation (time, duration) are end-to-end encrypted messages and follow C3.
 
 ### Portail-etu
 

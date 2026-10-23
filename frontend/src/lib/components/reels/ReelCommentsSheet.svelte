@@ -21,7 +21,8 @@
   import PostComments from '$lib/components/posts/PostComments.svelte';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import type { PostComment, PostEntity, PostMediaRef } from '$lib/posts/api';
-  import { PostCommentThread } from '$lib/posts/postCommentThread.svelte';
+  import { PostCommentThread, type CommentOutcome } from '$lib/posts/postCommentThread.svelte';
+  import type { CommentIdentity } from '$lib/posts/postIdentity';
   import { commentCountOf } from '$lib/posts/commentChange';
   import { reportComment } from '$lib/posts/reportComment';
   import type { ReportReason } from '$lib/moderation/reasons';
@@ -45,6 +46,8 @@
 
   let sheet = $state<HTMLDivElement | null>(null);
   let commentText = $state('');
+  /** Why the last comment did not go, said beside the box. */
+  let commentError = $state('');
   /** How far the sheet is dragged down, px. */
   let dragY = $state(0);
   let settling = $state(false);
@@ -62,14 +65,8 @@
     begin: () => {},
     end: () => {},
     answered: () => {},
-    holdThread: () => {},
-    adoptThread: (full) =>
-      onChange({
-        ...post,
-        comments: full.comments,
-        commentCount: full.commentCount,
-      }),
-    fail: (message) => showToast(message, 'error'),
+    // Said beside the box, where the reader is looking, and not in a toast over the reel.
+    fail: (message) => (commentError = message),
   });
 
   const comments = $derived(post.comments ?? []);
@@ -168,11 +165,17 @@
     close();
   }
 
-  async function handleAddComment(parentId?: string, media?: PostMediaRef) {
+  async function handleAddComment(
+    parentId?: string,
+    media?: PostMediaRef,
+    identity?: CommentIdentity
+  ): Promise<CommentOutcome> {
     const text = commentText.trim();
-    const outcome = await thread.add(text, parentId, media, () => (commentText = ''));
+    commentError = '';
+    const outcome = await thread.add(text, parentId, media, () => (commentText = ''), identity);
     // The box was emptied when the comment was shown; a failure puts the words back.
     if (outcome === 'failed' && !commentText) commentText = text;
+    return outcome;
   }
 
   function handleReportComment(commentId: string) {
@@ -253,25 +256,27 @@
 
     <div class="min-h-0 flex-1">
       <PostComments
-        docked
+        postId={post.id}
+        sendError={commentError}
         {comments}
         {topLevelComments}
-        showComments
         {commentText}
         submittingComment={thread.submitting}
         pendingCommentIds={thread.pending}
         {currentUserId}
         {authToken}
-        onToggleComments={close}
         onCommentTextChange={async (text) => {
           commentText = text;
+          commentError = '';
         }}
         onAddComment={handleAddComment}
         onLikeComment={(id) => void thread.like(id)}
         onEditComment={(id, text) => thread.edit(id, text)}
         onDeleteComment={(id) => thread.remove(id)}
         onReport={handleReportComment}
-        onLoadAllComments={() => thread.loadAll()}
+        onLoadOlder={() => thread.loadMore()}
+        hasMoreComments={thread.hasMore}
+        loadingMore={thread.loadingMore}
         totalCommentCount={commentCountOf(post)}
       />
     </div>

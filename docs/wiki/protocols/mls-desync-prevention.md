@@ -565,3 +565,196 @@ MLS lock nor anything a flusher holds (`awaitRustMutations` waits only for `oubl
 
 Pinned by `mlsStatePersister.test.ts` ("a flush asked while a checkpoint is running", "a checkpoint
 that FAILED leaves the state dirty"), both failing on the previous shape.
+
+### A web checkpoint resolves only when its state is on disk (2026-10-21)
+
+`WebMlsService.writeCheckpoint` used to resolve on every outcome of the version guard
+(`saveMlsStateEncrypted`, `utils/hex.ts`). So when the guard dropped the write, every waiter of
+`persistCheckpoint` still declared that state durable: the send ledger, the history marks,
+`externalJoin`. When the stored blob is another tab's, those markers land in the `localStorage`
+both tabs share.
+
+**The guard now tells its own document from another one.** `hex.ts` records the version this
+document last wrote, per account, once the transaction commits. An untagged write (a restore or a
+migration) made BY THIS DOCUMENT clears the record. An older write then has two outcomes:
+
+- **`superseded`**: the stored version is this document's own. Its counter is per document and
+  monotonic, so that later capture holds everything the refused one did. This is the ordinary case
+  when a direct `persistCheckpoint` (watchdog, burn, rotation, registry fallback) lands before a
+  slower persister flight. It is silent, and a checkpoint resolves on it.
+- **`stale`**: the stored version is another document's. This is a refusal.
+
+`collision` (two documents reached the same version) stays a refusal, now at `warn` because it fails
+a checkpoint. A device key change still requires `written`: a newer blob of this document may still
+be sealed under the old key.
+
+The own-document record was chosen over routing the direct callers through the persister. The
+record is one fact, kept where the decision is made. Re-routing would touch four call sites, and the
+fifth one written later would reopen the hole.
+
+**What it does not see: an untagged write from ANOTHER document.** A backup restore
+(`settings/actions.ts`) or a legacy migration in another tab replaces the blob without a version, so
+the stored version stays this document's last one and nothing tells this document its record is
+false. An older flight of this document that lands afterwards comes back `superseded` and declares
+its send ledger durable, while the disk holds the restore. It needs a restore in a second tab of the
+same account, during this tab's in-flight checkpoint. It is left open, rare and named: the cure is
+for every write to carry a version (the restore included), which is the version guard's own
+follow-up, not this fix's.
+
+**One line per refusal.** The guard's line names the refused version, the stored one, and what this
+document last wrote. `writeCheckpoint` rejects typed (`MlsStateWriteRefusedError`) and says nothing
+more, and the persister no longer repeats a typed refusal. A caller whose consequence is its own
+still says so: `externalJoin`'s fork accusation, and the rotation's abort.
+
+**The rotation persists first** (`BaseMlsService.rotateDeviceIdentity`). The fresh identity is
+loaded and checkpointed before anything shared moves: the id in `localStorage`, the send ledger and
+the old device's server row. On a refusal, another document wrote this account's state after this
+one loaded. Nothing shared moves, the old device is not deleted (the other document may be serving
+it), and the refusal propagates.
+
+**What is left in memory is ENDED, never rolled back.** The fresh client is already loaded, so
+restoring only the ids would run a groupless client under the revoked id. The round's caller logs
+and carries on, so every later round would rotate again, and once this tab's counter passed the
+other's the fresh state would be written next to the old stored id. So the ids stay the fresh ones,
+agreeing with the client, and each caller ends the holder:
+
+- **init** throws; the login maps it to a typed `LoginFailure` (`state_written_by_another_tab`,
+  "close the other tabs") and releases its client;
+- **the revocation round** reloads the document (`endDocumentAfterRefusedRotation`), the same proof
+  the tab promotion relies on: a reload is what provably re-reads the disk.
+
+**The refusal first LATCHES this document's writes** (`stateWritesEnded`). The version guard cannot
+do it: it orders by counter alone and does not know whose blob it holds. A rotation refused as a
+`collision` (same version) has its very next capture tagged one above the stored one, and that
+capture is written; refused stale by one, the next collides and the one after is written. A reload
+does not stop the page either - it runs until the next response commits, seconds on a slow
+network - and a persister flight (which raises its dirty flag again after each failure), the
+session watchdog's checkpoint or the burn's can land in between. So from the refusal on,
+`persistCheckpoint` and `changeDeviceKey` - the two seams every write of a live client passes -
+refuse typed (`MlsStateWriteRefusedError('ended')`). The latch is never cleared: the document is
+ended, and the next login builds a new client (`mlsHolder.reset`).
+
+**The latch decides AT THE PUT, and the refusal sets it there.** A check when a write starts is not
+one: a checkpoint captures, seals off the main thread, and waits for the device-key gate and the
+database, and neither the rotation's own checkpoint nor the watchdog's goes through the persister's
+single flight. So a flight could pass the start check, capture the fresh client one version above
+the other document's and still be sealing when the rotation's write was refused - then land. The
+latch is therefore handed to the write (`MlsStateWriteLatch`, `utils/hex.ts`) and read inside its
+IndexedDB transaction, in the same synchronous step as the guard's verdict and the put; and the
+rotation's write (`endsDocumentOnRefusal`) sets it in the very transaction that refuses it.
+IndexedDB serialises read-write transactions on one store, so every later write of this document
+sees it. The start check stays, so an ended document captures nothing. Native has no version guard
+and never refuses, so only the start check applies there.
+
+**The latch is said ONCE.** The rotation's `error` line says every later write is refused; the
+refused writes themselves are silent, typed, and the persister repeats nothing. A device-key re-seal
+refused as `ended` is silent too; refused by the guard, it still says which outcome kept the old key.
+
+**The reload is bounded by a count, never a clock.** The page it starts logs in again, and every
+login path asks the server whether the stored id is revoked and wipes it if so, so one reload
+normally ends it. That question answers `false` when the server is unreachable, though, and a page
+that then reaches the server while another document keeps writing would rotate, be refused and
+reload again. So at most two such reloads per tab (`sessionStorage`, which a reload keeps -
+`refusedRotationReloads.ts`) with no key package round PUBLISHED in between: any round that
+publishes resets the count - an ordinary login's, a healed page's, a landed rotation's - and so does
+the session's end (`tearDownLiveSession`, sign-out and revocation alike), so a sign-in after a
+sign-out in the same tab never inherits a run; the factory wipe empties `sessionStorage` whole. The
+key is NOT per account: every exit of an account passes that teardown, and a per-account key would
+have to join `accountLocalKeys.ts`, which is the `localStorage` sweep of an account deletion. A
+successful init does NOT reset it, because in that
+loop every init succeeds; it is the round after it that meets the revocation, so an init reset
+would keep the count below the bound for ever. Past the bound the page is not reloaded: it stays
+latched, writes nothing, says so at `error`, and shows the member a PINNED toast
+(`showPinnedToast`, `mls_page_ended_other_tab_writing`: close the other tabs, then reload) with a
+reload button and no close button - closed, it would leave a page that saves nothing and looks alive.
+
+**One accusation per event.** The init path printed three lines for one refusal: the guard's `warn`,
+the rotation's `error`, and the login's `[INIT] Login failed` at `error`. The rotation's line is the
+one that knows which id stayed stored and that nothing shared moved, so it keeps `error`; the guard
+keeps its `warn` (it names both versions); `state_written_by_another_tab` joined
+`isExpectedLoginOutcome`, so the login narrates it at `warn` instead of accusing it a second time.
+
+**What the reload costs the member.** The chat composer's text is plain component state
+(`MainChatPage.svelte`, `messageText`) and is lost, exactly as on the tab-leader promotion and
+demotion reloads, which already accept it. A message already sent is in the durable outbox and is not
+lost. A post or a comment being written is not lost: their drafts persist in `localStorage`
+(`postComposerDraft.ts`, `postCommentDraft.ts`).
+
+Pinned by `hex.mlsVersion.test.ts` (superseded versus stale, untagged writes; a refusal as
+`collision` or stale by one that ends the document makes the next queued write `ended`),
+`WebMlsService.changeDeviceKey.test.ts` ("WebMlsService.writeCheckpoint": the latch handed to the
+write, `ended` rejects; a re-seal refused as `ended` logs nothing), `mlsStatePersister.test.ts` (a refused checkpoint adds no line),
+`BaseMlsService.externalJoin.test.ts` (no fork accusation for an own-document stale write, one for a
+foreign one), `BaseMlsService.deviceRevoked.test.ts` and `WebMlsService.legacyMigration.test.ts`
+(the refused rotation ends the document on the revocation path, and only for a refusal; a flight
+already sealing when the rotation is refused is refused at its put; after the refusal no later
+checkpoint, persister flight or re-seal is written, and only one line is printed; the reload bound,
+its toast, and its reset by a published round), `refusedRotationReloads.test.ts` and
+`signOutEndsLiveSession.test.ts` (the session's end clears the count),
+`ToastContainer.svelte.test.ts` (a pinned toast has no close button), `savedStateFailure.test.ts` (the typed login
+failure), `loginErrors.test.ts` (narrated, not accused). Each was mutation-checked.
+
+### A history replay's markers wait for the checkpoint that holds it (2026-10-21)
+
+A history replay returns a commit thunk (`MlsReplayCommit`, `utils/chat/history.ts`) that writes
+its Redis stream cursor, seen-ciphertext set and retry counters. It must run only once the ratchet
+advance the replay made is on disk: a cursor ahead of the state skips, on the next cold replay,
+frames the restored state never applied - the `wrong-epoch` / epoch-gap class, and the direction
+`commitPendingHistoryMarks` calls unsurvivable.
+
+**Until 2026-10-21 it ran after `endBulkIngest` resolved, and four comments said that was after the
+flush. It was not.** `BaseMlsService.endBulkIngest` awaits every observer, but the persister's
+`onBulkIngestEnd` STARTS the checkpoint and returns (durability must not gate delivery, section 8),
+and a window closing inside another one - a replay inside a live drain - returns at depth > 0 with
+no checkpoint at all. So the markers led the state by one checkpoint (~100 ms web, seconds on a big
+native state) on every shipped build. Found by reading, never measured in the field.
+
+**Now `withMlsBulkIngest` (`mls-client/mlsBulkIngest.ts`) owns the ordering.** It takes the commit
+as an argument and:
+
+1. marks the state dirty AFTER `fn` resolved (the replay's session has committed its ratchet) and
+   BEFORE the window closes, so the outermost close's own checkpoint is the one that covers it - no
+   second write;
+2. closes the window, returns `fn`'s value at once - the caller draws its page without waiting
+   for the disk;
+3. chains `persister.flushEncrypted()` and runs the commit when it resolves. By the contract of the
+   subsection above, that promise resolves only once a checkpoint that started after the mark has
+   landed: the dirty flag is cleared only by starting a checkpoint, and a failed one raises it again.
+   Nested inside a drain, the flush starts its own checkpoint.
+
+**What "landed" means, exactly.** The commit runs only when `fn` returned something to commit, the
+mark came after it, the flush resolved, AND that checkpoint's state is on disk: on web, `written`, or
+`superseded` by this document's own later capture, while `stale` and `collision` reject typed (the
+subsection above, "A web checkpoint resolves only when its state is on disk"). A typed refusal adds
+no line here: the guard has said it once.
+
+**A failed checkpoint rejects the flush and the commit never runs**: the markers stay behind the
+state, the survivable direction (a re-walk of frames already seen). No persister registered is a
+defect upstream (the pipeline registers before the restore can replay) and is logged as an error,
+markers withheld. No clock anywhere: termination is the checkpoint promise, which settles.
+
+**What it costs, stated.** One extra checkpoint per replay that closes inside a live drain, because
+that close starts none; a replay that fetched nothing returns `undefined` and owes none. And the
+markers land LATER than they did: the restore's commits run once the phase's checkpoint lands,
+after `restore` has returned, so a conversation opened meanwhile probes the OLD cursor and re-walks
+from it. That re-walk is idempotent - the frames it meets again are in the in-memory seen set.
+
+**The thunk no longer writes the seen set.** That set is the LIVE one live delivery shares, so the
+thunk's write also wrote every mark live delivery made while the covering checkpoint was sealing:
+a live commit's fingerprint durable before the checkpoint holding its epoch, and a kill there made
+the cold replay skip that commit, move the cursor past it, and fail every later frame `wrong-epoch`
+into a forced re-Welcome. The walk's own marks need no such write: each is registered pending
+before the helper marks the state dirty, so the covering checkpoint's `commitPendingHistoryMarks`
+snapshot holds every one. The thunk keeps the cursor and the retry counters.
+
+Rejected: awaiting the checkpoint in the persister's `onBulkIngestEnd` for persist-only windows.
+`endBulkIngest` swallows observer failures, so a failed checkpoint could not reach the caller
+without changing that seam, the nested close would still start nothing, and the selected
+conversation's page would be drawn only after the disk answered (8 s on a cold web client). Also
+rejected: the persister running registered thunks after a later checkpoint - the same proof with
+more state to own (registration, logout, two replays of one group).
+
+Pinned by `mlsBulkIngest.test.ts` (the real persister as observer: before the checkpoint lands, a
+failed checkpoint, a version-guard refusal, a close inside a live drain, a checkpoint already
+running, nothing to commit; and no persister) and `history.checkpointBoundMarks.test.ts` ("a LIVE
+mark made while the covering checkpoint seals is not made durable by the thunk").

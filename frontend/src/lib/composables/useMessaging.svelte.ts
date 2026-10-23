@@ -69,7 +69,7 @@ import {
   whenSalonSendable,
 } from '$lib/utils/graine/salonSendGate';
 import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
-import { MediaService } from '$lib/media';
+import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
 import {
   applyEditToBody,
@@ -1667,7 +1667,7 @@ export function useMessaging() {
         if (prepared) readyFiles.push(prepared);
         continue;
       }
-      if (limits !== null && file.size > limits.maxPlaintextBytes) {
+      if (limits !== null && refusedBeforePreparation(file, limits)) {
         const size = (file.size / 1024 / 1024).toFixed(1);
         // TOLD the configured ceiling, COMPARED against it minus the AES-GCM tag - see
         // `uploadLimits`. Announcing the compared number would say "49 Mo" of a 50 MB server.
@@ -1772,7 +1772,11 @@ export function useMessaging() {
   }
 
   /** Stages picked files in the pending queue, to be sent with the next message. */
-  async function handleFilesSelected(files: File[], ctx: MessagingContext) {
+  async function handleFilesSelected(
+    files: File[],
+    ctx: MessagingContext,
+    opts?: { stillWanted?: () => boolean }
+  ) {
     // The conversation the files were picked IN, read before the preparation (a video re-encode)
     // gives the member time to open another one.
     const stagedIn = ctx.selectedContact;
@@ -1782,6 +1786,12 @@ export function useMessaging() {
     }
     const readyFiles = await prepareMediaFiles(files, ctx);
     if (readyFiles.length === 0) return;
+    // ASKED AFTER THE PREPARATION, which can take seconds: a sign-out during it has already emptied
+    // the queues (`forgetAccount`), and staging now would hand this account's file to the next one.
+    if (opts?.stillWanted && !opts.stillWanted()) {
+      ctx.log(`[MEDIA] ${readyFiles.length} file(s) not staged: no longer wanted (signed out)`);
+      return;
+    }
     ctx.log(`[MEDIA] ${readyFiles.length} file(s) staged in ${stagedIn}`);
     setPendingMediaFiles(stagedIn, [...pendingMediaFilesFor(stagedIn), ...readyFiles]);
   }

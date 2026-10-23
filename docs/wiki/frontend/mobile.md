@@ -252,7 +252,7 @@ which stores nothing; same method as [section 9.2 of the upload design](../servi
 
 **Why the override exists, and why this is safe to narrow.** `ad405e190` (2026-04-05) installed it when the
 Tauri origins were not yet in the services' CORS allowlists. They all are now (`TAURI_WEBVIEW_ORIGINS`, three
-spellings, asserted by name in each `cors-origins.spec.ts`), and every credentialed call already goes native
+spellings, asserted by name in chat-delivery's `cors-origins.spec.ts`, which proves the four byte-identical copies), and every credentialed call already goes native
 (`shouldUseNativeFetch`), so the WebView's `fetch` already talks to every service from `tauri.localhost` in
 production. Checked from the Android origin against dev: an `Authorization`-bearing POST with a `FormData`,
 `Blob` or `Uint8Array` body, so a real preflight, answers 401 readably on `/api/media/upload`,
@@ -395,7 +395,9 @@ call invite for as long as it stayed on that network (CALL-WS-V6,
 - **Closing a late socket is necessary, not harmless.** Whatever the gateway sent it before the close
   is lost to this device: on connect the gateway drains `pending_welcome_notify:{user}` into the new
   socket and deletes the key once the send succeeded (`apps/chat-gateway/src/handlers.rs`), so a late
-  socket can consume those signals; the delivery service's FCM resend of a still-pending
+  socket can consume those signals - and so can an ON-TIME one, whose frames may reach the plugin's
+  Channel before the page has called `addListener` (the P3 "the vendored websocket plugin" in
+  [backlog](../backlog.md)); the delivery service's FCM resend of a still-pending
   `welcome_request` is what covers them. The cure is the connect being fast, which is what the race is
   for; the close only stops the ghost from going on consuming.
 
@@ -899,9 +901,11 @@ destination column is what the app opens, the coverage column is what a test or 
 | `association_post`, `followed_post`, `association_repost` | FCM + APNs | `postId` | `/posts/<id>` | same | routes |
 | `repost_proposed`, `coorganise_proposed` | FCM + APNs | none (`postId` is the RECEIVING association) | **was the feed `/posts`**; now `proposals/<associationId>` -> slug lookup -> `/associations/<slug>/edit/republications` | `push-target.spec`, `deepLinkRoutes.test` | **fixed on the branch**, never run on a phone |
 | `form_opening_soon`, `form_open` | FCM + APNs | `formId` | `/forms/<id>` | same | routes |
+| `form_paid_over_capacity` (organiser alert, 2026-10-22) | FCM + APNs | `target: 'form-responses'` + `formId` (wins over the plain `form/<id>`) -> `form-responses/<formId>` | `/forms?responses=<formId>`, that form's responses accordion opened | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test`, `page.responsesLink.svelte.test` | SWITCHED OFF until the floor covers #1911 ([forms](modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)); never run on a phone. A build older than this host's declaration drops the tap's link on Android (the app opens where it was) |
 | `event_proposed` | FCM + APNs | `associationId`, `action` | `/admin/agenda` | same | routes (iOS read on hardware 2026-10-05) |
 | `event_validated/rejected/updated/deleted/pending` | FCM + APNs | same | `/calendar` | same | routes |
 | `profile_correction_applied/refused` | none (`skipPush`) | `requestId` | in-app row only, `/profile` | `notificationTarget.test` | no push by design |
+| `live_cut`, `live_suspended`, `live_withdrawn` (WP-L8b, 2026-10-21) | FCM + APNs | `target: 'notifications'` (wins over `postId`, the live's or the member's id) | `/notifications`, where the inert row says it | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test` | never run on a phone; never muted by a category ([lives](../services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)) |
 | Incoming call | FCM silent frame | `groupId`, `callId` | `/chat`, accept recorded | NOTIF rows | HELD: `CALLS_ENABLED = false` |
 | Browser (web) notification | `new Notification` from a WebSocket frame, **no service worker, no web push** | `conversationId` | `chatDeepLinkRoute` | `useNotifications.webClick.test` | **was `/chat` for a salon, fixed on the branch**; a closed tab gets nothing |
 
@@ -1045,8 +1049,10 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
   device key comes from the shared keychain item `mls_bg_key_<alias>` (see
   [auth](modules/auth.md) "Where the key lives")
 - `mls.bin` — read-only mirror of the persisted MLS state; the NSE never writes it
-- `channel_keys.json` — read-only mirror for community/channel message decryption
+- `graine_seeds.json` — the salon seed mirror, SEALED at rest; only Rust opens it (see "The native caches are sealed at rest")
 - `push_secret.txt` — read-only mirror of the PushSecret for backend fetch paths
+
+(`channel_keys.json`, the epoch-key mirror Graine replaced, had no reader left; the first run of a 2026-10-22 build deletes it.)
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
@@ -1086,9 +1092,10 @@ Now (`canari_push.mm`):
   decrypting nothing; `call_ring_end` ends a CallKit ring. Every other kind - a Welcome, a
   `welcome_request_pending`, a peer's receipt, a commit - is logged `NOT acted on`: the two Welcome
   kinds would be the first background MLS write an iPhone has ever run, and wait for the
-  background-join row fix ([backlog](../backlog.md)). The `welcome_request_pending`, `isWelcome` and
-  `process_queue` branches of `CanariHandleFcmData`, which only a silent frame carries, are
-  therefore reached by nothing on iOS.
+  background-join row fix ([backlog](../backlog.md)). The `isWelcome` and `process_queue` branches
+  of `CanariHandleFcmData`, which only a silent frame carries, are therefore reached by nothing on
+  iOS; its `welcome_request_pending` branch was the same and was deleted on 2026-10-22 (it wrote the
+  add before the server answered - [chat-delivery](../services/chat-delivery.md#the-background-welcome-answers-what-happened-and-the-phone-installs-only-an-acceptance-2026-10-22)).
 - **The completion handler is called once**, after the removal has been issued and any chained
   implementation has answered: early lets iOS suspend the process with the removal queued, never
   makes iOS throttle later wakes.
@@ -1416,6 +1423,13 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
 - Localized `InfoPlist.strings` (fr/en `PBXVariantGroup`)
 - `aps-environment: production` for TestFlight/App Store
 - Provisioning profiles: two named profiles matching `PROVISIONING_PROFILE_SPECIFIER`, team "Les Rootz" `4CLNB8SR6L`
+- **The app needs iOS 16** (owner decision 2026-10-22). The WebView carries a Content-Security-Policy
+  with `'wasm-unsafe-eval'`, which WebKit before 16 does not know - it refuses WebAssembly, so the MLS
+  engine would not load. Stated in four places that must agree: `IPHONEOS_DEPLOYMENT_TARGET` (the
+  project and the app target, both configurations; the NSE keeps its own higher value), `project.yml`,
+  the `Podfile`, and `bundle.iOS.minimumSystemVersion` in `tauri.conf.json` - plus the Rust prebuild's
+  `IPHONEOS_DEPLOYMENT_TARGET` in `ios.yml`. `csp.test.ts` asserts them
+  ([cloudflare-edge](../infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)).
 
 ### A build for the phone on the bench
 
@@ -1662,9 +1676,9 @@ User decision 2026-10-14: declare exclusion rects.
   `canariGestures` JavaScript interface of `MainActivity` (`setRightBand` / `clearRightBand`, the
   twin of `canariTheme`), re-reported by a `ResizeObserver`, cleared on unmount. Everywhere else the
   system right-edge back swipe is untouched.
-- **Native:** `MainActivity.applyRightEdgeExclusion` sets ONE rect on the WebView
+- **Native:** `MainActivity.applyEdgeExclusions` sets the right rect on the WebView
   (`ViewCompat.setSystemGestureExclusionRects`, API 29+, no-op below) on each report and on each
-  WebView layout change, skipping an unchanged result. The arithmetic is `rightEdgeExclusion`
+  WebView layout change, skipping an unchanged result. The arithmetic is `edgeExclusion(Edge.RIGHT, ..., CapAnchor.BOTTOM)`
   (`gesture/EdgeGestureExclusion.kt`, pure, tested by `EdgeGestureExclusionTest` in `android-tests`):
   width = the REAL `systemGestures` inset (74 px here) + 8 dp margin, not a constant; a 0 inset
   (3-button navigation) means no rect.
@@ -1678,13 +1692,62 @@ User decision 2026-10-14: declare exclusion rects.
   list continuously); native logs and re-sets only on change.
 - **Known gap:** an overlay drawn over a mounted list (side panel on a phone, modal, media viewer)
   keeps the band; the right-edge Back swipe is unavailable there too.
-- **Unaffected:** the system Back button / 3-button Back, and the LEFT edge gesture (no rect there);
+- **Unaffected:** the system Back button / 3-button Back, and the LEFT edge gesture (no rect there, except over the feed - next section);
   the history stepping of "The hardware Back press had no owner" is unchanged.
 - **The 74 px comes from `dumpsys`** (`EdgeBackGestureHandler`), not from the code: the first thing to
-  read on the Mi 9T is the log line `right-edge gesture exclusion: span=... -> ...` (a null band
-  there means the inset read 0).
+  read on the Mi 9T is the log line `gesture exclusion: spans={RIGHT=...} -> [...]` (an empty
+  list there means the inset read 0; `API < 29: not applied` means the OS has no exclusion API).
 - **Owed:** a reading on the Mi 9T through the next pre-release (own bubble, x >= 406.5 CSS px,
   keyboard closed and open; then the right-edge back swipe on the list screen must still work).
+
+### The left-edge back gesture is excluded over the feed, and only there (2026-10-21)
+
+A swipe from the feed to the camera (the tab swipe's `prev` from `/posts`) started in the left
+74 physical px (30 CSS px, `EdgeBackGestureHandler mEdgeWidthLeft=74` on the Mi 9T) was taken by the
+system as Back: the page saw only `touchstart > touchcancel`, 8 of 8 (class B of the 2026-10-21
+camera-swipe matrix, `<harness-dir>/a1-bench/camera-swipe-r1021/`). Owner decision 2026-10-21:
+exclude the left edge over the feed, with the mechanism of the right edge above.
+
+- **One mechanism, two edges.** The `canariGestures` bridge gained `setLeftBand` / `clearLeftBand`;
+  `MainActivity.applyEdgeExclusions` holds one span per edge and hands BOTH bands to
+  `ViewCompat.setSystemGestureExclusionRects` in one list (the call replaces the view's list, so a
+  single-edge call would erase the other). That list is composed by the pure `bandsFor`, and
+  `EdgeGestureExclusionTest` asserts that a LEFT span leaves the RIGHT band intact and the reverse -
+  `MainActivity` itself is compiled by no pull-request gate. The arithmetic is
+  `edgeExclusion(edge, ..., anchor)` in `gesture/EdgeGestureExclusion.kt`, the right edge's function
+  generalised, not a copy. Below API 29 nothing is applied and the log line says `API < 29: not
+  applied`. The page side is `excludeEdgeOver` in `lib/mobile/edgeGestureExclusion.ts`,
+  with `excludeRightEdgeOver` (ChatArea) and `excludeLeftEdgeOver` (root layout) as its two callers.
+- **Scope:** `wantsFeedLeftEdgeExclusion` (pure, tested) - exactly `/posts`, the swipe armed on this
+  layout, the camera being the feed's `prev`, the keyboard down, and NOTHING COVERING THE SCREEN
+  (`screenCover.covered`: the reel viewer, a full-screen media viewer, a modal, the composer's
+  camera) - each of those is closed by Back, so a band left under it would make a left-edge Back
+  do nothing. A post page (`/posts/<id>`), the
+  camera, a conversation and every other route keep the left-edge Back. The root layout's `$effect`
+  reports `.page-scroll-wrap` (the page area, the bottom bar's `padding-bottom` removed) and its
+  cleanup clears the band on every route change, keyboard rise or viewport change.
+- **Width:** the REAL left `systemGestures` inset + 8 dp, as on the right - 74 + 22 = 96 px on the
+  Mi 9T, which covers the measured 30 CSS px band and widens with the user's back-sensitivity
+  setting. A 0 inset (3-button navigation) declares nothing. **A dead zone remains inside the
+  band:** a start on a horizontally scrollable strip (the feed's chip rows) is refused by
+  `shouldIgnoreSwipeTarget`, so there the touch reaches neither the camera swipe nor Back. The span is CSS px x
+  `devicePixelRatio`; dp come from native `density`.
+- **The budget:** Android honours 200 dp of exclusion PER EDGE (and Android 10 caps the vertical
+  extent at 200 dp), and ignores the excess silently. Each edge has its own budget, so the two bands
+  never compete. The feed is taller than 200 dp (550 px on the Mi 9T), so the band is cut to 200 dp
+  around the MIDDLE of the feed (`CapAnchor.CENTER`), where a thumb starts that swipe and where the
+  matrix started every cell (y = 1300 of 2340); the right edge keeps its BOTTOM anchor. Above and
+  below the band a swipe from the left edge is still Back - the declared cost.
+- **No leak:** native re-applies on every WebView layout change (rotation is a `configChanges`, not
+  a recreation) and the page's `ResizeObserver` re-reports the span; the rects live on the view, so
+  a pause and resume keeps them. A `location.reload()` keeps the activity and its native spans, so
+  the root layout calls `clearEdgeExclusionsForNewDocument` once per document before any surface
+  reports - this also closes the same leak for the right edge.
+- **iOS: nothing to do.** There is no system back gesture on the left edge of a WKWebView app here
+  (no back-forward swipe), the iOS Back is the app's own `swipeBack`, only in a conversation, so the
+  feed's left edge already belongs to the page. The bridge is absent there and the call is a no-op.
+- **Owed:** a Mi 9T reading on the next pre-release
+  ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
 
 ### One Back with the message sheet open closed the sheet AND the conversation, and ten more surfaces shared the cause (2026-10-13)
 
@@ -2059,7 +2122,10 @@ them. The name never rides the push and is never fetched on the push path (user 
   (`mentionAuthorLine`) and the subtitle on iOS (the NSE's `mentionAuthorLine`,
   `CanariMentionAuthorLine`), from the existing `notif_social_mention_title` /
   `notif.social.mention.title` sentence - no new string. An MLS (DM or group) banner is unchanged:
-  its push has always carried `senderName`, which is the title or the subtitle.
+  its push has always carried `senderName`, which is the title or the subtitle. **Only on a banner
+  that shows the decrypted text** (2026-10-22): a blind salon banner draws no author line, no face
+  and no mention route, because nothing proved the server's `senderId`
+  ([channel-encryption 21.5](../protocols/channel-encryption.md#215-the-native-readers-wp-g2-4b)).
 - **The mentioned person, inside the text, comes from the same file**: a body carries
   `@[<64 hex>]`, rendered by every native composer (Android `renderMentions`, the NSE's
   `renderMentions`, `CanariRenderMentions`). This device's own id is "you", anybody else is named
@@ -2525,9 +2591,79 @@ The web has no bridge to cross: the bytes go from IndexedDB to WASM in one proce
 `hasMlsState` still loads them there. That split is not a fallback, it is the same question asked
 the way each store can answer it.
 
+### The native caches are sealed at rest, and kept out of backups (2026-10-22)
+
+Two files exist so a phone can act with the app shut, and each holds what the app's own stores
+seal: `graine_seeds.json` (salon seeds, for the push service to derive a message key) and
+`fcm_message_cache*.ndjson` (messages the push service decrypted, for the next start). Both are
+sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design:
+
+- **The key is the INSTALL's, not the device key.** A random 32 bytes, created once by the native
+  side at process start (Android `NativeCacheKey.ensure` from `CanariApplication`; iOS
+  `CanariEnsureNativeCacheKey` at bootstrap and activation), kept exactly where the device key's
+  background copy is kept: wrapped by a non-exportable Android Keystore key (`keystore_aliases`
+  prefs), or a Keychain item `mls_bg_key_canari_native_cache_key` in the App Group access group,
+  `AfterFirstUnlockThisDeviceOnly`. Not the device key, deliberately: that one changes with the
+  PIN, and two background processes would have to re-seal both files across a change neither
+  holds. A key that never rotates has no such window, and nothing the server holds derives it.
+- **One creator.** Rust never creates it - the app process reads it through the keystore plugin's
+  unattended read; the push service and the NSE read it themselves and hand it over (JNI / FFI).
+- **Two envelopes**: the mirror is `CNSEAL1\n || nonce || AES-256-GCM`; a cache LINE is
+  `cs1:<base64>`, so the append, the take and the size-checked ack still work line by line. Each
+  purpose has its own HKDF subkey.
+- **No key, nothing written**: a writer with no key writes nothing (the message is still on the
+  server), a sealed file with no key is an error and never "empty", and a take with no key does not
+  hand over (so never acks) a file holding sealed lines.
+- **Only Rust opens the mirror.** The Kotlin service, the NSE and `canari_push.mm` ask
+  `graineSeedHeld` (1 / 0 / -1) and pass the key to `open_graine_push`; the seed never enters the
+  JVM or Swift.
+- **The upgrade**: a mirror without the marker is in the older unsealed format, read as such and
+  sealed by the first write and by `migrate_legacy_files` (run once per process from
+  `take_fcm_cache`, for the data dir and the iOS App Group copy; the file's marker is the durable
+  record, so it is idempotent). `channel_keys.json` has no reader and is deleted. Unsealed cache
+  lines are taken beside sealed ones and leave with the ack. The reader for the older format has a
+  removal condition, in [legacy-compatibility](../legacy-compatibility.md#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal).
+- **Any question about the mirror's contents goes through `read_graine_mirror` with the key.** A
+  second reader that parses the raw file still compiles, and against a sealed file it answers
+  "holds nothing" for every salon. `nativeCacheSeal.test.ts` allows exactly one raw read.
+- **One key read per push, and absence said once.** A salon push on Android unwraps the key once
+  and hands it down. `take_fcm_cache` runs on a poll, so `app_cache_key` logs a missing key when it
+  goes missing and again when it comes back, never once per poll.
+- **Backups**: Android already excludes its whole data domain (`data_extraction_rules.xml`, see
+  below). iOS sets `NSURLIsExcludedFromBackupKey` on the two CACHE FILES only, in the data
+  directory and in the App Group container - **never on a directory**. Those directories also hold
+  `mls.bin`, `push_context.json` and the identity files. The device key that opens `mls.bin` is
+  derived from the PIN, so a restored `mls.bin` can be opened, and a restore that brought back
+  WebKit's IndexedDB without it would look like a damaged MLS state. The flag is per file, and an
+  atomic write is a new inode that does not carry it, so EVERY writer re-applies it after its write:
+  - Rust `with_graine_mirror_inner` (`native_cache::exclude_from_backup`, through the Objective-C
+    runtime because `libapp.a` is linked into the NSE too);
+  - `CanariAppendFcmCacheEntry`, `CanariDrainAppGroupFcmCache` and `CanariMirrorPushStateToAppGroup`
+    (`CanariExcludeNativeCacheFilesFromBackup`);
+  - the NSE's `writeFcmCache` (`excludeFromBackup`).
+
+  A pass at bootstrap and on each activation covers a file an older build wrote.
+- **Desktop has no reader**, so it writes no mirror and deletes one an older build left.
+
+`nativeCacheSeal.test.ts` pins the alias across the five files, that every cache writer seals,
+that no native reader opens the mirror, and the iOS exclusion. A rotation of the key, a key lost
+with the Keystore entry (Android re-creates it only when the wrapping entry is GONE), or a sealed
+line under another key costs a cache entry or a richer banner, never a message: the durable stores
+are the truth.
+
+### What a native log line may carry (2026-10-22)
+
+Native log lines - logcat, os_log and the Rust log - carry ids (truncated) and counts only
+(`chars=${text.length}`, `named=true`), never message text, a name or a key.
+`nativeLogContent.test.ts` scans every Kotlin, Swift, Objective-C++ and Rust log call for an
+interpolated content-bearing name (`text`, `body`, `senderName`, `seed`, `token` ...) and fails on
+one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content is allowlisted
+by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) match
+these shapes.
+
 ### FCM message cache
 
-Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt:
+Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt, each line SEALED (previous section):
 
 - Android: `CanariFirebaseMessagingService.writeFcmCache` → `{app_data_dir}` directly. The FCM service runs in the app's own process, so it shares that directory.
 - iOS NSE: `NotificationService.writeFcmCache` → the **App Group container**, then `CanariDrainAppGroupFcmCache` (called from `canari_ios_bootstrap` and on `didBecomeActive`) moves the entries into `{app_data_dir}`.
@@ -3503,7 +3639,9 @@ reviewer probably cannot place a call on it: calling needs two accounts on the D
 direct conversation between them, so the reviewer may again find a declared mode whose feature it
 cannot locate. Internal testers are not reviewed. If an external group is ever added, the answer
 must be ready before submission: a demo pair of dev accounts in the review notes, or the mode left
-out of that group's build.
+out of that group's build. Such a build also carries the stable's microphone purpose string, which
+does not name calls; the stable's notes and string are drafted in
+[calls, B14](modules/calls.md#the-drafts-still-owed-2026-10-21).
 
 ### Where the three channels actually are - READ THEM, NEVER READ THIS
 

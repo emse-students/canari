@@ -105,7 +105,7 @@ its migrations are already recorded, so the query succeeds there whatever the co
 
 **A salon row's broadcast and push come from an outbox (migration 093, 2026-10-18).** `sendMessage` inserts the row AND a `channel_message_fanout` entry (`messageId`, a `payload` holding the cleartext mentions and the seed frame the push carries) in ONE transaction, answers, then publishes `channel.message.created` and rings the phones off the request path; the entry is deleted only when BOTH were handed off (each failure is logged by branch). The entry cascades with its message. **What it covers: PROCESS DEATH and DATABASE failures (an audience, member or workspace read that throws) - NOT a Redis outage**: `RedisService.publish` swallows its own errors, so the frame counts as handed off and the entry is deleted.
 
-**Who finishes a fan-out that did not complete.** (1) A normal deploy is the commonest process death: the old replica is told SIGTERM after its successor is healthy, and its last requests were answered BEFORE their fan-outs ran. `ChannelService` tracks every in-process fan-out by message id and `drainOnSigterm` awaits `settleFanouts()` before `process.exit` (bounded only by the stop timeout), so a deploy leaves no entry. (2) `onApplicationBootstrap` drains the entries left by a real crash, once per boot (a failure is logged at ERROR, retried at the next boot, never fatal). (3) A repeat of a send (WP-OFF-3) drains its own entry at once, skipping one whose fan-out is running in this process. No clock decides any of it. **Accepted, not fixed:** an entry kept by a DB failure waits for the next boot, where it rings phones for an old message. The client facts that make a late duplicate or a late push imperfect: the web client shows a weeks-old message with unloaded history as a new bubble; Android's duplicate-push dedupe keeps only 128 keys (`ALERTED_PREFS`); the iOS notification extension has no channel-push dedupe. A cross-replica claim is out of scope: a boot drain on a new replica can repeat a fan-out the old replica is still finishing (one duplicate frame, settled by message id). Both pull requests may ride the same release: the deploy migrates before it replaces services, and a rollback leaves a harmless unread table. Tests: `channel.service.spec.ts`, `drain-on-sigterm.spec.ts` (an owed fan-out is awaited before exit), and `channel-message-client-id.integration.spec.ts` (an incomplete fan-out leaves its entry and the boot drain finishes it; a send whose entry cannot be written leaves no row).
+**Who finishes a fan-out that did not complete.** (1) A normal deploy is the commonest process death: the old replica is told SIGTERM after its successor is healthy, and its last requests were answered BEFORE their fan-outs ran. `ChannelService` tracks every in-process fan-out by message id and `drainOnSigterm` awaits `settleFanouts()` before `process.exit` (bounded only by the stop timeout), so a deploy leaves no entry. (2) `onApplicationBootstrap` drains the entries left by a real crash, once per boot (a failure is logged at ERROR, retried at the next boot, never fatal). (3) A repeat of a send (WP-OFF-3) drains its own entry at once, skipping one whose fan-out is running in this process. No clock decides any of it. **Accepted, not fixed:** an entry kept by a DB failure waits for the next boot, where it rings phones for an old message. The client facts that make a late duplicate or a late push imperfect: the web client shows a weeks-old message with unloaded history as a new bubble; Android's duplicate-push dedupe keeps only 128 keys (`ALERTED_PREFS`); the iOS notification extension has no channel-push dedupe. A cross-replica claim is out of scope: a boot drain on a new replica can repeat a fan-out the old replica is still finishing (one duplicate frame, settled by message id). Both pull requests may ride the same release: the deploy migrates before it replaces services, and a rollback leaves a harmless unread table. Tests: `channel.service.spec.ts`, `drain-on-sigterm.spec.ts` in chat-delivery-service, which proves this service's byte-identical copy (an owed fan-out is awaited before exit), and `channel-message-client-id.integration.spec.ts` (an incomplete fan-out leaves its entry and the boot drain finishes it; a send whose entry cannot be written leaves no row).
 
 ## Storage and retention: a channel message costs one row, forever
 
@@ -179,7 +179,6 @@ added later without the pipe fails there.
 | POST | `/api/channels` | Create channel in a workspace |
 | POST | `/api/channels/:channelId/messages` | Send encrypted channel message |
 | GET | `/api/channels/:channelId/messages` | List messages newest-first (`limit`≤200, `before` ISO cursor) |
-| POST | `/api/channels/:channelId/members/join` | Join channel |
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (drops the caller from `allowedUsers` and rotates the key). A public channel answers 400 - see "A channel-scoped action never touches community membership" |
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
@@ -681,7 +680,8 @@ Live broadcasts, behind `LIVE_ENABLED`; every route, its rights and its refusal 
 | PATCH | `/api/associations/:id/events/:eventId` | Update calendar event |
 | DELETE | `/api/associations/:id/events/:eventId` | Delete calendar event |
 | POST | `/api/associations/:id/products` | Create boutique product |
-| POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for product |
+| POST | `/api/associations/:id/products/:productId/checkout` | Open ONE checkout attempt (a `product_checkouts` row, then the Lydia request) - see [payments](../frontend/modules/payments.md#a-product-checkout-is-a-row-one-per-attempt-2026-10-21) |
+| POST | `/api/associations/:id/products/:productId/checkouts/:checkoutId/confirm` | The buyer's return: reads the attempt's own request at Lydia, records it if paid, answers its status (throttled) |
 | POST | `/api/associations/:id/partnerships` | Create a partnership card (`MANAGE_PARTNERSHIPS`) |
 | POST | `/api/associations/:id/partnerships/:cardId/claim` | Claim a partnership (any logged-in member; `membersOnly` gated server-side) |
 
@@ -781,6 +781,14 @@ raw row. `toAssociationView` replaced it: an ALLOWLIST on
 all eight routes that answer a row, so a column added later is private until someone lists it. The
 payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
 test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).
+
+**The Lydia Business private token is write-only (2026-10-16, migration 100).** `PUT :id/lydia-business-key`
+(`canManagePayoutAccount`) stores it encrypted (`common/secret-box.ts`, `LYDIA_KEY_ENCRYPTION_SECRET`,
+bound to the association and its vendor token) in `"lydiaBusinessKeyCiphertext"`, a column the entity
+maps `select`/`insert`/`update: false` and only raw SQL touches; `GET` on the same path answers `{ set }`.
+The one route that answers it decrypted is the internal `POST /api/internal/associations/lydia-callback-key`
+(`InternalLydiaKeyController`, `X-Internal-Secret`, `no-store`), for core-service to verify a Lydia
+callback. Why and how: [payments](../frontend/modules/payments.md#what-confirms-a-payment-2026-10-16).
 
 ### The document vault's markers are parsed in two languages, and they disagreed for seven weeks
 
@@ -1287,6 +1295,47 @@ last.
 expires. Bounds that would mint a dead link - an expiry already past, a cap below one - are refused
 (`INVITE_EXPIRY_INVALID`, `INVITE_EXPIRY_IN_THE_PAST`, `INVITE_MAX_USES_INVALID`) rather than stored,
 since `inviteIsValid` would otherwise hand back a token dead on arrival with nothing saying why.
+
+**Invite use counting is atomic (2026-10-22).** `acceptWorkspaceInvite`'s read of the invite is a
+preview; what admits is ONE conditional `UPDATE workspace_invites SET uses = uses + 1 WHERE id = $1
+AND revoked = false AND (not expired) AND ("maxUses" IS NULL OR uses < "maxUses") RETURNING id`, in
+the transaction that writes the membership. The row lock serialises concurrent accepts, each
+re-evaluates the WHERE against the committed count, and a claim that matches no row is refused
+(`404`) with nothing written. Pinned by `workspace-invite.integration.spec.ts`,
+which parks an accept on a held claim through `pg_blocking_pids`, never a sleep.
+
+### An invitation grants only a role the inviter may grant (2026-10-22)
+
+An invite LINK carries no role: whoever minted it, accepting grants the community's base role,
+its lowest-priority one (`baseMemberRole`, the one definition). A direct invitation
+(`inviteToChannel`) takes a `roleName` in its body, and since inviting is `member.invite` or
+`channel.manage` while granting a role is role management, it grants the base role unless
+`actorMayGrantRole` (`permissions.ts`) allows the named one: the actor holds
+`roleGrantsRoleManagement` - the same predicate every role-management endpoint now reads - and the
+role grants nothing the actor does not hold (`workspace.manage` holds everything). Otherwise
+`403 { code: 'INVITE_ROLE_NOT_GRANTABLE' }`, decided before the device lookup, never a silent
+downgrade. A request naming `Membre` (or the base role's own name) means the base role, so an
+ordinary invitation works in a community whose lowest role is called otherwise; the client sends
+no `roleName` at all for one, and names a role only when the inviter picked one.
+
+**Role changes are bounded by the actor's own permissions, by the same function.** Every
+role-management write goes through `assertActorManagesRoles` (the `roleGrantsRoleManagement` gate,
+returning the union of what the actor holds) and then `actorMayGrantRole`:
+
+| Write | Bound | Refusal |
+|---|---|---|
+| `updateWorkspaceMemberRole` | the new role AND the target's current roles grant nothing the actor lacks - the actor's own membership included | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `setRoleBasePermission` | the role being edited grants nothing the actor lacks (their own role included), and a granted key is one they hold; checked on the LOCKED row | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+| `createRole` | the new role grants nothing the actor lacks; it ranks just above the base role (`priority` is the server's, the body's is not read) | `403 ROLE_CHANGE_EXCEEDS_ACTOR` |
+
+**Removals are bounded by the actor's own permissions, by the sibling predicate.**
+`kickFromWorkspace` and `removeMemberFromChannel` share one gate, `assertActorMayRemoveMember`:
+the actor holds `member.kick`, `channel.manage` or `workspace.manage`, and `permissionsCover` -
+the "holds at least as much" that `actorMayGrantRole` is built on - holds between the actor's
+permissions and the target's. Otherwise `403 REMOVAL_EXCEEDS_ACTOR`.
+
+`workspace.manage` holds every permission, so an administrator keeps all of it. Pinned by
+`role-change-bound.spec.ts` and `removal-bound.spec.ts`.
 
 ### A user id becomes a property name, and four sites spelled the refusal differently (2026-09-23)
 

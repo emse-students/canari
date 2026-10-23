@@ -1,7 +1,10 @@
 <script lang="ts">
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
+  import { page } from '$app/state';
+  import { FORM_RESPONSES_PARAM } from '$lib/forms/responsesLink';
+  import { Log } from '$lib/utils/Log';
   import { showToast } from '$lib/stores/toast.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
@@ -115,6 +118,33 @@
     }
   }
 
+  /** The form a `?responses=` link last opened, so one link opens its accordion once. */
+  let openedFromLink: string | null = null;
+
+  /**
+   * A LINK NAMING ONE FORM'S RESPONSES (`responsesLink.ts`) - the organiser alert for a payment
+   * over capacity, from the bell or a push tap - opens that accordion once the list has loaded, and
+   * brings it into view. A form the list does not hold (deleted, or not this reader's to manage) is
+   * said in the log (`Log.i`, so it reaches the in-app log a device reading sees) rather than
+   * guessed at: the list stays as it is.
+   */
+  $effect(() => {
+    const wanted = page.url.searchParams.get(FORM_RESPONSES_PARAM);
+    if (loading || !wanted || wanted === openedFromLink) return;
+    openedFromLink = wanted;
+    untrack(() => void openResponsesFromLink(wanted));
+  });
+
+  async function openResponsesFromLink(formId: string) {
+    if (!forms.some((f) => f.id === formId)) {
+      Log.i('forms.responsesLink', `form ${formId} is not on this list - nothing opened`);
+      return;
+    }
+    if (!expandedForms[formId]) await toggleResponses(formId);
+    await tick();
+    document.getElementById(`form-${formId}`)?.scrollIntoView({ block: 'start' });
+  }
+
   async function handleDeleteSubmission(formId: string, sub: Submission) {
     // An anonymous answer is deleted by its content and its day alone: there is no one to name.
     const prompt = sub.userId
@@ -195,6 +225,7 @@
     <div class="space-y-3">
       {#each forms as form (form.id)}
         <div
+          id="form-{form.id}"
           class="border-cn-border rounded-2xl border-2 bg-(--cn-surface) transition-colors {expandedForms[
             form.id
           ]

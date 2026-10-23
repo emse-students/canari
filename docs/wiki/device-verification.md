@@ -22,6 +22,8 @@ here and nothing else.**
 
 ## Where the pass stands
 
+**2026-10-22, the background Welcome read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813` plus an uncommitted manifest whitespace change; local estate with chat-delivery from `4f31a81ad` and the frontend of `5fa025d87`).** The phone was killed (no process), one `mls_group_info` row was deleted, and a new web device of another member asked for a Welcome. Phone: `Welcome created ... baseEpoch=1`, `HTTP 201`, `Welcome sent`, no `sendWelcomeAndCommit failed`. Server: `[BG_WELCOME] START ... baseEpoch=1`, then `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1)`, so there is no `commit accepted`. The commit-caller checks did not refuse. The stale base and the 201 are in [backlog](backlog.md#p2---a-killed-phone-answers-a-background-welcome-from-a-stale-epoch-and-the-route-reports-it-as-sent-read-on-the-mi-9t-2026-10-22). Not read: the newcomer afterwards.
+
 **2026-10-13, the bench pass of the owed rows: Mi 9T on `v1.2.6-alpha.1`, iPhone 12 on `1.2.3-alpha.5` (the newest pre-release TestFlight serves it).** `PASS`: check V, check W on the Mi 9T, the "Rester connecte" cold path and its landing preview, #1603 both halves, #1605 on Android, #1548 and the send path on the iPhone. `FAIL`: Android at 200 % text (two P3 in the agenda) and, met in three-button mode, ONE system Back closing both the message action sheet and the conversation (P2). Answered in part: #1604. Detail: [the bench readings of 2026-10-13](#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
 
 **2026-10-11, `v1.2.3-alpha.5` on the iPhone 12 (iOS 27.0.1, TestFlight build 100200305, `dev.canari-emse.fr`, account `canari-test-gamma`).** `PASS`: the login page's "Ouvrir dans l'application" opens the app (#1605, iPhone half), the conversation's glass chrome (alignment, "+" > Photos opens ONE picker, the four accessible names), the camera opening full-bleed on the front lens 15 of 15 times with a home-and-return (#1370, front half), the emoji pictures in the composer and the bubble (rows 3 and 12, in part), the profile hub's breadcrumb, a 5 s video sent, the associations list scroll. **`FAIL` in a new shape: check W on the iPhone** (3 of 3 rises). Every reading, what is blocked and what waits for the next pre-release: [the inventory below](#the-iphone-12-owed-readings-inventory-2026-10-11).
@@ -1187,6 +1189,14 @@ photo post, a poll post and a reel, none of them reacted to by the account; the 
 Mi 9T, the in-app log on the iPhone) for the `[doubleTapLike] double tap` and
 `[PostCard.doubleTap]` / `[reel-viewer] double tap` lines.
 
+**When a double tap does NOT like, read what reached the page before suspecting anything** (DT-IOS,
+2026-10-21: a native XCUITest double tap never liked on the iPhone, real W3C two-tap sequences did).
+Each tap of the gesture logs `[doubleTapLike] press ended (touch)` and then `[doubleTapLike] click
+(detail N, surface|opener|owned)`; a sequence under way that ended logs `sequence ended: <why>`.
+Two `press ended` with no `click` after them is the engine's own double-tap recognizer swallowing
+both clicks - the one case worth a detector change, and only once it is seen with a finger. No
+`press ended` at all means the touches never reached the card (another layer took them).
+
 1. **A reel, in the viewer**: open it, double tap the picture. Expect the heart at the finger, one
    `like` line, the controls ending as they started, the video still playing. Double tap again: the
    heart, an `already reacted, heart only` line, no request. Close: the card shows ❤️ as the reader's
@@ -1612,7 +1622,8 @@ run on a phone ([2026-10-18 bench](device-readings-calls-live-2026-10-18.md): `B
 **The log.** A store build is not inspectable: Settings > A propos > "Enregistrer le journal" saves
 the in-app log after each call. **Never paste the `[Call] encryption key derived from MLS (fp=...)`
 line of a build older than 2026-10-21 into this public repository** - it printed key bytes. From
-then on the line reads `fp=<hex>, sha256`, a hash of the key, safe to quote ([calls](frontend/modules/calls.md)).
+then on the line reads `media keys derived from MLS (role= send_fp= recv_fp=, sha256)`, a hash of
+each direction's key, safe to quote ([calls](frontend/modules/calls.md)).
 
 **Steps:**
 
@@ -1643,8 +1654,11 @@ network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the b
 - `[Call] startCall refused - RTCRtpScriptTransform unavailable` (or `acceptCall refused ...`): that
   WebView has no E2E transform - a finding about the engine, P1 for lot 1, never a reason to degrade.
 - `[Call] WARN remote audio still muted after 5s`, or `[Call] E2E decrypt failed`: media arrives
-  but cannot be heard or decrypted - the per-side key derivation (F5 on
-  [calls](frontend/modules/calls.md)); note both phones' MLS state.
+  but cannot be heard or decrypted; note both phones' MLS state.
+- `[Call] ERROR E2E key mismatch` and the "ne peut pas être déchiffré" notice (builds carrying the 2026-10-21 port
+  of #2013): no receiver decrypted anything after 100 failures - compare one phone's `send_fp` with
+  the other's `recv_fp` (`media keys derived from MLS` line); unequal means the two devices derived
+  different keys (different MLS epochs, or one build older than the v2 wire) ([calls](frontend/modules/calls.md)).
 - `[Call] signalling refused: <reason>`: the relay refused the room (`room-full`, `group-mismatch`,
   `token-refused`; `call-over` on a resume means the seat expired or the other party hung up).
 - `[Call] terminal failure: ... the relay gave no resume token`: the call-service on that estate
@@ -1652,8 +1666,8 @@ network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the b
 - `[Call] connectionState=failed` with no `selected path`: no candidate pair, not even TURN - read
   `iceConnectionState` and the network.
 
-**`[CALL_REPORT]` IS NOT IN ANY BUILD YET**: it is #2011, an open draft. Once a pre-release carries it,
-each device logs one line per call every 10 s and once at the end
+**`[CALL_REPORT]` reaches a build with the first pre-release carrying the 2026-10-21 port of #2011**
+(check the release notes; no build before it has the line). From then on each device logs one line per call every 10 s and once at the end
 (`[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms= engine= ice= pair= relayed= ...
 e2e=on enc_frames= dec_frames= dec_fail=`); record `setup_ms`, `relayed`, `rtt_ms`, `loss_in_pct` and
 `dec_fail` per direction, which is the plan's exit criterion

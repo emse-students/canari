@@ -64,7 +64,8 @@ dev_env() {
     DEV_INTERNAL_SHARED_SECRET=d6 \
     DEV_CALL_ROOM_SECRET=d7 \
     DEV_AGENDA_SIGNING_KEY=d8-0123456789abcdef0123456789abcdef \
-    DEV_LIVE_REPORT_SIGNING_KEY=d9-0123456789abcdef0123456789abcdef
+    DEV_LIVE_REPORT_SIGNING_KEY=d9-0123456789abcdef0123456789abcdef \
+    DEV_LYDIA_KEY_ENCRYPTION_SECRET=d10-0123456789abcdef0123456789abcde
 }
 
 prod_env() {
@@ -84,7 +85,8 @@ prod_env() {
     INTERNAL_SHARED_SECRET=p6 \
     CALL_ROOM_SECRET=p7 \
     AGENDA_SIGNING_KEY=p8-0123456789abcdef0123456789abcdef \
-    LIVE_REPORT_SIGNING_KEY=p9-0123456789abcdef0123456789abcdef
+    LIVE_REPORT_SIGNING_KEY=p9-0123456789abcdef0123456789abcdef \
+    LYDIA_KEY_ENCRYPTION_SECRET=p10-0123456789abcdef0123456789abcde
 }
 
 # Run the renderer with an explicit environment built from the lines on stdin.
@@ -494,6 +496,50 @@ elif grep -q 'AGENDA_SIGNING_KEY is set for the prod environment but is only 31 
   pass "a 31-character AGENDA_SIGNING_KEY fails the production render, naming the secret"
 else
   fail "production refused a short AGENDA_SIGNING_KEY without naming it"
+fi
+
+# A TURN budget that is not a whole number is read as 0 by chat-delivery - TURN off on every call,
+# silently as far as the deploy is concerned. It must fail the render, naming the key; 0 must pass.
+out="$TMP/prod-budget.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env) CLOUDFLARE_TURN_MONTHLY_BUDGET_GB=1.5e3 >"$TMP/prod-budget.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with a TURN budget that is not a whole number"
+elif grep -q 'CLOUDFLARE_TURN_MONTHLY_BUDGET_GB is set for the prod environment but is not a whole number' "$TMP/prod-budget.log"; then
+  pass "a TURN budget that is not a whole number fails the production render, naming the key"
+else
+  fail "production refused a bad TURN budget without naming it"
+fi
+
+out="$TMP/prod-budget-zero.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env) CLOUDFLARE_TURN_MONTHLY_BUDGET_GB=0 >/dev/null
+if [ -f "$out" ] && grep -q '^CLOUDFLARE_TURN_MONTHLY_BUDGET_GB=0$' "$out"; then
+  pass "a TURN budget of 0 renders: calls STUN only is a decision, not an error"
+else
+  fail "a TURN budget of 0 did not render as 0"
+fi
+
+out="$TMP/prod-shortlydia.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v '^LYDIA_KEY_ENCRYPTION_SECRET=') LYDIA_KEY_ENCRYPTION_SECRET=0123456789abcdef0123456789abcde >"$TMP/prod-shortlydia.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with a 31-character LYDIA_KEY_ENCRYPTION_SECRET"
+elif grep -q 'LYDIA_KEY_ENCRYPTION_SECRET is set for the prod environment but is only 31 characters' "$TMP/prod-shortlydia.log"; then
+  pass "a 31-character LYDIA_KEY_ENCRYPTION_SECRET fails the production render, naming the secret"
+else
+  fail "production refused a short LYDIA_KEY_ENCRYPTION_SECRET without naming it"
+fi
+
+out="$TMP/dev-nolydia.env"
+# shellcheck disable=SC2046
+render dev "$out" $(dev_env | grep -v '^DEV_LYDIA_KEY_ENCRYPTION_SECRET=') >"$TMP/dev-nolydia.log" || true
+if [ -f "$out" ]; then
+  fail "dev rendered with no LYDIA_KEY_ENCRYPTION_SECRET"
+elif grep -q 'LYDIA_KEY_ENCRYPTION_SECRET is not set for the dev environment' "$TMP/dev-nolydia.log"; then
+  pass "a missing LYDIA_KEY_ENCRYPTION_SECRET fails the dev render, naming the secret"
+else
+  fail "dev refused a missing LYDIA_KEY_ENCRYPTION_SECRET without naming it"
 fi
 
 out="$TMP/dev-build.env"

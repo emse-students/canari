@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
+import { CommentIdentityService } from './comment-identity';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
 import { PostPreviewService } from './post-preview.service';
@@ -42,6 +43,7 @@ import { ModerationModule } from '../moderation/moderation.module';
     FeedAudienceGuard,
     PostsService,
     PostInteractionsService,
+    CommentIdentityService,
     PostNotificationsService,
     PostPreviewService,
     PostAnnounceScheduler,

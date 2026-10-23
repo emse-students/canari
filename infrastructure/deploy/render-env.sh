@@ -200,7 +200,19 @@ min_length() {
   # Signs a reported live chat line kept for staff (WP-L8b); shorter, social-service refuses the
   # report with 503 LIVE_REPORT_SIGNING_UNAVAILABLE.
   LIVE_REPORT_SIGNING_KEY) printf '32' ;;
+  LYDIA_KEY_ENCRYPTION_SECRET) printf '32' ;;
   esac
+}
+
+# ── Whole numbers ─────────────────────────────────────────────────────────────
+# A value the service reads as a NUMBER, refused here when it is not one, whatever its disposition:
+# chat-delivery reads an unreadable TURN budget as 0 and turns TURN off on every call, which the
+# deploy's colour would never show. 15 digits at most: past that a JavaScript number is not exact.
+whole_number() {
+  case "$1" in
+  CLOUDFLARE_TURN_MONTHLY_BUDGET_GB) return 0 ;;
+  esac
+  return 1
 }
 
 # ── Pass 1: resolve everything, and fail before writing anything ─────────────
@@ -270,6 +282,13 @@ while IFS=$'\t' read -r key prod dev source note; do
   if [ -n "$minimum" ] && [ "${#value}" -lt "$minimum" ] && [ "$disposition" = "required" ]; then
     printf '::error::%s is set for the %s environment but is only %s characters, %s needs at least %s - %s
 '       "$key" "$ENVIRONMENT" "${#value}" "$key" "$minimum" "$note" >&2
+    MISSING=1
+    continue
+  fi
+
+  if whole_number "$key" && ! [[ "$value" =~ ^[0-9]{1,15}$ ]]; then
+    printf '::error::%s is set for the %s environment but is not a whole number - %s
+'       "$key" "$ENVIRONMENT" "$note" >&2
     MISSING=1
     continue
   fi

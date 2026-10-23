@@ -4,6 +4,7 @@
 pub mod bench;
 pub mod cookies;
 pub mod display_names;
+pub mod handoff;
 pub mod mls;
 pub mod notifications;
 pub mod picked_files;

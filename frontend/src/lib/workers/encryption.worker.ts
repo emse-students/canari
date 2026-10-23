@@ -2,17 +2,29 @@
 
 import { isValidOpusPacket } from '../utils/opusPacket';
 import { clearHeaderBytes, isCallVideoCodec } from '../utils/callVideoFrame';
+import {
+  callMediaKind,
+  DECRYPT_MISMATCH_FAILURES,
+  frameAad,
+  type CallTransformOptions,
+} from '../utils/callFrameAad';
+import type { CallMediaKind } from '../utils/callE2eReport';
 
 /** Minimal typing for RTCTransformEvent (DOM lib may omit it in worker context). */
 interface TransformEventLike {
   transformer: {
     readable: ReadableStream;
     writable: WritableStream;
-    options?: { side?: string; epoch?: number };
+    options?: Partial<CallTransformOptions>;
   };
 }
 
-let callKey: CryptoKey | null = null;
+/**
+ * One key per direction (`utils/callKeys.ts`): this device encrypts with `sendKey` and decrypts
+ * with `receiveKey`. Each is imported for that ONE use, so the send key cannot open a frame.
+ */
+let sendKey: CryptoKey | null = null;
+let receiveKey: CryptoKey | null = null;
 const ivLength = 12;
 let decryptFailures = 0;
 /** The same failures per kind: a video key mismatch or a mangled clear header shows apart. */
@@ -27,6 +39,8 @@ let videoCodecUnexpected = 0;
  * emits, and one that cannot be framed so the receiver splits it the same way - dropped, never sent.
  */
 let videoTooShortSent = 0;
+/** Frames whose transform threw (`onrtctransform`'s catch): each one was lost, never forwarded. */
+let transformErrors = 0;
 /** Receiver frames too short to carry an IV, dropped before any decrypt (see `decryptFrame`). */
 let tooShort = 0;
 /** How many of the too-short frames were EMPTY (carry nothing; counted, not named). */
@@ -82,42 +96,79 @@ type RtcTransformWorkerScope = typeof self & {
 
 const workerScope = self as RtcTransformWorkerScope;
 
-/** Receives the AES-GCM key material from the main thread (raw bytes, not CryptoKey). */
-self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
+/** Receives the call's two AES-GCM keys from the main thread (raw bytes, not CryptoKey). */
+self.onmessage = async (
+  event: MessageEvent<{ type: string; send?: ArrayBuffer; receive?: ArrayBuffer }>
+) => {
   if (event.origin && event.origin !== self.location.origin) return;
   if (event.data?.type === 'report') {
     self.postMessage(workerReport((event.data as { tag?: string }).tag ?? ''));
     return;
   }
-  if (event.data?.type === 'setKey') {
-    const raw = event.data.payload;
-    if (!raw || raw.byteLength !== 32) {
-      self.postMessage({ type: 'keyError', detail: `invalid key length ${raw?.byteLength ?? 0}` });
+  if (event.data?.type === 'setKeys') {
+    const detail = keysProblem(event.data.send, event.data.receive);
+    if (detail) {
+      self.postMessage({ type: 'keyError', detail });
       return;
     }
     try {
-      callKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, [
-        'encrypt',
-        'decrypt',
-      ]);
+      const send = await crypto.subtle.importKey(
+        'raw',
+        event.data.send!,
+        { name: 'AES-GCM' },
+        false,
+        ['encrypt']
+      );
+      const receive = await crypto.subtle.importKey(
+        'raw',
+        event.data.receive!,
+        { name: 'AES-GCM' },
+        false,
+        ['decrypt']
+      );
+      // Both or neither: a frame never meets one call's send key and another's receive key.
+      sendKey = send;
+      receiveKey = receive;
       self.postMessage({ type: 'keyReady' });
     } catch (e) {
-      const detail = String(e);
-      self.postMessage({ type: 'keyError', detail });
+      self.postMessage({ type: 'keyError', detail: String(e) });
     }
   }
 };
 
+/**
+ * Why a `setKeys` pair cannot be used, or `null`. Two EQUAL keys are refused: they would put both
+ * directions back in one nonce space and let a reflected frame open - exactly what two keys exist
+ * to prevent - and only a broken derivation produces them.
+ */
+function keysProblem(send?: ArrayBuffer, receive?: ArrayBuffer): string | null {
+  if (!send || send.byteLength !== 32) return `invalid send key length ${send?.byteLength ?? 0}`;
+  if (!receive || receive.byteLength !== 32) {
+    return `invalid receive key length ${receive?.byteLength ?? 0}`;
+  }
+  const a = new Uint8Array(send);
+  const b = new Uint8Array(receive);
+  if (a.every((byte, i) => byte === b[i])) return 'the send and receive keys are equal';
+  return null;
+}
+
 workerScope.onrtctransform = (event: Event) => {
   const transformEvent = event as unknown as TransformEventLike;
-  const options = transformEvent.transformer.options as
-    | { side?: string; epoch?: number }
-    | undefined;
+  const options = transformEvent.transformer.options;
   const side = options?.side;
   const epoch = options?.epoch;
+  // The kind comes from the PAGE, which knows the track (`utils/callFrameAad.ts`): it is
+  // authenticated in every frame, so a transform without one forwards nothing rather than guess.
+  const mediaKind = callMediaKind(options?.kind);
 
   if (side !== 'sender' && side !== 'receiver') {
     self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
+  }
+  if (!mediaKind) {
+    self.postMessage({
+      type: 'warn',
+      detail: `${String(side)} transform without a media kind (${String(options?.kind)}) - every frame dropped`,
+    });
   }
   // The app attaches ONE transformer per sender and ONE per receiver: the per-side count, posted
   // with the first frame's codec, makes a second audio sender transformer (a double attach) visible.
@@ -133,19 +184,27 @@ workerScope.onrtctransform = (event: Event) => {
    * decrypted (receiver), posted ONCE per transformer with its epoch, so a rebuilt peer connection
    * earns the screen's "end-to-end encrypted" again from its OWN transforms.
    */
-  const postInPath = (mediaKind: string) => {
+  const postInPath = (kind: CallMediaKind) => {
     if (inPathPosted) return;
     inPathPosted = true;
-    self.postMessage({ type: 'inPath', side: sideKey, epoch: epoch ?? 0, mediaKind });
+    self.postMessage({ type: 'inPath', side: sideKey, epoch: epoch ?? 0, mediaKind: kind });
   };
+  /**
+   * This RECEIVER transformer's decrypt failures while it has decrypted nothing. Reaching
+   * `DECRYPT_MISMATCH_FAILURES` is posted ONCE as `undecryptable`: the page decides whether it is a
+   * key mismatch (no receiver of the peer connection decrypted anything) or something else.
+   */
+  let failedUnopened = 0;
+  let opened = false;
   const shape = newSenderShape(id);
 
   const transform = new TransformStream({
     transform: async (frame, controller) => {
       framesIn[sideKey] = (framesIn[sideKey] ?? 0) + 1;
-      const kindKey = framesKey(epoch, sideKey, frameTypeLabel(frame));
+      if (!mediaKind) return;
+      const kindKey = framesKey(epoch, sideKey, mediaKind);
       framesInBy[kindKey] = (framesInBy[kindKey] ?? 0) + 1;
-      if (!callKey) {
+      if (!sendKey || !receiveKey) {
         droppedNoKey++;
         if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
           self.postMessage({ type: 'droppedNoKey', count: droppedNoKey });
@@ -153,7 +212,6 @@ workerScope.onrtctransform = (event: Event) => {
         return;
       }
       try {
-        const mediaKind = frameTypeLabel(frame);
         // Read once per frame and shared: each read of a throwing `getMetadata` is a log line.
         const meta =
           !firstFrameSeen || mediaKind === 'video' || (side === 'sender' && mediaKind === 'audio')
@@ -197,7 +255,17 @@ workerScope.onrtctransform = (event: Event) => {
           }
           // Counted only when it decrypted: a failed frame is `decryptError`, and counting it here
           // too made a wrong-key call log `decryptOk` (measured in Chrome 155, 2026-10-17).
-          if (!(await decryptFrame(frame, controller, mediaKind, mimeType))) return;
+          const outcome = await decryptFrame(frame, controller, mediaKind, mimeType);
+          if (outcome === 'failed' && !opened && ++failedUnopened === DECRYPT_MISMATCH_FAILURES) {
+            self.postMessage({
+              type: 'undecryptable',
+              epoch: epoch ?? 0,
+              mediaKind,
+              failures: failedUnopened,
+            });
+          }
+          if (outcome !== 'opened') return;
+          opened = true;
           decrypted[mediaKind]++;
           postInPath(mediaKind);
           if (decrypted[mediaKind] === 1 || decrypted[mediaKind] % 300 === 0) {
@@ -205,7 +273,13 @@ workerScope.onrtctransform = (event: Event) => {
           }
         }
       } catch (e) {
-        console.error('[Worker] Transform error:', e);
+        // To the page, which writes the call log: a worker's console reaches no exported log, and a
+        // frame lost here is otherwise lost without a trace. Sampled like a decrypt failure - a
+        // transform that throws throws on EVERY frame (50 a second).
+        transformErrors++;
+        if (transformErrors <= 3 || transformErrors % 100 === 0) {
+          self.postMessage({ type: 'transformError', detail: String(e), count: transformErrors });
+        }
       }
     },
   });
@@ -241,11 +315,8 @@ function workerReport(tag: string) {
     droppedNoKey,
     opusInvalid: { ...opusInvalid },
     doubleEncrypted,
+    transformErrors,
   };
-}
-
-function frameTypeLabel(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): 'audio' | 'video' {
-  return frame.constructor.name.includes('Video') ? 'video' : 'audio';
 }
 
 /** True when an encoded video frame is a keyframe (IDR). Browser support varies. */
@@ -300,15 +371,20 @@ function checkOpus(
 }
 
 /**
- * A decrypted audio payload that is not Opus: does it decrypt AGAIN with the same key? If so the
- * sender applied the transform twice, which is proof, not inference - logged, never undone here.
+ * A decrypted audio payload that is not Opus: does it decrypt AGAIN with the receive key and the
+ * audio additional data? If so the sender applied the transform twice, which is proof, not
+ * inference - logged, never undone here.
  */
 async function probeDoubleEncryption(clear: Uint8Array): Promise<void> {
-  if (clear.byteLength <= ivLength || !callKey) return;
+  if (clear.byteLength <= ivLength || !receiveKey) return;
   try {
     await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: clear.slice(0, ivLength) },
-      callKey,
+      {
+        name: 'AES-GCM',
+        iv: clear.slice(0, ivLength),
+        additionalData: frameAad('audio', new Uint8Array(0)),
+      },
+      receiveKey,
       clear.slice(ivLength)
     );
   } catch {
@@ -451,9 +527,10 @@ function recordSenderShape(
 }
 
 /**
- * Encrypts one frame as `clear header || IV || AES-GCM(rest)`. The clear header is empty for audio
- * (the layout every audio build has sent) and the VP8 payload header for video
- * (`clearHeaderBytes`), bound as additional data so it cannot be altered unseen. Returns whether a
+ * Encrypts one frame with the SEND key as `clear header || IV || AES-GCM(rest)`. The clear header
+ * is empty for audio and the VP8 payload header for video (`clearHeaderBytes`); the additional data
+ * is the frame's kind followed by that header (`frameAad`), so neither can be altered or swapped
+ * unseen. Returns whether a
  * frame was ENCRYPTED: an empty video frame is passed through as it is (it carries nothing, and
  * the receiver passes it the same way), and a non-empty one shorter than its header is dropped -
  * framed whole, the receiver would read its first IV byte as a header and split it elsewhere.
@@ -461,7 +538,7 @@ function recordSenderShape(
 async function encryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   controller: TransformStreamDefaultController,
-  mediaKind: 'audio' | 'video',
+  mediaKind: CallMediaKind,
   mimeType: string | undefined
 ): Promise<boolean> {
   const data = new Uint8Array(frame.data);
@@ -485,8 +562,8 @@ async function encryptFrame(
   // The ring is the AUDIO double-encryption probe's window: 30 video IVs a second would flush it.
   if (mediaKind === 'audio') rememberIv(iv);
   const ciphertext = await crypto.subtle.encrypt(
-    clear > 0 ? { name: 'AES-GCM', iv, additionalData: header } : { name: 'AES-GCM', iv },
-    callKey!,
+    { name: 'AES-GCM', iv, additionalData: frameAad(mediaKind, header) },
+    sendKey!,
     data.subarray(clear)
   );
 
@@ -513,20 +590,26 @@ function noteUnexpectedVideoCodec(mimeType: string | undefined): void {
 }
 
 /**
- * Decrypts one frame (`clear header || IV || ciphertext`, see `encryptFrame`) and forwards it with
- * its header put back; `false` when it was dropped (too short, or wrong key).
+ * What became of one received frame: `opened` (decrypted and forwarded), `skipped` (empty or too
+ * short to be one of ours - never a verdict on the key), `failed` (AES-GCM refused it).
+ */
+type DecryptOutcome = 'opened' | 'skipped' | 'failed';
+
+/**
+ * Decrypts one frame with the RECEIVE key (`clear header || IV || ciphertext`, see `encryptFrame`)
+ * and forwards it with its header put back.
  */
 async function decryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   controller: TransformStreamDefaultController,
-  mediaKind: 'audio' | 'video',
+  mediaKind: CallMediaKind,
   mimeType: string | undefined
-): Promise<boolean> {
+): Promise<DecryptOutcome> {
   const data = new Uint8Array(frame.data);
   // An empty video frame was passed through by the sender (`encryptFrame`): passed on the same way.
   if (mediaKind === 'video' && data.byteLength === 0) {
     controller.enqueue(frame);
-    return false;
+    return 'skipped';
   }
   // The receiver reads the SAME clear first byte the sender read, so both find the same length.
   const clear = clearHeaderBytes(mediaKind, mimeType, data);
@@ -538,7 +621,7 @@ async function decryptFrame(
     tooShort++;
     if (data.byteLength === 0) {
       tooShortEmpty++;
-      return false;
+      return 'skipped';
     }
     const nonEmpty = tooShort - tooShortEmpty;
     if (nonEmpty <= 3 || nonEmpty % 100 === 0) {
@@ -547,7 +630,7 @@ async function decryptFrame(
         detail: `receiver ${mediaKind} frame of ${data.byteLength} byte(s) dropped: shorter than its clear header and an IV (${nonEmpty} so far)`,
       });
     }
-    return false;
+    return 'skipped';
   }
 
   const header = data.slice(0, clear);
@@ -556,8 +639,8 @@ async function decryptFrame(
 
   try {
     const plaintext = await crypto.subtle.decrypt(
-      clear > 0 ? { name: 'AES-GCM', iv, additionalData: header } : { name: 'AES-GCM', iv },
-      callKey!,
+      { name: 'AES-GCM', iv, additionalData: frameAad(mediaKind, header) },
+      receiveKey!,
       ciphertext
     );
     if (mediaKind === 'audio') {
@@ -571,7 +654,7 @@ async function decryptFrame(
       frame.data = out.buffer;
     }
     controller.enqueue(frame);
-    return true;
+    return 'opened';
   } catch (e) {
     decryptFailures++;
     decryptFailuresBy[mediaKind]++;
@@ -579,6 +662,6 @@ async function decryptFrame(
       const detail = String(e);
       self.postMessage({ type: 'decryptError', detail, count: decryptFailures, mediaKind });
     }
-    return false;
+    return 'failed';
   }
 }

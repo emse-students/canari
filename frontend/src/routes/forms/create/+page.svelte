@@ -36,7 +36,12 @@
     emptyCotisationSettings,
     forgetTierSelection,
   } from '$lib/forms/cotisationSettings';
-  import { matrixPayload, matrixProblem, type PriceMatrix } from '$lib/pricing/priceMatrix';
+  import {
+    matrixPayload,
+    matrixProblem,
+    pricesOnProfile,
+    type PriceMatrix,
+  } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
   import { formSummary } from '$lib/forms/summary';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
@@ -119,7 +124,13 @@
   });
 
   const grantBlocker = $derived(
-    cotisationGrantBlocker(requiresPayment, associationId, tiers.length, mayGrantCotisation)
+    cotisationGrantBlocker(
+      requiresPayment,
+      associationId,
+      tiers.length,
+      mayGrantCotisation,
+      isPublic
+    )
   );
 
   onMount(async () => {
@@ -332,6 +343,7 @@
     bind:anonymous
     anonymousFixed={false}
     bind:isPublic
+    profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
     {requiresPayment}
     bind:opensAt
     bind:submitCondition

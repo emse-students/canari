@@ -604,7 +604,7 @@ non-destructively by `IMlsService.openLocalStateWithKey`).
 | MLS state | `mls.bin` (native), `CanariDBMls_<userId>` (web) | `changeDeviceKey` | `recoverAndRekey` (open + re-seal) | `changeDeviceKey`, LAST |
 | Keystore entry + background copy | platform keystore (native) | rewritten by `changeDeviceKey`, unawaited | same | `pointUnattendedUnlockAt`, awaited, FIRST |
 | Vault slot (+ an older build's unlabelled slot holding this key) | `canari_device_key_vault:v2:<userId>` | overwritten at the END | same | old slot cleared BEFORE the keystore (`retireOldDeviceKeyFromVault`), new key saved after it (`applyNewDeviceKeyLocally`) |
-| Graine native mirror | `graine_seeds.json` (native) | not sealed (app-private plaintext): nothing to do | same | same |
+| Graine native mirror, push message cache | `graine_seeds.json`, `fcm_message_cache*.ndjson` (native) | sealed since 2026-10-22, but under the INSTALL's native cache key, which a PIN change does not touch: nothing to do ([mobile](../mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)) | same | same |
 | Feed cache | memory only (`posts/feedCache.ts`) | not sealed, not persisted | same | same |
 | Stored feed first pages (#1896) | `IStorage` `feedPages` / `feed_pages` | dropped (`dropStoredFeedPages`) | dropped | DROPPED inside the storage hold, not re-sealed: a copy the server's next answer rewrites |
 | Exported backup file | wherever the user saved it | NOT re-sealed: a file the device no longer holds; its import refuses it as "a different device key" | same | same |
@@ -1636,7 +1636,7 @@ Two things must line up, and no compiler checks either:
 | ACL | listed in the plugin's `build.rs` COMMANDS **and** granted in `permissions/default.toml` | absent - the IPC boundary refuses the call although the Rust fn exists |
 
 Build the identifier with `keystoreCommand()` from `services/keystoreCommands.ts` rather than
-writing the string; `keystoreCommands.test.ts` reads the Rust sources and fails CI when a name,
+writing the string; `nativePluginCommands.test.ts` reads the Rust sources and fails CI when a name,
 the handler registration, the ACL array or the default permission set drift apart.
 
 `has_key_bytes` never prompts: Android reads SharedPreferences only, iOS matches keychain

@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="21/10/2026"
+  updated="23/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -103,6 +103,12 @@
           demande (l'association, le membre qui l'a faite, la publication) vous est adressée, et
           rien n'est montré à son public tant que vous n'avez pas accepté. Vous pouvez retirer ce
           relais à tout moment ; la demande est effacée avec la publication ou avec votre compte.
+          Vous pouvez publier ou commenter de façon anonyme, ou au nom d'une association dont vous
+          avez le droit de parler : les autres membres ne voient alors pas votre compte, mais la
+          modération et les administrateurs de la plateforme peuvent l'identifier (pour traiter un
+          signalement, par exemple), et votre compte reste responsable de ce que vous écrivez. Un
+          commentaire écrit au nom d'une association lui appartient : il reste si vous supprimez
+          votre compte, détaché de celui-ci.
         </dd>
       </div>
       <div>
@@ -112,6 +118,22 @@
           (montant, produit, statut, identifiant de la transaction chez Lydia). Aucune donnée
           bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un formulaire (par
           exemple un CV) sont lisibles par l'association qui l'a créé.
+        </dd>
+      </div>
+      <div>
+        <dt>Formulaires publics (réponses sans compte)</dt>
+        <dd>
+          Une personne sans compte qui répond à un formulaire public laisse ses réponses, et, si le
+          formulaire est payant, le montant, le statut du paiement et l'identifiant de la demande
+          chez Lydia. L'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas
+          conservée par Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de
+          retour (jamais le lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse
+          payante attend son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC)
+          à partir du formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64
+          d'une adresse IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert
+          uniquement à limiter à trois les réponses en attente de paiement depuis un même réseau ;
+          elle est effacée par une tâche planifiée, dans les cinq minutes qui suivent le règlement,
+          l'annulation ou l'expiration de la réponse.
         </dd>
       </div>
       <div>
@@ -150,14 +172,26 @@
       <div>
         <dt>Appels audio (quand la fonction est ouverte)</dt>
         <dd>
-          Le son est chiffré de bout en bout entre les deux appareils : ni notre serveur ni
-          Cloudflare ne peuvent l'écouter. Le serveur connaît l'appel lui-même : la conversation,
-          qui appelle, l'heure et la durée. Il en garde l'état quelques heures, et ses journaux
-          techniques en gardent la trace pendant la durée indiquée en section 6. Pour se joindre,
-          <strong>les deux appareils échangent leurs adresses IP</strong> en passant par notre serveur,
-          qui les voit donc aussi : chaque participant peut connaître celle de l'autre. À chaque appel,
-          chaque appareil contacte aussi le relais de Cloudflare, qui voit son adresse IP et l'heure ;
-          quand la connexion directe est impossible, le son chiffré passe par ce relais (section 4).
+          Le son d'un appel est chiffré de bout en bout entre les deux appareils : ni notre serveur
+          ni Cloudflare ne peuvent l'écouter, et aucun appel n'est enregistré. Notre serveur connaît
+          en revanche l'appel lui-même : la conversation, qui appelle, qui décroche et depuis quel
+          appareil, l'heure et la durée. Il garde l'état d'un appel 4 heures au plus après son
+          début, et ses journaux techniques en gardent la trace pendant la durée indiquée en section
+          6. Une fois l'appel décroché,
+          <strong>les deux appareils échangent leurs adresses IP</strong> par l'intermédiaire de notre
+          serveur, pour se connecter directement : votre correspondant peut donc connaître votre adresse
+          IP, qui peut indiquer approximativement où vous vous trouvez (ville, fournisseur d'accès, réseau
+          de l'École). Chaque appareil contacte aussi les serveurs de connexion de Cloudflare, qui voient
+          son adresse IP et l'heure ; quand la connexion directe est impossible, le son, toujours chiffré,
+          passe par le relais de Cloudflare (section 4). Un appel que vous ne décrochez pas ne transmet
+          votre adresse IP ni à l'appelant ni à Cloudflare. Vous pouvez refuser les appels dans chaque
+          conversation, et aucun appel n'est possible entre deux membres dont l'un a bloqué l'autre. La
+          conversation garde une ligne « appel » (heure, durée), chiffrée comme vos messages. Pour un
+          appel, notre serveur envoie aussi un avis d'appel entrant à chaque appareil d'un membre qui
+          accepte les appels dans cette conversation, même si l'application est fermée : il contient en
+          clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un groupe, et les identifiants
+          techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée est générique, « Appel entrant
+          », sans nom). Dans cette version, un appel ne sonne que dans l'application ouverte.
         </dd>
       </div>
       <div>
@@ -238,7 +272,7 @@
           </tr>
           <tr>
             <td>Notifications push</td>
-            <td>Vous prévenir d'un message ou d'une activité</td>
+            <td>Vous prévenir d'un message, d'une activité ou d'un appel</td>
             <td>Exécution du service (6.1.b) ; désactivables depuis l'appareil</td>
           </tr>
           <tr>
@@ -312,9 +346,7 @@
           le jeton et le titre affiché (nom de l'expéditeur ou du groupe). Pour une activité sur le fil
           (commentaire, mention, événement), la notification contient aussi en clair le nom de l'auteur
           et le début du texte, 60 caractères au plus. Ce choix technique permet d'afficher une notification
-          lisible ; le contenu des messages privés n'y figure jamais en clair. Pour un appel, la notification
-          qui fait sonner le téléphone leur indique aussi qu'un appel arrive, avec en clair le nom de
-          l'appelant et celui de la conversation.
+          lisible ; le contenu des messages privés n'y figure jamais en clair.
         </p>
       </li>
       <li>
@@ -356,11 +388,13 @@
           contenu chiffré. Le nom principal, canari.emse.fr, ne passe pas par Cloudflare.
         </p>
         <p>
-          Pour les appels, Cloudflare fournit aussi un relais (TURN). Chaque appareil le contacte à
-          chaque appel pour préparer la connexion : Cloudflare voit alors son adresse IP et le
-          moment de l'appel. Quand les deux appareils ne peuvent pas se joindre directement, le son
-          passe par ce relais, qui voit aussi le volume échangé, mais jamais le son, chiffré de bout
-          en bout. Notre serveur ne lui transmet aucun identifiant de compte.
+          Pour les appels, Cloudflare (Cloudflare Inc., États-Unis) fournit aussi des serveurs de
+          connexion (STUN) et un relais (TURN). Une fois un appel décroché, chaque appareil les
+          contacte pour établir la connexion : Cloudflare voit alors son adresse IP et l'heure.
+          Quand les deux appareils ne peuvent pas se joindre directement, le son passe par ce
+          relais, qui voit aussi l'adresse IP de l'autre appareil, la durée et le volume échangé,
+          mais jamais le son, chiffré de bout en bout. Notre serveur obtient pour chaque appel un
+          accès temporaire au relais sans transmettre à Cloudflare aucun identifiant de compte.
         </p>
       </li>
       <li>
@@ -469,6 +503,16 @@
             <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
           </tr>
           <tr>
+            <td>
+              Empreinte (HMAC) du réseau d'une réponse payante sans compte (adresse IPv4 ou préfixe
+              /64 IPv6, jamais l'adresse elle-même)
+            </td>
+            <td>
+              Tant que la réponse attend son paiement (30 minutes en ligne, jusqu'à l'échéance fixée
+              pour un paiement en espèces), puis effacée dans les cinq minutes
+            </td>
+          </tr>
+          <tr>
             <td>Réponses et fichiers d'une réservation</td>
             <td>
               Supprimés automatiquement N jours après la fin du créneau (N est choisi par
@@ -487,6 +531,13 @@
               >Supprimé à la déconnexion ou à la suppression du compte ; 90 jours au plus sans
               renouvellement</td
             >
+          </tr>
+          <tr>
+            <td>État d'un appel sur le serveur (conversation, appelant, appareils, heure)</td>
+            <td>
+              4 heures au plus après le début de l'appel ; les journaux techniques en gardent la
+              trace selon la ligne « Journaux techniques » ci-dessous
+            </td>
           </tr>
           <tr>
             <td>Notifications dans l'application</td>
@@ -615,7 +666,8 @@
         <dd>
           Canari fonctionne sur un serveur partagé de l'École des Mines de Saint-Étienne, en France,
           administré avec la DSI de l'École. Les sauvegardes sont copiées sur une seconde machine de
-          l'École. Les anciens noms de domaine passent encore par Cloudflare (section 4).
+          l'École. Les anciens noms de domaine passent encore par Cloudflare (section 4), de même
+          que les appels audio dans la mesure décrite en sections 2 et 4.
         </dd>
       </div>
       <div>
@@ -631,7 +683,8 @@
         <dt>Chiffrement de bout en bout</dt>
         <dd>
           Les messages, les fichiers et les réactions des conversations sont chiffrés sur votre
-          appareil. Le serveur ne détient aucune clé permettant de les lire.
+          appareil. Le serveur ne détient aucune clé permettant de les lire. Il en va de même du son
+          des appels audio, chiffré entre les deux appareils.
         </dd>
       </div>
       <div>

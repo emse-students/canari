@@ -89,6 +89,7 @@ REST: those rows need a count, then a migration.
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
 | Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
 | `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
+| Plaintext native cache reader (`native_cache::open_file`/`open_line`, the `Plaintext` arm, and the one-pass migration) | floor >= the release carrying the at-rest seal | NO (unreleased) | `graine_seeds.json`, `fcm_message_cache*.ndjson` on devices not yet updated | 2 match arms + 3 migration functions | waits for the floor ([diary](#no-date-yet---a-plaintext-native-cache-written-by-a-build-older-than-the-at-rest-seal)) |
 | `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
@@ -131,6 +132,15 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 3. Add the type to `KNOWN_NOTIFICATION_TYPES` and the `notificationHref` switch (`notificationTarget.ts`), and give `NotificationRow` its glyph, colour and Paraglide sentence; the tests walk every known type through both.
 4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
 **Removal condition:** none; this is a floor requirement, not a shim.
+**Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
+payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
+Steps 2-4 are done; step 1 is not: #1911's first stable is `v1.2.9` and the floor reads `1.2.7`. It
+ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
+**The exact precondition to set it to `true` (user, 2026-10-22):** `minClientVersion` at or above the
+version that CARRIES #2228 (not merely `1.2.9`: that build also declares the `form-responses` host and
+knows the type), on BOTH estates, once BOTH Play AND the App Store serve that version. The switch stays
+ONE one-line constant; the flip is a follow-up pull request changing the constant and the spec that
+pins it, run by someone else.
 
 ### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 
@@ -145,6 +155,64 @@ and `displayName.ts` warned, backed off 120 s and asked again.
 **Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
 past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
 field becomes the breach. A server version, not a client floor.
+
+### No date yet - the exclusions route answered without `withheld`, by a server older than 2026-10-22
+
+**Sites:** `entitledHistorySelection` (the inviter's push) and `dropOwnExcludedMessages` (the
+receiver), both in `frontend/src/lib/utils/chat/historyEntitlement.ts`, on `WithheldUnsupportedError`
+(thrown by `MlsDeliveryApi.getGroupWithheld`) and on nothing else.
+**Shim (2026-10-22):** a server that predates the field answers the exclusions route without
+`withheld`, which is an ordinary state while a store build runs ahead of production. Both sites then
+do exactly what they did before the field existed. The push filters on the union of gaps, so a
+continuous member's new device and a 1:1 keep their restore. The receiver filters on its own gaps.
+**What it costs:** in that window a genuine newcomer to a group conversation is still pushed what
+preceded their arrival - the leak the field exists to close, unchanged from before it. That is why
+the push's branch is a FALLBACK and accuses: one `console.error` per session. The receiver's line is
+per bundle. Every other failure of the read still sends and ingests nothing.
+**Removal condition:** every estate's chat-delivery answers `withheld`; then both branches go and the
+error is an ordinary refusal. A server version, not a client floor.
+
+### No date yet - the exclusions route answered without `addressedAnswers`, by a server older than step A
+
+**Site:** `readerHistorySelection` in `frontend/src/lib/utils/chat/historyEntitlement.ts`, on
+`addressedAnswers !== true` and on nothing else
+([history-answer-addressing](protocols/history-answer-addressing.md), rule 2).
+**Shim (2026-10-22):** a server that predates step A refuses an addressed conversation frame, so
+every history answer - the push, the diff, the scrollback - is sent as the broadcast it was before,
+filtered on the union of gaps (plus the invitee's span on a push).
+**What it costs:** against such a server the answer is a broadcast, filtered on the union of gaps
+and, on the receiving side, on that receiver's own windows. It is a FALLBACK and accuses: one
+`console.error` per session.
+**Removal condition:** every estate's chat-delivery answers `addressedAnswers: true`; then the branch
+and `entitledHistorySelection` go. A server version, not a client floor.
+
+### No date yet - history answers and asks from clients older than step A
+
+**Sites:** none to delete on the new client: an older client still asks without a `requestId` and
+answers by broadcast. A new answerer sends nothing addressed to an ask with no id
+(`sendBundleChunks`), and a new receiver drops from a broadcast bundle what falls in its own windows
+(`dropOwnExcludedMessages`).
+**What it costs:** a product choice: an older client is answered only by older peers, until
+`minClientVersion` carries step A.
+**Removal condition:** `minClientVersion` is a release carrying step A; then the broadcast branch of
+the `history_bundle` receiver and the no-id refusal line can go.
+
+### No date yet - a plaintext native cache, written by a build older than the at-rest seal
+
+**Sites:** `open_file` and `open_line` in `frontend/src-tauri/src/native_cache.rs` (the `Plaintext`
+arm), `migrate_legacy_files` and `seal_legacy_seed_mirror` there, and `remove_legacy_channel_keys`.
+**Shim (2026-10-22):** the seed mirror (`graine_seeds.json`) and the push cache
+(`fcm_message_cache*.ndjson`) are sealed at rest since the release carrying this change
+([mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
+A file or line with no seal marker is what an older build wrote, and is read as such. The mirror is
+sealed on its first pass, and the legacy `channel_keys.json` is deleted. A plaintext cache line is
+taken once and never written back. **What keeps writing plaintext is an OLDER BUILD still
+installed:** its push service, or on iOS its notification extension writing into the App Group
+until the app updates.
+**Removal condition:** `minClientVersion` at or above the release carrying this change, on both
+estates, with both stores serving it. No floor client writes plaintext then, and every install
+that ran the new build once has had its files sealed. After that the `Plaintext` arms become a
+refusal (`SealError`), and the three migration functions go. A client floor, not a server version.
 
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
@@ -263,34 +331,20 @@ this entry deliberately has no date: a date would be a guess about a platform no
 is that a client sending neither looks identical to one sending a stale cookie, which is why the
 refusal already logs the cookie names it received.
 
-### 2026-11-19 - the pre-MLS send path, and the `content` column it is the only writer of
+### Removed 2026-10-22 - the pre-MLS send path; the `content` column and its read arm wait for a migration
 
-**Site:** the `else` arm of `MessagingService.sendMessage`
-([`messaging.service.ts`](../../apps/chat-delivery-service/src/services/messaging.service.ts)), taken
-when a caller posts no `proto`; `QueuedMessage.content`
-([`queued-message.entity.ts`](../../apps/chat-delivery-service/src/entities/queued-message.entity.ts));
-and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`.
-**Shim:** every client since MLS sends `proto`, a base64 MLS ciphertext. This branch takes
-`body.content` with a `type` tag and fans out over `dm_group_members` instead of the device
-membership table. Nothing else writes the column.
-**What the evidence actually says:** on 2026-08-19 `queued_message` held 817 rows back to
-2026-07-28, `proto` non-null on **817**, `content` non-null on **0**. That is strong and it is not a
-census - **the queue records only what was UNDELIVERED**, so a legacy message delivered instantly
-leaves no row, and it is only evidence for the question it was written to answer. The service log
-would settle it, but its window is one container lifetime and a deploy restarts the container: on
-2026-08-19 it held six `[SEND]` lines over three hours.
-**Why a date rather than a deletion now:** the fleet is mixed by construction - A1's APK carries its
-own bundle and a deploy never reaches it - and deleting a send path that one old client still takes
-turns a working install into one that cannot send, silently. Three months is one campaign plus the
-margin for a phone nobody has updated.
-**On removal:** delete the `else` arm, the `content` column (migration), the `?? queued.content`
-arm, and this entry. Both sites now log - `LEGACY_CONTENT_PATH` on write and `LEGACY_CONTENT_ROW` on
-read, both at warn - so the date is checked by reading whether either ever fired, not by arguing
-about it. **If either has fired, the caller is found and fixed before the branch goes**, because
-reaching a fallback means the primary path failed.
-**Cost of keeping it:** a nullable column on the largest MLS table, and a read-side `??` that made
-the column look load-bearing to anyone auditing it - which is how it survived unnoticed until the
-storage panel raised the question.
+**Removed per measurement, 2026-10-22**, ahead of the 2026-11-19 date, which was conditional on
+silence: `POST /mls/send` refuses a send with no `proto` (`proto_required`, 400), and the `else` arm of
+`MessagingService.sendMessage` refuses too instead of fanning out over `dm_group_members`.
+**The measurement that replaced the date:** `queued_message` held 0 rows with `proto` NULL and 0 with
+`content` set out of 278 717, from 2026-08-21 to 2026-10-21; the live chat-delivery log held 0
+`LEGACY_CONTENT_PATH` lines against 596 sends. The queue records only what was undelivered, so this
+is strong rather than a census. An optional confirmation, not a blocker, is the user's one-off count
+over the 30-day deploy-log archive ([backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+**Still owed, in their own migration:** the `QueuedMessage.content` column
+([`queued-message.entity.ts`](../../apps/chat-delivery-service/src/entities/queued-message.entity.ts))
+and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`, which logs
+`LEGACY_CONTENT_ROW` at warn if a row ever carries it. Then this entry goes.
 
 ### 2027-02-19 - a server-composed `title` / `body` on social and form pushes
 
@@ -466,6 +520,24 @@ signs every row.
   entry above should then read 0. That is when the v1 reader, the nullable column and the optional
   DTO field go together - and if it does not read 0, the salons keeping the old rows are named, not
   the date.
+
+## Nothing to remove - a call media frame is v2 only (2026-10-21)
+
+**A wire BREAK, and no shim, because no production client ever placed a call.** Call media is now
+sealed under one key PER DIRECTION, `exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>|<sender
+role>', 32)` (`frontend/src/lib/utils/callKeys.ts`), and every frame's AES-GCM additional data starts
+with `canari-call-v2|<audio|video>` (`frontend/src/lib/utils/callFrameAad.ts`). Before it, both
+directions shared one `mls-webrtc-media` key and audio carried no additional data
+([calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+
+- **Who is affected:** a call between a build carrying this change and one older than it - only dev
+  builds and tester pre-releases, since `CALLS_COMPILED` is still `false` on production. Neither end
+  decrypts the other: after 100 failed frames the newer end logs `ERROR E2E key mismatch` and shows
+  the `call_e2e_key_mismatch` notice; the older end hears silence. Both phones updated cures it.
+- **Why nothing is removed later:** no reader of the old frame was kept, so there is nothing to
+  retire. **The constraint it adds:** the day `CALLS_COMPILED` flips, the `minClientVersion` raise the
+  owner decided (both stores serving the release) is what keeps a pre-v2 tester build out of a
+  production call.
 
 ## No date - `GET /api/mls/history/:groupId` answering with a bare array
 

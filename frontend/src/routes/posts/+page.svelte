@@ -56,7 +56,8 @@
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
   import LiveViewer from '$lib/components/live/LiveViewer.svelte';
-  import { LIVE_ENABLED } from '$lib/features';
+  import { livesAvailable } from '$lib/utils/livesAvailability';
+  import { serverLivesMode } from '$lib/stores/appVersionCheck.svelte';
   import type { LiveListItem } from '$lib/live/types';
   import { getToken } from '$lib/stores/auth';
   import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -84,11 +85,27 @@
   /**
    * THE LIVE CARD ASKS FOR THE OPEN LIVES WHEN THE FEED ASKS FOR ITS FIRST PAGE (WP-L5): bumped by
    * the tab load and by `refreshPosts` (pull-to-refresh, retry, reconnect, a publish), so the card
-   * has no timer of its own. `LIVE_ENABLED` keeps a production build from asking at all.
+   * has no timer of its own. `livesShown` keeps a production build, and an estate whose lives kill
+   * switch is off, from asking at all.
    */
   let liveRefresh = $state(0);
+  /**
+   * The live card and the viewer are drawn: a `LIVE_ENABLED` build AND the server's lives kill
+   * switch on (`livesAvailable`). Reactive on `/api/version`, so a switch closed by an admin takes
+   * the card and an open viewer away at the next version refresh - the server already answers 404.
+   */
+  const livesShown = $derived(livesAvailable(serverLivesMode()));
   /** The live the viewer is open on, or null. */
   let openLive = $state<LiveListItem | null>(null);
+
+  // A CLOSED SWITCH CLOSES THE VIEWER FOR GOOD. Hiding it alone kept `openLive` set, so when lives
+  // reopened in the same session the viewer came back on a live nobody had asked to see again.
+  $effect(() => {
+    if (!livesShown && openLive) {
+      Log.d('POSTS', `live ${openLive.id} viewer closed: lives are not available any more`);
+      openLive = null;
+    }
+  });
 
   let postsOverride = $state<PostEntity[] | null>(null);
   /** Resolved value of data.posts - used as fallback when postsOverride is still null. */
@@ -859,8 +876,8 @@
   </div>
 
   <!-- THE LIVE CARD, at the top of the feed whatever the tab (L5); hidden while a search replaces
-       the feed, like the tab row. Dev builds only (`LIVE_ENABLED`). -->
-  {#if LIVE_ENABLED && userId && !searchQuery}
+       the feed, like the tab row. Only where `livesShown` (the build AND the server's switch). -->
+  {#if livesShown && userId && !searchQuery}
     <LiveFeedCard
       refreshKey={liveRefresh}
       viewerId={userId}
@@ -870,7 +887,7 @@
       }}
     />
   {/if}
-  {#if LIVE_ENABLED && openLive}
+  {#if livesShown && openLive}
     {#key openLive.id}
       <LiveViewer
         live={openLive}

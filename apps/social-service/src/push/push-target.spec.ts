@@ -21,6 +21,19 @@ describe('socialDeepLink - the payload contract of a tap', () => {
     );
   });
 
+  it("the organiser alert opens that form's RESPONSES, not the page that answers it", () => {
+    expect(socialDeepLink({ type: 'social', target: 'form-responses', formId: 'f1' })).toBe(
+      'fr.emse.canari://form-responses/f1'
+    );
+    expect(socialDeepLink({ target: 'form-responses', formId: 'a/b?x=1' })).toBe(
+      'fr.emse.canari://form-responses/a%2Fb%3Fx%3D1'
+    );
+    // The target without a form names nothing to open: the plain fallback, never an empty id.
+    expect(socialDeepLink({ type: 'social', target: 'form-responses' })).toBe(
+      'fr.emse.canari://posts'
+    );
+  });
+
   it('an event proposal opens the validation queue, the other agenda notices the calendar', () => {
     const base = { type: 'social', associationId: 'a1' };
     expect(socialDeepLink({ ...base, action: 'proposed' })).toBe('fr.emse.canari://admin-agenda');
@@ -46,6 +59,13 @@ describe('socialDeepLink - the payload contract of a tap', () => {
     );
     // Only the closed value is a target: anything else is ignored, never concatenated.
     expect(socialDeepLink({ type: 'social', target: 'chat/x' })).toBe('fr.emse.canari://posts');
+  });
+
+  it('a notice with no page of its own opens the notifications list, even when it carries a postId', () => {
+    // A cut live's notice carries the live's id as `postId`: a post link would open nothing.
+    expect(socialDeepLink({ type: 'social', postId: 'live-1', target: 'notifications' })).toBe(
+      'fr.emse.canari://notifications'
+    );
   });
 
   it('a payload naming nothing opens the posts list', () => {

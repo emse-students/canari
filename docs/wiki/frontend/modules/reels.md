@@ -540,7 +540,8 @@ below; **owed on both phones**
 
 - **The rail** (`ReelActionRail`, inside `ReelSlide`'s frame, bottom-right on the caption's
   baseline; the caption keeps `pr-16` free for it): **heart** with the number of reactions,
-  **comments** with the number of comments, **send**. Drawn only when the viewer has a reader
+  **comments** with the number of comments, **send** (`sharePostLink`: the system share sheet on
+the public link in the phone apps, a copied link elsewhere). Drawn only when the viewer has a reader
   (`likerId`), so a conversation's reel (RC-1) has none. `data-no-double-tap` keeps it out of the
   double tap, `data-reel-rail` out of the viewer's swipe (`NOT_A_GESTURE`).
 - **The heart says "I reacted"** (`reels/reelRail.ts`): a post carries reactions of several kinds,
@@ -736,6 +737,16 @@ name a plain file name; anything that looks like a path is a typed refusal (`Bad
 `BadName`), never a default. The native copy runs off the main thread. The command names, their
 arguments and the capability are pinned on both sides by `services/galleryCommands.test.ts`, which
 reads the Rust sources.
+
+**The same staging serves the system SHARE sheet** (lot S3, [share-out](../share-out.md)): `share_staged`
+moves a staged file into the cache's `share_out/` - emptied first, one file shared out at a time,
+and swept at start-up with the `gallery-*` files - which is the ONE cache directory the app's
+FileProvider exposes (`res/xml/file_paths.xml`), then opens the sheet on it (Android `ACTION_SEND`
+with a read grant carried in the ClipData, iOS `UIActivityViewController` on the file URL). The
+copy cannot be deleted when the sheet closes, because the receiving app reads it on its own
+schedule, so it stays until the next share or the next launch. `share_text` opens the sheet on a
+text. Name and mime type are refused when they name a path or are not a plain `type/subtype`
+(`BadName`, `BadMime`).
 
 **A refusal is an outcome, not a failure**: `denied` swaps the save button for "Open settings",
 which opens the app's own page in the system settings (`ACTION_APPLICATION_DETAILS_SETTINGS`,

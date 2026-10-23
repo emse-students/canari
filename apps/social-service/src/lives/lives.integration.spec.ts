@@ -32,6 +32,7 @@ import { LivesService } from './lives.service';
 import { LiveChatService } from './live-chat.service';
 import { liveChatAad } from './live-chat-seal';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
+import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
 import { seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore } from './live-segment-store';
@@ -167,12 +168,26 @@ class MemorySeats {
   cap = Number.POSITIVE_INFINITY;
   readonly held = new Set<string>();
 
-  async take(liveId: string, viewerId: string): Promise<void> {
+  async take(liveId: string, viewerId: string): Promise<number> {
     const member = seatMember(liveId, viewerId);
     if (!this.held.has(member) && this.held.size >= this.cap) {
       throw new ServiceUnavailableException({ code: 'LIVE_FULL', viewerCap: this.cap });
     }
     this.held.add(member);
+    return this.count(liveId);
+  }
+
+  /** How many times the broadcaster's read-only count was asked. */
+  watchingCalls = 0;
+
+  async watching(liveId: string): Promise<number | null> {
+    this.watchingCalls++;
+    return this.count(liveId);
+  }
+
+  private count(liveId: string): number {
+    const prefix = seatMember(liveId, '');
+    return [...this.held].filter((m) => m.startsWith(prefix)).length;
   }
 
   async release(liveId: string, viewerId: string): Promise<void> {
@@ -491,6 +506,33 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
       // A viewer leaving gives its seat to the next one in - whatever case its URL spelled the id in.
       await lives.leave(BOB, live.id.toUpperCase());
       await expect(lives.get(CAROL, live.id)).resolves.toMatchObject({ id: live.id });
+    });
+
+    it('tells every poll HOW MANY watch - a number, never who - the broadcaster uncounted', async () => {
+      const live = await start();
+      await lives.get(BOB, live.id);
+      const bobs = await lives.manifest(BOB, live.id);
+      expect(bobs.viewers).toBe(1);
+      await lives.get(CAROL, live.id);
+      expect((await lives.manifest(CAROL, live.id)).viewers).toBe(2);
+      // The broadcaster's KEY read (a return from the background) shows no count, so runs none.
+      seats.watchingCalls = 0;
+      await lives.get(ALICE, live.id);
+      expect(seats.watchingCalls).toBe(0);
+      // Its manifest reads the same number as the viewers', without taking a seat.
+      const alices = await lives.manifest(ALICE, live.id);
+      expect(alices.viewers).toBe(2);
+      expect(seats.watchingCalls).toBe(1);
+      expect(seats.held.size).toBe(2);
+      // NO IDENTITY IN THE ANSWER: no viewer's id anywhere in what the broadcaster or a viewer reads.
+      expect(JSON.stringify(bobs)).not.toContain(CAROL);
+      expect(JSON.stringify(alices)).not.toContain(BOB);
+      expect(JSON.stringify(alices)).not.toContain(CAROL);
+      // A viewer who leaves, and one the broadcaster removes, leave the count at once.
+      await lives.leave(BOB, live.id);
+      expect((await lives.manifest(ALICE, live.id)).viewers).toBe(1);
+      await lives.removeViewer(ALICE, live.id, CAROL);
+      expect((await lives.manifest(ALICE, live.id)).viewers).toBe(0);
     });
 
     it('answers removed, blocked and ended BEFORE full, and frees the seat of a removed viewer', async () => {
@@ -1381,7 +1423,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
           actorId: '',
           actorName: '',
           text: 'harassment',
-          skipPush: true,
+          // Pushed (WP-L8b), and its tap opens the notifications list: the live has no page left.
+          pushData: { target: 'notifications' },
         },
       ]);
       const [listed] = await reports().listAllReports();
@@ -2295,10 +2338,14 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         details: 'three lives in a month',
       });
       expect(withdrawn).toMatchObject({ userId: ALICE, newlyWithdrawn: true, cutsOnRecord: 3 });
-      expect(bell[bell.length - 1]).toMatchObject({
+      expect(bell[bell.length - 1]).toEqual({
         recipientId: ALICE,
         type: 'live_withdrawn',
+        postId: ALICE,
+        actorId: '',
+        actorName: '',
         text: 'harassment',
+        pushData: { target: 'notifications' },
       });
       await expect(lives.withdraw(MOD, ALICE, { reason: 'spam' })).resolves.toMatchObject({
         newlyWithdrawn: false,
@@ -2749,6 +2796,42 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099)', () => {
         content: 'verified',
         author: 'erased',
         reporter: 'verified',
+      });
+    });
+  });
+
+  describe('the 24 h alarm on the live report queue (WP-L8b item e)', () => {
+    /** A report row, its `createdAt` moved back by SQL from the database's own `now()`. */
+    const report = (contentType: string, status: string, age: string) =>
+      q(
+        `INSERT INTO content_reports ("reporterId", "contentType", "contentId", reason, status, "createdAt")
+         VALUES ($1, $2, gen_random_uuid()::text, 'spam', $3, now() - $4::interval)`,
+        [CAROL, contentType, status, age]
+      );
+
+    it('reads only the PENDING live and live_chat reports, and their age on the database clock', async () => {
+      await report('live', 'pending', '10 days'); // ten days always hold more than 24 working hours
+      await report('live_chat', 'pending', '0 seconds');
+      await report('post', 'pending', '20 days');
+      await report('live', 'reviewed', '30 days');
+      await report('live_chat', 'dismissed', '30 days');
+
+      const reading = await new LiveReportAgeScheduler(ds).reportOnce();
+      expect(reading.pending).toBe(2);
+      expect(reading.overdue).toBe(1);
+      // The `timestamp` column read back as the instant it was written: ten days, to the minute.
+      const tenDays = 10 * 24 * 3_600_000;
+      expect(reading.oldestWallMs).toBeGreaterThanOrEqual(tenDays);
+      expect(reading.oldestWallMs).toBeLessThan(tenDays + 60_000);
+    });
+
+    it('reads an empty queue on one row, with the clock', async () => {
+      await report('post', 'pending', '20 days');
+      expect(await new LiveReportAgeScheduler(ds).reportOnce()).toEqual({
+        pending: 0,
+        overdue: 0,
+        oldestWallMs: null,
+        oldestWorkingMs: null,
       });
     });
   });

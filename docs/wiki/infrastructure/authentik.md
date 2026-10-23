@@ -131,6 +131,29 @@ application slugs are in each client's issuer URL, a rename deferred with the OI
 `password-login` is the test campaign's `PASSWORD_LOGIN_FLOW_SLUG`. Stage, prompt, policy, mapping and
 provider names are read by nothing outside authentik, and those are the ones renamed.
 
+## The Alumni SAML source: what to hand the IdP, and what is still missing (2026-10-22)
+
+MiConnect is the Service Provider, Alumnforce (the alumni portal) the Identity Provider. Measured
+2026-10-22 on the public host, no login needed:
+
+- **SP metadata**: `https://miconnect.emse.fr/source/saml/alumni/metadata/` answers `200` XML. The
+  `entityID` is that same URL, the ACS is `https://miconnect.emse.fr/source/saml/alumni/acs/`
+  (HTTP-POST), the NameID format is `persistent`. The slug `alumni` is in both URLs, hence never
+  renamed. `auth.canari-emse.fr/...` answers `301`: hand the `miconnect.emse.fr` form only.
+- **The metadata carries NO certificate** (no `KeyDescriptor`): the source has no signing keypair,
+  so authentik does not sign its requests. An IdP that insists on a SP certificate needs one created
+  and attached to the source first, which is a production write.
+- **What the IdP gives back goes into the source**: its metadata URL (Alumnforce's looks like
+  `https://mines-saint-etienne.org/sso/saml/metadata`) fills `sso_url`, the issuer and the
+  verification certificate. The blueprint (`30-sources.yaml`) still carries a PLACEHOLDER `sso_url`,
+  and the source has NO property mapping: the attributes the IdP will send (id, e-mail, first name,
+  last name) map to nothing until one is written, as `miconnect-cas-identity` does for the CAS.
+- **The entry point** is `/source/saml/login/alumni/`; after the assertion the person lands on the
+  single `miconnect-enrollment` flow ([profiles-and-access](../profiles-and-access.md), D7, WP8).
+- **Not read**: the live source's fields (signing keypair, NameID policy, linked users) - a read
+  through `ak shell` on the production host was refused by the session's guard, and the blueprint
+  does not set them.
+
 Traps found while writing this, each measured on authentik 2026.8.0:
 
 - **`ak apply_blueprint` exits 0 when a blueprint FAILS to apply**: it ignores the return value of
@@ -631,6 +654,7 @@ decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1
 - [`infrastructure/nginx.md`](nginx.md) — `auth_request` configuration
 - [`infrastructure/backup.md`](backup.md) — Backup and restore procedures
 - [`infrastructure/MIGRATION.md`](../../../infrastructure/MIGRATION.md) — Server bootstrap and migration
+- [`cas-callback-state.md`](cas-callback-state.md) — a CAS sign-in that returns with no `code` and no `state`: cause, setting, measurements
 
 ## The terms of use are a stage of the authorization flow (2026-10-16)
 

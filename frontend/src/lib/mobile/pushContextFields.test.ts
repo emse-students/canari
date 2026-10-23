@@ -249,7 +249,7 @@ describe('device key keystore encoding (raw bytes at rest, base64 on the wire)',
     /\n}/
   );
   const ktStore = functionBody(deviceKeyStoreKt, /fun store\(/, /\n {4}}/);
-  const ktRetrieve = functionBody(deviceKeyStoreKt, /fun retrieve\(/, /\n {4}}/);
+  const ktRetrieve = functionBody(deviceKeyStoreKt, /fun retrieveForAlias\(/, /\n {4}}/);
   const ktPluginStore = functionBody(keystoreKt, /fun storeKeyBytes\(/, /\n {4}}/);
   const ktPluginGet = functionBody(keystoreKt, /fun getKeyBytes\(/, /\n {4}}/);
 

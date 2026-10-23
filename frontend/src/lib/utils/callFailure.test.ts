@@ -5,6 +5,7 @@ import {
   CallE2eSetupError,
   CallE2eUnsupportedError,
   CallInitiateError,
+  CallRelayWithheldError,
   describeCallFailure,
 } from './callFailure';
 
@@ -52,6 +53,25 @@ describe('describeCallFailure', () => {
       expect(out).toBe(m.call_unavailable());
     }
   );
+
+  it.each([['initiate'], ['ring'], ['room-token'], ['ice-servers']] as const)(
+    'reads the kill switch (CALLS_DISABLED) from %s as "calls are unavailable", not as a failure',
+    (step) => {
+      const out = describeCallFailure(
+        new CallInitiateError(step, 403, 'calls failed (403)', 'CALLS_DISABLED')
+      );
+
+      expect(out).toBe(m.call_calls_disabled());
+    }
+  );
+
+  it('reads an audio-only server refusing a video ring (CALLS_VIDEO_DISABLED) as such', () => {
+    const out = describeCallFailure(
+      new CallInitiateError('ring', 403, 'calls/ring failed (403)', 'CALLS_VIDEO_DISABLED')
+    );
+
+    expect(out).toBe(m.call_video_disabled());
+  });
 
   it('a 403 with no code keeps the generic refusal line', () => {
     const out = describeCallFailure(new CallInitiateError('initiate', 403, SERVER_SENTENCE));
@@ -133,5 +153,18 @@ describe('describeCallFailure', () => {
 
     expect(describeCallFailure(error)).toBe(m.call_e2e_setup_failed());
     expect(describeCallFailure(error)).not.toBe(m.call_connection_lost());
+  });
+
+  it.each(['TURN_BUDGET_REACHED', 'TURN_METER_UNAVAILABLE'])(
+    'reads a never-connected call whose relay was withheld (%s) as its own sentence',
+    (code) => {
+      expect(describeCallFailure(new CallRelayWithheldError(code))).toBe(m.call_relay_withheld());
+    }
+  );
+
+  it('reads TURN off by configuration as permanent, not as a passing outage', () => {
+    expect(describeCallFailure(new CallRelayWithheldError('TURN_DISABLED'))).toBe(
+      m.call_relay_disabled()
+    );
   });
 });

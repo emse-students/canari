@@ -38,6 +38,15 @@ describe('scrubComments', () => {
     text: `text-${id}`,
   });
 
+  it('keeps a comment written as an association and lets go of the account only', () => {
+    const asAsso = { ...comment('c1', ME), associationId: 'asso-1' };
+    const { comments, changed } = scrubComments([asAsso, comment('c2', ME)], ME);
+    expect(changed).toBe(true);
+    expect(comments).toEqual([
+      expect.objectContaining({ id: 'c1', userId: '', associationId: 'asso-1' }),
+    ]);
+  });
+
   it('removes the account comments, with the name each one carried', () => {
     const { comments, changed } = scrubComments([comment('c1', ME), comment('c2', 'other')], ME);
     expect(changed).toBe(true);

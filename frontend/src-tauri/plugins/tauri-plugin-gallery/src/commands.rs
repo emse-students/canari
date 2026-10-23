@@ -17,6 +17,10 @@ pub struct SaveVideoAnswer {
 /// nothing else (`sweep_staged`).
 const STAGED_PREFIX: &str = "gallery-";
 
+/// The cache directory a file waits in while another app reads it from the share sheet. Its name is
+/// also the app's FileProvider path (`res/xml/file_paths.xml`), which exposes this directory alone.
+const SHARE_OUT_DIR: &str = "share_out";
+
 /// A staging session id is the frontend's `crypto.randomUUID()`: a plain token, never a path.
 fn valid_session(session: &str) -> bool {
     (1..=64).contains(&session.len())
@@ -36,14 +40,15 @@ fn staged_path<R: Runtime>(app: &AppHandle<R>, session: &str) -> crate::Result<P
     Ok(dir.join(format!("{STAGED_PREFIX}{session}.mp4")))
 }
 
-/// Removes every staged file left in the app cache. Called once at start-up, when no save can be
-/// in flight, so a save the process died during leaves no decrypted reel behind for longer than
-/// one launch.
+/// Removes every staged file left in the app cache, and the last file shared out. Called once at
+/// start-up, when no save or share can be in flight, so neither leaves a decrypted file behind for
+/// longer than one launch.
 pub(crate) fn sweep_staged<R: Runtime>(app: &AppHandle<R>) {
     let Ok(dir) = app.path().app_cache_dir() else {
         log::warn!("[gallery] sweep: the app cache directory is unknown");
         return;
     };
+    empty_share_out(&dir.join(SHARE_OUT_DIR));
     let Ok(entries) = std::fs::read_dir(&dir) else {
         // No cache directory yet: nothing was ever staged.
         log::debug!("[gallery] sweep: no cache directory");
@@ -108,7 +113,7 @@ pub(crate) async fn save_video<R: Runtime>(
     session: String,
     name: String,
 ) -> crate::Result<SaveVideoAnswer> {
-    if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+    if !valid_name(&name) {
         return Err(crate::Error::BadName);
     }
     let path = staged_path(&app, &session)?;
@@ -139,6 +144,119 @@ pub(crate) async fn discard_video<R: Runtime>(
     Ok(())
 }
 
+/// A file name the page chose, used as the last segment of a cache path: never a path itself.
+fn valid_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 200 && !name.contains(['/', '\\']) &&!name.contains("..")
+}
+
+/// A plain `type/subtype`, as the receiving app is told: nothing that could carry parameters or
+/// anything else into the intent.
+fn valid_mime(mime: &str) -> bool {
+    let Some((kind, sub)) = mime.split_once('/') else {
+        return false;
+    };
+    let token = |t: &str| {
+        !t.is_empty()
+            && t.len() <= 64
+            && t.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
+    };
+    token(kind) && token(sub)
+}
+
+/// Deletes whatever the last share left in `share_out/`. A file shared out cannot be deleted when
+/// the sheet closes - the receiving app may still be reading it, on its own schedule - so it stays
+/// until the next share, the next sign-out or the next launch, and nothing else ever accumulates
+/// there. The names are NOT logged: they are the member's attachment names.
+fn empty_share_out(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        log::debug!("[gallery] share_out: nothing to empty");
+        return;
+    };
+    let (mut removed, mut kept) = (0u32, 0u32);
+    for entry in entries.flatten() {
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => removed += 1,
+            Err(e) => {
+                kept += 1;
+                log::warn!("[gallery] share_out: a file was not removed: {e}");
+            }
+        }
+    }
+    log::debug!("[gallery] share_out: {removed} removed, {kept} left");
+}
+
+/// Empties `share_out/` at sign-out: the decrypted file the last share left must not outlive the
+/// session it was decrypted in. The next share and the next launch empty it too.
+#[command]
+pub(crate) async fn discard_shared_out<R: Runtime>(app: AppHandle<R>) -> crate::Result<()> {
+    log::debug!("[gallery] discard_shared_out");
+    empty_share_out(&app.path().app_cache_dir()?.join(SHARE_OUT_DIR));
+    Ok(())
+}
+
+/// Opens the system share sheet on a text (a message, a link).
+#[command]
+pub(crate) async fn share_text<R: Runtime>(app: AppHandle<R>, text: String) -> crate::Result<()> {
+    log::debug!("[gallery] share_text: {} chars", text.len());
+    #[cfg(mobile)]
+    {
+        app.gallery().share_text(text)
+    }
+    #[cfg(not(mobile))]
+    {
+        let _ = (app, text);
+        Err(crate::Error::Unsupported)
+    }
+}
+
+/// Opens the system share sheet on the session's staged file, under `name` and `mime`.
+///
+/// The staged file is MOVED into `share_out/` (emptied first: one file shared out at a time), the
+/// one cache directory the app's FileProvider exposes, because the receiving app reads it through a
+/// `content://` grant (Android) or a file URL (iOS) after this call has returned. It stays there
+/// until the next share or the next launch (`empty_share_out`). The staged copy is removed on every
+/// path that does not move it.
+#[command]
+pub(crate) async fn share_staged<R: Runtime>(
+    app: AppHandle<R>,
+    session: String,
+    name: String,
+    mime: String,
+) -> crate::Result<()> {
+    let staged = staged_path(&app, &session)?;
+    if !valid_name(&name) {
+        remove_staged(&staged);
+        return Err(crate::Error::BadName);
+    }
+    if !valid_mime(&mime) {
+        remove_staged(&staged);
+        return Err(crate::Error::BadMime);
+    }
+    let dir = app.path().app_cache_dir()?.join(SHARE_OUT_DIR);
+    empty_share_out(&dir);
+    std::fs::create_dir_all(&dir)?;
+    let target = dir.join(&name);
+    if let Err(e) = std::fs::rename(&staged, &target) {
+        log::error!("[gallery] share_staged {session}: the staged file was not moved: {e}");
+        remove_staged(&staged);
+        return Err(e.into());
+    }
+    // The name is the member's attachment name: the size and the type say enough.
+    let size = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+    log::debug!("[gallery] share_staged {session}: {size} bytes, {mime}");
+    #[cfg(mobile)]
+    {
+        app.gallery()
+            .share_file(target.to_string_lossy().into_owned(), mime)
+    }
+    #[cfg(not(mobile))]
+    {
+        let _ = target;
+        Err(crate::Error::Unsupported)
+    }
+}
+
 fn remove_staged(path: &std::path::Path) {
     match std::fs::remove_file(path) {
         Ok(()) => {}
@@ -166,7 +284,7 @@ pub(crate) async fn open_app_settings<R: Runtime>(app: AppHandle<R>) -> crate::R
 
 #[cfg(test)]
 mod tests {
-    use super::valid_session;
+    use super::{valid_mime, valid_name, valid_session};
 
     #[test]
     fn a_session_is_a_token_never_a_path() {
@@ -175,5 +293,27 @@ mod tests {
         assert!(!valid_session("../escape"));
         assert!(!valid_session("a/b"));
         assert!(!valid_session(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn a_shared_name_is_a_last_segment_never_a_path() {
+        assert!(valid_name("photo.jpg"));
+        assert!(valid_name("Rapport final.pdf"));
+        assert!(!valid_name(""));
+        assert!(!valid_name("../mls.bin"));
+        assert!(!valid_name("a/b.png"));
+        assert!(!valid_name("a\\b.png"));
+        assert!(!valid_name(&"a".repeat(201)));
+    }
+
+    #[test]
+    fn a_shared_mime_is_a_plain_type_and_subtype() {
+        assert!(valid_mime("image/jpeg"));
+        assert!(valid_mime("application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+        assert!(valid_mime("image/svg+xml"));
+        assert!(!valid_mime("image"));
+        assert!(!valid_mime("text/plain; charset=utf-8"));
+        assert!(!valid_mime("/png"));
+        assert!(!valid_mime("image/"));
     }
 }

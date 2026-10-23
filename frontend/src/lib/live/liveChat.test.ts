@@ -14,6 +14,7 @@ import {
   LiveChatSession,
   isLiveOverRefusal,
   liveChatSendFailure,
+  LIVE_REACTION_KINDS,
   liveReactionEmoji,
   type LiveChatDeps,
   type LiveChatLine,
@@ -310,10 +311,10 @@ describe('reactions', () => {
   it("caps a burst at the server's taps per window; past it a tap still floats", () => {
     const s = session();
     s.setLimits({ chatMessageMaxChars: 300, reactionTapsPerWindow: 2 });
-    for (let i = 0; i < 4; i++) s.tap('love');
+    for (let i = 0; i < 4; i++) s.tap('fire');
     expect(floats).toHaveLength(4);
     s.query();
-    expect(deps.postReactions.mock.calls[0][2]).toEqual({ love: 2 });
+    expect(deps.postReactions.mock.calls[0][2]).toEqual({ fire: 2 });
   });
 
   it('drops a refused burst and says so - never retried', async () => {
@@ -322,7 +323,7 @@ describe('reactions', () => {
       refusal('rate-limited', 429, 'LIVE_REACTION_TOO_FAST')
     );
     const s = session();
-    s.tap('happy');
+    s.tap('clap');
     s.query();
     await vi.waitFor(() => expect(warn).toHaveBeenCalled());
     s.query();
@@ -330,9 +331,12 @@ describe('reactions', () => {
     warn.mockRestore();
   });
 
-  it('draws the post reaction set: the same emoji for the same name', () => {
+  it('draws the five kinds: the shared names keep the post emoji, bravo and fire are new', () => {
     expect(liveReactionEmoji('canari')).toBe('🐤');
     expect(liveReactionEmoji('like')).toBe('❤️');
+    expect(liveReactionEmoji('clap')).toBe('👏');
+    expect(liveReactionEmoji('fire')).toBe('🔥');
+    expect(LIVE_REACTION_KINDS).toEqual(['like', 'laugh', 'clap', 'fire', 'canari']);
   });
 });
 
@@ -341,12 +345,13 @@ describe("the broadcaster's chat loop", () => {
   let manifests: (LiveManifest | Error)[];
   const fetchManifest = vi.fn();
 
-  const manifest = (chat: LiveChatBlock): LiveManifest => ({
+  const manifest = (chat: LiveChatBlock, viewers: number | null = 0): LiveManifest => ({
     liveId: LIVE,
     nextIndex: 0,
     lastSegmentAt: null,
     serverNow: '2026-10-19T10:00:00.000Z',
     segments: [],
+    viewers,
     chat,
   });
 
@@ -408,6 +413,41 @@ describe("the broadcaster's chat loop", () => {
     expect(ended.mock.calls[0][0]).toBeInstanceOf(LiveRefusalError);
     expect((ended.mock.calls[0][0] as LiveRefusalError).status).toBe(410);
     expect(timers).toHaveLength(0);
+    warn.mockRestore();
+    poller.stop();
+  });
+
+  it("hands the broadcaster each poll's viewer count, a number or nothing, from the same request", async () => {
+    const counts: (number | null)[] = [];
+    const poller = new LiveBroadcasterChatPoller(
+      LIVE,
+      session(),
+      {
+        fetchManifest,
+        schedule: (fn, ms) => {
+          timers.push({ fn, ms });
+          return () => {};
+        },
+      },
+      undefined,
+      (count) => counts.push(count)
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    manifests.push(
+      manifest(block([], 0), 3),
+      manifest(block([], 0), null),
+      manifest(block([], 0), 5),
+      new TransportFailureError('offline')
+    );
+    poller.start();
+    await vi.waitFor(() => expect(timers).toHaveLength(1));
+    await runTimer();
+    await runTimer();
+    // A failed tick drops the number rather than leaving the last one on screen.
+    await runTimer();
+    expect(counts).toEqual([3, null, 5, null]);
+    // One request a tick: the count costs no fetch of its own.
+    expect(fetchManifest).toHaveBeenCalledTimes(4);
     warn.mockRestore();
     poller.stop();
   });

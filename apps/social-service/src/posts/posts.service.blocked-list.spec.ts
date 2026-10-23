@@ -144,6 +144,9 @@ describe('PostsService hides a blocked account, and only where the author was vi
     expect(sql).toMatch(/SELECT COUNT\(\*\)::integer/);
     const guards = sql.match(/COALESCE\(elem->>'userId', ''\) <> ALL/g) ?? [];
     expect(guards).toHaveLength(2);
+    // An anonymous or association comment is exempt, or a block would probe its writer.
+    const exemptions = sql.match(/elem->>'anonymous' = 'true'/g) ?? [];
+    expect(exemptions).toHaveLength(2);
   });
 
   it('emits no clause at all when the viewer has blocked nobody', async () => {

@@ -76,6 +76,13 @@ export type LoginErrorCode =
    * there to refuse it. Only an online sign-in (a new account, once the erasure completed) lifts it.
    */
   | 'account_deleted'
+  /**
+   * This device's identity had to be rotated, and the fresh state could not be recorded: ANOTHER
+   * TAB of this account wrote the stored state after this login loaded it (the version guard's
+   * refusal). Nothing durable was moved - not the stored id, not the server's device row - so the
+   * remedy is closing the other tab, never a PIN or a reset.
+   */
+  | 'state_written_by_another_tab'
   /** Anything else (network, server, unexpected). */
   | 'other';
 
@@ -172,6 +179,11 @@ export function provesLocalStateExists(code: LoginErrorCode): boolean {
  * on 2026-10-14: a vault left by another account, refused as it should be; and a sixth on
  * 2026-10-18: an account deleted from this device, refused as it should be.
  *
+ * `state_written_by_another_tab` (2026-10-21) is narrated here and ACCUSED elsewhere: the refusal
+ * it reports has its line at `error` already, in `rotateDeviceIdentity`, the one place that knows
+ * which id stayed stored and that nothing shared moved. A second `error` here would be the same
+ * event filed twice; the login only says it did not complete, and why.
+ *
  * `device_revoked` is NOT one of them: local state is WIPED on that path, and an erasure deserves a
  * line that accuses whatever anybody later comes looking for. Neither is `other`, which is where the
  * server's 5xx, the WASM that would not load and the genuinely unexpected all land - it is the
@@ -184,6 +196,7 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
     code === 'account_deleted' ||
+    code === 'state_written_by_another_tab' ||
     isVaultRefusal(code)
   );
 }

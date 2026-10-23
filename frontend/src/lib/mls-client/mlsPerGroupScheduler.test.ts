@@ -161,15 +161,33 @@ describe('MlsPerGroupScheduler', () => {
     releaseB();
   });
 
-  it('release is idempotent', async () => {
+  it('release is idempotent: a second call neither throws nor frees the next holder', async () => {
     const scheduler = new MlsPerGroupScheduler('web');
-    const release = await scheduler.acquireMlsLock();
-    release();
-    release(); // second call is a no-op, must not throw or double-release
+    const releaseA = await scheduler.acquireMlsLock();
+    let bAcquired = false;
+    let cAcquired = false;
+    const bPromise = scheduler.acquireMlsLock().then((r) => {
+      bAcquired = true;
+      return r;
+    });
+    const cPromise = scheduler.acquireMlsLock().then((r) => {
+      cAcquired = true;
+      return r;
+    });
 
-    // Lock is free again: next acquire resolves promptly.
-    const next = await scheduler.acquireMlsLock();
-    next();
+    releaseA();
+    expect(() => releaseA()).not.toThrow(); // second call is a no-op
+    const releaseB = await bPromise;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // B holds the lock: A's stray second release must not have let C in beside it.
+    expect(bAcquired).toBe(true);
+    expect(cAcquired).toBe(false);
+
+    releaseB();
+    (await cPromise)();
+    expect(cAcquired).toBe(true);
   });
 
   /**

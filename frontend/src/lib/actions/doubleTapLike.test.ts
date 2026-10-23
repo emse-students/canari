@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { doubleTapLike, type DoubleTapLikeParams } from './doubleTapLike';
 import { GESTURE } from '$lib/utils/viewerGestures';
+import { Log } from '$lib/utils/Log';
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] });
@@ -298,6 +299,26 @@ describe('doubleTapLike', () => {
       vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
       expect(opened).not.toHaveBeenCalled();
     });
+  });
+
+  it('logs what reached the surface: a press and its click per tap, and nothing for a lone scroll', () => {
+    const { el } = surface();
+    const log = vi.spyOn(Log, 'd');
+    pointer('pointerdown', el('text'), 100, 100);
+    pointer('pointercancel', el('text'), 100, 100);
+    expect(log).not.toHaveBeenCalled();
+
+    pointer('pointerdown', el('text'), 100, 100);
+    pointer('pointerup', el('text'), 100, 100);
+    tap(el('text'));
+    const lines = log.mock.calls.map((c) => String(c[1]));
+    expect(lines[0]).toMatch(/^press ended/);
+    expect(lines[1]).toBe('click (detail 1, surface)');
+
+    pointer('pointerdown', el('text'), 100, 100);
+    pointer('pointercancel', el('text'), 100, 100);
+    expect(String(log.mock.calls.at(-1)?.[1])).toBe('sequence ended: the engine took the press');
+    log.mockRestore();
   });
 
   it("a mouse double click does not select the word under it, and leaves a control's alone", () => {

@@ -47,6 +47,18 @@ export const GRAINE_ROTATE_AFTER_MESSAGES = 100;
 export const GRAINE_ROTATE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * The tighter caps of a session RE-DISTRIBUTED at least once, i.e. kept across an epoch move
+ * because nobody left (`docs/wiki/protocols/graine-removal-tracker.md`, the named residual).
+ *
+ * Rotating on every Add used to bound a stolen copy of a device's seeds by accident; reuse removes
+ * that, so these are the stated bound instead: a day, not a week. 50 is above the p99 of messages one
+ * sender writes in one salon in one day (38, production 2026-10-22), so the age cap is the one that
+ * normally fires. Counted from the MINT, never from the last re-distribution.
+ */
+export const GRAINE_REUSED_ROTATE_AFTER_MESSAGES = 50;
+export const GRAINE_REUSED_ROTATE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
  * How many sessions per channel the NATIVE mirror keeps, the durable store holding the rest.
  *
  * The mirror exists for exactly one job - decrypting an incoming push before any WebView runs - so
@@ -61,9 +73,11 @@ export const GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL = 20;
  * Ceiling on the seeds one history bundle may carry, and therefore on what a newcomer receives in
  * a single message.
  *
- * Sized from the measurement rather than guessed: a one-year community with 30 active senders
- * rotating weekly holds ~1 500 seeds at ~50 bytes each, about 80 KB. This leaves room for several
- * such years before the bundle has to be split, and it is a REFUSAL rather than a silent truncation
+ * Sized on 2026-08-17 for a one-year community with 30 active senders rotating weekly: ~1 500 seeds
+ * at ~50 bytes each, about 80 KB. Both factors were wrong by 2026-10-21: a v2 seed is ~330 bytes on
+ * the wire, so this cap is ~2.6 MB in one message, and adds rotate sessions, so the largest
+ * community minted 458 seeds in 8 days (`docs/wiki/protocols/dm-vs-community-encryption.md`). It is
+ * a REFUSAL rather than a silent truncation
  * - a bundle quietly cut short would read as "this is all the history there is", which is the exact
  * silence this protocol exists to remove.
  */

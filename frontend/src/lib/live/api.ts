@@ -30,6 +30,7 @@ import type {
   LiveLimits,
   LiveCutReason,
   LiveCutResult,
+  LiveWithdrawalResult,
   LiveEndReason,
   LiveListItem,
   LiveManifest,
@@ -62,7 +63,9 @@ export class LiveRefusalError extends ApiRefusalError {
      * `LIVE_ENDED`: why it ended (`cut`: a moderator ended it) - what a screen branches on, never
      * the message. Null when the body carries none, or a value this build does not know.
      */
-    readonly endReason: LiveEndReason | null = null
+    readonly endReason: LiveEndReason | null = null,
+    /** `LIVE_BROADCAST_SUSPENDED`: when the suspension ends (ISO string), null when absent. */
+    readonly suspendedUntil: string | null = null
   ) {
     super(status, code, message);
     this.name = 'LiveRefusalError';
@@ -104,11 +107,15 @@ export function classifyLiveRefusal(
   if (code === 'LIVE_NOT_FOUND') return 'not-found';
   if (code === 'LIVE_ENDED') return 'ended';
   if (code === 'LIVE_VIEWER_REMOVED') return 'removed';
+  // The strike ladder's two refusals of a START (WP-L8b): 403 with the code, told apart by code only.
+  if (code === 'LIVE_BROADCAST_SUSPENDED') return 'suspended';
+  if (code === 'LIVE_BROADCAST_WITHDRAWN') return 'withdrawn';
   if (code === 'LIVE_SEGMENT_OUT_OF_ORDER') return 'out-of-order';
   if (code !== null && RETRY_SEGMENT_CODES.has(code)) return 'retry-segment';
   if (status === 404 && code === null) {
     if (segmentFetch) return 'not-found';
-    // Only OUR gateway's bare 404 is the `LIVE_ENABLED` guard; an edge page says nothing about it.
+    // Only OUR gateway's bare 404 is the live guard (`LIVE_ENABLED` or `lives_mode` off); an edge
+    // page says nothing about it.
     return origin === 'gateway' ? 'disabled' : 'refused';
   }
   // A 5xx nobody named is "no verdict, retry later". A 4xx from the edge (a WAF page, nginx's own
@@ -168,7 +175,8 @@ async function liveRefusal(
     numberField(body, 'viewerCap'),
     numberField(body, 'nextIndex'),
     endedAt,
-    endReason
+    endReason,
+    typeof body?.suspendedUntil === 'string' ? body.suspendedUntil : null
   );
 }
 
@@ -385,6 +393,31 @@ export async function cutLive(
   });
   console.log(`[LIVE] ${liveId} cut (${cut.newlyCut ? 'new' : 'repeat'}, ${cut.priorCuts} prior)`);
   return cut;
+}
+
+/**
+ * `POST /api/lives/broadcasters/:userId/withdrawal` - a content moderator withdraws an account's
+ * right to broadcast (the ladder's 3rd step). Idempotent (`newlyWithdrawn: false`). Refusals, read by
+ * `code`: `LIVE_WITHDRAWAL_FORBIDDEN` (403), `LIVE_WITHDRAWAL_NOT_DUE` (409, below the cuts it needs),
+ * `LIVE_CUT_REASON_INVALID` / `LIVE_CUT_DETAILS_INVALID` (400).
+ */
+export async function withdrawBroadcaster(
+  userId: string,
+  reason: LiveCutReason,
+  details?: string
+): Promise<LiveWithdrawalResult> {
+  console.debug(`[LIVE] withdraw the right of ${userId} (${reason})`);
+  const body: { reason: LiveCutReason; details?: string } = { reason };
+  if (details) body.details = details;
+  const done = await liveJson<LiveWithdrawalResult>(
+    `${livesBase()}/broadcasters/${encodeURIComponent(userId)}/withdrawal`,
+    'Live withdrawal',
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+  console.log(
+    `[LIVE] right of ${userId} withdrawn (${done.newlyWithdrawn ? 'new' : 'repeat'}, ${done.cutsOnRecord} cuts)`
+  );
+  return done;
 }
 
 /**

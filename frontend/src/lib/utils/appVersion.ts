@@ -38,10 +38,41 @@ export type PlatformMaintenanceInfo = {
   message: string | null;
 };
 
+/**
+ * The server's kill switch for calls (`platform_config.calls_mode`, published by `/api/version`):
+ * `off` - no call may start; `audio` - audio only; `audio_video` - both. The server refuses what it
+ * forbids on every call request; the client reads it only to HIDE what would be refused.
+ */
+export type CallsMode = 'off' | 'audio' | 'audio_video';
+
+/**
+ * Every value of {@link CallsMode}, for the admin picker and the agreement test. FIVE COPIES of these
+ * three strings exist (the SQL CHECK, core's entity, chat-delivery's reader, this, the admin page
+ * through this) and `callsModesAgree.test.ts` fails the day one of them drifts.
+ */
+export const CALLS_MODES: readonly CallsMode[] = ['off', 'audio', 'audio_video'];
+
+/**
+ * The server's kill switch for lives (`platform_config.lives_mode`, published by `/api/version`):
+ * `off` - every live route answers 404; `on` - lives answer where the estate's `LIVE_ENABLED` deploy
+ * lock is on too. The server refuses on every live request; the client reads it only to HIDE the
+ * live surfaces that would be refused.
+ */
+export type LivesMode = 'off' | 'on';
+
+/**
+ * Every value of {@link LivesMode}. SIX COPIES of these two strings exist (the SQL CHECK, core's
+ * entity, social-service's and media-service's readers, this, the admin page through this) and
+ * `livesModesAgree.test.ts` fails the day one of them drifts.
+ */
+export const LIVES_MODES: readonly LivesMode[] = ['off', 'on'];
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
+  callsMode: CallsMode;
+  livesMode: LivesMode;
 };
 
 export type AppVersionCheckResult = {
@@ -52,6 +83,10 @@ export type AppVersionCheckResult = {
   /** True when the client is older than the server-enforced minimum. */
   belowMinVersion: boolean;
   maintenance: PlatformMaintenanceInfo;
+  /** What the server lets calls do; `off` until a server has said otherwise. */
+  callsMode: CallsMode;
+  /** Whether the server lets lives answer; `off` until a server has said otherwise. */
+  livesMode: LivesMode;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -65,10 +100,36 @@ function normalizeMaintenance(raw: unknown): PlatformMaintenanceInfo {
   };
 }
 
+/**
+ * The calls mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`: a server that does
+ * not publish the switch is one this client cannot ask, and the failure of a kill switch must be
+ * the closed direction - the server would refuse anyway, so showing a call button would only buy a
+ * refusal toast.
+ */
+function normalizeCallsMode(raw: unknown): CallsMode {
+  const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
+  return CALLS_MODES.find((known) => known === mode) ?? 'off';
+}
+
+/**
+ * The lives mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`, for the reason
+ * {@link normalizeCallsMode} gives: a kill switch that cannot be read fails closed.
+ */
+function normalizeLivesMode(raw: unknown): LivesMode {
+  const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
+  return LIVES_MODES.find((known) => known === mode) ?? 'off';
+}
+
 /** Parses `/api/version` JSON into a normalized {@link ServerVersionInfo}. */
 export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null {
   if (!data || typeof data !== 'object') return null;
-  const obj = data as { version?: unknown; minClientVersion?: unknown; maintenance?: unknown };
+  const obj = data as {
+    version?: unknown;
+    minClientVersion?: unknown;
+    maintenance?: unknown;
+    calls?: unknown;
+    lives?: unknown;
+  };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
   const minRaw = typeof obj.minClientVersion === 'string' ? obj.minClientVersion.trim() : '';
@@ -76,6 +137,30 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     version,
     minClientVersion: minRaw || '0.0.0',
     maintenance: normalizeMaintenance(obj.maintenance),
+    callsMode: normalizeCallsMode(obj.calls),
+    livesMode: normalizeLivesMode(obj.lives),
+  };
+}
+
+/**
+ * The `/api/version` body a {@link ServerVersionInfo} came from - its inverse, so a cached copy is
+ * stored in the SAME shape it is read back with. Storing the parsed shape instead (`callsMode` at
+ * the top) and re-parsing it with {@link parseServerVersionInfo} (which reads `calls.mode`) read
+ * every cached mode back as `off`.
+ */
+export function serverVersionInfoToWire(info: ServerVersionInfo): {
+  version: string;
+  minClientVersion: string;
+  maintenance: PlatformMaintenanceInfo;
+  calls: { mode: CallsMode };
+  lives: { mode: LivesMode };
+} {
+  return {
+    version: info.version,
+    minClientVersion: info.minClientVersion,
+    maintenance: info.maintenance,
+    calls: { mode: info.callsMode },
+    lives: { mode: info.livesMode },
   };
 }
 /**
@@ -238,6 +323,8 @@ export function buildAppVersionCheckResult(
     upToDate,
     belowMinVersion,
     maintenance,
+    callsMode: serverInfo?.callsMode ?? 'off',
+    livesMode: serverInfo?.livesMode ?? 'off',
   };
 }
 

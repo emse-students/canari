@@ -68,7 +68,9 @@ function serviceFor(formRepo: any) {
     {} as any,
     {} as any,
     {} as any,
-    {} as any
+    {} as any,
+    // FormOrganiserAlertService: switched off, as it ships.
+    { enabled: () => false } as any
   );
 }
 
