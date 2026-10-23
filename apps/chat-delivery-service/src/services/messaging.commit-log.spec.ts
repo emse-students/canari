@@ -79,6 +79,9 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         if (entity === MlsCommitLog) return { createQueryBuilder: () => commitInsertBuilder };
         // The newcomers a commit admits are written in the same callback as the advance.
         if (entity === DeviceGroupMembership) return txMembershipRepo;
+        // A seat's key package, read FOR SHARE under the seat lock before the seat is written.
+        if (entity === KeyPackage) return keyPackageRepo;
+        if (entity === RevokedDevice) return revokedDeviceRepo;
         return txGroupInfoRepo;
       },
     })
@@ -989,15 +992,18 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             ...asked,
             userId: 'user-1',
           });
-          expect(activate).toHaveBeenCalledWith(
-            'user-1',
-            'device-1',
-            'group-1',
+          // The committer's seat is written IN the advance's transaction, against its claim re-read
+          // there - never after it, where any eviction of the group would leave a leaf with no seat.
+          expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(
             expect.objectContaining({
-              authority: 'accepted_commit',
-              claim: { groupId: 'group-1', userId: 'user-1', generation: 0, owed: false },
-            })
+              userId: 'user-1',
+              deviceId: 'device-1',
+              groupId: 'group-1',
+              status: 'active',
+            }),
+            { conflictPaths: ['deviceId', 'groupId'] }
           );
+          expect(activate).not.toHaveBeenCalled();
         }
       );
 
@@ -1185,6 +1191,8 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
                 if (entity === MlsCommitLog)
                   return { createQueryBuilder: () => commitInsertBuilder };
                 if (entity === DeviceGroupMembership) return seatRepo;
+                if (entity === KeyPackage) return keyPackageRepo;
+                if (entity === RevokedDevice) return revokedDeviceRepo;
                 if (entity === QueuedMessage)
                   return { delete: jest.fn().mockResolvedValue({ affected: 0 }) };
                 return txGroupInfoRepo;
@@ -1255,9 +1263,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
           // The claim the gate took was overtaken, and the external commit's own claim is re-read
           // under the seat lock in the advance's transaction: the join is refused there, so no
-          // leaf enters the tree for a person with no seat.
+          // leaf enters the tree for a person with no seat. The group's generation cannot say whose
+          // eviction it was, so the refusal is the retryable one - and the retry meets the gate,
+          // where this person's departure refuses it.
           await expect(committed).rejects.toMatchObject({
-            response: { code: 'NOT_A_MEMBER', error: 'committer_not_member' },
+            response: { code: 'SEAT_CLAIM_OVERTAKEN', error: 'seat_claim_overtaken' },
           });
           expect(groupUpdate).not.toHaveBeenCalled();
           expect(sent).not.toHaveBeenCalled();
@@ -1437,14 +1447,19 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
           });
 
-          it('admits nobody evicted between the question and the lock', async () => {
+          it('refuses the whole commit, retryably, when an eviction lands between the question and the lock', async () => {
             fetchSpy.mockImplementationOnce(async () => {
               await service.evictSeats('group-1', 'user-2', 'begin');
               await service.evictSeats('group-1', 'user-2', { settles: 1 });
               return entitled(true);
             });
 
-            await expect(admitUser2()).resolves.toMatchObject({ accepted: true });
+            // Dropping the admit alone would accept a commit whose newcomer is in the tree with no
+            // seat; the group's generation cannot say whose eviction it was, so nothing advances.
+            await expect(admitUser2()).rejects.toMatchObject({
+              response: { code: 'SEAT_CLAIM_OVERTAKEN', seat: 'admit' },
+            });
+            expect(groupUpdate).not.toHaveBeenCalled();
             expect(membershipInsertBuilder.values).not.toHaveBeenCalled();
           });
 
@@ -1506,9 +1521,6 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     });
 
     it("writes the CALLER's id downstream of the gate, never the body's spelling of it", async () => {
-      const activate = jest
-        .spyOn(service, 'activateDeviceMembership')
-        .mockResolvedValue({ ok: true });
       tables({
         keyPackages: [ownKey],
         roster: [{ groupId: 'group-1', userId: 'user-1' }],
@@ -1518,15 +1530,19 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       await expect(
         commit({ proto: EXTERNAL_COMMIT, senderId: 'USER-1' }, 'user-1')
       ).resolves.toMatchObject({ accepted: true });
-      // The committer's own row is read by the pair, then activated under the caller's id...
+      // The committer's own row is read by the pair, then its seat written under the caller's id...
       expect(deviceGroupRepo.findOne).toHaveBeenCalledWith({
         where: { userId: 'user-1', deviceId: 'device-1', groupId: 'group-1' },
       });
-      expect(activate).toHaveBeenCalledWith('user-1', 'device-1', 'group-1', {
-        authority: 'accepted_commit',
-        // The claim, too, is the CALLER's: taken under the caller's id before the roster check.
-        claim: { groupId: 'group-1', userId: 'user-1', generation: 0, owed: false },
-      });
+      expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-1', deviceId: 'device-1', status: 'active' }),
+        { conflictPaths: ['deviceId', 'groupId'] }
+      );
+      // ...against a claim that is the CALLER's too, taken under the caller's id before the check.
+      expect(groupRepo.manager.query).toHaveBeenCalledWith(expect.any(String), [
+        'group-1',
+        'user-1',
+      ]);
       // ...and the fan-out names the caller as the commit's author.
       expect(sent.mock.calls[0][0]).toMatchObject({
         senderId: 'user-1',
@@ -1888,10 +1904,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           const sent = fanOut();
           txEvictionRow = { generation: 1, owedDeparture: null };
 
-          await expect(withWelcome()).resolves.toEqual({
-            accepted: false,
-            currentEpoch: 5,
-            reason: 'welcome_target_not_member',
+          // The target is also this commit's admit, whose claim the eviction overtook: the whole
+          // commit is refused retryably, and the retry meets the target's entitlement afresh.
+          await expect(withWelcome()).rejects.toMatchObject({
+            response: { code: 'SEAT_CLAIM_OVERTAKEN', seat: 'admit' },
           });
           expect(groupUpdate).not.toHaveBeenCalled();
           expect(txQueuedRepo.save).not.toHaveBeenCalled();

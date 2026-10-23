@@ -567,8 +567,9 @@ window with a durable row and a lock:
   commit or the rollback and never by a clock. Every writer that evicts or creates a seat holds it:
   `evictFromDistributionGroup` (`evictSeats`), `removeGroupMember` (the conversation removal, its
   roster write and its eviction record in one transaction), the commit's advance (its admits), an
-  account erasure (`eraseSeats`, per group), `activateDeviceMembership` for an accepted commit's
-  committer and a key group's publisher, and the two writers of a `pending` seat - a device
+  account erasure (`eraseSeats`, per group), the commit's advance for its own committer (written in
+  that transaction, so an accepted commit never leaves a leaf without its seat),
+  `activateDeviceMembership` for a key group's publisher, and the two writers of a `pending` seat - a device
   registration and an invite acceptance (`writePendingSeats`, shared, against the group row and the
   roster re-read under it).
 - **One order.** Every writer takes the seat lock, then the `dm_groups` row, then
@@ -606,14 +607,27 @@ window with a durable row and a lock:
   holds a seat and queues and delivers only to them (a commit's removed devices excepted, logged
   `SEAT_GONE_NOT_QUEUED`). An eviction waits for the write and its delete then takes those rows; sends
   into one group never wait for each other.
-- **An external commit re-reads its claim in the advance's transaction.** Under the seat lock, before
-  the epoch moves, a claim an eviction or a departure overtook since the gate refuses the join
-  (`NOT_A_MEMBER`, `reason=evicted_since_claim` or `departure_in_progress`): no leaf enters the tree
-  for a person with no seat.
+- **A commit re-reads its claims in the advance's transaction, and an overtaken one refuses it
+  whole.** Under the seat lock, before the epoch moves, the committer's claim (an external joiner, or
+  a member whose seat is not yet `active`) and each admit's are re-read. A claim an unrelated
+  eviction overtook (`evicted_since_claim`: the group's generation moved) refuses the WHOLE commit
+  with a 409 `SEAT_CLAIM_OVERTAKEN` (`seat: committer|admit`): nothing advances, and the client
+  retries at once on a fresh claim (`isSeatClaimOvertaken` in `BaseMlsService`, the external join's
+  attempt loop, `admitNewcomer`'s rebuild). Each such refusal proves an eviction landed in between,
+  which is what bounds the retries. A departure in progress still refuses an external join
+  (`NOT_A_MEMBER`, `reason=departure_in_progress`): no leaf enters the tree for a person with no seat.
+- **A seat is written only beside its key package, read under the lock.** `writeClaimedSeat` (the
+  committer's seat, an activation) reads the device's `KeyPackage` row `FOR SHARE` and checks the
+  revocation denylist before writing. An account erasure deletes the account's key packages FIRST,
+  in the transaction that then ends its device rows, so a seat writer either commits before it
+  (and the erasure ends that seat) or finds no key package and writes nothing. The erasure then
+  sweeps the Redis routes, by prefix and under each group's seat lock (`eraseRoutes`), of every group
+  its device rows named. `recordSeatEviction` creates no row for an account it is not beginning a
+  departure for, so an eviction after the erasure leaves nothing naming it.
 - **A key group's admits are asked like a join.** An admit writes a `pending` seat its device later
   promotes by reporting itself, so in a key group each admitted person is asked of social-service
   (`claimKeyGroupAdmits`, before the commit lock) against a claim re-read under the seat lock: not
-  entitled, evicted since, or departing is `ADMIT_REFUSED`. The group's epoch is read first, so a
+  entitled or departing is `ADMIT_REFUSED`, evicted since is the whole-commit 409 above. The group's epoch is read first, so a
   commit on another epoch is answered `epoch_mismatch` without asking anyone; the distinct people are
   then asked in parallel. Unanswered is a 503 for the whole commit, before the epoch moves.
 - **The Welcome store and the key-group eviction take the same seat lock.** A key group has no roster
@@ -621,7 +635,8 @@ window with a durable row and a lock:
   against a claim read before the question. Both stores re-read that claim under the seat lock - a
   sent Welcome in `enqueueForLiveGroup` (shared), a commit-carried one in the advance's transaction -
   and refuse `welcome_target_not_member` (`reason=evicted_since_claim` or `departure_in_progress`)
-  when an eviction overtook it. The target's `pending` row is written in that same transaction
+  when an eviction overtook it - unless the target is also the commit's admit, whose overtaken claim
+  has already refused the whole commit with the 409. The target's `pending` row is written in that same transaction
   (`ensurePendingSeat`), so an eviction either runs wholly before the store or deletes what it wrote.
   Evictions and removals end the device rows and the queue through `endDeviceMemberships`, under the
   lock.

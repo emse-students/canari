@@ -48,6 +48,9 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   // A commit refused by the per-user rate limit is a typed `CommitRefusedError('rate_limited')`
   // carrying the wait, and the recovery sweeps pause on it; no screen words it.
   'RATE_LIMITED',
+  // A key-group commit whose seat claim an unrelated eviction overtook is a typed
+  // `CommitRefusedError('seat_claim_overtaken')`, and the committer retries it at once.
+  'SEAT_CLAIM_OVERTAKEN',
 ];
 
 /** Every code {@link describeRefusalCode} words. */

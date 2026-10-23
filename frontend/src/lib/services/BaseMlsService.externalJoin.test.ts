@@ -482,4 +482,46 @@ describe('BaseMlsService.externalJoin', () => {
     expect(other.delivery.submitCommit).not.toHaveBeenCalled();
     resetCommitRateLimit();
   });
+
+  // A 409 SEAT_CLAIM_OVERTAKEN IS AN ANSWER TOO: someone else's eviction moved the group's seat
+  // generation while the server asked whether this device may join, so nothing advanced and the
+  // retry meets a fresh claim. Each refusal proves an eviction happened, which is what bounds it.
+  it('retries at once when an unrelated eviction overtook its seat claim, and joins', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit
+      .mockRejectedValueOnce(
+        new ApiRefusalError(409, 'SEAT_CLAIM_OVERTAKEN', 'Commit submission HTTP error (409)')
+      )
+      .mockResolvedValueOnce({ accepted: true, newEpoch: 6 });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(2);
+    // The refused external commit cannot be cleared, so its group goes before the retry builds anew.
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
+    expect(ctx.mergePendingCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a seat claim overtaken on every attempt as a typed refusal', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockRejectedValue(
+      new ApiRefusalError(409, 'SEAT_CLAIM_OVERTAKEN', 'Commit submission HTTP error (409)')
+    );
+
+    expect(await externalJoin(ctx, 'g')).toEqual({
+      joined: false,
+      reason: 'refused',
+      serverReason: 'seat_claim_overtaken',
+    });
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(3);
+  });
 });

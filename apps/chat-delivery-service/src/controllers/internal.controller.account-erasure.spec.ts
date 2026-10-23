@@ -6,6 +6,7 @@ import { NotificationPreference } from '../entities/notification-preference.enti
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
+import { KeyPackage } from '../entities/key-package.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 
 /**
@@ -22,7 +23,12 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
   const USER = 'user-erased';
 
   function make(
-    opts: { routed?: string[]; deviceGroups?: string[]; evictionGroups?: string[] } = {}
+    opts: {
+      routed?: string[];
+      deviceGroups?: string[];
+      evictionGroups?: string[];
+      touchedGroups?: string[];
+    } = {}
   ) {
     process.env.INTERNAL_SECRET = SECRET;
     const repo = () => ({
@@ -39,6 +45,13 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
           txDeletes.push({ entity, where });
           return Promise.resolve({ affected: 1 });
         },
+        // The device rows the transaction is about to end: the groups whose routes go after it.
+        find: () =>
+          Promise.resolve(
+            entity === DeviceGroupMembership
+              ? (opts.touchedGroups ?? []).map((groupId) => ({ groupId }))
+              : []
+          ),
       }),
     };
     const manager = {
@@ -84,6 +97,7 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     // Each group's seats are cut through the one eviction, under that group's seat lock.
     const messagingService = {
       eraseSeats: jest.fn().mockResolvedValue({ memberships: 1, queued: 0, toRemove: 2 }),
+      eraseRoutes: jest.fn().mockResolvedValue(0),
     };
     const controller = new InternalController(
       repos.pushToken as never,
@@ -127,7 +141,10 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     expect(params).toEqual([USER]);
     // ...and what was queued FOR the account still goes - Welcomes included - with its device
     // rows, in one transaction (`endDeviceMemberships`).
+    // The key packages go FIRST, in the same transaction: a seat is written only while its key
+    // package is read under the seat lock, so none can be written after this one commits.
     expect(txDeletes).toEqual([
+      { entity: KeyPackage, where: { userId: USER } },
       { entity: QueuedMessage, where: { recipientId: USER } },
       { entity: DeviceGroupMembership, where: { userId: USER } },
     ]);
@@ -175,6 +192,15 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
 
     // The cut moves that group's seat generation, the one thing left to refuse an earlier claim.
     expect(messagingService.eraseSeats).toHaveBeenCalledWith('g-departing', USER);
+  });
+
+  it("sweeps the routes of every group its device rows were in, under each group's seat lock", async () => {
+    const { controller, messagingService } = make({ touchedGroups: ['g-late', 'g-other'] });
+    await controller.deleteUserData(USER, SECRET);
+
+    // A group found only now - a seat written after the group list was read - loses its routes too.
+    expect(messagingService.eraseRoutes).toHaveBeenCalledWith('g-late', USER);
+    expect(messagingService.eraseRoutes).toHaveBeenCalledWith('g-other', USER);
   });
 
   it('answers ok on an account with nothing left, which is what the final pass meets', async () => {

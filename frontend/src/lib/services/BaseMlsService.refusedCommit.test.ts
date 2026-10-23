@@ -204,6 +204,24 @@ describe('BaseMlsService - a commit refused by the rate limit (429)', () => {
     expect(isInEpochGap('g')).toBe(false);
   });
 
+  it('rolls back a commit whose seat claim an unrelated eviction overtook, as a typed refusal', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.submitCommit.mockRejectedValue(
+      new ApiRefusalError(409, 'SEAT_CLAIM_OVERTAKEN', 'Commit submission HTTP error (409)')
+    );
+
+    const refused = await runCommit(ctx, 'g').catch((e: unknown) => e);
+
+    // The server refused the WHOLE commit before advancing anything: the staged commit goes, and
+    // the caller is told a retry meets a fresh claim - never a fork, never a loss of state.
+    expect(refused).toBeInstanceOf(CommitRefusedError);
+    expect((refused as CommitRefusedError).reason).toBe('seat_claim_overtaken');
+    expect(ctx.clearPendingCommit).toHaveBeenCalledWith('g');
+    expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
+    expect(commitRateLimitRemainingMs()).toBe(0);
+    expect(isInEpochGap('g')).toBe(false);
+  });
+
   it('leaves every other failed submission as it was: unanswered is not refused', async () => {
     const ctx = makeCtx();
     const unanswered = new ApiRefusalError(502, null, 'Commit submission HTTP error (502)');

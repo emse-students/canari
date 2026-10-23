@@ -11,6 +11,14 @@
  *
  * The message keeps its historical spelling so a log reader and older assertions read it the same.
  */
+/**
+ * The reason a key-group commit carries when the server answered 409 `SEAT_CLAIM_OVERTAKEN`: an
+ * unrelated eviction moved the group's seat generation while the server asked who may hold a seat,
+ * so the WHOLE commit was refused and nothing advanced. The epoch did not move, so a caller that
+ * retries only past a moved epoch must retry on this reason too - each refusal proves an eviction.
+ */
+export const SEAT_CLAIM_OVERTAKEN_REASON = 'seat_claim_overtaken';
+
 export class CommitRefusedError extends Error {
   /**
    * @param reason - the server's refusal reason (`epoch_mismatch`, `concurrent_commit`, ...).

@@ -158,7 +158,11 @@ describe('a group ends - one policy, three routes', () => {
               return repos.group;
             }
             entities.push(entity);
-            return { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
+            return {
+              delete: jest.fn().mockResolvedValue({ affected: 1 }),
+              // The account's device rows, read before they end: none left in these cases.
+              find: jest.fn().mockResolvedValue([]),
+            };
           }),
         };
         const out = await cb(transactional);

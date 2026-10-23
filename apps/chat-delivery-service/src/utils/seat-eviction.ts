@@ -198,8 +198,9 @@ export async function bumpSeatGeneration(m: EntityManager, groupId: string): Pro
  * @param beginsDeparture true for a key group's eviction made BEFORE social-service's roster write:
  *   the departure it begins is named by the new generation and stays owed until settled
  *   ({@link settleSeatDeparture}). false for any other eviction, which leaves a departure already in
- *   progress as it is.
- * @returns the new generation - the departure's name when it begins one.
+ *   progress as it is - and CREATES NO ROW: with no departure to name, a row would only be a record
+ *   naming the person, and one arriving after an account erasure would outlive it.
+ * @returns the new generation - the departure's name when it begins one; 0 when no row was written.
  */
 export async function recordSeatEviction(
   m: EntityManager,
@@ -209,7 +210,10 @@ export async function recordSeatEviction(
 ): Promise<number> {
   const rows = (await m.query(
     `INSERT INTO dm_seat_evictions ("groupId", "userId", "generation", "owedDeparture", "updatedAt")
-     VALUES ($1, $2, 1, CASE WHEN $3 THEN 1 ELSE NULL END, now())
+     SELECT $1::uuid, $2::varchar, 1, CASE WHEN $3::boolean THEN 1 ELSE NULL END, now()
+      WHERE $3::boolean
+         OR EXISTS (SELECT 1 FROM dm_seat_evictions
+                     WHERE "groupId" = $1::uuid AND "userId" = $2::varchar)
      ON CONFLICT ("groupId", "userId") DO UPDATE
        SET "generation" = dm_seat_evictions."generation" + 1,
            "owedDeparture" = CASE WHEN $3 THEN dm_seat_evictions."generation" + 1

@@ -42,6 +42,12 @@ export const RefusalCode = {
   CALLS_VIDEO_DISABLED: 'CALLS_VIDEO_DISABLED',
   /** 429 - a per-user rate limit (`UserThrottlerGuard`); `retryAfterMs` says how long to wait. */
   RATE_LIMITED: 'RATE_LIMITED',
+  /**
+   * 409 - a commit that writes a seat was refused whole because an eviction in the group overtook
+   * the seat claim it was checked against (`utils/seat-eviction.ts`). Nothing advanced; rebuild the
+   * commit and submit it again now.
+   */
+  SEAT_CLAIM_OVERTAKEN: 'SEAT_CLAIM_OVERTAKEN',
 } as const;
 
 /** A stable refusal code of this service. */

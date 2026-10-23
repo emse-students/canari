@@ -777,15 +777,37 @@ export class InternalController {
     // ── User's own records ────────────────────────────────────────────────
     const manager = this.groupRepo.manager;
     // Every device row of the account and everything queued FOR it - Welcomes included - in ONE
-    // transaction ({@link endDeviceMemberships}).
-    const departed = await manager.transaction((tx) => endDeviceMemberships(tx, { userId }, 'all'));
+    // transaction ({@link endDeviceMemberships}), AFTER ITS KEY PACKAGES IN THE SAME ONE. A seat is
+    // written only while its device's key package is read `FOR SHARE` under the group's seat lock
+    // (`MessagingService.writeClaimedSeat`), so a seat racing this either committed first - this
+    // delete waited for it, and the device rows below take it - or finds no key package and is never
+    // written. That holds in a group this erasure found no trace of, which no cut above reached.
+    const departed = await manager.transaction(async (tx) => {
+      const keyPackages = await tx.getRepository(KeyPackage).delete({ userId });
+      const touched = await tx.getRepository(DeviceGroupMembership).find({
+        where: { userId },
+        select: { groupId: true },
+      });
+      const ended = await endDeviceMemberships(tx, { userId }, 'all');
+      return {
+        ...ended,
+        keyPackages: keyPackages.affected ?? 0,
+        groupIds: [...new Set(touched.map((t) => t.groupId))],
+      };
+    });
+    // The routes of every group those device rows were in, by prefix and under each group's seat
+    // lock ({@link MessagingService.eraseRoutes}): a seat that committed just before the delete above
+    // may have had its route added since the group list was read at the start.
+    let lateRoutes = 0;
+    for (const groupId of departed.groupIds) {
+      lateRoutes += await this.messagingService.eraseRoutes(groupId, userId);
+    }
     const [, sentQueued] = (await manager.query(
       `DELETE FROM queued_message
         WHERE "senderId" = $1 AND "isCommit" IS NOT TRUE AND "isWelcome" IS NOT TRUE`,
       [userId]
     )) as [unknown[], number];
     await Promise.all([
-      this.keyPackageRepo.delete({ userId }),
       this.otpRepo.delete({ userId }),
       // DM groupMember rows already deleted above; this cleans multi-group rows
       this.groupMemberRepo.delete({ userId }),
@@ -806,7 +828,8 @@ export class InternalController {
 
     this.logger.log(
       `[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued} ` +
-        `deviceMemberships=${departed.memberships} queuedFor=${departed.queued}`
+        `deviceMemberships=${departed.memberships} queuedFor=${departed.queued} ` +
+        `keyPackages=${departed.keyPackages} lateRoutes=${lateRoutes}`
     );
     return { ok: true };
   }

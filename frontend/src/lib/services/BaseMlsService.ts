@@ -140,7 +140,10 @@ import {
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
-import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import {
+  CommitRefusedError,
+  SEAT_CLAIM_OVERTAKEN_REASON,
+} from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
@@ -153,6 +156,14 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
  * that is behind the group's epoch ends the loop on that fact, whatever this number is.
  */
 const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
+
+/**
+ * Whether a failed commit submission is the server's 409 `SEAT_CLAIM_OVERTAKEN`: a whole-commit
+ * refusal that advanced nothing, read off the typed status and code, never off the message.
+ */
+function isSeatClaimOvertaken(e: unknown): boolean {
+  return e instanceof ApiRefusalError && e.status === 409 && e.code === 'SEAT_CLAIM_OVERTAKEN';
+}
 
 /**
  * How many times one join may read the device's published-KeyPackage fact while rounds keep
@@ -3510,6 +3521,21 @@ export abstract class BaseMlsService implements IMlsService {
               commitRateLimitRemainingMs()
             );
           }
+          // A 409 SEAT_CLAIM_OVERTAKEN IS A REFUSAL OF THE WHOLE COMMIT: an unrelated eviction
+          // moved the key group's seat generation while the server asked who may hold a seat, so
+          // nothing advanced. Rolled back like any refusal; the caller retries on a fresh claim.
+          if (isSeatClaimOvertaken(e)) {
+            console.warn(
+              `[COMMIT] ${groupId.slice(0, 8)}... refused at epoch ${baseEpoch}: an unrelated eviction overtook its seat claim - staged commit rolled back`
+            );
+            await this.clearPendingCommit(groupId).catch((clearErr) =>
+              console.error(
+                `[COMMIT] ${groupId.slice(0, 8)}... could not roll back the overtaken commit:`,
+                String(clearErr).slice(0, 120)
+              )
+            );
+            throw new CommitRefusedError(SEAT_CLAIM_OVERTAKEN_REASON, baseEpoch, baseEpoch);
+          }
           throw e;
         }
         if (!validation.accepted) {
@@ -4584,10 +4610,13 @@ export abstract class BaseMlsService implements IMlsService {
           // unmerged breaks every later operation on it - and if the server DID accept the commit we
           // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
           const rateLimited = e instanceof ApiRefusalError && e.status === 429;
+          const overtaken = isSeatClaimOvertaken(e);
           await dropGroupState(this, joined.groupId, {
             reason: rateLimited
               ? 'the commit gate refused it under the rate limit'
-              : 'the commit gate could not be reached',
+              : overtaken
+                ? 'an unrelated eviction overtook its seat claim'
+                : 'the commit gate could not be reached',
             // Built in memory during this very call and never checkpointed: there is nothing
             // durable to undo, and a save here would cost one per failed attempt.
             checkpoint: 'never-persisted',
@@ -4601,6 +4630,22 @@ export abstract class BaseMlsService implements IMlsService {
               reason: 'rate_limited',
               retryAfterMs: commitRateLimitRemainingMs(),
             };
+          }
+          // A 409 SEAT_CLAIM_OVERTAKEN IS AN ANSWER: nothing advanced, and the next attempt asks
+          // for a fresh claim at once. Each refusal proves an eviction landed in between, and the
+          // attempt bound still holds against a group evicting without pause.
+          if (overtaken) {
+            console.warn(
+              `[MLS] externalJoin seat claim OVERTAKEN for ${short}... (base ${gi.baseEpoch}) - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
+            );
+            if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
+              return {
+                joined: false,
+                reason: 'refused',
+                serverReason: SEAT_CLAIM_OVERTAKEN_REASON,
+              };
+            }
+            continue;
           }
           console.warn(
             `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +

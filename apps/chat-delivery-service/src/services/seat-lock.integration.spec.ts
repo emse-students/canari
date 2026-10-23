@@ -45,7 +45,17 @@ import { InvitationsController } from '../controllers/invitations.controller';
 import { DevicesController } from '../controllers/devices.controller';
 import { InternalController } from '../controllers/internal.controller';
 import { claimSeat, seatClaimHolds, withSeatLock, type SeatClaim } from '../utils/seat-eviction';
-import { memberCommitFrame } from '../testing/mlsFrameFixture';
+import { externalCommitFrame, memberCommitFrame } from '../testing/mlsFrameFixture';
+import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
+
+// social-service's entitlement answer, held by each case: what an HTTP call does outside the lock.
+jest.mock('../internal/distribution-entitlement', () => ({
+  ...jest.requireActual('../internal/distribution-entitlement'),
+  isEntitledToDistributionGroup: jest.fn(),
+}));
+const entitled = isEntitledToDistributionGroup as jest.MockedFunction<
+  typeof isEntitledToDistributionGroup
+>;
 
 const URL = process.env.DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -86,25 +96,34 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
   let admin: Client;
   let ds: DataSource;
   let service: MessagingService;
-  const routes = new Set<string>();
+  /** Every routing set by its key; `routes` is GROUP's. */
+  const sets = new Map<string, Set<string>>();
+  const setOf = (key: string): Set<string> => {
+    let set = sets.get(key);
+    if (!set) sets.set(key, (set = new Set()));
+    return set;
+  };
+  const routes = setOf(ROUTES);
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
   const seams = () => service as unknown as Seams;
 
   /** The gateway's routing sets, in memory - only the commands the seat writers use. */
   const redis = {
-    smembers: async (key: string) => (key === ROUTES ? [...routes] : []),
-    sadd: async (_key: string, ...members: string[]) => {
-      const before = routes.size;
-      members.forEach((m) => routes.add(m));
-      return routes.size - before;
+    smembers: async (key: string) => [...setOf(key)],
+    sadd: async (key: string, ...members: string[]) => {
+      const set = setOf(key);
+      const before = set.size;
+      members.forEach((m) => set.add(m));
+      return set.size - before;
     },
-    srem: async (_key: string, ...members: string[]) => {
-      const before = routes.size;
-      members.forEach((m) => routes.delete(m));
-      return before - routes.size;
+    srem: async (key: string, ...members: string[]) => {
+      const set = setOf(key);
+      const before = set.size;
+      members.forEach((m) => set.delete(m));
+      return before - set.size;
     },
-    smismember: async (_key: string, ...members: string[]) =>
-      members.map((m) => (routes.has(m) ? 1 : 0)),
+    smismember: async (key: string, ...members: string[]) =>
+      members.map((m) => (setOf(key).has(m) ? 1 : 0)),
     // The commit gate's Redis lock, as it stands once its 5 s have run out: never held. What
     // serialises two commits at one base must then be the database alone.
     set: async () => 'OK',
@@ -248,7 +267,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
   });
 
   beforeEach(async () => {
-    routes.clear();
+    for (const set of sets.values()) set.clear();
     await q(`DELETE FROM dm_device_group_memberships`);
     await q(`DELETE FROM queued_message`);
     await q(`DELETE FROM dm_seat_evictions`);
@@ -537,6 +556,42 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
       expect(await seatsOf(PEER)).toBe(0);
     });
 
+    it('an activation waiting on the seat lock while the account is erased writes no seat after it', async () => {
+      // A device with no trace in the group yet: the erasure has no seat of it to cut, so what
+      // refuses the activation is its key package, read under the lock and deleted by the erasure.
+      const NEW = { userId: 'erased-new', deviceId: 'dev-en' };
+      await q(
+        `INSERT INTO key_package ("userId", "deviceId", "keyPackage") VALUES ($1, $2, 'kp')
+         ON CONFLICT DO NOTHING`,
+        [NEW.userId, NEW.deviceId]
+      );
+      const claim = await claimSeat(ds.manager, GROUP, NEW.userId);
+      const held = await holder('exclusive');
+      let activating: Promise<unknown>;
+      try {
+        activating = service.activateDeviceMembership(NEW.userId, NEW.deviceId, GROUP, {
+          authority: 'accepted_commit',
+          claim,
+        });
+        await parked(1);
+        await internal().deleteUserData(NEW.userId, SECRET);
+        await held.query('COMMIT');
+      } finally {
+        await release(held);
+      }
+
+      await expect(activating).resolves.toEqual({ ok: false, reason: 'no_key_package' });
+      expect(await seatsOf(NEW)).toBe(0);
+    });
+
+    it('an eviction arriving after the erasure writes no row naming the account', async () => {
+      await internal().deleteUserData(PEER.userId, SECRET);
+
+      await service.evictSeats(GROUP, PEER.userId, { settles: 1 });
+
+      expect(await evictionRowsOf(PEER)).toBe(0);
+    });
+
     it('is refused after it when the account held no seat, only a departure in progress', async () => {
       // Seats cut and roster gone: the eviction row is all that still names the group.
       await service.evictSeats(GROUP, PEER.userId, 'begin');
@@ -546,6 +601,143 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
 
       await expect(holds(claim)).resolves.toBe('evicted_since_claim');
       expect(await evictionRowsOf(PEER)).toBe(0);
+    });
+  });
+
+  /**
+   * THE GROUP'S GENERATION REFUSES A CLAIM ANY EVICTION OVERTOOK, SO A COMMIT THAT WRITES A SEAT
+   * MUST BE REFUSED WHOLE. Dropping only the seat would accept a commit whose newcomer is in the tree
+   * with no seat and nothing retrying it. social-service's answer is where the eviction lands: the
+   * claim was read before the question, and the eviction runs while it is being answered.
+   */
+  describe('a key-group commit whose seat claim an unrelated eviction overtakes', () => {
+    const KEY_GROUP = '00000000-0000-4000-8000-0000000000e2';
+    const WORKSPACE = '00000000-0000-4000-8000-0000000000f2';
+    const NEWCOMER = { userId: 'kg-newcomer', deviceId: 'dev-kn' };
+    const JOINER = { userId: 'kg-joiner', deviceId: 'dev-kj' };
+    const epochOf = async (): Promise<number> => {
+      const [row]: { activeEpoch: number }[] = await q(
+        `SELECT "activeEpoch" FROM dm_groups WHERE id = $1`,
+        [KEY_GROUP]
+      );
+      return Number(row.activeEpoch);
+    };
+    const statusOf = async (who: { userId: string; deviceId: string }): Promise<string | null> => {
+      const rows: { status: string }[] = await q(
+        `SELECT status FROM dm_device_group_memberships
+          WHERE "groupId" = $1 AND "userId" = $2 AND "deviceId" = $3`,
+        [KEY_GROUP, who.userId, who.deviceId]
+      );
+      return rows[0]?.status ?? null;
+    };
+    const loggedCommits = async (): Promise<number> => {
+      const [row]: { n: string }[] = await q(
+        `SELECT count(*) AS n FROM mls_commit_log WHERE "groupId" = $1`,
+        [KEY_GROUP]
+      );
+      return Number(row.n);
+    };
+    /** social-service answers `true`, after an eviction of PEER - someone else - committed. */
+    const answerAfterAnUnrelatedEviction = () =>
+      entitled.mockImplementationOnce(async () => {
+        await service.evictSeats(KEY_GROUP, PEER.userId, 'begin');
+        return true;
+      });
+    /** The refusal a client reads: its status and its stable code. */
+    const refusalOf = (call: Promise<unknown>) =>
+      call.then(
+        () => null,
+        (e: { getStatus: () => number; getResponse: () => { code?: string } }) => ({
+          status: e.getStatus(),
+          code: e.getResponse().code,
+        })
+      );
+
+    beforeAll(async () => {
+      await q(
+        `INSERT INTO dm_groups (id, "isGroup", "activeEpoch", "distributionWorkspaceId")
+         VALUES ($1, true, 3, $2)`,
+        [KEY_GROUP, WORKSPACE]
+      );
+    });
+
+    beforeEach(async () => {
+      entitled.mockReset();
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+      await q(`UPDATE dm_groups SET "activeEpoch" = 3 WHERE id = $1`, [KEY_GROUP]);
+      await q(`DELETE FROM mls_commit_log WHERE "groupId" = $1`, [KEY_GROUP]);
+      for (const who of [SENDER, PEER]) {
+        await q(
+          `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+           VALUES ($1, $2, $3, 'active')`,
+          [who.userId, who.deviceId, KEY_GROUP]
+        );
+      }
+      for (const who of [SENDER, NEWCOMER, JOINER]) {
+        await q(
+          `INSERT INTO key_package ("userId", "deviceId", "keyPackage") VALUES ($1, $2, 'kp')
+           ON CONFLICT DO NOTHING`,
+          [who.userId, who.deviceId]
+        );
+      }
+    });
+
+    it("refuses a commit admitting a newcomer whole and retryably, and accepts the retry with the newcomer's seat", async () => {
+      const commit = () =>
+        service.validateCommit(
+          {
+            groupId: KEY_GROUP,
+            deviceId: SENDER.deviceId,
+            baseEpoch: 3,
+            proto: memberCommitFrame(KEY_GROUP, 3n),
+            senderId: SENDER.userId,
+            admits: [NEWCOMER],
+          },
+          SENDER.userId
+        );
+      answerAfterAnUnrelatedEviction();
+
+      await expect(refusalOf(commit())).resolves.toEqual({
+        status: 409,
+        code: 'SEAT_CLAIM_OVERTAKEN',
+      });
+      expect(await epochOf()).toBe(3);
+      expect(await loggedCommits()).toBe(0);
+      expect(await statusOf(NEWCOMER)).toBeNull();
+
+      entitled.mockResolvedValueOnce(true);
+      await expect(commit()).resolves.toMatchObject({ accepted: true });
+      expect(await epochOf()).toBe(4);
+      expect(await statusOf(NEWCOMER)).toBe('pending');
+    });
+
+    it("refuses an external join the same way, and accepts the retry with the joiner's seat", async () => {
+      const join = () =>
+        service.validateCommit(
+          {
+            groupId: KEY_GROUP,
+            deviceId: JOINER.deviceId,
+            baseEpoch: 3,
+            proto: externalCommitFrame(KEY_GROUP, 3n, `${JOINER.userId}:${JOINER.deviceId}`),
+            senderId: JOINER.userId,
+          },
+          JOINER.userId
+        );
+      answerAfterAnUnrelatedEviction();
+
+      await expect(refusalOf(join())).resolves.toEqual({
+        status: 409,
+        code: 'SEAT_CLAIM_OVERTAKEN',
+      });
+      expect(await epochOf()).toBe(3);
+      expect(await statusOf(JOINER)).toBeNull();
+
+      entitled.mockResolvedValueOnce(true);
+      await expect(join()).resolves.toMatchObject({ accepted: true });
+      expect(await epochOf()).toBe(4);
+      expect(await statusOf(JOINER)).toBe('active');
     });
   });
 

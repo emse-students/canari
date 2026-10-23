@@ -381,8 +381,11 @@ the ~77 key-group joins/day.
 ## P3 - The key-group seat lock: what it does not yet carry (2026-10-22)
 
 Every seat-creating write (a commit's committer and its admits, a key group's publisher) and every
-eviction share one per-group advisory lock and one durable row, `dm_seat_evictions` (chat-delivery
-migration 036); every key-group departure, account erasure included, goes through one function and
+eviction share one per-group advisory lock, and a seat claim is the group's own generation,
+`dm_groups."seatGeneration"`, which every eviction moves (chat-delivery migration 036; a claim an
+unrelated eviction overtook refuses the whole commit with a retryable 409 `SEAT_CLAIM_OVERTAKEN`).
+`dm_seat_evictions` only names a key-group departure in progress, and an erasure deletes its rows;
+every key-group departure, account erasure included, goes through one function and
 records its outcome in `distribution_departures` (social migration 108), which the hourly drain asks
 for ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 Both migrations are applied by the release's deploy before the new containers start, and may ride the

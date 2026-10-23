@@ -139,6 +139,8 @@ describe('InternalController - the community distribution group', () => {
             redis,
             deleteSeats: (MessagingService.prototype as unknown as { deleteSeats: unknown })
               .deleteSeats,
+            removeRoutesOf: (MessagingService.prototype as unknown as { removeRoutesOf: unknown })
+              .removeRoutesOf,
           },
           groupId,
           userId,
